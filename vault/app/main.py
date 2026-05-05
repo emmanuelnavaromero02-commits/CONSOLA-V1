@@ -29,7 +29,8 @@ from pathlib import Path
 
 import psycopg2
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Depends
+import os
 
 _SECRETS_FILE = Path("/vault/secrets.yaml")
 _DATABASE_URL = os.getenv(
@@ -151,7 +152,16 @@ def _mask(d: dict) -> dict:
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="MODecissions Vault")
+
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+    # Validate the key and that the caller explicitly declares itself
+    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+        raise HTTPException(status_code=403, detail="Invalid internal service origin")
+    if x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)])
 
 
 @app.on_event("startup")

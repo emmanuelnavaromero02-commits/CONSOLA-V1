@@ -9,7 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Depends
 
 from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
@@ -55,12 +55,21 @@ async def lifespan(app: FastAPI):
     yield
 
 
+
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+    # Validate the key and that the caller explicitly declares itself
+    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+        raise HTTPException(status_code=403, detail="Invalid internal service origin")
+    if x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
 
 # ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
 async def mcp_tools():
     return {"tools": [
 
@@ -456,7 +465,7 @@ async def mcp_tools():
     ]}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
 async def mcp_invoke(body: dict):
     tool = body.get("tool")
     args = body.get("args", {})
@@ -476,7 +485,7 @@ async def mcp_invoke(body: dict):
         return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
 
     if tool == "preview_transform":
-        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"))
+        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"), args.get("user_context"))
 
     if tool == "save_dataset":
         store.save_dataset(args)
@@ -561,7 +570,7 @@ async def mcp_invoke(body: dict):
         ds = store.get_dataset(args["name"])
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
-        return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100))
+        return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100), args.get("user_context"))
 
     if tool == "get_lineage":
         return _get_lineage(args["name"], args.get("limit", 10))

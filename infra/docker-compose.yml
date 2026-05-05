@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: modecissions
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "15432:5432"
     volumes:
@@ -23,7 +23,7 @@ services:
     environment:
       POSTGRES_DB: modecissions_gold
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "15433:5433"
     command: -p 5433
@@ -37,7 +37,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -52,10 +52,10 @@ services:
       dockerfile: Dockerfile
     container_name: mode_console
     environment:
-      DATABASE_URL:      "postgresql+psycopg2://postgres:postgres@postgres:5432/modecissions"
+      DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
-      MINIO_SECRET_KEY:  minio123
+      MINIO_SECRET_KEY:  ${MINIO_SECRET_KEY}
       MINIO_BUCKET:      lakehouse
       MINIO_SECURE:      "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -95,7 +95,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_workspace
     environment:
-      DATABASE_URL:         "postgresql+psycopg2://postgres:postgres@postgres:5432/modecissions"
+      DATABASE_URL:         "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       REFINEMENT_URL:       http://refinement:8500
       MCP_INFRA_URL:        http://mcp-infra:8010
       CONSOLE_URL:          ${CONSOLE_URL:-http://localhost:8000}
@@ -119,11 +119,11 @@ services:
       dockerfile: Dockerfile
     container_name: mode_refinement
     environment:
-      DATABASE_URL:       "postgresql+psycopg2://postgres:postgres@postgres:5432/modecissions"
-      GOLD_DATABASE_URL:  "postgresql+psycopg2://postgres:postgres@postgres_gold:5433/modecissions_gold"
+      DATABASE_URL:       "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
+      GOLD_DATABASE_URL:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres_gold:5433/modecissions_gold"
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
-      MINIO_SECRET_KEY:  minio123
+      MINIO_SECRET_KEY:  ${MINIO_SECRET_KEY}
       MINIO_BUCKET:      lakehouse
       MINIO_SECURE:      "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -134,6 +134,19 @@ services:
       - postgres
       - postgres_gold
       - minio
+
+
+  vault:
+    build:
+      context: ../vault
+      dockerfile: Dockerfile
+    container_name: mode_vault
+    environment:
+      DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
+      INTERNAL_API_KEY:  ${INTERNAL_API_KEY:-dev-secret-key}
+    depends_on:
+      - postgres
+    restart: unless-stopped
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
@@ -157,7 +170,7 @@ services:
       AIRFLOW_DAGS_PATH: /opt/airflow/dags
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
-      MINIO_SECRET_KEY: minio123
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       MINIO_BUCKET:     lakehouse
       MINIO_SECURE:     "false"
       PG_HOST:          postgres
@@ -192,7 +205,7 @@ services:
     container_name: mode_superset_init
     environment:
       SUPERSET_SECRET_KEY:   ${SUPERSET_SECRET_KEY:-modecissions-superset-secret}
-      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:postgres@postgres:5432/superset
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/superset
     entrypoint: /bin/bash
     command: >
       -c "
@@ -214,7 +227,7 @@ services:
     container_name: mode_superset
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:-modecissions-superset-secret}
-      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:postgres@postgres:5432/superset
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/superset
       SUPERSET_WEBSERVER_PORT: 8088
       TALISMAN_ENABLED:        "false"
       WTF_CSRF_ENABLED:        "false"
@@ -235,10 +248,14 @@ services:
     image: apache/airflow:2.9.2
     container_name: mode_airflow_init
     entrypoint: /bin/bash
-    command: -c "airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@modecissions.local"
+    command: -c "airflow db migrate && airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local"
     environment:
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-secret-key}
+      VAULT_URL: http://vault:8300
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: "modecissions-airflow-secret"
     depends_on:
@@ -252,22 +269,20 @@ services:
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: "modecissions-airflow-secret"
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
       # Paquetes extra para los DAGs
       _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow minio psycopg2-binary openpyxl"
       # Variables disponibles en los DAGs via Variable.get()
-      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:postgres@postgres:5432/modecissions"
+      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
-      AIRFLOW_VAR_MINIO_SECRET_KEY: "minio123"
+      AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
-      # AIRFLOW_CONN_REPLICON_ANALYTICS={"conn_type":"http","host":"https://na5.replicon.com/analyticsapi","password":"TOKEN"}
-      # AIRFLOW_CONN_REPLICON_SERVICES={"conn_type":"http","host":"https://na5.replicon.com/services","password":"TOKEN"}
     ports:
       - "8082:8080"
     volumes:
@@ -284,15 +299,20 @@ services:
     container_name: mode_airflow_scheduler
     command: scheduler
     environment:
+
+      AIRFLOW_ADMIN_USER:                   ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:-dev-secret-key}
+      VAULT_URL:                            http://vault:8300
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: "modecissions-airflow-secret"
       _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow minio psycopg2-binary openpyxl"
-      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:postgres@postgres:5432/modecissions"
+      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
-      AIRFLOW_VAR_MINIO_SECRET_KEY: "minio123"
+      AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
     volumes:

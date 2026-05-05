@@ -56,6 +56,7 @@
 </div>
 
 <script>
+function esc(s){ return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 const params = new URLSearchParams(location.search);
 let semanticData = null;
 
@@ -95,7 +96,7 @@ async function loadSemantic(){
 
     renderMain(semanticData.entities || {});
   } catch(e) {
-    document.getElementById('main-area').innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${e.message}</div>`;
+    document.getElementById('main-area').innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
   }
 }
 
@@ -121,7 +122,7 @@ function renderMain(entities){
 
   document.getElementById('main-area').innerHTML = `
     <div class="stat-row">
-      <div class="stat"><div class="stat-val">${list.length}</div><div class="stat-lbl">ENTIDADES</div></div>
+      <div class="stat"><div class="stat-val">${esc(list.length)}</div><div class="stat-lbl">ENTIDADES</div></div>
       <div class="stat"><div class="stat-val">${total_fields}</div><div class="stat-lbl">CAMPOS TOTAL</div></div>
       <div class="stat"><div class="stat-val" style="color:var(--amber)">${has_watermark}</div><div class="stat-lbl">CON WATERMARK</div></div>
     </div>

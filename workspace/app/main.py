@@ -252,11 +252,11 @@ async def serve_app(request: Request, name: str):
 
 @app.get("/api/data/{dataset}")
 async def api_data(request: Request, dataset: str, limit: int = 5000):
-    require_user(request)
-    async with httpx.AsyncClient(timeout=60) as c:
+    user = require_user(request)
+    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
-                               "args": {"name": dataset, "limit": limit}})
+                               "args": {"name": dataset, "limit": limit, "user_context": user}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
@@ -266,7 +266,7 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
 @app.get("/api/data/{dataset}/options")
 async def api_data_options(request: Request, dataset: str, columns: str = ""):
     """Distinct values per column for filter dropdowns."""
-    require_user(request)
+    user = require_user(request)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
     if not cols:
         raise HTTPException(400, "columns param required")
@@ -280,10 +280,11 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
         for col in cols
     ]
     union_sql = " UNION ALL ".join(sqls) + " ORDER BY col, val"
-    async with httpx.AsyncClient(timeout=30) as c:
+
+    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": union_sql, "limit": 5000}})
+                               "args": {"sql": union_sql, "limit": 5000, "user_context": user}})
     result = r.json()
     rows = result.get("data", [])
     options: dict = {col: [] for col in cols}
@@ -331,10 +332,11 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
 
-    async with httpx.AsyncClient(timeout=60) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=60) as c:
+        user = require_user(request)
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": sql, "limit": limit}})
+                               "args": {"sql": sql, "limit": limit, "user_context": user}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()
@@ -360,7 +362,7 @@ async def api_users_list(request: Request):
 @app.get("/api/datasets")
 async def api_datasets_list(request: Request):
     require_user(request)
-    async with httpx.AsyncClient(timeout=20) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "list_datasets", "args": {}})
     if r.status_code != 200:
@@ -371,7 +373,7 @@ async def api_datasets_list(request: Request):
 @app.get("/api/datasets/{name}/schema")
 async def api_dataset_schema(request: Request, name: str):
     require_user(request)
-    async with httpx.AsyncClient(timeout=20) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "get_schema", "args": {"name": name}})
     if r.status_code != 200:

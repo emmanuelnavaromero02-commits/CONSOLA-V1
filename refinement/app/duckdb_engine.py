@@ -192,8 +192,9 @@ class DuckDBEngine:
 
     # ── SQL preview ───────────────────────────────────────────────────────────
 
-    def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None) -> dict:
+    def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None) -> dict:
         try:
+            sql = self.apply_rls(sql, user_context)
             con = self._conn()
             effective_sql = self._inject_bucket(self._inject_latest_date(sql, sources or []))
             limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
@@ -220,11 +221,30 @@ class DuckDBEngine:
         except Exception as exc:
             return {"name": ds.get("name"), "error": str(exc)}
 
-    def query_dataset(self, ds: dict, filters: dict, limit: int = 100) -> dict:
+
+    def apply_rls(self, sql: str, user_context: dict) -> str:
+        if not user_context or user_context.get("role") == "admin":
+            return sql
+
+        email_esc = str(user_context.get("email", "")).replace("'", "''")
+        name_esc = str(user_context.get("name") or "").replace("'", "''")
+
+        # Intercept any query to a pggold.gold_ table and wrap it in a subquery with RLS.
+        import re
+        def replacer(match):
+            table = match.group(0)
+            return f"(SELECT * FROM {table} WHERE revenue_manager = '{email_esc}' OR revenue_manager = '{name_esc}' OR revenue_manager = 'N/D')"
+
+        sql = re.sub(r'pggold\.gold_[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
+        return sql
+
+    def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
         sql = ds.get("sql_def", "")
         if filters:
             clauses = [f"{k} = '{v}'" for k, v in filters.items()]
             sql = f"SELECT * FROM ({sql}) _q WHERE {' AND '.join(clauses)}"
+
+        sql = self.apply_rls(sql, user_context)
         return self.preview_sql(sql, limit)
 
     def _inject_latest_date(self, sql: str, sources: list[str]) -> str:

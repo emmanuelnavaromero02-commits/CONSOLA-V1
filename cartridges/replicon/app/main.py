@@ -1,10 +1,11 @@
 from __future__ import annotations
+import os
 
 import inspect
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
 from app.api.routes_health import router as health_router
@@ -25,6 +26,15 @@ async def lifespan(app: FastAPI):
 
 # ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
 _mcp_app = mcp.http_app(path="/")
+
+
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+    # Validate the key and that the caller explicitly declares itself
+    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+        raise HTTPException(status_code=403, detail="Invalid internal service origin")
+    if x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 app = FastAPI(title="Replicon Cartridge", lifespan=lifespan)
 
@@ -62,7 +72,7 @@ def _tool_schema(tool_fn) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
 async def mcp_tools():
     """Return all registered MCP tools in the console registry format."""
     tool_list = await mcp.list_tools()
@@ -82,7 +92,7 @@ async def mcp_tools():
     return {"tools": tools}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
 async def mcp_invoke(body: dict):
     """Invoke a tool by name with args. Returns the tool result."""
     tool_name = body.get("tool", "")
