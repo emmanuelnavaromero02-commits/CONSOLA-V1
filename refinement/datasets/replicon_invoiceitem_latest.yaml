@@ -1,0 +1,6 @@
+name: replicon_invoiceitem_latest
+description: 'InvoiceItem - Ultima extraccion Replicon Bronze'
+layer: silver
+sources:
+- raw/replicon/InvoiceItem
+sql: "SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/InvoiceItem/**/*.parquet', hive_partitioning=true, union_by_name=true)"

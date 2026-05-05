@@ -1,0 +1,9 @@
+description: Activity - Ultima extraccion Replicon Bronze
+last_refresh: '2026-04-21T16:29:20.873564+00:00'
+layer: silver
+name: replicon_activity_latest
+row_count: 35
+sources:
+- raw/replicon/Activity
+sql: SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/Activity/**/*.parquet',
+  hive_partitioning=true, union_by_name=true)

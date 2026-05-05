@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MODecissions · Semantic Model</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+<link rel="stylesheet" href="/static/css/viewer.css">
+<style>
+/* ── Semantic model — estilos únicos ── */
+.server-info { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; margin-bottom:12px; }
+.health-ok  { color:var(--green); }
+.health-err { color:var(--red); }
+.entity-grid  { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; }
+.entity-card  { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:14px; }
+.entity-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+.entity-modes { display:flex; gap:4px; flex-wrap:wrap; }
+.mode-tag   { padding:1px 6px; border-radius:2px; font-size:9px; font-family:var(--font-mono); }
+.mode-full  { background:#1a2a1a; color:#00ff41; border:1px solid #00ff41; }
+.mode-delta { background:#1a1a0a; color:#ffb000; border:1px solid #ffb000; }
+.mode-patch { background:#0a1a2a; color:#00e5ff; border:1px solid #00e5ff; }
+.field-list { max-height:200px; overflow-y:auto; }
+.field-row  { display:flex; gap:6px; padding:3px 0; border-bottom:1px solid var(--border); font-size:10px; }
+.field-name { color:var(--text); min-width:140px; font-family:var(--font-mono); }
+.field-type { color:var(--cyan); min-width:80px; }
+.field-key  { color:var(--amber); min-width:60px; }
+.watermark-row { display:flex; gap:8px; align-items:center; padding:4px 0; font-size:10px; border-bottom:1px solid var(--border); }
+.wm-entity { color:var(--amber); min-width:140px; font-family:var(--font-mono); }
+.wm-field  { color:var(--text2); min-width:120px; }
+.wm-value  { color:var(--green); font-family:var(--font-mono); flex:1; }
+</style>
+</head>
+<body>
+<div class="crt-overlay"></div>
+<div class="scanlines"></div>
+<div class="viewer-wrap">
+  <div class="vheader">
+    <h1>SEMANTIC MODEL</h1>
+    <a href="/">← Consola</a>
+  </div>
+
+  <div class="card" id="server-card">
+    <div class="card-title">CARTUCHO</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
+      <select id="cartridge-sel" onchange="loadSemantic()">
+        <option value="replicon">replicon</option>
+      </select>
+      <button class="btn" onclick="loadSemantic()">↺ Recargar</button>
+    </div>
+    <div class="server-info" id="server-info"></div>
+  </div>
+
+  <div id="main-area">
+    <div class="empty-state">Selecciona un cartucho para ver su modelo semántico</div>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+let semanticData = null;
+
+async function loadCartridges(){
+  try {
+    const r = await fetch('/mcp/servers');
+    const d = await r.json();
+    const servers = d.servers || [];
+    const sel = document.getElementById('cartridge-sel');
+    const cartridge = params.get('cartridge') || 'replicon';
+    sel.innerHTML = servers.map(s=>`<option value="${s.id}" ${s.id===cartridge?'selected':''}>${s.id}</option>`).join('');
+    loadSemantic();
+  } catch(e) {
+    loadSemantic();
+  }
+}
+
+async function loadSemantic(){
+  const cartridge = document.getElementById('cartridge-sel').value || 'replicon';
+  history.replaceState(null,'',`?cartridge=${cartridge}`);
+  document.getElementById('main-area').innerHTML = '<div class="empty-state">Cargando modelo semántico...</div>';
+  document.getElementById('server-info').innerHTML = '';
+
+  try {
+    const r = await fetch(`/api/semantic?cartridge=${cartridge}`);
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    semanticData = await r.json();
+
+    const srv = semanticData.server || {};
+    const healthy = srv.healthy;
+    document.getElementById('server-info').innerHTML = `
+      <div><div class="meta-lbl">ID</div><div class="meta-val">${srv.id||cartridge}</div></div>
+      <div><div class="meta-lbl">URL</div><div class="meta-val" style="font-size:10px">${srv.url||'—'}</div></div>
+      <div><div class="meta-lbl">ESTADO</div><div class="meta-val ${healthy?'health-ok':'health-err'}">${healthy?'● HEALTHY':'● OFFLINE'}</div></div>
+      <div><div class="meta-lbl">TOOLS</div><div class="meta-val">${(srv.tools||[]).length}</div></div>
+    `;
+
+    renderMain(semanticData.entities || {});
+  } catch(e) {
+    document.getElementById('main-area').innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${e.message}</div>`;
+  }
+}
+
+function modeTags(modes){
+  if(!modes || !modes.length) return '<span class="mode-tag mode-full">full</span>';
+  return modes.map(m=>`<span class="mode-tag mode-${m}">${m}</span>`).join('');
+}
+
+function renderMain(entities){
+  const list = Array.isArray(entities) ? entities : (entities.entities || []);
+  if(!list.length){
+    document.getElementById('main-area').innerHTML = '<div class="empty-state">Sin entidades en el modelo</div>';
+    return;
+  }
+
+  const total_fields = list.reduce((a,e)=>a+(e.fields||e.columns||[]).length,0);
+  const has_watermark = list.filter(e=>e.watermark_field||e.watermark).length;
+
+  // Collect watermarks
+  const watermarks = list
+    .filter(e=>e.watermark_field||e.watermark)
+    .map(e=>({entity: e.name||e.entity, field: e.watermark_field||e.watermark, value: e.last_watermark||'—'}));
+
+  document.getElementById('main-area').innerHTML = `
+    <div class="stat-row">
+      <div class="stat"><div class="stat-val">${list.length}</div><div class="stat-lbl">ENTIDADES</div></div>
+      <div class="stat"><div class="stat-val">${total_fields}</div><div class="stat-lbl">CAMPOS TOTAL</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--amber)">${has_watermark}</div><div class="stat-lbl">CON WATERMARK</div></div>
+    </div>
+
+    <div class="card">
+      <div class="tab-bar">
+        <div class="tab active" id="tab-entities-btn" onclick="switchView('entities')">ENTIDADES</div>
+        <div class="tab" id="tab-watermarks-btn" onclick="switchView('watermarks')">WATERMARKS</div>
+      </div>
+
+      <div id="view-entities">
+        <div class="filter-row">
+          <input type="text" id="search" placeholder="Buscar entidad..." oninput="filterEntities()">
+          <select id="mode-filter" onchange="filterEntities()">
+            <option value="">Todos los modos</option>
+            <option value="full">full</option>
+            <option value="delta">delta</option>
+            <option value="patch">patch</option>
+          </select>
+        </div>
+        <div class="entity-grid" id="entity-grid">
+          ${renderEntityCards(list)}
+        </div>
+      </div>
+
+      <div id="view-watermarks" style="display:none">
+        ${watermarks.length ? `
+          <div style="font-size:10px;color:var(--text3);display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px">
+            <span style="min-width:140px">ENTIDAD</span>
+            <span style="min-width:120px">CAMPO WATERMARK</span>
+            <span>ULTIMO VALOR</span>
+          </div>
+          ${watermarks.map(w=>`
+          <div class="watermark-row">
+            <span class="wm-entity">${w.entity}</span>
+            <span class="wm-field">${w.field}</span>
+            <span class="wm-value">${w.value}</span>
+          </div>`).join('')}
+        ` : '<div class="empty-state">Sin watermarks registrados</div>'}
+      </div>
+    </div>`;
+
+  window._entityList = list;
+}
+
+function renderEntityCards(list){
+  if(!list.length) return '<div class="empty-state" style="grid-column:1/-1">Sin entidades</div>';
+  return list.map(e=>{
+    const name = e.name||e.entity||'?';
+    const modes = e.modes||e.extraction_modes||['full'];
+    const fields = e.fields||e.columns||[];
+    const pk = e.primary_key||e.pk||'';
+    return `
+    <div class="entity-card">
+      <div class="entity-header">
+        <div class="entity-name">${name}</div>
+        <div class="entity-modes">${modeTags(modes)}</div>
+      </div>
+      ${e.watermark_field||e.watermark ? `<div style="font-size:10px;color:var(--text3);margin-bottom:6px">⏱ watermark: <span style="color:var(--cyan)">${e.watermark_field||e.watermark}</span></div>` : ''}
+      ${pk ? `<div style="font-size:10px;color:var(--text3);margin-bottom:6px">🔑 pk: <span style="color:var(--amber)">${Array.isArray(pk)?pk.join(', '):pk}</span></div>` : ''}
+      ${fields.length ? `
+        <div style="font-size:9px;color:var(--text3);display:flex;gap:6px;padding:2px 0;border-bottom:1px solid var(--border);margin-bottom:2px">
+          <span style="min-width:140px">CAMPO</span><span style="min-width:80px">TIPO</span>
+        </div>
+        <div class="field-list">
+          ${fields.map(f=>{
+            const fname = typeof f==='string'?f:(f.name||f.field||f.column||JSON.stringify(f));
+            const ftype = typeof f==='string'?'':(f.type||f.dtype||'');
+            const fkey  = typeof f==='string'?'':(f.key||f.pk?'KEY':'');
+            return `<div class="field-row">
+              <span class="field-name">${fname}</span>
+              <span class="field-type">${ftype}</span>
+              <span class="field-key">${fkey}</span>
+            </div>`;
+          }).join('')}
+        </div>` : '<div style="font-size:10px;color:var(--text3)">Sin detalle de campos</div>'}
+    </div>`;
+  }).join('');
+}
+
+function filterEntities(){
+  const q = document.getElementById('search').value.toLowerCase();
+  const mf = document.getElementById('mode-filter').value;
+  const list = (window._entityList||[]).filter(e=>{
+    const name = (e.name||e.entity||'').toLowerCase();
+    const modes = e.modes||e.extraction_modes||['full'];
+    return (!q || name.includes(q)) && (!mf || modes.includes(mf));
+  });
+  document.getElementById('entity-grid').innerHTML = renderEntityCards(list);
+}
+
+function switchView(view){
+  document.getElementById('view-entities').style.display = view==='entities'?'block':'none';
+  document.getElementById('view-watermarks').style.display = view==='watermarks'?'block':'none';
+  document.getElementById('tab-entities-btn').classList.toggle('active', view==='entities');
+  document.getElementById('tab-watermarks-btn').classList.toggle('active', view==='watermarks');
+}
+
+loadCartridges();
+</script>
+</body>
+</html>

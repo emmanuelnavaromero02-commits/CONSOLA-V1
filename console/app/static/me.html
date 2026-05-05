@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mi perfil — MODecissions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    body { padding: 0; margin: 0; overflow: auto; }
+    .shell { max-width: 720px; margin: 0 auto; padding: 24px 24px 80px; }
+    .topbar {
+      display: flex; align-items: center; gap: 16px; margin-bottom: 24px;
+      padding-bottom: 14px; border-bottom: 1px solid var(--border);
+    }
+    .topbar a.back {
+      font-size: 10px; color: var(--text3); font-family: var(--font-mono);
+      letter-spacing: 1px; text-decoration: none;
+    }
+    .topbar a.back:hover { color: var(--green); }
+    .topbar a.back.disabled { opacity: .35; pointer-events: none; }
+    .title  { font-size: 13px; color: var(--amber); letter-spacing: 3px; font-family: var(--font-mono); }
+    .subtitle { font-size: 10px; color: var(--text3); letter-spacing: 1px; margin-top: 4px; }
+
+    .user-bar {
+      display: flex; align-items: center; gap: 12px; margin-left: auto;
+      font-family: var(--font-mono); font-size: 10px; color: var(--text3); letter-spacing: 1px;
+    }
+    .user-bar a { color: var(--text3); text-decoration: none; }
+    .user-bar a:hover { color: var(--amber); }
+
+    .card {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 24px 28px; margin-bottom: 24px;
+    }
+    .card h2 {
+      margin: 0 0 16px; font-family: var(--font-mono); font-size: 12px;
+      color: var(--amber); letter-spacing: 2px;
+    }
+
+    .info-grid {
+      display: grid; grid-template-columns: 130px 1fr; gap: 8px 18px;
+      font-size: 12px;
+    }
+    .info-grid .l { font-family: var(--font-mono); font-size: 10px; color: var(--text3); letter-spacing: 1.5px; }
+    .info-grid .v { color: var(--text); }
+
+    .role-pill {
+      padding: 1px 6px; border-radius: 3px; font-size: 9px; letter-spacing: 1.5px;
+      background: var(--bg3); color: var(--text2);
+    }
+    .role-pill.admin { background: rgba(210,153,34,.15); color: var(--amber); }
+
+    .alert {
+      background: rgba(248,81,73,.08); border: 1px solid var(--red);
+      color: var(--red); padding: 12px 14px; border-radius: 4px;
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px;
+      margin-bottom: 20px;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label { font-family: var(--font-mono); font-size: 10px; color: var(--text3); letter-spacing: 1.5px; }
+    .field input {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 10px 12px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px;
+    }
+    .field input:focus { outline: none; border-color: var(--amber); }
+    .help { font-size: 10px; color: var(--text3); font-family: var(--font-mono); }
+
+    .btn-primary {
+      background: var(--amber); border: none; color: #1a1408;
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: 2px;
+      padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: 600;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .err { color: var(--red); font-size: 11px; font-family: var(--font-mono); margin-top: 10px; min-height: 14px; }
+    .ok  { color: var(--green); font-size: 11px; font-family: var(--font-mono); margin-top: 10px; min-height: 14px; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <a class="back" id="back-link" href="/">← INICIO</a>
+      <div>
+        <div class="title">▣ MI PERFIL</div>
+        <div class="subtitle">DATOS DE CUENTA · CAMBIO DE PASSWORD</div>
+      </div>
+      <div class="user-bar">
+        <a href="#" onclick="event.preventDefault();doLogout()">SALIR</a>
+      </div>
+    </div>
+
+    <div id="forced-banner" style="display:none">
+      <div class="alert">
+        ⚠ Debes cambiar tu password antes de continuar usando la aplicación.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>DATOS DE CUENTA</h2>
+      <div class="info-grid">
+        <div class="l">EMAIL</div>      <div class="v" id="me-email">—</div>
+        <div class="l">NOMBRE</div>     <div class="v" id="me-name">—</div>
+        <div class="l">ROL</div>        <div class="v"><span id="me-role" class="role-pill">—</span></div>
+        <div class="l">CREADO</div>     <div class="v" id="me-created">—</div>
+        <div class="l">ÚLTIMO LOGIN</div><div class="v" id="me-last">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>CAMBIAR PASSWORD</h2>
+      <form id="pw-form" onsubmit="return changePassword(event)">
+        <div class="field">
+          <label>PASSWORD ACTUAL</label>
+          <input id="cur" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="field">
+          <label>NUEVO PASSWORD</label>
+          <input id="new" type="password" autocomplete="new-password" minlength="8" required>
+          <div class="help">Mínimo 8 caracteres. Distinto al actual.</div>
+        </div>
+        <div class="field">
+          <label>CONFIRMAR NUEVO PASSWORD</label>
+          <input id="confirm" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <button type="submit" class="btn-primary" id="btn">GUARDAR PASSWORD</button>
+        <div class="err" id="err"></div>
+        <div class="ok" id="ok"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
+
+    function fmt(s){ return s ? String(s).slice(0,16).replace('T',' ') : '—'; }
+    function escHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    async function loadMe(){
+      const r = await fetch('/api/me');
+      if (!r.ok) { location.href = '/login'; return; }
+      const u = await r.json();
+      document.getElementById('me-email').textContent  = u.email;
+      document.getElementById('me-name').textContent   = u.name || '—';
+      const role = document.getElementById('me-role');
+      role.textContent = u.role.toUpperCase();
+      role.classList.toggle('admin', u.role === 'admin');
+      document.getElementById('me-created').textContent = fmt(u.created_at);
+      document.getElementById('me-last').textContent    = fmt(u.last_login);
+      if (u.must_change_password) {
+        document.getElementById('forced-banner').style.display = '';
+        document.getElementById('back-link').classList.add('disabled');
+        document.getElementById('back-link').textContent = '← INICIO (bloqueado hasta cambiar password)';
+      }
+    }
+
+    async function changePassword(ev){
+      ev.preventDefault();
+      const cur = document.getElementById('cur').value;
+      const nw  = document.getElementById('new').value;
+      const cf  = document.getElementById('confirm').value;
+      const err = document.getElementById('err');
+      const ok  = document.getElementById('ok');
+      const btn = document.getElementById('btn');
+      err.textContent = ''; ok.textContent = '';
+      if (nw !== cf) { err.textContent = 'Los passwords nuevos no coinciden'; return false; }
+      if (nw.length < 8) { err.textContent = 'El nuevo password debe tener al menos 8 caracteres'; return false; }
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/me/change-password', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ current_password: cur, new_password: nw }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(()=>({}));
+          err.textContent = e.detail || ('Error: ' + r.statusText);
+          btn.disabled = false;
+          return false;
+        }
+        ok.textContent = '✓ Password actualizado. Redirigiendo…';
+        setTimeout(() => location.href = '/', 800);
+      } catch(e) {
+        err.textContent = 'Error de red: ' + e.message;
+        btn.disabled = false;
+      }
+      return false;
+    }
+
+    async function doLogout(){
+      await fetch('/auth/logout', {method:'POST'});
+      location.href = '/login';
+    }
+
+    loadMe();
+  </script>
+</body>
+</html>

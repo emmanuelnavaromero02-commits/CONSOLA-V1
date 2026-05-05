@@ -1,0 +1,6 @@
+name: replicon_profititem_latest
+description: 'ProfitItem - Ultima extraccion Replicon Bronze'
+layer: silver
+sources:
+- raw/replicon/ProfitItem
+sql: "SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/ProfitItem/**/*.parquet', hive_partitioning=true, union_by_name=true)"

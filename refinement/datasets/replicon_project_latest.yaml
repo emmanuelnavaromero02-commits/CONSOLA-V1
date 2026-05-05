@@ -1,0 +1,9 @@
+description: Project - Ultima extraccion Replicon Bronze
+last_refresh: '2026-04-16T02:05:51.488621+00:00'
+layer: silver
+name: replicon_project_latest
+row_count: 2436
+sources:
+- raw/replicon/Project
+sql: SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/Project/**/*.parquet',
+  hive_partitioning=true, union_by_name=true)

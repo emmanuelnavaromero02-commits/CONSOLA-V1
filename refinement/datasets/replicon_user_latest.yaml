@@ -1,0 +1,9 @@
+description: User - Ultima extraccion Replicon Bronze
+last_refresh: '2026-04-16T02:05:50.524557+00:00'
+layer: silver
+name: replicon_user_latest
+row_count: 1485
+sources:
+- raw/replicon/User
+sql: SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/User/**/*.parquet', hive_partitioning=true,
+  union_by_name=true)

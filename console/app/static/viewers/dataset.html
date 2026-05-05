@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MODecissions · Dataset Detail</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+<link rel="stylesheet" href="/static/css/viewer.css">
+<style>
+/* ── Dataset detail — estilos únicos ── */
+.mapping-row  { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); }
+.field-source { font-family:var(--font-mono); font-size:11px; color:var(--amber); min-width:200px; }
+.field-arrow  { color:var(--text3); }
+.field-biz    { font-size:11px; color:var(--text); }
+.lineage-row  { display:flex; gap:12px; padding:6px 0; border-bottom:1px solid var(--border); font-size:11px; }
+.lin-date  { color:var(--text3); white-space:nowrap; width:100px; flex-shrink:0; font-family:var(--font-mono); }
+.lin-batch { color:var(--amber); width:160px; flex-shrink:0; font-family:var(--font-mono); font-size:10px; overflow:hidden; text-overflow:ellipsis; }
+.lin-rows  { color:var(--cyan); width:80px; flex-shrink:0; font-family:var(--font-mono); text-align:right; }
+.lin-uri   { color:var(--text2); flex:1; font-size:10px; overflow:hidden; text-overflow:ellipsis; }
+</style>
+</head>
+<body>
+<div class="crt-overlay"></div>
+<div class="scanlines"></div>
+<div class="viewer-wrap">
+  <div class="vheader">
+    <h1 id="page-title">DATASET</h1>
+    <a href="/viewer/datasets">← Todos los datasets</a>
+    <a href="/">← Consola</a>
+  </div>
+
+  <div class="card" id="meta-card">
+    <div class="card-title">INFORMACION DEL DATASET</div>
+    <div class="meta-grid" id="meta"></div>
+  </div>
+
+  <div class="card">
+    <div class="tab-bar">
+      <div class="tab active" onclick="showTab('sql')">SQL DEFINITION</div>
+      <div class="tab" onclick="showTab('mapping')">COLUMN MAPPING</div>
+      <div class="tab" onclick="showTab('lineage')">LINEAGE</div>
+      <div class="tab" onclick="showTab('preview')">PREVIEW</div>
+    </div>
+    <div style="border:1px solid var(--border); border-top:none; padding:16px;">
+
+      <div class="tab-content active" id="tab-sql">
+        <div class="card-title">DEFINICION SQL</div>
+        <div class="sql-box" id="sql-def">Cargando...</div>
+      </div>
+
+      <div class="tab-content" id="tab-mapping">
+        <div class="card-title">MAPEO DE COLUMNAS <span style="font-size:9px;color:var(--text3)">(fuente → término de negocio)</span></div>
+        <div id="mapping-list"></div>
+      </div>
+
+      <div class="tab-content" id="tab-lineage">
+        <div class="card-title">HISTORIAL DE MATERIALIZACION</div>
+        <div id="lineage-list"></div>
+      </div>
+
+      <div class="tab-content" id="tab-preview">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <div class="card-title" style="margin:0">DATOS ACTUALES</div>
+          <button class="btn" onclick="loadPreview()">↺ Cargar preview</button>
+        </div>
+        <div class="preview-wrap" id="preview-wrap">
+          <div class="empty-state">Haz clic en "Cargar preview" para ver datos</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const dsName = location.pathname.split('/').pop();
+let dsData = null;
+
+function showTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const names = ['sql','mapping','lineage','preview'];
+    t.classList.toggle('active', names[i]===name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c=>{
+    c.classList.toggle('active', c.id===`tab-${name}`);
+  });
+  if(name==='lineage' && !document.getElementById('lineage-list').dataset.loaded) loadLineage();
+}
+
+function layerBadge(layer){
+  const cls = {silver:'layer-silver',master:'layer-master',gold:'layer-gold'}[layer]||'layer-silver';
+  return `<span class="layer-badge ${cls}">${(layer||'silver').toUpperCase()}</span>`;
+}
+
+function fmt(iso){ return iso ? iso.replace('T',' ').substring(0,16) : '—'; }
+
+async function loadDataset(){
+  document.getElementById('page-title').textContent = `DATASET · ${dsName}`;
+  try {
+    const r = await fetch(`/datasets/${dsName}/schema`);
+    dsData = await r.json();
+
+    document.getElementById('meta').innerHTML = `
+      <div><div class="meta-lbl">NOMBRE</div><div class="meta-val" style="color:var(--amber)">${dsData.name||dsName}</div></div>
+      <div><div class="meta-lbl">CAPA</div><div class="meta-val">${layerBadge(dsData.layer)}</div></div>
+      <div><div class="meta-lbl">CARTUCHO</div><div class="meta-val">${dsData.cartridge||'—'}</div></div>
+      <div><div class="meta-lbl">ENTIDAD FUENTE</div><div class="meta-val">${dsData.source_entity||'—'}</div></div>
+      <div><div class="meta-lbl">FECHA FUENTE</div><div class="meta-val">${dsData.source_load_date||'—'}</div></div>
+      <div><div class="meta-lbl">BATCH FUENTE</div><div class="meta-val" style="font-size:10px">${dsData.source_batch_id||'—'}</div></div>
+    `;
+
+    document.getElementById('sql-def').textContent = dsData.sql || '-- Sin definición SQL';
+
+    const mapping = dsData.column_mapping || {};
+    const entries = Object.entries(mapping);
+    if(entries.length){
+      document.getElementById('mapping-list').innerHTML = entries.map(([src,biz])=>`
+        <div class="mapping-row">
+          <span class="field-source">${src}</span>
+          <span class="field-arrow">→</span>
+          <span class="field-biz">${biz}</span>
+        </div>`).join('');
+    } else {
+      document.getElementById('mapping-list').innerHTML = '<div class="empty-state">Sin mapeo de columnas definido</div>';
+    }
+  } catch(e) {
+    document.getElementById('meta').innerHTML = `<span style="color:var(--red)">Error cargando dataset: ${e.message}</span>`;
+  }
+}
+
+async function loadLineage(){
+  document.getElementById('lineage-list').dataset.loaded = '1';
+  document.getElementById('lineage-list').innerHTML = '<div class="empty-state">Cargando lineage...</div>';
+  try {
+    const r = await fetch(`/api/datasets/${dsName}/lineage`);
+    const d = await r.json();
+    const rows = d.lineage || d.result || [];
+    if(!rows.length){
+      document.getElementById('lineage-list').innerHTML = '<div class="empty-state">Sin historial de materialización</div>';
+      return;
+    }
+    document.getElementById('lineage-list').innerHTML = `
+      <div style="font-size:10px;color:var(--text3);display:flex;gap:12px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px">
+        <span style="width:100px">FECHA</span>
+        <span style="width:160px">BATCH ID</span>
+        <span style="width:80px;text-align:right">FILAS</span>
+        <span style="flex:1">STORAGE URI</span>
+      </div>
+      ${rows.map(r=>`
+      <div class="lineage-row">
+        <span class="lin-date">${fmt(r.created_at)}</span>
+        <span class="lin-batch">${r.source_batch_id||'—'}</span>
+        <span class="lin-rows">${r.row_count!==null?Number(r.row_count).toLocaleString():'—'}</span>
+        <span class="lin-uri" title="${r.storage_uri||''}">${r.storage_uri||'—'}</span>
+      </div>`).join('')}`;
+  } catch(e) {
+    document.getElementById('lineage-list').innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+  }
+}
+
+async function loadPreview(){
+  document.getElementById('preview-wrap').innerHTML = '<div class="empty-state">Cargando...</div>';
+  try {
+    const r = await fetch(`/datasets/${dsName}/data?limit=20`);
+    const d = await r.json();
+    const rows = d.rows || d.data || [];
+    if(!rows.length){
+      document.getElementById('preview-wrap').innerHTML = '<div class="empty-state">Sin datos disponibles</div>';
+      return;
+    }
+    const cols = Object.keys(rows[0]);
+    document.getElementById('preview-wrap').innerHTML = `
+      <table>
+        <thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${rows.map(row=>`<tr>${cols.map(c=>{
+            const v = row[c];
+            if(v===null||v===undefined) return `<td style="color:var(--text3);font-style:italic;font-size:10px">NULL</td>`;
+            const s = String(v);
+            return `<td style="font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.replace(/"/g,'&quot;')}">${s.substring(0,60)}</td>`;
+          }).join('')}</tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch(e) {
+    document.getElementById('preview-wrap').innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+  }
+}
+
+loadDataset();
+</script>
+</body>
+</html>

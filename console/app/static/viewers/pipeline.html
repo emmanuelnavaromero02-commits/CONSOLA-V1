@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MODecissions · Pipeline Monitor</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css?v=2">
+<link rel="stylesheet" href="/static/css/viewer.css?v=2">
+<style>
+/* ── Pipeline Monitor — estilos únicos ── */
+.viewer-wrap { max-width:1400px; }
+
+/* Stats bar uses "stats-bar" class (viewer.css uses "stat-row");
+   stat/stat-val are compact overrides for the pipeline layout */
+.stats-bar   { display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.stat        { padding:8px 14px; border-radius:3px; }
+.stat-val    { font-size:18px; }
+
+/* ── Header actions slot ── */
+.header-actions { margin-left:auto; display:flex; gap:10px; align-items:center; }
+
+/* ── Stage columns header ── */
+.pipeline-header {
+  display:grid; grid-template-columns:200px 1fr 1fr 1fr;
+  gap:1px; background:var(--border);
+  border:1px solid var(--border); border-bottom:none;
+  border-radius:4px 4px 0 0; overflow:hidden;
+}
+.stage-header {
+  background:var(--bg2); padding:8px 12px;
+  font-family:var(--font-ui); font-size:11px; font-weight:600; letter-spacing:.04em;
+  color:var(--text2); display:flex; align-items:center; gap:8px;
+}
+.stage-icon { font-size:11px; }
+
+/* ── Pipeline table & rows ── */
+.pipeline-table { border:1px solid var(--border); border-radius:0 0 4px 4px; overflow:hidden; }
+.pipeline-row {
+  display:grid; grid-template-columns:200px 1fr 1fr 1fr;
+  gap:1px; background:var(--border);
+  border-bottom:1px solid var(--border); transition:background .15s;
+}
+.pipeline-row:last-child { border-bottom:none; }
+.pipeline-row:hover .cell { background:var(--bg2); }
+.cell { background:var(--bg); padding:10px 12px; min-height:64px; position:relative; transition:background .2s; }
+
+/* ── Entity cell ── */
+.entity-cell  { background:var(--bg2) !important; }
+.entity-name  { font-family:var(--font-mono); font-size:12px; color:var(--amber); margin-bottom:4px; }
+.entity-meta  { font-size:9px; color:var(--text3); margin-bottom:6px; }
+.mode-tag     { display:inline-block; padding:1px 5px; border-radius:2px; font-size:8px; margin-right:3px; font-family:var(--font-mono); }
+.mode-full    { background:rgba(63,185,80,.12);  color:var(--green); border:1px solid var(--green); }
+.mode-delta   { background:rgba(210,153,34,.12); color:var(--amber); border:1px solid var(--amber); }
+.mode-patch   { background:rgba(88,166,255,.12); color:var(--cyan);  border:1px solid var(--cyan);  }
+.extract-btn  {
+  display:flex; align-items:center; gap:5px;
+  padding:4px 10px; background:var(--bg);
+  border:1px solid var(--green); color:var(--green);
+  font-family:var(--font-mono); font-size:10px;
+  cursor:pointer; border-radius:2px; transition:all .15s; white-space:nowrap;
+}
+.extract-btn:hover    { background:var(--green); color:var(--bg); }
+.extract-btn:disabled { border-color:var(--border); color:var(--text3); cursor:default; background:var(--bg); }
+
+/* ── Status dots ── */
+.s-fresh   { color:var(--green); }
+.s-stale   { color:#ffb000; }
+.s-error   { color:#ff2d55; }
+.s-never   { color:#444; }
+.s-running { color:#00e5ff; animation:pulse 1s infinite; }
+.s-unknown { color:#666; }
+
+/* ── Stage cells ── */
+.stage-empty  { color:var(--text3); font-size:10px; font-style:italic; padding-top:6px; }
+.ds-node      { margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.ds-node:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
+.ds-name      { font-family:var(--font-mono); font-size:11px; color:var(--text); margin-bottom:2px;
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+.ds-meta      { font-size:10px; color:var(--text3); }
+.ds-meta .count { color:var(--cyan); font-family:var(--font-mono); }
+/* compact layer-badge for pipeline (viewer.css has larger padding) */
+.layer-badge  { padding:1px 5px; font-size:8px; margin-right:4px; }
+
+/* ── Bronze cell ── */
+.bronze-date  { font-family:var(--font-mono); font-size:11px; color:var(--text); margin-bottom:2px; }
+.bronze-count { font-size:10px; color:var(--cyan); font-family:var(--font-mono); }
+.bronze-src   { font-size:9px; color:var(--text3); margin-top:2px; word-break:break-all; }
+
+/* ── Flow arrows ── */
+.arrow-wrap { position:absolute; right:-8px; top:50%; transform:translateY(-50%); z-index:2; color:var(--border); font-size:12px; pointer-events:none; }
+
+/* ── Job progress bar ── */
+.job-progress   { margin-top:6px; }
+.job-bar        { height:4px; background:var(--border); border-radius:2px; overflow:hidden; margin-bottom:3px; }
+.job-fill       { height:100%; background:var(--green); box-shadow:0 0 6px var(--green); transition:width .5s; }
+.job-msg        { font-size:9px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.job-status-row { display:flex; align-items:center; gap:5px; margin-top:3px; font-size:9px; }
+
+/* ── Pipeline-specific button variant ── */
+.btn-all        { border-color:var(--amber); color:var(--amber); }
+.btn-all:hover  { background:var(--amber); color:var(--bg); }
+
+/* ── Legend ── */
+.legend      { display:flex; gap:16px; flex-wrap:wrap; font-size:10px; color:var(--text2); }
+.legend-item { display:flex; align-items:center; gap:5px; }
+
+/* ── DAGs panel ── */
+.dags-section { margin-top:24px; }
+.dags-header  {
+  display:flex; align-items:center; gap:10px;
+  padding:8px 12px; background:var(--bg2);
+  border:1px solid var(--border); border-radius:4px 4px 0 0;
+  font-family:var(--font-ui); font-size:11px; font-weight:600;
+  color:var(--text2); letter-spacing:.04em; cursor:pointer;
+}
+.dags-header:hover { color:var(--text1); }
+.dags-body    { border:1px solid var(--border); border-top:none; border-radius:0 0 4px 4px; }
+.dag-row      {
+  display:grid; grid-template-columns:200px 90px 1fr auto;
+  gap:8px; padding:10px 14px; align-items:center;
+  border-bottom:1px solid var(--border); font-size:11px;
+}
+.dag-row:last-child { border-bottom:none; }
+.dag-row:hover      { background:var(--bg2); }
+.dag-id    { font-family:var(--font-mono); color:var(--amber); }
+.dag-badge { display:inline-block; padding:1px 6px; border-radius:2px; font-size:9px;
+             font-family:var(--font-mono); }
+.dag-active { background:rgba(63,185,80,.12); color:var(--green); border:1px solid var(--green); }
+.dag-paused { background:rgba(100,100,100,.12); color:#666; border:1px solid #444; }
+.dag-actions { display:flex; gap:6px; }
+
+/* ── Source modal ── */
+.modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,.75);
+  z-index:1000; align-items:center; justify-content:center;
+}
+.modal-overlay.open { display:flex; }
+.modal-box {
+  background:var(--bg); border:1px solid var(--green); border-radius:4px;
+  width:min(860px,95vw); max-height:85vh; display:flex; flex-direction:column;
+}
+.modal-hdr {
+  display:flex; align-items:center; gap:10px; padding:12px 16px;
+  border-bottom:1px solid var(--border); flex-shrink:0;
+}
+.modal-title { font-family:var(--font-mono); color:var(--green); font-size:13px; flex:1; }
+.modal-body  { flex:1; overflow:auto; padding:0; }
+.modal-body pre {
+  margin:0; padding:16px; font-family:var(--font-mono); font-size:11px;
+  color:var(--text1); line-height:1.6; white-space:pre-wrap; word-break:break-word;
+}
+.modal-footer {
+  display:flex; gap:8px; padding:10px 16px;
+  border-top:1px solid var(--border); flex-shrink:0; justify-content:flex-end;
+}
+
+/* ── Loading / cascade ── */
+.loading-row { text-align:center; padding:40px; color:var(--text3); font-size:12px; font-style:italic; }
+.cascade-highlight .cell { background:rgba(63,185,80,.06) !important; transition:background .4s; }
+
+/* ── Tabs ── */
+.tab-bar {
+  display:flex; gap:2px; margin-bottom:16px;
+  border-bottom:1px solid var(--border);
+}
+.tab-btn {
+  padding:7px 18px; font-family:var(--font-ui); font-size:11px;
+  font-weight:600; letter-spacing:.05em; color:var(--text3);
+  background:transparent; border:1px solid transparent;
+  border-bottom:none; cursor:pointer; border-radius:3px 3px 0 0;
+  margin-bottom:-1px; transition:color .15s, border-color .15s;
+}
+.tab-btn:hover { color:var(--text1); border-color:var(--border); }
+.tab-btn.active {
+  color:var(--green); border-color:var(--border);
+  border-bottom-color:var(--bg); background:var(--bg);
+}
+.tab-btn.tab-dags.active { color:var(--amber); border-color:var(--amber); border-bottom-color:var(--bg); }
+
+/* ── DAG editor layout ── */
+.dag-editor-layout {
+  display:flex; gap:0; border:1px solid var(--border); border-radius:4px;
+  height:calc(100vh - 220px); min-height:400px; overflow:hidden;
+}
+.dag-sidebar {
+  width:220px; flex-shrink:0; border-right:1px solid var(--border);
+  overflow-y:auto; display:flex; flex-direction:column;
+}
+.dag-sidebar-hdr {
+  padding:8px 12px; font-family:var(--font-ui); font-size:10px;
+  font-weight:600; color:var(--text3); letter-spacing:.06em;
+  border-bottom:1px solid var(--border); background:var(--bg2);
+  display:flex; align-items:center; gap:6px; flex-shrink:0;
+}
+.dag-sidebar-item {
+  padding:10px 12px; border-bottom:1px solid var(--border);
+  cursor:pointer; transition:background .12s;
+}
+.dag-sidebar-item:last-child { border-bottom:none; }
+.dag-sidebar-item:hover     { background:var(--bg2); }
+.dag-sidebar-item.selected  { background:rgba(210,153,34,.08); border-left:2px solid var(--amber); }
+.dag-item-id   { font-family:var(--font-mono); font-size:11px; color:var(--amber); margin-bottom:3px; word-break:break-all; }
+.dag-item-meta { font-size:9px; color:var(--text3); display:flex; align-items:center; gap:5px; }
+
+.dag-code-panel {
+  flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden;
+}
+.dag-code-toolbar {
+  display:flex; align-items:center; gap:8px; padding:8px 12px;
+  border-bottom:1px solid var(--border); background:var(--bg2);
+  flex-shrink:0; flex-wrap:wrap;
+}
+.dag-code-name {
+  font-family:var(--font-mono); font-size:12px; color:var(--amber); flex:1;
+  min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.dag-editor-wrap {
+  flex:1; display:flex; overflow:hidden; min-height:0;
+}
+.dag-line-numbers {
+  flex-shrink:0; width:42px; background:var(--bg2); border-right:1px solid var(--border);
+  font-family:var(--font-mono); font-size:11px; line-height:1.6; color:var(--text3);
+  padding:14px 6px 14px 0; text-align:right; overflow:hidden; user-select:none;
+  box-sizing:border-box;
+}
+.dag-line-numbers span { display:block; }
+.dag-code-textarea {
+  flex:1; background:var(--bg); color:var(--text1);
+  font-family:var(--font-mono); font-size:11px; line-height:1.6;
+  border:none; outline:none; resize:none; padding:14px 16px;
+  tab-size:4; white-space:pre; overflow-wrap:normal; overflow-x:auto;
+  overflow-y:auto;
+}
+.dag-code-textarea:focus { background:var(--bg); }
+.dag-deploy-bar {
+  display:flex; align-items:center; gap:8px; padding:8px 12px;
+  border-top:1px solid var(--border); background:var(--bg2); flex-shrink:0;
+}
+.deploy-msg { font-size:10px; font-family:var(--font-mono); flex:1; }
+.deploy-ok  { color:var(--green); }
+.deploy-err { color:#ff2d55; }
+
+.dag-empty-state {
+  flex:1; display:flex; align-items:center; justify-content:center;
+  color:var(--text3); font-size:12px; font-style:italic;
+}
+
+/* ── Template items ── */
+.tpl-item {
+  padding:9px 12px; border-bottom:1px solid var(--border);
+  cursor:pointer; transition:background .12s;
+}
+.tpl-item:last-child  { border-bottom:none; }
+.tpl-item:hover       { background:var(--bg2); }
+.tpl-item-name  { font-family:var(--font-ui); font-size:11px; color:var(--cyan); margin-bottom:2px; }
+.tpl-item-desc  { font-size:9px; color:var(--text3); line-height:1.4; }
+.tpl-tags       { display:flex; gap:3px; margin-top:4px; flex-wrap:wrap; }
+.tpl-tag        { font-size:8px; font-family:var(--font-mono); padding:1px 4px;
+                  border:1px solid var(--border); border-radius:2px; color:var(--text3); }
+</style>
+</head>
+<body>
+<div class="crt-overlay"></div>
+<div class="scanlines"></div>
+<div class="viewer-wrap">
+
+  <div class="vheader">
+    <h1>PIPELINE MONITOR</h1>
+    <a href="/">← Consola</a>
+    <div class="header-actions">
+      <span style="font-size:10px;color:var(--text3);font-family:var(--font-ui);font-weight:600">CARTUCHO</span>
+      <select id="cart-sel" onchange="onCartridgeChange()" style="height:26px;padding:0 8px;font-size:11px;min-width:160px"></select>
+      <button class="btn btn-all" onclick="extractAll()">⚡ Extract All</button>
+      <button class="btn" onclick="load()">↺ Refresh</button>
+    </div>
+  </div>
+
+  <div class="refresh-bar">
+    <span id="last-update">Cargando...</span>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+      <input type="checkbox" id="auto-refresh" checked> Auto-refresh 8s
+    </label>
+    <div class="legend">
+      <span class="legend-item"><span class="s-fresh">●</span> fresh (&lt;24h)</span>
+      <span class="legend-item"><span class="s-stale">●</span> stale (&gt;24h)</span>
+      <span class="legend-item"><span class="s-running">●</span> running</span>
+      <span class="legend-item"><span class="s-error">●</span> error</span>
+      <span class="legend-item"><span class="s-never">●</span> sin datos</span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-pipeline" onclick="switchTab('pipeline')">◈ PIPELINE</button>
+    <button class="tab-btn tab-dags" id="tab-dags" onclick="switchTab('dags')">⚙ DAGS</button>
+  </div>
+
+  <!-- ── PIPELINE tab ── -->
+  <div id="view-pipeline">
+    <div class="stats-bar" id="stats-bar"></div>
+    <div class="pipeline-header">
+      <div class="stage-header"><span class="stage-icon">◈</span>ENTIDAD</div>
+      <div class="stage-header"><span class="stage-icon">▼</span>BRONZE <span style="font-size:8px;color:var(--text3);font-family:var(--font-mono)">(raw)</span></div>
+      <div class="stage-header"><span class="stage-icon">▼</span>SILVER <span style="font-size:8px;color:var(--text3);font-family:var(--font-mono)">(snapshot)</span></div>
+      <div class="stage-header"><span class="stage-icon">▼</span>GOLD / MASTER <span style="font-size:8px;color:var(--text3);font-family:var(--font-mono)">(analytics)</span></div>
+    </div>
+    <div class="pipeline-table" id="pipeline-table">
+      <div class="loading-row">Cargando pipeline...</div>
+    </div>
+  </div>
+
+  <!-- ── DAGS tab ── -->
+  <div id="view-dags" style="display:none">
+    <div class="dag-editor-layout">
+
+      <!-- Sidebar: dag list -->
+      <div class="dag-sidebar">
+        <div class="dag-sidebar-hdr">
+          ⚙ DAGS
+          <button class="btn-sm" style="margin-left:auto" onclick="loadDags()" title="Recargar">↺</button>
+          <button class="btn-sm" style="color:var(--green);border-color:var(--green)" onclick="newDag()" title="Nuevo DAG">+</button>
+        </div>
+        <div id="dag-list">
+          <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>
+        </div>
+        <!-- Templates section -->
+        <div class="dag-sidebar-hdr" style="cursor:pointer;border-top:1px solid var(--border)"
+             onclick="toggleTemplates()" title="Plantillas de DAG">
+          ◈ PLANTILLAS
+          <span id="tpl-toggle" style="margin-left:auto;color:var(--text3);font-size:9px">▶</span>
+        </div>
+        <div id="tpl-list" style="display:none">
+          <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>
+        </div>
+      </div>
+
+      <!-- Code panel -->
+      <div class="dag-code-panel" id="dag-code-panel">
+        <div class="dag-empty-state" id="dag-empty-state">
+          Selecciona un DAG de la lista
+        </div>
+        <div id="dag-editor-body" style="display:none;flex-direction:column;flex:1;min-height:0">
+          <div class="dag-code-toolbar">
+            <span class="dag-code-name" id="dag-editor-name">—</span>
+            <span id="dag-editor-badge"></span>
+            <span id="dag-dirty-badge" style="display:none;font-size:9px;color:var(--amber);
+                  font-family:var(--font-ui);margin-left:4px" title="Cambios sin desplegar">● modificado</span>
+            <span style="margin-left:auto;font-size:9px;color:var(--text3);font-family:var(--font-ui)">
+              Tab=indent &nbsp;·&nbsp; Ctrl+S=deploy
+            </span>
+            <a id="dag-airflow-link" href="#" target="_blank" class="btn btn-sm"
+               style="color:var(--amber);border-color:var(--amber);text-decoration:none"
+               title="Ver en Airflow UI">◈ Airflow</a>
+          </div>
+          <!-- Editor with line numbers -->
+          <div class="dag-editor-wrap" id="dag-editor-wrap">
+            <div class="dag-line-numbers" id="dag-line-numbers"></div>
+            <textarea id="dag-code-textarea" class="dag-code-textarea" spellcheck="false"
+                      placeholder="# Código del DAG Python"
+                      onkeydown="editorKeydown(event)"
+                      oninput="editorOnInput()"
+                      onscroll="syncLineScroll()"></textarea>
+          </div>
+          <div class="dag-deploy-bar">
+            <button class="btn" style="color:var(--green);border-color:var(--green)"
+                    onclick="deployDag()" id="btn-deploy">▶ Deploy a Airflow</button>
+            <button class="btn btn-sm" onclick="copyDagCode()" title="Copiar código">⎘ Copiar</button>
+            <button class="btn btn-sm" style="color:var(--cyan);border-color:var(--cyan)"
+                    onclick="sendDagToAssistant()" title="Enviar al asistente">✎ Asistente</button>
+            <span class="deploy-msg" id="deploy-msg"></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+let pipelineData  = [];
+let activeJobs    = {};   // entity → job_id (jobs being polled)
+let _autoTimer    = null;
+let _cartridge    = 'replicon';
+let _activeTab    = 'pipeline';
+let _selectedDag  = null;  // currently selected dag_id in editor
+
+async function loadCartridgeSelector() {
+  try {
+    const r = await fetch('/studio/cartridges');
+    const d = await r.json();
+    const list = d.cartridges || [];
+    const sel  = document.getElementById('cart-sel');
+    sel.innerHTML = list.map(c =>
+      `<option value="${esc(c.id)}" ${c.id === _cartridge ? 'selected' : ''}>${esc(c.name)} (${esc(c.id)})</option>`
+    ).join('');
+    if (list.length === 1) _cartridge = list[0].id;
+  } catch(e) {}
+}
+
+function onCartridgeChange() {
+  const sel = document.getElementById('cart-sel');
+  _cartridge = sel.value || 'replicon';
+  activeJobs = {};
+  load();
+  loadDags();
+}
+
+// ── Status helpers ────────────────────────────────────────────────────────────
+
+function dot(status) {
+  const map = {fresh:'s-fresh', stale:'s-stale', error:'s-error',
+                never:'s-never', running:'s-running', unknown:'s-unknown'};
+  return `<span class="${map[status]||'s-unknown'}">●</span>`;
+}
+
+function fmt(iso) {
+  if (!iso) return '—';
+  return iso.replace('T',' ').substring(0, 16);
+}
+
+function reltime(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso);
+  const min  = Math.floor(diff / 60000);
+  if (min < 1)   return 'hace un momento';
+  if (min < 60)  return `hace ${min}m`;
+  const h = Math.floor(min / 60);
+  if (h < 24)    return `hace ${h}h`;
+  return `hace ${Math.floor(h/24)}d`;
+}
+
+function fmtCount(n) {
+  return n != null ? Number(n).toLocaleString('es') : '—';
+}
+
+function modeTags(modes) {
+  return (modes||['full']).map(m =>
+    `<span class="mode-tag mode-${m}">${m}</span>`
+  ).join('');
+}
+
+function layerBadge(layer) {
+  return `<span class="layer-badge layer-${layer}">${layer.toUpperCase()}</span>`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function renderStats(rows) {
+  const fresh   = rows.filter(r => r.bronze.status === 'fresh').length;
+  const stale   = rows.filter(r => r.bronze.status === 'stale').length;
+  const never   = rows.filter(r => r.bronze.status === 'never').length;
+  const running = Object.keys(activeJobs).length;
+  const silverTotal = rows.reduce((a,r) => a + (r.silver||[]).length, 0);
+  document.getElementById('stats-bar').innerHTML = `
+    <div class="stat"><div class="stat-val">${rows.length}</div><div class="stat-lbl">ENTIDADES</div></div>
+    <div class="stat"><div class="stat-val s-fresh">${fresh}</div><div class="stat-lbl">FRESH</div></div>
+    <div class="stat"><div class="stat-val s-stale">${stale}</div><div class="stat-lbl">STALE</div></div>
+    <div class="stat"><div class="stat-val s-never">${never}</div><div class="stat-lbl">SIN DATOS</div></div>
+    <div class="stat"><div class="stat-val s-running">${running}</div><div class="stat-lbl">EXTRAYENDO</div></div>
+    <div class="stat"><div class="stat-val">${silverTotal}</div><div class="stat-lbl">DATASETS SILVER</div></div>
+  `;
+}
+
+function renderRow(row) {
+  const entity    = row.entity;
+  const cartridge = row.cartridge;
+  const jobInfo   = activeJobs[entity] || null;
+  const isRunning = jobInfo || (row.last_job && row.last_job.status === 'running');
+
+  // Entity status
+  let entityStatus = row.bronze.status;
+  if (isRunning) entityStatus = 'running';
+  if (row.last_job && row.last_job.status === 'failed' && !isRunning) entityStatus = 'error';
+
+  // Entity cell
+  let jobHtml = '';
+  if (isRunning) {
+    const msg = jobInfo?.message || row.last_job?.message || 'Extrayendo...';
+    const pct = parseJobPct(msg);
+    jobHtml = `
+      <div class="job-progress">
+        <div class="job-bar"><div class="job-fill" style="width:${pct}%"></div></div>
+        <div class="job-msg">${esc(msg)}</div>
+      </div>`;
+  } else if (row.last_run) {
+    // Airflow DAG run (from pipeline_runs table)
+    const lr = row.last_run;
+    const statusColor = {done:'s-fresh', success:'s-fresh', failed:'s-error'}[lr.status] || 's-unknown';
+    const srcBadge = lr.source === 'airflow'
+      ? `<span style="color:var(--text3);font-size:8px;font-family:var(--font-mono)">airflow</span>`
+      : '';
+    const errSnippet = lr.error
+      ? `<div style="color:#ff2d55;font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px" title="${esc(lr.error)}">${esc(lr.error.substring(0,80))}</div>`
+      : '';
+    jobHtml = `
+      <div class="job-status-row">
+        <span class="${statusColor}">●</span>
+        <span style="color:var(--text3)">${lr.status} · ${reltime(lr.finished_at)}</span>
+        ${srcBadge}
+        ${lr.job_id ? `<a href="/viewer/jobs/${lr.job_id}" style="color:var(--text3);font-size:9px;text-decoration:none;">logs →</a>` : ''}
+      </div>${errSnippet}`;
+  } else if (row.last_job) {
+    const j = row.last_job;
+    const statusColor = {done:'s-fresh', failed:'s-error', running:'s-running'}[j.status] || 's-unknown';
+    jobHtml = `
+      <div class="job-status-row">
+        <span class="${statusColor}">●</span>
+        <span style="color:var(--text3)">${j.status} · ${reltime(j.created_at)}</span>
+        ${j.job_id ? `<a href="/viewer/jobs/${j.job_id}" style="color:var(--text3);font-size:9px;text-decoration:none;" title="Ver logs">logs →</a>` : ''}
+      </div>`;
+  }
+
+  const disabledAttr = isRunning ? 'disabled' : '';
+  const btnLabel = isRunning ? '⟳ running' : '► Extract';
+
+  const entityCell = `
+    <div class="cell entity-cell">
+      <div class="entity-name">${dot(entityStatus)} ${esc(entity)}</div>
+      <div class="entity-meta">${modeTags(row.modes)}${row.watermark ? ` <span style="color:var(--text3)">⏱ ${esc(row.watermark)}</span>` : ''}</div>
+      <button class="extract-btn" onclick="extractEntity('${esc(cartridge)}','${esc(entity)}')" ${disabledAttr}>${btnLabel}</button>
+      ${jobHtml}
+    </div>`;
+
+  // Bronze cell
+  const b = row.bronze;
+  const lr = row.last_run;
+  const bronzeCell = `
+    <div class="cell" style="position:relative">
+      ${b.status === 'error'
+        ? `<div class="bronze-date" style="color:#ff2d55">${dot('error')} Error</div>
+           <div class="bronze-src" style="color:#ff2d55;font-size:9px;margin-top:2px">${esc((lr?.error||'').substring(0,100))}</div>`
+        : b.status !== 'never'
+        ? `<div class="bronze-date">${dot(b.status)} ${b.latest_date || '—'}</div>
+           <div class="bronze-count">${fmtCount(b.record_count)} rows</div>
+           <div class="bronze-src">${esc(b.source)}</div>`
+        : `<div class="stage-empty">${dot('never')} sin extracción</div>
+           <div class="bronze-src" style="margin-top:4px">${esc(b.source)}</div>`
+      }
+      <span class="arrow-wrap">▶</span>
+    </div>`;
+
+  // Silver cell
+  let silverHtml = '';
+  if (!row.silver || !row.silver.length) {
+    silverHtml = `<div class="stage-empty">${dot('never')} sin datasets</div>`;
+  } else {
+    silverHtml = row.silver.map(ds => {
+      const s = isRunning ? 'running' : ds.status;
+      return `
+        <div class="ds-node">
+          <div class="ds-name">${dot(s)} ${esc(ds.name)}</div>
+          <div class="ds-meta">
+            ${layerBadge(ds.layer)}
+            <span class="count">${fmtCount(ds.row_count)} rows</span>
+            ${ds.last_refresh ? `<span class="ts"> · ${reltime(ds.last_refresh)}</span>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+  const silverCell = `
+    <div class="cell" style="position:relative">
+      ${silverHtml}
+      ${row.gold && row.gold.length ? '<span class="arrow-wrap">▶</span>' : ''}
+    </div>`;
+
+  // Gold cell
+  let goldHtml = '';
+  if (!row.gold || !row.gold.length) {
+    goldHtml = `<div class="stage-empty" style="color:#333">—</div>`;
+  } else {
+    goldHtml = row.gold.map(ds => {
+      const s = isRunning ? 'running' : ds.status;
+      return `
+        <div class="ds-node">
+          <div class="ds-name">${dot(s)} ${esc(ds.name)}</div>
+          <div class="ds-meta">
+            ${layerBadge(ds.layer)}
+            <span class="count">${fmtCount(ds.row_count)} rows</span>
+            ${ds.last_refresh ? `<span class="ts"> · ${reltime(ds.last_refresh)}</span>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+  const goldCell = `<div class="cell">${goldHtml}</div>`;
+
+  const rowClass = isRunning ? 'pipeline-row cascade-highlight' : 'pipeline-row';
+  return `<div class="${rowClass}" data-entity="${esc(entity)}">${entityCell}${bronzeCell}${silverCell}${goldCell}</div>`;
+}
+
+function render(rows) {
+  renderStats(rows);
+  if (!rows.length) {
+    document.getElementById('pipeline-table').innerHTML =
+      '<div class="loading-row">No se encontraron entidades registradas.</div>';
+    return;
+  }
+  document.getElementById('pipeline-table').innerHTML = rows.map(renderRow).join('');
+}
+
+// ── Extract actions ───────────────────────────────────────────────────────────
+
+async function extractEntity(cartridge, entity) {
+  const r = await fetch(`/api/pipeline/${cartridge}/${entity}/extract`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: 'incremental'}),
+  });
+  const d = await r.json();
+  if (d.job_id) {
+    activeJobs[entity] = {job_id: d.job_id, message: 'Iniciando...'};
+    _pollJob(entity, d.job_id);
+    _rerender();
+  }
+}
+
+async function extractAll() {
+  const r = await fetch('/mcp/servers/infra/invoke', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tool: 'cartridge_extract_all', args: {cartridge_id: _cartridge, mode: 'incremental'}}),
+  });
+  const d = await r.json();
+  if (d.triggered && d.triggered.length) {
+    d.triggered.forEach(t => {
+      if (!t.error) activeJobs[t.entity] = {job_id: t.dag_run_id, message: 'Batch iniciado...'};
+    });
+    _rerender();
+    setTimeout(load, 3000);
+  }
+}
+
+// ── Job polling ───────────────────────────────────────────────────────────────
+
+function parseJobPct(msg) {
+  if (!msg) return 0;
+  const m = msg.match(/(\d+)\/(\d+)/);
+  return m ? Math.round(parseInt(m[1]) / parseInt(m[2]) * 100) : 30;
+}
+
+async function _pollJob(entity, jobId) {
+  let done = false;
+  while (!done) {
+    await _sleep(2000);
+    try {
+      const r = await fetch(`/api/jobs/${jobId}`);
+      const j = await r.json();
+      if (j.status === 'done' || j.status === 'failed') {
+        delete activeJobs[entity];
+        done = true;
+        await load();   // full reload to see Silver updates
+      } else {
+        if (activeJobs[entity]) {
+          activeJobs[entity].message = j.message || 'Extrayendo...';
+        }
+        _rerender();
+      }
+    } catch { done = true; }
+  }
+}
+
+function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Data loading ──────────────────────────────────────────────────────────────
+
+async function load() {
+  try {
+    const r = await fetch(`/api/pipeline?cartridge=${encodeURIComponent(_cartridge)}`);
+    const d = await r.json();
+    pipelineData = d.pipeline || [];
+
+    // Merge running jobs detected server-side
+    pipelineData.forEach(row => {
+      if (row.last_job && row.last_job.status === 'running' && !activeJobs[row.entity]) {
+        activeJobs[row.entity] = {job_id: row.last_job.job_id, message: row.last_job.message || ''};
+        _pollJob(row.entity, row.last_job.job_id);
+      }
+    });
+
+    render(pipelineData);
+    document.getElementById('last-update').textContent =
+      'Actualizado: ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('last-update').textContent = 'Error: ' + e.message;
+  }
+}
+
+function _rerender() {
+  render(pipelineData);
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Auto-refresh ──────────────────────────────────────────────────────────────
+
+function startAutoRefresh() {
+  if (_autoTimer) clearInterval(_autoTimer);
+  _autoTimer = setInterval(() => {
+    if (document.getElementById('auto-refresh').checked && !Object.keys(activeJobs).length) {
+      load();
+    }
+  }, 8000);
+}
+
+// Support ?tab=dags[&dag=dag_id] URL params
+(function initFromUrl() {
+  const p   = new URLSearchParams(location.search);
+  const tab = p.get('tab');
+  const dag = p.get('dag');
+  if (tab === 'dags') {
+    if (dag) _selectedDag = dag;
+    // Switch after cartridge selector is ready
+    loadCartridgeSelector().then(() => {
+      load();
+      switchTab('dags');   // loadDags() is called inside switchTab
+    });
+  } else {
+    loadCartridgeSelector().then(() => { load(); });
+  }
+})();
+startAutoRefresh();
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+  _activeTab = tab;
+  document.getElementById('view-pipeline').style.display = tab === 'pipeline' ? '' : 'none';
+  document.getElementById('view-dags').style.display     = tab === 'dags'     ? '' : 'none';
+  document.getElementById('tab-pipeline').classList.toggle('active', tab === 'pipeline');
+  document.getElementById('tab-dags').classList.toggle('active',    tab === 'dags');
+  if (tab === 'dags') loadDags();
+}
+
+// ── DAG editor ────────────────────────────────────────────────────────────────
+
+let _dagsCache = [];
+
+function _showEditor() {
+  document.getElementById('dag-empty-state').style.display = 'none';
+  document.getElementById('dag-editor-body').style.display = 'flex';
+}
+
+async function loadDags() {
+  const list = document.getElementById('dag-list');
+  list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>';
+  try {
+    const r = await fetch('/mcp/invoke', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
+    });
+    const d = await r.json();
+    _dagsCache = (d.result?.dags || [])
+      .filter(dag => !_cartridge || dag.dag_id.startsWith(_cartridge + '_'))
+      .sort((a, b) => a.dag_id.localeCompare(b.dag_id));
+
+    if (!_dagsCache.length) {
+      list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">
+        Sin DAGs con prefijo <code>${esc(_cartridge)}_</code></div>`;
+      return;
+    }
+    list.innerHTML = _dagsCache.map(dag => {
+      const statusDot = dag.is_paused
+        ? `<span style="color:#555">● pausado</span>`
+        : `<span class="s-fresh">● activo</span>`;
+      return `<div class="dag-sidebar-item ${_selectedDag === dag.dag_id ? 'selected' : ''}"
+                   id="dagitem-${esc(dag.dag_id)}"
+                   onclick="selectDag('${esc(dag.dag_id)}')">
+        <div class="dag-item-id">${esc(dag.dag_id)}</div>
+        <div class="dag-item-meta">${statusDot}</div>
+      </div>`;
+    }).join('');
+
+    // Restore previous selection, or auto-select first DAG
+    const toSelect = (_selectedDag && _dagsCache.find(d => d.dag_id === _selectedDag))
+      ? _selectedDag
+      : _dagsCache[0]?.dag_id;
+    if (toSelect) await selectDag(toSelect, false);
+  } catch(e) {
+    list.innerHTML = `<div style="padding:16px;color:#ff2d55;font-size:11px">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function selectDag(dagId, reloadList = true) {
+  _selectedDag = dagId;
+  // Update sidebar highlight
+  document.querySelectorAll('.dag-sidebar-item').forEach(el => {
+    el.classList.toggle('selected', el.id === `dagitem-${dagId}`);
+  });
+
+  // Show editor panel
+  _showEditor();
+
+  const textarea = document.getElementById('dag-code-textarea');
+  const nameEl   = document.getElementById('dag-editor-name');
+  const badgeEl  = document.getElementById('dag-editor-badge');
+  const afLink   = document.getElementById('dag-airflow-link');
+
+  nameEl.textContent = dagId;
+  afLink.href = `http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid`;
+
+  const dag = _dagsCache.find(d => d.dag_id === dagId);
+  if (dag) {
+    badgeEl.innerHTML = dag.is_paused
+      ? `<span class="dag-badge dag-paused">pausado</span>`
+      : `<span class="dag-badge dag-active">activo</span>`;
+  }
+
+  setEditorCode('# Cargando fuente…');
+  setDeployMsg('', '');
+
+  // Try to load source from DB (falls back to disk automatically in dag_get_source)
+  try {
+    const r = await fetch('/mcp/invoke', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        server: 'infra', tool: 'dag_get_source',
+        args: { cartridge_id: _cartridge, dag_id: dagId },
+      }),
+    });
+    const d = await r.json();
+    if (d.result?.found && d.result?.source_code) {
+      setEditorCode(d.result.source_code);
+      return;
+    }
+  } catch(_) {}
+
+  setEditorCode(
+    `# Fuente no encontrada en BD para "${dagId}".\n` +
+    `# El asistente puede regenerarla con infra__airflow_create_dag.\n`
+  );
+}
+
+function newDag() {
+  _selectedDag = '__new__';
+  document.querySelectorAll('.dag-sidebar-item').forEach(el => el.classList.remove('selected'));
+  _showEditor();
+  document.getElementById('dag-editor-name').textContent = 'nuevo_dag';
+  document.getElementById('dag-editor-badge').innerHTML = '';
+  document.getElementById('dag-airflow-link').href = '#';
+  setEditorCode(
+    `# Nuevo DAG — ${_cartridge}\n` +
+    `# dag_id recomendado: ${_cartridge}_<entidad>_<modo>\n\n` +
+    `from airflow import DAG\n` +
+    `from airflow.operators.python import PythonOperator\n` +
+    `from datetime import datetime\n\n` +
+    `with DAG(\n` +
+    `    dag_id='${_cartridge}_nueva_entidad',\n` +
+    `    start_date=datetime(2024, 1, 1),\n` +
+    `    schedule=None,\n` +
+    `    catchup=False,\n` +
+    `    tags=['${_cartridge}'],\n` +
+    `) as dag:\n` +
+    `    pass\n`
+  );
+  setDeployMsg('', '');
+}
+
+async function deployDag() {
+  const code   = document.getElementById('dag-code-textarea').value.trim();
+  if (!code) { setDeployMsg('Sin código', 'err'); return; }
+
+  // Extract dag_id from code (dag_id='...') or use current
+  let dagId = _selectedDag === '__new__' ? '' : _selectedDag;
+  const m = code.match(/dag_id\s*=\s*['"]([^'"]+)['"]/);
+  if (m) dagId = m[1];
+  if (!dagId) { setDeployMsg('No se encontró dag_id en el código', 'err'); return; }
+
+  const btn = document.getElementById('btn-deploy');
+  btn.disabled = true;
+  setDeployMsg('Desplegando…', '');
+
+  try {
+    const r = await fetch('/mcp/invoke', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        server: 'infra', tool: 'airflow_create_dag',
+        args: { dag_id: dagId, code, cartridge_id: _cartridge,
+                description: `DAG del cartucho ${_cartridge}` },
+      }),
+    });
+    const d = await r.json();
+    if (d.result?.created || d.result?.dag_id) {
+      setDeployMsg(`✓ Desplegado: ${esc(d.result.created || dagId)} (${d.result.bytes || 0} bytes)`, 'ok');
+      // Clear dirty flag — deployed code is now the canonical version
+      _deployedCode = code;
+      markDirty();
+      document.getElementById('dag-editor-name').textContent = dagId;
+      _selectedDag = dagId;
+      setTimeout(loadDags, 1200);
+    } else {
+      setDeployMsg(`Error: ${esc(JSON.stringify(d.result || d))}`, 'err');
+    }
+  } catch(e) {
+    setDeployMsg(`Error: ${esc(e.message)}`, 'err');
+  }
+  btn.disabled = false;
+}
+
+// ── Code editor helpers ────────────────────────────────────────────────────────
+
+let _deployedCode = '';   // last code that was successfully deployed (or loaded from disk)
+
+function editorKeydown(e) {
+  const ta    = e.target;
+  const start = ta.selectionStart;
+  const end   = ta.selectionEnd;
+  const val   = ta.value;
+
+  // Ctrl+S → deploy
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    deployDag();
+    return;
+  }
+
+  // Tab → insert 4 spaces (single cursor) or indent selected lines
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    if (start === end) {
+      // No selection — insert spaces to next 4-space boundary
+      const col     = start - val.lastIndexOf('\n', start - 1) - 1;
+      const spaces  = '    '.slice(col % 4) || '    ';
+      _insertAt(ta, start, end, spaces, spaces.length);
+    } else {
+      // Multi-line selection — indent / dedent all touched lines
+      const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+      const lineEnd   = val.indexOf('\n', end - 1);
+      const block     = val.substring(lineStart, lineEnd < 0 ? val.length : lineEnd);
+      if (e.shiftKey) {
+        const replaced = block.replace(/^    /mg, '');
+        _replaceBlock(ta, lineStart, lineEnd < 0 ? val.length : lineEnd, replaced);
+      } else {
+        const replaced = block.replace(/^/mg, '    ');
+        _replaceBlock(ta, lineStart, lineEnd < 0 ? val.length : lineEnd, replaced);
+      }
+    }
+    updateLineNumbers();
+    markDirty();
+    return;
+  }
+
+  // Shift+Tab on single cursor → remove up to 4 spaces from line start
+  if (e.key === 'Tab' && e.shiftKey) { return; }  // handled above
+
+  // Enter → auto-indent matching current line + extra indent after ':'
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const lineStart  = val.lastIndexOf('\n', start - 1) + 1;
+    const currentLine = val.substring(lineStart, start);
+    const indent      = currentLine.match(/^(\s*)/)[1];
+    const extraIndent = currentLine.trimEnd().endsWith(':') ? '    ' : '';
+    const insert      = '\n' + indent + extraIndent;
+    _insertAt(ta, start, end, insert, insert.length);
+    updateLineNumbers();
+    markDirty();
+  }
+}
+
+function _insertAt(ta, start, end, text, cursorOffset) {
+  const v = ta.value;
+  ta.value = v.substring(0, start) + text + v.substring(end);
+  ta.selectionStart = ta.selectionEnd = start + cursorOffset;
+}
+
+function _replaceBlock(ta, from, to, text) {
+  const v = ta.value;
+  ta.value = v.substring(0, from) + text + (to < 0 ? '' : v.substring(to));
+  ta.selectionStart = from;
+  ta.selectionEnd   = from + text.length;
+}
+
+function editorOnInput() {
+  updateLineNumbers();
+  markDirty();
+}
+
+function syncLineScroll() {
+  const ta = document.getElementById('dag-code-textarea');
+  const ln = document.getElementById('dag-line-numbers');
+  if (ln) ln.scrollTop = ta.scrollTop;
+}
+
+function updateLineNumbers() {
+  const ta    = document.getElementById('dag-code-textarea');
+  const ln    = document.getElementById('dag-line-numbers');
+  if (!ta || !ln) return;
+  const count = (ta.value.match(/\n/g) || []).length + 1;
+  // Only redraw if count changed
+  const current = ln.querySelectorAll('span').length;
+  if (current === count) return;
+  ln.innerHTML = Array.from({length: count}, (_, i) =>
+    `<span>${i + 1}</span>`
+  ).join('');
+}
+
+function markDirty() {
+  const badge = document.getElementById('dag-dirty-badge');
+  const isDirty = document.getElementById('dag-code-textarea').value !== _deployedCode;
+  if (badge) badge.style.display = isDirty ? '' : 'none';
+}
+
+function setEditorCode(code) {
+  const ta = document.getElementById('dag-code-textarea');
+  if (ta) ta.value = code;
+  _deployedCode = code;
+  updateLineNumbers();
+  markDirty();
+}
+
+function setDeployMsg(msg, type) {
+  const el = document.getElementById('deploy-msg');
+  el.textContent = msg;
+  el.className = 'deploy-msg' + (type === 'ok' ? ' deploy-ok' : type === 'err' ? ' deploy-err' : '');
+}
+
+function copyDagCode() {
+  const code = document.getElementById('dag-code-textarea').value;
+  if (!code) return;
+  navigator.clipboard.writeText(code).then(() => setDeployMsg('⎘ Copiado', 'ok'))
+    .catch(() => setDeployMsg('Error al copiar', 'err'));
+  setTimeout(() => setDeployMsg('', ''), 2000);
+}
+
+// ── DAG Templates ─────────────────────────────────────────────────────────────
+
+let _tplOpen = false;
+
+function toggleTemplates() {
+  _tplOpen = !_tplOpen;
+  const list = document.getElementById('tpl-list');
+  const tog  = document.getElementById('tpl-toggle');
+  list.style.display = _tplOpen ? '' : 'none';
+  tog.textContent    = _tplOpen ? '▼' : '▶';
+  if (_tplOpen && list.querySelector('[style*="Cargando"]')) loadTemplates();
+}
+
+async function loadTemplates() {
+  const list = document.getElementById('tpl-list');
+  try {
+    const r = await fetch('/api/dag_templates');
+    const d = await r.json();
+    const tpls = d.templates || [];
+    if (!tpls.length) {
+      list.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:10px">Sin plantillas.</div>';
+      return;
+    }
+    list.innerHTML = tpls.map(t => `
+      <div class="tpl-item" onclick="applyTemplate('${esc(t.id)}')">
+        <div class="tpl-item-name">◈ ${esc(t.name)}</div>
+        <div class="tpl-item-desc">${esc(t.description)}</div>
+        <div class="tpl-tags">${(t.tags||[]).map(tag => `<span class="tpl-tag">${esc(tag)}</span>`).join('')}</div>
+      </div>`).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="padding:12px;color:#ff2d55;font-size:10px">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function applyTemplate(templateId) {
+  // Ask for entity name to substitute placeholders
+  const entity = prompt('Nombre de la entidad (ej. "ProjectDetail"):',
+                        _selectedDag && _selectedDag !== '__new__'
+                          ? _selectedDag.replace(_cartridge + '_', '').replace(/_/g, '')
+                          : 'MyEntity');
+  if (!entity) return;
+
+  try {
+    const r = await fetch(
+      `/api/dag_templates/${encodeURIComponent(templateId)}` +
+      `?cartridge=${encodeURIComponent(_cartridge)}&entity=${encodeURIComponent(entity)}`
+    );
+    const d = await r.json();
+    if (!d.code) { alert('No se pudo cargar la plantilla'); return; }
+
+    setEditorCode(d.code);
+    // Show editor if not already visible
+    _showEditor();
+    document.getElementById('dag-editor-name').textContent =
+      `${_cartridge}_${entity.toLowerCase()} (plantilla)`;
+    document.getElementById('dag-editor-badge').innerHTML =
+      '<span class="dag-badge dag-paused">borrador</span>';
+    _selectedDag = '__new__';
+    setDeployMsg('Plantilla cargada — revisa los TODO y despliega', 'ok');
+    setTimeout(() => setDeployMsg('', ''), 4000);
+  } catch(e) {
+    alert(`Error al cargar plantilla: ${e.message}`);
+  }
+}
+
+function sendDagToAssistant() {
+  const dagId  = _selectedDag === '__new__' ? 'nuevo_dag' : (_selectedDag || 'dag');
+  const source = document.getElementById('dag-code-textarea').value;
+  const hasSource = source && !source.startsWith('# Fuente no encontrada');
+  const msg = hasSource
+    ? `Quiero modificar el DAG \`${dagId}\`. Este es el código actual:\n\n\`\`\`python\n${source}\n\`\`\`\n\n¿Qué cambios quieres hacer?`
+    : `Quiero crear o corregir el DAG \`${dagId}\` del cartucho \`${_cartridge}\`. Genera el código completo y despliégalo con infra__airflow_create_dag.`;
+
+  // Try postMessage to parent (embedded in Monitor/Studio)
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ type: 'dag_to_assistant', message: msg, dagId, source }, '*');
+    setDeployMsg('✓ Enviado al asistente', 'ok');
+    setTimeout(() => setDeployMsg('', ''), 2500);
+    return;
+  }
+  // Fallback: open Studio via sessionStorage
+  const payload = { type: 'dag_edit', dag_id: dagId, source, cartridge: _cartridge };
+  sessionStorage.setItem('studio_pending', JSON.stringify(payload));
+  window.open('/studio', '_blank');
+}
+</script>
+</body>
+</html>

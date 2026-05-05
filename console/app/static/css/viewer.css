@@ -1,0 +1,275 @@
+/* ── viewer.css — shared styles for all viewers ─────────────────────────────
+   Import after main.css. Viewers define only truly unique local styles.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Viewers live inside iframes or standalone pages — need their own scroll */
+html, body { overflow: auto; }
+
+/* ── Layout ────────────────────────────────────────────────────────────────── */
+.viewer-wrap {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+.vheader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.vheader h1 {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -.02em;
+}
+.vheader a {
+  font-size: 12px;
+  color: var(--text3);
+  text-decoration: none;
+  transition: color .15s;
+}
+.vheader a:hover { color: var(--cyan); }
+.vheader .actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+/* ── Cards ─────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.card-title {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.btn {
+  padding: 5px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.btn:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(88,166,255,.06); }
+html[data-theme="light"] .btn:hover { background: rgba(9,105,218,.06); }
+.btn:disabled { border-color: var(--border); color: var(--text3); cursor: default; background: var(--bg2); }
+
+.btn-amber { border-color: var(--amber); color: var(--amber); }
+.btn-amber:hover { background: var(--amber); color: var(--bg); border-color: var(--amber); }
+
+.btn-sm {
+  padding: 3px 9px;
+  font-size: 11px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text3);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.btn-sm:hover { border-color: var(--cyan); color: var(--cyan); }
+
+/* ── Form controls ─────────────────────────────────────────────────────────── */
+select {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 5px 10px;
+}
+select:focus { outline: none; border-color: var(--cyan); }
+
+input[type=text], input[type=search] {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 5px 10px;
+}
+input[type=text]:focus,
+input[type=search]:focus { outline: none; border-color: var(--cyan); }
+
+/* ── Stats ─────────────────────────────────────────────────────────────────── */
+.stat-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.stat {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+}
+.stat-val {
+  font-size: 22px;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+.stat-lbl {
+  font-size: 10px;
+  color: var(--text3);
+  margin-top: 2px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th {
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--bg3);
+  color: var(--text2);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+tr:hover td { background: var(--bg3); }
+
+/* ── Badges ────────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+.badge-running { background: rgba(63,185,80,.15);  color: var(--green); border: 1px solid var(--green);  animation: pulse 1.5s infinite; }
+.badge-done    { background: rgba(88,166,255,.12); color: var(--cyan);  border: 1px solid var(--cyan); }
+.badge-failed  { background: rgba(248,81,73,.12);  color: var(--red);   border: 1px solid var(--red); }
+.badge-pending { background: rgba(210,153,34,.12); color: var(--amber); border: 1px solid var(--amber); }
+
+/* ── Layer badges ──────────────────────────────────────────────────────────── */
+.layer-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.layer-silver { background: rgba(88,166,255,.12);  color: var(--cyan);  border: 1px solid var(--cyan); }
+.layer-master { background: rgba(210,153,34,.12);  color: var(--amber); border: 1px solid var(--amber); }
+.layer-gold   { background: rgba(210,153,34,.08);  color: var(--amber); border: 1px solid var(--amber); }
+
+/* ── Tabs ──────────────────────────────────────────────────────────────────── */
+.tab-bar { display: flex; gap: 0; margin-bottom: -1px; }
+.tab {
+  padding: 7px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--bg3);
+  color: var(--text3);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  transition: color .15s;
+  margin-right: 3px;
+}
+.tab:hover { color: var(--text2); }
+.tab.active { background: var(--bg2); color: var(--cyan); border-bottom-color: var(--bg2); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── Meta grid ─────────────────────────────────────────────────────────────── */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.meta-lbl { font-size: 10px; color: var(--text3); margin-bottom: 3px; letter-spacing: .04em; text-transform: uppercase; }
+.meta-val { font-size: 13px; color: var(--text); font-family: var(--font-mono); }
+
+/* ── Toolbar / filter row ──────────────────────────────────────────────────── */
+.refresh-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text2);
+  flex-wrap: wrap;
+}
+.filter-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text2);
+  flex-wrap: wrap;
+}
+
+/* ── Helpers ───────────────────────────────────────────────────────────────── */
+.mono        { font-family: var(--font-mono); font-size: 12px; color: var(--amber); }
+.link-btn    { color: var(--cyan); text-decoration: none; font-size: 12px; }
+.link-btn:hover { text-decoration: underline; }
+.empty-state { text-align: center; padding: 40px; color: var(--text3); font-size: 13px; }
+.null-val    { color: var(--text3); font-style: italic; font-size: 11px; }
+
+.sql-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--cyan);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.preview-wrap { overflow-x: auto; }
+
+.stat-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text3);
+  margin-right: 8px;
+}
+.stat-pill span { color: var(--cyan); font-family: var(--font-mono); }
+
+/* ── Animation ─────────────────────────────────────────────────────────────── */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }

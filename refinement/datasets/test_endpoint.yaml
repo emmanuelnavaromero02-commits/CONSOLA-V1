@@ -1,0 +1,6 @@
+cartridge: unknown
+description: ''
+layer: silver
+name: test_endpoint
+sources: []
+sql: SELECT 1

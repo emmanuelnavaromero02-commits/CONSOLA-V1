@@ -1,0 +1,9 @@
+description: TimeEntry - Ultima extraccion Replicon Bronze
+last_refresh: '2026-04-16T02:05:49.561475+00:00'
+layer: silver
+name: replicon_timeentry_latest
+row_count: 304242
+sources:
+- raw/replicon/TimeEntry
+sql: SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/TimeEntry/**/*.parquet',
+  hive_partitioning=true, union_by_name=true)

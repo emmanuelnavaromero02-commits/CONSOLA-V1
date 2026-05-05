@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MODecissions · Datasets</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+<link rel="stylesheet" href="/static/css/viewer.css">
+</head>
+<body>
+<div class="crt-overlay"></div>
+<div class="scanlines"></div>
+<div class="viewer-wrap">
+  <div class="vheader">
+    <h1>DATASETS</h1>
+    <a href="/">← Consola</a>
+  </div>
+
+  <div class="stat-row" id="stats"></div>
+
+  <div class="filter-row">
+    <span id="last-update">Cargando...</span>
+    <button class="btn" onclick="load()">↺ Actualizar</button>
+    <select id="filter-layer" onchange="render()">
+      <option value="">Todas las capas</option>
+      <option value="silver">Silver</option>
+      <option value="master">Master</option>
+      <option value="gold">Gold</option>
+    </select>
+    <select id="filter-cartridge" onchange="render()">
+      <option value="">Todos los cartuchos</option>
+    </select>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>NOMBRE</th><th>CAPA</th><th>CARTUCHO</th><th>ENTIDAD FUENTE</th>
+          <th>COLUMNAS</th><th>ULTIMA ACTUALIZACION</th><th>DETALLE</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let allDatasets = [];
+
+function layerBadge(layer){
+  const cls = {silver:'layer-silver',master:'layer-master',gold:'layer-gold'}[layer]||'layer-silver';
+  return `<span class="layer-badge ${cls}">${(layer||'silver').toUpperCase()}</span>`;
+}
+
+function fmt(iso){ return iso ? iso.replace('T',' ').substring(0,16) : '—'; }
+
+function render(){
+  const fl = document.getElementById('filter-layer').value;
+  const fc = document.getElementById('filter-cartridge').value;
+  const data = allDatasets.filter(d=>
+    (!fl || (d.layer||'silver')===fl) &&
+    (!fc || d.cartridge===fc)
+  );
+
+  if(!data.length){
+    document.getElementById('tbody').innerHTML = `<tr><td colspan="7"><div class="empty-state">Sin datasets</div></td></tr>`;
+    return;
+  }
+
+  document.getElementById('tbody').innerHTML = data.map(d=>`
+    <tr>
+      <td style="font-family:var(--font-mono);color:var(--amber)">${d.name}</td>
+      <td>${layerBadge(d.layer)}</td>
+      <td style="font-size:10px;color:var(--text2)">${d.cartridge||'—'}</td>
+      <td style="font-size:10px">${d.source_entity||'—'}</td>
+      <td style="font-family:var(--font-mono);color:var(--cyan)">${d.column_count||Object.keys(d.column_mapping||{}).length||'—'}</td>
+      <td style="font-size:10px">${fmt(d.updated_at||d.created_at)}</td>
+      <td><a class="link-btn" href="/viewer/datasets/${d.name}">Ver →</a></td>
+    </tr>`).join('');
+}
+
+function renderStats(){
+  const silver = allDatasets.filter(d=>(d.layer||'silver')==='silver').length;
+  const master = allDatasets.filter(d=>d.layer==='master').length;
+  const gold   = allDatasets.filter(d=>d.layer==='gold').length;
+  const cartridges = [...new Set(allDatasets.map(d=>d.cartridge).filter(Boolean))];
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="stat-val">${allDatasets.length}</div><div class="stat-lbl">TOTAL</div></div>
+    <div class="stat"><div class="stat-val" style="color:#00e5ff">${silver}</div><div class="stat-lbl">SILVER</div></div>
+    <div class="stat"><div class="stat-val" style="color:#ffb000">${master}</div><div class="stat-lbl">MASTER</div></div>
+    <div class="stat"><div class="stat-val" style="color:#ffd700">${gold}</div><div class="stat-lbl">GOLD</div></div>
+    <div class="stat"><div class="stat-val">${cartridges.length}</div><div class="stat-lbl">CARTUCHOS</div></div>
+  `;
+
+  const sel = document.getElementById('filter-cartridge');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Todos los cartuchos</option>' +
+    cartridges.map(c=>`<option value="${c}" ${c===prev?'selected':''}>${c}</option>`).join('');
+}
+
+async function load(){
+  try {
+    const r = await fetch('/datasets');
+    const d = await r.json();
+    allDatasets = d.datasets || [];
+    renderStats();
+    render();
+    document.getElementById('last-update').textContent = 'Actualizado: '+new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('last-update').textContent = 'Error: '+e.message;
+  }
+}
+
+load();
+</script>
+</body>
+</html>

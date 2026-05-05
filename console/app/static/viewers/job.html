@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MODecissions · Job Detail</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+<link rel="stylesheet" href="/static/css/viewer.css">
+<style>
+/* ── Job-specific styles ── */
+.log-entry  { display:flex; gap:12px; padding:5px 0; border-bottom:1px solid var(--border); font-size:11px; }
+.log-ts     { color:var(--text3); white-space:nowrap; width:90px; flex-shrink:0; }
+.log-entity { color:var(--amber); width:140px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; }
+.log-level  { width:50px; flex-shrink:0; }
+.log-level-INFO  { color:var(--cyan); }
+.log-level-ERROR { color:var(--red); }
+.log-level-WARN  { color:var(--amber); }
+.log-msg    { color:var(--text); flex:1; }
+.log-detail { font-size:10px; color:var(--text2); margin-top:2px; }
+.progress-bar  { background:var(--bg); border:1px solid var(--border); border-radius:3px; height:8px; margin:8px 0; overflow:hidden; }
+.progress-fill { height:100%; background:var(--green); box-shadow:0 0 8px var(--green); transition:width .5s; }
+.entity-grid   { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; }
+.entity-card   { background:var(--bg); border:1px solid var(--border); padding:8px 12px; border-radius:3px; }
+.entity-count  { font-size:14px; font-family:var(--font-mono); }
+.entity-ok  { color:var(--cyan); }
+.entity-err { color:var(--red); }
+</style>
+</head>
+<body>
+<div class="crt-overlay"></div>
+<div class="scanlines"></div>
+<div class="viewer-wrap">
+  <div class="vheader">
+    <h1 id="page-title">JOB DETAIL</h1>
+    <a href="/viewer/jobs">← Todos los jobs</a>
+    <a href="/">← Consola</a>
+  </div>
+
+  <div class="card" id="job-card">
+    <div class="card-title">ESTADO DEL JOB</div>
+    <div class="meta-grid" id="meta"></div>
+    <div class="progress-bar" id="prog-wrap" style="display:none">
+      <div class="progress-fill" id="prog-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <div class="card" id="entities-card" style="display:none">
+    <div class="card-title">RESULTADO POR ENTIDAD</div>
+    <div class="entity-grid" id="entity-grid"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">LOGS DE EJECUCION</div>
+    <div class="refresh-bar">
+      <span id="log-count">0 entradas</span>
+      <button class="btn" onclick="loadAll()">↺ Actualizar</button>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="auto-refresh" checked> Auto-refresh 3s
+      </label>
+    </div>
+    <div id="log-container"></div>
+  </div>
+</div>
+
+<script>
+const jobId = location.pathname.split('/').pop();
+let isRunning = true;
+
+function badge(s){
+  const cls = {running:'badge-running',done:'badge-done',failed:'badge-failed'}[s]||'';
+  return `<span class="badge ${cls}">${s.toUpperCase()}</span>`;
+}
+function fmt(iso){ return iso ? iso.replace('T',' ').substring(0,19) : '—'; }
+function dur(s,e){
+  if(!s) return '—';
+  const sec=Math.round((new Date(e||Date.now())-new Date(s))/1000);
+  return sec<60?sec+'s':Math.floor(sec/60)+'m '+(sec%60)+'s';
+}
+
+async function loadJob(){
+  const r = await fetch(`/api/jobs/${jobId}`);
+  const j = await r.json();
+  if(j.error){ document.getElementById('meta').innerHTML=`<span style="color:var(--red)">${j.error}</span>`; return; }
+
+  document.getElementById('page-title').textContent = `JOB ${jobId}`;
+  const args = j.args||{};
+  document.getElementById('meta').innerHTML = `
+    <div class="meta-item"><div class="meta-lbl">STATUS</div><div class="meta-val">${badge(j.status)}</div></div>
+    <div class="meta-item"><div class="meta-lbl">ENTIDAD</div><div class="meta-val">${args.entity||'(todas)'}</div></div>
+    <div class="meta-item"><div class="meta-lbl">MODO</div><div class="meta-val">${args.mode||'—'}</div></div>
+    <div class="meta-item"><div class="meta-lbl">TOOL</div><div class="meta-val" style="font-size:10px">${j.tool||'—'}</div></div>
+    <div class="meta-item"><div class="meta-lbl">MENSAJE</div><div class="meta-val" style="color:var(--text2)">${j.message||'—'}</div></div>
+    <div class="meta-item"><div class="meta-lbl">INICIO</div><div class="meta-val">${fmt(j.created_at)}</div></div>
+    <div class="meta-item"><div class="meta-lbl">FIN</div><div class="meta-val">${fmt(j.finished_at)}</div></div>
+    <div class="meta-item"><div class="meta-lbl">DURACION</div><div class="meta-val">${dur(j.created_at,j.finished_at)}</div></div>
+    ${j.error?`<div class="meta-item" style="grid-column:1/-1"><div class="meta-lbl">ERROR</div><div class="meta-val" style="color:var(--red)">${j.error}</div></div>`:''}
+  `;
+
+  // Progress parsing from message "Progreso X/Y"
+  const match = (j.message||'').match(/(\d+)\/(\d+)/);
+  if(match && j.status==='running'){
+    const pct = Math.round(parseInt(match[1])/parseInt(match[2])*100);
+    document.getElementById('prog-wrap').style.display='block';
+    document.getElementById('prog-fill').style.width=pct+'%';
+  }
+
+  // Entity results
+  const res = j.result||{};
+  if(res.entities){
+    document.getElementById('entities-card').style.display='block';
+    document.getElementById('entity-grid').innerHTML = res.entities.map(e=>`
+      <div class="entity-card">
+        <div class="entity-name">${e.entity}</div>
+        ${e.status==='success'
+          ? `<div class="entity-count entity-ok">${(e.record_count||0).toLocaleString()} <span style="font-size:9px;color:var(--text3)">registros</span></div>`
+          : `<div class="entity-count entity-err">ERROR</div><div style="font-size:9px;color:var(--text2)">${(e.error||'').substring(0,60)}</div>`
+        }
+      </div>`).join('');
+  }
+
+  isRunning = j.status === 'running';
+}
+
+async function loadLogs(){
+  const r = await fetch(`/api/jobs/${jobId}/logs?limit=500`);
+  const d = await r.json();
+  const logs = d.logs||[];
+  document.getElementById('log-count').textContent = logs.length+' entradas';
+  document.getElementById('log-container').innerHTML = logs.map(l=>`
+    <div class="log-entry">
+      <span class="log-ts">${l.ts.substring(11,23)}</span>
+      <span class="log-entity">${l.entity||'(batch)'}</span>
+      <span class="log-level log-level-${l.level}">${l.level}</span>
+      <span class="log-msg">
+        ${l.message}
+        ${l.detail?`<div class="log-detail">${JSON.stringify(l.detail)}</div>`:''}
+      </span>
+    </div>`).join('');
+}
+
+async function loadAll(){
+  await Promise.all([loadJob(), loadLogs()]);
+}
+
+loadAll();
+setInterval(()=>{
+  if(document.getElementById('auto-refresh').checked && isRunning) loadAll();
+}, 3000);
+</script>
+</body>
+</html>

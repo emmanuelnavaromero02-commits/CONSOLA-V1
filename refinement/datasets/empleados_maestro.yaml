@@ -1,0 +1,24 @@
+cartridge: replicon
+column_mapping:
+  currenthourlybillingamount: tarifa_facturacion
+  currenthourlycostamount: costo_hora
+  departmentname: departamento
+  employeetypename: tipo_empleado
+  firstname: nombre
+  lastname: apellido
+  locationname: ubicacion
+  userid: id_empleado
+description: Maestro de empleados activos con terminos de negocio
+last_refresh: '2026-04-17T02:51:41.160713+00:00'
+layer: master
+name: empleados_maestro
+row_count: 202
+source_load_date: '2026-04-16'
+sources:
+- raw/replicon/User
+sql: SELECT userid AS id_empleado, firstname AS nombre, lastname AS apellido, username
+  AS usuario, email, departmentname AS departamento, locationname AS ubicacion, employeetypename
+  AS tipo_empleado, currenthourlycostamount AS costo_hora, currenthourlybillingamount
+  AS tarifa_facturacion FROM read_parquet('s3://lakehouse/raw/replicon/User/**/*.parquet',
+  hive_partitioning=true, union_by_name=true) WHERE load_date = '2026-04-16' AND isenabled
+  = true

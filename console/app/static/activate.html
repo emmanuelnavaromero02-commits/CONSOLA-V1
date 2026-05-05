@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Activar cuenta — MODecissions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    body { padding: 0; margin: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 100vh; }
+    .card { width: 420px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 36px 32px; }
+    .brand { font-size: 22px; color: var(--green); letter-spacing: 2px; text-align: center; font-weight: 700; }
+    .brand .accent { color: var(--amber); }
+    .tagline { text-align: center; font-size: 9px; color: var(--text3); letter-spacing: 2px; margin-top: 6px; margin-bottom: 22px; }
+    h2 { font-size: 13px; color: var(--amber); letter-spacing: 2px; font-family: var(--font-mono); margin: 0 0 14px; text-align: center; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label { font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; }
+    .field input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; }
+    .field input:focus { outline: none; border-color: var(--amber); }
+    .help { font-size: 10px; color: var(--text3); font-family: var(--font-mono); letter-spacing: 1px; }
+    .btn { width: 100%; background: var(--amber); border: none; color: #1a1408; font-family: var(--font-mono); font-size: 11px; letter-spacing: 2px; padding: 12px; border-radius: 4px; cursor: pointer; font-weight: 600; margin-top: 6px; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .err { color: var(--red); font-size: 11px; font-family: var(--font-mono); text-align: center; margin-top: 12px; min-height: 14px; }
+    .info { color: var(--text2); font-size: 11px; font-family: var(--font-mono); text-align: center; margin-bottom: 18px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">MO<span class="accent">D</span>ECISSIONS</div>
+    <div class="tagline">DECISION INTELLIGENCE PLATFORM</div>
+    <div id="invalid" style="display:none">
+      <h2>LINK INVÁLIDO</h2>
+      <div class="info">Este link de activación es inválido o ha expirado.</div>
+      <div style="text-align:center"><a href="/login" style="color:var(--amber);font-family:var(--font-mono);font-size:10px;letter-spacing:1px">← VOLVER A LOGIN</a></div>
+    </div>
+    <div id="form" style="display:none">
+      <h2>ACTIVAR CUENTA</h2>
+      <div class="info" id="who">…</div>
+      <form onsubmit="return doActivate(event)">
+        <div class="field"><label>NUEVO PASSWORD</label>
+          <input id="pw" type="password" autocomplete="new-password" minlength="8" required autofocus>
+          <div class="help">Mínimo 8 caracteres.</div>
+        </div>
+        <div class="field"><label>CONFIRMAR</label>
+          <input id="pw2" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <button type="submit" class="btn" id="btn">ACTIVAR Y ENTRAR →</button>
+        <div class="err" id="err"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
+    const TOKEN = new URLSearchParams(location.search).get('token') || '';
+
+    async function loadInfo() {
+      try {
+        const r = await fetch('/auth/activate/info?token=' + encodeURIComponent(TOKEN));
+        const d = await r.json();
+        if (!d.valid) { document.getElementById('invalid').style.display = ''; return; }
+        document.getElementById('who').textContent = `Hola${d.name ? ' ' + d.name : ''} · ${d.email}`;
+        document.getElementById('form').style.display = '';
+      } catch { document.getElementById('invalid').style.display = ''; }
+    }
+
+    async function doActivate(ev) {
+      ev.preventDefault();
+      const pw = document.getElementById('pw').value;
+      const p2 = document.getElementById('pw2').value;
+      const err = document.getElementById('err');
+      err.textContent = '';
+      if (pw !== p2)         { err.textContent = 'Los passwords no coinciden'; return false; }
+      if (pw.length < 8)     { err.textContent = 'Mínimo 8 caracteres'; return false; }
+      const btn = document.getElementById('btn');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/auth/activate', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ token: TOKEN, new_password: pw }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(()=>({}));
+          err.textContent = e.detail || ('Error: ' + r.statusText);
+          btn.disabled = false;
+          return false;
+        }
+        location.href = '/';
+      } catch (e) {
+        err.textContent = 'Error de red: ' + e.message;
+        btn.disabled = false;
+      }
+      return false;
+    }
+
+    loadInfo();
+  </script>
+</body>
+</html>

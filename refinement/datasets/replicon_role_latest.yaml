@@ -1,0 +1,6 @@
+name: replicon_role_latest
+description: 'Role - Ultima extraccion Replicon Bronze'
+layer: silver
+sources:
+- raw/replicon/Role
+sql: "SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/Role/**/*.parquet', hive_partitioning=true, union_by_name=true)"

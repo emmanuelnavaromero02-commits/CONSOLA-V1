@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usuarios — MODecissions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    body { padding: 0; margin: 0; overflow: auto; }
+    .shell { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+    .topbar {
+      display: flex; align-items: center; gap: 16px; margin-bottom: 24px;
+      padding-bottom: 14px; border-bottom: 1px solid var(--border);
+    }
+    .topbar a.back {
+      font-size: 10px; color: var(--text3); font-family: var(--font-mono);
+      letter-spacing: 1px; text-decoration: none;
+    }
+    .topbar a.back:hover { color: var(--green); }
+    .title  { font-size: 13px; color: var(--amber); letter-spacing: 3px; font-family: var(--font-mono); }
+    .subtitle { font-size: 10px; color: var(--text3); letter-spacing: 1px; margin-top: 4px; }
+    .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .spacer  { flex: 1; }
+    .btn-primary {
+      background: var(--amber); border: none; color: #1a1408;
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
+      padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-ghost {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--text2); font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+    }
+    .btn-danger {
+      background: transparent; border: 1px solid var(--red);
+      color: var(--red); font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+    }
+    table {
+      width: 100%; border-collapse: collapse; background: var(--bg2);
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    th, td { text-align: left; padding: 10px 14px; font-size: 12px; border-bottom: 1px solid var(--border); }
+    th { background: var(--bg3); font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 3px;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
+    }
+    .b-admin    { background: rgba(210,153,34,.18); color: var(--amber); }
+    .b-user     { background: rgba(110,118,129,.18); color: var(--text2); }
+    .b-active   { background: rgba(63,185,80,.18); color: var(--green); }
+    .b-inactive { background: rgba(248,81,73,.12); color: var(--red); }
+
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.65);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding-top: 7vh; z-index: 100;
+    }
+    .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; width: min(480px, 92vw); }
+    .modal-head { padding: 14px 20px; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+    .modal-head h3 { margin:0; font-family: var(--font-mono); font-size: 12px; color: var(--amber); letter-spacing: 2px; }
+    .modal-close { background: transparent; border: none; color: var(--text3); font-size: 18px; cursor: pointer; }
+    .modal-body { padding: 20px; }
+    .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label { font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; }
+    .field input, .field select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 8px 10px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px;
+    }
+    .empty-state { text-align:center; padding:60px; color:var(--text3); font-size:11px; font-family: var(--font-mono); }
+    .user-bar {
+      display: flex; align-items: center; gap: 12px; margin-left: auto;
+      font-family: var(--font-mono); font-size: 10px; color: var(--text3); letter-spacing: 1px;
+    }
+    .user-bar .me strong { color: var(--text); }
+    .user-bar a { color: var(--text3); text-decoration: none; }
+    .user-bar a:hover { color: var(--amber); }
+    .role-pill { padding: 1px 6px; border-radius: 3px; font-size: 8px; letter-spacing: 1.5px; background: var(--bg3); color: var(--text2); }
+    .role-pill.admin { background: rgba(210,153,34,.15); color: var(--amber); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <a class="back" href="/">← INICIO</a>
+      <div>
+        <div class="title">▣ USUARIOS</div>
+        <div class="subtitle">ADMINISTRACIÓN DE CUENTAS LOCALES</div>
+      </div>
+      <div class="user-bar" id="user-bar"><span class="me">…</span></div>
+    </div>
+
+    <div class="toolbar">
+      <div class="spacer"></div>
+      <button class="btn-primary" id="btn-invite">+ INVITAR USUARIO</button>
+    </div>
+
+    <div id="users-container"><div class="empty-state">Cargando…</div></div>
+  </div>
+
+  <div id="modal" style="display:none"></div>
+
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
+    function escHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function fmtDate(s){ return s ? String(s).slice(0,10) : '—'; }
+
+    let ME = null;
+
+    async function loadMe(){
+      try { const r = await fetch('/auth/me'); const d = await r.json(); ME = d.user; } catch { ME = null; }
+      const bar = document.getElementById('user-bar');
+      if (!ME) { bar.innerHTML = `<a href="/login">INICIAR SESIÓN</a>`; return; }
+      bar.innerHTML = `
+        <span class="me"><strong>${escHtml(ME.email)}</strong></span>
+        <span class="role-pill ${ME.role==='admin'?'admin':''}">${ME.role.toUpperCase()}</span>
+        <a href="/me">MI PERFIL</a>
+        <a href="#" onclick="event.preventDefault();doLogout()">SALIR</a>`;
+    }
+    window.doLogout = async function(){
+      await fetch('/auth/logout', {method:'POST'});
+      location.href = '/login';
+    };
+
+    async function loadUsers(){
+      const cont = document.getElementById('users-container');
+      cont.innerHTML = '<div class="empty-state">Cargando…</div>';
+      try {
+        const r = await fetch('/api/admin/users');
+        if (!r.ok) {
+          cont.innerHTML = `<div class="empty-state" style="color:var(--red)">No autorizado o sin sesión</div>`;
+          return;
+        }
+        const d = await r.json();
+        const users = d.users || [];
+        if (!users.length) { cont.innerHTML = '<div class="empty-state">Sin usuarios</div>'; return; }
+        cont.innerHTML = `
+          <table>
+            <thead><tr>
+              <th>EMAIL</th><th>NOMBRE</th><th>ROL</th><th>ESTADO</th><th>CREADO</th><th>ÚLTIMO LOGIN</th><th></th>
+            </tr></thead>
+            <tbody>${users.map(rowHtml).join('')}</tbody>
+          </table>`;
+      } catch (e) {
+        cont.innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${escHtml(e.message)}</div>`;
+      }
+    }
+    function rowHtml(u){
+      const isMe = ME && ME.id === u.id;
+      const pending = !u.is_active && !u.last_login;
+      const stateBadge = pending
+        ? '<span class="badge" style="background:rgba(210,153,34,.15);color:var(--amber)">PENDIENTE</span>'
+        : `<span class="badge ${u.is_active?'b-active':'b-inactive'}">${u.is_active?'ACTIVO':'INACTIVO'}</span>`;
+      const actions = [];
+      actions.push(`<button class="btn-ghost" onclick='editUser(${JSON.stringify(u)})'>EDITAR</button>`);
+      if (pending) {
+        actions.push(`<button class="btn-ghost" onclick="reinvite(${u.id}, '${escHtml(u.email)}')">↻ REENVIAR</button>`);
+      } else if (u.is_active) {
+        actions.push(`<button class="btn-ghost" onclick="sendReset(${u.id}, '${escHtml(u.email)}')">🔑 RESET</button>`);
+      }
+      if (!isMe) {
+        actions.push(`<button class="btn-danger" onclick="deleteUser(${u.id}, '${escHtml(u.email)}')">×</button>`);
+      }
+      return `<tr>
+        <td><strong>${escHtml(u.email)}</strong>${isMe ? ' <span style="color:var(--text3)">(tú)</span>' : ''}</td>
+        <td style="color:var(--text2)">${escHtml(u.name || '—')}</td>
+        <td><span class="badge b-${u.role}">${u.role.toUpperCase()}</span></td>
+        <td>${stateBadge}</td>
+        <td style="color:var(--text2)">${fmtDate(u.created_at)}</td>
+        <td style="color:var(--text2)">${fmtDate(u.last_login)}</td>
+        <td style="text-align:right">${actions.join(' ')}</td>
+      </tr>`;
+    }
+
+    document.getElementById('btn-invite').addEventListener('click', () => openInviteModal());
+
+    window.openInviteModal = function(){
+      const m = document.getElementById('modal');
+      m.style.display = 'block';
+      m.innerHTML = `
+        <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+          <div class="modal">
+            <div class="modal-head">
+              <h3>INVITAR USUARIO</h3>
+              <button class="modal-close" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="field"><label>EMAIL</label>
+                <input id="i-email" type="email" placeholder="usuario@epiuse.com" autofocus>
+              </div>
+              <div class="field"><label>NOMBRE (opcional)</label>
+                <input id="i-name">
+              </div>
+              <div class="field"><label>ROL</label>
+                <select id="i-role">
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                </select>
+              </div>
+              <div style="font-size:10px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px">
+                El usuario recibirá un email con un link para activar su cuenta y elegir su password.
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn-ghost" onclick="closeModal()">CANCELAR</button>
+              <button class="btn-primary" onclick="submitInvite()">ENVIAR INVITACIÓN</button>
+            </div>
+          </div>
+        </div>`;
+    };
+
+    window.editUser = function(u){
+      const m = document.getElementById('modal');
+      m.style.display = 'block';
+      m.innerHTML = `
+        <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+          <div class="modal">
+            <div class="modal-head">
+              <h3>EDITAR USUARIO</h3>
+              <button class="modal-close" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="field"><label>EMAIL</label>
+                <input id="f-email" type="email" value="${escHtml(u.email)}" readonly>
+              </div>
+              <div class="field"><label>NOMBRE</label>
+                <input id="f-name" value="${escHtml(u.name || '')}">
+              </div>
+              <div class="field"><label>ROL</label>
+                <select id="f-role">
+                  <option value="user"  ${u.role==='user' ?'selected':''}>user</option>
+                  <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
+                </select>
+              </div>
+              <div class="field"><label>ACTIVO</label>
+                <select id="f-active">
+                  <option value="true"  ${u.is_active ?'selected':''}>activo</option>
+                  <option value="false" ${!u.is_active ?'selected':''}>inactivo</option>
+                </select>
+              </div>
+              <div style="font-size:10px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px;margin-top:8px">
+                Para resetear el password, usa el botón "🔑 RESET" en la fila — el usuario recibirá un email con link.
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn-ghost" onclick="closeModal()">CANCELAR</button>
+              <button class="btn-primary" onclick="saveUser(${u.id})">GUARDAR</button>
+            </div>
+          </div>
+        </div>`;
+    };
+    window.closeModal = function(){ document.getElementById('modal').style.display = 'none'; };
+
+    window.submitInvite = async function(){
+      const email = document.getElementById('i-email').value.trim();
+      if (!email) { alert('Email obligatorio'); return; }
+      const body = {
+        email,
+        name: document.getElementById('i-name').value.trim() || null,
+        role: document.getElementById('i-role').value,
+      };
+      const r = await fetch('/api/admin/users/invite', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(()=>({}));
+        alert('Error: ' + (e.detail || r.statusText));
+        return;
+      }
+      const d = await r.json();
+      closeModal();
+      loadUsers();
+      if (!d.email_sent) {
+        alert('Usuario creado, pero falló el envío del correo. Verifica la configuración SMTP.');
+      }
+    };
+
+    window.saveUser = async function(id){
+      const body = {
+        name:      document.getElementById('f-name').value.trim() || null,
+        role:      document.getElementById('f-role').value,
+        is_active: document.getElementById('f-active').value === 'true',
+      };
+      const r = await fetch('/api/admin/users/' + id, {
+        method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(()=>({}));
+        alert('Error: ' + (e.detail || r.statusText));
+        return;
+      }
+      closeModal();
+      loadUsers();
+    };
+
+    window.reinvite = async function(id, email){
+      if (!confirm(`Reenviar invitación a "${email}"?`)) return;
+      const r = await fetch('/api/admin/users/' + id + '/reinvite', {method:'POST'});
+      if (!r.ok) { alert('Error: ' + r.statusText); return; }
+      const d = await r.json();
+      alert(d.email_sent ? '✓ Invitación reenviada' : 'Generado el token, pero el envío falló');
+    };
+
+    window.sendReset = async function(id, email){
+      if (!confirm(`Enviar link de reset de password a "${email}"?`)) return;
+      const r = await fetch('/api/admin/users/' + id + '/send-reset', {method:'POST'});
+      if (!r.ok) { alert('Error: ' + r.statusText); return; }
+      const d = await r.json();
+      alert(d.sent ? '✓ Email de reset enviado' : 'Token generado, pero el envío falló');
+    };
+
+    window.deleteUser = async function(id, email){
+      if (!confirm(`¿Eliminar usuario "${email}"? No se puede deshacer.`)) return;
+      const r = await fetch('/api/admin/users/' + id, {method:'DELETE'});
+      if (!r.ok) { alert('Error: ' + r.statusText); return; }
+      loadUsers();
+    };
+
+    (async () => { await loadMe(); loadUsers(); })();
+  </script>
+</body>
+</html>

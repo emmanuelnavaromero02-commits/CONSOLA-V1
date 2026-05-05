@@ -1,0 +1,25 @@
+# Terraform state and lock cache
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Secrets passed to terraform
+*.tfvars
+*.tfvars.json
+!*.example.tfvars
+!*.tfvars.example
+
+# Outputs containing identifiers / endpoints
+terraform-outputs.json
+
+# SSH / deploy keys
+*.pem
+*.pem.bak
+modecissions-deploy-key
+modecissions-deploy-key.pub
+
+# OS
+.DS_Store
+Thumbs.db

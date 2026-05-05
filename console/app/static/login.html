@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — MODecissions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    body {
+      padding: 0; margin: 0; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      height: 100vh;
+    }
+    .login-card {
+      width: 380px; background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 36px 32px;
+    }
+    .login-brand {
+      font-family: var(--font-ui); font-size: 22px; color: var(--green);
+      letter-spacing: 2px; text-align: center; font-weight: 700;
+    }
+    .login-brand .accent { color: var(--amber); }
+    .login-tagline {
+      text-align: center; font-size: 9px; color: var(--text3);
+      letter-spacing: 2px; margin-top: 6px; margin-bottom: 32px;
+    }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+    .field label {
+      font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px;
+    }
+    .field input {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 10px 12px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px;
+    }
+    .field input:focus { outline: none; border-color: var(--amber); }
+    .btn-login {
+      width: 100%; background: var(--amber); border: none; color: #1a1408;
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: 2px;
+      padding: 12px; border-radius: 4px; cursor: pointer; font-weight: 600;
+      margin-top: 8px;
+    }
+    .btn-login:hover { filter: brightness(1.1); }
+    .btn-login:disabled { opacity: .5; cursor: not-allowed; }
+    .err {
+      color: var(--red); font-size: 11px; font-family: var(--font-mono);
+      text-align: center; margin-top: 12px; min-height: 16px;
+    }
+    .footer {
+      text-align: center; font-size: 9px; color: var(--text3);
+      letter-spacing: 1px; margin-top: 24px; font-family: var(--font-mono);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-brand">MO<span class="accent">D</span>ECISSIONS</div>
+    <div class="login-tagline">DECISION INTELLIGENCE PLATFORM</div>
+
+    <form id="login-form" onsubmit="return doLogin(event)">
+      <div class="field">
+        <label>EMAIL</label>
+        <input id="email" type="email" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label>PASSWORD</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn-login" id="btn-login" type="submit">INICIAR SESIÓN →</button>
+      <div class="err" id="err"></div>
+    </form>
+
+    <div style="text-align:center;margin-top:14px">
+      <a href="/forgot-password" style="color:var(--text3);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;text-decoration:none">¿OLVIDASTE TU PASSWORD?</a>
+    </div>
+
+    <div class="footer">v1.0 · LOGIN LOCAL · SSO PRÓXIMAMENTE</div>
+  </div>
+
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
+
+    function nextUrl() {
+      const p = new URLSearchParams(location.search);
+      const n = p.get('next');
+      if (!n) return '/';
+      // Same-path relative URLs always allowed
+      if (n.startsWith('/') && !n.startsWith('//')) return n;
+      // Allow same-hostname absolute URLs (cross-port within the org / dev),
+      // and any localhost target for development.
+      try {
+        const u = new URL(n);
+        if (u.hostname === location.hostname) return u.toString();
+        if (location.hostname === 'localhost' && u.hostname === 'localhost') return u.toString();
+      } catch (_) {}
+      return '/';
+    }
+
+    async function doLogin(ev) {
+      ev.preventDefault();
+      const btn = document.getElementById('btn-login');
+      const err = document.getElementById('err');
+      err.textContent = '';
+      btn.disabled = true;
+      try {
+        const r = await fetch('/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            email: document.getElementById('email').value,
+            password: document.getElementById('password').value,
+          })
+        });
+        if (!r.ok) {
+          if (r.status === 401) err.textContent = 'Credenciales inválidas';
+          else                  err.textContent = 'Error: ' + r.statusText;
+          btn.disabled = false;
+          return;
+        }
+        location.href = nextUrl();
+      } catch(e) {
+        err.textContent = 'Error de red: ' + e.message;
+        btn.disabled = false;
+      }
+      return false;
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+name: replicon_client_latest
+description: 'Client - Ultima extraccion Replicon Bronze'
+layer: silver
+sources:
+- raw/replicon/Client
+sql: "SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/Client/**/*.parquet', hive_partitioning=true, union_by_name=true)"

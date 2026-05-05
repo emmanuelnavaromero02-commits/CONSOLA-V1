@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MODecissions · Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    .hdr-nav { display:flex; gap:4px; margin-left:10px; }
+    .hdr-nav-btn {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text3);
+      text-decoration: none;
+      padding: 3px 9px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      transition: color .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .hdr-nav-btn:hover { color: var(--green); border-color: var(--green); }
+    .hdr-nav-btn.studio:hover { color: var(--amber); border-color: var(--amber); }
+  </style>
+</head>
+<body>
+
+  <!-- CRT overlay -->
+  <div class="crt-overlay"></div>
+  <div class="scanlines"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">MO<span class="logo-accent">D</span>ECISSIONS</span>
+      <span class="logo-sub">MONITOR // v0.1.0</span>
+    </div>
+    <div class="header-marquee">
+      <div class="marquee-track">
+        <span>◈ PIPELINE DAG &nbsp;&nbsp;&nbsp; ◈ BRONZE → SILVER → GOLD &nbsp;&nbsp;&nbsp; ◈ JOB MONITORING &nbsp;&nbsp;&nbsp; ◈ MCP CARTRIDGES &nbsp;&nbsp;&nbsp; ◈ AI ASSISTANT &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+        <span>◈ PIPELINE DAG &nbsp;&nbsp;&nbsp; ◈ BRONZE → SILVER → GOLD &nbsp;&nbsp;&nbsp; ◈ JOB MONITORING &nbsp;&nbsp;&nbsp; ◈ MCP CARTRIDGES &nbsp;&nbsp;&nbsp; ◈ AI ASSISTANT &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="status-dot blink"></span>
+      <span class="status-text" id="sys-status">ONLINE</span>
+      <button class="btn-theme" id="theme-btn" onclick="cycleTheme()" title="Cambiar tema">☾ DARK</button>
+      <div class="hdr-nav">
+        <a href="/studio" class="hdr-nav-btn studio">⚙ Studio</a>
+        <a href="/rag" class="hdr-nav-btn" style="color:var(--cyan);border-color:var(--cyan)">◈ RAG</a>
+        <a href="/viewer/vault" class="hdr-nav-btn" style="color:var(--amber);border-color:var(--amber)" target="_blank">🔑 Vault</a>
+        <a href="/" class="hdr-nav-btn">⌂</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <div class="app-body">
+  <main class="layout">
+
+    <!-- LEFT: Assistant terminal -->
+    <section class="panel panel-main">
+      <div class="panel-title">
+        <span class="panel-icon">▶</span> ASSISTANT TERMINAL
+        <span class="panel-badge" id="model-badge">CLAUDE SONNET 4.6</span>
+      </div>
+
+      <div class="chat-window" id="chat-window">
+        <div class="chat-boot">
+          <div class="boot-line">MODecissions Monitor — Pipeline &amp; Data Intelligence</div>
+          <div class="boot-line">Initializing MCP registry...</div>
+          <div class="boot-line" id="boot-mcp-line">Scanning cartridges...</div>
+          <div class="boot-line success" id="boot-ready">SYSTEM READY. Abriendo Pipeline Monitor...</div>
+        </div>
+      </div>
+
+      <div class="input-bar">
+        <span class="prompt-symbol">&gt;_</span>
+        <textarea id="chat-input" class="chat-input" rows="1"
+          placeholder="Consulta el estado del pipeline, jobs, datasets..."
+          onkeydown="handleKey(event)"></textarea>
+        <button class="btn-exec" onclick="sendMessage()" title="Send [Enter]">
+          EXEC
+        </button>
+      </div>
+    </section>
+
+    <!-- RIGHT: Sidebar -->
+    <aside class="sidebar">
+
+      <!-- Jobs -->
+      <div class="panel panel-side">
+        <div class="panel-title">
+          <span class="panel-icon">⚙</span> JOBS
+          <span class="panel-badge" id="jobs-running">—</span>
+          <button class="btn-sm" onclick="loadJobs()">↺</button>
+        </div>
+        <div id="jobs-list" class="jobs-list">
+          <div class="dim" style="padding:8px;font-size:10px">No jobs yet.</div>
+        </div>
+      </div>
+
+      <!-- MCP Servers -->
+      <div class="panel panel-side">
+        <div class="panel-title">
+          <span class="panel-icon">◈</span> MCP SERVERS
+          <button class="btn-sm" onclick="loadServers(true)">↺</button>
+        </div>
+        <div id="servers-list" class="servers-list">
+          <div class="loading-dots">SCANNING<span class="dots"></span></div>
+        </div>
+        <div class="servers-footer">
+          <span class="dim">TOOLS AVAILABLE:</span>
+          <span class="accent" id="tools-count">—</span>
+        </div>
+      </div>
+
+      <!-- Quick actions -->
+      <div class="panel panel-side">
+        <div class="panel-title">
+          <span class="panel-icon">◆</span> QUICK OPS
+        </div>
+        <div class="quick-ops">
+          <button class="qbtn" onclick="openViewer('/viewer/pipeline','Pipeline Monitor')" style="border-color:var(--amber);color:var(--amber)">◈ Pipeline DAG</button>
+          <button class="qbtn" onclick="openViewer('/viewer/jobs','Jobs History')">⚙ Historial de jobs</button>
+          <button class="qbtn" onclick="quickCmd('Lista todos los datasets disponibles')">📦 Listar datasets</button>
+          <button class="qbtn" onclick="quickCmd('Lista las fuentes de datos bronze disponibles')">🗄 Bronze sources</button>
+          <button class="qbtn" onclick="quickCmd('¿Qué MCP servers están registrados y qué herramientas tienen?')">◈ MCP status</button>
+          <button class="qbtn" onclick="openDatasets()">📊 Datasets panel</button>
+          <button class="qbtn" onclick="window.location='/studio'" style="border-color:var(--cyan);color:var(--cyan)">⚙ Ir a Studio →</button>
+        </div>
+      </div>
+
+      <!-- Token usage -->
+      <div class="panel panel-side">
+        <div class="panel-title">
+          <span class="panel-icon">◎</span> TOKEN USAGE
+          <span class="panel-badge" id="token-calls">0 calls</span>
+        </div>
+        <div class="token-grid">
+          <div class="token-row">
+            <span class="token-label">INPUT</span>
+            <span class="token-val" id="tok-in">—</span>
+          </div>
+          <div class="token-row">
+            <span class="token-label">OUTPUT</span>
+            <span class="token-val" id="tok-out">—</span>
+          </div>
+          <div class="token-row token-cost-row">
+            <span class="token-label">COST (est.)</span>
+            <span class="token-val accent" id="tok-cost">—</span>
+          </div>
+        </div>
+        <div class="token-models" id="token-models"></div>
+      </div>
+
+      <!-- Activity log -->
+      <div class="panel panel-side panel-log">
+        <div class="panel-title">
+          <span class="panel-icon">▪</span> ACTIVITY
+        </div>
+        <div id="activity-log" class="activity-log">
+          <div class="log-entry dim">— no activity yet —</div>
+        </div>
+      </div>
+
+    </aside>
+  </main>
+
+  <!-- Viewer Panel (bottom split) -->
+  <div class="resize-handle" id="resize-handle" style="display:none"></div>
+  <div class="viewer-panel" id="viewer-panel" style="display:none">
+    <div class="viewer-panel-header">
+      <span class="panel-icon" style="padding:0 8px;font-size:9px;color:var(--green)">◈</span>
+      <div class="viewer-tabs" id="viewer-tabs"></div>
+      <div class="viewer-panel-actions">
+        <button class="btn-sm" onclick="popoutViewer()" title="Abrir en nueva pestaña">⬡</button>
+        <button class="btn-sm" onclick="closeViewerPanel()" title="Cerrar panel">✕</button>
+      </div>
+    </div>
+    <iframe id="viewer-frame" src="about:blank" frameborder="0" class="viewer-iframe"></iframe>
+  </div>
+  </div><!-- end app-body -->
+
+  <!-- Datasets modal -->
+  <div class="modal-overlay" id="datasets-modal" style="display:none" onclick="closeModal(event)">
+    <div class="modal">
+      <div class="modal-title">
+        <span class="panel-icon">📊</span> DATASETS REGISTRY
+        <button class="btn-sm" onclick="loadDatasets()">↺</button>
+        <button class="modal-close" onclick="document.getElementById('datasets-modal').style.display='none'">✕</button>
+      </div>
+      <div id="datasets-body" class="datasets-body">
+        <div class="loading-dots">LOADING<span class="dots"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=2"></script>
+  <script>
+    // Auto-open Pipeline Monitor after boot sequence completes (~2s)
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        if (typeof openViewer === 'function') {
+          openViewer('/viewer/pipeline', 'Pipeline Monitor');
+        }
+      }, 2200);
+    });
+
+    // Receive messages from viewer iframes
+    window.addEventListener('message', (ev) => {
+      if (!ev.data) return;
+
+      // DAG-to-assistant: pipeline viewer sends DAG code to chat
+      if (ev.data.type === 'dag_to_assistant') {
+        const input = document.getElementById('chat-input');
+        if (!input) return;
+        input.value = ev.data.message || '';
+        input.style.borderColor = 'var(--cyan)';
+        input.focus();
+        input.dispatchEvent(new Event('input'));
+        setTimeout(() => { input.style.borderColor = ''; }, 2000);
+        return;
+      }
+
+      // open_viewer: studio entity row "✏ DAG" button — navigate viewer to pipeline DAGs tab
+      if (ev.data.type === 'open_viewer' && ev.data.url) {
+        openViewer(ev.data.url, ev.data.label || 'DAG Editor');
+        return;
+      }
+    });
+  </script>
+</body>
+</html>
