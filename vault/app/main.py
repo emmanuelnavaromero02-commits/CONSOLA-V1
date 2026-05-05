@@ -29,7 +29,8 @@ from pathlib import Path
 
 import psycopg2
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends
+from app.auth import verify_internal_api_key, HTTPException
 
 _SECRETS_FILE = Path("/vault/secrets.yaml")
 _DATABASE_URL = os.getenv(
@@ -164,7 +165,7 @@ def health():
     return {"status": "ok", "store": "postgresql"}
 
 
-@app.post("/reload")
+@app.post("/reload", dependencies=[Depends(verify_internal_api_key)])
 def reload():
     _seed()
     return {"reloaded": True, "note": "ON CONFLICT DO NOTHING — existing entries not overwritten"}
@@ -172,7 +173,7 @@ def reload():
 
 # ── Connections ───────────────────────────────────────────────────────────────
 
-@app.get("/connections/{cartridge}")
+@app.get("/connections/{cartridge}", dependencies=[Depends(verify_internal_api_key)])
 def list_connections(cartridge: str):
     rows = _db_list("connections", cartridge)
     return {
@@ -182,7 +183,7 @@ def list_connections(cartridge: str):
     }
 
 
-@app.get("/connections/{cartridge}/{conn_id}")
+@app.get("/connections/{cartridge}/{conn_id}", dependencies=[Depends(verify_internal_api_key)])
 def get_connection(cartridge: str, conn_id: str):
     """Returns full credentials — called by DAGs internally, not exposed to users."""
     value = _db_get("connections", cartridge, conn_id)
@@ -191,13 +192,13 @@ def get_connection(cartridge: str, conn_id: str):
     return {"conn_id": conn_id, **value}
 
 
-@app.put("/connections/{cartridge}/{conn_id}")
+@app.put("/connections/{cartridge}/{conn_id}", dependencies=[Depends(verify_internal_api_key)])
 async def put_connection(cartridge: str, conn_id: str, body: dict):
     _db_upsert("connections", cartridge, conn_id, body)
     return {"saved": True, "conn_id": conn_id}
 
 
-@app.delete("/connections/{cartridge}/{conn_id}")
+@app.delete("/connections/{cartridge}/{conn_id}", dependencies=[Depends(verify_internal_api_key)])
 def delete_connection(cartridge: str, conn_id: str):
     if not _db_delete("connections", cartridge, conn_id):
         raise HTTPException(404, f"Connection '{cartridge}/{conn_id}' not found")
@@ -206,13 +207,13 @@ def delete_connection(cartridge: str, conn_id: str):
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
-@app.get("/secrets/{scope}")
+@app.get("/secrets/{scope}", dependencies=[Depends(verify_internal_api_key)])
 def list_secret_keys(scope: str):
     rows = _db_list("secrets", scope)
     return {"keys": [r["key"] for r in rows]}
 
 
-@app.get("/secrets/{scope}/{key}")
+@app.get("/secrets/{scope}/{key}", dependencies=[Depends(verify_internal_api_key)])
 def get_secret(scope: str, key: str):
     row = _db_get("secrets", scope, key)
     if row is None:
@@ -220,13 +221,13 @@ def get_secret(scope: str, key: str):
     return {"value": row.get("value", row)}
 
 
-@app.put("/secrets/{scope}/{key}")
+@app.put("/secrets/{scope}/{key}", dependencies=[Depends(verify_internal_api_key)])
 async def put_secret(scope: str, key: str, body: dict):
     _db_upsert("secrets", scope, key, {"value": body.get("value", body)})
     return {"saved": True}
 
 
-@app.delete("/secrets/{scope}/{key}")
+@app.delete("/secrets/{scope}/{key}", dependencies=[Depends(verify_internal_api_key)])
 def delete_secret(scope: str, key: str):
     if not _db_delete("secrets", scope, key):
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
@@ -235,13 +236,13 @@ def delete_secret(scope: str, key: str):
 
 # ── Destinations (legacy compat) ──────────────────────────────────────────────
 
-@app.get("/destinations")
+@app.get("/destinations", dependencies=[Depends(verify_internal_api_key)])
 def list_destinations():
     rows = _db_list("destinations", "platform")
     return {"destinations": [r["key"] for r in rows]}
 
 
-@app.get("/destinations/{name}")
+@app.get("/destinations/{name}", dependencies=[Depends(verify_internal_api_key)])
 def get_destination(name: str):
     config = _db_get("destinations", "platform", name)
     if config is None:

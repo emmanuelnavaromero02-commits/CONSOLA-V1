@@ -509,7 +509,7 @@ async function loadSecrets() {
   const scope  = document.getElementById('scope-input').value.trim() || 'platform';
   const tbody  = document.getElementById('secrets-tbody');
   const status = document.getElementById('secrets-status');
-  document.getElementById('secrets-title').textContent = `Secrets — scope: ${scope}`;
+  document.getElementById('secrets-title').textContent = `Secrets — scope: ${esc(scope)}`;
   tbody.innerHTML = '<tr class="empty-row"><td colspan="3">Cargando...</td></tr>';
   status.innerHTML = '';
   try {
@@ -581,7 +581,7 @@ function openAddSecret() {
 
 async function openEditSecret(key, scope) {
   _editingSecretKey = key;
-  document.getElementById('secret-modal-title').textContent = `Editar — ${key}`;
+  document.getElementById('secret-modal-title').textContent = `Editar — ${esc(key)}`;
   document.getElementById('fs-scope').value = scope;
   document.getElementById('fs-key').value   = key;
   document.getElementById('fs-key').readOnly = true;

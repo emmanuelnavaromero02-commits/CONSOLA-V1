@@ -18,6 +18,13 @@
 .lin-rows  { color:var(--cyan); width:80px; flex-shrink:0; font-family:var(--font-mono); text-align:right; }
 .lin-uri   { color:var(--text2); flex:1; font-size:10px; overflow:hidden; text-overflow:ellipsis; }
 </style>
+
+<script>
+function esc(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
 </head>
 <body>
 <div class="crt-overlay"></div>
@@ -81,7 +88,7 @@ function showTab(name){
     t.classList.toggle('active', names[i]===name);
   });
   document.querySelectorAll('.tab-content').forEach(c=>{
-    c.classList.toggle('active', c.id===`tab-${name}`);
+    c.classList.toggle('active', c.id===`tab-${esc(name)}`);
   });
   if(name==='lineage' && !document.getElementById('lineage-list').dataset.loaded) loadLineage();
 }
@@ -123,7 +130,7 @@ async function loadDataset(){
       document.getElementById('mapping-list').innerHTML = '<div class="empty-state">Sin mapeo de columnas definido</div>';
     }
   } catch(e) {
-    document.getElementById('meta').innerHTML = `<span style="color:var(--red)">Error cargando dataset: ${e.message}</span>`;
+    document.getElementById('meta').innerHTML = `<span style="color:var(--red)">Error cargando dataset: ${esc(e.message)}</span>`;
   }
 }
 
@@ -153,7 +160,7 @@ async function loadLineage(){
         <span class="lin-uri" title="${r.storage_uri||''}">${r.storage_uri||'—'}</span>
       </div>`).join('')}`;
   } catch(e) {
-    document.getElementById('lineage-list').innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+    document.getElementById('lineage-list').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
   }
 }
 
@@ -181,7 +188,7 @@ async function loadPreview(){
         </tbody>
       </table>`;
   } catch(e) {
-    document.getElementById('preview-wrap').innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+    document.getElementById('preview-wrap').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
   }
 }
 

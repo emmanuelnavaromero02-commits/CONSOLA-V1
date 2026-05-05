@@ -135,6 +135,34 @@ services:
       - postgres_gold
       - minio
 
+  vault:
+
+    build:
+
+      context: ../vault
+
+      dockerfile: Dockerfile
+
+    container_name: mode_vault
+
+    environment:
+
+      DATABASE_URL:       "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/modecissions"
+
+      INTERNAL_API_KEY:   ${INTERNAL_API_KEY:-modecissions-internal-key}
+
+    ports:
+
+      - "8300:8300"
+
+    volumes:
+
+      - ../vault/secrets.yaml:/vault/secrets.yaml:ro
+
+    depends_on:
+
+      - postgres
+
   mailhog:
     image: mailhog/mailhog:v1.0.1
     container_name: mode_mailhog

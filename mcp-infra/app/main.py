@@ -10,7 +10,8 @@ via the standard MCP contract:
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends
+from app.auth import verify_internal_api_key, HTTPException
 from pydantic import BaseModel
 
 from app import registry
@@ -54,12 +55,12 @@ class InvokeRequest(BaseModel):
 
 # ── MCP endpoints ──────────────────────────────────────────────────────────────
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_internal_api_key)])
 def get_tools():
     return {"tools": registry.list_tools()}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_internal_api_key)])
 async def invoke_tool(req: InvokeRequest):
     try:
         result = await registry.invoke(req.tool, req.args)
@@ -86,12 +87,12 @@ from app.rag.store import list_sources as _rag_list_sources, delete_source as _r
 from app.tools.rag import _do_ingest as _rag_do_ingest, _do_search as _rag_do_search
 
 
-@app.get("/rag/sources")
+@app.get("/rag/sources", dependencies=[Depends(verify_internal_api_key)])
 async def rag_rest_list_sources():
     return {"sources": await _rag_list_sources()}
 
 
-@app.delete("/rag/sources/{source_id}")
+@app.delete("/rag/sources/{source_id}", dependencies=[Depends(verify_internal_api_key)])
 async def rag_rest_delete_source(source_id: int):
     ok = await _rag_delete_source(source_id)
     if not ok:
@@ -99,7 +100,7 @@ async def rag_rest_delete_source(source_id: int):
     return {"deleted": True, "source_id": source_id}
 
 
-@app.post("/rag/search")
+@app.post("/rag/search", dependencies=[Depends(verify_internal_api_key)])
 async def rag_rest_search(body: dict):
     return {"results": await _rag_do_search(
         query=body["query"],
@@ -108,7 +109,7 @@ async def rag_rest_search(body: dict):
     )}
 
 
-@app.post("/rag/ingest")
+@app.post("/rag/ingest", dependencies=[Depends(verify_internal_api_key)])
 async def rag_rest_ingest(body: dict):
     content = body.get("content", "")
     if body.get("mime_type") == "application/pdf":

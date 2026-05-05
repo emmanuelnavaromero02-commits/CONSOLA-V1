@@ -17,6 +17,13 @@
 .type-tag { font-size:10px; color:var(--cyan); font-family:var(--font-mono); }
 td { vertical-align:top; }
 </style>
+
+<script>
+function esc(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
 </head>
 <body>
 <div class="crt-overlay"></div>
@@ -174,7 +181,7 @@ async function loadSchema(){
   } catch(e) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('schema-area').style.display = 'block';
-    document.getElementById('partition-info').innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+    document.getElementById('partition-info').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
   }
 }
 

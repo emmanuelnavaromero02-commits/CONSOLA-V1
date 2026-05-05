@@ -5,6 +5,7 @@ Job management (extract, get_job_status, list_jobs) is the cartridge's responsib
 from __future__ import annotations
 
 import os
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "modecissions-internal-key")
 import time
 import httpx
 
@@ -130,7 +131,7 @@ async def _get_catalog_context() -> str:
         return _catalog_text
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=20, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as client:
             r = await client.post(
                 f"{REFINEMENT_URL}/mcp/invoke",
                 json={"tool": "get_data_catalog", "args": {}},

@@ -155,6 +155,40 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  vault:
+
+    image: modecissions/vault:latest
+
+    container_name: mode_vault
+
+    env_file: .env
+
+    environment:
+
+      DATABASE_URL:       "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
+
+      INTERNAL_API_KEY:   ${INTERNAL_API_KEY:-modecissions-internal-key}
+
+    ports:
+
+      - "8300:8300"
+
+    volumes:
+
+      - /opt/modecissions/vault/secrets.yaml:/vault/secrets.yaml:ro
+
+    networks:
+
+      - modecissions_net
+
+    depends_on:
+
+      - postgres
+
+    restart: unless-stopped
+
+    logging: *default-logging
+
   mailhog:
     image: mailhog/mailhog:v1.0.1
     container_name: mode_mailhog

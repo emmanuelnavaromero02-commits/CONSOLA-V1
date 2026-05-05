@@ -71,6 +71,11 @@ default_args = {
 
 # ── Helpers (módulo-level, no son tareas de Airflow) ─────────────────────────
 
+
+def _get_internal_api_key() -> str:
+    from airflow.models import Variable
+    return Variable.get("INTERNAL_API_KEY", "modecissions-internal-key")
+
 def _get_connection(conn_id: str) -> tuple[str, str]:
     """Devuelve (base_url, token) desde una Airflow Connection replicon_<conn_id>."""
     from airflow.hooks.base import BaseHook
@@ -84,6 +89,12 @@ def _get_connection(conn_id: str) -> tuple[str, str]:
         )
     base_url = (conn.host or "").rstrip("/")
     token    = conn.password or ""
+    if token:
+        try:
+            from airflow.utils.log.secrets_masker import mask_secret
+            mask_secret(token)
+        except ImportError:
+            pass
     if not base_url or not token:
         raise ValueError(f"Conexión '{airflow_conn_id}' incompleta — falta Host o Password.")
     return base_url, token
@@ -96,7 +107,7 @@ def _watermark_get(entity: str) -> str | None:
             f"{MCP_INFRA_URL}/mcp/invoke",
             json={"tool": "watermark_get",
                   "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity}},
-            timeout=10,
+            timeout=10, headers={"X-Internal-Api-Key": _get_internal_api_key()}
         )
         return (r.json().get("result") or {}).get("last_value") if r.ok else None
     except Exception:
@@ -111,7 +122,7 @@ def _watermark_set(entity: str, field: str, value: str, run_id: str) -> None:
             json={"tool": "watermark_set",
                   "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity,
                            "watermark_field": field, "value": value, "run_id": run_id}},
-            timeout=10,
+            timeout=10, headers={"X-Internal-Api-Key": _get_internal_api_key()}
         )
     except Exception:
         pass
@@ -125,7 +136,7 @@ def _pipeline_run_save(dag_id: str, entity: str, **kwargs) -> None:
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": dag_id, "cartridge_id": CARTRIDGE_ID,
                            "entity": entity, **kwargs}},
-            timeout=10,
+            timeout=10, headers={"X-Internal-Api-Key": _get_internal_api_key()}
         )
     except Exception:
         pass
@@ -424,7 +435,7 @@ def replicon_extract():
             r = requests.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
                 json={"source": source},
-                timeout=300,
+                timeout=300, headers={"X-Internal-Api-Key": _get_internal_api_key()}
             )
             r.raise_for_status()
             data = r.json()

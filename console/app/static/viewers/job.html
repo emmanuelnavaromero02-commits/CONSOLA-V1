@@ -25,6 +25,13 @@
 .entity-ok  { color:var(--cyan); }
 .entity-err { color:var(--red); }
 </style>
+
+<script>
+function esc(str) {
+  if (str == null) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
 </head>
 <body>
 <div class="crt-overlay"></div>

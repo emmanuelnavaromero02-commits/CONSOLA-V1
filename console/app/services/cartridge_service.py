@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import os
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "modecissions-internal-key")
 import textwrap
 import zipfile
 from datetime import datetime, timezone
@@ -460,7 +461,7 @@ async def import_cartridge(zip_bytes: bytes) -> dict:
         mcp_infra_url = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
         dag_files_written: list[str] = []
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as client:
                 for name in names:
                     if not name.startswith("dags/") or not name.endswith(".py"):
                         continue

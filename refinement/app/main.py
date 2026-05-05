@@ -9,7 +9,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends
+from app.auth import verify_internal_api_key, HTTPException
 
 from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
@@ -60,7 +61,7 @@ app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
 # ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_internal_api_key)])
 async def mcp_tools():
     return {"tools": [
 
@@ -456,7 +457,7 @@ async def mcp_tools():
     ]}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_internal_api_key)])
 async def mcp_invoke(body: dict):
     tool = body.get("tool")
     args = body.get("args", {})
@@ -1085,12 +1086,12 @@ def _seed_relationships() -> int:
 
 # ── REST API ──────────────────────────────────────────────────────────────────
 
-@app.get("/datasets")
+@app.get("/datasets", dependencies=[Depends(verify_internal_api_key)])
 async def list_datasets():
     return {"datasets": store.list_datasets()}
 
 
-@app.get("/datasets/{name}/definition")
+@app.get("/datasets/{name}/definition", dependencies=[Depends(verify_internal_api_key)])
 async def dataset_definition(name: str):
     ds = store.get_dataset(name)
     if not ds:
@@ -1098,7 +1099,7 @@ async def dataset_definition(name: str):
     return ds
 
 
-@app.get("/datasets/{name}/schema")
+@app.get("/datasets/{name}/schema", dependencies=[Depends(verify_internal_api_key)])
 async def dataset_schema(name: str):
     ds = store.get_dataset(name)
     if not ds:
@@ -1106,7 +1107,7 @@ async def dataset_schema(name: str):
     return engine.get_dataset_schema(ds)
 
 
-@app.get("/datasets/{name}/data")
+@app.get("/datasets/{name}/data", dependencies=[Depends(verify_internal_api_key)])
 async def dataset_data(name: str, limit: int = 100):
     ds = store.get_dataset(name)
     if not ds:
@@ -1114,7 +1115,7 @@ async def dataset_data(name: str, limit: int = 100):
     return engine.query_dataset(ds, {}, limit)
 
 
-@app.post("/datasets/{name}/refresh")
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(verify_internal_api_key)])
 async def refresh_dataset(name: str):
     ds = store.get_dataset(name)
     if not ds:
@@ -1124,7 +1125,7 @@ async def refresh_dataset(name: str):
     return result
 
 
-@app.post("/refresh-by-source")
+@app.post("/refresh-by-source", dependencies=[Depends(verify_internal_api_key)])
 async def refresh_by_source(body: dict):
     """
     Re-materializa todos los datasets Silver/Master cuyas fuentes incluyen

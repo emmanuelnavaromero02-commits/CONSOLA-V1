@@ -61,6 +61,11 @@ ALL_ENTITIES: list[str] = list(_WATERMARK_FIELD.keys())
 #   Host:      https://<tenant>.replicon.com/analyticsapi
 #   Password:  <bearer_token>
 
+
+def _get_internal_api_key() -> str:
+    from airflow.models import Variable
+    return Variable.get("INTERNAL_API_KEY", "modecissions-internal-key")
+
 def _get_connection(conn_id: str) -> tuple[str, str]:
     """Return (base_url, token) from Airflow connection replicon_<conn_id>."""
     from airflow.hooks.base import BaseHook
@@ -78,6 +83,12 @@ def _get_connection(conn_id: str) -> tuple[str, str]:
         )
     base_url = conn.host or ""
     token    = conn.password or ""
+    if token:
+        try:
+            from airflow.utils.log.secrets_masker import mask_secret
+            mask_secret(token)
+        except ImportError:
+            pass
     if not base_url or not token:
         raise ValueError(
             f"Conexión Airflow '{airflow_conn_id}' incompleta — falta Host o Password.\n"
@@ -95,7 +106,7 @@ def _watermark_get(entity: str) -> str | None:
             f"{MCP_INFRA_URL}/mcp/invoke",
             json={"tool": "watermark_get",
                   "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity}},
-            timeout=10,
+            timeout=10, headers={"X-Internal-Api-Key": _get_internal_api_key()}
         )
         if r.ok:
             return r.json().get("result", {}).get("last_value")
@@ -117,7 +128,7 @@ def _watermark_set(entity: str, watermark_field: str, value: str, run_id: str) -
                       "value":           value,
                       "run_id":          run_id,
                   }},
-            timeout=10,
+            timeout=10, headers={"X-Internal-Api-Key": _get_internal_api_key()}
         )
     except Exception:
         pass
@@ -131,7 +142,7 @@ def _pipeline_run_save(dag_id: str, entity: str, **kwargs) -> None:
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": dag_id, "cartridge_id": CARTRIDGE_ID,
                            "entity": entity, **kwargs}},
-            timeout=10,
+            timeout=10, headers={"X-Internal-Api-Key": _get_internal_api_key()}
         )
     except Exception:
         pass

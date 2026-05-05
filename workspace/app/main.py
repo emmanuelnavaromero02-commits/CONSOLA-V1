@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "modecissions-internal-key")
 from datetime import date, datetime
 from pathlib import Path
 
@@ -252,11 +253,15 @@ async def serve_app(request: Request, name: str):
 
 @app.get("/api/data/{dataset}")
 async def api_data(request: Request, dataset: str, limit: int = 5000):
-    require_user(request)
-    async with httpx.AsyncClient(timeout=60) as c:
+    user = require_user(request)
+
+    sql = f"SELECT * FROM pggold.gold_{dataset} LIMIT {limit}"
+
+    async with httpx.AsyncClient(timeout=60, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "query_dataset",
-                               "args": {"name": dataset, "limit": limit}})
+                         json={"tool": "preview_transform",
+                               "args": {"sql": sql, "limit": limit}})
+
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
@@ -265,8 +270,7 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
 
 @app.get("/api/data/{dataset}/options")
 async def api_data_options(request: Request, dataset: str, columns: str = ""):
-    """Distinct values per column for filter dropdowns."""
-    require_user(request)
+    user = require_user(request)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
     if not cols:
         raise HTTPException(400, "columns param required")
@@ -274,13 +278,14 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     for col in cols:
         if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_ ]*$', col):
             raise HTTPException(400, f"Invalid column name: {col}")
+
     sqls = [
-        f"SELECT DISTINCT {col} AS val, '{col}' AS col "
+        f"SELECT DISTINCT {col} AS val, \'{col}\' AS col "
         f"FROM pggold.gold_{dataset} WHERE {col} IS NOT NULL"
         for col in cols
     ]
     union_sql = " UNION ALL ".join(sqls) + " ORDER BY col, val"
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with httpx.AsyncClient(timeout=30, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {"sql": union_sql, "limit": 5000}})
@@ -296,8 +301,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
 
 @app.post("/api/data/{dataset}/query")
 async def api_data_query(request: Request, dataset: str, body: dict):
-    """Filtered query against a gold dataset (mirrors console for app compat)."""
-    require_user(request)
+    user = require_user(request)
     import re as _re
     filters = body.get("filters", {})
     limit   = min(int(body.get("limit", 2000)), 10000)
@@ -331,7 +335,7 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
 
-    async with httpx.AsyncClient(timeout=60) as c:
+    async with httpx.AsyncClient(timeout=60, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {"sql": sql, "limit": limit}})
@@ -360,7 +364,7 @@ async def api_users_list(request: Request):
 @app.get("/api/datasets")
 async def api_datasets_list(request: Request):
     require_user(request)
-    async with httpx.AsyncClient(timeout=20) as c:
+    async with httpx.AsyncClient(timeout=20, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "list_datasets", "args": {}})
     if r.status_code != 200:
@@ -371,7 +375,7 @@ async def api_datasets_list(request: Request):
 @app.get("/api/datasets/{name}/schema")
 async def api_dataset_schema(request: Request, name: str):
     require_user(request)
-    async with httpx.AsyncClient(timeout=20) as c:
+    async with httpx.AsyncClient(timeout=20, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "get_schema", "args": {"name": name}})
     if r.status_code != 200:

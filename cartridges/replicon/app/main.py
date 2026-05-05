@@ -4,7 +4,8 @@ import inspect
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from app.auth import verify_internal_api_key
 from fastapi.responses import JSONResponse
 
 from app.api.routes_health import router as health_router
@@ -62,7 +63,7 @@ def _tool_schema(tool_fn) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_internal_api_key)])
 async def mcp_tools():
     """Return all registered MCP tools in the console registry format."""
     tool_list = await mcp.list_tools()
@@ -82,7 +83,7 @@ async def mcp_tools():
     return {"tools": tools}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_internal_api_key)])
 async def mcp_invoke(body: dict):
     """Invoke a tool by name with args. Returns the tool result."""
     tool_name = body.get("tool", "")
@@ -124,7 +125,7 @@ async def mcp_invoke(body: dict):
 
 # ── Custom tools reload ───────────────────────────────────────────────────────
 
-@app.post("/mcp-reload")
+@app.post("/mcp-reload", dependencies=[Depends(verify_internal_api_key)])
 def mcp_reload():
     count = load_custom_tools()
     return JSONResponse({"reloaded": count, "status": "ok"})

@@ -10,6 +10,7 @@ Constraints (vs the builder assistant):
 from __future__ import annotations
 
 import os
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "modecissions-internal-key")
 import time
 from typing import Any
 
@@ -145,7 +146,7 @@ async def _discover_tools() -> tuple[list[dict], dict[str, str]]:
 
     tools: list[dict] = []
     server_map: dict[str, str] = {}
-    async with httpx.AsyncClient(timeout=10) as c:
+    async with httpx.AsyncClient(timeout=10, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         for srv_id, base_url in SERVER_URLS.items():
             allow = ALLOWED_TOOLS.get(srv_id, set())
             try:
@@ -174,7 +175,7 @@ async def _raw_invoke(server_id: str, tool: str, args: dict) -> Any:
     base = SERVER_URLS.get(server_id)
     if not base:
         return {"error": f"unknown server: {server_id}"}
-    async with httpx.AsyncClient(timeout=120) as c:
+    async with httpx.AsyncClient(timeout=120, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
         r = await c.post(f"{base}/mcp/invoke", json={"tool": tool, "args": args})
     try:
         return r.json()
@@ -278,7 +279,7 @@ async def _catalog_context() -> str:
     if _catalog_text and (time.time() - _catalog_ts) < _CATALOG_TTL:
         return _catalog_text
     try:
-        async with httpx.AsyncClient(timeout=20) as c:
+        async with httpx.AsyncClient(timeout=20, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as c:
             r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                              json={"tool": "get_data_catalog", "args": {}})
             r.raise_for_status()

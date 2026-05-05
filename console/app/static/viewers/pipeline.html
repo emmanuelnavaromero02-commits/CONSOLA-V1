@@ -492,7 +492,7 @@ function renderRow(row) {
       ? `<span style="color:var(--text3);font-size:8px;font-family:var(--font-mono)">airflow</span>`
       : '';
     const errSnippet = lr.error
-      ? `<div style="color:#ff2d55;font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px" title="${esc(lr.error)}">${esc(lr.error.substring(0,80))}</div>`
+      ? `<div style="color:#ff2d55;font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px" title="${esc(lr.error)}">${esc(lr.error.substring(0,80)}</div>`
       : '';
     jobHtml = `
       <div class="job-status-row">
@@ -508,7 +508,7 @@ function renderRow(row) {
       <div class="job-status-row">
         <span class="${statusColor}">●</span>
         <span style="color:var(--text3)">${j.status} · ${reltime(j.created_at)}</span>
-        ${j.job_id ? `<a href="/viewer/jobs/${j.job_id}" style="color:var(--text3);font-size:9px;text-decoration:none;" title="Ver logs">logs →</a>` : ''}
+        ${j.job_id ? `<a href="/viewer/jobs/${esc(j.job_id)}" style="color:var(--text3);font-size:9px;text-decoration:none;" title="Ver logs">logs →</a>` : ''}
       </div>`;
   }
 
@@ -530,7 +530,7 @@ function renderRow(row) {
     <div class="cell" style="position:relative">
       ${b.status === 'error'
         ? `<div class="bronze-date" style="color:#ff2d55">${dot('error')} Error</div>
-           <div class="bronze-src" style="color:#ff2d55;font-size:9px;margin-top:2px">${esc((lr?.error||'').substring(0,100))}</div>`
+           <div class="bronze-src" style="color:#ff2d55;font-size:9px;margin-top:2px">${esc((lr?.error||'').substring(0,100)}</div>`
         : b.status !== 'never'
         ? `<div class="bronze-date">${dot(b.status)} ${b.latest_date || '—'}</div>
            <div class="bronze-count">${fmtCount(b.record_count)} rows</div>
@@ -602,7 +602,7 @@ function render(rows) {
 // ── Extract actions ───────────────────────────────────────────────────────────
 
 async function extractEntity(cartridge, entity) {
-  const r = await fetch(`/api/pipeline/${cartridge}/${entity}/extract`, {
+  const r = await fetch(`/api/pipeline/${esc(cartridge)}/${esc(entity)}/extract`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({mode: 'incremental'}),
@@ -891,7 +891,7 @@ async function deployDag() {
       _selectedDag = dagId;
       setTimeout(loadDags, 1200);
     } else {
-      setDeployMsg(`Error: ${esc(JSON.stringify(d.result || d))}`, 'err');
+      setDeployMsg(`Error: ${esc(JSON.stringify(d.result || d)}`, 'err');
     }
   } catch(e) {
     setDeployMsg(`Error: ${esc(e.message)}`, 'err');
@@ -1085,7 +1085,7 @@ async function applyTemplate(templateId) {
     setDeployMsg('Plantilla cargada — revisa los TODO y despliega', 'ok');
     setTimeout(() => setDeployMsg('', ''), 4000);
   } catch(e) {
-    alert(`Error al cargar plantilla: ${e.message}`);
+    alert(`Error al cargar plantilla: ${esc(e.message)}`);
   }
 }
 

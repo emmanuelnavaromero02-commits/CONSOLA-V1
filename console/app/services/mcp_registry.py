@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "modecissions-internal-key")
 
 import asyncpg
 import httpx
@@ -128,7 +129,7 @@ async def invoke(server_id: str, tool: str, args: dict) -> dict:
     if not row:
         return {"error": f"Server '{server_id}' not found"}
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as client:
             r = await client.post(
                 f"{row['url']}/mcp/invoke",
                 json={"tool": tool, "args": args},
@@ -158,7 +159,7 @@ async def health_check_all() -> int:
 
 async def _fetch_tools(url: str) -> list[dict]:
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers={"X-Internal-Api-Key": INTERNAL_API_KEY}) as client:
             r = await client.get(f"{url}/mcp/tools")
             if r.status_code < 400:
                 return r.json().get("tools", [])
