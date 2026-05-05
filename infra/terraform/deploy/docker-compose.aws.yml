@@ -155,6 +155,21 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+
+  vault:
+    image: modecissions/vault:latest
+    container_name: mode_vault
+    env_file: .env
+    environment:
+      DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
+      INTERNAL_API_KEY:  ${INTERNAL_API_KEY:-dev-secret-key}
+    networks:
+      - modecissions_net
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    logging: *default-logging
+
   mailhog:
     image: mailhog/mailhog:v1.0.1
     container_name: mode_mailhog
@@ -175,7 +190,7 @@ services:
     environment:
       AIRFLOW_URL:       http://airflow:8080
       AIRFLOW_USER:      ${AIRFLOW_ADMIN_USER:-admin}
-      AIRFLOW_PASSWORD:  ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      AIRFLOW_PASSWORD:  ${AIRFLOW_ADMIN_PASSWORD}
       AIRFLOW_DAGS_PATH: /opt/airflow/dags
       MINIO_BUCKET:      ${S3_BUCKET_NAME}
       MINIO_ENDPOINT:    "s3.${AWS_REGION:-us-east-1}.amazonaws.com"
@@ -194,7 +209,7 @@ services:
       PG_GOLD_DB:        modecissions_gold
       SUPERSET_URL:      http://superset:8088
       SUPERSET_USER:     admin
-      SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
     ports:
       - "8010:8010"
     volumes:
@@ -265,11 +280,13 @@ services:
     command: -c "airflow db migrate && airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local"
     environment:
       AIRFLOW_ADMIN_USER:                   ${AIRFLOW_ADMIN_USER:-admin}
-      AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD}
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY}
+      INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:-dev-secret-key}
+      VAULT_URL:                            http://vault:8300
     networks:
       - modecissions_net
     depends_on:
@@ -288,8 +305,10 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY}
+      INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:-dev-secret-key}
+      VAULT_URL:                            http://vault:8300
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
-      _PIP_ADDITIONAL_REQUIREMENTS:         "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
+      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME}
@@ -322,7 +341,9 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY}
-      _PIP_ADDITIONAL_REQUIREMENTS:         "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
+      INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:-dev-secret-key}
+      VAULT_URL:                            http://vault:8300
+      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME}

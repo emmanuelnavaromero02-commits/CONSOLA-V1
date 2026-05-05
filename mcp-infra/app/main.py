@@ -9,8 +9,9 @@ via the standard MCP contract:
   GET  /health             → { status, tools }
 """
 from __future__ import annotations
+import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 
 from app import registry
@@ -39,6 +40,15 @@ async def _lifespan(app: FastAPI):
     yield
 
 
+
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+    # Validate the key and that the caller explicitly declares itself
+    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+        raise HTTPException(status_code=403, detail="Invalid internal service origin")
+    if x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 app = FastAPI(
     title="MODecissions MCP Infra",
     description="MCP tools for Airflow, MinIO, PostgreSQL, Superset, RAG",
@@ -54,12 +64,12 @@ class InvokeRequest(BaseModel):
 
 # ── MCP endpoints ──────────────────────────────────────────────────────────────
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
 def get_tools():
     return {"tools": registry.list_tools()}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
 async def invoke_tool(req: InvokeRequest):
     try:
         result = await registry.invoke(req.tool, req.args)
