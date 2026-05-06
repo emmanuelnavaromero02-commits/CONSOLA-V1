@@ -342,7 +342,7 @@ async function loadConnections() {
       return;
     }
     tbody.innerHTML = conns.map(c => renderConnRow(c)).join('');
-    status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — ${conns.length} conexión${conns.length>1?'es':''}`;
+    status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — ${esc(conns.length)} conexión${conns.length>1?'es':''}`;
   } catch(e) {
     tbody.innerHTML = `<tr class="empty-row"><td colspan="5" style="color:#ff2d55">Error: ${esc(e.message)}</td></tr>`;
     status.innerHTML = `<span class="status-err">✖ ${esc(e.message)}</span>`;
@@ -523,7 +523,7 @@ async function loadSecrets() {
       return;
     }
     tbody.innerHTML = keys.map(k => renderSecretRow(scope, k)).join('');
-    status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — ${keys.length} secret${keys.length>1?'s':''}`;
+    status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — ${esc(keys.length)} secret${keys.length>1?'s':''}`;
   } catch(e) {
     tbody.innerHTML = `<tr class="empty-row"><td colspan="3" style="color:#ff2d55">Error: ${esc(e.message)}</td></tr>`;
     status.innerHTML = `<span class="status-err">✖ ${esc(e.message)}</span>`;

@@ -34,7 +34,7 @@ class DuckDBEngine:
     def __init__(self):
         self.minio_endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
         self.minio_access   = os.environ.get("MINIO_ACCESS_KEY", "minio")
-        self.minio_secret   = os.environ.get("MINIO_SECRET_KEY", "minio123")
+        self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
         self.pg_url         = os.environ.get("DATABASE_URL", "")
@@ -192,15 +192,27 @@ class DuckDBEngine:
 
     # ── SQL preview ───────────────────────────────────────────────────────────
 
-    def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None) -> dict:
+    def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
         try:
-            sql = self.apply_rls(sql, user_context)
+            if params is None:
+                sql, params = self.get_rls_filters(sql, user_context)
+
+            # Using cached connection. The user requested read_only if possible, but DuckDB doesn't allow changing it on the fly.
             con = self._conn()
+
             effective_sql = self._inject_bucket(self._inject_latest_date(sql, sources or []))
             limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
-            schema_rows = con.execute(f"DESCRIBE {limited}").fetchall()
-            data = con.execute(limited).fetchall()
-            cols = [r[0] for r in schema_rows]
+
+            cursor = con.execute(limited, params)
+            desc = cursor.description
+            data = cursor.fetchall()
+
+            # duckdb Python API description returns (name, type_code, display_size, internal_size, precision, scale, null_ok)
+            # type_code is usually None or unhelpful in DuckDB, but we can return "UNKNOWN" or just map it as string.
+            # Actually, `cursor.description` in duckdb returns types like 'VARCHAR' in the second tuple item in newer duckdb versions.
+            # For robustness, we will extract it if available or fallback.
+            schema_rows = [{"name": c[0], "type": c[1] if len(c)>1 and isinstance(c[1], str) else "VARCHAR"} for c in desc]
+            cols = [c[0] for c in desc]
             return {
                 "schema":    [{"name": r[0], "type": r[1]} for r in schema_rows],
                 "data":      [dict(zip(cols, row)) for row in data],
@@ -222,30 +234,75 @@ class DuckDBEngine:
             return {"name": ds.get("name"), "error": str(exc)}
 
 
-    def apply_rls(self, sql: str, user_context: dict) -> str:
-        if not user_context or user_context.get("role") == "admin":
-            return sql
+    def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
+        if user_context and user_context.get("role") == "admin":
+            return sql, []
 
-        email_esc = str(user_context.get("email", "")).replace("'", "''")
-        name_esc = str(user_context.get("name") or "").replace("'", "''")
+        if not user_context:
+            user_context = {}
 
-        # Intercept any query to a pggold.gold_ table and wrap it in a subquery with RLS.
+        params = []
+
         import re
         def replacer(match):
             table = match.group(0)
-            return f"(SELECT * FROM {table} WHERE revenue_manager = '{email_esc}' OR revenue_manager = '{name_esc}' OR revenue_manager = 'N/D')"
+            table_name = table.split('.')[-1]
+            try:
+                con = self._conn()
+                schema_rows = con.execute(f"DESCRIBE SELECT * FROM pggold.{table_name} LIMIT 0").fetchall()
+                cols = [r[0].lower() for r in schema_rows]
+            except Exception:
+                cols = []
 
-        sql = re.sub(r'pggold\.gold_[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
-        return sql
+            filters = []
+            if 'tenant_id' in cols:
+                filters.append("tenant_id = ?")
+                params.append(str(user_context.get("tenant_id") or ""))
+            elif 'workspace_id' in cols:
+                filters.append("workspace_id = ?")
+                params.append(str(user_context.get("workspace_id") or ""))
+            elif 'project_id' in cols:
+                filters.append("project_id = ?")
+                params.append(str(user_context.get("project_id") or ""))
+            elif 'user_id' in cols:
+                filters.append("user_id = ?")
+                params.append(str(user_context.get("id") or ""))
+            elif 'revenue_manager' in cols:
+                filters.append("(revenue_manager = ? OR revenue_manager = ? OR revenue_manager = 'N/D')")
+                params.extend([str(user_context.get("email", "")), str(user_context.get("name") or "")])
+
+            if not filters and table_name.lower().startswith("gold_"):
+                return f"(SELECT * FROM {table} WHERE 1=0)"
+
+            if filters:
+                return f"(SELECT * FROM {table} WHERE {' OR '.join(filters)})"
+
+            return table
+
+        new_sql = re.sub(r'pggold\.gold_[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
+        return new_sql, params
+
+    def apply_rls(self, sql: str, user_context: dict) -> str:
+        # We must not use this unsafe fallback. Any caller MUST use get_rls_filters to get params, OR use preview_sql/query_dataset.
+        # But if anything calls apply_rls directly and expects a string without params, we have to handle it carefully.
+        # Currently only query_dataset and preview_sql call apply_rls, and I updated them to use get_rls_filters and params.
+        # Let's remove this danger loop entirely and just return the string if there are no params, else raise.
+        sql_with_placeholders, params = self.get_rls_filters(sql, user_context)
+        if params:
+             raise ValueError("apply_rls cannot safely return a parameterized string. Use get_rls_filters instead.")
+        return sql_with_placeholders
 
     def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
         sql = ds.get("sql_def", "")
+        filter_params = []
         if filters:
-            clauses = [f"{k} = '{v}'" for k, v in filters.items()]
+            clauses = [f"{k} = ?" for k in filters.keys()]
+            filter_params = list(filters.values())
             sql = f"SELECT * FROM ({sql}) _q WHERE {' AND '.join(clauses)}"
 
-        sql = self.apply_rls(sql, user_context)
-        return self.preview_sql(sql, limit)
+        rls_sql, rls_params = self.get_rls_filters(sql, user_context)
+        combined_params = rls_params + filter_params
+        return self.preview_sql(rls_sql, limit, params=combined_params)
 
     def _inject_latest_date(self, sql: str, sources: list[str]) -> str:
         """

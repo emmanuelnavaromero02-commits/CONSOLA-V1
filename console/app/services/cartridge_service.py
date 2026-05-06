@@ -23,14 +23,14 @@ from datetime import datetime, timezone
 import asyncpg
 
 _DATABASE_URL = (
-    os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/modecissions")
+    os.environ.get("DATABASE_URL", "")
     .replace("postgresql+psycopg2://", "postgresql://")
     .replace("postgresql+asyncpg://", "postgresql://")
 )
 
 _MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "minio:9000")
 _MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
-_MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minio123")
+_MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY")
 _MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
 _MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
 

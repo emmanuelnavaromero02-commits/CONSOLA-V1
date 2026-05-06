@@ -11,6 +11,8 @@ from __future__ import annotations
 _CONN_BLOCK = '''\
 MCP_INFRA_URL  = "http://mcp-infra:8010"
 REFINEMENT_URL = "http://refinement:8500"
+import os
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
 
 
 def _get_connection(conn_id: str, cartridge_id: str = "{cartridge}") -> tuple[str, str]:
@@ -57,6 +59,7 @@ def _watermark_get(entity: str, cartridge_id: str = "{cartridge}") -> str | None
     import requests
     try:
         r = requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
+                          headers={{"x-api-key": INTERNAL_API_KEY}},
                           json={{"tool": "watermark_get",
                                 "args": {{"cartridge_id": cartridge_id, "entity": entity}}}},
                           timeout=10)
@@ -70,6 +73,7 @@ def _watermark_set(entity: str, field: str, value: str, run_id: str,
     import requests
     try:
         requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
+                      headers={{"x-api-key": INTERNAL_API_KEY}},
                       json={{"tool": "watermark_set",
                             "args": {{"cartridge_id": cartridge_id, "entity": entity,
                                      "watermark_field": field, "value": value,
@@ -84,6 +88,7 @@ def _pipeline_run_save(dag_id: str, entity: str, cartridge_id: str = "{cartridge
     import requests
     try:
         requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
+                      headers={{"x-api-key": INTERNAL_API_KEY}},
                       json={{"tool": "pipeline_run_save",
                             "args": {{"dag_id": dag_id, "cartridge_id": cartridge_id,
                                      "entity": entity, **kwargs}}}},
@@ -138,7 +143,7 @@ _TRIGGER_SILVER_TASK = '''\
             return {{"refreshed": 0}}
         source = f"raw/{{CARTRIDGE_ID}}/{{result.get(\'entity\', ENTITY)}}"
         resp   = requests.post(f"{{REFINEMENT_URL}}/refresh-by-source",
-                               json={{"source": source}}, timeout=300)
+                               headers={{"x-api-key": INTERNAL_API_KEY}}, json={{"source": source}}, timeout=300)
         resp.raise_for_status()
         data = resp.json()
         log.info("  silver refresh: %d datasets actualizados", data.get("refreshed", 0))

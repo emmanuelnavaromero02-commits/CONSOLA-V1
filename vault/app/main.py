@@ -35,7 +35,7 @@ import os
 _SECRETS_FILE = Path("/vault/secrets.yaml")
 _DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:postgres@postgres:5432/modecissions",
+    "",
 )
 
 _SENSITIVE = {"token", "password", "secret", "api_key", "api_secret"}
@@ -160,6 +160,11 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if x_api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+import os
+if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
+    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
 
 app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)])
 

@@ -49,6 +49,11 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
     if x_api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+
+import os
+if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
+    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
+
 app = FastAPI(
     title="MODecissions MCP Infra",
     description="MCP tools for Airflow, MinIO, PostgreSQL, Superset, RAG",
