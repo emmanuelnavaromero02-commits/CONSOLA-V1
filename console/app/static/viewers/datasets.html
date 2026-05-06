@@ -46,6 +46,7 @@
 </div>
 
 <script>
+function esc(s){ return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 let allDatasets = [];
 
 function layerBadge(layer){
@@ -70,13 +71,13 @@ function render(){
 
   document.getElementById('tbody').innerHTML = data.map(d=>`
     <tr>
-      <td style="font-family:var(--font-mono);color:var(--amber)">${d.name}</td>
+      <td style="font-family:var(--font-mono);color:var(--amber)">${esc(d.name)}</td>
       <td>${layerBadge(d.layer)}</td>
-      <td style="font-size:10px;color:var(--text2)">${d.cartridge||'—'}</td>
-      <td style="font-size:10px">${d.source_entity||'—'}</td>
-      <td style="font-family:var(--font-mono);color:var(--cyan)">${d.column_count||Object.keys(d.column_mapping||{}).length||'—'}</td>
+      <td style="font-size:10px;color:var(--text2)">${esc(d.cartridge||"") || "—"}</td>
+      <td style="font-size:10px">${esc(d.source_entity||"") || "—"}</td>
+      <td style="font-family:var(--font-mono);color:var(--cyan)">${esc(d.column_count||Object.keys(d.column_mapping||{}).length||"") || "—"}</td>
       <td style="font-size:10px">${fmt(d.updated_at||d.created_at)}</td>
-      <td><a class="link-btn" href="/viewer/datasets/${d.name}">Ver →</a></td>
+      <td><a class="link-btn" href="/viewer/datasets/${esc(d.name)}">Ver →</a></td>
     </tr>`).join('');
 }
 
@@ -97,7 +98,7 @@ function renderStats(){
   const sel = document.getElementById('filter-cartridge');
   const prev = sel.value;
   sel.innerHTML = '<option value="">Todos los cartuchos</option>' +
-    cartridges.map(c=>`<option value="${c}" ${c===prev?'selected':''}>${c}</option>`).join('');
+    cartridges.map(c=>`<option value="${esc(c)}" ${c===prev?'selected':''}>${esc(c)}</option>`).join('');
 }
 
 async function load(){

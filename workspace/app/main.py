@@ -33,6 +33,11 @@ WORKSPACE_PUBLIC_URL = os.environ.get("WORKSPACE_PUBLIC_URL", "http://localhost:
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
 
 
+
+import os
+if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
+    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
+
 app = FastAPI(title="MODecissionsPaaS Workspace")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

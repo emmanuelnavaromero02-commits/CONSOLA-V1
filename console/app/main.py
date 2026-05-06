@@ -24,6 +24,7 @@ from app.services import cartridge_service
 from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
+from app.services.auth import verify_internal_api_key
 
 
 async def _periodic_health_check():
@@ -44,6 +45,11 @@ async def lifespan(app: FastAPI):
     yield
     task.cancel()
 
+
+
+import os
+if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
+    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
 
 app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
 
@@ -314,28 +320,28 @@ async def index():
 
 # ── MCP Registry ──────────────────────────────────────────────────────────────
 
-@app.get("/mcp/servers")
+@app.get("/mcp/servers", dependencies=[Depends(verify_internal_api_key)])
 async def list_servers():
     return {"servers": await mcp_registry.list_servers()}
 
 
-@app.post("/mcp/servers/register")
+@app.post("/mcp/servers/register", dependencies=[Depends(verify_internal_api_key)])
 async def register_server(body: dict):
     result = await mcp_registry.register(body)
     return result
 
 
-@app.get("/mcp/servers/{server_id}/tools")
+@app.get("/mcp/servers/{server_id}/tools", dependencies=[Depends(verify_internal_api_key)])
 async def list_tools(server_id: str):
     return {"tools": await mcp_registry.list_tools(server_id)}
 
 
-@app.post("/mcp/servers/{server_id}/invoke")
+@app.post("/mcp/servers/{server_id}/invoke", dependencies=[Depends(verify_internal_api_key)])
 async def invoke_tool(server_id: str, body: dict):
     return await mcp_registry.invoke(server_id, body.get("tool"), body.get("args", {}))
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_internal_api_key)])
 async def invoke_tool_generic(body: dict):
     """Generic invoke: {server, tool, args}. Used by Studio UI for Pattern B actions."""
     server_id = body.get("server", "")
@@ -345,13 +351,13 @@ async def invoke_tool_generic(body: dict):
     return {"result": result}
 
 
-@app.post("/mcp/servers/health-check")
+@app.post("/mcp/servers/health-check", dependencies=[Depends(verify_internal_api_key)])
 async def health_check_servers():
     count = await mcp_registry.health_check_all()
     return {"checked": count}
 
 
-@app.delete("/mcp/servers/{server_id}")
+@app.delete("/mcp/servers/{server_id}", dependencies=[Depends(verify_internal_api_key)])
 async def deregister_server(server_id: str):
     await mcp_registry.deregister(server_id)
     return {"ok": True}

@@ -87,10 +87,10 @@ async function loadJob(){
   const args = j.args||{};
   document.getElementById('meta').innerHTML = `
     <div class="meta-item"><div class="meta-lbl">STATUS</div><div class="meta-val">${badge(j.status)}</div></div>
-    <div class="meta-item"><div class="meta-lbl">ENTIDAD</div><div class="meta-val">${args.entity||'(todas)'}</div></div>
-    <div class="meta-item"><div class="meta-lbl">MODO</div><div class="meta-val">${args.mode||'—'}</div></div>
-    <div class="meta-item"><div class="meta-lbl">TOOL</div><div class="meta-val" style="font-size:10px">${j.tool||'—'}</div></div>
-    <div class="meta-item"><div class="meta-lbl">MENSAJE</div><div class="meta-val" style="color:var(--text2)">${j.message||'—'}</div></div>
+    <div class="meta-item"><div class="meta-lbl">ENTIDAD</div><div class="meta-val">${esc(args.entity||"") || "(todas)"}</div></div>
+    <div class="meta-item"><div class="meta-lbl">MODO</div><div class="meta-val">${esc(args.mode||"") || "—"}</div></div>
+    <div class="meta-item"><div class="meta-lbl">TOOL</div><div class="meta-val" style="font-size:10px">${esc(j.tool||"") || "—"}</div></div>
+    <div class="meta-item"><div class="meta-lbl">MENSAJE</div><div class="meta-val" style="color:var(--text2)">${esc(j.message||"") || "—"}</div></div>
     <div class="meta-item"><div class="meta-lbl">INICIO</div><div class="meta-val">${fmt(j.created_at)}</div></div>
     <div class="meta-item"><div class="meta-lbl">FIN</div><div class="meta-val">${fmt(j.finished_at)}</div></div>
     <div class="meta-item"><div class="meta-lbl">DURACION</div><div class="meta-val">${dur(j.created_at,j.finished_at)}</div></div>
@@ -130,10 +130,10 @@ async function loadLogs(){
   document.getElementById('log-container').innerHTML = logs.map(l=>`
     <div class="log-entry">
       <span class="log-ts">${l.ts.substring(11,23)}</span>
-      <span class="log-entity">${l.entity||'(batch)'}</span>
-      <span class="log-level log-level-${l.level}">${l.level}</span>
+      <span class="log-entity">${esc(l.entity||"") || "(batch)"}</span>
+      <span class="log-level log-level-${esc(l.level)}">${esc(l.level)}</span>
       <span class="log-msg">
-        ${l.message}
+        ${esc(l.message)}
         ${l.detail?`<div class="log-detail">${esc(JSON.stringify(l.detail))}</div>`:''}
       </span>
     </div>`).join('');

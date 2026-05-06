@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # MinIO fallback
     minio_endpoint:   str  = "minio:9000"
     minio_access_key: str  = "minio"
-    minio_secret_key: str  = "minio123"
+    minio_secret_key: str = ""
     minio_bucket:     str  = "lakehouse"
     minio_secure:     bool = False
 
