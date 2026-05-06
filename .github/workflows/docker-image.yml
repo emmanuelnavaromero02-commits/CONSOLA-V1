@@ -12,7 +12,15 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
     - uses: actions/checkout@v4
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Run Pytest
+      run: pip install pytest && export PYTHONPATH=$PYTHONPATH:$(pwd) && pytest refinement/tests/test_rls.py
     - name: Build the Docker image
-      run: cd infra && docker compose build
+      run: docker build ./console --file console/Dockerfile --tag my-image-name:$(date +%s)
