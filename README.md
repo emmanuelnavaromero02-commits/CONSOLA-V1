@@ -20,3 +20,12 @@
 * `console/Dockerfile`, `mcp-infra/Dockerfile`, `refinement/Dockerfile`, `vault/Dockerfile`, `workspace/Dockerfile` (App User Setup)
 * `infra/docker-compose.yml` (Healthcheck)
 * `.github/workflows/docker-image.yml` (CI Fixes)
+
+### Phase 1 Overview
+| Component | Before | After |
+| --------- | ------ | ----- |
+| **Gold Datasets** | Vulnerable to cross-tenant data access | Strict RLS (default-deny) via parameterized queries |
+| **DAG Templates** | Internal HTTP endpoints open | Enforced `X-Internal-Api-Key` for all webhook calls |
+| **Secrets** | Hardcoded `minio123` / `postgres:postgres` | Sourced safely from ENV or Vault |
+| **Internal MCP APIs** | Mixed authentication | `verify_internal_api_key` enforced universally |
+| **Frontend UI** | Bare `innerHTML` injection risks | Standardized `esc()` sanitization wrapper |
