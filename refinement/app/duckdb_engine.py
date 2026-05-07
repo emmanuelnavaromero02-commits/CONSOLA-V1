@@ -214,7 +214,7 @@ class DuckDBEngine:
             schema_rows = [{"name": c[0], "type": c[1] if len(c)>1 and isinstance(c[1], str) else "VARCHAR"} for c in desc]
             cols = [c[0] for c in desc]
             return {
-                "schema":    [{"name": r[0], "type": r[1]} for r in schema_rows],
+                "schema":    schema_rows,
                 "data":      [dict(zip(cols, row)) for row in data],
                 "row_count": len(data),
             }

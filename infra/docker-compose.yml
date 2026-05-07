@@ -52,6 +52,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_console
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
@@ -95,6 +96,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_workspace
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       DATABASE_URL:         "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       REFINEMENT_URL:       http://refinement:8500
       MCP_INFRA_URL:        http://mcp-infra:8010
@@ -119,6 +121,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_refinement
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       DATABASE_URL:       "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       GOLD_DATABASE_URL:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres_gold:5433/modecissions_gold"
       MINIO_ENDPOINT:    minio:9000
@@ -143,7 +146,7 @@ services:
     container_name: mode_vault
     environment:
       DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
-      INTERNAL_API_KEY:  ${INTERNAL_API_KEY:-dev-secret-key}
+      INTERNAL_API_KEY:  ${INTERNAL_API_KEY}
     depends_on:
       - postgres
     restart: unless-stopped
@@ -164,6 +167,7 @@ services:
       dockerfile: Dockerfile
     container_name: mode_mcp_infra
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       AIRFLOW_URL:      http://airflow:8080
       AIRFLOW_USER:     ${AIRFLOW_ADMIN_USER:-admin}
       AIRFLOW_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
@@ -177,7 +181,7 @@ services:
       PG_PORT:          5432
       PG_DB:            modecissions
       PG_USER:          postgres
-      PG_PASSWORD:      postgres
+      PG_PASSWORD:      ${POSTGRES_PASSWORD}
       PG_GOLD_HOST:     postgres_gold
       PG_GOLD_PORT:     5433
       PG_GOLD_DB:       modecissions_gold
@@ -252,7 +256,7 @@ services:
     environment:
       AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-secret-key}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       VAULT_URL: http://vault:8300
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
@@ -268,6 +272,7 @@ services:
     entrypoint: /bin/bash
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -299,10 +304,11 @@ services:
     container_name: mode_airflow_scheduler
     command: scheduler
     environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
 
       AIRFLOW_ADMIN_USER:                   ${AIRFLOW_ADMIN_USER:-admin}
       AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:-admin}
-      INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:-dev-secret-key}
+
       VAULT_URL:                            http://vault:8300
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow

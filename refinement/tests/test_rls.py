@@ -17,7 +17,9 @@ def engine():
     e = DuckDBEngine()
     mock_conn = MagicMock()
     e._conn = MagicMock(return_value=mock_conn)
-    return e, mock_conn
+    yield e, mock_conn
+    if e._con is not None:
+        e._con.close()
 
 def test_rls_default_deny(engine):
     e, mock_conn = engine
