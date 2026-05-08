@@ -114,7 +114,7 @@ async function loadJob(){
         <div class="entity-name">${esc(e.entity)}</div>
         ${e.status==='success'
           ? `<div class="entity-count entity-ok">${(e.record_count||0).toLocaleString()} <span style="font-size:9px;color:var(--text3)">registros</span></div>`
-          : `<div class="entity-count entity-err">ERROR</div><div style="font-size:9px;color:var(--text2)">${(e.error||'').substring(0,60)}</div>`
+          : `<div class="entity-count entity-err">ERROR</div><div style="font-size:9px;color:var(--text2)">${esc((e.error||'').substring(0,60))}</div>`
         }
       </div>`).join('');
   }
@@ -129,7 +129,7 @@ async function loadLogs(){
   document.getElementById('log-count').textContent = logs.length+' entradas';
   document.getElementById('log-container').innerHTML = logs.map(l=>`
     <div class="log-entry">
-      <span class="log-ts">${l.ts.substring(11,23)}</span>
+      <span class="log-ts">${esc((l.ts||'').substring(11,23))}</span>
       <span class="log-entity">${esc(l.entity||"") || "(batch)"}</span>
       <span class="log-level log-level-${esc(l.level)}">${esc(l.level)}</span>
       <span class="log-msg">

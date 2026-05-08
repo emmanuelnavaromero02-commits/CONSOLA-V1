@@ -76,8 +76,8 @@ function render(){
       <td style="font-size:10px;color:var(--text2)">${esc(d.cartridge||"") || "—"}</td>
       <td style="font-size:10px">${esc(d.source_entity||"") || "—"}</td>
       <td style="font-family:var(--font-mono);color:var(--cyan)">${esc(d.column_count||Object.keys(d.column_mapping||{}).length||"") || "—"}</td>
-      <td style="font-size:10px">${fmt(d.updated_at||d.created_at)}</td>
-      <td><a class="link-btn" href="/viewer/datasets/${esc(d.name)}">Ver →</a></td>
+      <td style="font-size:10px">${esc(fmt(d.updated_at||d.created_at))}</td>
+      <td><a class="link-btn" href="/viewer/datasets/${encodeURIComponent(d.name||'')}">Ver →</a></td>
     </tr>`).join('');
 }
 

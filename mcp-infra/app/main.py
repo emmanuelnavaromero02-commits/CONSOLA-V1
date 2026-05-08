@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 
 from app import registry
+from app.security import get_internal_api_key
 
 # ── Import tool modules so decorators register themselves ──────────────────────
 import app.tools.airflow     # noqa: F401
@@ -39,20 +40,13 @@ async def _lifespan(app: FastAPI):
         pass  # RAG is optional — server starts even if pgvector is not ready
     yield
 
-
-
-INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+INTERNAL_API_KEY = get_internal_api_key()
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
     # Validate the key and that the caller explicitly declares itself
     if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if x_api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
-
-
-import os
-if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
-    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
 
 app = FastAPI(
     title="MODecissions MCP Infra",

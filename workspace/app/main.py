@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from app.services import session as _session, consumer_assistant as _ca
+from app.security import get_internal_api_key
 
 REFINEMENT_URL       = os.environ.get("REFINEMENT_URL",       "http://refinement:8500")
 MCP_INFRA_URL        = os.environ.get("MCP_INFRA_URL",        "http://mcp-infra:8010")
@@ -32,15 +33,40 @@ CONSOLE_URL          = os.environ.get("CONSOLE_URL",          "http://localhost:
 WORKSPACE_PUBLIC_URL = os.environ.get("WORKSPACE_PUBLIC_URL", "http://localhost:8001")
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
 
-
-
-import os
-if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
-    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
+INTERNAL_API_KEY = get_internal_api_key()
 
 app = FastAPI(title="MODecissionsPaaS Workspace")
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+}
+
+
+def _apply_security_headers(response: Response) -> Response:
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    return _apply_security_headers(response)
 
 
 # ── Postgres pool (apps + sessions) ────────────────────────────────────────
@@ -84,21 +110,21 @@ async def auth_middleware(request: Request, call_next):
 
     if not user:
         if _is_api(path, request.headers.get("accept", "")):
-            return JSONResponse({"detail": "authentication required"}, status_code=401)
+            return _apply_security_headers(JSONResponse({"detail": "authentication required"}, status_code=401))
         # Bounce to console login with an absolute return URL pointing back to us
         return_url = f"{WORKSPACE_PUBLIC_URL}{path}"
         if request.url.query:
             return_url += "?" + request.url.query
-        return RedirectResponse(url=f"{CONSOLE_URL}/login?next={return_url}")
+        return _apply_security_headers(RedirectResponse(url=f"{CONSOLE_URL}/login?next={return_url}"))
 
     if user.get("must_change_password"):
         # Forced change runs in the console (where the form lives)
         if _is_api(path, request.headers.get("accept", "")):
-            return JSONResponse(
+            return _apply_security_headers(JSONResponse(
                 {"detail": "password change required", "must_change_password": True},
                 status_code=403,
-            )
-        return RedirectResponse(url=f"{CONSOLE_URL}/me")
+            ))
+        return _apply_security_headers(RedirectResponse(url=f"{CONSOLE_URL}/me"))
 
     return await call_next(request)
 
@@ -258,7 +284,7 @@ async def serve_app(request: Request, name: str):
 @app.get("/api/data/{dataset}")
 async def api_data(request: Request, dataset: str, limit: int = 5000):
     user = require_user(request)
-    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
                                "args": {"name": dataset, "limit": limit, "user_context": user}})
@@ -286,7 +312,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     ]
     union_sql = " UNION ALL ".join(sqls) + " ORDER BY col, val"
 
-    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {"sql": union_sql, "limit": 5000, "user_context": user}})
@@ -337,7 +363,7 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
 
-    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
         user = require_user(request)
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
@@ -367,7 +393,7 @@ async def api_users_list(request: Request):
 @app.get("/api/datasets")
 async def api_datasets_list(request: Request):
     require_user(request)
-    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=20) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "list_datasets", "args": {}})
     if r.status_code != 200:
@@ -378,7 +404,7 @@ async def api_datasets_list(request: Request):
 @app.get("/api/datasets/{name}/schema")
 async def api_dataset_schema(request: Request, name: str):
     require_user(request)
-    async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "workspace"}, timeout=20) as c:
+    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "get_schema", "args": {"name": name}})
     if r.status_code != 200:

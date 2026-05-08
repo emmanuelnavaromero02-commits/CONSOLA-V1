@@ -177,7 +177,7 @@ services:
       PG_PORT:          5432
       PG_DB:            modecissions
       PG_USER:          postgres
-      PG_PASSWORD:      postgres
+      PG_PASSWORD:      ${POSTGRES_PASSWORD}
       PG_GOLD_HOST:     postgres_gold
       PG_GOLD_PORT:     5433
       PG_GOLD_DB:       modecissions_gold

@@ -13,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import bcrypt
+from fastapi import Header, HTTPException
+
+from app.security import get_internal_api_key
 
 COOKIE_NAME      = "mod_session"
 SESSION_LIFETIME = timedelta(days=7)
@@ -276,3 +279,13 @@ def _user_to_dict(row) -> dict | None:
 
 def cookie_secure() -> bool:
     return os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+
+
+def verify_internal_api_key(
+    x_api_key: str | None = Header(None),
+    x_internal_service: str | None = Header(None),
+) -> None:
+    if not x_internal_service or x_internal_service not in {"console", "workspace", "refinement", "mcp-infra", "airflow"}:
+        raise HTTPException(status_code=403, detail="Invalid internal service origin")
+    if x_api_key != get_internal_api_key():
+        raise HTTPException(status_code=403, detail="Forbidden")

@@ -14,6 +14,7 @@ from fastapi import FastAPI, Header, HTTPException, Depends
 from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
 from app.llm_sql import generate_sql
+from app.security import get_internal_api_key
 
 DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
@@ -54,20 +55,13 @@ async def lifespan(app: FastAPI):
     _seed_relationships()
     yield
 
-
-
-INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+INTERNAL_API_KEY = get_internal_api_key()
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
     # Validate the key and that the caller explicitly declares itself
     if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if x_api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
-
-
-import os
-if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
-    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
 
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 

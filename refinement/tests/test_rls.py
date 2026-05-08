@@ -68,3 +68,19 @@ def test_rls_admin_bypass(engine):
     rls_sql, params = e.get_rls_filters(sql, ctx)
     assert rls_sql == sql
     assert len(params) == 0
+
+def test_preview_sql_returns_schema_dicts(engine):
+    e, mock_conn = engine
+    cursor = MagicMock()
+    cursor.description = [('customer_id', 'VARCHAR'), ('amount', 'DOUBLE')]
+    cursor.fetchall.return_value = [('cust-1', 12.5)]
+    mock_conn.execute.return_value = cursor
+
+    result = e.preview_sql("SELECT customer_id, amount FROM pggold.gold_sales", user_context={"role": "admin"})
+
+    assert result["schema"] == [
+        {"name": "customer_id", "type": "VARCHAR"},
+        {"name": "amount", "type": "DOUBLE"},
+    ]
+    assert result["data"] == [{"customer_id": "cust-1", "amount": 12.5}]
+    assert result["row_count"] == 1

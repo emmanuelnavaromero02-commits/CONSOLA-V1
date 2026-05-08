@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
+from app.security import get_internal_api_key
 from app.api.routes_health import router as health_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
@@ -26,20 +27,13 @@ async def lifespan(app: FastAPI):
 
 # ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
 _mcp_app = mcp.http_app(path="/")
-
-
-INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-secret-key")
+INTERNAL_API_KEY = get_internal_api_key()
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
     # Validate the key and that the caller explicitly declares itself
     if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if x_api_key != INTERNAL_API_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
-
-
-import os
-if not os.environ.get('INTERNAL_API_KEY') or os.environ.get('INTERNAL_API_KEY') == 'dev-secret-key':
-    raise RuntimeError('INTERNAL_API_KEY missing or using default dev-secret-key. System halted for security.')
 
 app = FastAPI(title="Replicon Cartridge", lifespan=lifespan)
 
