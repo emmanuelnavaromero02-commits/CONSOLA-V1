@@ -284,6 +284,16 @@ def test_protected_route_with_unassigned_workspace_returns_403(console_main):
     assert response.status_code == 403
 
 
+def test_invalid_dataset_path_param_returns_400(console_main):
+    client = TestClient(console_main.app)
+    client.cookies.set("mod_session", "legacy-session-token")
+
+    response = client.get("/api/data/bad-name/options?columns=cliente")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid dataset name"
+
+
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("refresh_token", "valid-refresh-token")
