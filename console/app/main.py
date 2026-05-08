@@ -209,7 +209,7 @@ def _access_token_for_user(user: dict) -> str:
 def _set_refresh_cookie(resp: JSONResponse, token: str, expires) -> None:
     resp.set_cookie(
         _auth.REFRESH_COOKIE_NAME, token,
-        httponly=True, secure=True, samesite="lax",
+        httponly=True, secure=_auth.cookie_secure(), samesite="lax",
         expires=expires.replace(microsecond=0),
         path="/",
     )
