@@ -61,6 +61,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
         await _auth.close_pool()
         await _tokens.close_pool()
         await job_service.close_pool()
@@ -834,7 +838,7 @@ async def api_data_options(dataset: str, columns: str = ""):
     # Validate column names (alphanumeric + underscore only)
     import re as _re
     for col in cols:
-        if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_ ]*$', col):
+        if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
             raise HTTPException(400, f"Invalid column name: {col}")
 
     sqls = [f"SELECT DISTINCT {col} AS val, '{col}' AS col FROM pggold.gold_{dataset} WHERE {col} IS NOT NULL"
@@ -2474,6 +2478,8 @@ async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(requ
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user:
         raise HTTPException(404, "user not found")
+    if target_user.get("is_active"):
+        raise HTTPException(400, "user already active; use password reset instead")
     tok, _ = await _tokens.create(user_id, "invite")
     subject, html = _email.render_invitation(
         target_user.get("name"), target_user["email"], _activation_link(tok), INVITE_TTL_HOURS,

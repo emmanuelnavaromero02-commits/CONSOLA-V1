@@ -124,6 +124,15 @@ def console_main(monkeypatch):
     async def get_job(job_id):
         return {"id": job_id, "status": "ok"}
 
+    async def create_token(user_id, kind):
+        return f"{kind}-token", datetime.now(timezone.utc) + timedelta(hours=1)
+
+    def render_invitation(name, email, link, ttl_hours):
+        return "Invite", f"<p>{email}</p>"
+
+    async def send_email(email, subject, html):
+        return True
+
     auth_stub.authenticate = authenticate
     auth_stub.create_session = create_session
     auth_stub.create_refresh_token = create_refresh_token
@@ -139,8 +148,8 @@ def console_main(monkeypatch):
 
     service_stubs = {
         "app.services.auth": auth_stub,
-        "app.services.tokens": _module(close_pool=close_pool),
-        "app.services.email_service": _module(),
+        "app.services.tokens": _module(close_pool=close_pool, create=create_token),
+        "app.services.email_service": _module(render_invitation=render_invitation, send_email=send_email),
         "app.services.mcp_registry": _module(startup=_noop_async, health_check_all=_noop_async, close_pool=close_pool),
         "app.services.assistant": _module(chat=assistant_chat),
         "app.services.studio_assistant": _module(),
@@ -313,6 +322,19 @@ def test_invalid_dataset_path_param_returns_400(console_main):
     assert response.json()["detail"] == "Invalid dataset name"
 
 
+def test_api_data_options_invalid_column_returns_400(console_main):
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get(
+        "/api/data/gold_sales/options?columns=bad%20col",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid column name: bad col"
+
+
 def test_api_data_without_auth_returns_401(console_main):
     client = TestClient(console_main.app)
 
@@ -357,6 +379,14 @@ def test_uses_rbac_dependency_does_not_match_false_prefixes(console_main):
     assert console_main._uses_rbac_dependency("/jobsX") is False
     assert console_main._uses_rbac_dependency("/api/data/gold_sales") is True
     assert console_main._uses_rbac_dependency("/api/datafoo") is False
+
+
+def test_rbac_dependency_prefix_route_without_auth_does_not_return_200(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.get("/api/pipeline")
+
+    assert response.status_code == 401
 
 
 def test_assistant_chat_without_auth_returns_401(console_main):
@@ -443,6 +473,19 @@ def test_api_users_allows_admin(console_main):
 
     assert response.status_code == 200
     assert response.json()["users"][0]["id"] == 42
+
+
+def test_admin_reinvite_rejects_active_user(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.user["is_active"] = True
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.post("/api/admin/users/42/reinvite", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "user already active; use password reset instead"
 
 
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
