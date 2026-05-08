@@ -30,6 +30,13 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def close_pool() -> None:
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+
+
 async def record(
     provider: str,
     model: str,

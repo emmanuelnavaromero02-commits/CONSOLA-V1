@@ -62,7 +62,12 @@ async def lifespan(app: FastAPI):
     finally:
         task.cancel()
         await _auth.close_pool()
+        await _tokens.close_pool()
+        await job_service.close_pool()
+        await token_store.close_pool()
+        await mcp_registry.close_pool()
         await cartridge_service.close_pool()
+        await _close_dec_pool()
 
 
 
@@ -175,12 +180,26 @@ _RBAC_DEPENDENCY_PREFIXES = (
     "/tokens/summary",
     "/assistant/chat",
     "/datasets",
+    "/api/data",
+    "/api/jobs",
     "/api/me",
     "/api/users",
     "/api/decisions",
     "/api/datasets",
     "/api/apps",
     "/api/admin/users",
+    "/api/pipeline",
+    "/api/pipeline_runs",
+    "/api/dag_templates",
+    "/api/schema",
+    "/api/sources",
+    "/api/vault",
+    "/api/rag",
+    "/api/catalog",
+    "/api/semantic",
+    "/studio/cartridges",
+    "/studio/import",
+    "/studio/chat",
 )
 
 
@@ -191,7 +210,7 @@ def _is_api_like(path: str, accept: str) -> bool:
 
 
 def _uses_rbac_dependency(path: str) -> bool:
-    return any(path.startswith(prefix) for prefix in _RBAC_DEPENDENCY_PREFIXES)
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _RBAC_DEPENDENCY_PREFIXES)
 
 
 @app.middleware("http")
@@ -638,15 +657,15 @@ async def apps_gallery():
 
 # ── Viewer data APIs ──────────────────────────────────────────────────────────
 
-@app.get("/api/jobs")
+@app.get("/api/jobs", dependencies=[Depends(require_authenticated)])
 async def api_jobs(limit: int = 50):
     return {"jobs": await job_service.list_recent(limit)}
 
-@app.get("/api/jobs/{job_id}")
+@app.get("/api/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
 async def api_job(job_id: str):
     return await job_service.get(job_id)
 
-@app.get("/api/jobs/{job_id}/logs")
+@app.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_authenticated)])
 async def api_job_logs(job_id: str, limit: int = 200):
     import asyncpg, os, json as _json
     dsn = os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
@@ -674,7 +693,7 @@ async def api_job_logs(job_id: str, limit: int = 200):
         })
     return {"logs": result}
 
-@app.get("/api/schema")
+@app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -685,7 +704,7 @@ async def api_schema(source: str):
         preview = r2.json()
     return {"partitions": partitions, "preview": preview}
 
-@app.get("/api/sources")
+@app.get("/api/sources", dependencies=[Depends(require_authenticated)])
 async def api_sources():
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -790,7 +809,7 @@ async def api_apps_delete(name: str):
     return result
 
 
-@app.get("/api/data/{dataset}")
+@app.get("/api/data/{dataset}", dependencies=[Depends(require_authenticated)])
 async def api_data(dataset: str, limit: int = 5000):
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
@@ -804,7 +823,7 @@ async def api_data(dataset: str, limit: int = 5000):
     return data.get("data", data)
 
 
-@app.get("/api/data/{dataset}/options")
+@app.get("/api/data/{dataset}/options", dependencies=[Depends(require_authenticated)])
 async def api_data_options(dataset: str, columns: str = ""):
     """Return distinct values per column for building filter selectors."""
     _validate_dataset_name(dataset)
@@ -838,7 +857,7 @@ async def api_data_options(dataset: str, columns: str = ""):
     return options
 
 
-@app.post("/api/data/{dataset}/query")
+@app.post("/api/data/{dataset}/query", dependencies=[Depends(require_authenticated)])
 async def api_data_query_filtered(dataset: str, body: dict):
     """
     Execute a filtered query against a gold dataset.
@@ -896,7 +915,7 @@ async def api_data_query_filtered(dataset: str, body: dict):
 
 # ── Pipeline DAG ──────────────────────────────────────────────────────────────
 
-@app.get("/studio/cartridges/{cartridge_id}/connections")
+@app.get("/studio/cartridges/{cartridge_id}/connections", dependencies=[Depends(require_authenticated)])
 async def studio_cartridge_connections(cartridge_id: str):
     """Proxy to Vault — returns masked connection config for the cartridge."""
     vault_url = os.environ.get("VAULT_URL", "http://vault:8300")
@@ -908,7 +927,7 @@ async def studio_cartridge_connections(cartridge_id: str):
             return {"connections": []}
 
 
-@app.get("/api/pipeline")
+@app.get("/api/pipeline", dependencies=[Depends(require_authenticated)])
 async def api_pipeline(cartridge: str = "replicon"):
     """
     Ensambla el DAG completo: entidades × bronze status × silver datasets × gold deps.
@@ -1105,13 +1124,13 @@ async def api_pipeline(cartridge: str = "replicon"):
     return {"pipeline": rows}
 
 
-@app.get("/api/dag_templates")
+@app.get("/api/dag_templates", dependencies=[Depends(require_authenticated)])
 async def api_dag_templates():
     from app.services import dag_templates
     return {"templates": dag_templates.get_all()}
 
 
-@app.get("/api/dag_templates/{template_id}")
+@app.get("/api/dag_templates/{template_id}", dependencies=[Depends(require_authenticated)])
 async def api_dag_template_code(template_id: str,
                                 cartridge: str = "my_cartridge",
                                 entity: str = "MyEntity"):
@@ -1122,7 +1141,7 @@ async def api_dag_template_code(template_id: str,
     return {"id": template_id, "cartridge": cartridge, "entity": entity, "code": code}
 
 
-@app.get("/api/pipeline_runs")
+@app.get("/api/pipeline_runs", dependencies=[Depends(require_authenticated)])
 async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50):
     """Recent DAG run history from pipeline_runs table."""
     import asyncpg as _asyncpg, os as _os
@@ -1150,7 +1169,7 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
             await pool.close()
 
 
-@app.post("/api/pipeline/{cartridge}/{entity}/extract")
+@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
@@ -1164,7 +1183,7 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
 
 # ── Studio — Entity config ───────────────────────────────────────────────────
 
-@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename")
+@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     new_name = (body.get("new_name") or "").strip()
     if not new_name:
@@ -1184,7 +1203,7 @@ async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
 
-@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}")
+@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
     """Update entity_config fields."""
     allowed = {"display_name", "mode", "primary_key", "dag_id",
@@ -1198,12 +1217,12 @@ async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
 
 # ── Studio — Cartridge management ────────────────────────────────────────────
 
-@app.get("/studio/cartridges")
+@app.get("/studio/cartridges", dependencies=[Depends(require_authenticated)])
 async def studio_list_cartridges():
     return {"cartridges": await cartridge_service.list_cartridges()}
 
 
-@app.post("/studio/cartridges")
+@app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
     name = body.get("name", "").strip()
@@ -1216,7 +1235,7 @@ async def studio_create_cartridge(body: dict):
     return manifest
 
 
-@app.get("/studio/cartridges/{cartridge_id}")
+@app.get("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_authenticated)])
 async def studio_get_cartridge(cartridge_id: str):
     manifest = await cartridge_service.get_cartridge(cartridge_id)
     if not manifest:
@@ -1224,14 +1243,14 @@ async def studio_get_cartridge(cartridge_id: str):
     return manifest
 
 
-@app.patch("/studio/cartridges/{cartridge_id}")
+@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_update_cartridge(cartridge_id: str, body: dict):
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return await cartridge_service.update_cartridge(cartridge_id, body)
 
 
-@app.post("/studio/cartridges/{cartridge_id}/spec")
+@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
     """Upload a spec file (OpenAPI YAML, WSDL, OData $metadata) for the cartridge."""
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -1241,7 +1260,7 @@ async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
     return {"uploaded": key, "filename": file.filename, "size": len(content)}
 
 
-@app.get("/studio/cartridges/{cartridge_id}/export")
+@app.get("/studio/cartridges/{cartridge_id}/export", dependencies=[Depends(require_authenticated)])
 async def studio_export_cartridge(cartridge_id: str):
     """Download the cartridge as a ZIP archive."""
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -1254,7 +1273,7 @@ async def studio_export_cartridge(cartridge_id: str):
     )
 
 
-@app.post("/studio/import")
+@app.post("/studio/import", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_import_cartridge(file: UploadFile = File(...)):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
@@ -1267,7 +1286,7 @@ async def studio_import_cartridge(file: UploadFile = File(...)):
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat")
+@app.post("/studio/chat", dependencies=[Depends(require_authenticated)])
 async def studio_chat(body: dict):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
@@ -1279,7 +1298,7 @@ async def studio_chat(body: dict):
     )
 
 
-@app.post("/studio/chat/stream")
+@app.post("/studio/chat/stream", dependencies=[Depends(require_authenticated)])
 async def studio_chat_stream(body: dict):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
@@ -1353,14 +1372,14 @@ async def rag_page():
 _VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
 _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
-@app.get("/api/vault/connections/{cartridge}")
+@app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_list_connections(cartridge: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
         r.raise_for_status()
         return r.json()
 
-@app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal")
+@app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_reveal_connection(cartridge: str, conn_id: str):
     """Returns full credentials including token (not masked)."""
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
@@ -1370,14 +1389,14 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/connections/{cartridge}/{conn_id}")
+@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/connections/{cartridge}/{conn_id}")
+@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_delete_connection(cartridge: str, conn_id: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
@@ -1386,14 +1405,14 @@ async def api_vault_delete_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
-@app.get("/api/vault/secrets/{scope}")
+@app.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_list_secrets(scope: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}")
         r.raise_for_status()
         return r.json()
 
-@app.get("/api/vault/secrets/{scope}/{key}/reveal")
+@app.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_reveal_secret(scope: str, key: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}/{key}")
@@ -1402,14 +1421,14 @@ async def api_vault_reveal_secret(scope: str, key: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/secrets/{scope}/{key}")
+@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_upsert_secret(scope: str, key: str, body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/secrets/{scope}/{key}")
+@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_delete_secret(scope: str, key: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")
@@ -1421,14 +1440,14 @@ async def api_vault_delete_secret(scope: str, key: str):
 
 # ── RAG proxy ─────────────────────────────────────────────────────────────────
 
-@app.get("/api/rag/sources")
+@app.get("/api/rag/sources", dependencies=[Depends(require_authenticated)])
 async def api_rag_sources():
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.get(f"{_RAG_URL}/rag/sources")
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/rag/sources/{source_id}")
+@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_rag_delete_source(source_id: int):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
@@ -1437,14 +1456,14 @@ async def api_rag_delete_source(source_id: int):
         r.raise_for_status()
         return r.json()
 
-@app.post("/api/rag/search")
+@app.post("/api/rag/search", dependencies=[Depends(require_authenticated)])
 async def api_rag_search(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
         r = await c.post(f"{_RAG_URL}/rag/search", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.post("/api/rag/ingest")
+@app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_rag_ingest(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
@@ -1452,7 +1471,7 @@ async def api_rag_ingest(body: dict):
         return r.json()
 
 
-@app.post("/api/rag/ask")
+@app.post("/api/rag/ask", dependencies=[Depends(require_authenticated)])
 async def api_rag_ask(body: dict):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
@@ -1512,7 +1531,7 @@ async def api_rag_ask(body: dict):
     return {"answer": answer, "results": results}
 
 
-@app.get("/api/semantic")
+@app.get("/api/semantic", dependencies=[Depends(require_authenticated)])
 async def api_semantic(cartridge: str = "replicon"):
     from app.services import cartridge_service as _cs
     manifest = await _cs.get_cartridge(cartridge)
@@ -1532,7 +1551,7 @@ async def api_semantic(cartridge: str = "replicon"):
 
 # ── Data Catalog API ──────────────────────────────────────────────────────────
 
-@app.get("/api/catalog")
+@app.get("/api/catalog", dependencies=[Depends(require_authenticated)])
 async def api_catalog_get(layer: str = "", cartridge: str = "", tags: str = "", datasets: str = ""):
     args: dict = {}
     if layer:    args["layer"]    = layer
@@ -1543,12 +1562,12 @@ async def api_catalog_get(layer: str = "", cartridge: str = "", tags: str = "", 
     return result
 
 
-@app.post("/api/catalog/entries")
+@app.post("/api/catalog/entries", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_catalog_upsert(body: dict):
     return await _refinement_invoke("upsert_catalog_entries", body)
 
 
-@app.post("/api/catalog/relationships")
+@app.post("/api/catalog/relationships", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_catalog_relationship(body: dict):
     return await _refinement_invoke("register_relationship", body)
 
@@ -2178,6 +2197,13 @@ async def _dec_pool() -> _asyncpg_dec.Pool:
             ),
         )
     return _DEC_POOL
+
+
+async def _close_dec_pool() -> None:
+    global _DEC_POOL
+    if _DEC_POOL is not None:
+        await _DEC_POOL.close()
+        _DEC_POOL = None
 
 
 def _dec_row_to_dict(row) -> dict:

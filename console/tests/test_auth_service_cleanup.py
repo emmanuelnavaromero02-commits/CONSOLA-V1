@@ -71,3 +71,34 @@ async def test_close_pool_closes_and_resets_global_pool(auth_module):
 
     assert fake_pool.closed is True
     assert auth_module._POOL is None
+
+
+@pytest.mark.anyio
+async def test_remaining_service_close_pools_close_and_reset(monkeypatch):
+    monkeypatch.setitem(sys.modules, "asyncpg", _module())
+
+    class FakePool:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    modules = [
+        ("app.services.tokens", "_POOL"),
+        ("app.services.job_service", "_pool"),
+        ("app.services.token_store", "_pool"),
+        ("app.services.mcp_registry", "_pool"),
+    ]
+
+    for module_name, pool_attr in modules:
+        sys.modules.pop(module_name, None)
+        module = importlib.import_module(module_name)
+        fake_pool = FakePool()
+        setattr(module, pool_attr, fake_pool)
+
+        await module.close_pool()
+
+        assert fake_pool.closed is True
+        assert getattr(module, pool_attr) is None
+        sys.modules.pop(module_name, None)

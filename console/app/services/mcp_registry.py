@@ -28,6 +28,13 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def close_pool() -> None:
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+
+
 async def startup():
     """Register built-in servers from environment at app startup."""
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000")

@@ -139,13 +139,13 @@ def console_main(monkeypatch):
 
     service_stubs = {
         "app.services.auth": auth_stub,
-        "app.services.tokens": _module(),
+        "app.services.tokens": _module(close_pool=close_pool),
         "app.services.email_service": _module(),
-        "app.services.mcp_registry": _module(startup=_noop_async, health_check_all=_noop_async),
+        "app.services.mcp_registry": _module(startup=_noop_async, health_check_all=_noop_async, close_pool=close_pool),
         "app.services.assistant": _module(chat=assistant_chat),
         "app.services.studio_assistant": _module(),
-        "app.services.token_store": _module(summary=token_summary),
-        "app.services.job_service": _module(list_recent=list_recent_jobs, get=get_job),
+        "app.services.token_store": _module(summary=token_summary, close_pool=close_pool),
+        "app.services.job_service": _module(list_recent=list_recent_jobs, get=get_job, close_pool=close_pool),
         "app.services.cartridge_service": _module(close_pool=close_pool),
     }
     for name, mod in service_stubs.items():
@@ -302,12 +302,61 @@ def test_protected_route_with_unassigned_workspace_returns_403(console_main):
 
 def test_invalid_dataset_path_param_returns_400(console_main):
     client = TestClient(console_main.app)
-    client.cookies.set("mod_session", "legacy-session-token")
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
 
-    response = client.get("/api/data/bad-name/options?columns=cliente")
+    response = client.get(
+        "/api/data/bad-name/options?columns=cliente",
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid dataset name"
+
+
+def test_api_data_without_auth_returns_401(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.get("/api/data/gold_sales")
+
+    assert response.status_code == 401
+
+
+def test_api_data_with_valid_jwt_returns_200(console_main, monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"customer_id": "cust-1"}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/api/data/gold_sales", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == [{"customer_id": "cust-1"}]
+
+
+def test_uses_rbac_dependency_does_not_match_false_prefixes(console_main):
+    assert console_main._uses_rbac_dependency("/jobs") is True
+    assert console_main._uses_rbac_dependency("/jobs/job-1") is True
+    assert console_main._uses_rbac_dependency("/jobsX") is False
+    assert console_main._uses_rbac_dependency("/api/data/gold_sales") is True
+    assert console_main._uses_rbac_dependency("/api/datafoo") is False
 
 
 def test_assistant_chat_without_auth_returns_401(console_main):

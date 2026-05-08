@@ -22,6 +22,13 @@ async def _pool() -> asyncpg.Pool:
     return _POOL
 
 
+async def close_pool() -> None:
+    global _POOL
+    if _POOL is not None:
+        await _POOL.close()
+        _POOL = None
+
+
 def _ttl_for(kind: str) -> timedelta:
     return INVITE_TTL if kind == "invite" else RESET_TTL
 
