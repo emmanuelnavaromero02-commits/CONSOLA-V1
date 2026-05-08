@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +27,7 @@ from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
 from app.services.auth import verify_internal_api_key
+from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
 from app.security import get_internal_api_key
 
 
@@ -131,7 +132,7 @@ async def security_headers_middleware(request: Request, call_next):
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
 _AUTH_PUBLIC_EXACT = {
-    "/login", "/auth/login", "/auth/logout", "/auth/me", "/favicon.ico",
+    "/login", "/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/favicon.ico",
     "/activate", "/auth/activate", "/auth/activate/info",
     "/forgot-password", "/auth/forgot-password",
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
@@ -216,7 +217,12 @@ async def auth_login(request: Request, body: dict):
         raise HTTPException(401, "invalid credentials")
     ip = request.client.host if request.client else None
     token, expires = await _auth.create_session(user["id"], ip=ip)
-    resp = JSONResponse({"user": user})
+    access_token = create_access_token({
+        "sub": str(user["id"]),
+        "email": user["email"],
+        "role": user["role"],
+    })
+    resp = JSONResponse({"user": user, "access_token": access_token, "token_type": "bearer"})
     resp.set_cookie(
         _auth.COOKIE_NAME, token,
         httponly=True, samesite="lax",
@@ -240,6 +246,27 @@ async def auth_logout(request: Request):
 @app.get("/auth/me")
 async def auth_me(request: Request):
     return {"user": current_user(request)}
+
+
+@app.get("/auth/me-jwt")
+async def auth_me_jwt(authorization: str | None = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="invalid authorization header")
+    try:
+        claims = decode_access_token(token)
+    except JWTAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {"claims": {
+        "sub": claims["sub"],
+        "email": claims["email"],
+        "role": claims["role"],
+        "iat": claims["iat"],
+        "exp": claims["exp"],
+        "jti": claims["jti"],
+    }}
 
 
 # ── Activation ────────────────────────────────────────────────────────────────
