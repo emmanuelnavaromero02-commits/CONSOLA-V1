@@ -39,16 +39,26 @@ def console_main(monkeypatch):
     auth_stub.cookie_secure = lambda: False
     auth_stub.revoked_refresh_tokens = []
     auth_stub.created_refresh_tokens = []
+    auth_stub.user = {
+        "id": 42,
+        "email": "analyst@example.com",
+        "name": "Test Analyst",
+        "role": "analyst",
+        "is_active": True,
+        "must_change_password": False,
+    }
+    auth_stub.workspace_rows = [{
+        "workspace_id": "11111111-1111-1111-1111-111111111111",
+        "workspace_name": "Main Workspace",
+        "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "tenant_name": "Default Tenant",
+        "workspace_role": "analyst",
+    }]
 
     async def authenticate(email, password):
-        return {
-            "id": 42,
-            "email": email,
-            "name": "Test Analyst",
-            "role": "analyst",
-            "is_active": True,
-            "must_change_password": False,
-        }
+        user = dict(auth_stub.user)
+        user["email"] = email
+        return user
 
     async def create_session(user_id, ip=None):
         return "legacy-session-token", datetime.now(timezone.utc) + timedelta(days=7)
@@ -74,35 +84,27 @@ def console_main(monkeypatch):
         auth_stub.revoked_refresh_tokens.append(token)
 
     async def get_session_user(token):
+        if token == "legacy-session-token":
+            return dict(auth_stub.user)
         return None
 
     async def get_user_by_id(user_id):
-        if user_id == 42:
-            return {
-                "id": 42,
-                "email": "analyst@example.com",
-                "name": "Test Analyst",
-                "role": "analyst",
-                "is_active": True,
-                "must_change_password": False,
-            }
+        if user_id == auth_stub.user["id"]:
+            return dict(auth_stub.user)
         return None
 
     class FakePool:
         async def fetch(self, query, user_id):
-            return [{
-                "workspace_id": "11111111-1111-1111-1111-111111111111",
-                "workspace_name": "Main Workspace",
-                "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                "tenant_name": "Default Tenant",
-                "workspace_role": "analyst",
-            }]
+            return [dict(row) for row in auth_stub.workspace_rows]
 
     async def pool():
         return FakePool()
 
     async def destroy_session(token):
         return None
+
+    async def list_users(active_only=True):
+        return [dict(auth_stub.user)]
 
     def verify_internal_api_key(*args, **kwargs):
         return None
@@ -116,6 +118,7 @@ def console_main(monkeypatch):
     auth_stub.get_user_by_id = get_user_by_id
     auth_stub.pool = pool
     auth_stub.destroy_session = destroy_session
+    auth_stub.list_users = list_users
     auth_stub.verify_internal_api_key = verify_internal_api_key
 
     service_stubs = {
@@ -202,6 +205,83 @@ def test_me_current_accepts_valid_jwt(console_main):
     assert response.json()["user"]["active_tenant_id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     assert response.json()["user"]["workspace_role"] == "analyst"
     assert response.json()["user"]["workspaces"][0]["workspace_name"] == "Main Workspace"
+
+
+def test_protected_route_without_jwt_or_legacy_cookie_returns_401(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 401
+
+
+def test_protected_route_with_valid_jwt_returns_200(console_main):
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 42
+    assert response.json()["workspace_role"] == "analyst"
+
+
+def test_protected_route_with_legacy_cookie_still_works(console_main):
+    client = TestClient(console_main.app)
+    client.cookies.set("mod_session", "legacy-session-token")
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 42
+    assert response.json()["workspace_role"] == "analyst"
+
+
+def test_admin_route_rejects_viewer_workspace_role(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+
+
+def test_admin_route_allows_admin_workspace_role(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["users"][0]["id"] == 42
+
+
+def test_public_route_still_works_without_token(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.get("/auth/me")
+
+    assert response.status_code == 200
+    assert response.json() == {"user": None}
+
+
+def test_protected_route_with_unassigned_workspace_returns_403(console_main):
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get(
+        "/api/me",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Workspace-Id": "99999999-9999-9999-9999-999999999999",
+        },
+    )
+
+    assert response.status_code == 403
 
 
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
