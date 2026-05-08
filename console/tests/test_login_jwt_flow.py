@@ -106,6 +106,30 @@ def console_main(monkeypatch):
     async def list_users(active_only=True):
         return [dict(auth_stub.user)]
 
+    async def get_user_by_email(email):
+        return None
+
+    async def create_user(email, password, name=None, role="user"):
+        return {
+            "id": 43,
+            "email": email,
+            "name": name,
+            "role": role,
+            "is_active": True,
+        }
+
+    async def update_user(user_id, **kwargs):
+        return {
+            "id": user_id,
+            "email": "target@example.com",
+            "name": kwargs.get("name"),
+            "role": kwargs.get("role") or "user",
+            "is_active": kwargs.get("is_active", True),
+        }
+
+    async def delete_user(user_id):
+        return user_id != auth_stub.user["id"]
+
     def verify_internal_api_key(*args, **kwargs):
         return None
 
@@ -143,6 +167,10 @@ def console_main(monkeypatch):
     auth_stub.pool = pool
     auth_stub.destroy_session = destroy_session
     auth_stub.list_users = list_users
+    auth_stub.get_user_by_email = get_user_by_email
+    auth_stub.create_user = create_user
+    auth_stub.update_user = update_user
+    auth_stub.delete_user = delete_user
     auth_stub.verify_internal_api_key = verify_internal_api_key
     auth_stub.close_pool = close_pool
 
@@ -473,6 +501,76 @@ def test_api_users_allows_admin(console_main):
 
     assert response.status_code == 200
     assert response.json()["users"][0]["id"] == 42
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("get", "/api/admin/users", None),
+        ("post", "/api/admin/users", {"email": "new@example.com", "password": "secret"}),
+        ("patch", "/api/admin/users/43", {"name": "Target"}),
+        ("delete", "/api/admin/users/43", None),
+        ("post", "/api/admin/users/invite", {"email": "invite@example.com"}),
+        ("post", "/api/admin/users/43/reinvite", None),
+        ("post", "/api/admin/users/43/send-reset", None),
+    ],
+)
+def test_api_admin_users_routes_reject_non_admin(console_main, method, path, json_body):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    kwargs = {"headers": {"Authorization": f"Bearer {token}"}}
+    if json_body is not None:
+        kwargs["json"] = json_body
+    response = getattr(client, method)(path, **kwargs)
+
+    assert response.status_code == 403
+
+
+def test_api_admin_users_create_with_admin_still_works(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.post(
+        "/api/admin/users",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"email": "new@example.com", "password": "secret", "name": "New User"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "new@example.com"
+
+
+def test_api_admin_users_patch_with_admin_still_works(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.patch(
+        "/api/admin/users/43",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Target"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 43
+
+
+def test_api_admin_users_delete_with_admin_still_works(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.delete("/api/admin/users/43", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "id": 43}
 
 
 def test_admin_reinvite_rejects_active_user(console_main):
