@@ -132,7 +132,7 @@ async def security_headers_middleware(request: Request, call_next):
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
 _AUTH_PUBLIC_EXACT = {
-    "/login", "/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/favicon.ico",
+    "/login", "/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/auth/refresh", "/favicon.ico",
     "/activate", "/auth/activate", "/auth/activate/info",
     "/forgot-password", "/auth/forgot-password",
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
@@ -198,6 +198,23 @@ def require_admin(request: Request) -> dict:
     return u
 
 
+def _access_token_for_user(user: dict) -> str:
+    return create_access_token({
+        "sub": str(user["id"]),
+        "email": user["email"],
+        "role": user["role"],
+    })
+
+
+def _set_refresh_cookie(resp: JSONResponse, token: str, expires) -> None:
+    resp.set_cookie(
+        _auth.REFRESH_COOKIE_NAME, token,
+        httponly=True, secure=True, samesite="lax",
+        expires=expires.replace(microsecond=0),
+        path="/",
+    )
+
+
 # ── Auth routes ────────────────────────────────────────────────────────────────
 
 @app.get("/login")
@@ -217,11 +234,8 @@ async def auth_login(request: Request, body: dict):
         raise HTTPException(401, "invalid credentials")
     ip = request.client.host if request.client else None
     token, expires = await _auth.create_session(user["id"], ip=ip)
-    access_token = create_access_token({
-        "sub": str(user["id"]),
-        "email": user["email"],
-        "role": user["role"],
-    })
+    access_token = _access_token_for_user(user)
+    refresh_token, refresh_expires = await _auth.create_refresh_token(user["id"])
     resp = JSONResponse({"user": user, "access_token": access_token, "token_type": "bearer"})
     resp.set_cookie(
         _auth.COOKIE_NAME, token,
@@ -230,6 +244,24 @@ async def auth_login(request: Request, body: dict):
         expires=expires.replace(microsecond=0),
         path="/",
     )
+    _set_refresh_cookie(resp, refresh_token, refresh_expires)
+    return resp
+
+
+@app.post("/auth/refresh")
+async def auth_refresh(request: Request):
+    refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
+    user = await _auth.get_refresh_token_user(refresh_token)
+    if not user:
+        resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
+        resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
+        return resp
+
+    await _auth.revoke_refresh_token(refresh_token)
+    new_refresh_token, refresh_expires = await _auth.create_refresh_token(user["id"])
+    access_token = _access_token_for_user(user)
+    resp = JSONResponse({"access_token": access_token, "token_type": "bearer"})
+    _set_refresh_cookie(resp, new_refresh_token, refresh_expires)
     return resp
 
 
@@ -238,8 +270,12 @@ async def auth_logout(request: Request):
     token = request.cookies.get(_auth.COOKIE_NAME)
     if token:
         await _auth.destroy_session(token)
+    refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
+    if refresh_token:
+        await _auth.revoke_refresh_token(refresh_token)
     resp = JSONResponse({"logged_out": True})
     resp.delete_cookie(_auth.COOKIE_NAME, path="/")
+    resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
     return resp
 
 

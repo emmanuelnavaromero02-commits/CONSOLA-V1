@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import secrets
-import secrets
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -19,8 +19,10 @@ from fastapi import Header, HTTPException
 from app.security import get_internal_api_key
 
 COOKIE_NAME      = "mod_session"
+REFRESH_COOKIE_NAME = "refresh_token"
 SESSION_LIFETIME = timedelta(days=7)
 SESSION_SLIDE    = timedelta(days=1)   # extend if older than this
+REFRESH_TOKEN_LIFETIME = timedelta(days=7)
 
 _POOL: asyncpg.Pool | None = None
 
@@ -263,6 +265,64 @@ async def cleanup_expired_sessions() -> int:
         return int(res.split()[-1])
     except Exception:
         return 0
+
+
+# ── Refresh token management ────────────────────────────────────────────────
+
+def generate_refresh_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def create_refresh_token(user_id: int) -> tuple[str, datetime]:
+    token = generate_refresh_token()
+    expires = datetime.now(timezone.utc) + REFRESH_TOKEN_LIFETIME
+    p = await pool()
+    await p.execute(
+        "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+        user_id, hash_refresh_token(token), expires,
+    )
+    return token, expires
+
+
+async def get_refresh_token_user(token: str) -> dict | None:
+    if not token:
+        return None
+    p = await pool()
+    row = await p.fetchrow(
+        """SELECT rt.id AS refresh_token_id, rt.user_id, rt.expires_at,
+                  u.id, u.email, u.name, u.role, u.is_active, u.must_change_password
+             FROM refresh_tokens rt
+             JOIN users u ON u.id = rt.user_id
+            WHERE rt.token_hash = $1
+              AND rt.revoked_at IS NULL
+              AND rt.expires_at > NOW()
+              AND u.is_active = TRUE""",
+        hash_refresh_token(token),
+    )
+    if not row:
+        return None
+    return {
+        "id":                   row["user_id"],
+        "email":                row["email"],
+        "name":                 row["name"],
+        "role":                 row["role"],
+        "is_active":            row["is_active"],
+        "must_change_password": row["must_change_password"],
+    }
+
+
+async def revoke_refresh_token(token: str) -> None:
+    if not token:
+        return
+    p = await pool()
+    await p.execute(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL",
+        hash_refresh_token(token),
+    )
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
