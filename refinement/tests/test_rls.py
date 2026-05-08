@@ -10,7 +10,7 @@ os.environ['MINIO_SECRET_KEY'] = 'test'
 os.environ['MINIO_ACCESS_KEY'] = 'test'
 os.environ['MINIO_ENDPOINT'] = 'test'
 
-from refinement.app.duckdb_engine import DuckDBEngine
+from refinement.app.duckdb_engine import DuckDBEngine, validate_safe_identifier
 
 @pytest.fixture
 def engine():
@@ -103,3 +103,48 @@ def test_preview_sql_rejects_dangerous_local_read(engine):
 
     with pytest.raises(ValueError):
         e.preview_sql("SELECT * FROM read_csv('/etc/passwd')", user_context={"role": "admin"})
+
+def test_valid_dataset_name_passes():
+    validate_safe_identifier("gold_sales_2025", "dataset")
+
+@pytest.mark.parametrize("name", [
+    'foo"; DROP TABLE x;--',
+    "../secret",
+    "foo/bar",
+    "file:///etc/passwd",
+    "foo bar",
+])
+def test_invalid_dataset_names_fail(name):
+    with pytest.raises(ValueError):
+        validate_safe_identifier(name, "dataset")
+
+def test_silver_path_rejects_invalid_dataset_name():
+    e = DuckDBEngine()
+
+    with pytest.raises(ValueError):
+        e._silver_path("replicon", "../secret")
+
+def test_preview_sql_uses_duckdb_lock(engine):
+    e, mock_conn = engine
+    cursor = MagicMock()
+    cursor.description = [('customer_id', 'VARCHAR')]
+    cursor.fetchall.return_value = [('cust-1',)]
+    mock_conn.execute.return_value = cursor
+
+    class CountingLock:
+        def __init__(self):
+            self.entered = 0
+
+        def __enter__(self):
+            self.entered += 1
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    lock = CountingLock()
+    e._duckdb_lock = lock
+
+    result = e.preview_sql("SELECT customer_id FROM pggold.gold_sales", user_context={"role": "admin"})
+
+    assert result["row_count"] == 1
+    assert lock.entered == 1

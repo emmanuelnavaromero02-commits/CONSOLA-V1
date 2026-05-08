@@ -606,25 +606,28 @@ async def mcp_invoke(body: dict):
 
     if tool == "describe_silver":
         name  = args["name"]
+        _validate_dataset_name(name)
         limit = args.get("limit", 3)
         ds    = store.get_dataset(name)
         if not ds:
             raise HTTPException(404, f"Dataset '{name}' not found")
         cartridge = ds.get("cartridge", "unknown")
+        _validate_dataset_name(cartridge)
         parquet   = f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
         try:
-            con = engine._conn()
-            schema_rows = con.execute(
-                f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
-            ).fetchall()
-            fields = [{"name": r[0], "type": r[1]} for r in schema_rows]
-            sample = []
-            if limit > 0:
-                cols = [r[0] for r in schema_rows]
-                rows = con.execute(
-                    f"SELECT * FROM read_parquet('{parquet}') LIMIT {limit}"
+            with engine._duckdb_lock:
+                con = engine._conn()
+                schema_rows = con.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
                 ).fetchall()
-                sample = [dict(zip(cols, row)) for row in rows]
+                fields = [{"name": r[0], "type": r[1]} for r in schema_rows]
+                sample = []
+                if limit > 0:
+                    cols = [r[0] for r in schema_rows]
+                    rows = con.execute(
+                        f"SELECT * FROM read_parquet('{parquet}') LIMIT {limit}"
+                    ).fetchall()
+                    sample = [dict(zip(cols, row)) for row in rows]
             return {"name": name, "layer": ds["layer"], "cartridge": cartridge,
                     "parquet": parquet, "fields": fields, "sample": sample}
         except Exception as exc:
@@ -999,6 +1002,12 @@ def _seed_catalog_from_existing() -> int:
             name      = meta["name"]
             layer     = meta.get("layer", "silver")
             cartridge = meta.get("cartridge", "")
+            try:
+                _validate_dataset_name(name)
+                if cartridge:
+                    _validate_dataset_name(cartridge)
+            except HTTPException:
+                continue
             ds_full   = store.get_dataset(name)
             col_map   = ds_full.get("column_mapping", {}) if ds_full else {}
 
@@ -1008,15 +1017,17 @@ def _seed_catalog_from_existing() -> int:
                     f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
                 )
                 try:
-                    con   = engine._conn()
-                    rows  = con.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
-                    ).fetchall()
+                    with engine._duckdb_lock:
+                        con   = engine._conn()
+                        rows  = con.execute(
+                            f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
+                        ).fetchall()
                     fields = [{"name": r[0], "type": r[1]} for r in rows]
                 except Exception:
                     continue
             elif layer == "gold":
                 try:
+                    _validate_dataset_name(name)
                     import psycopg2
                     conn = psycopg2.connect(_normalize_postgres_dsn(
                         os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL", "")

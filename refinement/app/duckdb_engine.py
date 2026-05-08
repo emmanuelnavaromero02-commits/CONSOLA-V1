@@ -25,10 +25,18 @@ import os
 import io
 import json
 import re
+import threading
 from datetime import datetime, timezone
 
 import duckdb
 import psycopg2
+
+SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def validate_safe_identifier(value: str, label: str = "identifier") -> None:
+    if not SAFE_IDENTIFIER_RE.fullmatch(value or ""):
+        raise ValueError(f"Invalid {label} name")
 
 
 class DuckDBEngine:
@@ -43,6 +51,7 @@ class DuckDBEngine:
         # local/dev environments without postgres_gold keep working.
         self.pg_gold_url    = os.environ.get("GOLD_DATABASE_URL", "") or self.pg_url
         self._con: duckdb.DuckDBPyConnection | None = None
+        self._duckdb_lock = threading.RLock()
 
     # ── DuckDB connection ─────────────────────────────────────────────────────
 
@@ -61,18 +70,19 @@ class DuckDBEngine:
         return self._con
 
     def setup(self):
-        con = self._conn()
-        # Attach both Postgres instances at startup so read paths (preview_sql,
-        # query_dataset) can reference pgdb.<table> / pggold.<table> without
-        # depending on a prior materialization call.
-        try:
-            self._pg_attach(con)
-        except Exception:
-            pass
-        try:
-            self._pg_gold_attach(con)
-        except Exception:
-            pass
+        with self._duckdb_lock:
+            con = self._conn()
+            # Attach both Postgres instances at startup so read paths (preview_sql,
+            # query_dataset) can reference pgdb.<table> / pggold.<table> without
+            # depending on a prior materialization call.
+            try:
+                self._pg_attach(con)
+            except Exception:
+                pass
+            try:
+                self._pg_gold_attach(con)
+            except Exception:
+                pass
 
     # ── Postgres connections ──────────────────────────────────────────────────
 
@@ -115,16 +125,19 @@ class DuckDBEngine:
 
     def _silver_path(self, cartridge: str, name: str) -> str:
         """Silver es un snapshot único — un archivo por dataset, siempre sobreescrito."""
+        validate_safe_identifier(cartridge, "cartridge")
+        validate_safe_identifier(name, "dataset")
         return f"s3://{self.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
 
     def _resolve_latest_date(self, source: str) -> str | None:
         """Devuelve el load_date más reciente disponible en una fuente Bronze."""
         try:
-            con = self._conn()
-            expr = self._bronze_read(source)
-            row = con.execute(
-                f"SELECT MAX(load_date) FROM {expr}"
-            ).fetchone()
+            with self._duckdb_lock:
+                con = self._conn()
+                expr = self._bronze_read(source)
+                row = con.execute(
+                    f"SELECT MAX(load_date) FROM {expr}"
+                ).fetchone()
             return str(row[0]) if row and row[0] else None
         except Exception:
             return None
@@ -133,20 +146,22 @@ class DuckDBEngine:
 
     def list_sources(self) -> list[str]:
         try:
-            con = self._conn()
-            rows = con.execute(f"""
-                SELECT DISTINCT regexp_extract(file, 's3://[^/]+/([^/]+/[^/]+/[^/]+)', 1) AS source
-                FROM glob('s3://{self.minio_bucket}/raw/**/*.parquet')
-            """).fetchall()
+            with self._duckdb_lock:
+                con = self._conn()
+                rows = con.execute(f"""
+                    SELECT DISTINCT regexp_extract(file, 's3://[^/]+/([^/]+/[^/]+/[^/]+)', 1) AS source
+                    FROM glob('s3://{self.minio_bucket}/raw/**/*.parquet')
+                """).fetchall()
             return sorted({r[0] for r in rows if r[0]})
         except Exception:
             return []
 
     def get_source_schema(self, source: str) -> dict:
         try:
-            con = self._conn()
-            expr = self._bronze_read(source)
-            rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
+            with self._duckdb_lock:
+                con = self._conn()
+                expr = self._bronze_read(source)
+                rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
             return {"source": source, "fields": [{"name": r[0], "type": r[1]} for r in rows]}
         except Exception as exc:
             return {"source": source, "error": str(exc)}
@@ -157,12 +172,13 @@ class DuckDBEngine:
         Also returns sql_latest — a ready-to-use SQL filtered to the most recent load_date.
         """
         try:
-            con = self._conn()
-            expr = self._bronze_read(source)
-            rows = con.execute(
-                f"SELECT DISTINCT load_date, batch_id FROM {expr} "
-                f"ORDER BY load_date DESC, batch_id DESC LIMIT 30"
-            ).fetchall()
+            with self._duckdb_lock:
+                con = self._conn()
+                expr = self._bronze_read(source)
+                rows = con.execute(
+                    f"SELECT DISTINCT load_date, batch_id FROM {expr} "
+                    f"ORDER BY load_date DESC, batch_id DESC LIMIT 30"
+                ).fetchall()
             partitions = [{"load_date": str(r[0]), "batch_id": str(r[1])} for r in rows]
             latest = partitions[0] if partitions else None
             return {
@@ -178,10 +194,11 @@ class DuckDBEngine:
 
     def preview_source(self, source: str, limit: int = 5) -> dict:
         try:
-            con = self._conn()
-            expr = self._bronze_read(source)
-            schema_rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
-            data = con.execute(f"SELECT * FROM {expr} LIMIT {limit}").fetchall()
+            with self._duckdb_lock:
+                con = self._conn()
+                expr = self._bronze_read(source)
+                schema_rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
+                data = con.execute(f"SELECT * FROM {expr} LIMIT {limit}").fetchall()
             cols = [r[0] for r in schema_rows]
             return {
                 "source": source,
@@ -210,18 +227,19 @@ class DuckDBEngine:
     def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
         self._validate_safe_sql(sql)
         try:
-            if params is None:
-                sql, params = self.get_rls_filters(sql, user_context)
+            with self._duckdb_lock:
+                if params is None:
+                    sql, params = self.get_rls_filters(sql, user_context)
 
-            # Using cached connection. The user requested read_only if possible, but DuckDB doesn't allow changing it on the fly.
-            con = self._conn()
+                # Using cached connection. The user requested read_only if possible, but DuckDB doesn't allow changing it on the fly.
+                con = self._conn()
 
-            effective_sql = self._inject_bucket(self._inject_latest_date(sql, sources or []))
-            limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
+                effective_sql = self._inject_bucket(self._inject_latest_date(sql, sources or []))
+                limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
-            cursor = con.execute(limited, params)
-            desc = cursor.description
-            data = cursor.fetchall()
+                cursor = con.execute(limited, params)
+                desc = cursor.description
+                data = cursor.fetchall()
 
             # duckdb Python API description returns (name, type_code, display_size, internal_size, precision, scale, null_ok)
             # type_code is usually None or unhelpful in DuckDB, but we can return "UNKNOWN" or just map it as string.
@@ -244,10 +262,12 @@ class DuckDBEngine:
 
     def get_dataset_schema(self, ds: dict) -> dict:
         try:
-            con = self._conn()
-            rows = con.execute(
-                f"DESCRIBE SELECT * FROM ({self._inject_bucket(ds['sql_def'])}) _q LIMIT 0"
-            ).fetchall()
+            validate_safe_identifier(ds["name"], "dataset")
+            with self._duckdb_lock:
+                con = self._conn()
+                rows = con.execute(
+                    f"DESCRIBE SELECT * FROM ({self._inject_bucket(ds['sql_def'])}) _q LIMIT 0"
+                ).fetchall()
             return {"name": ds["name"], "fields": [{"name": r[0], "type": r[1]} for r in rows]}
         except Exception as exc:
             return {"name": ds.get("name"), "error": str(exc)}
@@ -266,6 +286,7 @@ class DuckDBEngine:
             table = match.group(0)
             table_name = table.split('.')[-1]
             try:
+                validate_safe_identifier(table_name, "table")
                 con = self._conn()
                 schema_rows = con.execute(f"DESCRIBE SELECT * FROM pggold.{table_name} LIMIT 0").fetchall()
                 cols = [r[0].lower() for r in schema_rows]
@@ -297,7 +318,8 @@ class DuckDBEngine:
 
             return table
 
-        new_sql = re.sub(r'pggold\.[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
+        with self._duckdb_lock:
+            new_sql = re.sub(r'pggold\.[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
         return new_sql, params
 
     def apply_rls(self, sql: str, user_context: dict) -> str:
@@ -311,15 +333,19 @@ class DuckDBEngine:
         return sql_with_placeholders
 
     def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
+        validate_safe_identifier(ds.get("name", ""), "dataset")
         sql = ds.get("sql_def", "")
         self._validate_safe_sql(sql)
         filter_params = []
         if filters:
+            for key in filters.keys():
+                validate_safe_identifier(key, "filter")
             clauses = [f"{k} = ?" for k in filters.keys()]
             filter_params = list(filters.values())
             sql = f"SELECT * FROM ({sql}) _q WHERE {' AND '.join(clauses)}"
 
-        rls_sql, rls_params = self.get_rls_filters(sql, user_context)
+        with self._duckdb_lock:
+            rls_sql, rls_params = self.get_rls_filters(sql, user_context)
         combined_params = rls_params + filter_params
         return self.preview_sql(rls_sql, limit, params=combined_params)
 
@@ -361,65 +387,70 @@ class DuckDBEngine:
           source_load_date — partition date of the bronze source (for lineage)
           source_batch_id  — batch_id of the bronze source (for lineage)
         """
-        con = self._conn()
-        name        = ds["name"]
-        layer       = ds.get("layer", "silver")
-        sql         = ds["sql_def"]
-        cartridge   = ds.get("cartridge", "unknown")
-        sources     = ds.get("sources") or []
-        storage_uri = ""
-        row_count   = 0
+        validate_safe_identifier(ds["name"], "dataset")
+        validate_safe_identifier(ds.get("cartridge", "unknown"), "cartridge")
+        with self._duckdb_lock:
+            con = self._conn()
+            name        = ds["name"]
+            layer       = ds.get("layer", "silver")
+            sql         = ds["sql_def"]
+            cartridge   = ds.get("cartridge", "unknown")
+            sources     = ds.get("sources") or []
+            storage_uri = ""
+            row_count   = 0
 
-        sql = self._inject_bucket(sql)
+            sql = self._inject_bucket(sql)
 
-        if layer == "gold":
-            # ── Gold → tabla en postgres_gold ────────────────────────────────
-            self._pg_gold_attach(con)
-            table = f"gold_{name}"
-            con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({sql})")
-            row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
-            storage_uri = f"postgres_gold:{table}"
-
-        elif layer == "master":
-            # ── Master → Parquet único + tabla en postgres_gold (dimensión) ──
-            effective_sql = self._inject_latest_date(sql, sources)
-            parquet_path  = self._silver_path(cartridge, name)
-            con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
-            row_count = con.execute(
-                f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
-            ).fetchone()[0]
-            storage_uri = parquet_path
-
-            # Dimensión también en postgres_gold para joins con hechos gold
-            self._pg_gold_attach(con)
-            table = f"master_{name}"
-            con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
-
-        else:
-            # ── Silver → Parquet único, siempre sobreescrito (última extracción) ──
-            effective_sql = self._inject_latest_date(sql, sources)
-            parquet_path  = self._silver_path(cartridge, name)
-            con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
-            row_count = con.execute(
-                f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
-            ).fetchone()[0]
-            storage_uri = parquet_path
-
-        # ── Infer schema for catalog & lineage ──────────────────────────────
-        try:
-            if layer in ("silver", "master"):
-                parquet_path = self._silver_path(cartridge, name)
-                schema_rows  = con.execute(
-                    f"DESCRIBE SELECT * FROM read_parquet('{parquet_path}') LIMIT 0"
-                ).fetchall()
-            else:
+            if layer == "gold":
+                # ── Gold → tabla en postgres_gold ────────────────────────────────
                 self._pg_gold_attach(con)
-                schema_rows = con.execute(
-                    f"DESCRIBE SELECT * FROM pggold.gold_{name} LIMIT 0"
-                ).fetchall()
-            schema_fields = [{"name": r[0], "type": r[1]} for r in schema_rows]
-        except Exception:
-            schema_fields = []
+                table = f"gold_{name}"
+                validate_safe_identifier(table, "table")
+                con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({sql})")
+                row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
+                storage_uri = f"postgres_gold:{table}"
+
+            elif layer == "master":
+                # ── Master → Parquet único + tabla en postgres_gold (dimensión) ──
+                effective_sql = self._inject_latest_date(sql, sources)
+                parquet_path  = self._silver_path(cartridge, name)
+                con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+                row_count = con.execute(
+                    f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
+                ).fetchone()[0]
+                storage_uri = parquet_path
+
+                # Dimensión también en postgres_gold para joins con hechos gold
+                self._pg_gold_attach(con)
+                table = f"master_{name}"
+                validate_safe_identifier(table, "table")
+                con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
+
+            else:
+                # ── Silver → Parquet único, siempre sobreescrito (última extracción) ──
+                effective_sql = self._inject_latest_date(sql, sources)
+                parquet_path  = self._silver_path(cartridge, name)
+                con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+                row_count = con.execute(
+                    f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
+                ).fetchone()[0]
+                storage_uri = parquet_path
+
+            # ── Infer schema for catalog & lineage ──────────────────────────────
+            try:
+                if layer in ("silver", "master"):
+                    parquet_path = self._silver_path(cartridge, name)
+                    schema_rows  = con.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{parquet_path}') LIMIT 0"
+                    ).fetchall()
+                else:
+                    self._pg_gold_attach(con)
+                    schema_rows = con.execute(
+                        f"DESCRIBE SELECT * FROM pggold.gold_{name} LIMIT 0"
+                    ).fetchall()
+                schema_fields = [{"name": r[0], "type": r[1]} for r in schema_rows]
+            except Exception:
+                schema_fields = []
 
         # ── Write lineage ────────────────────────────────────────────────────
         source_entity = (sources or [""])[0]

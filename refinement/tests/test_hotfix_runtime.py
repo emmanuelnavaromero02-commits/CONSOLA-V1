@@ -60,3 +60,12 @@ async def test_delete_dataset_rejects_invalid_name(refinement_main):
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid dataset name"
+
+
+@pytest.mark.anyio
+async def test_describe_silver_rejects_invalid_name_before_path_build(refinement_main):
+    with pytest.raises(HTTPException) as exc:
+        await refinement_main.mcp_invoke({"tool": "describe_silver", "args": {"name": "../secret"}})
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Invalid dataset name"
