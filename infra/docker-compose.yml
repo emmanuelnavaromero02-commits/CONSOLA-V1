@@ -42,7 +42,9 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - C:/MODecissionsPaaS/data/lakehouse:/data
+      - type: bind
+        source: ../data/lakehouse
+        target: /data
 
   # ── Application services ──────────────────────────────────────────────────────
 
