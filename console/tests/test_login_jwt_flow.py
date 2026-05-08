@@ -76,6 +76,18 @@ def console_main(monkeypatch):
     async def get_session_user(token):
         return None
 
+    async def get_user_by_id(user_id):
+        if user_id == 42:
+            return {
+                "id": 42,
+                "email": "analyst@example.com",
+                "name": "Test Analyst",
+                "role": "analyst",
+                "is_active": True,
+                "must_change_password": False,
+            }
+        return None
+
     async def destroy_session(token):
         return None
 
@@ -88,6 +100,7 @@ def console_main(monkeypatch):
     auth_stub.get_refresh_token_user = get_refresh_token_user
     auth_stub.revoke_refresh_token = revoke_refresh_token
     auth_stub.get_session_user = get_session_user
+    auth_stub.get_user_by_id = get_user_by_id
     auth_stub.destroy_session = destroy_session
     auth_stub.verify_internal_api_key = verify_internal_api_key
 
@@ -107,10 +120,12 @@ def console_main(monkeypatch):
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
 
     sys.modules.pop("app.main", None)
+    sys.modules.pop("app.dependencies", None)
     main = importlib.import_module("app.main")
     main._RATE_BUCKETS.clear()
     yield main
     sys.modules.pop("app.main", None)
+    sys.modules.pop("app.dependencies", None)
 
 
 def test_login_success_returns_access_token(console_main):
@@ -158,6 +173,17 @@ def test_me_jwt_rejects_invalid_token(console_main):
     response = client.get("/auth/me-jwt", headers={"Authorization": "Bearer invalid-token"})
 
     assert response.status_code == 401
+
+
+def test_me_current_accepts_valid_jwt(console_main):
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/auth/me-current", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["user"]["id"] == 42
+    assert response.json()["user"]["email"] == "analyst@example.com"
 
 
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
