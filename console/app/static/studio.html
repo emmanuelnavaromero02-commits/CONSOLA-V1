@@ -1113,12 +1113,12 @@
                style="width:100%;height:20px;font-size:9px;font-family:var(--font-mono);
                       background:var(--bg2);color:var(--text1);border:1px solid var(--border);
                       padding:0 4px;box-sizing:border-box"
-               onchange="patchEntityField('${esc(cartridge)}','${esc(rawName)}','display_name',this.value,this)">`;
+               onchange="patchEntityField(${escJsArg(cartridge)},${escJsArg(rawName)},'display_name',this.value,this)">`;
 
       // Mode select
       const modeSel = `
         <select style="width:100%;height:22px;font-size:10px;padding:0 4px"
-                onchange="patchEntityField('${esc(cartridge)}','${esc(rawName)}','mode',this.value,this)">
+                onchange="patchEntityField(${escJsArg(cartridge)},${escJsArg(rawName)},'mode',this.value,this)">
           <option value="full"        ${modeRaw==='full'        ?'selected':''}>full</option>
           <option value="incremental" ${modeRaw==='incremental' ?'selected':''}>incremental</option>
         </select>`;
@@ -1129,7 +1129,7 @@
         : `<option value="${esc(dagRaw)}">${esc(dagRaw)||'—'}</option>`;
       const dagInput = `
         <select style="width:100%;height:22px;font-size:10px;padding:0 4px;font-family:var(--font-mono);color:var(--green)"
-                onchange="patchEntityField('${esc(cartridge)}','${esc(rawName)}','dag_id',this.value,this)">
+                onchange="patchEntityField(${escJsArg(cartridge)},${escJsArg(rawName)},'dag_id',this.value,this)">
           ${dagOpts}
         </select>`;
 
@@ -1138,7 +1138,7 @@
         <button class="btn btn-sm ${isScheduled?'btn-active':''}"
                 style="${isScheduled?'color:var(--green);border-color:var(--green)':''}"
                 title="${isScheduled?'Programado: '+cronRaw:'Manual'}"
-                onclick="toggleEntitySchedule('${esc(cartridge)}','${esc(rawName)}','${esc(triggerType)}','${esc(cronRaw)}')">
+                onclick="toggleEntitySchedule(${escJsArg(cartridge)},${escJsArg(rawName)},${escJsArg(triggerType)},${escJsArg(cronRaw)})">
           ${isScheduled ? '⏱ '+esc(cronRaw) : '⏱ manual'}
         </button>`;
 
@@ -1146,7 +1146,7 @@
       const extractBtn = isExtracting
         ? `<button class="btn btn-sm" id="${extractBtnId}" disabled style="color:var(--cyan)">⟳ ...</button>`
         : `<button class="btn btn-sm" id="${extractBtnId}"
-                   onclick="extractNow('${esc(cartridge)}','${esc(rawName)}','${modeRaw}','${esc(dagRaw)}')">► Extraer</button>`;
+                   onclick="extractNow(${escJsArg(cartridge)},${escJsArg(rawName)},${escJsArg(modeRaw)},${escJsArg(dagRaw)})">► Extraer</button>`;
 
       return `
         <div class="et-row" id="erow-${rawName.replace(/\W/g,'_')}">
@@ -1888,7 +1888,7 @@
         <div style="display:flex;height:100%">
           <!-- LEFT: dataset list -->
           <div style="width:200px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column">
-            <div style="padding:10px 10px 6px;font-size:9px;letter-spacing:1px;color:var(--text3)">DATASETS ${layer.toUpperCase()}</div>
+        <div style="padding:10px 10px 6px;font-size:9px;letter-spacing:1px;color:var(--text3)">DATASETS ${esc(String(layer).toUpperCase())}</div>
             <div style="flex:1;overflow-y:auto">${listHtml}</div>
             <div style="padding:8px 10px;border-top:1px solid var(--border)">
               <button class="btn btn-sm" style="width:100%" onclick="selectDS(null)">+ Nuevo</button>
@@ -1965,7 +1965,7 @@
       const statsHtml = !isNew && rowCount != null ? `
         <div style="display:flex;gap:16px;font-size:10px;color:var(--text3);margin-bottom:4px">
           <span>Filas: <span style="color:var(--cyan)">${Number(rowCount).toLocaleString('es')}</span></span>
-          ${lastRefresh ? `<span>Actualizado: <span style="color:var(--cyan)">${fmt(lastRefresh)}</span></span>` : ''}
+          ${lastRefresh ? `<span>Actualizado: <span style="color:var(--cyan)">${esc(fmt(lastRefresh))}</span></span>` : ''}
         </div>` : '';
 
       return `
@@ -1988,9 +1988,9 @@
             </div>
             <span style="font-size:9px;letter-spacing:1px;color:var(--amber);border:1px solid var(--amber);
                          padding:2px 8px;border-radius:2px;font-family:var(--font-mono)">
-              ${layer.toUpperCase()}
+              ${esc(String(layer).toUpperCase())}
             </span>
-            <input type="hidden" id="ds-ed-layer" value="${layer}">
+            <input type="hidden" id="ds-ed-layer" value="${esc(layer)}">
           </div>
 
           <!-- Meta row -->
@@ -2534,13 +2534,13 @@ FROM silver_${entity || 'entity'}`;
           <div class="ds-row">
             <div>
               <div class="ds-row-name">${esc(ds.name)}</div>
-              <div class="ds-row-meta">${ds.row_count != null ? Number(ds.row_count).toLocaleString('es') + ' rows · ' : ''}${ds.updated_at ? fmt(ds.updated_at) : '—'}</div>
+              <div class="ds-row-meta">${ds.row_count != null ? Number(ds.row_count).toLocaleString('es') + ' rows · ' : ''}${ds.updated_at ? esc(fmt(ds.updated_at)) : '—'}</div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
               <button class="btn btn-sm btn-amber" onclick="askSuperset('Crea un dataset en Superset para la tabla ${esc(ds.name)} y un dashboard básico de KPIs')">
                 + Crear en Superset
               </button>
-              <a class="btn btn-sm" href="/viewer/datasets/${esc(ds.name)}" target="_blank">Ver SQL →</a>
+              <a class="btn btn-sm" href="/viewer/datasets/${encodeURIComponent(ds.name || '')}" target="_blank">Ver SQL →</a>
             </div>
           </div>`).join('');
       }).catch(() => {
@@ -2570,16 +2570,16 @@ FROM silver_${entity || 'entity'}`;
             <div style="font-family:var(--font-mono);font-size:11px;color:var(--text1)">${esc(app.title)}</div>
             <div style="font-size:10px;color:var(--text2);line-height:1.6;flex:1">${esc(app.description || '—')}</div>
             <div style="font-size:9px;color:var(--text3);font-family:var(--font-mono)">
-              ${app.updated_at ? app.updated_at.slice(0,16).replace('T',' ') : '—'}
+              ${app.updated_at ? esc(app.updated_at.slice(0,16).replace('T',' ')) : '—'}
             </div>
             <div style="display:flex;gap:6px">
-              <a href="/apps/${esc(app.name)}" target="_blank"
+              <a href="/apps/${encodeURIComponent(app.name || '')}" target="_blank"
                  style="flex:1;display:inline-block;padding:5px 12px;border:1px solid #7c9fff;border-radius:3px;
                         color:#7c9fff;font-size:10px;font-family:var(--font-mono);text-decoration:none;
                         text-align:center;transition:background .15s"
                  onmouseover="this.style.background='rgba(124,159,255,.12)'"
                  onmouseout="this.style.background='transparent'">→ ABRIR APP</a>
-              <button onclick="deleteAnalyticApp('${esc(app.name)}', '${esc(app.title)}')" title="Eliminar"
+              <button onclick="deleteAnalyticApp(${escJsArg(app.name)}, ${escJsArg(app.title)})" title="Eliminar"
                       style="padding:5px 10px;border:1px solid #c44;border-radius:3px;background:transparent;
                              color:#c44;font-size:11px;font-family:var(--font-mono);cursor:pointer;transition:background .15s"
                       onmouseover="this.style.background='rgba(204,68,68,.12)'"
@@ -2682,9 +2682,9 @@ FROM silver_${entity || 'entity'}`;
           <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
             <div>
               <div style="color:var(--text)">${esc(s.name)}</div>
-              <div style="color:var(--text2);font-size:10px">${esc(s.description || '')} · ${s.size_chars || 0} chars · ${s.chunk_count || 0} chunks</div>
+              <div style="color:var(--text2);font-size:10px">${esc(s.description || '')} · ${Number(s.size_chars || 0).toLocaleString('es')} chars · ${Number(s.chunk_count || 0).toLocaleString('es')} chunks</div>
             </div>
-            <button class="btn-sm" onclick="ragDeleteSource(${s.id})" title="Borrar">🗑</button>
+            <button class="btn-sm" onclick="ragDeleteSource(${Number(s.id)})" title="Borrar">🗑</button>
           </div>`).join('');
       } catch(e) {
         list.innerHTML = `<div style="color:var(--red)">Error: ${esc(e.message)}</div>`;
@@ -2723,7 +2723,7 @@ FROM silver_${entity || 'entity'}`;
         if (d.error) {
           msg.innerHTML = `<span style="color:var(--red)">${esc(d.error)}</span>`;
         } else {
-          msg.innerHTML = `<span style="color:var(--green)">✓ Ingerido — ${d.chunk_count || 0} chunks</span>`;
+          msg.innerHTML = `<span style="color:var(--green)">✓ Ingerido — ${Number(d.chunk_count || 0).toLocaleString('es')} chunks</span>`;
           document.getElementById('rag-name').value = '';
           document.getElementById('rag-desc').value = '';
           document.getElementById('rag-text').value = '';
@@ -3472,7 +3472,11 @@ FROM silver_${entity || 'entity'}`;
     // ── Utils ──────────────────────────────────────────────────────────────────
 
     function esc(s) {
-      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    function escJsArg(s) {
+      return JSON.stringify(String(s || '')).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
     }
 
     function fmt(iso) {

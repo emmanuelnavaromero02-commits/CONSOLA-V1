@@ -10,6 +10,7 @@ via the standard MCP contract:
 """
 from __future__ import annotations
 import os
+import secrets
 
 from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
@@ -45,7 +46,7 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
     # Validate the key and that the caller explicitly declares itself
     if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if x_api_key != INTERNAL_API_KEY:
+    if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 app = FastAPI(

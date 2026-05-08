@@ -253,9 +253,10 @@
     const adminLink = ME.role === 'admin'
       ? `<a href="/admin/users">USUARIOS</a> · `
       : '';
+    const role = String(ME.role || '');
     bar.innerHTML = `
       <span class="me"><strong>${escHtml(ME.email)}</strong></span>
-      <span class="role-pill ${ME.role==='admin'?'admin':''}">${ME.role.toUpperCase()}</span>
+      <span class="role-pill ${role==='admin'?'admin':''}">${escHtml(role.toUpperCase())}</span>
       ${adminLink}
       <a href="/me">MI PERFIL</a>
       <a href="#" onclick="event.preventDefault();doLogout()">SALIR</a>`;
@@ -278,7 +279,7 @@
     return u ? (u.name || u.email) : `#${uid}`;
   }
 
-  function escHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function escHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fmtDate(s){ return s ? String(s).slice(0,10) : '—'; }
   function fmtDateTime(s){ return s ? String(s).slice(0,16).replace('T',' ') : '—'; }
   function daysUntil(d){
@@ -353,7 +354,8 @@
 
   function rowHtml(r){
     const days = daysUntil(r.commitment_date);
-    let statusBadge = `<span class="badge b-${r.status}">${r.status.toUpperCase()}</span>`;
+    const status = String(r.status || '');
+    let statusBadge = `<span class="badge b-${escHtml(status)}">${escHtml(status.toUpperCase())}</span>`;
     let daysCell = '—';
     if (r.status === 'open' && days !== null) {
       if (days < 0)      { statusBadge = `<span class="badge b-overdue">VENCIDA</span>`; daysCell = `<span style="color:var(--red)">${days}d</span>`; }
@@ -371,7 +373,7 @@
       <td style="color:var(--text)"><strong>${escHtml(r.title)}</strong></td>
       <td style="color:var(--text2)">${responsable}</td>
       <td>${visBadge}</td>
-      <td>${fmtDate(r.commitment_date)}</td>
+      <td>${escHtml(fmtDate(r.commitment_date))}</td>
       <td>${statusBadge}</td>
       <td>${outcomeCell}</td>
       <td>${daysCell}</td>
@@ -407,11 +409,11 @@
           <button class="btn-danger" onclick="deleteDecision(${d.id})">🗑 ELIMINAR</button>
         </div>
         <div class="detail-meta">
-          <div class="meta-item"><span class="meta-lbl">CREADA</span><span class="meta-val">${fmtDateTime(d.created_at)}</span></div>
-          <div class="meta-item"><span class="meta-lbl">COMPROMISO</span><span class="meta-val">${fmtDate(d.commitment_date)}</span></div>
-          <div class="meta-item"><span class="meta-lbl">CIERRE</span><span class="meta-val">${fmtDateTime(d.closed_at)}</span></div>
-          <div class="meta-item"><span class="meta-lbl">STATUS</span><span class="meta-val">${(d.status||'').toUpperCase()}</span></div>
-          <div class="meta-item"><span class="meta-lbl">OUTCOME</span><span class="meta-val">${d.outcome ? d.outcome.toUpperCase() : '—'}</span></div>
+          <div class="meta-item"><span class="meta-lbl">CREADA</span><span class="meta-val">${escHtml(fmtDateTime(d.created_at))}</span></div>
+          <div class="meta-item"><span class="meta-lbl">COMPROMISO</span><span class="meta-val">${escHtml(fmtDate(d.commitment_date))}</span></div>
+          <div class="meta-item"><span class="meta-lbl">CIERRE</span><span class="meta-val">${escHtml(fmtDateTime(d.closed_at))}</span></div>
+          <div class="meta-item"><span class="meta-lbl">STATUS</span><span class="meta-val">${escHtml((d.status||'').toUpperCase())}</span></div>
+          <div class="meta-item"><span class="meta-lbl">OUTCOME</span><span class="meta-val">${d.outcome ? escHtml(d.outcome.toUpperCase()) : '—'}</span></div>
         </div>
         <div class="tabs">
           <div class="tab active" data-tab="overview">OVERVIEW</div>

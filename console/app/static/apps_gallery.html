@@ -153,16 +153,16 @@
             <div class="app-card-icon">▦</div>
             <div class="app-card-title">${escHtml(app.title)}</div>
             <div class="app-card-desc">${escHtml(app.description || '—')}</div>
-            <div class="app-card-meta">Actualizado: ${app.updated_at ? app.updated_at.slice(0,16).replace('T',' ') : '—'}</div>
+            <div class="app-card-meta">Actualizado: ${escHtml(app.updated_at ? app.updated_at.slice(0,16).replace('T',' ') : '—')}</div>
             <div style="display:flex;gap:8px;align-items:center">
-              <a class="app-card-btn" href="/apps/${escHtml(app.name)}" target="_blank" style="flex:1">→ ABRIR APP</a>
-              <button class="app-card-btn" title="Eliminar aplicación" onclick="deleteApp('${escHtml(app.name)}', '${escHtml(app.title)}')"
+              <a class="app-card-btn" href="/apps/${encodeURIComponent(app.name || '')}" target="_blank" style="flex:1">→ ABRIR APP</a>
+              <button class="app-card-btn" title="Eliminar aplicación" onclick="deleteApp(${escJsArg(app.name)}, ${escJsArg(app.title)})"
                       style="background:transparent;border-color:#c44;color:#c44;cursor:pointer;padding:6px 10px">🗑</button>
             </div>
           </div>
         `).join('')}</div>`;
       } catch (e) {
-        container.innerHTML = `<div class="empty-state"><div>Error cargando apps: ${e.message}</div></div>`;
+        container.innerHTML = `<div class="empty-state"><div>Error cargando apps: ${escHtml(e.message)}</div></div>`;
       }
     }
 
@@ -182,7 +182,11 @@
     }
 
     function escHtml(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    function escJsArg(s) {
+      return JSON.stringify(String(s ?? '')).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
     }
 
     loadApps();

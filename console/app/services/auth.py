@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -287,5 +288,5 @@ def verify_internal_api_key(
 ) -> None:
     if not x_internal_service or x_internal_service not in {"console", "workspace", "refinement", "mcp-infra", "airflow"}:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if x_api_key != get_internal_api_key():
+    if not x_api_key or not secrets.compare_digest(x_api_key, get_internal_api_key()):
         raise HTTPException(status_code=403, detail="Forbidden")
