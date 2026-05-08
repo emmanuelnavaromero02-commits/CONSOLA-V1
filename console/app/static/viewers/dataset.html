@@ -89,7 +89,7 @@ function showTab(name){
 
 function layerBadge(layer){
   const cls = {silver:'layer-silver',master:'layer-master',gold:'layer-gold'}[layer]||'layer-silver';
-  return `<span class="layer-badge ${cls}">${(layer||'silver').toUpperCase()}</span>`;
+  return `<span class="layer-badge ${cls}">${esc((layer||'silver').toUpperCase())}</span>`;
 }
 
 function fmt(iso){ return iso ? iso.replace('T',' ').substring(0,16) : '—'; }

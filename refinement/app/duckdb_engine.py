@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import io
 import json
+import re
 from datetime import datetime, timezone
 
 import duckdb
@@ -48,7 +49,6 @@ class DuckDBEngine:
     def _conn(self) -> duckdb.DuckDBPyConnection:
         if self._con is None:
             self._con = duckdb.connect()
-            self._con.execute("SET enable_external_access=false;")
             self._con.execute("INSTALL httpfs; LOAD httpfs;")
             self._con.execute("INSTALL postgres; LOAD postgres;")
             self._con.execute(f"""
@@ -193,7 +193,22 @@ class DuckDBEngine:
 
     # ── SQL preview ───────────────────────────────────────────────────────────
 
+    _DANGEROUS_READ_RE = re.compile(r"\bread_(?:csv|text|json)\s*\(", re.IGNORECASE)
+    _READ_PARQUET_RE = re.compile(r"\bread_parquet\s*\(\s*(['\"])(.*?)\1", re.IGNORECASE | re.DOTALL)
+    _DANGEROUS_PATH_RE = re.compile(r"(?i)(file://|['\"]/(?:etc|proc|var)/)")
+
+    def _validate_safe_sql(self, sql: str) -> None:
+        if self._DANGEROUS_READ_RE.search(sql):
+            raise ValueError("SQL contains a blocked local/external read function")
+        if self._DANGEROUS_PATH_RE.search(sql):
+            raise ValueError("SQL contains a blocked local file path")
+        for match in self._READ_PARQUET_RE.finditer(sql):
+            path = match.group(2).strip()
+            if not path.startswith("s3://"):
+                raise ValueError("read_parquet is only allowed for s3:// sources")
+
     def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
+        self._validate_safe_sql(sql)
         try:
             if params is None:
                 sql, params = self.get_rls_filters(sql, user_context)
@@ -247,7 +262,6 @@ class DuckDBEngine:
 
         params = []
 
-        import re
         def replacer(match):
             table = match.group(0)
             table_name = table.split('.')[-1]
@@ -275,7 +289,7 @@ class DuckDBEngine:
                 filters.append("(revenue_manager = ? OR revenue_manager = ? OR revenue_manager = 'N/D')")
                 params.extend([str(user_context.get("email", "")), str(user_context.get("name") or "")])
 
-            if not filters and table_name.lower().startswith("gold_"):
+            if not filters:
                 return f"(SELECT * FROM {table} WHERE 1=0)"
 
             if filters:
@@ -283,7 +297,7 @@ class DuckDBEngine:
 
             return table
 
-        new_sql = re.sub(r'pggold\.gold_[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
+        new_sql = re.sub(r'pggold\.[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
         return new_sql, params
 
     def apply_rls(self, sql: str, user_context: dict) -> str:
@@ -298,6 +312,7 @@ class DuckDBEngine:
 
     def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
         sql = ds.get("sql_def", "")
+        self._validate_safe_sql(sql)
         filter_params = []
         if filters:
             clauses = [f"{k} = ?" for k in filters.keys()]

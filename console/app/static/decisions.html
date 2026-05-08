@@ -369,9 +369,9 @@
     const visBadge = r.visibility === 'shared'
       ? `<span class="badge" style="background:rgba(88,166,255,.12);color:var(--cyan)" title="Visible para todo el equipo">EQUIPO</span>`
       : `<span class="badge" style="background:rgba(110,118,129,.18);color:var(--text2)" title="Solo creador, responsable y admins">PRIVADA</span>`;
-    return `<tr data-id="${r.id}" class="${SELECTED_ID === r.id ? 'selected' : ''}">
+    return `<tr data-id="${Number(r.id)}" class="${SELECTED_ID === r.id ? 'selected' : ''}">
       <td style="color:var(--text)"><strong>${escHtml(r.title)}</strong></td>
-      <td style="color:var(--text2)">${responsable}</td>
+      <td style="color:var(--text2)">${escHtml(responsable)}</td>
       <td>${visBadge}</td>
       <td>${escHtml(fmtDate(r.commitment_date))}</td>
       <td>${statusBadge}</td>
@@ -406,7 +406,7 @@
         <div class="detail-head">
           <h2>${escHtml(d.title)}</h2>
           <button class="btn-ghost" onclick="closeDetail()">CERRAR</button>
-          <button class="btn-danger" onclick="deleteDecision(${d.id})">🗑 ELIMINAR</button>
+          <button class="btn-danger" onclick="deleteDecision(${Number(d.id)})">🗑 ELIMINAR</button>
         </div>
         <div class="detail-meta">
           <div class="meta-item"><span class="meta-lbl">CREADA</span><span class="meta-val">${escHtml(fmtDateTime(d.created_at))}</span></div>
@@ -435,7 +435,7 @@
     const body = document.getElementById('tab-body');
     if (tab === 'overview') {
       const userOpts = ['<option value="">(sin asignar)</option>']
-        .concat(USERS.map(u => `<option value="${u.id}" ${d.assignee_id===u.id?'selected':''}>${escHtml(u.name||u.email)}</option>`))
+        .concat(USERS.map(u => `<option value="${escHtml(u.id)}" ${d.assignee_id===u.id?'selected':''}>${escHtml(u.name||u.email)}</option>`))
         .join('');
       const ownerLabel = userLabel(d.created_by_id) || '—';
       body.innerHTML = `
@@ -484,7 +484,7 @@
           </div>
         </div>
         <div style="display:flex; gap:8px; margin-top:8px">
-          <button class="btn-primary" onclick="saveOverview(${d.id})">GUARDAR CAMBIOS</button>
+          <button class="btn-primary" onclick="saveOverview(${Number(d.id)})">GUARDAR CAMBIOS</button>
         </div>`;
     } else if (tab === 'kpis') {
       const datasets = await fetchDatasets();
@@ -492,7 +492,7 @@
         <div id="kpi-list"></div>
         <div style="margin-top:18px">
           <button class="btn-ghost" onclick="addKpiRow()">+ AÑADIR KPI</button>
-          <button class="btn-primary" style="margin-left:8px" onclick="saveKpis(${d.id})">GUARDAR KPIs</button>
+          <button class="btn-primary" style="margin-left:8px" onclick="saveKpis(${Number(d.id)})">GUARDAR KPIs</button>
         </div>`;
       window._kpis = JSON.parse(JSON.stringify(d.kpis || []));
       window._kpiDatasets = datasets;
@@ -504,7 +504,7 @@
           <textarea id="ac-text" placeholder="Acción tomada o nota…"></textarea>
         </div>
         <div style="display:flex; gap:8px; margin-bottom:18px">
-          <button class="btn-primary" onclick="addAction(${d.id})">AÑADIR</button>
+          <button class="btn-primary" onclick="addAction(${Number(d.id)})">AÑADIR</button>
         </div>
         <div class="actions-list">
           ${(d.actions||[]).length === 0
@@ -524,12 +524,12 @@
       body.innerHTML = `
         <div style="font-size:12px; color:var(--text2); margin-bottom:14px">
           ${fu
-            ? `Esta decisión tiene un seguimiento: <a style="color:var(--amber)" href="#" onclick="event.preventDefault(); selectDecision(${fu})">decisión #${fu}</a>`
+            ? `Esta decisión tiene un seguimiento: <a style="color:var(--amber)" href="#" onclick="event.preventDefault(); selectDecision(${Number(fu)})">decisión #${Number(fu)}</a>`
             : 'Si esta decisión no se logró o requiere continuidad, crea una decisión de seguimiento que herede los KPIs.'}
         </div>
         ${fu
-          ? '<button class="btn-ghost" onclick="unlinkFollowUp('+d.id+')">DESVINCULAR SEGUIMIENTO</button>'
-          : '<button class="btn-primary" onclick="createFollowUp('+d.id+')">CREAR DECISIÓN DE SEGUIMIENTO</button>'}`;
+          ? '<button class="btn-ghost" onclick="unlinkFollowUp('+Number(d.id)+')">DESVINCULAR SEGUIMIENTO</button>'
+          : '<button class="btn-primary" onclick="createFollowUp('+Number(d.id)+')">CREAR DECISIÓN DE SEGUIMIENTO</button>'}`;
     }
   }
 
@@ -547,7 +547,7 @@
   function kpiRowHtml(k, i){
     const datasets = window._kpiDatasets || [];
     const dsOpts = datasets.map(d =>
-      `<option value="${escHtml(d.name)}" ${k.dataset===d.name?'selected':''}>${escHtml(d.name)} [${d.layer}]</option>`
+      `<option value="${escHtml(d.name)}" ${k.dataset===d.name?'selected':''}>${escHtml(d.name)} [${escHtml(d.layer)}]</option>`
     ).join('');
     return `<div class="kpi-row" data-i="${i}">
       <div><label>DATASET</label>
@@ -697,7 +697,7 @@
   function openNewModal(){
     const m = document.getElementById('modal-new');
     const userOpts = ['<option value="">(sin asignar)</option>']
-      .concat(USERS.map(u => `<option value="${u.id}" ${ME && ME.id===u.id?'selected':''}>${escHtml(u.name||u.email)}</option>`))
+      .concat(USERS.map(u => `<option value="${escHtml(u.id)}" ${ME && ME.id===u.id?'selected':''}>${escHtml(u.name||u.email)}</option>`))
       .join('');
     m.style.display = 'block';
     m.innerHTML = `

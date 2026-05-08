@@ -963,7 +963,7 @@
       const patternLabel = isDag ? 'DAG-BASED' : 'FASTAPI-MCP';
       const patternColor = isDag ? 'var(--cyan)' : 'var(--amber)';
       return `
-        <div class="item-card ${cls}" onclick="selectCartridge('${esc(c.id)}')" style="cursor:pointer">
+        <div class="item-card ${cls}" onclick="selectCartridge(${escJsArg(c.id)})" style="cursor:pointer">
           <div class="ic-hdr">
             <div class="ic-icon" style="color:${patternColor}">◈</div>
             <div>
@@ -979,7 +979,7 @@
             <span style="color:var(--text3)">${esc(c.source || '')}</span>
           </div>
           <div style="display:flex;gap:6px;margin-top:10px">
-            <button class="btn btn-sm" onclick="event.stopPropagation();selectCartridge('${esc(c.id)}');goStep(3)" title="Ver entidades">Entidades →</button>
+            <button class="btn btn-sm" onclick="event.stopPropagation();selectCartridge(${escJsArg(c.id)});goStep(3)" title="Ver entidades">Entidades →</button>
             <button class="btn btn-sm" onclick="event.stopPropagation();exportCartridge()" title="Exportar ZIP">↓ ZIP</button>
           </div>
         </div>`;
@@ -1154,7 +1154,7 @@
             <span class="et-name">${name}
               <button class="btn-sm" title="Renombrar entidad"
                       style="font-size:8px;padding:0 4px;margin-left:3px;opacity:.5"
-                      onclick="renameEntity('${esc(cartridge)}','${esc(rawName)}')">✎</button>
+                      onclick="renameEntity(${escJsArg(cartridge)},${escJsArg(rawName)})">✎</button>
             </span>
             ${runBadgeHtml}
           </span>
@@ -1165,13 +1165,13 @@
             ${extractBtn}
             ${schedBtn}
             <button class="btn btn-sm" title="Vista Previa Bronze"
-                    onclick="toggleEntityPreview('${esc(cartridge)}','${esc(rawName)}',this)">◉</button>
+                    onclick="toggleEntityPreview(${escJsArg(cartridge)},${escJsArg(rawName)},this)">◉</button>
             ${dagRaw ? `<button class="btn btn-sm" title="Editar DAG: ${esc(dagRaw)}"
                     style="color:var(--amber);border-color:var(--amber)"
-                    onclick="openDagEditor('${esc(dagRaw)}')">✏ DAG</button>` : ''}
+                    onclick="openDagEditor(${escJsArg(dagRaw)})">✏ DAG</button>` : ''}
             ${run ? `<button class="btn btn-sm" title="Ver logs"
                     style="${run.status!=='success'?'color:#ff2d55;border-color:#ff2d55':''}"
-                    onclick="toggleEntityLogs('${esc(cartridge)}','${esc(rawName)}',this)">
+                    onclick="toggleEntityLogs(${escJsArg(cartridge)},${escJsArg(rawName)},this)">
                       ⬡ Logs
                     </button>` : ''}
           </span>
@@ -1317,7 +1317,7 @@
         </select>
         <span style="display:flex;gap:5px">
           <button class="btn btn-sm" style="color:var(--green);border-color:var(--green)"
-                  onclick="saveNewEntity('${esc(cartridge)}')">✓ Guardar</button>
+                  onclick="saveNewEntity(${escJsArg(cartridge)})">✓ Guardar</button>
           <button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55"
                   onclick="document.getElementById('new-entity-row').remove()">✕</button>
         </span>`;
@@ -1873,7 +1873,7 @@
       const listHtml = ds.length ? ds.map(d => `
         <div class="ds-row ds-list-item ${_selectedDS?.name===d.name?'ds-row-active':''}"
              style="cursor:pointer;padding:8px 10px"
-             onclick="selectDS('${esc(d.name)}')">
+             onclick="selectDS(${escJsArg(d.name)})">
           <div style="min-width:0">
             <div class="ds-row-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</div>
             <div class="ds-row-meta" style="font-size:9px">
@@ -2044,8 +2044,8 @@
             <span style="font-size:10px;color:var(--text3)">Ctrl+Enter · Ctrl+⇧+Enter (modal)</span>
             <button class="btn" onclick="saveDS()">✓ Guardar</button>
             <button class="btn btn-amber" onclick="saveThenMaterialize()">✓⟳ Guardar y Materializar</button>
-            ${!isNew ? `<button class="btn btn-sm" onclick="materializeDS('${esc(name)}')">⟳ Re-materializar</button>` : ''}
-            ${!isNew ? `<button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55" onclick="deleteDS('${esc(name)}')">✕ Eliminar</button>` : ''}
+            ${!isNew ? `<button class="btn btn-sm" onclick="materializeDS(${escJsArg(name)})">⟳ Re-materializar</button>` : ''}
+            ${!isNew ? `<button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55" onclick="deleteDS(${escJsArg(name)})">✕ Eliminar</button>` : ''}
             <button class="btn btn-sm" style="margin-left:auto" onclick="sendDSToAI()">◈ Pedir ayuda a IA</button>
             <span id="ds-ed-status" style="font-size:10px;color:var(--text3)"></span>
           </div>
@@ -2338,12 +2338,12 @@ FROM silver_${entity || 'entity'}`;
       if (count) count.textContent = `(${filtered.length})`;
 
       const entityRows = filtered.map(s => `
-        <div class="ds-row" style="cursor:pointer;padding-left:12px" onclick="bronzeSelectSource('${esc(s.source)}')">
+        <div class="ds-row" style="cursor:pointer;padding-left:12px" onclick="bronzeSelectSource(${escJsArg(s.source)})">
           <div>
             <div class="ds-row-name">${esc(s.entity)}</div>
             <div class="ds-row-meta">${esc(s.source)}</div>
           </div>
-          <button class="btn btn-sm" onclick="event.stopPropagation();bronzeSelectSource('${esc(s.source)}')">Query →</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();bronzeSelectSource(${escJsArg(s.source)})">Query →</button>
         </div>`).join('') || '<div class="empty-card">Sin datos Bronze para este cartucho.</div>';
 
       area.innerHTML = `
@@ -2537,7 +2537,7 @@ FROM silver_${entity || 'entity'}`;
               <div class="ds-row-meta">${ds.row_count != null ? Number(ds.row_count).toLocaleString('es') + ' rows · ' : ''}${ds.updated_at ? esc(fmt(ds.updated_at)) : '—'}</div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
-              <button class="btn btn-sm btn-amber" onclick="askSuperset('Crea un dataset en Superset para la tabla ${esc(ds.name)} y un dashboard básico de KPIs')">
+              <button class="btn btn-sm btn-amber" onclick="askSuperset(${escJsArg(`Crea un dataset en Superset para la tabla ${ds.name} y un dashboard básico de KPIs`)})">
                 + Crear en Superset
               </button>
               <a class="btn btn-sm" href="/viewer/datasets/${encodeURIComponent(ds.name || '')}" target="_blank">Ver SQL →</a>
@@ -3018,26 +3018,26 @@ FROM silver_${entity || 'entity'}`;
               ${isEditing
                 ? `<input class="cat-edit-desc" id="cat-desc-inp-${CSS.escape(editId)}"
                      value="${esc(col.description||'')}"
-                     onblur="catSaveDesc('${esc(dsName)}','${esc(col.name)}')"
-                     onkeydown="if(event.key==='Enter')catSaveDesc('${esc(dsName)}','${esc(col.name)}');if(event.key==='Escape')catCancelEdit()">`
+                     onblur="catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)})"
+                     onkeydown="if(event.key==='Enter')catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)});if(event.key==='Escape')catCancelEdit()">`
                 : `<span style="cursor:pointer;color:${col.description?'var(--text1)':'var(--text3)'}"
-                       onclick="catStartEdit('${esc(dsName)}','${esc(col.name)}')"
+                       onclick="catStartEdit(${escJsArg(dsName)},${escJsArg(col.name)})"
                        title="Click para editar">${esc(col.description||'— agregar descripción')}</span>`}
             </td>
             <td>${tagsHtml}</td>
             <td>
               <span class="cat-flag ${col.is_key?'on':''}"
-                    onclick="catToggleFlag('${esc(dsName)}','${esc(col.name)}','is_key',${!col.is_key})"
+                    onclick="catToggleFlag(${escJsArg(dsName)},${escJsArg(col.name)},'is_key',${!col.is_key})"
                     title="Clave de join">K</span>
             </td>
             <td>
               <span class="cat-flag ${col.is_metric?'on':''}"
-                    onclick="catToggleFlag('${esc(dsName)}','${esc(col.name)}','is_metric',${!col.is_metric})"
+                    onclick="catToggleFlag(${escJsArg(dsName)},${escJsArg(col.name)},'is_metric',${!col.is_metric})"
                     title="Métrica de negocio">M</span>
             </td>
             <td>
               <button class="btn btn-sm" style="padding:1px 6px;font-size:9px"
-                onclick="catAddTagPrompt('${esc(dsName)}','${esc(col.name)}')">+tag</button>
+                onclick="catAddTagPrompt(${escJsArg(dsName)},${escJsArg(col.name)})">+tag</button>
             </td>
           </tr>`;
         }
@@ -3231,7 +3231,7 @@ FROM silver_${entity || 'entity'}`;
           const div  = document.createElement('div');
           div.className = `ai-msg ai-${role}`;
           const label = role === 'user' ? 'TÚ' : '◈ MOD·AI';
-          div.innerHTML = `<span class="ai-role">${label}</span><div class="ai-body">${html}</div>`;
+          div.innerHTML = `<span class="ai-role">${label}</span><div class="ai-body">${sanitizeAiHtml(html)}</div>`;
           chat.appendChild(div);
         });
         chat.scrollTop = chat.scrollHeight;
@@ -3469,6 +3469,24 @@ FROM silver_${entity || 'entity'}`;
         .replace(/\n/g, '<br>');
     }
 
+    function sanitizeAiHtml(html) {
+      const tpl = document.createElement('template');
+      tpl.innerHTML = String(html || '');
+      const allowed = new Set(['BR', 'CODE', 'PRE', 'STRONG']);
+      tpl.content.querySelectorAll('*').forEach(node => {
+        if (!allowed.has(node.tagName)) {
+          node.replaceWith(document.createTextNode(node.textContent || ''));
+          return;
+        }
+        [...node.attributes].forEach(attr => {
+          if (node.tagName !== 'STRONG' || attr.name !== 'style' || attr.value !== 'color:var(--amber)') {
+            node.removeAttribute(attr.name);
+          }
+        });
+      });
+      return tpl.innerHTML;
+    }
+
     // ── Utils ──────────────────────────────────────────────────────────────────
 
     function esc(s) {
@@ -3621,7 +3639,7 @@ FROM silver_${entity || 'entity'}`;
             : '';
           return `<div class="dag-sidebar-item ${_selectedDag === dag.dag_id ? 'selected' : ''}"
                        id="dagitem-${esc(dag.dag_id)}"
-                       onclick="selectDag('${esc(dag.dag_id)}')">
+                       onclick="selectDag(${escJsArg(dag.dag_id)})">
             <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
             <div class="dag-item-meta">${statusDot}</div>
           </div>`;
@@ -3750,7 +3768,7 @@ FROM silver_${entity || 'entity'}`;
             const list = document.getElementById('dag-list');
             if (list) list.innerHTML = _dagsCache.map(dag => {
               const dot = dag.is_paused ? `<span style="color:#555">● pausado</span>` : `<span style="color:var(--green)">● activo</span>`;
-              return `<div class="dag-sidebar-item ${_selectedDag===dag.dag_id?'selected':''}" id="dagitem-${esc(dag.dag_id)}" onclick="selectDag('${esc(dag.dag_id)}')">
+              return `<div class="dag-sidebar-item ${_selectedDag===dag.dag_id?'selected':''}" id="dagitem-${esc(dag.dag_id)}" onclick="selectDag(${escJsArg(dag.dag_id)})">
                 <div class="dag-item-id">${esc(dag.dag_id)}</div>
                 <div class="dag-item-meta">${dot}</div></div>`;
             }).join('');
@@ -3832,7 +3850,7 @@ FROM silver_${entity || 'entity'}`;
               ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>` : '';
             return `<div class="dag-sidebar-item ${dag.dag_id === newId ? 'selected' : ''}"
                          id="dagitem-${esc(dag.dag_id)}"
-                         onclick="selectDag('${esc(dag.dag_id)}')">
+                         onclick="selectDag(${escJsArg(dag.dag_id)})">
               <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
               <div class="dag-item-meta">${statusDot}</div>
             </div>`;
@@ -4250,7 +4268,7 @@ FROM silver_${entity || 'entity'}`;
             const cy = p.y + 52 + ci * 16;
             const fnLabel = c.name.length > 24 ? c.name.slice(0, 22) + '…' : c.name;
             inner += `
-              <g onclick="event.stopPropagation();jumpToTaskLine(${c.line},'${esc(t.id)}')" style="cursor:pointer">
+              <g onclick="event.stopPropagation();jumpToTaskLine(${c.line},${escJsArg(t.id)})" style="cursor:pointer">
                 <rect x="${p.x + 4}" y="${cy - 11}" width="${p.w - 8}" height="14" rx="2"
                       fill="rgba(255,255,255,.04)" stroke="none"/>
                 <text x="${p.x + 10}" y="${cy}" fill="var(--cyan)"
@@ -4262,7 +4280,7 @@ FROM silver_${entity || 'entity'}`;
         }
 
         nodeSvg += `<g class="dag-graph-node" id="gnode-${esc(t.id)}"
-            onclick="jumpToTaskLine(${t.line},'${esc(t.id)}')" style="cursor:pointer"
+            onclick="jumpToTaskLine(${t.line},${escJsArg(t.id)})" style="cursor:pointer"
             title="${esc(t.id)} — línea ${t.line}">
           ${inner}
         </g>`;
@@ -4460,7 +4478,7 @@ FROM silver_${entity || 'entity'}`;
           return;
         }
         list.innerHTML = tpls.map(t => `
-          <div class="tpl-item" onclick="applyDagTemplate('${esc(t.id)}')">
+          <div class="tpl-item" onclick="applyDagTemplate(${escJsArg(t.id)})">
             <div class="tpl-item-name">◈ ${esc(t.name)}</div>
             <div class="tpl-item-desc">${esc(t.description)}</div>
             <div class="tpl-tags">${(t.tags||[]).map(tag => `<span class="tpl-tag">${esc(tag)}</span>`).join('')}</div>
