@@ -14,6 +14,8 @@ import os
 import asyncpg
 import httpx
 
+from app.security import get_internal_api_key
+
 _pool: asyncpg.Pool | None = None
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -128,7 +130,7 @@ async def invoke(server_id: str, tool: str, args: dict) -> dict:
     if not row:
         return {"error": f"Server '{server_id}' not found"}
     try:
-        async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "console"}, timeout=120) as client:
+        async with httpx.AsyncClient(headers={"x-api-key": get_internal_api_key(), "x-internal-service": "console"}, timeout=120) as client:
             r = await client.post(
                 f"{row['url']}/mcp/invoke",
                 json={"tool": tool, "args": args},
@@ -158,7 +160,7 @@ async def health_check_all() -> int:
 
 async def _fetch_tools(url: str) -> list[dict]:
     try:
-        async with httpx.AsyncClient(headers={"x-api-key": os.environ.get("INTERNAL_API_KEY", "dev-secret-key"), "x-internal-service": "console"}, timeout=10) as client:
+        async with httpx.AsyncClient(headers={"x-api-key": get_internal_api_key(), "x-internal-service": "console"}, timeout=10) as client:
             r = await client.get(f"{url}/mcp/tools")
             if r.status_code < 400:
                 return r.json().get("tools", [])

@@ -12,7 +12,9 @@ _CONN_BLOCK = '''\
 MCP_INFRA_URL  = "http://mcp-infra:8010"
 REFINEMENT_URL = "http://refinement:8500"
 import os
-INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
+
+from app.security import get_internal_api_key
+INTERNAL_API_KEY = get_internal_api_key()
 
 
 def _get_connection(conn_id: str, cartridge_id: str = "{cartridge}") -> tuple[str, str]:

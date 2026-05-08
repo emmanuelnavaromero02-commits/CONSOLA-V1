@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +18,7 @@ class Settings(BaseSettings):
     pg_port:     int = 5432
     pg_db:       str = "modecissions"
     pg_user:     str = "postgres"
-    pg_password: str = "postgres"
+    pg_password: str = Field(..., min_length=1)
 
     # MinIO fallback
     minio_endpoint:   str  = "minio:9000"

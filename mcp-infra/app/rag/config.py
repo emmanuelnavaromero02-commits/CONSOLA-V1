@@ -5,9 +5,12 @@ _pg_dsn_env = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://
 if _pg_dsn_env:
     PG_DSN = _pg_dsn_env
 else:
+    pg_password = os.environ.get("PG_PASSWORD")
+    if not pg_password:
+        raise RuntimeError("PG_PASSWORD is required when DATABASE_URL is not set.")
     PG_DSN = (
         f"postgresql://{os.environ.get('PG_USER', 'postgres')}:"
-        f"{os.environ.get('PG_PASSWORD', 'postgres')}@"
+        f"{pg_password}@"
         f"{os.environ.get('PG_HOST', 'postgres')}:"
         f"{os.environ.get('PG_PORT', '5432')}/"
         f"{os.environ.get('PG_DB', 'modecissions')}"
