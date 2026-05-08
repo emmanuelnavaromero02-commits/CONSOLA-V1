@@ -29,6 +29,7 @@ from app.services import email_service as _email
 from app.services.auth import verify_internal_api_key
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
 from app.security import get_internal_api_key
+from app.dependencies import get_current_user as get_current_user_dependency
 
 
 async def _periodic_health_check():
@@ -132,7 +133,7 @@ async def security_headers_middleware(request: Request, call_next):
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
 _AUTH_PUBLIC_EXACT = {
-    "/login", "/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/auth/refresh", "/favicon.ico",
+    "/login", "/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/auth/me-current", "/auth/refresh", "/favicon.ico",
     "/activate", "/auth/activate", "/auth/activate/info",
     "/forgot-password", "/auth/forgot-password",
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
@@ -303,6 +304,11 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
         "exp": claims["exp"],
         "jti": claims["jti"],
     }}
+
+
+@app.get("/auth/me-current")
+async def auth_me_current(user: dict = Depends(get_current_user_dependency)):
+    return {"user": user}
 
 
 # ── Activation ────────────────────────────────────────────────────────────────
