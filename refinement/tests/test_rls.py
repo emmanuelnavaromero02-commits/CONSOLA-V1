@@ -41,6 +41,17 @@ def test_rls_tenant_isolation(engine):
     assert "tenant_id = ?" in rls_sql
     assert "tenant123" in params
 
+def test_rls_intercepts_pggold_table_without_gold_prefix(engine):
+    e, mock_conn = engine
+    mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
+    sql = "SELECT * FROM pggold.billing"
+    ctx = {"tenant_id": "tenant-billing"}
+
+    rls_sql, params = e.get_rls_filters(sql, ctx)
+    assert "pggold.billing" in rls_sql
+    assert "tenant_id = ?" in rls_sql
+    assert "tenant-billing" in params
+
 def test_rls_workspace_isolation(engine):
     e, mock_conn = engine
     mock_conn.execute.return_value.fetchall.return_value = [('workspace_id', 'varchar')]
@@ -86,3 +97,9 @@ def test_preview_sql_returns_schema_dicts(engine):
     ]
     assert result["data"] == [{"customer_id": "cust-1", "amount": 12.5}]
     assert result["row_count"] == 1
+
+def test_preview_sql_rejects_dangerous_local_read(engine):
+    e = DuckDBEngine()
+
+    with pytest.raises(ValueError):
+        e.preview_sql("SELECT * FROM read_csv('/etc/passwd')", user_context={"role": "admin"})
