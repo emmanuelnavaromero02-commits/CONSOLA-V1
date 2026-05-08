@@ -29,7 +29,15 @@ from app.services import email_service as _email
 from app.services.auth import verify_internal_api_key
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
 from app.security import get_internal_api_key
-from app.dependencies import get_current_user as get_current_user_dependency
+from app.dependencies import (
+    ROLE_ADMIN,
+    ROLE_ANALYST,
+    ROLE_WORKSPACE_ADMIN,
+    get_current_user as get_current_user_dependency,
+    require_any_role,
+    require_authenticated,
+    require_role,
+)
 
 
 async def _periodic_health_check():
@@ -147,11 +155,24 @@ _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
     "/me", "/api/me", "/api/me/change-password", "/auth/logout", "/auth/me",
 }
 
+_RBAC_DEPENDENCY_PREFIXES = (
+    "/api/me",
+    "/api/users",
+    "/api/decisions",
+    "/api/datasets",
+    "/api/apps",
+    "/api/admin/users",
+)
+
 
 def _is_api_like(path: str, accept: str) -> bool:
     if any(path.startswith(p) for p in _AUTH_API_LIKE_PREFIX):
         return True
     return "application/json" in (accept or "")
+
+
+def _uses_rbac_dependency(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in _RBAC_DEPENDENCY_PREFIXES)
 
 
 @app.middleware("http")
@@ -162,6 +183,9 @@ async def auth_middleware(request: Request, call_next):
     token = request.cookies.get(_auth.COOKIE_NAME)
     user  = await _auth.get_session_user(token) if token else None
     request.state.user = user
+
+    if not user and not is_public and _uses_rbac_dependency(path):
+        return await call_next(request)
 
     if not user and not is_public:
         if _is_api_like(path, request.headers.get("accept", "")):
@@ -439,13 +463,12 @@ async def viewer_me(request: Request):
 
 
 @app.get("/api/me")
-async def api_me(request: Request):
-    return require_user(request)
+async def api_me(user: dict = Depends(require_authenticated)):
+    return user
 
 
 @app.post("/api/me/change-password")
-async def api_me_change_password(request: Request, body: dict):
-    user = require_user(request)
+async def api_me_change_password(body: dict, user: dict = Depends(require_authenticated)):
     current = body.get("current_password") or ""
     new     = body.get("new_password") or ""
     if not current or not new:
@@ -650,7 +673,7 @@ async def api_sources():
         return {"sources": sources}
     return {"sources": []}
 
-@app.post("/api/datasets/save")
+@app.post("/api/datasets/save", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_dataset_save(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -659,7 +682,7 @@ async def api_dataset_save(body: dict):
     return r.json()
 
 
-@app.get("/api/datasets/{name}/detail")
+@app.get("/api/datasets/{name}/detail", dependencies=[Depends(require_authenticated)])
 async def api_dataset_detail(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/definition")
@@ -682,7 +705,7 @@ async def api_bronze_query(body: dict):
     return r.json()
 
 
-@app.delete("/api/datasets")
+@app.delete("/api/datasets", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_delete_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -692,7 +715,7 @@ async def api_delete_dataset(name: str):
     return r.json()
 
 
-@app.get("/api/datasets/{name}/lineage")
+@app.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_authenticated)])
 async def api_dataset_lineage(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -718,7 +741,7 @@ async def serve_app(name: str):
     return Response(content=row["html"], media_type="text/html")
 
 
-@app.get("/api/apps")
+@app.get("/api/apps", dependencies=[Depends(require_authenticated)])
 async def api_apps():
     """List all published analytic apps."""
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
@@ -727,7 +750,7 @@ async def api_apps():
     return r.json()
 
 
-@app.delete("/api/apps/{name}")
+@app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_apps_delete(name: str):
     """Delete a published analytic app by name."""
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
@@ -2169,8 +2192,7 @@ def _dec_can_delete(row: dict, user: dict) -> bool:
 
 
 @app.get("/api/decisions")
-async def api_decisions_list(request: Request, status: str = "", overdue: str = ""):
-    user = require_user(request)
+async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_authenticated)):
     where, params = [], []
     where.append(_dec_visible_clause(user["id"], user.get("role") == "admin", params))
     if status in ("open", "closed"):
@@ -2186,8 +2208,7 @@ async def api_decisions_list(request: Request, status: str = "", overdue: str = 
 
 
 @app.post("/api/decisions")
-async def api_decisions_create(request: Request, body: dict):
-    user = require_user(request)
+async def api_decisions_create(body: dict, user: dict = Depends(require_authenticated)):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
@@ -2209,8 +2230,7 @@ async def api_decisions_create(request: Request, body: dict):
 
 
 @app.get("/api/decisions/{decision_id}")
-async def api_decisions_get(request: Request, decision_id: int):
-    user = require_user(request)
+async def api_decisions_get(decision_id: int, user: dict = Depends(require_authenticated)):
     row = await _dec_load_with_visibility(decision_id, user)
     if not row:
         raise HTTPException(404, f"Decision {decision_id} not found")
@@ -2227,10 +2247,9 @@ async def api_decisions_get(request: Request, decision_id: int):
 
 
 @app.patch("/api/decisions/{decision_id}")
-async def api_decisions_update(request: Request, decision_id: int, body: dict):
+async def api_decisions_update(decision_id: int, body: dict, user: dict = Depends(require_authenticated)):
     """Patch any subset of: title, description, commitment_date, kpis, status, outcome,
     closed_at, follow_up_decision_id, assignee_id, visibility."""
-    user = require_user(request)
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
         raise HTTPException(404, f"Decision {decision_id} not found")
@@ -2270,8 +2289,7 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
 
 
 @app.delete("/api/decisions/{decision_id}")
-async def api_decisions_delete(request: Request, decision_id: int):
-    user = require_user(request)
+async def api_decisions_delete(decision_id: int, user: dict = Depends(require_authenticated)):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
         raise HTTPException(404, f"Decision {decision_id} not found")
@@ -2283,8 +2301,7 @@ async def api_decisions_delete(request: Request, decision_id: int):
 
 
 @app.post("/api/decisions/{decision_id}/actions")
-async def api_decisions_add_action(request: Request, decision_id: int, body: dict):
-    user = require_user(request)
+async def api_decisions_add_action(decision_id: int, body: dict, user: dict = Depends(require_authenticated)):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
         raise HTTPException(404, f"Decision {decision_id} not found")
@@ -2307,8 +2324,7 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
 @app.get("/api/users")
-async def api_users_list(request: Request):
-    require_user(request)
+async def api_users_list(user: dict = Depends(require_authenticated)):
     return {"users": await _auth.list_users(active_only=True)}
 
 
@@ -2321,14 +2337,12 @@ async def viewer_admin_users(request: Request):
 
 
 @app.get("/api/admin/users")
-async def api_admin_users_list(request: Request):
-    require_admin(request)
+async def api_admin_users_list(user: dict = Depends(require_role(ROLE_ADMIN))):
     return {"users": await _auth.list_users(active_only=False)}
 
 
 @app.post("/api/admin/users")
-async def api_admin_users_create(request: Request, body: dict):
-    require_admin(request)
+async def api_admin_users_create(body: dict, user: dict = Depends(require_role(ROLE_ADMIN))):
     email = (body.get("email") or "").strip().lower()
     pw    = body.get("password") or ""
     if not email or not pw:
@@ -2341,8 +2355,7 @@ async def api_admin_users_create(request: Request, body: dict):
 
 
 @app.patch("/api/admin/users/{user_id}")
-async def api_admin_users_update(request: Request, user_id: int, body: dict):
-    me = require_admin(request)
+async def api_admin_users_update(user_id: int, body: dict, me: dict = Depends(require_role(ROLE_ADMIN))):
     # Don't let an admin demote / disable themselves accidentally
     if user_id == me["id"] and (body.get("role") == "user" or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
@@ -2359,8 +2372,7 @@ async def api_admin_users_update(request: Request, user_id: int, body: dict):
 
 
 @app.delete("/api/admin/users/{user_id}")
-async def api_admin_users_delete(request: Request, user_id: int):
-    me = require_admin(request)
+async def api_admin_users_delete(user_id: int, me: dict = Depends(require_role(ROLE_ADMIN))):
     if user_id == me["id"]:
         raise HTTPException(400, "you cannot delete your own account")
     ok = await _auth.delete_user(user_id)
@@ -2370,10 +2382,9 @@ async def api_admin_users_delete(request: Request, user_id: int):
 
 
 @app.post("/api/admin/users/invite")
-async def api_admin_users_invite(request: Request, body: dict):
+async def api_admin_users_invite(body: dict, user: dict = Depends(require_role(ROLE_ADMIN))):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
-    require_admin(request)
     email = (body.get("email") or "").strip().lower()
     if not email:
         raise HTTPException(400, "email is required")
@@ -2389,9 +2400,8 @@ async def api_admin_users_invite(request: Request, body: dict):
 
 
 @app.post("/api/admin/users/{user_id}/reinvite")
-async def api_admin_users_reinvite(request: Request, user_id: int):
+async def api_admin_users_reinvite(user_id: int, user: dict = Depends(require_role(ROLE_ADMIN))):
     """Re-issue an invitation email (only for users that have not activated yet)."""
-    require_admin(request)
     user = await _auth.get_user_by_id(user_id)
     if not user:
         raise HTTPException(404, "user not found")
@@ -2404,9 +2414,8 @@ async def api_admin_users_reinvite(request: Request, user_id: int):
 
 
 @app.post("/api/admin/users/{user_id}/send-reset")
-async def api_admin_users_send_reset(request: Request, user_id: int):
+async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require_role(ROLE_ADMIN))):
     """Email a password reset link to an existing active user."""
-    require_admin(request)
     user = await _auth.get_user_by_id(user_id)
     if not user or not user.get("is_active"):
         raise HTTPException(404, "user not found or inactive")
