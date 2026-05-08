@@ -6,8 +6,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # ── Airflow ────────────────────────────────────────────────────────────────
     airflow_url:      str = "http://airflow:8080"
-    airflow_user:     str = "admin"
-    airflow_password: str = "admin"
+    airflow_user:     str = Field(..., min_length=1)
+    airflow_password: str = Field(..., min_length=1)
     airflow_dags_path: str = "/opt/airflow/dags"
 
     # ── MinIO ──────────────────────────────────────────────────────────────────
@@ -34,8 +34,8 @@ class Settings(BaseSettings):
 
     # ── Superset ───────────────────────────────────────────────────────────────
     superset_url:      str = "http://superset:8088"
-    superset_user:     str = "admin"
-    superset_password: str = "admin"
+    superset_user:     str = Field(..., min_length=1)
+    superset_password: str = Field(..., min_length=1)
 
     class Config:
         env_file = ".env"

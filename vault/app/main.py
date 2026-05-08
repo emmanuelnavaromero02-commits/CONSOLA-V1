@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg2
 import yaml
 from fastapi import FastAPI, Header, HTTPException, Depends
-import os
 from app.security import get_internal_api_key
 
 _SECRETS_FILE = Path("/vault/secrets.yaml")
@@ -157,15 +158,16 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
     # Validate the key and that the caller explicitly declares itself
     if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if x_api_key != INTERNAL_API_KEY:
+    if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)])
-
-
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     _seed()
+    yield
+
+
+app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)], lifespan=lifespan)
 
 
 @app.get("/health")

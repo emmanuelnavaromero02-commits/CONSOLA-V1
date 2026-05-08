@@ -15,6 +15,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -52,6 +53,20 @@ async def lifespan(app: FastAPI):
 INTERNAL_API_KEY = get_internal_api_key()
 
 app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
+
+
+def _allowed_origins() -> list[str]:
+    raw = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000")
+    return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Internal-Api-Key", "x-api-key", "x-internal-service"],
+)
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

@@ -48,6 +48,7 @@ class DuckDBEngine:
     def _conn(self) -> duckdb.DuckDBPyConnection:
         if self._con is None:
             self._con = duckdb.connect()
+            self._con.execute("SET enable_external_access=false;")
             self._con.execute("INSTALL httpfs; LOAD httpfs;")
             self._con.execute("INSTALL postgres; LOAD postgres;")
             self._con.execute(f"""

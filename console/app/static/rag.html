@@ -383,15 +383,16 @@ function renderSources() {
   }
   el.innerHTML = sources.map(s => {
     const active = selectedSourceIds.includes(s.id) ? 'active' : '';
-    const chunks = s.chunk_count ? `${s.chunk_count} chunks` : '';
+    const sourceId = Number(s.id);
+    const chunks = s.chunk_count ? `${Number(s.chunk_count).toLocaleString()} chunks` : '';
     const date   = (s.created_at || '').slice(0, 10);
-    return `<div class="source-item ${active}" onclick="toggleSource(${s.id})" data-id="${s.id}">
+    return `<div class="source-item ${active}" onclick="toggleSource(${sourceId})" data-id="${sourceId}">
       <div class="source-info">
         <div class="source-name" title="${esc(s.name)}">${esc(s.name)}</div>
-        <div class="source-meta">${chunks}${chunks && date ? ' · ' : ''}${date}</div>
+        <div class="source-meta">${esc(chunks)}${chunks && date ? ' · ' : ''}${esc(date)}</div>
         ${s.description ? `<div class="source-meta" style="color:var(--text2)">${esc(s.description)}</div>` : ''}
       </div>
-      <button class="source-del" onclick="delSource(event,${s.id})" title="Delete">✕</button>
+      <button class="source-del" onclick="delSource(event,${sourceId})" title="Delete">✕</button>
     </div>`;
   }).join('');
   updateFilterLabel();
@@ -486,7 +487,7 @@ async function doIngest() {
       throw new Error(err.detail || r.statusText);
     }
     const data = await r.json();
-    status.innerHTML = `<span class="ok">✓ Ingested: ${data.parents} parents, ${data.children} child chunks.</span>`;
+    status.innerHTML = `<span class="ok">✓ Ingested: ${Number(data.parents || 0).toLocaleString()} parents, ${Number(data.children || 0).toLocaleString()} child chunks.</span>`;
     document.getElementById('inName').value = '';
     document.getElementById('inDesc').value = '';
     document.getElementById('inContent').value = '';

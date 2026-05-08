@@ -23,7 +23,9 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-PG_DSN  = os.getenv("PG_DSN", "host=localhost port=5432 dbname=modecissions user=postgres password=postgres")
+PG_DSN = os.getenv("PG_DSN")
+if not PG_DSN:
+    raise RuntimeError("PG_DSN is required. Example: host=localhost port=5432 dbname=modecissions user=postgres password=...")
 DAGS_DIR = Path(__file__).parent.parent / "airflow" / "dags"
 
 # DAGs a sincronizar: (cartridge_id, dag_id, archivo)
