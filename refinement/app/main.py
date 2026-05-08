@@ -6,6 +6,7 @@ transforma a Silver/Gold con términos de negocio y trazabilidad de lineage.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +21,20 @@ from app.security import get_internal_api_key
 DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
 store  = DatasetStore(DATASETS_DIR)
+DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _normalize_postgres_dsn(raw: str) -> str:
+    return (raw or "").replace("postgresql+psycopg2://", "postgresql://")
+
+
+def _postgres_dsn() -> str:
+    return _normalize_postgres_dsn(os.environ.get("DATABASE_URL", ""))
+
+
+def _validate_dataset_name(name: str) -> None:
+    if not DATASET_NAME_RE.fullmatch(name or ""):
+        raise HTTPException(400, "Invalid dataset name")
 
 
 def _migrate_yaml_datasets():
@@ -493,6 +508,7 @@ async def mcp_invoke(body: dict):
 
     if tool == "delete_dataset":
         ds_name = args["name"]
+        _validate_dataset_name(ds_name)
         # Block deletion if any published app references this dataset (best-effort
         # via substring scan of the HTML — apps fetch via /api/data/<dataset>).
         try:
@@ -516,6 +532,7 @@ async def mcp_invoke(body: dict):
         layer     = info["layer"]
         cartridge = info["cartridge"]
         name      = info["name"]
+        _validate_dataset_name(name)
         steps     = []
         # Delete MinIO Parquet for silver / master
         if layer in ("silver", "master"):
@@ -676,8 +693,7 @@ async def mcp_invoke(body: dict):
 def _get_lineage(name: str, limit: int) -> dict:
     try:
         import psycopg2
-        pg_url = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "")
-        conn = psycopg2.connect(f"postgresql://{pg_url}")
+        conn = psycopg2.connect(_postgres_dsn())
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT silver_name, cartridge_id, source_entity,
@@ -702,8 +718,7 @@ def _get_lineage(name: str, limit: int) -> dict:
 
 def _pg_exec(query: str, params=None, fetch=False):
     import psycopg2
-    pg_url = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "")
-    conn = psycopg2.connect(f"postgresql://{pg_url}")
+    conn = psycopg2.connect(_postgres_dsn())
     result = None
     with conn.cursor() as cur:
         cur.execute(query, params)
@@ -792,9 +807,8 @@ def _get_data_catalog(
 
 def _upsert_catalog_entries(entries: list[dict]) -> dict:
     import json as _json
-    conn_str = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "")
     import psycopg2
-    conn = psycopg2.connect(f"postgresql://{conn_str}")
+    conn = psycopg2.connect(_postgres_dsn())
     updated = 0
     with conn.cursor() as cur:
         for e in entries:
@@ -1004,11 +1018,9 @@ def _seed_catalog_from_existing() -> int:
             elif layer == "gold":
                 try:
                     import psycopg2
-                    pg_url = (
-                        os.environ.get("GOLD_DATABASE_URL")
-                        or os.environ.get("DATABASE_URL", "")
-                    ).replace("postgresql+psycopg2://", "")
-                    conn   = psycopg2.connect(f"postgresql://{pg_url}")
+                    conn = psycopg2.connect(_normalize_postgres_dsn(
+                        os.environ.get("GOLD_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
+                    ))
                     with conn.cursor() as cur:
                         cur.execute(f"""
                             SELECT column_name, data_type

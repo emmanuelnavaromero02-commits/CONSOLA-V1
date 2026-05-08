@@ -9,6 +9,7 @@ import ast
 import asyncio
 import json
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
+DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service
 from app.services import cartridge_service
@@ -80,6 +82,11 @@ app.add_middleware(
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+def _validate_dataset_name(dataset: str) -> None:
+    if not DATASET_NAME_RE.fullmatch(dataset or ""):
+        raise HTTPException(400, "Invalid dataset name")
 
 
 SECURITY_HEADERS = {
@@ -629,12 +636,14 @@ async def api_job_logs(job_id: str, limit: int = 200):
     import asyncpg, os, json as _json
     dsn = os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
-    rows = await pool.fetch(
-        "SELECT entity, level, message, detail, ts FROM run_logs "
-        "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
-        job_id, limit
-    )
-    await pool.close()
+    try:
+        rows = await pool.fetch(
+            "SELECT entity, level, message, detail, ts FROM run_logs "
+            "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
+            job_id, limit
+        )
+    finally:
+        await pool.close()
     result = []
     for row in rows:
         detail = row["detail"]
@@ -730,12 +739,15 @@ async def serve_app(name: str):
     """Serve a published analytic app HTML page."""
     import asyncpg as _asyncpg
     dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
     try:
         pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
         row  = await pool.fetchrow("SELECT html FROM analytic_apps WHERE name=$1", name)
-        await pool.close()
     except Exception:
         raise HTTPException(503, "Database unavailable")
+    finally:
+        if pool:
+            await pool.close()
     if not row:
         raise HTTPException(404, f"App '{name}' not found")
     return Response(content=row["html"], media_type="text/html")
@@ -766,6 +778,7 @@ async def api_apps_delete(name: str):
 @app.get("/api/data/{dataset}")
 async def api_data(dataset: str, limit: int = 5000):
     """Return dataset rows as JSON array for use by analytic apps."""
+    _validate_dataset_name(dataset)
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
@@ -779,6 +792,7 @@ async def api_data(dataset: str, limit: int = 5000):
 @app.get("/api/data/{dataset}/options")
 async def api_data_options(dataset: str, columns: str = ""):
     """Return distinct values per column for building filter selectors."""
+    _validate_dataset_name(dataset)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
     if not cols:
         raise HTTPException(400, "columns param required, e.g. ?columns=revenue_manager,cliente")
@@ -818,6 +832,7 @@ async def api_data_query_filtered(dataset: str, body: dict):
            "limit": 1000, "columns": ["col1", "col2"]}
     fiscal_year uses March-February logic automatically.
     """
+    _validate_dataset_name(dataset)
     import re as _re
     filters   = body.get("filters", {})
     limit     = min(int(body.get("limit", 2000)), 10000)
@@ -920,6 +935,7 @@ async def api_pipeline(cartridge: str = "replicon"):
     import asyncpg as _asyncpg, os as _os
     _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
     dag_runs_by_entity: dict[str, dict] = {}
+    _pool = None
     try:
         _pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
         rows_pg = await _pool.fetch(
@@ -933,11 +949,13 @@ async def api_pipeline(cartridge: str = "replicon"):
                ORDER BY entity, started_at DESC""",
             cartridge,
         )
-        await _pool.close()
         for row in rows_pg:
             dag_runs_by_entity[row["entity"]] = dict(row)
     except Exception:
         pass
+    finally:
+        if _pool:
+            await _pool.close()
 
     # 2b. jobs table — internal queue (legacy / console-triggered runs)
     all_jobs = await job_service.list_recent(100)
@@ -1094,6 +1112,7 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
     """Recent DAG run history from pipeline_runs table."""
     import asyncpg as _asyncpg, os as _os
     _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
     try:
         pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
         if entity:
@@ -1108,10 +1127,12 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
                 "ORDER BY started_at DESC NULLS LAST LIMIT $2",
                 cartridge, limit,
             )
-        await pool.close()
         return {"runs": [dict(r) for r in rows]}
     except Exception as exc:
         raise HTTPException(500, str(exc))
+    finally:
+        if pool:
+            await pool.close()
 
 
 @app.post("/api/pipeline/{cartridge}/{entity}/extract")
@@ -1680,6 +1701,7 @@ async def studio_ops_invoke(body: dict):
         import asyncpg as _asyncpg, os as _os
         _dsn = _os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
         runs_map = {}
+        pool = None
         try:
             pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
             rows = await pool.fetch(
@@ -1687,7 +1709,6 @@ async def studio_ops_invoke(body: dict):
                 "FROM pipeline_runs WHERE cartridge_id=$1 ORDER BY entity, started_at DESC",
                 cartridge_id,
             )
-            await pool.close()
             for r in rows:
                 runs_map[r["entity"]] = {"status": r["status"],
                                          "started_at":  str(r["started_at"])[:16]  if r["started_at"]  else None,
@@ -1696,6 +1717,9 @@ async def studio_ops_invoke(body: dict):
                                          "error": r["error_message"]}
         except Exception:
             pass
+        finally:
+            if pool:
+                await pool.close()
         entities = []
         for e in (manifest.get("entities") or []):
             name = e.get("entity") or e.get("id") or ""
@@ -1717,6 +1741,7 @@ async def studio_ops_invoke(body: dict):
         import asyncpg as _asyncpg, os as _os
         _dsn = _os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
         last_run = None
+        pool = None
         try:
             pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
             row  = await pool.fetchrow(
@@ -1726,11 +1751,13 @@ async def studio_ops_invoke(body: dict):
                 "ORDER BY started_at DESC LIMIT 1",
                 cartridge_id, entity,
             )
-            await pool.close()
             if row:
                 last_run = dict(row)
         except Exception as exc:
             return {"error": f"DB error: {exc}"}
+        finally:
+            if pool:
+                await pool.close()
 
         if not last_run:
             return {"error": f"No pipeline runs found for {cartridge_id}/{entity}"}

@@ -184,8 +184,12 @@ CREATE TABLE IF NOT EXISTS token_usage (
     model         TEXT NOT NULL,
     input_tokens  INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
     ts            TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS cache_creation_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER NOT NULL DEFAULT 0;
 
 -- Silver lineage — trazabilidad de cada materialización silver
 CREATE TABLE IF NOT EXISTS silver_lineage (
