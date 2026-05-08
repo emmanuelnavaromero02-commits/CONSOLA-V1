@@ -109,6 +109,9 @@ def console_main(monkeypatch):
     def verify_internal_api_key(*args, **kwargs):
         return None
 
+    async def close_pool():
+        return None
+
     async def assistant_chat(message, history):
         return {"reply": f"echo:{message}", "history": history}
 
@@ -132,6 +135,7 @@ def console_main(monkeypatch):
     auth_stub.destroy_session = destroy_session
     auth_stub.list_users = list_users
     auth_stub.verify_internal_api_key = verify_internal_api_key
+    auth_stub.close_pool = close_pool
 
     service_stubs = {
         "app.services.auth": auth_stub,
@@ -142,7 +146,7 @@ def console_main(monkeypatch):
         "app.services.studio_assistant": _module(),
         "app.services.token_store": _module(summary=token_summary),
         "app.services.job_service": _module(list_recent=list_recent_jobs, get=get_job),
-        "app.services.cartridge_service": _module(),
+        "app.services.cartridge_service": _module(close_pool=close_pool),
     }
     for name, mod in service_stubs.items():
         monkeypatch.setitem(sys.modules, name, mod)

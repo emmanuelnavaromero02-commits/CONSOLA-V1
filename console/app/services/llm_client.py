@@ -38,9 +38,30 @@ CHAT_MODEL = os.environ.get(
     _PROVIDER_DEFAULTS.get(CHAT_PROVIDER, "claude-haiku-4-5-20251001"),
 )
 
-_ant           = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-_google_client = google_genai.Client(api_key=GEMINI_API_KEY)
-_ollama        = AsyncOpenAI(api_key="ollama", base_url=f"{OLLAMA_URL}/v1/")
+_ant: anthropic.AsyncAnthropic | None = None
+_google_client: google_genai.Client | None = None
+_ollama: AsyncOpenAI | None = None
+
+
+def _anthropic_client() -> anthropic.AsyncAnthropic:
+    global _ant
+    if _ant is None:
+        _ant = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    return _ant
+
+
+def _gemini_client() -> google_genai.Client:
+    global _google_client
+    if _google_client is None:
+        _google_client = google_genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
+    return _google_client
+
+
+def _ollama_client() -> AsyncOpenAI:
+    global _ollama
+    if _ollama is None:
+        _ollama = AsyncOpenAI(api_key="ollama", base_url=f"{OLLAMA_URL}/v1/")
+    return _ollama
 
 
 async def chat(
@@ -58,7 +79,7 @@ async def chat(
     if CHAT_PROVIDER == "gemini":
         return await _gemini_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
     if CHAT_PROVIDER == "ollama":
-        return await _openai_compat_chat(system, messages, tools, invoke_tool, tool_server_map, _ollama)
+        return await _openai_compat_chat(system, messages, tools, invoke_tool, tool_server_map, _ollama_client())
     return await _anthropic_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
 
 
@@ -225,7 +246,7 @@ async def _anthropic_chat(
         # Stream the SDK call (Anthropic recommends it for max_tokens >8k or
         # operations that may exceed 10 min). We still accumulate the final
         # message and use it the same way as a non-streamed response.
-        async with _ant.messages.stream(
+        async with _anthropic_client().messages.stream(
             model=CHAT_MODEL,
             max_tokens=32000,
             system=system_blocks,
@@ -353,7 +374,7 @@ async def _gemini_generate_with_retry(*, model: str, contents, config):
     """Wrap generate_content with retry on transient 503/429 from Gemini."""
     for attempt in range(4):
         try:
-            return await _google_client.aio.models.generate_content(
+            return await _gemini_client().aio.models.generate_content(
                 model=model, contents=contents, config=config,
             )
         except Exception as exc:
@@ -385,7 +406,7 @@ async def _get_or_create_gemini_cache(
     if sig in _gemini_cache_by_sig:
         return _gemini_cache_by_sig[sig]
     try:
-        cache = await _google_client.aio.caches.create(
+        cache = await _gemini_client().aio.caches.create(
             model=CHAT_MODEL,
             config=gtypes.CreateCachedContentConfig(
                 system_instruction=system,
