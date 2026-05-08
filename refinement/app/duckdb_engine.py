@@ -32,6 +32,11 @@ import duckdb
 import psycopg2
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
+
+
+def _normalize_postgres_dsn(raw: str) -> str:
+    return (raw or "").replace("postgresql+psycopg2://", "postgresql://")
 
 
 def validate_safe_identifier(value: str, label: str = "identifier") -> None:
@@ -87,12 +92,10 @@ class DuckDBEngine:
     # ── Postgres connections ──────────────────────────────────────────────────
 
     def _pg_conn(self):
-        dsn = self.pg_url.replace("postgresql+psycopg2://", "")
-        return psycopg2.connect(f"postgresql://{dsn}")
+        return psycopg2.connect(_normalize_postgres_dsn(self.pg_url))
 
     def _pg_gold_conn(self):
-        dsn = self.pg_gold_url.replace("postgresql+psycopg2://", "")
-        return psycopg2.connect(f"postgresql://{dsn}")
+        return psycopg2.connect(_normalize_postgres_dsn(self.pg_gold_url))
 
     def _pg_attach(self, con: duckdb.DuckDBPyConnection) -> str:
         """Attach service Postgres (pgdb) and return alias."""
@@ -114,7 +117,42 @@ class DuckDBEngine:
 
     # ── Path helpers ──────────────────────────────────────────────────────────
 
+    def _validate_bronze_source(self, source: str) -> str:
+        source = (source or "").strip()
+        if not source:
+            raise ValueError("Invalid bronze source")
+
+        blocked = ("'", '"', ";", "..", "file://", "\\", " ")
+        if any(token in source for token in blocked):
+            raise ValueError("Invalid bronze source")
+        if source.startswith("/") or source.startswith(("http://", "https://")):
+            raise ValueError("Invalid bronze source")
+
+        if source.startswith("s3://"):
+            expected_prefix = f"s3://{self.minio_bucket}/raw/"
+            if not source.startswith(expected_prefix):
+                raise ValueError("Invalid bronze source")
+            relative = source[len(f"s3://{self.minio_bucket}/"):]
+            parts = relative.split("/")
+            if len(parts) < 3 or parts[0] != "raw":
+                raise ValueError("Invalid bronze source")
+            validate_safe_identifier(parts[1], "cartridge")
+            validate_safe_identifier(parts[2], "entity")
+            if len(parts) > 3:
+                tail = "/".join(parts[3:])
+                if not tail or not SAFE_S3_BRONZE_TAIL_RE.fullmatch(tail):
+                    raise ValueError("Invalid bronze source")
+            return source
+
+        parts = source.split("/")
+        if len(parts) != 3 or parts[0] != "raw":
+            raise ValueError("Invalid bronze source")
+        validate_safe_identifier(parts[1], "cartridge")
+        validate_safe_identifier(parts[2], "entity")
+        return source
+
     def _bronze_path(self, source: str) -> str:
+        source = self._validate_bronze_source(source)
         if source.startswith("s3://"):
             return source
         return f"s3://{self.minio_bucket}/{source}/**/*.parquet"

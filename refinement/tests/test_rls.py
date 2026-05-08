@@ -10,7 +10,7 @@ os.environ['MINIO_SECRET_KEY'] = 'test'
 os.environ['MINIO_ACCESS_KEY'] = 'test'
 os.environ['MINIO_ENDPOINT'] = 'test'
 
-from refinement.app.duckdb_engine import DuckDBEngine, validate_safe_identifier
+from refinement.app.duckdb_engine import DuckDBEngine, _normalize_postgres_dsn, validate_safe_identifier
 
 @pytest.fixture
 def engine():
@@ -107,6 +107,12 @@ def test_preview_sql_rejects_dangerous_local_read(engine):
 def test_valid_dataset_name_passes():
     validate_safe_identifier("gold_sales_2025", "dataset")
 
+def test_normalize_postgres_dsn_sqlalchemy_driver():
+    assert _normalize_postgres_dsn("postgresql+psycopg2://u:p@h/db") == "postgresql://u:p@h/db"
+
+def test_normalize_postgres_dsn_native_postgres_url():
+    assert _normalize_postgres_dsn("postgresql://u:p@h/db") == "postgresql://u:p@h/db"
+
 @pytest.mark.parametrize("name", [
     'foo"; DROP TABLE x;--',
     "../secret",
@@ -123,6 +129,29 @@ def test_silver_path_rejects_invalid_dataset_name():
 
     with pytest.raises(ValueError):
         e._silver_path("replicon", "../secret")
+
+def test_bronze_path_allows_expected_raw_source():
+    e = DuckDBEngine()
+
+    assert e._bronze_path("raw/replicon/TimeEntry") == "s3://lakehouse/raw/replicon/TimeEntry/**/*.parquet"
+
+@pytest.mark.parametrize("source", [
+    "../secret",
+    "file:///etc/passwd",
+    "raw/replicon/TimeEntry'; DROP TABLE x;--",
+    "http://attacker/x",
+])
+def test_bronze_path_rejects_invalid_sources(source):
+    e = DuckDBEngine()
+
+    with pytest.raises(ValueError):
+        e._bronze_path(source)
+
+def test_bronze_read_rejects_invalid_source_before_sql_build():
+    e = DuckDBEngine()
+
+    with pytest.raises(ValueError):
+        e._bronze_read("raw/replicon/TimeEntry'; DROP TABLE x;--")
 
 def test_preview_sql_uses_duckdb_lock(engine):
     e, mock_conn = engine
