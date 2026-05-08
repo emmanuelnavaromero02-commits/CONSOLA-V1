@@ -109,6 +109,18 @@ def console_main(monkeypatch):
     def verify_internal_api_key(*args, **kwargs):
         return None
 
+    async def assistant_chat(message, history):
+        return {"reply": f"echo:{message}", "history": history}
+
+    async def token_summary():
+        return {"total_tokens": 123}
+
+    async def list_recent_jobs(limit=20):
+        return [{"id": "job-1", "status": "ok"}]
+
+    async def get_job(job_id):
+        return {"id": job_id, "status": "ok"}
+
     auth_stub.authenticate = authenticate
     auth_stub.create_session = create_session
     auth_stub.create_refresh_token = create_refresh_token
@@ -126,10 +138,10 @@ def console_main(monkeypatch):
         "app.services.tokens": _module(),
         "app.services.email_service": _module(),
         "app.services.mcp_registry": _module(startup=_noop_async, health_check_all=_noop_async),
-        "app.services.assistant": _module(),
+        "app.services.assistant": _module(chat=assistant_chat),
         "app.services.studio_assistant": _module(),
-        "app.services.token_store": _module(),
-        "app.services.job_service": _module(),
+        "app.services.token_store": _module(summary=token_summary),
+        "app.services.job_service": _module(list_recent=list_recent_jobs, get=get_job),
         "app.services.cartridge_service": _module(),
     }
     for name, mod in service_stubs.items():
@@ -292,6 +304,92 @@ def test_invalid_dataset_path_param_returns_400(console_main):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid dataset name"
+
+
+def test_assistant_chat_without_auth_returns_401(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.post("/assistant/chat", json={"message": "hello", "history": []})
+
+    assert response.status_code == 401
+
+
+def test_assistant_chat_with_valid_jwt_returns_200(console_main):
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.post(
+        "/assistant/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"message": "hello", "history": []},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "echo:hello"
+
+
+def test_jobs_without_auth_returns_401(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.get("/jobs")
+
+    assert response.status_code == 401
+
+
+def test_jobs_with_valid_jwt_returns_200(console_main):
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/jobs", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["id"] == "job-1"
+
+
+def test_tokens_summary_rejects_viewer(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.get("/tokens/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+
+
+def test_tokens_summary_allows_admin(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.get("/tokens/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["total_tokens"] == 123
+
+
+def test_api_users_rejects_viewer(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+
+
+def test_api_users_allows_admin(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["users"][0]["id"] == 42
 
 
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):

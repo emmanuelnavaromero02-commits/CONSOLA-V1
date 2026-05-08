@@ -163,6 +163,10 @@ _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
 }
 
 _RBAC_DEPENDENCY_PREFIXES = (
+    "/jobs",
+    "/tokens/summary",
+    "/assistant/chat",
+    "/datasets",
     "/api/me",
     "/api/users",
     "/api/decisions",
@@ -213,10 +217,12 @@ async def auth_middleware(request: Request, call_next):
 
 
 def current_user(request: Request) -> dict | None:
+    # TODO(phase-3): legacy cookie-middleware compatibility shim. Prefer dependencies.py.
     return getattr(request.state, "user", None)
 
 
 def require_user(request: Request) -> dict:
+    # TODO(phase-3): legacy cookie-middleware compatibility shim. Prefer require_authenticated.
     u = current_user(request)
     if not u:
         raise HTTPException(401, "authentication required")
@@ -224,6 +230,7 @@ def require_user(request: Request) -> dict:
 
 
 def require_admin(request: Request) -> dict:
+    # TODO(phase-3): legacy cookie-middleware compatibility shim. Prefer require_role(ROLE_ADMIN).
     u = require_user(request)
     if u.get("role") != "admin":
         raise HTTPException(403, "admin role required")
@@ -538,19 +545,19 @@ async def deregister_server(server_id: str):
 
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
-@app.get("/jobs")
+@app.get("/jobs", dependencies=[Depends(require_authenticated)])
 async def list_jobs(limit: int = 20):
     return {"jobs": await job_service.list_recent(limit)}
 
 
-@app.get("/jobs/{job_id}")
+@app.get("/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
 async def get_job(job_id: str):
     return await job_service.get(job_id)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
 
-@app.get("/tokens/summary")
+@app.get("/tokens/summary", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def tokens_summary():
     return await token_store.summary()
 
@@ -558,31 +565,31 @@ async def tokens_summary():
 # ── Assistant ─────────────────────────────────────────────────────────────────
 
 @app.post("/assistant/chat")
-async def chat(body: dict):
+async def chat(body: dict, user: dict = Depends(require_authenticated)):
     return await assistant.chat(body.get("message", ""), body.get("history", []))
 
 
 # ── Datasets proxy → refinement ───────────────────────────────────────────────
 
-@app.get("/datasets")
+@app.get("/datasets", dependencies=[Depends(require_authenticated)])
 async def list_datasets():
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets")
         return r.json()
 
-@app.get("/datasets/{name}/schema")
+@app.get("/datasets/{name}/schema", dependencies=[Depends(require_authenticated)])
 async def dataset_schema(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/schema")
         return r.json()
 
-@app.get("/datasets/{name}/data")
+@app.get("/datasets/{name}/data", dependencies=[Depends(require_authenticated)])
 async def dataset_data(name: str, limit: int = 100):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/data", params={"limit": limit})
         return r.json()
 
-@app.post("/datasets/{name}/refresh")
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def refresh_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
@@ -700,7 +707,7 @@ async def api_dataset_detail(name: str):
     return r.json()
 
 
-@app.post("/api/bronze/query")
+@app.post("/api/bronze/query", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_bronze_query(body: dict):
     sql     = body.get("sql", "").strip()
     limit   = min(int(body.get("limit", 200)), 2000)
@@ -2351,7 +2358,7 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
 @app.get("/api/users")
-async def api_users_list(user: dict = Depends(require_authenticated)):
+async def api_users_list(user: dict = Depends(require_role(ROLE_ADMIN))):
     return {"users": await _auth.list_users(active_only=True)}
 
 
