@@ -37,6 +37,22 @@ def dependency_app(monkeypatch):
         "is_active": True,
         "must_change_password": False,
     }
+    auth_stub.workspace_rows = [
+        {
+            "workspace_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_name": "Main Workspace",
+            "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "tenant_name": "Default Tenant",
+            "workspace_role": "analyst",
+        },
+        {
+            "workspace_id": "22222222-2222-2222-2222-222222222222",
+            "workspace_name": "Finance Workspace",
+            "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "tenant_name": "Default Tenant",
+            "workspace_role": "viewer",
+        },
+    ]
 
     async def get_user_by_id(user_id):
         if user_id == auth_stub.user["id"]:
@@ -48,8 +64,16 @@ def dependency_app(monkeypatch):
             return dict(auth_stub.user)
         return None
 
+    class FakePool:
+        async def fetch(self, query, user_id):
+            return [dict(row) for row in auth_stub.workspace_rows]
+
+    async def pool():
+        return FakePool()
+
     auth_stub.get_user_by_id = get_user_by_id
     auth_stub.get_session_user = get_session_user
+    auth_stub.pool = pool
 
     services_pkg = importlib.import_module("app.services")
     monkeypatch.setattr(services_pkg, "auth", auth_stub)
@@ -88,6 +112,53 @@ def test_get_current_user_with_valid_jwt_returns_user(dependency_app):
     assert response.status_code == 200
     assert response.json()["user"]["id"] == 42
     assert response.json()["user"]["email"] == "analyst@example.com"
+    assert response.json()["user"]["active_workspace_id"] == "11111111-1111-1111-1111-111111111111"
+    assert response.json()["user"]["active_tenant_id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert response.json()["user"]["workspace_role"] == "analyst"
+    assert len(response.json()["user"]["workspaces"]) == 2
+
+
+def test_get_current_user_with_valid_jwt_and_workspace_header_returns_requested_workspace(dependency_app):
+    app, _ = dependency_app
+    client = TestClient(app)
+
+    response = client.get(
+        "/me",
+        headers={
+            "Authorization": f"Bearer {_token()}",
+            "X-Workspace-Id": "22222222-2222-2222-2222-222222222222",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["active_workspace_id"] == "22222222-2222-2222-2222-222222222222"
+    assert response.json()["user"]["workspace_role"] == "viewer"
+
+
+def test_get_current_user_with_unassigned_workspace_header_returns_403(dependency_app):
+    app, _ = dependency_app
+    client = TestClient(app)
+
+    response = client.get(
+        "/me",
+        headers={
+            "Authorization": f"Bearer {_token()}",
+            "X-Workspace-Id": "99999999-9999-9999-9999-999999999999",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_get_current_user_without_workspace_assignment_returns_403(dependency_app):
+    app, auth_stub = dependency_app
+    auth_stub.workspace_rows = []
+    client = TestClient(app)
+
+    response = client.get("/me", headers={"Authorization": f"Bearer {_token()}"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "user has no assigned workspace"
 
 
 def test_get_current_user_with_invalid_jwt_and_no_legacy_session_returns_401(dependency_app):
@@ -108,17 +179,19 @@ def test_get_current_user_with_legacy_cookie_still_works(dependency_app):
 
     assert response.status_code == 200
     assert response.json()["user"]["id"] == 42
+    assert response.json()["user"]["active_workspace_id"] == "11111111-1111-1111-1111-111111111111"
 
 
 def test_require_role_admin_allows_admin(dependency_app):
     app, auth_stub = dependency_app
     auth_stub.user["role"] = "admin"
+    auth_stub.workspace_rows[0]["workspace_role"] = "admin"
     client = TestClient(app)
 
     response = client.get("/admin", headers={"Authorization": f"Bearer {_token('admin')}"})
 
     assert response.status_code == 200
-    assert response.json()["user"]["role"] == "admin"
+    assert response.json()["user"]["workspace_role"] == "admin"
 
 
 def test_require_role_admin_rejects_viewer(dependency_app):
