@@ -15,6 +15,8 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt && \
     python -c "import duckdb; c = duckdb.connect(); c.execute('INSTALL httpfs;')"
 
-COPY app /app/app
+RUN useradd -m appuser
+USER appuser
+COPY --chown=appuser:appuser app /app/app
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8201"]

@@ -233,8 +233,8 @@ services:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:-modecissions-superset-secret}
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/superset
       SUPERSET_WEBSERVER_PORT: 8088
-      TALISMAN_ENABLED:        "false"
-      WTF_CSRF_ENABLED:        "false"
+      TALISMAN_ENABLED:        "true"
+      WTF_CSRF_ENABLED:        "true"
     command: superset run -p 8088 --with-threads --reload
     ports:
       - "8088:8088"
@@ -261,7 +261,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: "modecissions-airflow-secret"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"
     depends_on:
       - postgres
     restart: "no"
@@ -276,7 +276,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: "modecissions-airflow-secret"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
       # Paquetes extra para los DAGs
       _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow minio psycopg2-binary openpyxl"
@@ -313,7 +313,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: "modecissions-airflow-secret"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "${AIRFLOW_SECRET_KEY}"
       _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow minio psycopg2-binary openpyxl"
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
