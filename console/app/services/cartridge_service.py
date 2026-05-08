@@ -27,6 +27,7 @@ _DATABASE_URL = (
     .replace("postgresql+psycopg2://", "postgresql://")
     .replace("postgresql+asyncpg://", "postgresql://")
 )
+_POOL: asyncpg.Pool | None = None
 
 _MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "minio:9000")
 _MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
@@ -37,8 +38,38 @@ _MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
 
 # ── DB connection ─────────────────────────────────────────────────────────────
 
+class _PooledConnection:
+    def __init__(self, db_pool: asyncpg.Pool, conn):
+        self._pool = db_pool
+        self._conn = conn
+        self._released = False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    async def close(self) -> None:
+        if not self._released:
+            self._released = True
+            await self._pool.release(self._conn)
+
+
+async def pool() -> asyncpg.Pool:
+    global _POOL
+    if _POOL is None:
+        _POOL = await asyncpg.create_pool(_DATABASE_URL, min_size=1, max_size=4)
+    return _POOL
+
+
+async def close_pool() -> None:
+    global _POOL
+    if _POOL is not None:
+        await _POOL.close()
+        _POOL = None
+
+
 async def _pg():
-    return await asyncpg.connect(_DATABASE_URL)
+    db_pool = await pool()
+    return _PooledConnection(db_pool, await db_pool.acquire())
 
 
 # ── MinIO ─────────────────────────────────────────────────────────────────────

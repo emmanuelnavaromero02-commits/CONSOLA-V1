@@ -35,6 +35,13 @@ async def pool() -> asyncpg.Pool:
     return _POOL
 
 
+async def close_pool() -> None:
+    global _POOL
+    if _POOL is not None:
+        await _POOL.close()
+        _POOL = None
+
+
 # ── Password hashing ────────────────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
@@ -111,7 +118,7 @@ async def reset_password_to(user_id: int, new_password: str) -> dict | None:
     return dict(row) if row else None
 
 
-async def get_user_by_email(email: str) -> dict | None:
+async def _get_user_auth_record_by_email(email: str) -> dict | None:
     p = await pool()
     row = await p.fetchrow(
         "SELECT id, email, name, password_hash, role, is_active, must_change_password "
@@ -119,6 +126,10 @@ async def get_user_by_email(email: str) -> dict | None:
         email.lower().strip(),
     )
     return dict(row) if row else None
+
+
+async def get_user_by_email(email: str) -> dict | None:
+    return _user_to_dict(await _get_user_auth_record_by_email(email))
 
 
 async def get_user_by_id(user_id: int) -> dict | None:
@@ -198,7 +209,7 @@ async def delete_user(user_id: int) -> bool:
 
 async def authenticate(email: str, password: str) -> dict | None:
     """Returns user dict (without password_hash) on success, else None."""
-    u = await get_user_by_email(email)
+    u = await _get_user_auth_record_by_email(email)
     if not u or not u.get("is_active"):
         return None
     if not verify_password(password, u["password_hash"]):

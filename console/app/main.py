@@ -57,12 +57,18 @@ async def _periodic_health_check():
 async def lifespan(app: FastAPI):
     await mcp_registry.startup()
     task = asyncio.create_task(_periodic_health_check())
-    yield
-    task.cancel()
+    try:
+        yield
+    finally:
+        task.cancel()
+        await _auth.close_pool()
+        await cartridge_service.close_pool()
 
 
 
 INTERNAL_API_KEY = get_internal_api_key()
+# INTERNAL_API_KEY is cached at service startup. Rotating it requires restarting
+# Console and peer services so all in-process values are refreshed together.
 
 app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
 
@@ -112,6 +118,8 @@ RATE_LIMITS = {
     "/auth/reset-password": (8, RATE_LIMIT_WINDOW_SECONDS),
 }
 _RATE_BUCKETS: dict[tuple[str, str], list[float]] = {}
+# TODO(hardening): this in-memory limiter is per process. Multi-replica
+# deployments need a shared backend such as Redis to enforce global limits.
 
 
 def _client_ip(request: Request) -> str:
@@ -1143,8 +1151,9 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
 
 
 @app.post("/api/pipeline/{cartridge}/{entity}/extract")
-async def api_pipeline_extract(cartridge: str, entity: str, body: dict = {}):
+async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
+    body = body or {}
     mode = body.get("mode", "incremental")
     result = await mcp_registry.invoke(cartridge, "extract", {
         "entity": entity,
@@ -2371,12 +2380,12 @@ async def viewer_admin_users(request: Request):
 
 
 @app.get("/api/admin/users")
-async def api_admin_users_list(user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_list(admin_user: dict = Depends(require_role(ROLE_ADMIN))):
     return {"users": await _auth.list_users(active_only=False)}
 
 
 @app.post("/api/admin/users")
-async def api_admin_users_create(body: dict, user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
     email = (body.get("email") or "").strip().lower()
     pw    = body.get("password") or ""
     if not email or not pw:
@@ -2384,30 +2393,30 @@ async def api_admin_users_create(body: dict, user: dict = Depends(require_role(R
     if await _auth.get_user_by_email(email):
         raise HTTPException(409, f"user with email {email} already exists")
     role = body.get("role") if body.get("role") in ("user", "admin") else "user"
-    user = await _auth.create_user(email=email, password=pw, name=body.get("name"), role=role)
-    return user
+    target_user = await _auth.create_user(email=email, password=pw, name=body.get("name"), role=role)
+    return target_user
 
 
 @app.patch("/api/admin/users/{user_id}")
-async def api_admin_users_update(user_id: int, body: dict, me: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
     # Don't let an admin demote / disable themselves accidentally
-    if user_id == me["id"] and (body.get("role") == "user" or body.get("is_active") is False):
+    if user_id == admin_user["id"] and (body.get("role") == "user" or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
-    user = await _auth.update_user(
+    target_user = await _auth.update_user(
         user_id,
         name=body.get("name"),
         role=body.get("role") if body.get("role") in ("user", "admin") else None,
         is_active=body.get("is_active"),
         password=body.get("password"),
     )
-    if not user:
+    if not target_user:
         raise HTTPException(404, "user not found")
-    return user
+    return target_user
 
 
 @app.delete("/api/admin/users/{user_id}")
-async def api_admin_users_delete(user_id: int, me: dict = Depends(require_role(ROLE_ADMIN))):
-    if user_id == me["id"]:
+async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+    if user_id == admin_user["id"]:
         raise HTTPException(400, "you cannot delete your own account")
     ok = await _auth.delete_user(user_id)
     if not ok:
@@ -2416,7 +2425,7 @@ async def api_admin_users_delete(user_id: int, me: dict = Depends(require_role(R
 
 
 @app.post("/api/admin/users/invite")
-async def api_admin_users_invite(body: dict, user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
     email = (body.get("email") or "").strip().lower()
@@ -2426,34 +2435,34 @@ async def api_admin_users_invite(body: dict, user: dict = Depends(require_role(R
     if existing:
         raise HTTPException(409, f"user with email {email} already exists")
     role = body.get("role") if body.get("role") in ("user", "admin") else "user"
-    user = await _auth.create_invited_user(email=email, name=body.get("name"), role=role)
-    tok, _ = await _tokens.create(user["id"], "invite")
-    subject, html = _email.render_invitation(user.get("name"), email, _activation_link(tok), INVITE_TTL_HOURS)
+    target_user = await _auth.create_invited_user(email=email, name=body.get("name"), role=role)
+    tok, _ = await _tokens.create(target_user["id"], "invite")
+    subject, html = _email.render_invitation(target_user.get("name"), email, _activation_link(tok), INVITE_TTL_HOURS)
     sent = await _email.send_email(email, subject, html)
-    return {"invited": True, "user": user, "email_sent": sent}
+    return {"invited": True, "user": target_user, "email_sent": sent}
 
 
 @app.post("/api/admin/users/{user_id}/reinvite")
-async def api_admin_users_reinvite(user_id: int, user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
     """Re-issue an invitation email (only for users that have not activated yet)."""
-    user = await _auth.get_user_by_id(user_id)
-    if not user:
+    target_user = await _auth.get_user_by_id(user_id)
+    if not target_user:
         raise HTTPException(404, "user not found")
     tok, _ = await _tokens.create(user_id, "invite")
     subject, html = _email.render_invitation(
-        user.get("name"), user["email"], _activation_link(tok), INVITE_TTL_HOURS,
+        target_user.get("name"), target_user["email"], _activation_link(tok), INVITE_TTL_HOURS,
     )
-    sent = await _email.send_email(user["email"], subject, html)
+    sent = await _email.send_email(target_user["email"], subject, html)
     return {"reinvited": True, "email_sent": sent}
 
 
 @app.post("/api/admin/users/{user_id}/send-reset")
 async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require_role(ROLE_ADMIN))):
     """Email a password reset link to an existing active user."""
-    user = await _auth.get_user_by_id(user_id)
-    if not user or not user.get("is_active"):
+    target_user = await _auth.get_user_by_id(user_id)
+    if not target_user or not target_user.get("is_active"):
         raise HTTPException(404, "user not found or inactive")
     tok, _ = await _tokens.create(user_id, "reset")
-    subject, html = _email.render_password_reset(user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
-    sent = await _email.send_email(user["email"], subject, html)
+    subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
+    sent = await _email.send_email(target_user["email"], subject, html)
     return {"sent": sent}
