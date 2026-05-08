@@ -88,6 +88,19 @@ def console_main(monkeypatch):
             }
         return None
 
+    class FakePool:
+        async def fetch(self, query, user_id):
+            return [{
+                "workspace_id": "11111111-1111-1111-1111-111111111111",
+                "workspace_name": "Main Workspace",
+                "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "tenant_name": "Default Tenant",
+                "workspace_role": "analyst",
+            }]
+
+    async def pool():
+        return FakePool()
+
     async def destroy_session(token):
         return None
 
@@ -101,6 +114,7 @@ def console_main(monkeypatch):
     auth_stub.revoke_refresh_token = revoke_refresh_token
     auth_stub.get_session_user = get_session_user
     auth_stub.get_user_by_id = get_user_by_id
+    auth_stub.pool = pool
     auth_stub.destroy_session = destroy_session
     auth_stub.verify_internal_api_key = verify_internal_api_key
 
@@ -184,6 +198,10 @@ def test_me_current_accepts_valid_jwt(console_main):
     assert response.status_code == 200
     assert response.json()["user"]["id"] == 42
     assert response.json()["user"]["email"] == "analyst@example.com"
+    assert response.json()["user"]["active_workspace_id"] == "11111111-1111-1111-1111-111111111111"
+    assert response.json()["user"]["active_tenant_id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert response.json()["user"]["workspace_role"] == "analyst"
+    assert response.json()["user"]["workspaces"][0]["workspace_name"] == "Main Workspace"
 
 
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
