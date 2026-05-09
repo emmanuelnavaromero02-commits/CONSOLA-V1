@@ -65,6 +65,9 @@ def console_main(monkeypatch):
         async def fetch(self, *args, **kwargs):
             return list(asyncpg_stub.fetch_rows)
 
+        async def fetchrow(self, *args, **kwargs):
+            return asyncpg_stub.fetch_rows[0] if asyncpg_stub.fetch_rows else None
+
         async def close(self):
             return None
 
@@ -427,3 +430,51 @@ async def test_api_pipeline_entity_runs_returns_recent_history(console_main, mon
         "duration_sec": 3.0,
         "error": None,
     }]
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_run_logs_returns_summary(console_main, monkeypatch):
+    async def metadata(cartridge, entity):
+        return {
+            "pattern": "dag-based",
+            "entity": entity,
+            "dag_id": "replicon_extract",
+            "mode": "full",
+            "enabled": True,
+        }
+
+    calls = []
+
+    async def invoke(server, tool, args):
+        calls.append((server, tool, args))
+        if tool == "airflow_list_task_instances":
+            return {"tasks": [{"task_id": "extract", "state": "success", "duration": 1.5}]}
+        if tool == "airflow_get_task_logs":
+            return {"logs": "extract ok", "dag_id": args["dag_id"], "task_id": args["task_id"]}
+        return {}
+
+    console_main._test_asyncpg_stub.fetch_rows = [{
+        "run_id": "manual__test",
+        "dag_id": "replicon_extract",
+        "airflow_dag_run_id": "manual__test",
+        "status": "success",
+        "mode": "full",
+        "started_at": "2026-05-09T04:09:57+00:00",
+        "finished_at": "2026-05-09T04:10:00+00:00",
+        "duration_seconds": 3.0,
+        "error_message": None,
+    }]
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
+    monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
+
+    result = await console_main.api_pipeline_run_logs("replicon", "Department", "manual__test")
+
+    assert result["cartridge"] == "replicon"
+    assert result["entity"] == "Department"
+    assert result["dag_id"] == "replicon_extract"
+    assert result["dag_run_id"] == "manual__test"
+    assert result["status"] == "success"
+    assert result["available"] is True
+    assert result["tasks"] == [{"task_id": "extract", "state": "success", "duration": 1.5}]
+    assert result["logs"] == [{"task_id": "extract", "available": True, "logs": "extract ok"}]
+    assert result["error"] is None
