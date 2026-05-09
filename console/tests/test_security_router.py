@@ -24,7 +24,7 @@ def test_get_sessions(mock_pool):
 
     response = client.get("/security/sessions")
     assert response.status_code == 200
-    assert response.json() == [{"token": "abc", "user_id": 1, "user_email": "a@b.com"}]
+    assert response.json() == [{"user_id": 1, "user_email": "a@b.com", "token_preview": "***", "token": "abc"}]
 
 @patch("app.routers.security._auth.pool", new_callable=AsyncMock)
 def test_revoke_session(mock_pool):

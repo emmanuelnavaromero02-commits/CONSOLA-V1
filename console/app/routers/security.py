@@ -14,7 +14,14 @@ async def get_sessions(user: dict = Depends(require_admin)):
            JOIN users u ON u.id = s.user_id
            ORDER BY s.last_seen DESC NULLS LAST"""
     )
-    return [dict(r) for r in rows]
+    res = []
+    for r in rows:
+        d = dict(r)
+        token = d.pop("token")
+        d["token_preview"] = token[:8] + "..." if token and len(token) > 8 else "***"
+        d["token"] = token
+        res.append(d)
+    return res
 
 @router.delete("/sessions/{token}")
 async def revoke_session(token: str, user: dict = Depends(require_admin)):
@@ -28,7 +35,7 @@ async def revoke_session(token: str, user: dict = Depends(require_admin)):
 async def get_audit_events(user: dict = Depends(require_admin)):
     p = await _auth.pool()
     rows = await p.fetch(
-        """SELECT a.id, a.user_id, u.email as user_email, a.action, a.details, a.ip, a.created_at
+        """SELECT a.id, a.user_id, u.email as user_email, a.action, a.metadata as details, a.ip, a.created_at
            FROM audit_events a
            LEFT JOIN users u ON u.id = a.user_id
            ORDER BY a.created_at DESC
