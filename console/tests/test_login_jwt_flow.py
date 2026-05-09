@@ -586,6 +586,41 @@ def test_admin_reinvite_rejects_active_user(console_main):
     assert response.json()["detail"] == "user already active; use password reset instead"
 
 
+def test_viewer_pipeline_allows_same_origin_iframe_with_session(console_main):
+    client = TestClient(console_main.app)
+    client.cookies.set("mod_session", "legacy-session-token")
+
+    response = client.get("/viewer/pipeline")
+
+    assert response.status_code == 200
+    assert response.headers.get("x-frame-options") is None
+    csp = response.headers.get("content-security-policy", "")
+    assert "frame-ancestors 'self'" in csp
+    assert "frame-ancestors 'none'" not in csp
+
+
+def test_viewer_redirect_uses_same_origin_iframe_headers(console_main):
+    client = TestClient(console_main.app)
+
+    response = client.get("/viewer/pipeline", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/login?next=/viewer/pipeline"
+    assert response.headers.get("x-frame-options") is None
+    assert "frame-ancestors 'self'" in response.headers.get("content-security-policy", "")
+
+
+def test_regular_pages_keep_anti_frame_headers(console_main):
+    client = TestClient(console_main.app)
+    client.cookies.set("mod_session", "legacy-session-token")
+
+    response = client.get("/monitor")
+
+    assert response.status_code == 200
+    assert response.headers.get("x-frame-options") == "DENY"
+    assert "frame-ancestors 'none'" in response.headers.get("content-security-policy", "")
+
+
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("refresh_token", "valid-refresh-token")

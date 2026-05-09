@@ -325,6 +325,20 @@ SECURITY_HEADERS = {
         "form-action 'self'"
     ),
 }
+VIEWER_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+}
 
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMITS = {
@@ -356,8 +370,16 @@ def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     _RATE_BUCKETS[key] = hits
 
 
-def _apply_security_headers(response: Response) -> Response:
-    for name, value in SECURITY_HEADERS.items():
+def _is_viewer_path(path: str) -> bool:
+    return path == "/viewer" or path.startswith("/viewer/")
+
+
+def _apply_security_headers(response: Response, path: str = "") -> Response:
+    headers = VIEWER_SECURITY_HEADERS if _is_viewer_path(path) else SECURITY_HEADERS
+    if _is_viewer_path(path):
+        if "X-Frame-Options" in response.headers:
+            del response.headers["X-Frame-Options"]
+    for name, value in headers.items():
         response.headers.setdefault(name, value)
     return response
 
@@ -365,7 +387,7 @@ def _apply_security_headers(response: Response) -> Response:
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
-    return _apply_security_headers(response)
+    return _apply_security_headers(response, request.url.path)
 
 
 # ── Auth middleware ────────────────────────────────────────────────────────────
@@ -437,8 +459,8 @@ async def auth_middleware(request: Request, call_next):
 
     if not user and not is_public:
         if _is_api_like(path, request.headers.get("accept", "")):
-            return _apply_security_headers(JSONResponse({"detail": "authentication required"}, status_code=401))
-        return _apply_security_headers(RedirectResponse(url=f"/login?next={path}"))
+            return _apply_security_headers(JSONResponse({"detail": "authentication required"}, status_code=401), path)
+        return _apply_security_headers(RedirectResponse(url=f"/login?next={path}"), path)
 
     # Forced password change: confine the session to the change-password flow.
     if user and user.get("must_change_password") and not is_public:
@@ -447,8 +469,8 @@ async def auth_middleware(request: Request, call_next):
                 return _apply_security_headers(JSONResponse(
                     {"detail": "password change required", "must_change_password": True},
                     status_code=403,
-                ))
-            return _apply_security_headers(RedirectResponse(url="/me"))
+                ), path)
+            return _apply_security_headers(RedirectResponse(url="/me"), path)
 
     return await call_next(request)
 
