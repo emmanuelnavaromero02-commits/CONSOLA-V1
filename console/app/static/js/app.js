@@ -348,7 +348,7 @@ async function loadJobs() {
       <div class="job-dot ${j.status}"></div>
       <div class="job-info">
         <div class="job-tool">${srv} › ${tool}</div>
-        <div class="job-msg">${msg}</div>
+        <div class="job-msg">${esc(msg)}</div>
       </div>
       <div class="job-id">${esc(j.job_id)}</div>
     </div>`;
