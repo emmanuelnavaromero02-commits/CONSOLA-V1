@@ -1,0 +1,32 @@
+connector:
+  id: sap_payroll
+  name: SAP Payroll
+  version: "1.0"
+  description: Connector for SAP Payroll on-premise. Extracts payroll results, wage types, and deductions.
+  auth:
+    type: basic
+    env_var_user: SAP_PAYROLL_USER
+    env_var_pass: SAP_PAYROLL_PASS
+  api:
+    base_url_env: SAP_PAYROLL_BASE_URL
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 200
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/sap_payroll/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+  entities:
+    count: 8
+    watermark_field_default: lastModifiedDateTime
+    page_size_default: 200

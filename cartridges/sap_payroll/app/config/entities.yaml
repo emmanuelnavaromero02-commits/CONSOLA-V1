@@ -1,0 +1,68 @@
+entities:
+  - entity: PayrollResult
+    mode: incremental
+    watermark_field: RunDate
+    date_field: RunDate
+    page_size: 200
+    description: "Resultados de nómina por empleado y período"
+    odata_entity: HCM_PAYROLL_SRV/PayrollResultSet
+    select_fields: [Pernr, Molga, Abkrs, Inper, Inptp, RunDate, Lgart, Betrg, Waers, Anzhl]
+
+  - entity: WageType
+    mode: full
+    page_size: 500
+    description: "Catálogo de conceptos salariales (T512T)"
+    odata_entity: HCM_PAYROLL_SRV/WageTypeSet
+    select_fields: [Lgart, Lgtxt, Lgart_D, Zuord]
+
+  - entity: PayrollArea
+    mode: full
+    page_size: 200
+    description: "Áreas de nómina con período y frecuencia"
+    odata_entity: HCM_PAYROLL_SRV/PayrollAreaSet
+    select_fields: [Abkrs, Atext, Pabrj, Pabrt, Otype]
+
+  - entity: PayrollPeriod
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 500
+    description: "Períodos de nómina con fechas de inicio y fin"
+    odata_entity: HCM_PAYROLL_SRV/PayrollPeriodSet
+    select_fields: [Abkrs, Pabrj, Pabrt, Begda, Endda, Bondt]
+
+  - entity: TaxWithholding
+    mode: incremental
+    watermark_field: RunDate
+    date_field: RunDate
+    page_size: 200
+    description: "Retenciones fiscales por empleado y período"
+    odata_entity: HCM_PAYROLL_SRV/TaxWithholdingSet
+    select_fields: [Pernr, Pabrj, Pabrt, Lgart, Betrg, Waers, RunDate]
+
+  - entity: SocialSecurity
+    mode: incremental
+    watermark_field: RunDate
+    date_field: RunDate
+    page_size: 200
+    description: "Cotizaciones de seguridad social por empleado"
+    odata_entity: HCM_PAYROLL_SRV/SocialSecuritySet
+    select_fields: [Pernr, Pabrj, Pabrt, Beitr, Waers, RunDate, Bsgrd]
+
+  - entity: BankTransfer
+    mode: incremental
+    watermark_field: RunDate
+    date_field: RunDate
+    page_size: 200
+    description: "Transferencias bancarias de nómina por empleado"
+    odata_entity: HCM_PAYROLL_SRV/BankTransferSet
+    select_fields: [Pernr, Pabrj, Pabrt, Betrg, Waers, Bankl, Bankn, Bkont, RunDate]
+
+  - entity: PayslipSummary
+    mode: incremental
+    watermark_field: RunDate
+    date_field: RunDate
+    page_size: 200
+    description: "Resumen de nómina: bruto, neto y deducciones"
+    odata_entity: HCM_PAYROLL_SRV/PayslipSummarySet
+    select_fields: [Pernr, Pabrj, Pabrt, GrossAmount, NetAmount, TotalDeductions, Waers, RunDate]

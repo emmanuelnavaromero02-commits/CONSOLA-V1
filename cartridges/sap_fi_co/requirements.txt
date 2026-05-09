@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+requests
+pydantic
+pydantic-settings
+python-dotenv
+sqlalchemy
+psycopg2-binary
+minio
+pandas
+pyarrow
+pyyaml
+cryptography
+duckdb
+fastmcp
+asyncpg

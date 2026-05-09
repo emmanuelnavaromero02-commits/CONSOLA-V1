@@ -1,0 +1,66 @@
+entities:
+  - entity: TimeEntry
+    mode: incremental
+    watermark_field: Bldat
+    date_field: Bldat
+    page_size: 2000
+    description: "Imputaciones de tiempo CATS por empleado y fecha"
+    odata_entity: HCM_CATS_SRV/CatsTimeEntrySet
+    select_fields: [Pernr, Bldat, Lstar, Raufnr, Skostl, Kapar, Catshours, Unit, Aueru, Bldat]
+
+  - entity: TimeBalance
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 1000
+    description: "Saldos de tiempo por empleado: horas extra, banco de horas"
+    odata_entity: HCM_TIME_SRV/TimeBalanceSet
+    select_fields: [Pernr, Begda, Endda, Ztart, Anzhl, Einhe, Zeinh]
+
+  - entity: Attendance
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 2000
+    description: "Asistencias registradas por empleado y día"
+    odata_entity: HCM_TIME_SRV/AttendanceSet
+    select_fields: [Pernr, Begda, Endda, Awart, Atbez, Kaltd, Stdaz]
+
+  - entity: WorkScheduleRule
+    mode: full
+    page_size: 500
+    description: "Reglas de horario: turnos, horas por día"
+    odata_entity: HCM_TIME_SRV/WorkScheduleRuleSet
+    select_fields: [Schkz, Begda, Endda, Tprog, Sstaz, Arbst, Pausen]
+
+  - entity: Shift
+    mode: full
+    page_size: 500
+    description: "Definición de turnos con inicio y fin"
+    odata_entity: HCM_TIME_SRV/ShiftSet
+    select_fields: [Schkz, Tprog, Beguz, Enduz, Tagnr, Plnty]
+
+  - entity: PublicHoliday
+    mode: full
+    page_size: 500
+    description: "Festivos por calendario y país"
+    odata_entity: HCM_TIME_SRV/PublicHolidaySet
+    select_fields: [Mandt, Fikrs, Fdate, Ftext, Ftype]
+
+  - entity: OvertimeRequest
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 1000
+    description: "Solicitudes de horas extra aprobadas"
+    odata_entity: HCM_TIME_SRV/OvertimeRequestSet
+    select_fields: [Pernr, Begda, Endda, Anzhl, Einhe, Awart, Status]
+
+  - entity: ClockEntry
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 5000
+    description: "Fichajes de entrada y salida por empleado"
+    odata_entity: HCM_TIME_SRV/ClockEntrySet
+    select_fields: [Pernr, Begda, Beguz, Enduz, Tityp, Stext]

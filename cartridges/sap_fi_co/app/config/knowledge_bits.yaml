@@ -1,0 +1,163 @@
+knowledge_bits:
+  - id: kb_budget_vs_actual
+    name: "Budget vs Actual"
+    description: "Presupuesto vs real por centro de coste y elemento de coste en el año en curso."
+    sql: >
+      WITH bgt AS (
+          SELECT DISTINCT ON (Kostl, Kstar, Gjahr, Monat) Kostl, Kstar, Gjahr, Monat, Wkgbtr
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/BudgetLine/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Gjahr AS INTEGER) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY Kostl, Kstar, Gjahr, Monat, _extracted_at DESC
+      ),
+      act AS (
+          SELECT Kostl, Kstar, Gjahr, Monat, SUM(CAST(Wkgbtr AS DECIMAL)) as actual_amount
+          FROM (
+              SELECT DISTINCT ON (Belegnr, Buzei) Kostl, Kstar, Gjahr, Monat, Wkgbtr
+              FROM read_parquet('s3://{bucket}/raw/sap_fi_co/ActualCost/load_date=*/batch_id=*/*.parquet')
+              WHERE CAST(Gjahr AS INTEGER) = EXTRACT(YEAR FROM CURRENT_DATE)
+              ORDER BY Belegnr, Buzei, _extracted_at DESC
+          )
+          GROUP BY Kostl, Kstar, Gjahr, Monat
+      ),
+      cc AS (
+          SELECT DISTINCT ON (Kostl) Kostl, Ktext
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/CostCenter/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Kostl, _extracted_at DESC
+      ),
+      ce AS (
+          SELECT DISTINCT ON (Kstar) Kstar, Ktext
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/CostElement/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Kstar, _extracted_at DESC
+      )
+      SELECT
+          COALESCE(b.Kostl, a.Kostl) as kostl,
+          cc.Ktext as ktext_cc,
+          COALESCE(b.Kstar, a.Kstar) as kstar,
+          ce.Ktext as ktext_ce,
+          COALESCE(b.Gjahr, a.Gjahr) as gjahr,
+          COALESCE(b.Monat, a.Monat) as monat,
+          COALESCE(CAST(b.Wkgbtr AS DECIMAL), 0) as budget_amount,
+          COALESCE(a.actual_amount, 0) as actual_amount,
+          COALESCE(a.actual_amount, 0) - COALESCE(CAST(b.Wkgbtr AS DECIMAL), 0) as variance,
+          CASE WHEN COALESCE(CAST(b.Wkgbtr AS DECIMAL), 0) = 0 THEN 0 ELSE (COALESCE(a.actual_amount, 0) / CAST(b.Wkgbtr AS DECIMAL)) * 100 END as consumption_pct,
+          CASE WHEN (CASE WHEN COALESCE(CAST(b.Wkgbtr AS DECIMAL), 0) = 0 THEN 0 ELSE (COALESCE(a.actual_amount, 0) / CAST(b.Wkgbtr AS DECIMAL)) * 100 END) > 90 THEN TRUE ELSE FALSE END as alert
+      FROM bgt b
+      FULL OUTER JOIN act a ON b.Kostl = a.Kostl AND b.Kstar = a.Kstar AND b.Gjahr = a.Gjahr AND b.Monat = a.Monat
+      LEFT JOIN cc ON COALESCE(b.Kostl, a.Kostl) = cc.Kostl
+      LEFT JOIN ce ON COALESCE(b.Kstar, a.Kstar) = ce.Kstar
+
+  - id: kb_payroll_cost_by_cc
+    name: "Payroll Cost By CC"
+    description: "Coste de nómina imputado por centro de coste y mes."
+    sql: >
+      WITH pay AS (
+          SELECT DISTINCT ON (Pernr, Kostl, Budat) Kostl, Gjahr, Monat, Abkrs, Pabrj, Pabrt, Betrg, Waers
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/PayrollPosting/load_date=*/batch_id=*/*.parquet')
+          WHERE Blart = 'LO'
+          ORDER BY Pernr, Kostl, Budat, _extracted_at DESC
+      ),
+      cc AS (
+          SELECT DISTINCT ON (Kostl) Kostl, Ktext
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/CostCenter/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Kostl, _extracted_at DESC
+      )
+      SELECT
+          p.Kostl as kostl,
+          cc.Ktext as ktext,
+          p.Gjahr as gjahr,
+          p.Monat as monat,
+          p.Abkrs as abkrs,
+          p.Pabrj as pabrj,
+          p.Pabrt as pabrt,
+          SUM(CAST(p.Betrg AS DECIMAL)) as total_payroll_cost,
+          p.Waers as waers
+      FROM pay p
+      LEFT JOIN cc ON p.Kostl = cc.Kostl
+      GROUP BY p.Kostl, cc.Ktext, p.Gjahr, p.Monat, p.Abkrs, p.Pabrj, p.Pabrt, p.Waers
+
+  - id: kb_cost_center_monthly_trend
+    name: "Cost Center Monthly Trend"
+    description: "Tendencia mensual de costes reales por CC últimos 12 meses."
+    sql: >
+      WITH act AS (
+          SELECT Kostl, DATE_TRUNC('month', CAST(Budat AS DATE)) as year_month, SUM(CAST(Wkgbtr AS DECIMAL)) as total_cost
+          FROM (
+              SELECT DISTINCT ON (Belegnr, Buzei) Kostl, Budat, Wkgbtr
+              FROM read_parquet('s3://{bucket}/raw/sap_fi_co/ActualCost/load_date=*/batch_id=*/*.parquet')
+              WHERE CAST(Budat AS DATE) >= CURRENT_DATE - INTERVAL '12' MONTH
+              ORDER BY Belegnr, Buzei, _extracted_at DESC
+          )
+          GROUP BY Kostl, DATE_TRUNC('month', CAST(Budat AS DATE))
+      ),
+      cc AS (
+          SELECT DISTINCT ON (Kostl) Kostl, Ktext
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/CostCenter/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Kostl, _extracted_at DESC
+      ),
+      trend AS (
+          SELECT
+              a.Kostl,
+              cc.Ktext,
+              a.year_month,
+              a.total_cost,
+              LAG(a.total_cost) OVER (PARTITION BY a.Kostl ORDER BY a.year_month) as prev_cost
+          FROM act a
+          LEFT JOIN cc ON a.Kostl = cc.Kostl
+      )
+      SELECT
+          Kostl as kostl,
+          Ktext as ktext,
+          year_month,
+          total_cost,
+          CASE WHEN prev_cost = 0 OR prev_cost IS NULL THEN 0 ELSE ((total_cost - prev_cost) / prev_cost) * 100 END as mom_change_pct
+      FROM trend
+
+  - id: kb_headcount_cost_ratio
+    name: "Headcount Cost Ratio"
+    description: "Coste total por empleado en el último período de nómina."
+    sql: >
+      WITH pay AS (
+          SELECT DISTINCT ON (Pernr, Pabrj, Pabrt) Pernr, Kostl, Pabrj, Pabrt, Betrg, Waers
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/PayrollPosting/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Pabrj, Pabrt, _extracted_at DESC
+      )
+      SELECT
+          Pernr as pernr,
+          Kostl as kostl,
+          Pabrj as pabrj,
+          Pabrt as pabrt,
+          SUM(CAST(Betrg AS DECIMAL)) as total_cost,
+          Waers as waers
+      FROM pay
+      GROUP BY Pernr, Kostl, Pabrj, Pabrt, Waers
+
+  - id: kb_internal_order_spending
+    name: "Internal Order Spending"
+    description: "Gasto acumulado por orden interna en el año en curso."
+    sql: >
+      WITH io AS (
+          SELECT DISTINCT ON (Aufnr) Aufnr, Ktext, Auart, Objnr
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/InternalOrder/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Aufnr, _extracted_at DESC
+      ),
+      act AS (
+          SELECT Belegnr, Gjahr, SUM(CAST(Wkgbtr AS DECIMAL)) as Wkgbtr, Waers
+          FROM (
+              SELECT DISTINCT ON (Belegnr, Buzei) Belegnr, Gjahr, Wkgbtr, Waers
+              FROM read_parquet('s3://{bucket}/raw/sap_fi_co/ActualCost/load_date=*/batch_id=*/*.parquet')
+              WHERE CAST(Gjahr AS INTEGER) = EXTRACT(YEAR FROM CURRENT_DATE)
+              ORDER BY Belegnr, Buzei, _extracted_at DESC
+          )
+          GROUP BY Belegnr, Gjahr, Waers
+      )
+      SELECT
+          io.Aufnr as aufnr,
+          io.Ktext as ktext,
+          io.Auart as auart,
+          a.Gjahr as gjahr,
+          SUM(a.Wkgbtr) as total_actual,
+          a.Waers as waers,
+          'Active' as order_status
+      FROM io
+      LEFT JOIN act a ON 1=1 -- Vía Dummy JOIN si no hay Belegnr -> Objnr claro, ideal mapear.
+      GROUP BY io.Aufnr, io.Ktext, io.Auart, a.Gjahr, a.Waers

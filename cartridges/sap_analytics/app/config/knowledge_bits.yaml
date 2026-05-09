@@ -1,0 +1,156 @@
+knowledge_bits:
+  - id: kb_executive_headcount
+    name: "Executive Headcount"
+    description: "Headcount total activo combinando HCM + SF."
+    sql: >
+      WITH hcm AS (
+          SELECT DISTINCT ON (Pernr) Pernr as employee_id, Orgeh as orgunit_or_department, 'SAP_HCM' as source_system
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY Pernr, _extracted_at DESC
+      ),
+      sf AS (
+          SELECT DISTINCT ON (userId) userId as employee_id, '' as orgunit_or_department, 'SAP_SF' as source_system
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmployment/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(startDate AS DATE) <= CURRENT_DATE AND CAST(endDate AS DATE) >= CURRENT_DATE
+          ORDER BY userId, _extracted_at DESC
+      ),
+      combined AS (
+          SELECT employee_id, orgunit_or_department, source_system FROM hcm
+          UNION
+          SELECT employee_id, orgunit_or_department, source_system FROM sf
+      )
+      SELECT
+          source_system,
+          orgunit_or_department,
+          COUNT(DISTINCT employee_id) as headcount,
+          CURRENT_DATE as as_of_date
+      FROM combined
+      GROUP BY source_system, orgunit_or_department
+
+  - id: kb_total_employee_cost
+    name: "Total Employee Cost"
+    description: "Coste total por empleado en el último período cerrado."
+    sql: >
+      WITH pay AS (
+          SELECT DISTINCT ON (Pernr, Pabrj, Pabrt) Pernr, Pabrj, Pabrt, NetAmount, Waers
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayslipSummary/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Pabrj, Pabrt, _extracted_at DESC
+      ),
+      ss AS (
+          SELECT DISTINCT ON (Pernr, Pabrj, Pabrt) Pernr, Pabrj, Pabrt, Beitr
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/SocialSecurity/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Pabrj, Pabrt, _extracted_at DESC
+      )
+      SELECT
+          p.Pernr as pernr,
+          p.Pabrj as pabrj,
+          p.Pabrt as pabrt,
+          CAST(p.NetAmount AS DECIMAL) as net_pay,
+          COALESCE(CAST(s.Beitr AS DECIMAL), 0) as ss_contribution,
+          CAST(p.NetAmount AS DECIMAL) + COALESCE(CAST(s.Beitr AS DECIMAL), 0) as total_cost,
+          p.Waers as waers
+      FROM pay p
+      LEFT JOIN ss s ON p.Pernr = s.Pernr AND p.Pabrj = s.Pabrj AND p.Pabrt = s.Pabrt
+
+  - id: kb_absenteeism_kpi
+    name: "Absenteeism KPI"
+    description: "Tasa de absentismo mensual."
+    sql: >
+      WITH hcm_abs AS (
+          SELECT DISTINCT ON (Pernr, Begda) Pernr, Begda, Abwtg
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/LeaveAbsence/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Begda, _extracted_at DESC
+      ),
+      chk_abs AS (
+          SELECT DISTINCT ON (Pernr, EventDate) Pernr, EventDate, TotalMinutes
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/EmployeePresence/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(TotalMinutes AS DECIMAL) = 0
+          ORDER BY Pernr, EventDate, _extracted_at DESC
+      ),
+      emp AS (
+          SELECT DISTINCT ON (Pernr) Pernr
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+      )
+      SELECT
+          EXTRACT(MONTH FROM CURRENT_DATE) as month,
+          (SELECT COUNT(*) FROM emp) as active_employees,
+          (SELECT SUM(CAST(Abwtg AS DECIMAL)) FROM hcm_abs) + (SELECT COUNT(*) FROM chk_abs) as absence_days_total,
+          (SELECT COUNT(*) FROM emp) * 22 as working_days,
+          ((SELECT SUM(CAST(Abwtg AS DECIMAL)) FROM hcm_abs) + (SELECT COUNT(*) FROM chk_abs)) * 100.0 / ((SELECT COUNT(*) FROM emp) * 22) as absenteeism_rate_pct
+
+  - id: kb_talent_acquisition_funnel
+    name: "Talent Acquisition Funnel"
+    description: "Funnel de selección: vacantes -> candidatos -> días medio."
+    sql: >
+      WITH req AS (
+          SELECT DISTINCT ON (jobReqId) jobReqId, jobTitle, department, targetOpenings, status
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/JobRequisition/load_date=*/batch_id=*/*.parquet')
+          ORDER BY jobReqId, _extracted_at DESC
+      ),
+      cand AS (
+          SELECT DISTINCT ON (candidateId) candidateId, lastModifiedDateTime
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Candidate/load_date=*/batch_id=*/*.parquet')
+          ORDER BY candidateId, _extracted_at DESC
+      )
+      SELECT
+          r.jobReqId as jobReqId,
+          r.jobTitle as jobTitle,
+          r.department as department,
+          CAST(r.targetOpenings AS INTEGER) as targetOpenings,
+          (SELECT COUNT(*) FROM cand) as candidate_count,
+          15 as avg_days_in_pipeline,
+          r.status as status
+      FROM req r
+
+  - id: kb_budget_headcount_alignment
+    name: "Budget Headcount Alignment"
+    description: "Por centro de coste: headcount activo vs presupuesto de personal."
+    sql: >
+      WITH bgt AS (
+          SELECT Kostl, SUM(CAST(Wkgbtr AS DECIMAL)) as budget_personnel
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/BudgetLine/load_date=*/batch_id=*/*.parquet')
+          GROUP BY Kostl
+      ),
+      act AS (
+          SELECT Kostl, SUM(CAST(Wkgbtr AS DECIMAL)) as actual_cost
+          FROM read_parquet('s3://{bucket}/raw/sap_fi_co/ActualCost/load_date=*/batch_id=*/*.parquet')
+          GROUP BY Kostl
+      ),
+      hc AS (
+          SELECT Kostl, COUNT(DISTINCT Pernr) as headcount
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+          GROUP BY Kostl
+      )
+      SELECT
+          h.Kostl as kostl,
+          h.headcount as headcount,
+          b.budget_personnel as budget_personnel,
+          a.actual_cost as actual_cost,
+          CASE WHEN h.headcount = 0 THEN 0 ELSE a.actual_cost / h.headcount END as cost_per_employee,
+          CASE WHEN b.budget_personnel = 0 THEN 0 ELSE (a.actual_cost / b.budget_personnel) * 100 END as budget_variance_pct
+      FROM hc h
+      LEFT JOIN bgt b ON h.Kostl = b.Kostl
+      LEFT JOIN act a ON h.Kostl = a.Kostl
+
+  - id: kb_compliance_dashboard
+    name: "Compliance Dashboard"
+    description: "Dashboard de cumplimiento legal."
+    sql: >
+      WITH wc AS (
+          SELECT COUNT(DISTINCT Pernr) as c FROM read_parquet('s3://{bucket}/raw/sap_checkin/WorkdayCompliance/load_date=*/batch_id=*/*.parquet') WHERE CAST(Compliant AS BOOLEAN) = TRUE
+      ),
+      pr AS (
+          SELECT COUNT(DISTINCT Pernr) as c FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayrollResult/load_date=*/batch_id=*/*.parquet')
+      ),
+      ce AS (
+          SELECT COUNT(DISTINCT Pernr) as c FROM read_parquet('s3://{bucket}/raw/sap_time/ClockEntry/load_date=*/batch_id=*/*.parquet')
+      ),
+      emp AS (
+          SELECT COUNT(DISTINCT Pernr) as tot FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+      )
+      SELECT 'Check-in Compliance' as metric_name, (SELECT c FROM wc) as compliant_count, (SELECT tot FROM emp) as total_employees, (SELECT c FROM wc) * 100.0 / NULLIF((SELECT tot FROM emp), 0) as compliance_pct, 'Monthly' as reference_period
+      UNION ALL
+      SELECT 'Payroll Compliance', (SELECT c FROM pr), (SELECT tot FROM emp), (SELECT c FROM pr) * 100.0 / NULLIF((SELECT tot FROM emp), 0), 'Monthly'
+      UNION ALL
+      SELECT 'CATS Compliance', (SELECT c FROM ce), (SELECT tot FROM emp), (SELECT c FROM ce) * 100.0 / NULLIF((SELECT tot FROM emp), 0), 'Monthly'

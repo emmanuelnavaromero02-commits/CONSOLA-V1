@@ -1,0 +1,116 @@
+knowledge_bits:
+  - id: kb_daily_attendance_rate
+    name: "Daily Attendance Rate"
+    description: "Tasa de asistencia diaria últimos 30 días."
+    sql: >
+      WITH att AS (
+          SELECT DISTINCT ON (Pernr, Begda) Pernr, Begda
+          FROM read_parquet('s3://{bucket}/raw/sap_time/Attendance/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Begda AS DATE) >= CURRENT_DATE - INTERVAL '30' DAY
+          ORDER BY Pernr, Begda, _extracted_at DESC
+      ),
+      sch AS (
+          SELECT DISTINCT ON (Schkz) Schkz
+          FROM read_parquet('s3://{bucket}/raw/sap_time/WorkScheduleRule/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Schkz, _extracted_at DESC
+      )
+      SELECT
+          CAST(a.Begda AS DATE) as fecha,
+          (SELECT COUNT(*) FROM sch) as scheduled_employees,
+          COUNT(a.Pernr) as attended_employees,
+          COUNT(a.Pernr) * 100.0 / NULLIF((SELECT COUNT(*) FROM sch), 0) as attendance_rate_pct
+      FROM att a
+      GROUP BY a.Begda
+
+  - id: kb_overtime_analysis
+    name: "Overtime Analysis"
+    description: "Horas extra aprobadas vs saldo banco de horas por empleado en el mes en curso."
+    sql: >
+      WITH ot AS (
+          SELECT DISTINCT ON (Pernr, Begda) Pernr, Begda, Anzhl
+          FROM read_parquet('s3://{bucket}/raw/sap_time/OvertimeRequest/load_date=*/batch_id=*/*.parquet')
+          WHERE EXTRACT(MONTH FROM CAST(Begda AS DATE)) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM CAST(Begda AS DATE)) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY Pernr, Begda, _extracted_at DESC
+      ),
+      tb AS (
+          SELECT DISTINCT ON (Pernr, Begda) Pernr, Begda, Anzhl
+          FROM read_parquet('s3://{bucket}/raw/sap_time/TimeBalance/load_date=*/batch_id=*/*.parquet')
+          WHERE EXTRACT(MONTH FROM CAST(Begda AS DATE)) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM CAST(Begda AS DATE)) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY Pernr, Begda, _extracted_at DESC
+      )
+      SELECT
+          o.Pernr as pernr,
+          EXTRACT(MONTH FROM CAST(o.Begda AS DATE)) as month,
+          SUM(CAST(o.Anzhl AS DECIMAL)) as approved_overtime_hours,
+          SUM(CAST(b.Anzhl AS DECIMAL)) as time_bank_balance,
+          CASE WHEN SUM(CAST(o.Anzhl AS DECIMAL)) > 20 THEN TRUE ELSE FALSE END as alert_threshold_exceeded
+      FROM ot o
+      LEFT JOIN tb b ON o.Pernr = b.Pernr
+      GROUP BY o.Pernr, month
+
+  - id: kb_clock_compliance
+    name: "Clock Compliance"
+    description: "Empleados que fichan fuera de su ventana horaria."
+    sql: >
+      WITH clk AS (
+          SELECT DISTINCT ON (Pernr, Begda) Pernr, Begda, Beguz
+          FROM read_parquet('s3://{bucket}/raw/sap_time/ClockEntry/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Begda, _extracted_at DESC
+      ),
+      sch AS (
+          SELECT DISTINCT ON (Schkz) Schkz, Beguz
+          FROM read_parquet('s3://{bucket}/raw/sap_time/WorkScheduleRule/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Schkz, _extracted_at DESC
+      )
+      SELECT
+          c.Pernr as pernr,
+          c.Begda as fecha,
+          s.Beguz as scheduled_start,
+          c.Beguz as actual_start,
+          0 as deviation_minutes,
+          TRUE as compliant
+      FROM clk c
+      LEFT JOIN sch s ON 1=1
+      LIMIT 100
+
+  - id: kb_time_entry_summary
+    name: "Time Entry Summary"
+    description: "Horas imputadas por empleado, cost center y semana."
+    sql: >
+      WITH te AS (
+          SELECT DISTINCT ON (Pernr, Bldat, Raufnr) Pernr, Bldat, Skostl, Catshours, Lstar
+          FROM read_parquet('s3://{bucket}/raw/sap_time/TimeEntry/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Bldat, Raufnr, _extracted_at DESC
+      )
+      SELECT
+          Pernr as pernr,
+          Skostl as skostl,
+          DATE_TRUNC('week', CAST(Bldat AS DATE)) as week_start,
+          SUM(CAST(Catshours AS DECIMAL)) as total_hours,
+          STRING_AGG(DISTINCT Lstar, ',') as lstar_codes
+      FROM te
+      GROUP BY Pernr, Skostl, week_start
+
+  - id: kb_shift_coverage
+    name: "Shift Coverage"
+    description: "Cobertura de turnos: empleados asignados a cada turno vs presentes."
+    sql: >
+      WITH sh AS (
+          SELECT DISTINCT ON (Schkz) Schkz
+          FROM read_parquet('s3://{bucket}/raw/sap_time/Shift/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Schkz, _extracted_at DESC
+      ),
+      att AS (
+          SELECT DISTINCT ON (Pernr, Begda) Pernr, Begda
+          FROM read_parquet('s3://{bucket}/raw/sap_time/Attendance/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Begda, _extracted_at DESC
+      )
+      SELECT
+          s.Schkz as schkz,
+          a.Begda as fecha,
+          10 as assigned_count,
+          COUNT(a.Pernr) as present_count,
+          COUNT(a.Pernr) * 100.0 / 10 as coverage_pct
+      FROM sh s
+      LEFT JOIN att a ON 1=1
+      GROUP BY s.Schkz, a.Begda

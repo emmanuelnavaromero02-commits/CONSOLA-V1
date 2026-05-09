@@ -1,0 +1,59 @@
+entities:
+  - entity: EmployeePresence
+    mode: incremental
+    watermark_field: EventDate
+    date_field: EventDate
+    page_size: 5000
+    description: "Presencia diaria: primer fichaje de entrada y último de salida"
+    odata_entity: HCM_ACCESS_SRV/EmployeePresenceSet
+    select_fields: [Pernr, EventDate, FirstIn, LastOut, TotalMinutes, LocationId, DeviceId]
+
+  - entity: AccessEvent
+    mode: incremental
+    watermark_field: EventTimestamp
+    date_field: EventDate
+    page_size: 5000
+    description: "Eventos individuales de acceso: entrada/salida por lector"
+    odata_entity: HCM_ACCESS_SRV/AccessEventSet
+    select_fields: [Pernr, EventDate, EventTimestamp, EventType, LocationId, DeviceId, ZoneId, AccessGranted]
+
+  - entity: AccessZone
+    mode: full
+    page_size: 200
+    description: "Zonas de acceso: oficinas, salas, almacenes"
+    odata_entity: HCM_ACCESS_SRV/AccessZoneSet
+    select_fields: [ZoneId, ZoneName, Building, Floor, MaxCapacity, RestrictedAccess]
+
+  - entity: AccessDevice
+    mode: full
+    page_size: 200
+    description: "Dispositivos de control de acceso"
+    odata_entity: HCM_ACCESS_SRV/AccessDeviceSet
+    select_fields: [DeviceId, DeviceName, ZoneId, LocationId, DeviceType, Status]
+
+  - entity: AbsenceAlert
+    mode: incremental
+    watermark_field: AlertDate
+    date_field: AlertDate
+    page_size: 1000
+    description: "Alertas de ausencia no justificada generadas automáticamente"
+    odata_entity: HCM_ACCESS_SRV/AbsenceAlertSet
+    select_fields: [Pernr, AlertDate, AlertType, Resolved, ResolvedBy, Notes]
+
+  - entity: WorkdayCompliance
+    mode: incremental
+    watermark_field: ComplianceDate
+    date_field: ComplianceDate
+    page_size: 2000
+    description: "Cumplimiento de jornada laboral: horas registradas vs requeridas"
+    odata_entity: HCM_ACCESS_SRV/WorkdayComplianceSet
+    select_fields: [Pernr, ComplianceDate, RequiredMinutes, RecordedMinutes, CompliancePct, Compliant, LegalRisk]
+
+  - entity: CapacitySnapshot
+    mode: incremental
+    watermark_field: SnapshotTime
+    date_field: SnapshotDate
+    page_size: 1000
+    description: "Ocupación en tiempo real por zona"
+    odata_entity: HCM_ACCESS_SRV/CapacitySnapshotSet
+    select_fields: [ZoneId, SnapshotDate, SnapshotTime, CurrentOccupancy, MaxCapacity, OccupancyPct]

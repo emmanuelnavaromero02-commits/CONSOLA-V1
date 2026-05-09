@@ -1,0 +1,61 @@
+entities:
+  - entity: GLAccount
+    mode: full
+    page_size: 1000
+    description: "Plan de cuentas contable (SKA1/SKAT)"
+    odata_entity: FAC_GL_ACCOUNT_SRV/GLAccountSet
+    select_fields: [Saknr, Bukrs, Bilkt, Xbilk, Gvtyp, Ktoks, Txt20, Txt50]
+
+  - entity: CostCenter
+    mode: full
+    page_size: 1000
+    description: "Centros de coste con responsable y área de control"
+    odata_entity: FAC_COST_CENTER_SRV/CostCenterSet
+    select_fields: [Kostl, Kokrs, Datbi, Datab, Ktext, Verak, Kosar, Abtei, Bukrs]
+
+  - entity: CostElement
+    mode: full
+    page_size: 1000
+    description: "Elementos de coste primarios y secundarios"
+    odata_entity: FAC_COST_ELEMENT_SRV/CostElementSet
+    select_fields: [Kstar, Kokrs, Datbi, Datab, Ktext, Katyp]
+
+  - entity: ActualCost
+    mode: incremental
+    watermark_field: Budat
+    date_field: Budat
+    page_size: 500
+    description: "Costes reales contabilizados por centro de coste"
+    odata_entity: FAC_ACTUAL_COST_SRV/ActualCostSet
+    select_fields: [Kostl, Kstar, Gjahr, Monat, Budat, Wrttp, Wkgbtr, Waers, Belegnr, Buzei]
+
+  - entity: BudgetLine
+    mode: incremental
+    watermark_field: Gjahr
+    page_size: 500
+    description: "Líneas de presupuesto anual por centro de coste"
+    odata_entity: FAC_BUDGET_SRV/BudgetLineSet
+    select_fields: [Kostl, Kstar, Gjahr, Wrttp, Wkgbtr, Waers, Versn, Monat]
+
+  - entity: PayrollPosting
+    mode: incremental
+    watermark_field: Budat
+    date_field: Budat
+    page_size: 500
+    description: "Asientos contables generados por nómina (HR->FI)"
+    odata_entity: FAC_PAYROLL_POST_SRV/PayrollPostingSet
+    select_fields: [Pernr, Kostl, Kstar, Gjahr, Monat, Budat, Betrg, Waers, Abkrs, Pabrj, Pabrt, Blart]
+
+  - entity: ProfitCenter
+    mode: full
+    page_size: 500
+    description: "Centros de beneficio"
+    odata_entity: FAC_PROFIT_CENTER_SRV/ProfitCenterSet
+    select_fields: [Prctr, Kokrs, Datbi, Datab, Ktext, Verak, Abtei]
+
+  - entity: InternalOrder
+    mode: full
+    page_size: 500
+    description: "Órdenes internas CO para proyectos y CAPEX"
+    odata_entity: FAC_INTERNAL_ORDER_SRV/InternalOrderSet
+    select_fields: [Aufnr, Kokrs, Auart, Ktext, Kostv, Bukrs, Erdat, Objnr, Kostl]

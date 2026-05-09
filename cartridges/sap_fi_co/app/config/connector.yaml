@@ -1,0 +1,32 @@
+connector:
+  id: sap_fi_co
+  name: SAP FI/CO Finanzas
+  version: "1.0"
+  description: Connector for SAP FI/CO Finanzas.
+  auth:
+    type: basic
+    env_var_user: SAP_FICO_USER
+    env_var_pass: SAP_FICO_PASS
+  api:
+    base_url_env: SAP_FICO_BASE_URL
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 500
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/sap_fi_co/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+  entities:
+    count: 8
+    watermark_field_default: lastModifiedDateTime
+    page_size_default: 500

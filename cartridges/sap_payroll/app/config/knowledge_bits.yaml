@@ -1,0 +1,147 @@
+knowledge_bits:
+  - id: kb_payroll_monthly_summary
+    name: "Payroll Monthly Summary"
+    description: "Bruto/neto/deducciones por área de nómina y período."
+    sql: >
+      WITH wage_types AS (
+          SELECT DISTINCT ON (Lgart) Lgart, Lgtxt
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/WageType/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Lgart, _extracted_at DESC
+      ),
+      periods AS (
+          SELECT DISTINCT ON (Abkrs) Abkrs, Pabrj, Pabrt
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayrollPeriod/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Abkrs, _extracted_at DESC
+      ),
+      results AS (
+          SELECT Pernr, Pabrj, Pabrt, Lgart, Waers, SUM(CAST(Betrg AS DECIMAL)) as Betrg
+          FROM (
+              SELECT DISTINCT ON (Pernr, Inper, RunDate, Lgart) Pernr, SUBSTRING(Inper FROM 1 FOR 4) as Pabrj, SUBSTRING(Inper FROM 5 FOR 2) as Pabrt, Lgart, Waers, Betrg
+              FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayrollResult/load_date=*/batch_id=*/*.parquet')
+              ORDER BY Pernr, Inper, RunDate, Lgart, _extracted_at DESC
+          )
+          GROUP BY Pernr, Pabrj, Pabrt, Lgart, Waers
+      ),
+      areas AS (
+          SELECT DISTINCT ON (Abkrs) Abkrs, Atext
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayrollArea/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Abkrs, _extracted_at DESC
+      )
+      SELECT
+          p.Abkrs as abkrs,
+          r.Pabrj as pabrj,
+          r.Pabrt as pabrt,
+          r.Pernr as pernr,
+          SUM(CASE WHEN r.Lgart LIKE 'M%' THEN r.Betrg ELSE 0 END) AS gross_amount,
+          SUM(CASE WHEN r.Lgart LIKE 'D%' THEN r.Betrg ELSE 0 END) AS total_deductions,
+          SUM(CASE WHEN r.Lgart LIKE 'M%' THEN r.Betrg ELSE 0 END) - SUM(CASE WHEN r.Lgart LIKE 'D%' THEN r.Betrg ELSE 0 END) AS net_amount,
+          r.Waers as waers
+      FROM results r
+      JOIN periods p ON r.Pabrj = p.Pabrj AND r.Pabrt = p.Pabrt
+      GROUP BY p.Abkrs, r.Pabrj, r.Pabrt, r.Pernr, r.Waers
+
+  - id: kb_tax_withholding_analysis
+    name: "Tax Withholding Analysis"
+    description: "Retención media por empleado en el año en curso."
+    sql: >
+      WITH taxes AS (
+          SELECT DISTINCT ON (Pernr, RunDate, Lgart) Pernr, Pabrj, Pabrt, Betrg, Waers, RunDate
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/TaxWithholding/load_date=*/batch_id=*/*.parquet')
+          WHERE EXTRACT(YEAR FROM CAST(RunDate AS DATE)) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY Pernr, RunDate, Lgart, _extracted_at DESC
+      ),
+      results AS (
+          SELECT DISTINCT ON (Pernr, Inper, RunDate) Pernr, SUBSTRING(Inper FROM 1 FOR 4) as Pabrj, SUBSTRING(Inper FROM 5 FOR 2) as Pabrt, Betrg
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayrollResult/load_date=*/batch_id=*/*.parquet')
+          WHERE Lgart LIKE 'M%' AND EXTRACT(YEAR FROM CAST(RunDate AS DATE)) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY Pernr, Inper, RunDate, _extracted_at DESC
+      )
+      SELECT
+          t.Pernr as pernr,
+          t.Pabrj as pabrj,
+          SUM(CAST(t.Betrg AS DECIMAL)) as total_withheld,
+          SUM(CAST(r.Betrg AS DECIMAL)) as gross_base,
+          CASE WHEN SUM(CAST(r.Betrg AS DECIMAL)) = 0 THEN 0 ELSE (SUM(CAST(t.Betrg AS DECIMAL)) / SUM(CAST(r.Betrg AS DECIMAL))) * 100 END as effective_rate_pct,
+          t.Waers as waers
+      FROM taxes t
+      JOIN results r ON t.Pernr = r.Pernr AND t.Pabrj = r.Pabrj AND t.Pabrt = r.Pabrt
+      GROUP BY t.Pernr, t.Pabrj, t.Waers
+
+  - id: kb_social_security_monthly
+    name: "Social Security Monthly"
+    description: "Cotizaciones SS del último mes cerrado."
+    sql: >
+      WITH last_run AS (
+          SELECT MAX(CAST(RunDate AS DATE)) as max_date
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/SocialSecurity/load_date=*/batch_id=*/*.parquet')
+      ),
+      ss AS (
+          SELECT DISTINCT ON (Pernr, RunDate) Pernr, Pabrj, Pabrt, Beitr, Waers, RunDate
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/SocialSecurity/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(RunDate AS DATE) = (SELECT max_date FROM last_run)
+          ORDER BY Pernr, RunDate, _extracted_at DESC
+      )
+      SELECT
+          Pabrj as pabrj,
+          Pabrt as pabrt,
+          SUM(CAST(Beitr AS DECIMAL)) as total_ss_contributions,
+          COUNT(Pernr) as employee_count,
+          Waers as waers
+      FROM ss
+      GROUP BY Pabrj, Pabrt, Waers
+
+  - id: kb_net_pay_distribution
+    name: "Net Pay Distribution"
+    description: "Distribución del neto por tramos en el último período."
+    sql: >
+      WITH summary AS (
+          SELECT DISTINCT ON (Pernr, Pabrj, Pabrt) Pernr, Pabrj, Pabrt, NetAmount
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayslipSummary/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Pabrj, Pabrt, _extracted_at DESC
+      ),
+      categorized AS (
+          SELECT
+              Pabrj,
+              Pabrt,
+              CASE
+                  WHEN CAST(NetAmount AS DECIMAL) < 1000 THEN '< 1000'
+                  WHEN CAST(NetAmount AS DECIMAL) >= 1000 AND CAST(NetAmount AS DECIMAL) < 2000 THEN '1000-2000'
+                  WHEN CAST(NetAmount AS DECIMAL) >= 2000 AND CAST(NetAmount AS DECIMAL) < 3000 THEN '2000-3000'
+                  WHEN CAST(NetAmount AS DECIMAL) >= 3000 AND CAST(NetAmount AS DECIMAL) < 5000 THEN '3000-5000'
+                  ELSE '> 5000'
+              END AS tramo
+          FROM summary
+      )
+      SELECT
+          Pabrj as pabrj,
+          Pabrt as pabrt,
+          tramo,
+          COUNT(*) as employee_count,
+          COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY Pabrj, Pabrt) as pct_total
+      FROM categorized
+      GROUP BY Pabrj, Pabrt, tramo
+
+  - id: kb_bank_transfer_control
+    name: "Bank Transfer Control"
+    description: "Control: importe transferido vs neto de nómina."
+    sql: >
+      WITH transfers AS (
+          SELECT DISTINCT ON (Pernr, Pabrj, Pabrt) Pernr, Pabrj, Pabrt, Betrg
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/BankTransfer/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Pabrj, Pabrt, _extracted_at DESC
+      ),
+      summary AS (
+          SELECT DISTINCT ON (Pernr, Pabrj, Pabrt) Pernr, Pabrj, Pabrt, NetAmount
+          FROM read_parquet('s3://{bucket}/raw/sap_payroll/PayslipSummary/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, Pabrj, Pabrt, _extracted_at DESC
+      )
+      SELECT
+          t.Pernr as pernr,
+          t.Pabrj as pabrj,
+          t.Pabrt as pabrt,
+          CAST(s.NetAmount AS DECIMAL) as net_amount,
+          CAST(t.Betrg AS DECIMAL) as transferred_amount,
+          CAST(t.Betrg AS DECIMAL) - CAST(s.NetAmount AS DECIMAL) as diff,
+          CASE WHEN ABS(CAST(t.Betrg AS DECIMAL) - CAST(s.NetAmount AS DECIMAL)) > 0.01 THEN TRUE ELSE FALSE END as has_discrepancy
+      FROM transfers t
+      JOIN summary s ON t.Pernr = s.Pernr AND t.Pabrj = s.Pabrj AND t.Pabrt = s.Pabrt

@@ -1,0 +1,106 @@
+knowledge_bits:
+  - id: kb_daily_presence_summary
+    name: "Daily Presence Summary"
+    description: "Resumen de presencia últimos 30 días."
+    sql: >
+      WITH pres AS (
+          SELECT DISTINCT ON (Pernr, EventDate) Pernr, EventDate, TotalMinutes
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/EmployeePresence/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, EventDate, _extracted_at DESC
+      )
+      SELECT
+          CAST(EventDate AS DATE) as event_date,
+          COUNT(DISTINCT Pernr) FILTER (WHERE CAST(TotalMinutes AS DECIMAL) > 0) as present_count,
+          AVG(CAST(TotalMinutes AS DECIMAL)) as total_minutes_avg,
+          COUNT(DISTINCT Pernr) FILTER (WHERE CAST(TotalMinutes AS DECIMAL) > 0) * 100.0 / NULLIF(COUNT(DISTINCT Pernr), 0) as presence_rate_pct
+      FROM pres
+      GROUP BY EventDate
+
+  - id: kb_absence_pattern_detection
+    name: "Absence Pattern Detection"
+    description: "Empleados con más de 3 ausencias no justificadas en el mes."
+    sql: >
+      WITH pres AS (
+          SELECT DISTINCT ON (Pernr, EventDate) Pernr, EventDate, TotalMinutes
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/EmployeePresence/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, EventDate, _extracted_at DESC
+      ),
+      alrt AS (
+          SELECT DISTINCT ON (Pernr, AlertDate) Pernr, AlertDate
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/AbsenceAlert/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, AlertDate, _extracted_at DESC
+      )
+      SELECT
+          p.Pernr as pernr,
+          EXTRACT(MONTH FROM CAST(p.EventDate AS DATE)) as month,
+          COUNT(p.EventDate) FILTER (WHERE CAST(p.TotalMinutes AS DECIMAL) = 0) as total_absences,
+          COUNT(a.AlertDate) as unjustified_absences,
+          COUNT(a.AlertDate) as alert_count,
+          CASE WHEN COUNT(a.AlertDate) > 3 THEN 'HIGH' ELSE 'LOW' END as risk_level
+      FROM pres p
+      LEFT JOIN alrt a ON p.Pernr = a.Pernr AND p.EventDate = a.AlertDate
+      GROUP BY p.Pernr, month
+
+  - id: kb_workday_legal_compliance
+    name: "Workday Legal Compliance"
+    description: "Incumplimientos de jornada en el mes."
+    sql: >
+      WITH wc AS (
+          SELECT DISTINCT ON (Pernr, ComplianceDate) Pernr, ComplianceDate, LegalRisk, Compliant
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/WorkdayCompliance/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, ComplianceDate, _extracted_at DESC
+      )
+      SELECT
+          Pernr as pernr,
+          DATE_TRUNC('week', CAST(ComplianceDate AS DATE)) as week_start,
+          COUNT(*) FILTER (WHERE CAST(Compliant AS BOOLEAN) = TRUE) as compliant_days,
+          COUNT(*) FILTER (WHERE CAST(Compliant AS BOOLEAN) = FALSE) as non_compliant_days,
+          COUNT(*) FILTER (WHERE CAST(LegalRisk AS BOOLEAN) = TRUE) as legal_risk_days,
+          COUNT(*) FILTER (WHERE CAST(Compliant AS BOOLEAN) = TRUE) * 100.0 / COUNT(*) as compliance_rate_pct
+      FROM wc
+      GROUP BY Pernr, week_start
+
+  - id: kb_zone_occupancy_realtime
+    name: "Zone Occupancy Realtime"
+    description: "Última snapshot de ocupación por zona."
+    sql: >
+      WITH snap AS (
+          SELECT DISTINCT ON (ZoneId) ZoneId, SnapshotTime, CurrentOccupancy, OccupancyPct
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/CapacitySnapshot/load_date=*/batch_id=*/*.parquet')
+          ORDER BY ZoneId, SnapshotTime DESC, _extracted_at DESC
+      ),
+      zone AS (
+          SELECT DISTINCT ON (ZoneId) ZoneId, ZoneName, Building, Floor, MaxCapacity
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/AccessZone/load_date=*/batch_id=*/*.parquet')
+          ORDER BY ZoneId, _extracted_at DESC
+      )
+      SELECT
+          s.ZoneId as zone_id,
+          z.ZoneName as zone_name,
+          z.Building as building,
+          z.Floor as floor,
+          CAST(s.CurrentOccupancy AS INTEGER) as current_occupancy,
+          CAST(z.MaxCapacity AS INTEGER) as max_capacity,
+          CAST(s.OccupancyPct AS DECIMAL) as occupancy_pct,
+          CASE WHEN CAST(s.CurrentOccupancy AS INTEGER) > CAST(z.MaxCapacity AS INTEGER) THEN TRUE ELSE FALSE END as overcapacity
+      FROM snap s
+      JOIN zone z ON s.ZoneId = z.ZoneId
+
+  - id: kb_access_anomalies
+    name: "Access Anomalies"
+    description: "Eventos de acceso denegado últimos 7 días."
+    sql: >
+      WITH evt AS (
+          SELECT DISTINCT ON (Pernr, EventTimestamp) Pernr, ZoneId, EventDate, AccessGranted
+          FROM read_parquet('s3://{bucket}/raw/sap_checkin/AccessEvent/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(EventDate AS DATE) >= CURRENT_DATE - INTERVAL '7' DAY
+          ORDER BY Pernr, EventTimestamp, _extracted_at DESC
+      )
+      SELECT
+          Pernr as pernr,
+          ZoneId as zone_id,
+          CAST(EventDate AS DATE) as event_date,
+          COUNT(*) FILTER (WHERE CAST(AccessGranted AS BOOLEAN) = FALSE) as denied_attempts,
+          CASE WHEN COUNT(*) FILTER (WHERE CAST(AccessGranted AS BOOLEAN) = FALSE) > 3 THEN TRUE ELSE FALSE END as is_anomaly
+      FROM evt
+      GROUP BY Pernr, ZoneId, EventDate

@@ -1,0 +1,34 @@
+connector:
+  id: sap_analytics
+  name: SAP Analytics — KPIs Unificados
+  version: "1.0"
+  description: >
+    Orquestador de KPIs cross-cartucho. Lee datos Bronze de
+    sap_hcm, sap_successfactors, sap_payroll, sap_time,
+    sap_checkin y sap_fi_co para generar métricas ejecutivas.
+    No realiza extracción directa de SAP.
+  auth:
+    type: none
+  api:
+    base_url_env: ""
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 0
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/sap_analytics/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+  entities:
+    count: 0
+    watermark_field_default: lastModifiedDateTime
+    page_size_default: 0
