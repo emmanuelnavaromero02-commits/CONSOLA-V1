@@ -45,8 +45,16 @@ _SENSITIVE = {"token", "password", "secret", "api_key", "api_secret"}
 
 # ── PostgreSQL helpers ────────────────────────────────────────────────────────
 
+def _normalize_postgres_dsn(raw: str) -> str:
+    return (raw or "").replace(
+        "postgresql+psycopg2://", "postgresql://"
+    ).replace(
+        "postgres+psycopg2://", "postgres://"
+    )
+
+
 def _pg():
-    return psycopg2.connect(_DATABASE_URL)
+    return psycopg2.connect(_normalize_postgres_dsn(_DATABASE_URL))
 
 
 def _db_upsert(scope: str, cartridge: str, key: str, value: dict) -> None:

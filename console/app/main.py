@@ -926,8 +926,12 @@ async def studio_cartridge_connections(cartridge_id: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         try:
             r = await c.get(f"{vault_url}/connections/{cartridge_id}")
+            if r.status_code in (404, 204):
+                return {"connections": []}
+            if r.status_code >= 500:
+                return {"connections": []}
             return r.json()
-        except Exception:
+        except (httpx.HTTPError, ValueError):
             return {"connections": []}
 
 
@@ -1378,10 +1382,22 @@ _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
 @app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_list_connections(cartridge: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
+    try:
+        async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+            r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
+        if r.status_code in (404, 204):
+            return {"connections": []}
+        if r.status_code >= 500:
+            raise HTTPException(502, "Vault request failed")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, "Vault request failed") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "Vault request failed") from exc
+    if not data:
+        return {"connections": []}
+    return data
 
 @app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_vault_reveal_connection(cartridge: str, conn_id: str):
