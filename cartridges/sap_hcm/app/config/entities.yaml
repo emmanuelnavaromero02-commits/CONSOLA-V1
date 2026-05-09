@@ -1,0 +1,77 @@
+entities:
+  - entity: EmployeeMaster
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    description: "Employee org assignment (infotype 0001): pernr, plans, orgeh, kostl, stell"
+    odata_entity: HCM_SAP_HCMFAB_EMPLOYEE_SRV/EmployeeCollection
+    select_fields: [Pernr, Plans, Orgeh, Kostl, Stell, Werks, Persg, Persk, Begda, Endda]
+
+  - entity: PersonalData
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    description: "Personal data"
+    odata_entity: HCM_SAP_HCMFAB_EMPLOYEE_SRV/EmployeePersonalCollection
+    select_fields: [Pernr, Vorna, Nachn, Gbdat, Gesch, Anred, Sprsl]
+
+  - entity: ContractData
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    description: "Contract data"
+    odata_entity: HCM_CONTRACTS_SRV/ContractSet
+    select_fields: [Pernr, Ktart, Begda, Endda, Zzkto]
+
+  - entity: OrgUnit
+    mode: full
+    page_size: 1000
+    description: "Organizational unit"
+    odata_entity: HCM_ORG_MGMT_SRV/OrgUnitCollection
+    select_fields: [ObjId, Name, Stext, ParentObjId, Begda, Endda]
+
+  - entity: Position
+    mode: full
+    page_size: 1000
+    description: "Position"
+    odata_entity: HCM_ORG_MGMT_SRV/PositionCollection
+    select_fields: [ObjId, Name, OrgUnitId, JobId, Kostl, Begda, Endda]
+
+  - entity: CostCenter
+    mode: full
+    page_size: 1000
+    description: "Cost center"
+    odata_entity: FAC_COST_CENTER_SRV/CostCenterSet
+    select_fields: [Kostl, Ktext, Bukrs, Kokrs, Datbi, Datab, Verak]
+
+  - entity: JobCode
+    mode: full
+    page_size: 1000
+    description: "Job code"
+    odata_entity: HCM_ORG_MGMT_SRV/JobCollection
+    select_fields: [ObjId, Name, Stext]
+
+  - entity: EmployeeActions
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 500
+    description: "Employee actions"
+    odata_entity: HCM_SAP_HCMFAB_EMPLOYEE_SRV/ActionsCollection
+    select_fields: [Pernr, Begda, Massn, Massg, Mgrpd, Endda]
+
+  - entity: LeaveAbsence
+    mode: incremental
+    watermark_field: Begda
+    date_field: Begda
+    page_size: 2000
+    description: "Leave and absence"
+    odata_entity: HCM_ABSENCE_SRV/AbsenceSet
+    select_fields: [Pernr, Awart, Begda, Endda, Abwtg, Kaltd, Lgart]
+
+  - entity: WorkSchedule
+    mode: full
+    page_size: 1000
+    description: "Work schedule"
+    odata_entity: HCM_TIME_SRV/WorkScheduleSet
+    select_fields: [Pernr, Schkz, Begda, Endda, Tprog, Mosch]

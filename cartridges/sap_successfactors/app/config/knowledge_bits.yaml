@@ -1,0 +1,163 @@
+knowledge_bits:
+  - id: kb_employee_360
+    name: "Employee 360"
+    description: "Vista unificada: User + EmpEmployment + EmpJob + EmpCompensation"
+    sql: >
+      WITH Users AS (
+          SELECT DISTINCT ON (userId) userId, firstName, lastName, email, status
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/User/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Employment AS (
+          SELECT DISTINCT ON (userId) userId, startDate, endDate
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmployment/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(startDate AS DATE) <= CURRENT_DATE AND CAST(endDate AS DATE) >= CURRENT_DATE
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Job AS (
+          SELECT DISTINCT ON (userId) userId, jobTitle, jobCode, department, division, location, costCenter, payGrade
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpJob/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(startDate AS DATE) <= CURRENT_DATE AND CAST(endDate AS DATE) >= CURRENT_DATE
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Compensation AS (
+          SELECT DISTINCT ON (userId) userId, payGroup, startDate, endDate
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpCompensation/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(startDate AS DATE) <= CURRENT_DATE AND CAST(endDate AS DATE) >= CURRENT_DATE
+          ORDER BY userId, _extracted_at DESC
+      )
+      SELECT
+          u.userId, u.firstName, u.lastName, u.email, u.status,
+          j.jobTitle, j.jobCode, j.department, j.division, j.location, j.costCenter, j.payGrade,
+          c.payGroup, e.startDate, e.endDate
+      FROM Users u
+      JOIN Employment e ON u.userId = e.userId
+      JOIN Job j ON u.userId = j.userId
+      JOIN Compensation c ON u.userId = c.userId
+
+  - id: kb_headcount_by_department
+    name: "Headcount by department"
+    description: "Headcount activo (EmpEmployment activo) por Department, Division, Location"
+    sql: >
+      WITH ActiveEmployment AS (
+          SELECT DISTINCT ON (userId) userId
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmployment/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(startDate AS DATE) <= CURRENT_DATE AND CAST(endDate AS DATE) >= CURRENT_DATE
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Job AS (
+          SELECT DISTINCT ON (userId) userId, department, division, location
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpJob/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Departments AS (
+          SELECT DISTINCT ON (externalCode) externalCode, name_defaultValue
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Department/load_date=*/batch_id=*/*.parquet')
+          ORDER BY externalCode, _extracted_at DESC
+      ),
+      Locations AS (
+          SELECT DISTINCT ON (externalCode) externalCode, country
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Location/load_date=*/batch_id=*/*.parquet')
+          ORDER BY externalCode, _extracted_at DESC
+      )
+      SELECT
+          j.department,
+          j.division,
+          j.location,
+          l.country,
+          COUNT(e.userId) AS headcount,
+          COUNT(e.userId) * 100.0 / SUM(COUNT(e.userId)) OVER () AS pct_total
+      FROM ActiveEmployment e
+      JOIN Job j ON e.userId = j.userId
+      LEFT JOIN Locations l ON j.location = l.externalCode
+      GROUP BY j.department, j.division, j.location, l.country
+
+  - id: kb_talent_pipeline
+    name: "Talent pipeline"
+    description: "Candidatos activos (Candidate) por JobRequisition"
+    sql: >
+      WITH Reqs AS (
+          SELECT DISTINCT ON (jobReqId) jobReqId, jobTitle, department, location
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/JobRequisition/load_date=*/batch_id=*/*.parquet')
+          ORDER BY jobReqId, _extracted_at DESC
+      ),
+      Candidates AS (
+          SELECT DISTINCT ON (candidateId) candidateId, firstName, lastName, lastModifiedDateTime
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Candidate/load_date=*/batch_id=*/*.parquet')
+          ORDER BY candidateId, _extracted_at DESC
+      )
+      SELECT
+          r.jobReqId, r.jobTitle, r.department, r.location,
+          c.candidateId, c.firstName, c.lastName,
+          DATE_DIFF('day', CAST(c.lastModifiedDateTime AS DATE), CURRENT_DATE) AS days_in_pipeline,
+          'Active' AS status
+      FROM Reqs r
+      CROSS JOIN Candidates c
+
+  - id: kb_learning_completion
+    name: "Learning completion"
+    description: "Por userId y learningItemId: % completado"
+    sql: >
+      WITH Learning AS (
+          SELECT DISTINCT ON (userId, learningItemId) userId, learningItemId, title, status, completionDate, dueDate
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/LearningItem/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, learningItemId, _extracted_at DESC
+      ),
+      Users AS (
+          SELECT DISTINCT ON (userId) userId, firstName, lastName
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/User/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, _extracted_at DESC
+      )
+      SELECT
+          l.userId, u.firstName, u.lastName,
+          l.learningItemId, l.title, l.status, l.completionDate, l.dueDate,
+          CASE WHEN l.dueDate IS NOT NULL AND CAST(l.dueDate AS DATE) < CURRENT_DATE AND l.status != 'COMPLETED' THEN TRUE ELSE FALSE END AS overdue
+      FROM Learning l
+      LEFT JOIN Users u ON l.userId = u.userId
+
+  - id: kb_performance_distribution
+    name: "Performance distribution"
+    description: "Distribución de overallRating por Department (vía EmpJob)"
+    sql: >
+      WITH Reviews AS (
+          SELECT DISTINCT ON (userId) userId, overallRating
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/PerformanceReview/load_date=*/batch_id=*/*.parquet')
+          WHERE EXTRACT(YEAR FROM CAST(formStartDate AS DATE)) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Job AS (
+          SELECT DISTINCT ON (userId) userId, department
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpJob/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, _extracted_at DESC
+      )
+      SELECT
+          j.department,
+          r.overallRating AS rating_value,
+          COUNT(r.userId) AS employee_count,
+          COUNT(r.userId) * 100.0 / SUM(COUNT(r.userId)) OVER (PARTITION BY j.department) AS pct_in_dept
+      FROM Reviews r
+      JOIN Job j ON r.userId = j.userId
+      GROUP BY j.department, r.overallRating
+
+  - id: kb_compensation_analysis
+    name: "Compensation analysis"
+    description: "Salario medio (si EmpCompensation tiene payGrade) por payGrade y department. Proxy de análisis de compensación."
+    sql: >
+      WITH Compensation AS (
+          SELECT DISTINCT ON (userId) userId, payGroup
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpCompensation/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, _extracted_at DESC
+      ),
+      Job AS (
+          SELECT DISTINCT ON (userId) userId, department, jobCode, payGrade
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpJob/load_date=*/batch_id=*/*.parquet')
+          ORDER BY userId, _extracted_at DESC
+      )
+      SELECT
+          j.payGrade,
+          j.department,
+          j.jobCode,
+          COUNT(c.userId) AS employee_count
+      FROM Compensation c
+      JOIN Job j ON c.userId = j.userId
+      GROUP BY j.payGrade, j.department, j.jobCode
