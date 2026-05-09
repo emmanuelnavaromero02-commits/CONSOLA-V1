@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
 INTERNAL_API_KEY = get_internal_api_key()
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
     # Validate the key and that the caller explicitly declares itself
-    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow", "replicon"]:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1117,12 +1117,12 @@ def _seed_relationships() -> int:
 
 # ── REST API ──────────────────────────────────────────────────────────────────
 
-@app.get("/datasets")
+@app.get("/datasets", dependencies=[Depends(verify_api_key)])
 async def list_datasets():
     return {"datasets": store.list_datasets()}
 
 
-@app.get("/datasets/{name}/definition")
+@app.get("/datasets/{name}/definition", dependencies=[Depends(verify_api_key)])
 async def dataset_definition(name: str):
     ds = store.get_dataset(name)
     if not ds:
@@ -1130,7 +1130,7 @@ async def dataset_definition(name: str):
     return ds
 
 
-@app.get("/datasets/{name}/schema")
+@app.get("/datasets/{name}/schema", dependencies=[Depends(verify_api_key)])
 async def dataset_schema(name: str):
     ds = store.get_dataset(name)
     if not ds:
@@ -1138,7 +1138,7 @@ async def dataset_schema(name: str):
     return engine.get_dataset_schema(ds)
 
 
-@app.get("/datasets/{name}/data")
+@app.get("/datasets/{name}/data", dependencies=[Depends(verify_api_key)])
 async def dataset_data(name: str, limit: int = 100):
     ds = store.get_dataset(name)
     if not ds:
@@ -1146,7 +1146,7 @@ async def dataset_data(name: str, limit: int = 100):
     return engine.query_dataset(ds, {}, limit)
 
 
-@app.post("/datasets/{name}/refresh")
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(verify_api_key)])
 async def refresh_dataset(name: str):
     ds = store.get_dataset(name)
     if not ds:
@@ -1156,7 +1156,7 @@ async def refresh_dataset(name: str):
     return result
 
 
-@app.post("/refresh-by-source")
+@app.post("/refresh-by-source", dependencies=[Depends(verify_api_key)])
 async def refresh_by_source(body: dict):
     """
     Re-materializa todos los datasets Silver/Master cuyas fuentes incluyen

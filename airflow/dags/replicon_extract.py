@@ -21,6 +21,7 @@ Credenciales en Airflow UI > Admin > Connections:
 from __future__ import annotations
 
 import io
+import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -423,6 +424,10 @@ def replicon_extract():
         try:
             r = requests.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
+                headers={
+                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+                    "x-internal-service": "airflow",
+                },
                 json={"source": source},
                 timeout=300,
             )

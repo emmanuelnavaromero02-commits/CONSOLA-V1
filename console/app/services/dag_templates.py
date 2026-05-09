@@ -145,7 +145,9 @@ _TRIGGER_SILVER_TASK = '''\
             return {{"refreshed": 0}}
         source = f"raw/{{CARTRIDGE_ID}}/{{result.get(\'entity\', ENTITY)}}"
         resp   = requests.post(f"{{REFINEMENT_URL}}/refresh-by-source",
-                               headers={{"x-api-key": INTERNAL_API_KEY}}, json={{"source": source}}, timeout=300)
+                               headers={{"x-api-key": INTERNAL_API_KEY,
+                                         "x-internal-service": "airflow"}},
+                               json={{"source": source}}, timeout=300)
         resp.raise_for_status()
         data = resp.json()
         log.info("  silver refresh: %d datasets actualizados", data.get("refreshed", 0))

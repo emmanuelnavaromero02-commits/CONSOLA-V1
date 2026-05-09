@@ -134,7 +134,7 @@ async def mcp_invoke(body: dict):
 
 # ── Custom tools reload ───────────────────────────────────────────────────────
 
-@app.post("/mcp-reload")
+@app.post("/mcp-reload", dependencies=[Depends(verify_api_key)])
 def mcp_reload():
     count = load_custom_tools()
     return JSONResponse({"reloaded": count, "status": "ok"})

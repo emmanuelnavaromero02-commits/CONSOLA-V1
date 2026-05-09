@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -33,6 +34,7 @@ MCP_INFRA_URL        = os.environ.get("MCP_INFRA_URL",        "http://mcp-infra:
 CONSOLE_URL          = os.environ.get("CONSOLE_URL",          "http://localhost:8000")
 WORKSPACE_PUBLIC_URL = os.environ.get("WORKSPACE_PUBLIC_URL", "http://localhost:8001")
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
+DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 INTERNAL_API_KEY = get_internal_api_key()
 
@@ -54,6 +56,11 @@ app.add_middleware(
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+def _validate_dataset_name(dataset: str) -> None:
+    if not DATASET_NAME_RE.fullmatch(dataset or ""):
+        raise HTTPException(400, "Invalid dataset name")
 
 
 SECURITY_HEADERS = {
@@ -300,6 +307,7 @@ async def serve_app(request: Request, name: str):
 @app.get("/api/data/{dataset}")
 async def api_data(request: Request, dataset: str, limit: int = 5000):
     user = require_user(request)
+    _validate_dataset_name(dataset)
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
@@ -314,6 +322,7 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
 async def api_data_options(request: Request, dataset: str, columns: str = ""):
     """Distinct values per column for filter dropdowns."""
     user = require_user(request)
+    _validate_dataset_name(dataset)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
     if not cols:
         raise HTTPException(400, "columns param required")
@@ -346,6 +355,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
 async def api_data_query(request: Request, dataset: str, body: dict):
     """Filtered query against a gold dataset (mirrors console for app compat)."""
     require_user(request)
+    _validate_dataset_name(dataset)
     import re as _re
     filters = body.get("filters", {})
     limit   = min(int(body.get("limit", 2000)), 10000)
