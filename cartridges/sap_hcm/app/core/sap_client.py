@@ -15,7 +15,6 @@ class SapHcmClient:
             "sap-client": settings.sap_hcm_client
         }
         self.client = httpx.Client(
-            base_url=self.base_url,
             auth=self.auth,
             timeout=self.timeout,
             headers=self.headers
