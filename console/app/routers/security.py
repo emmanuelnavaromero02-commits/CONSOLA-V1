@@ -19,7 +19,6 @@ async def get_sessions(user: dict = Depends(require_admin)):
         d = dict(r)
         token = d.pop("token")
         d["token_preview"] = token[:8] + "..." if token and len(token) > 8 else "***"
-        d["token"] = token
         res.append(d)
     return res
 

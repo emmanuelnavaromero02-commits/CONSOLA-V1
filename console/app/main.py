@@ -527,10 +527,10 @@ async def auth_login(request: Request, body: dict):
     _rate_limit(request, "/auth/login", email)
     if not email or not pw:
         raise HTTPException(400, "email and password are required")
-    user = await _auth.authenticate(email, pw)
+    ip = request.client.host if request.client else None
+    user = await _auth.authenticate(email, pw, ip=ip)
     if not user:
         raise HTTPException(401, "invalid credentials")
-    ip = request.client.host if request.client else None
     token, expires = await _auth.create_session(user["id"], ip=ip)
     access_token = _access_token_for_user(user)
     refresh_token, refresh_expires = await _auth.create_refresh_token(user["id"])
@@ -2119,7 +2119,7 @@ async def monitoring_mcp_invoke(body: dict):
 
 # ── Studio-ops MCP server — cartridge & entity management tools ───────────────
 
-@app.get("/studio_ops/mcp/tools")
+@app.get("/studio_ops/mcp/tools", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_ops_tools():
     return {"tools": [
         {
@@ -2212,7 +2212,7 @@ async def studio_ops_tools():
     ]}
 
 
-@app.post("/studio_ops/mcp/invoke")
+@app.post("/studio_ops/mcp/invoke", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def studio_ops_invoke(body: dict):
     tool = body.get("tool")
     args = body.get("args", {})

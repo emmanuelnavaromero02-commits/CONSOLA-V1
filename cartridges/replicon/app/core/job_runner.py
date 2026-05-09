@@ -223,6 +223,10 @@ async def _trigger_silver_refresh(entity: str) -> None:
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
+                headers={
+                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+                    "x-internal-service": "replicon",
+                },
                 json={"source": source},
             )
     except Exception:
