@@ -3,6 +3,16 @@
 -- stamps `created_by_id`. Apps additionally get a `visibility` field so the
 -- workspace gallery shows only owned + shared apps.
 
+CREATE TABLE IF NOT EXISTS analytic_apps (
+    name         TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    html         TEXT NOT NULL,
+    description  TEXT,
+    cartridge_id TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
 ALTER TABLE datasets       ADD COLUMN IF NOT EXISTS created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE analytic_apps  ADD COLUMN IF NOT EXISTS created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE analytic_apps  ADD COLUMN IF NOT EXISTS visibility    TEXT NOT NULL DEFAULT 'private';
