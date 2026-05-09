@@ -276,7 +276,10 @@ services:
   # volumes where /docker-entrypoint-initdb.d no longer runs.
 
   airflow-init:
-    image: apache/airflow:2.9.2
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: mode-airflow:2.9.2-local
     container_name: mode_airflow_init
     entrypoint: /bin/bash
     command: >
@@ -301,7 +304,10 @@ services:
     restart: "no"
 
   airflow:
-    image: apache/airflow:2.9.2
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: mode-airflow:2.9.2-local
     container_name: mode_airflow
     entrypoint: /bin/bash
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
@@ -312,8 +318,6 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
-      # Paquetes extra para los DAGs
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow minio psycopg2-binary openpyxl"
       # Variables disponibles en los DAGs via Variable.get()
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
@@ -321,6 +325,9 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
+      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
+      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
+      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
@@ -337,7 +344,10 @@ services:
     restart: unless-stopped
 
   airflow-scheduler:
-    image: apache/airflow:2.9.2
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: mode-airflow:2.9.2-local
     container_name: mode_airflow_scheduler
     command: scheduler
     environment:
@@ -351,13 +361,15 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow minio psycopg2-binary openpyxl"
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
+      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
+      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
+      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
     volumes:
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
