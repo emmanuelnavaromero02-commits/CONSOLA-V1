@@ -400,6 +400,7 @@ async function loadTokens() {
 
 let _viewerTabs = [];   // [{url, label}]
 let _activeViewerUrl = null;
+let _viewerLoadTimer = null;
 const VIEWER_DEFAULT_H = 360;
 
 function openViewer(url, label) {
@@ -414,7 +415,21 @@ function openViewer(url, label) {
 
 function _switchViewerTab(url) {
   _activeViewerUrl = url;
-  document.getElementById('viewer-frame').src = url;
+  const fallback = document.getElementById('viewer-fallback');
+  const frame = document.getElementById('viewer-frame');
+  if (fallback) fallback.style.display = 'none';
+  if (_viewerLoadTimer) clearTimeout(_viewerLoadTimer);
+  frame.onload = () => {
+    if (fallback) fallback.style.display = 'none';
+    if (_viewerLoadTimer) clearTimeout(_viewerLoadTimer);
+  };
+  frame.onerror = () => {
+    if (fallback) fallback.style.display = 'flex';
+  };
+  frame.src = url;
+  _viewerLoadTimer = setTimeout(() => {
+    if (_activeViewerUrl === url && fallback) fallback.style.display = 'flex';
+  }, 8000);
   _renderViewerTabs();
 }
 
@@ -446,6 +461,9 @@ function closeViewerPanel() {
   document.getElementById('viewer-panel').style.display = 'none';
   document.getElementById('resize-handle').style.display = 'none';
   document.getElementById('viewer-frame').src = 'about:blank';
+  const fallback = document.getElementById('viewer-fallback');
+  if (fallback) fallback.style.display = 'none';
+  if (_viewerLoadTimer) clearTimeout(_viewerLoadTimer);
 }
 
 function popoutViewer() {
