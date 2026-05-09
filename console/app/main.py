@@ -189,6 +189,127 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str) -> dict:
         return {}
 
 
+def _parse_iso_datetime(value: str | None):
+    if not value:
+        return None
+    from datetime import datetime as _dt
+
+    try:
+        return _dt.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _duration_seconds(started_at, finished_at) -> float | None:
+    start = _parse_iso_datetime(str(started_at)) if started_at else None
+    finish = _parse_iso_datetime(str(finished_at)) if finished_at else None
+    if not start or not finish:
+        return None
+    return max((finish - start).total_seconds(), 0.0)
+
+
+def _normalize_airflow_state(state: str | None) -> str:
+    normalized = (state or "unknown").lower()
+    if normalized in {"queued", "running", "success", "failed"}:
+        return normalized
+    return "unknown"
+
+
+async def _record_dag_pipeline_trigger(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    dag_run_id: str,
+    mode: str,
+    status: str,
+    conf: dict,
+) -> None:
+    import asyncpg as _asyncpg
+
+    if not dag_run_id:
+        return
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        await pool.execute(
+            """
+            INSERT INTO pipeline_runs (
+                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                mode, status, started_at, extra
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
+            ON CONFLICT (run_id) DO UPDATE SET
+                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                mode = EXCLUDED.mode,
+                status = EXCLUDED.status,
+                extra = pipeline_runs.extra || EXCLUDED.extra
+            """,
+            dag_run_id,
+            dag_id,
+            cartridge,
+            entity,
+            dag_run_id,
+            mode,
+            _normalize_airflow_state(status),
+            json.dumps({"raw_conf": conf, "triggered_by": "console"}),
+        )
+    finally:
+        if pool:
+            await pool.close()
+
+
+async def _refresh_dag_run_status(row: dict) -> dict:
+    status = _normalize_airflow_state(row.get("status"))
+    dag_id = row.get("dag_id")
+    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
+    if status not in {"queued", "running", "unknown"} or not dag_id or not dag_run_id:
+        return row
+
+    result = await mcp_registry.invoke("infra", "airflow_get_run_status", {
+        "dag_id": dag_id,
+        "dag_run_id": dag_run_id,
+    })
+    if result.get("error"):
+        return row
+
+    new_status = _normalize_airflow_state(result.get("state"))
+    row["status"] = new_status
+    row["started_at"] = _parse_iso_datetime(result.get("start_date")) or row.get("started_at")
+    row["finished_at"] = _parse_iso_datetime(result.get("end_date")) or row.get("finished_at")
+    row["duration_seconds"] = _duration_seconds(row.get("started_at"), row.get("finished_at"))
+
+    import asyncpg as _asyncpg
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        await pool.execute(
+            """
+            UPDATE pipeline_runs
+               SET status=$2,
+                   started_at=COALESCE($3::timestamptz, started_at),
+                   finished_at=COALESCE($4::timestamptz, finished_at),
+                   duration_seconds=COALESCE($5::numeric, duration_seconds)
+             WHERE run_id=$1
+            """,
+            row.get("run_id"),
+            new_status,
+            row.get("started_at"),
+            row.get("finished_at"),
+            row.get("duration_seconds"),
+        )
+    except Exception:
+        pass
+    finally:
+        if pool:
+            await pool.close()
+    return row
+
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -1067,17 +1188,19 @@ async def api_pipeline(cartridge: str = "replicon"):
         _pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
         rows_pg = await _pool.fetch(
             """SELECT DISTINCT ON (entity)
-                   entity, status, mode,
+                   run_id, dag_id, entity, airflow_dag_run_id,
+                   status, mode,
                    started_at, finished_at,
                    record_count, bytes_written, storage_uri,
-                   watermark_updated_to, error_message
+                   duration_seconds, watermark_updated_to, error_message, extra
                FROM pipeline_runs
                WHERE cartridge_id = $1
                ORDER BY entity, started_at DESC""",
             cartridge,
         )
         for row in rows_pg:
-            dag_runs_by_entity[row["entity"]] = dict(row)
+            run = await _refresh_dag_run_status(dict(row))
+            dag_runs_by_entity[row["entity"]] = run
     except Exception:
         pass
     finally:
@@ -1136,14 +1259,20 @@ async def api_pipeline(cartridge: str = "replicon"):
             fin = dag_run.get("finished_at")
             bronze_date  = str(fin)[:10] if fin else None
             bronze_count = dag_run.get("record_count")
-            dag_status   = dag_run["status"]  # success | failed
+            dag_status   = _normalize_airflow_state(dag_run.get("status"))
+            dag_run_id   = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
             last_run_info = {
-                "source":      "airflow",
-                "status":      "done" if dag_status == "success" else "failed",
-                "finished_at": str(fin) if fin else None,
-                "started_at":  str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
-                "mode":        dag_run.get("mode"),
-                "error":       dag_run.get("error_message"),
+                "source":       "airflow",
+                "dag_id":       dag_run.get("dag_id"),
+                "dag_run_id":   dag_run_id,
+                "run_id":       dag_run_id,
+                "status":       dag_status,
+                "mode":         dag_run.get("mode"),
+                "triggered_at": str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
+                "started_at":   str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
+                "finished_at":  str(fin) if fin else None,
+                "duration_sec": float(dag_run.get("duration_seconds")) if dag_run.get("duration_seconds") is not None else None,
+                "error":        dag_run.get("error_message"),
             }
         elif last_job:
             if last_job.get("status") == "done":
@@ -1204,10 +1333,16 @@ async def api_pipeline(cartridge: str = "replicon"):
             "last_run":  last_run_info,
             # Keep last_job for backward compat with pipeline.html polling logic
             "last_job":  {
-                "job_id":     last_run_info.get("job_id") if last_run_info else None,
-                "status":     last_run_info.get("status") if last_run_info else None,
-                "created_at": last_run_info.get("finished_at") if last_run_info else None,
-                "message":    last_run_info.get("message") if last_run_info else None,
+                "job_id":       last_run_info.get("job_id") if last_run_info else None,
+                "dag_id":       last_run_info.get("dag_id") if last_run_info else None,
+                "dag_run_id":   last_run_info.get("dag_run_id") if last_run_info else None,
+                "status":       last_run_info.get("status") if last_run_info else None,
+                "mode":         last_run_info.get("mode") if last_run_info else None,
+                "triggered_at": last_run_info.get("triggered_at") if last_run_info else None,
+                "finished_at":  last_run_info.get("finished_at") if last_run_info else None,
+                "duration_sec": last_run_info.get("duration_sec") if last_run_info else None,
+                "created_at":   last_run_info.get("finished_at") or last_run_info.get("triggered_at") if last_run_info else None,
+                "message":      last_run_info.get("message") if last_run_info else None,
             } if last_run_info else None,
             "bronze": {
                 "source":       source,
@@ -1288,6 +1423,15 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
         if result.get("error"):
             raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
         dag_run_id = result.get("dag_run_id") or result.get("run_id")
+        await _record_dag_pipeline_trigger(
+            cartridge=cartridge,
+            entity=entity,
+            dag_id=dag_id,
+            dag_run_id=dag_run_id,
+            mode=conf.get("mode", metadata.get("mode") or "incremental"),
+            status=result.get("state") or "queued",
+            conf=conf,
+        )
         return {
             "triggered": True,
             "cartridge": cartridge,
