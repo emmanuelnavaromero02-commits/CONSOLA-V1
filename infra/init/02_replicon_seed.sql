@@ -9,7 +9,7 @@ INSERT INTO cartridges (id, name, version, description, pattern, category, bronz
 VALUES (
     'replicon',
     'Replicon PSA',
-    '2.0.0',
+    '3.0.0',
     'Replicon Professional Services Automation — extrae datos de workforce: usuarios, proyectos, tiempo registrado, tareas, clientes, facturas, asignaciones y gastos.',
     'dag-based',
     'cartridge',
