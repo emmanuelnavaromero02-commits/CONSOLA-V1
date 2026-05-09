@@ -22,6 +22,19 @@ async def _noop_async(*args, **kwargs):
     return None
 
 
+async def _empty_list_async(*args, **kwargs):
+    return []
+
+
+class _FakeResponse:
+    def __init__(self, data, status_code=200):
+        self._data = data
+        self.status_code = status_code
+
+    def json(self):
+        return self._data
+
+
 @pytest.fixture()
 def anyio_backend():
     return "asyncio"
@@ -39,6 +52,7 @@ def console_main(monkeypatch):
         REFRESH_COOKIE_NAME="refresh_token",
         close_pool=_noop_async,
         cookie_secure=lambda: False,
+        verify_internal_api_key=lambda *args, **kwargs: None,
     )
 
     service_stubs = {
@@ -46,6 +60,7 @@ def console_main(monkeypatch):
         "app.services.tokens": _module(close_pool=_noop_async),
         "app.services.email_service": _module(),
         "app.services.mcp_registry": _module(
+            invoke=_noop_async,
             startup=_noop_async,
             health_check_all=_noop_async,
             close_pool=_noop_async,
@@ -53,8 +68,8 @@ def console_main(monkeypatch):
         "app.services.assistant": _module(),
         "app.services.studio_assistant": _module(),
         "app.services.token_store": _module(close_pool=_noop_async),
-        "app.services.job_service": _module(close_pool=_noop_async),
-        "app.services.cartridge_service": _module(close_pool=_noop_async),
+        "app.services.job_service": _module(list_recent=_empty_list_async, close_pool=_noop_async),
+        "app.services.cartridge_service": _module(get_cartridge=_noop_async, close_pool=_noop_async),
     }
     for name, mod in service_stubs.items():
         monkeypatch.setitem(sys.modules, name, mod)
@@ -192,3 +207,70 @@ async def test_dag_based_disabled_entity_returns_400(console_main, monkeypatch):
         await console_main.api_pipeline_extract("replicon", "Department", {})
 
     assert exc.value.status_code == 400
+
+
+def test_bronze_latest_date_from_real_minio_paths(console_main):
+    latest_date = console_main._bronze_latest_date_from_objects(
+        "replicon",
+        "Department",
+        [
+            "raw/replicon/Department/load_date=2026-05-08/data.parquet",
+            "raw/replicon/Department/load_date=2026-05-09/data.parquet",
+            "silver/replicon/replicon_department_latest/data.parquet",
+        ],
+    )
+
+    assert latest_date == "2026-05-09"
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_uses_physical_bronze_when_run_metadata_missing(console_main, monkeypatch):
+    async def get_cartridge(cartridge):
+        return {
+            "entities": [
+                {"id": "Department", "mode": "full", "description": "Departments"},
+            ]
+        }
+
+    async def physical_snapshot(cartridge, entity):
+        assert cartridge == "replicon"
+        assert entity == "Department"
+        return {"latest_date": "2026-05-09", "record_count": 3}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url):
+            return _FakeResponse({
+                "datasets": [
+                    {
+                        "name": "replicon_department_latest",
+                        "layer": "silver",
+                        "sources": ["raw/replicon/Department"],
+                        "row_count": 3,
+                        "last_refresh": "2026-05-09T00:00:00+00:00",
+                    }
+                ]
+            })
+
+    monkeypatch.setattr(console_main.cartridge_service, "get_cartridge", get_cartridge)
+    monkeypatch.setattr(console_main, "_bronze_physical_snapshot", physical_snapshot)
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await console_main.api_pipeline("replicon")
+    department = result["pipeline"][0]
+
+    assert department["entity"] == "Department"
+    assert department["bronze"]["source"] == "raw/replicon/Department"
+    assert department["bronze"]["latest_date"] == "2026-05-09"
+    assert department["bronze"]["record_count"] == 3
+    assert department["bronze"]["status"] != "never"
+    assert department["silver"][0]["name"] == "replicon_department_latest"
+    assert department["silver"][0]["row_count"] == 3
