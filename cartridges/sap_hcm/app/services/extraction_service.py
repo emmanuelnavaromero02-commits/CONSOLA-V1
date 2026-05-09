@@ -63,7 +63,7 @@ def run_entity(
                 filter_expr = f"{watermark_field} gt '{watermark}'"
 
             page = client.fetch_entity(
-                entity=config.get("odata_entity", entity).split("/")[-1], # ensure collection name
+                entity=config.get("odata_entity", entity),
                 select=select_fields,
                 page_size=page_size,
                 skip=offset,

@@ -12,7 +12,7 @@ class SapHcmClient:
         self.timeout = 120.0
         self.headers = {
             "Accept": "application/json",
-            "sap-client": "100"
+            "sap-client": settings.sap_hcm_client
         }
         self.client = httpx.Client(
             base_url=self.base_url,
@@ -22,7 +22,13 @@ class SapHcmClient:
         )
 
     def get_entity_url(self, entity: str) -> str:
-        return f"{self.base_url.rstrip('/')}/{entity}"
+        if "/" in entity:
+            parts = entity.split("/", 1)
+            service = parts[0].strip()
+            collection = parts[1].strip()
+            return f"{self.base_url.rstrip('/')}/{service}/{collection}"
+        else:
+            return f"{self.base_url.rstrip('/')}/{entity}"
 
     def fetch_entity(self, entity: str, select: list[str], page_size: int, skip: int, filter_expr: str | None = None) -> list[dict]:
         params = {

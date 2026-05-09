@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     sap_hcm_base_url: str = ""
     sap_hcm_user: str = ""
     sap_hcm_pass: str = ""
+    sap_hcm_client: str = "100"
     database_url: str = ""
     minio_endpoint: str = ""
     minio_access_key: str = ""
