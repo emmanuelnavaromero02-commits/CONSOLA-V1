@@ -104,6 +104,91 @@ def _validate_dataset_name(dataset: str) -> None:
         raise HTTPException(400, "Invalid dataset name")
 
 
+def _safe_pipeline_name(value: str) -> bool:
+    return bool(DATASET_NAME_RE.fullmatch(value or ""))
+
+
+def _bronze_latest_date_from_objects(cartridge: str, entity: str, object_names: list[str]) -> str | None:
+    if not _safe_pipeline_name(cartridge) or not _safe_pipeline_name(entity):
+        return None
+
+    prefix = f"raw/{cartridge}/{entity}/"
+    pattern = re.compile(
+        rf"^{re.escape(prefix)}load_date=(\d{{4}}-\d{{2}}-\d{{2}})/.+\.parquet$"
+    )
+    dates = []
+    for object_name in object_names:
+        match = pattern.match(object_name or "")
+        if match:
+            dates.append(match.group(1))
+    return max(dates) if dates else None
+
+
+def _minio_client():
+    from minio import Minio
+
+    return Minio(
+        os.environ.get("MINIO_ENDPOINT", "minio:9000"),
+        access_key=os.environ.get("MINIO_ACCESS_KEY", "minio"),
+        secret_key=os.environ.get("MINIO_SECRET_KEY"),
+        secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
+    )
+
+
+async def _count_bronze_parquet_rows(source: str, latest_date: str) -> int | None:
+    bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
+    parquet_glob = f"s3://{bucket}/{source}/load_date={latest_date}/*.parquet"
+    sql = (
+        "SELECT COUNT(*) AS record_count "
+        f"FROM read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
+    )
+    async with httpx.AsyncClient(
+        headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"},
+        timeout=60,
+    ) as c:
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json={"tool": "preview_transform", "args": {"sql": sql, "limit": 1, "sources": [source]}},
+        )
+    if r.status_code != 200:
+        return None
+    data = r.json()
+    rows = data.get("data") or []
+    if not rows:
+        return None
+    row = rows[0]
+    value = row.get("record_count")
+    if value is None and row:
+        value = next(iter(row.values()))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _bronze_physical_snapshot(cartridge: str, entity: str) -> dict:
+    if not _safe_pipeline_name(cartridge) or not _safe_pipeline_name(entity):
+        return {}
+
+    source = f"raw/{cartridge}/{entity}"
+    bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
+    try:
+        client = _minio_client()
+        object_names = [
+            obj.object_name
+            for obj in client.list_objects(bucket, prefix=f"{source}/", recursive=True)
+        ]
+        latest_date = _bronze_latest_date_from_objects(cartridge, entity, object_names)
+        if not latest_date:
+            return {}
+        return {
+            "latest_date": latest_date,
+            "record_count": await _count_bronze_parquet_rows(source, latest_date),
+        }
+    except Exception:
+        return {}
+
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -1072,6 +1157,13 @@ async def api_pipeline(cartridge: str = "replicon"):
                 "finished_at": last_job.get("finished_at") or last_job.get("created_at"),
                 "message":     last_job.get("message"),
             }
+
+        if not bronze_date or bronze_count is None:
+            physical_bronze = await _bronze_physical_snapshot(cartridge, entity)
+            if physical_bronze:
+                bronze_date = bronze_date or physical_bronze.get("latest_date")
+                if bronze_count is None:
+                    bronze_count = physical_bronze.get("record_count")
 
         # Bronze freshness
         if dag_run and dag_run["status"] == "failed" and not bronze_date:
