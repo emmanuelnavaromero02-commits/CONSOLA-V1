@@ -1181,12 +1181,107 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
+    metadata = await _pipeline_extract_metadata(cartridge, entity)
+    if (metadata.get("pattern") or "").lower() == "dag-based":
+        if not metadata.get("entity"):
+            raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
+        if not metadata.get("enabled"):
+            raise HTTPException(400, f"Entity '{entity}' is disabled")
+        dag_id = metadata.get("dag_id")
+        if not dag_id:
+            raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
+
+        conf = _build_dag_extract_conf(entity, metadata.get("mode"), body)
+        result = await _trigger_airflow_extract_dag(dag_id, conf)
+        if result.get("error"):
+            raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
+        dag_run_id = result.get("dag_run_id") or result.get("run_id")
+        return {
+            "triggered": True,
+            "cartridge": cartridge,
+            "entity": entity,
+            "dag_id": dag_id,
+            "run_id": dag_run_id,
+            "dag_run_id": dag_run_id,
+            "state": result.get("state"),
+            "conf": conf,
+        }
+
     mode = body.get("mode", "incremental")
     result = await mcp_registry.invoke(cartridge, "extract", {
         "entity": entity,
         "mode": mode,
     })
     return result
+
+
+async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
+    import asyncpg as _asyncpg
+    import os as _os
+
+    _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
+        row = await pool.fetchrow(
+            """
+            SELECT
+                c.id AS cartridge_id,
+                c.pattern AS pattern,
+                e.entity AS entity,
+                e.dag_id AS dag_id,
+                e.mode AS mode,
+                e.enabled AS enabled,
+                e.primary_key AS primary_key
+            FROM cartridges c
+            LEFT JOIN entity_config e
+              ON e.cartridge_id = c.id
+             AND e.entity = $2
+            WHERE c.id = $1
+            """,
+            cartridge,
+            entity,
+        )
+        if not row:
+            raise HTTPException(404, f"Cartridge '{cartridge}' not found")
+        return dict(row)
+    finally:
+        if pool:
+            await pool.close()
+
+
+def _build_dag_extract_conf(entity: str, configured_mode: str | None, body: dict) -> dict:
+    mode = body.get("mode") or configured_mode or "incremental"
+    conf = {
+        "entity": entity,
+        "mode": mode,
+    }
+    if body.get("from_date"):
+        conf["from_date"] = body["from_date"]
+    if body.get("to_date"):
+        conf["to_date"] = body["to_date"]
+    return conf
+
+
+async def _trigger_airflow_extract_dag(dag_id: str, conf: dict) -> dict:
+    result: dict = {}
+    for attempt in range(5):
+        result = await mcp_registry.invoke("infra", "airflow_trigger_dag", {
+            "dag_id": dag_id,
+            "conf": conf,
+        })
+        error = result.get("error")
+        if not error:
+            return result
+        if not _is_transient_airflow_trigger_error(error) or attempt == 4:
+            return result
+        await asyncio.sleep(4)
+    return result
+
+
+def _is_transient_airflow_trigger_error(error: str) -> bool:
+    lowered = str(error).lower()
+    return "connection" in lowered or "connect" in lowered
 
 
 # ── Studio — Entity config ───────────────────────────────────────────────────

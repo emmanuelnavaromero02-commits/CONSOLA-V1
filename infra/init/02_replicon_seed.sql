@@ -55,7 +55,7 @@ VALUES
     ('replicon',   'User',               'full',        'last_modified',  'user_id',          'services',    'replicon_projects_detail', 'Usuarios del sistema con costos y tarifas',                     TRUE),
     ('replicon',   'Client',             'full',        'last_modified',  'client_id',        'services',    'replicon_projects_detail', 'Clientes con moneda y tarifa de facturación',                   TRUE),
     ('replicon',   'Task',               'full',        'last_modified',  'task_id',          'services',    'replicon_projects_detail', 'Tareas de proyectos con horas estimadas',                       TRUE),
-    ('replicon',   'Department',         'full',        NULL,             'department_id',    'services',    'replicon_projects_detail', 'Departamentos organizacionales',                                 TRUE),
+    ('replicon',   'Department',         'full',        NULL,             'department_id',    'services',    'replicon_extract',        'Departamentos organizacionales',                                 TRUE),
     ('replicon',   'Role',               'full',        NULL,             'role_id',          'services',    'replicon_projects_detail', 'Roles de usuario',                                              TRUE),
     ('replicon',   'Activity',           'full',        NULL,             'activity_id',      'services',    'replicon_projects_detail', 'Actividades / códigos de trabajo',                              TRUE),
     ('replicon',   'Project',            'incremental', 'last_modified',  'project_id',       'services',    'replicon_projects_detail', 'Proyectos con presupuesto, estado y fechas',                    TRUE),
