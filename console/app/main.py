@@ -1465,6 +1465,92 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20)
     }
 
 
+@app.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_authenticated)])
+async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
+    """Basic DAG run logs summary for one cartridge entity run."""
+    metadata = await _pipeline_extract_metadata(cartridge, entity)
+    if not metadata.get("entity"):
+        raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
+
+    import asyncpg as _asyncpg
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        row = await pool.fetchrow(
+            """
+            SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
+                   started_at, finished_at, duration_seconds, error_message
+              FROM pipeline_runs
+             WHERE cartridge_id=$1
+               AND entity=$2
+               AND (run_id=$3 OR airflow_dag_run_id=$3)
+             ORDER BY started_at DESC NULLS LAST
+             LIMIT 1
+            """,
+            cartridge,
+            entity,
+            dag_run_id,
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    finally:
+        if pool:
+            await pool.close()
+
+    if not row:
+        raise HTTPException(404, f"Run '{dag_run_id}' not found for {cartridge}/{entity}")
+
+    run = await _refresh_dag_run_status(dict(row))
+    dag_id = run.get("dag_id") or metadata.get("dag_id")
+    resolved_dag_run_id = run.get("airflow_dag_run_id") or run.get("run_id") or dag_run_id
+    response = {
+        "cartridge": cartridge,
+        "entity": entity,
+        "dag_id": dag_id,
+        "dag_run_id": resolved_dag_run_id,
+        "status": _normalize_airflow_state(run.get("status")),
+        "tasks": [],
+        "logs": [],
+        "error": run.get("error_message"),
+        "available": False,
+    }
+
+    try:
+        tasks_result = await mcp_registry.invoke("infra", "airflow_list_task_instances", {
+            "dag_id": dag_id,
+            "dag_run_id": resolved_dag_run_id,
+        })
+        if tasks_result.get("error"):
+            response["error"] = tasks_result["error"]
+            return response
+
+        tasks = tasks_result.get("tasks") or []
+        response["tasks"] = tasks
+        logs = []
+        for task in tasks:
+            task_id = task.get("task_id")
+            if not task_id:
+                continue
+            log_result = await mcp_registry.invoke("infra", "airflow_get_task_logs", {
+                "dag_id": dag_id,
+                "dag_run_id": resolved_dag_run_id,
+                "task_id": task_id,
+            })
+            if log_result.get("error"):
+                logs.append({"task_id": task_id, "available": False, "error": log_result["error"]})
+            else:
+                logs.append({"task_id": task_id, "available": True, "logs": log_result.get("logs", "")})
+
+        response["logs"] = logs
+        response["available"] = bool(tasks) and all(item.get("available") for item in logs)
+        return response
+    except Exception as exc:
+        response["error"] = str(exc)
+        return response
+
+
 @app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
