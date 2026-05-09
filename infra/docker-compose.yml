@@ -45,7 +45,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -182,6 +182,15 @@ services:
       - "8025:8025"   # Web UI (open in browser to read sent emails)
     restart: unless-stopped
 
+  replicon-mock:
+    build:
+      context: ./replicon-mock
+      dockerfile: Dockerfile
+    container_name: mode_replicon_mock
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
+
   # ── MCP Infrastructure (incluye RAG) ─────────────────────────────────────────
 
   mcp-infra:
@@ -286,7 +295,11 @@ services:
       -c "
         python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='modecissions', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute(\\\"SELECT 1 FROM pg_database WHERE datname = 'airflow'\\\"); exists = cur.fetchone(); cur.execute('CREATE DATABASE airflow') if exists is None else None; cur.close(); conn.close()\" &&
         airflow db migrate &&
-        airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true
+        (airflow connections delete replicon_analytics || true) &&
+        airflow connections add replicon_analytics --conn-type http --conn-host http://replicon-mock:8100/analytics --conn-password dummy-local-token &&
+        (airflow connections delete replicon_services || true) &&
+        airflow connections add replicon_services --conn-type http --conn-host http://replicon-mock:8100/services --conn-password dummy-local-token &&
+        (airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true)
       "
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -301,6 +314,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      replicon-mock:
+        condition: service_started
     restart: "no"
 
   airflow:
@@ -339,6 +354,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      replicon-mock:
+        condition: service_started
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -378,6 +395,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      replicon-mock:
+        condition: service_started
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
