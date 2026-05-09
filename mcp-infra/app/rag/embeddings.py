@@ -23,7 +23,17 @@ from google.genai import types as gtypes
 
 from app.rag.config import GEMINI_API_KEY, EMBED_MODEL, EMBED_DIM
 
-_client = genai.Client(api_key=GEMINI_API_KEY)
+_client: genai.Client | None = None
+
+
+def _gemini_client() -> genai.Client:
+    global _client
+    if _client is None:
+        api_key = (GEMINI_API_KEY or "").strip()
+        if not api_key or api_key == "dummy-local-key":
+            raise RuntimeError("GEMINI_API_KEY is required to generate RAG embeddings")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 _DOC_CFG = gtypes.EmbedContentConfig(
     outputDimensionality=EMBED_DIM,
@@ -61,7 +71,7 @@ async def _embed_with_retry(contents: list[str], cfg) -> list:
     """Single embed call with retry on 429."""
     for attempt in range(4):
         try:
-            response = await _client.aio.models.embed_content(
+            response = await _gemini_client().aio.models.embed_content(
                 model=EMBED_MODEL, contents=contents, config=cfg,
             )
             return response.embeddings

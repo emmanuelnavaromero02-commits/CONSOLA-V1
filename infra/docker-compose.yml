@@ -14,6 +14,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   postgres_gold:
     image: postgres:15
@@ -28,6 +33,11 @@ services:
     volumes:
       - postgres_gold_data:/var/lib/postgresql/data
       - ./init_gold:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions_gold -p 5433"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   minio:
     image: minio/minio:latest
@@ -89,9 +99,12 @@ services:
       - ../cartridges:/registry/cartridges
       - ../console/app/static:/app/app/static:ro
     depends_on:
-      - postgres
-      - mcp-infra
-      - mailhog
+      postgres:
+        condition: service_healthy
+      mcp-infra:
+        condition: service_started
+      mailhog:
+        condition: service_started
 
   workspace:
     build:
@@ -113,9 +126,12 @@ services:
     ports:
       - "8001:8001"
     depends_on:
-      - postgres
-      - refinement
-      - mcp-infra
+      postgres:
+        condition: service_healthy
+      refinement:
+        condition: service_started
+      mcp-infra:
+        condition: service_started
     restart: unless-stopped
 
   refinement:
@@ -137,9 +153,12 @@ services:
     ports:
       - "8500:8500"
     depends_on:
-      - postgres
-      - postgres_gold
-      - minio
+      postgres:
+        condition: service_healthy
+      postgres_gold:
+        condition: service_healthy
+      minio:
+        condition: service_started
 
 
   vault:
@@ -151,7 +170,8 @@ services:
       DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   mailhog:
@@ -199,10 +219,14 @@ services:
     volumes:
       - ../airflow/dags:/opt/airflow/dags   # write DAGs directly
     depends_on:
-      - postgres
-      - postgres_gold
-      - minio
-      - airflow
+      postgres:
+        condition: service_healthy
+      postgres_gold:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      airflow:
+        condition: service_started
     restart: unless-stopped
 
   # ── Superset ──────────────────────────────────────────────────────────────────
@@ -226,7 +250,8 @@ services:
         superset init
       "
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: "no"
 
   superset:
@@ -242,21 +267,26 @@ services:
     ports:
       - "8088:8088"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Airflow ───────────────────────────────────────────────────────────────────
-  # Run once to initialize DB and create admin user:
-  #   docker compose run --rm airflow-init
-  # Then start normally:
-  #   docker compose up -d airflow airflow-scheduler
+  # Initializes Airflow metadata idempotently, including existing local Postgres
+  # volumes where /docker-entrypoint-initdb.d no longer runs.
 
   airflow-init:
     image: apache/airflow:2.9.2
     container_name: mode_airflow_init
     entrypoint: /bin/bash
-    command: -c "airflow db migrate && airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local"
+    command: >
+      -c "
+        python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='modecissions', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute(\\\"SELECT 1 FROM pg_database WHERE datname = 'airflow'\\\"); exists = cur.fetchone(); cur.execute('CREATE DATABASE airflow') if exists is None else None; cur.close(); conn.close()\" &&
+        airflow db migrate &&
+        airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true
+      "
     environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
@@ -266,7 +296,8 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: "no"
 
   airflow:
@@ -299,7 +330,10 @@ services:
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   airflow-scheduler:
@@ -330,7 +364,10 @@ services:
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
