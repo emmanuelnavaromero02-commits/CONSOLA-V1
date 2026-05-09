@@ -386,3 +386,44 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
     assert department["last_job"]["status"] == "success"
     assert department["last_job"]["mode"] == "full"
     assert department["last_job"]["duration_sec"] == 3.0
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_entity_runs_returns_recent_history(console_main, monkeypatch):
+    async def metadata(cartridge, entity):
+        return {
+            "pattern": "dag-based",
+            "entity": entity,
+            "dag_id": "replicon_extract",
+            "mode": "full",
+            "enabled": True,
+        }
+
+    console_main._test_asyncpg_stub.fetch_rows = [{
+        "run_id": "manual__test",
+        "dag_id": "replicon_extract",
+        "airflow_dag_run_id": "manual__test",
+        "status": "success",
+        "mode": "full",
+        "started_at": "2026-05-09T04:09:57+00:00",
+        "finished_at": "2026-05-09T04:10:00+00:00",
+        "duration_seconds": 3.0,
+        "error_message": None,
+    }]
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
+
+    result = await console_main.api_pipeline_entity_runs("replicon", "Department", limit=20)
+
+    assert result["cartridge"] == "replicon"
+    assert result["entity"] == "Department"
+    assert result["runs"] == [{
+        "dag_id": "replicon_extract",
+        "dag_run_id": "manual__test",
+        "status": "success",
+        "mode": "full",
+        "triggered_at": "2026-05-09T04:09:57+00:00",
+        "started_at": "2026-05-09T04:09:57+00:00",
+        "finished_at": "2026-05-09T04:10:00+00:00",
+        "duration_sec": 3.0,
+        "error": None,
+    }]

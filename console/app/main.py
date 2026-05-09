@@ -1404,6 +1404,67 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
             await pool.close()
 
 
+def _format_pipeline_entity_run(row: dict) -> dict:
+    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
+    return {
+        "dag_id":       row.get("dag_id"),
+        "dag_run_id":   dag_run_id,
+        "status":       _normalize_airflow_state(row.get("status")),
+        "mode":         row.get("mode"),
+        "triggered_at": str(row.get("started_at")) if row.get("started_at") else None,
+        "started_at":   str(row.get("started_at")) if row.get("started_at") else None,
+        "finished_at":  str(row.get("finished_at")) if row.get("finished_at") else None,
+        "duration_sec": float(row.get("duration_seconds")) if row.get("duration_seconds") is not None else None,
+        "error":        row.get("error_message"),
+    }
+
+
+@app.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_authenticated)])
+async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20):
+    """Recent DAG-based pipeline runs for one cartridge entity."""
+    metadata = await _pipeline_extract_metadata(cartridge, entity)
+    if not metadata.get("entity"):
+        raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
+
+    safe_limit = max(1, min(int(limit or 20), 100))
+
+    import asyncpg as _asyncpg
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        rows = await pool.fetch(
+            """
+            SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
+                   started_at, finished_at, duration_seconds, error_message
+              FROM pipeline_runs
+             WHERE cartridge_id=$1 AND entity=$2
+             ORDER BY started_at DESC NULLS LAST
+             LIMIT $3
+            """,
+            cartridge,
+            entity,
+            safe_limit,
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    finally:
+        if pool:
+            await pool.close()
+
+    runs = []
+    for row in rows:
+        refreshed = await _refresh_dag_run_status(dict(row))
+        runs.append(_format_pipeline_entity_run(refreshed))
+
+    return {
+        "cartridge": cartridge,
+        "entity": entity,
+        "runs": runs,
+    }
+
+
 @app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
