@@ -4,6 +4,7 @@ sap_successfactors_extract DAG
 Extrae UNA entidad llamando al cartucho SAP SuccessFactors (Puerto 8203).
 """
 from __future__ import annotations
+import os
 import httpx
 from airflow.decorators import dag, task
 
@@ -18,11 +19,16 @@ def sap_successfactors_extract():
         if not entity:
             raise ValueError("entity parameter is required")
 
+        headers = {
+            "X-Api-Key": os.environ.get("INTERNAL_API_KEY", ""),
+            "X-Internal-Service": "airflow",
+        }
+
         with httpx.Client(timeout=300) as client:
             res = client.post(
                 f"{CARTRIDGE_URL}/skills/entities/{entity}/extract",
                 json=conf,
-                headers={"X-Internal-Service": "airflow"}
+                headers=headers
             )
             res.raise_for_status()
             return res.json()

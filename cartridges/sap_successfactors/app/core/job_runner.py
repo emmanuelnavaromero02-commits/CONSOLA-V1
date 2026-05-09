@@ -246,8 +246,7 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
-        "sap_successfactors_base_url": settings.sap_successfactors_base_url,
-        "sap_successfactors_token":    settings.sap_successfactors_api_token or "",
+        "sf_base_url": settings.sf_base_url,
     }
     url = f"{settings.airflow_url}/api/v1/dags/sap_successfactors_extract/dagRuns"
     loop = asyncio.get_event_loop()

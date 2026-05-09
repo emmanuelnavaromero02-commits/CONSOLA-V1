@@ -247,7 +247,6 @@ async def _trigger_airflow(
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
         "sap_hcm_base_url": settings.sap_hcm_base_url,
-        "sap_hcm_token":    settings.sap_hcm_api_token or "",
     }
     url = f"{settings.airflow_url}/api/v1/dags/sap_hcm_extract/dagRuns"
     loop = asyncio.get_event_loop()
