@@ -38,9 +38,38 @@ CHAT_MODEL = os.environ.get(
     _PROVIDER_DEFAULTS.get(CHAT_PROVIDER, "claude-haiku-4-5-20251001"),
 )
 
-_ant           = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-_google_client = google_genai.Client(api_key=GEMINI_API_KEY)
-_ollama        = AsyncOpenAI(api_key="ollama", base_url=f"{OLLAMA_URL}/v1/")
+_ant: anthropic.AsyncAnthropic | None = None
+_google_client: google_genai.Client | None = None
+_ollama: AsyncOpenAI | None = None
+
+
+def _anthropic_client() -> anthropic.AsyncAnthropic:
+    global _ant
+    if _ant is None:
+        _ant = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+    return _ant
+
+
+def _gemini_client() -> google_genai.Client:
+    global _google_client
+    if _google_client is None:
+        api_key = (GEMINI_API_KEY or "").strip()
+        if not api_key or api_key == "dummy-local-key":
+            raise RuntimeError("GEMINI_API_KEY is required when CHAT_LLM_PROVIDER=gemini")
+        _google_client = google_genai.Client(api_key=api_key)
+    return _google_client
+
+
+def _gemini_key_configured() -> bool:
+    api_key = (GEMINI_API_KEY or "").strip()
+    return bool(api_key) and api_key != "dummy-local-key"
+
+
+def _ollama_client() -> AsyncOpenAI:
+    global _ollama
+    if _ollama is None:
+        _ollama = AsyncOpenAI(api_key="ollama", base_url=f"{OLLAMA_URL}/v1/")
+    return _ollama
 
 
 async def chat(
@@ -56,9 +85,13 @@ async def chat(
     The function still returns the same (reply, viewer_urls, messages) tuple
     so callers that ignore on_event keep working unchanged."""
     if CHAT_PROVIDER == "gemini":
+        if not _gemini_key_configured():
+            text = "Gemini is not configured. Set GEMINI_API_KEY or choose another CHAT_LLM_PROVIDER."
+            await _emit(on_event, {"type": "text", "text": text})
+            return text, [], messages + [{"role": "assistant", "content": text}]
         return await _gemini_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
     if CHAT_PROVIDER == "ollama":
-        return await _openai_compat_chat(system, messages, tools, invoke_tool, tool_server_map, _ollama)
+        return await _openai_compat_chat(system, messages, tools, invoke_tool, tool_server_map, _ollama_client())
     return await _anthropic_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
 
 
@@ -222,7 +255,7 @@ async def _anthropic_chat(
     viewer_urls: list[dict] = []
 
     for _i in range(20):
-        response = await _ant.messages.create(
+        response = await _anthropic_client().messages.create(
             model=CHAT_MODEL,
             # Bumped from 4096 → 8192 so the model has room to emit a complete
             # dashboard HTML inside a single tool_use(publish_app) call.
@@ -351,7 +384,7 @@ async def _gemini_generate_with_retry(*, model: str, contents, config):
     """Wrap generate_content with retry on transient 503/429 from Gemini."""
     for attempt in range(4):
         try:
-            return await _google_client.aio.models.generate_content(
+            return await _gemini_client().aio.models.generate_content(
                 model=model, contents=contents, config=config,
             )
         except Exception as exc:
@@ -383,7 +416,7 @@ async def _get_or_create_gemini_cache(
     if sig in _gemini_cache_by_sig:
         return _gemini_cache_by_sig[sig]
     try:
-        cache = await _google_client.aio.caches.create(
+        cache = await _gemini_client().aio.caches.create(
             model=CHAT_MODEL,
             config=gtypes.CreateCachedContentConfig(
                 system_instruction=system,
