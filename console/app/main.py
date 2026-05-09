@@ -2709,13 +2709,12 @@ def _coerce_dt(v):
 async def _dec_pool() -> _asyncpg_dec.Pool:
     global _DEC_POOL
     if _DEC_POOL is None:
-        dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-
         async def _init_conn(c):
             await c.set_type_codec(
                 "jsonb", encoder=_json_dec.dumps, decoder=_json_dec.loads, schema="pg_catalog"
             )
 
+        dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
         _DEC_POOL = await _asyncpg_dec.create_pool(
             dsn, min_size=1, max_size=4,
             init=_init_conn,
