@@ -3014,3 +3014,7 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
     sent = await _email.send_email(target_user["email"], subject, html)
     return {"sent": sent}
+
+
+from app.routers import security
+app.include_router(security.router)
