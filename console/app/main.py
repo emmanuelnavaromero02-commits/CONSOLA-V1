@@ -28,7 +28,6 @@ from app.services import cartridge_service
 from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
-from app.services.auth import verify_internal_api_key
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
 from app.security import get_internal_api_key
 from app.dependencies import (
@@ -752,56 +751,6 @@ async def api_me_change_password(body: dict, user: dict = Depends(require_authen
     return {"changed": True}
 
 
-@app.get("/")
-async def index():
-    return FileResponse(STATIC / "index.html")
-
-
-# ── MCP Registry ──────────────────────────────────────────────────────────────
-
-@app.get("/mcp/servers", dependencies=[Depends(verify_internal_api_key)])
-async def list_servers():
-    return {"servers": await mcp_registry.list_servers()}
-
-
-@app.post("/mcp/servers/register", dependencies=[Depends(verify_internal_api_key)])
-async def register_server(body: dict):
-    result = await mcp_registry.register(body)
-    return result
-
-
-@app.get("/mcp/servers/{server_id}/tools", dependencies=[Depends(verify_internal_api_key)])
-async def list_tools(server_id: str):
-    return {"tools": await mcp_registry.list_tools(server_id)}
-
-
-@app.post("/mcp/servers/{server_id}/invoke", dependencies=[Depends(verify_internal_api_key)])
-async def invoke_tool(server_id: str, body: dict):
-    return await mcp_registry.invoke(server_id, body.get("tool"), body.get("args", {}))
-
-
-@app.post("/mcp/invoke", dependencies=[Depends(verify_internal_api_key)])
-async def invoke_tool_generic(body: dict):
-    """Generic invoke: {server, tool, args}. Used by Studio UI for Pattern B actions."""
-    server_id = body.get("server", "")
-    tool      = body.get("tool", "")
-    args      = body.get("args", {})
-    result    = await mcp_registry.invoke(server_id, tool, args)
-    return {"result": result}
-
-
-@app.post("/mcp/servers/health-check", dependencies=[Depends(verify_internal_api_key)])
-async def health_check_servers():
-    count = await mcp_registry.health_check_all()
-    return {"checked": count}
-
-
-@app.delete("/mcp/servers/{server_id}", dependencies=[Depends(verify_internal_api_key)])
-async def deregister_server(server_id: str):
-    await mcp_registry.deregister(server_id)
-    return {"ok": True}
-
-
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 @app.get("/jobs", dependencies=[Depends(require_authenticated)])
@@ -853,38 +802,6 @@ async def refresh_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
         return r.json()
-
-
-# ── Viewer pages ──────────────────────────────────────────────────────────────
-
-@app.get("/viewer/jobs")
-async def viewer_jobs():
-    return FileResponse(STATIC / "viewers" / "jobs.html")
-
-@app.get("/viewer/jobs/{job_id}")
-async def viewer_job(job_id: str):
-    return FileResponse(STATIC / "viewers" / "job.html")
-
-@app.get("/viewer/schema")
-async def viewer_schema():
-    return FileResponse(STATIC / "viewers" / "schema.html")
-
-@app.get("/viewer/datasets")
-async def viewer_datasets():
-    return FileResponse(STATIC / "viewers" / "datasets.html")
-
-@app.get("/viewer/datasets/{name}")
-async def viewer_dataset(name: str):
-    return FileResponse(STATIC / "viewers" / "dataset.html")
-
-@app.get("/viewer/semantic")
-async def viewer_semantic():
-    return FileResponse(STATIC / "viewers" / "semantic.html")
-
-
-@app.get("/apps-gallery")
-async def apps_gallery():
-    return FileResponse(STATIC / "apps_gallery.html")
 
 
 # ── Viewer data APIs ──────────────────────────────────────────────────────────
@@ -1855,10 +1772,6 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
-@app.get("/monitor")
-async def monitor_page():
-    return FileResponse(STATIC / "monitor.html")
 
 @app.get("/studio")
 async def studio_page():
@@ -3039,5 +2952,8 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     return {"sent": sent}
 
 
-from app.routers import security
+from app.routers import mcp, pages, security
+
+app.include_router(pages.router)
+app.include_router(mcp.router)
 app.include_router(security.router)
