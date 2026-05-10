@@ -250,8 +250,6 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
-        "replicon_base_url": settings.replicon_base_url,
-        "replicon_token":    settings.replicon_api_token or "",
     }
     url = f"{settings.airflow_url}/api/v1/dags/replicon_extract/dagRuns"
     loop = asyncio.get_event_loop()
