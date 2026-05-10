@@ -1,59 +1,127 @@
 entities:
-  - entity: EmployeePresence
-    mode: incremental
-    watermark_field: EventDate
-    date_field: EventDate
-    page_size: 5000
-    description: "Presencia diaria: primer fichaje de entrada y último de salida"
-    odata_entity: HCM_ACCESS_SRV/EmployeePresenceSet
-    select_fields: [Pernr, EventDate, FirstIn, LastOut, TotalMinutes, LocationId, DeviceId]
 
-  - entity: AccessEvent
-    mode: incremental
-    watermark_field: EventTimestamp
-    date_field: EventDate
-    page_size: 5000
-    description: "Eventos individuales de acceso: entrada/salida por lector"
-    odata_entity: HCM_ACCESS_SRV/AccessEventSet
-    select_fields: [Pernr, EventDate, EventTimestamp, EventType, LocationId, DeviceId, ZoneId, AccessGranted]
+  # ---------------------------------------------------------------
+  # Dimensions — full load daily
+  # ---------------------------------------------------------------
 
-  - entity: AccessZone
+  - entity: User
     mode: full
-    page_size: 200
-    description: "Zonas de acceso: oficinas, salas, almacenes"
-    odata_entity: HCM_ACCESS_SRV/AccessZoneSet
-    select_fields: [ZoneId, ZoneName, Building, Floor, MaxCapacity, RestrictedAccess]
-
-  - entity: AccessDevice
-    mode: full
-    page_size: 200
-    description: "Dispositivos de control de acceso"
-    odata_entity: HCM_ACCESS_SRV/AccessDeviceSet
-    select_fields: [DeviceId, DeviceName, ZoneId, LocationId, DeviceType, Status]
-
-  - entity: AbsenceAlert
-    mode: incremental
-    watermark_field: AlertDate
-    date_field: AlertDate
+    watermark_field: last_modified
     page_size: 1000
-    description: "Alertas de ausencia no justificada generadas automáticamente"
-    odata_entity: HCM_ACCESS_SRV/AbsenceAlertSet
-    select_fields: [Pernr, AlertDate, AlertType, Resolved, ResolvedBy, Notes]
+    description: "Replicon users with cost and billing rates"
 
-  - entity: WorkdayCompliance
+  - entity: Client
+    mode: full
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Clients with currency and default billing rate"
+
+  - entity: Task
+    mode: full
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Project tasks with estimated hours and billable type"
+
+  - entity: Department
+    mode: full
+    page_size: 1000
+    description: "Organizational departments"
+
+  - entity: Role
+    mode: full
+    page_size: 1000
+    description: "User roles"
+
+  - entity: Activity
+    mode: full
+    page_size: 1000
+    description: "Activities / work codes"
+
+  # ---------------------------------------------------------------
+  # Projects — incremental by last_modified
+  # ---------------------------------------------------------------
+
+  - entity: Project
     mode: incremental
-    watermark_field: ComplianceDate
-    date_field: ComplianceDate
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Projects with budget, status and date range"
+
+  # ---------------------------------------------------------------
+  # Time — incremental by date
+  # ---------------------------------------------------------------
+
+  - entity: TimeEntry
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 5000
+    description: "Time entries with hours, billable status and approval"
+
+  - entity: Timesheet
+    mode: incremental
+    watermark_field: last_modified
     page_size: 2000
-    description: "Cumplimiento de jornada laboral: horas registradas vs requeridas"
-    odata_entity: HCM_ACCESS_SRV/WorkdayComplianceSet
-    select_fields: [Pernr, ComplianceDate, RequiredMinutes, RecordedMinutes, CompliancePct, Compliant, LegalRisk]
+    description: "Timesheets with period, user and approval status"
 
-  - entity: CapacitySnapshot
+  # ---------------------------------------------------------------
+  # Expenses — incremental
+  # ---------------------------------------------------------------
+
+  - entity: ExpenseEntry
     mode: incremental
-    watermark_field: SnapshotTime
-    date_field: SnapshotDate
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Expense entries with amount, category and billable flag"
+
+  # ---------------------------------------------------------------
+  # Resources — full load daily
+  # ---------------------------------------------------------------
+
+  - entity: ResourceAllocation
+    mode: full
+    page_size: 2000
+    description: "Resource allocations with hours and role per project"
+
+  - entity: ResourceRequest
+    mode: full
     page_size: 1000
-    description: "Ocupación en tiempo real por zona"
-    odata_entity: HCM_ACCESS_SRV/CapacitySnapshotSet
-    select_fields: [ZoneId, SnapshotDate, SnapshotTime, CurrentOccupancy, MaxCapacity, OccupancyPct]
+    description: "Open resource requests"
+
+  - entity: ProjectTeamMember
+    mode: full
+    page_size: 2000
+    description: "Project team members"
+
+  # ---------------------------------------------------------------
+  # Financial — incremental
+  # ---------------------------------------------------------------
+
+  - entity: BillingItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Billing items per project"
+
+  - entity: InvoiceItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Invoice items with amount, hours and rate"
+
+  - entity: CostItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Cost items per project"
+
+  - entity: ProfitItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Profit items per project"

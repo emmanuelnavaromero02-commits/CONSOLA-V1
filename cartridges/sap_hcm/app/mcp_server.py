@@ -1,8 +1,8 @@
 """
-SAP HCM MCP Server
+SAP HCM Core MCP Server
 ===================
 Exposes 8 tools over Streamable HTTP so that Claude (or any MCP client)
-can inspect, extract, and query SAP HCM data without writing custom code.
+can inspect, extract, and query SAP HCM Core data without writing custom code.
 
 Mount path: /mcp  (configured in main.py)
 """
@@ -22,7 +22,7 @@ from app.services.watermark_service import get_watermark
 mcp = FastMCP(
     name="sap_hcm",
     instructions=(
-        "You have access to the SAP HCM workforce-management cartridge. "
+        "You have access to the SAP HCM Core workforce-management cartridge. "
         "Use list_entities to discover what data is available, preview to inspect rows, "
         "extract to ingest data into Bronze storage, and query_kb for analytics."
     ),
@@ -34,7 +34,7 @@ mcp = FastMCP(
 @mcp.tool()
 def list_entities() -> list[dict[str, Any]]:
     """
-    List all SAP HCM entities with their extraction mode, watermark field,
+    List all SAP HCM Core entities with their extraction mode, watermark field,
     last recorded watermark value, and description.
     """
     entities = get_all_entities()
@@ -57,7 +57,7 @@ def list_entities() -> list[dict[str, Any]]:
 @mcp.tool()
 def get_schema(entity: str) -> dict[str, Any]:
     """
-    Return the configuration schema for a SAP HCM entity including field list,
+    Return the configuration schema for a SAP HCM Core entity including field list,
     watermark config, and extraction mode.
 
     Args:
@@ -84,7 +84,7 @@ def get_schema(entity: str) -> dict[str, Any]:
 @mcp.tool()
 def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     """
-    Preview the most recent rows for a SAP HCM entity from Bronze (MinIO Parquet).
+    Preview the most recent rows for a SAP HCM Core entity from Bronze (MinIO Parquet).
     Returns column names and up to `limit` rows.
 
     Args:
@@ -123,7 +123,7 @@ async def extract(
     to_date: str | None = None,
 ) -> dict[str, Any]:
     """
-    [BATCH — async] Trigger extraction of a SAP HCM entity into Bronze (MinIO Parquet).
+    [BATCH — async] Trigger extraction of a SAP HCM Core entity into Bronze (MinIO Parquet).
 
     Returns IMMEDIATELY with a job_id. The extraction runs in the background.
     Use get_job_status(job_id) to poll progress, or list_jobs() to see all jobs.
@@ -147,7 +147,7 @@ async def extract(
 @mcp.tool()
 async def extract_all(mode: str = "incremental") -> dict[str, Any]:
     """
-    [BATCH — async] Extrae TODAS las entidades de SAP HCM en paralelo (máx 4 simultáneas).
+    [BATCH — async] Extrae TODAS las entidades de SAP HCM Core en paralelo (máx 4 simultáneas).
 
     Regresa INMEDIATAMENTE con un job_id. El progreso se actualiza en tiempo real:
     cada entidad completada actualiza el mensaje del job y escribe en los logs centrales.
@@ -231,7 +231,7 @@ async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
 @mcp.tool()
 def list_kbs() -> list[dict[str, Any]]:
     """
-    List all Knowledge Bits defined for the SAP HCM cartridge, including
+    List all Knowledge Bits defined for the SAP HCM Core cartridge, including
     their description and output table.
     """
     kbs = get_all_kbs()
@@ -269,7 +269,7 @@ def run_kb(kb_id: str) -> dict[str, Any]:
 @mcp.tool()
 def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
     """
-    Run arbitrary DuckDB SQL against SAP HCM Bronze/Silver Parquet data.
+    Run arbitrary DuckDB SQL against SAP HCM Core Bronze/Silver Parquet data.
     The query runs in-process via DuckDB with MinIO S3 access pre-configured.
     Use {bucket} as a placeholder for the MinIO bucket name.
 

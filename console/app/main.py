@@ -189,6 +189,127 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str) -> dict:
         return {}
 
 
+def _parse_iso_datetime(value: str | None):
+    if not value:
+        return None
+    from datetime import datetime as _dt
+
+    try:
+        return _dt.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _duration_seconds(started_at, finished_at) -> float | None:
+    start = _parse_iso_datetime(str(started_at)) if started_at else None
+    finish = _parse_iso_datetime(str(finished_at)) if finished_at else None
+    if not start or not finish:
+        return None
+    return max((finish - start).total_seconds(), 0.0)
+
+
+def _normalize_airflow_state(state: str | None) -> str:
+    normalized = (state or "unknown").lower()
+    if normalized in {"queued", "running", "success", "failed"}:
+        return normalized
+    return "unknown"
+
+
+async def _record_dag_pipeline_trigger(
+    *,
+    cartridge: str,
+    entity: str,
+    dag_id: str,
+    dag_run_id: str,
+    mode: str,
+    status: str,
+    conf: dict,
+) -> None:
+    import asyncpg as _asyncpg
+
+    if not dag_run_id:
+        return
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        await pool.execute(
+            """
+            INSERT INTO pipeline_runs (
+                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                mode, status, started_at, extra
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
+            ON CONFLICT (run_id) DO UPDATE SET
+                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                mode = EXCLUDED.mode,
+                status = EXCLUDED.status,
+                extra = pipeline_runs.extra || EXCLUDED.extra
+            """,
+            dag_run_id,
+            dag_id,
+            cartridge,
+            entity,
+            dag_run_id,
+            mode,
+            _normalize_airflow_state(status),
+            json.dumps({"raw_conf": conf, "triggered_by": "console"}),
+        )
+    finally:
+        if pool:
+            await pool.close()
+
+
+async def _refresh_dag_run_status(row: dict) -> dict:
+    status = _normalize_airflow_state(row.get("status"))
+    dag_id = row.get("dag_id")
+    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
+    if status not in {"queued", "running", "unknown"} or not dag_id or not dag_run_id:
+        return row
+
+    result = await mcp_registry.invoke("infra", "airflow_get_run_status", {
+        "dag_id": dag_id,
+        "dag_run_id": dag_run_id,
+    })
+    if result.get("error"):
+        return row
+
+    new_status = _normalize_airflow_state(result.get("state"))
+    row["status"] = new_status
+    row["started_at"] = _parse_iso_datetime(result.get("start_date")) or row.get("started_at")
+    row["finished_at"] = _parse_iso_datetime(result.get("end_date")) or row.get("finished_at")
+    row["duration_seconds"] = _duration_seconds(row.get("started_at"), row.get("finished_at"))
+
+    import asyncpg as _asyncpg
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        await pool.execute(
+            """
+            UPDATE pipeline_runs
+               SET status=$2,
+                   started_at=COALESCE($3::timestamptz, started_at),
+                   finished_at=COALESCE($4::timestamptz, finished_at),
+                   duration_seconds=COALESCE($5::numeric, duration_seconds)
+             WHERE run_id=$1
+            """,
+            row.get("run_id"),
+            new_status,
+            row.get("started_at"),
+            row.get("finished_at"),
+            row.get("duration_seconds"),
+        )
+    except Exception:
+        pass
+    finally:
+        if pool:
+            await pool.close()
+    return row
+
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -200,6 +321,20 @@ SECURITY_HEADERS = {
         "img-src 'self' data: blob:; "
         "connect-src 'self' http://localhost:* ws://localhost:*; "
         "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+}
+VIEWER_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "form-action 'self'"
     ),
@@ -235,8 +370,16 @@ def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     _RATE_BUCKETS[key] = hits
 
 
-def _apply_security_headers(response: Response) -> Response:
-    for name, value in SECURITY_HEADERS.items():
+def _is_viewer_path(path: str) -> bool:
+    return path == "/viewer" or path.startswith("/viewer/")
+
+
+def _apply_security_headers(response: Response, path: str = "") -> Response:
+    headers = VIEWER_SECURITY_HEADERS if _is_viewer_path(path) else SECURITY_HEADERS
+    if _is_viewer_path(path):
+        if "X-Frame-Options" in response.headers:
+            del response.headers["X-Frame-Options"]
+    for name, value in headers.items():
         response.headers.setdefault(name, value)
     return response
 
@@ -244,7 +387,7 @@ def _apply_security_headers(response: Response) -> Response:
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
-    return _apply_security_headers(response)
+    return _apply_security_headers(response, request.url.path)
 
 
 # ── Auth middleware ────────────────────────────────────────────────────────────
@@ -316,8 +459,8 @@ async def auth_middleware(request: Request, call_next):
 
     if not user and not is_public:
         if _is_api_like(path, request.headers.get("accept", "")):
-            return _apply_security_headers(JSONResponse({"detail": "authentication required"}, status_code=401))
-        return _apply_security_headers(RedirectResponse(url=f"/login?next={path}"))
+            return _apply_security_headers(JSONResponse({"detail": "authentication required"}, status_code=401), path)
+        return _apply_security_headers(RedirectResponse(url=f"/login?next={path}"), path)
 
     # Forced password change: confine the session to the change-password flow.
     if user and user.get("must_change_password") and not is_public:
@@ -326,8 +469,8 @@ async def auth_middleware(request: Request, call_next):
                 return _apply_security_headers(JSONResponse(
                     {"detail": "password change required", "must_change_password": True},
                     status_code=403,
-                ))
-            return _apply_security_headers(RedirectResponse(url="/me"))
+                ), path)
+            return _apply_security_headers(RedirectResponse(url="/me"), path)
 
     return await call_next(request)
 
@@ -384,10 +527,10 @@ async def auth_login(request: Request, body: dict):
     _rate_limit(request, "/auth/login", email)
     if not email or not pw:
         raise HTTPException(400, "email and password are required")
-    user = await _auth.authenticate(email, pw)
+    ip = request.client.host if request.client else None
+    user = await _auth.authenticate(email, pw, ip=ip)
     if not user:
         raise HTTPException(401, "invalid credentials")
-    ip = request.client.host if request.client else None
     token, expires = await _auth.create_session(user["id"], ip=ip)
     access_token = _access_token_for_user(user)
     refresh_token, refresh_expires = await _auth.create_refresh_token(user["id"])
@@ -705,7 +848,7 @@ async def dataset_data(name: str, limit: int = 100):
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/data", params={"limit": limit})
         return r.json()
 
-@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def refresh_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
@@ -805,7 +948,7 @@ async def api_sources():
         return {"sources": sources}
     return {"sources": []}
 
-@app.post("/api/datasets/save", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/datasets/save", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_dataset_save(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -837,7 +980,7 @@ async def api_bronze_query(body: dict):
     return r.json()
 
 
-@app.delete("/api/datasets", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.delete("/api/datasets", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_delete_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -885,7 +1028,7 @@ async def api_apps():
     return r.json()
 
 
-@app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_apps_delete(name: str):
     """Delete a published analytic app by name."""
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
@@ -1067,17 +1210,19 @@ async def api_pipeline(cartridge: str = "replicon"):
         _pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
         rows_pg = await _pool.fetch(
             """SELECT DISTINCT ON (entity)
-                   entity, status, mode,
+                   run_id, dag_id, entity, airflow_dag_run_id,
+                   status, mode,
                    started_at, finished_at,
                    record_count, bytes_written, storage_uri,
-                   watermark_updated_to, error_message
+                   duration_seconds, watermark_updated_to, error_message, extra
                FROM pipeline_runs
                WHERE cartridge_id = $1
                ORDER BY entity, started_at DESC""",
             cartridge,
         )
         for row in rows_pg:
-            dag_runs_by_entity[row["entity"]] = dict(row)
+            run = await _refresh_dag_run_status(dict(row))
+            dag_runs_by_entity[row["entity"]] = run
     except Exception:
         pass
     finally:
@@ -1136,14 +1281,20 @@ async def api_pipeline(cartridge: str = "replicon"):
             fin = dag_run.get("finished_at")
             bronze_date  = str(fin)[:10] if fin else None
             bronze_count = dag_run.get("record_count")
-            dag_status   = dag_run["status"]  # success | failed
+            dag_status   = _normalize_airflow_state(dag_run.get("status"))
+            dag_run_id   = dag_run.get("airflow_dag_run_id") or dag_run.get("run_id")
             last_run_info = {
-                "source":      "airflow",
-                "status":      "done" if dag_status == "success" else "failed",
-                "finished_at": str(fin) if fin else None,
-                "started_at":  str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
-                "mode":        dag_run.get("mode"),
-                "error":       dag_run.get("error_message"),
+                "source":       "airflow",
+                "dag_id":       dag_run.get("dag_id"),
+                "dag_run_id":   dag_run_id,
+                "run_id":       dag_run_id,
+                "status":       dag_status,
+                "mode":         dag_run.get("mode"),
+                "triggered_at": str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
+                "started_at":   str(dag_run.get("started_at", "")) if dag_run.get("started_at") else None,
+                "finished_at":  str(fin) if fin else None,
+                "duration_sec": float(dag_run.get("duration_seconds")) if dag_run.get("duration_seconds") is not None else None,
+                "error":        dag_run.get("error_message"),
             }
         elif last_job:
             if last_job.get("status") == "done":
@@ -1204,10 +1355,16 @@ async def api_pipeline(cartridge: str = "replicon"):
             "last_run":  last_run_info,
             # Keep last_job for backward compat with pipeline.html polling logic
             "last_job":  {
-                "job_id":     last_run_info.get("job_id") if last_run_info else None,
-                "status":     last_run_info.get("status") if last_run_info else None,
-                "created_at": last_run_info.get("finished_at") if last_run_info else None,
-                "message":    last_run_info.get("message") if last_run_info else None,
+                "job_id":       last_run_info.get("job_id") if last_run_info else None,
+                "dag_id":       last_run_info.get("dag_id") if last_run_info else None,
+                "dag_run_id":   last_run_info.get("dag_run_id") if last_run_info else None,
+                "status":       last_run_info.get("status") if last_run_info else None,
+                "mode":         last_run_info.get("mode") if last_run_info else None,
+                "triggered_at": last_run_info.get("triggered_at") if last_run_info else None,
+                "finished_at":  last_run_info.get("finished_at") if last_run_info else None,
+                "duration_sec": last_run_info.get("duration_sec") if last_run_info else None,
+                "created_at":   last_run_info.get("finished_at") or last_run_info.get("triggered_at") if last_run_info else None,
+                "message":      last_run_info.get("message") if last_run_info else None,
             } if last_run_info else None,
             "bronze": {
                 "source":       source,
@@ -1269,7 +1426,154 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
             await pool.close()
 
 
-@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+def _format_pipeline_entity_run(row: dict) -> dict:
+    dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
+    return {
+        "dag_id":       row.get("dag_id"),
+        "dag_run_id":   dag_run_id,
+        "status":       _normalize_airflow_state(row.get("status")),
+        "mode":         row.get("mode"),
+        "triggered_at": str(row.get("started_at")) if row.get("started_at") else None,
+        "started_at":   str(row.get("started_at")) if row.get("started_at") else None,
+        "finished_at":  str(row.get("finished_at")) if row.get("finished_at") else None,
+        "duration_sec": float(row.get("duration_seconds")) if row.get("duration_seconds") is not None else None,
+        "error":        row.get("error_message"),
+    }
+
+
+@app.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_authenticated)])
+async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20):
+    """Recent DAG-based pipeline runs for one cartridge entity."""
+    metadata = await _pipeline_extract_metadata(cartridge, entity)
+    if not metadata.get("entity"):
+        raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
+
+    safe_limit = max(1, min(int(limit or 20), 100))
+
+    import asyncpg as _asyncpg
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        rows = await pool.fetch(
+            """
+            SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
+                   started_at, finished_at, duration_seconds, error_message
+              FROM pipeline_runs
+             WHERE cartridge_id=$1 AND entity=$2
+             ORDER BY started_at DESC NULLS LAST
+             LIMIT $3
+            """,
+            cartridge,
+            entity,
+            safe_limit,
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    finally:
+        if pool:
+            await pool.close()
+
+    runs = []
+    for row in rows:
+        refreshed = await _refresh_dag_run_status(dict(row))
+        runs.append(_format_pipeline_entity_run(refreshed))
+
+    return {
+        "cartridge": cartridge,
+        "entity": entity,
+        "runs": runs,
+    }
+
+
+@app.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_authenticated)])
+async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
+    """Basic DAG run logs summary for one cartridge entity run."""
+    metadata = await _pipeline_extract_metadata(cartridge, entity)
+    if not metadata.get("entity"):
+        raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
+
+    import asyncpg as _asyncpg
+
+    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
+    pool = None
+    try:
+        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        row = await pool.fetchrow(
+            """
+            SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
+                   started_at, finished_at, duration_seconds, error_message
+              FROM pipeline_runs
+             WHERE cartridge_id=$1
+               AND entity=$2
+               AND (run_id=$3 OR airflow_dag_run_id=$3)
+             ORDER BY started_at DESC NULLS LAST
+             LIMIT 1
+            """,
+            cartridge,
+            entity,
+            dag_run_id,
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    finally:
+        if pool:
+            await pool.close()
+
+    if not row:
+        raise HTTPException(404, f"Run '{dag_run_id}' not found for {cartridge}/{entity}")
+
+    run = await _refresh_dag_run_status(dict(row))
+    dag_id = run.get("dag_id") or metadata.get("dag_id")
+    resolved_dag_run_id = run.get("airflow_dag_run_id") or run.get("run_id") or dag_run_id
+    response = {
+        "cartridge": cartridge,
+        "entity": entity,
+        "dag_id": dag_id,
+        "dag_run_id": resolved_dag_run_id,
+        "status": _normalize_airflow_state(run.get("status")),
+        "tasks": [],
+        "logs": [],
+        "error": run.get("error_message"),
+        "available": False,
+    }
+
+    try:
+        tasks_result = await mcp_registry.invoke("infra", "airflow_list_task_instances", {
+            "dag_id": dag_id,
+            "dag_run_id": resolved_dag_run_id,
+        })
+        if tasks_result.get("error"):
+            response["error"] = tasks_result["error"]
+            return response
+
+        tasks = tasks_result.get("tasks") or []
+        response["tasks"] = tasks
+        logs = []
+        for task in tasks:
+            task_id = task.get("task_id")
+            if not task_id:
+                continue
+            log_result = await mcp_registry.invoke("infra", "airflow_get_task_logs", {
+                "dag_id": dag_id,
+                "dag_run_id": resolved_dag_run_id,
+                "task_id": task_id,
+            })
+            if log_result.get("error"):
+                logs.append({"task_id": task_id, "available": False, "error": log_result["error"]})
+            else:
+                logs.append({"task_id": task_id, "available": True, "logs": log_result.get("logs", "")})
+
+        response["logs"] = logs
+        response["available"] = bool(tasks) and all(item.get("available") for item in logs)
+        return response
+    except Exception as exc:
+        response["error"] = str(exc)
+        return response
+
+
+@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
@@ -1288,6 +1592,15 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
         if result.get("error"):
             raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
         dag_run_id = result.get("dag_run_id") or result.get("run_id")
+        await _record_dag_pipeline_trigger(
+            cartridge=cartridge,
+            entity=entity,
+            dag_id=dag_id,
+            dag_run_id=dag_run_id,
+            mode=conf.get("mode", metadata.get("mode") or "incremental"),
+            status=result.get("state") or "queued",
+            conf=conf,
+        )
         return {
             "triggered": True,
             "cartridge": cartridge,
@@ -1378,7 +1691,7 @@ def _is_transient_airflow_trigger_error(error: str) -> bool:
 
 # ── Studio — Entity config ───────────────────────────────────────────────────
 
-@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     new_name = (body.get("new_name") or "").strip()
     if not new_name:
@@ -1398,7 +1711,7 @@ async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
 
-@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
     """Update entity_config fields."""
     allowed = {"display_name", "mode", "primary_key", "dag_id",
@@ -1417,7 +1730,7 @@ async def studio_list_cartridges():
     return {"cartridges": await cartridge_service.list_cartridges()}
 
 
-@app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
     name = body.get("name", "").strip()
@@ -1438,14 +1751,14 @@ async def studio_get_cartridge(cartridge_id: str):
     return manifest
 
 
-@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_update_cartridge(cartridge_id: str, body: dict):
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return await cartridge_service.update_cartridge(cartridge_id, body)
 
 
-@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
     """Upload a spec file (OpenAPI YAML, WSDL, OData $metadata) for the cartridge."""
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -1468,7 +1781,7 @@ async def studio_export_cartridge(cartridge_id: str):
     )
 
 
-@app.post("/studio/import", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/import", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_import_cartridge(file: UploadFile = File(...)):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
@@ -1481,8 +1794,8 @@ async def studio_import_cartridge(file: UploadFile = File(...)):
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat", dependencies=[Depends(require_authenticated)])
-async def studio_chat(body: dict):
+@app.post("/studio/chat")
+async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
     return await studio_assistant.chat(
@@ -1490,11 +1803,12 @@ async def studio_chat(body: dict):
         history  = body.get("history", []),
         step     = body.get("step", 1),
         manifest = manifest,
+        actor_role = user.get("workspace_role") or user.get("role"),
     )
 
 
-@app.post("/studio/chat/stream", dependencies=[Depends(require_authenticated)])
-async def studio_chat_stream(body: dict):
+@app.post("/studio/chat/stream")
+async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
     cartridge_id = body.get("cartridge_id")
@@ -1518,6 +1832,7 @@ async def studio_chat_stream(body: dict):
                 step     = step,
                 manifest = manifest,
                 on_event = on_event,
+                actor_role = user.get("workspace_role") or user.get("role"),
             )
             await queue.put({"type": "done", **result})
         except Exception as exc:
@@ -1654,7 +1969,7 @@ async def api_rag_sources():
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_delete_source(source_id: int):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
@@ -1670,7 +1985,7 @@ async def api_rag_search(body: dict):
         r.raise_for_status()
         return r.json()
 
-@app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_ingest(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
@@ -1769,12 +2084,12 @@ async def api_catalog_get(layer: str = "", cartridge: str = "", tags: str = "", 
     return result
 
 
-@app.post("/api/catalog/entries", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/catalog/entries", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_catalog_upsert(body: dict):
     return await _refinement_invoke("upsert_catalog_entries", body)
 
 
-@app.post("/api/catalog/relationships", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/catalog/relationships", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_catalog_relationship(body: dict):
     return await _refinement_invoke("register_relationship", body)
 
@@ -1806,9 +2121,21 @@ async def monitoring_mcp_invoke(body: dict):
 
 # ── Studio-ops MCP server — cartridge & entity management tools ───────────────
 
+STUDIO_OPS_WRITE_TOOLS = {"rename_entity", "delete_entity", "update_entity"}
+
+
+def _role_name(user: dict) -> str:
+    return user.get("workspace_role") or user.get("role") or ""
+
+
+def _require_studio_ops_write_role(user: dict) -> None:
+    if _role_name(user) not in {ROLE_ADMIN, ROLE_WORKSPACE_ADMIN}:
+        raise HTTPException(403, "admin or workspace_admin role required")
+
+
 @app.get("/studio_ops/mcp/tools")
-async def studio_ops_tools():
-    return {"tools": [
+async def studio_ops_tools(user: dict = Depends(require_authenticated)):
+    tools = [
         {
             "name": "rename_entity",
             "description": (
@@ -1896,13 +2223,19 @@ async def studio_ops_tools():
                 "required": ["cartridge_id", "entity"],
             },
         },
-    ]}
+    ]
+    if _role_name(user) == ROLE_ANALYST:
+        tools = [tool for tool in tools if tool["name"] not in STUDIO_OPS_WRITE_TOOLS]
+    return {"tools": tools}
 
 
 @app.post("/studio_ops/mcp/invoke")
-async def studio_ops_invoke(body: dict):
+async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticated)):
     tool = body.get("tool")
     args = body.get("args", {})
+
+    if tool in STUDIO_OPS_WRITE_TOOLS:
+        _require_studio_ops_write_role(user)
 
     if tool == "delete_entity":
         cartridge_id = args["cartridge_id"]
@@ -2396,12 +2729,15 @@ def _coerce_dt(v):
 async def _dec_pool() -> _asyncpg_dec.Pool:
     global _DEC_POOL
     if _DEC_POOL is None:
+        async def _init_conn(c):
+            await c.set_type_codec(
+                "jsonb", encoder=_json_dec.dumps, decoder=_json_dec.loads, schema="pg_catalog"
+            )
+
         dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
         _DEC_POOL = await _asyncpg_dec.create_pool(
             dsn, min_size=1, max_size=4,
-            init=lambda c: c.set_type_codec(
-                "jsonb", encoder=_json_dec.dumps, decoder=_json_dec.loads, schema="pg_catalog"
-            ),
+            init=_init_conn,
         )
     return _DEC_POOL
 
@@ -2701,3 +3037,7 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
     sent = await _email.send_email(target_user["email"], subject, html)
     return {"sent": sent}
+
+
+from app.routers import security
+app.include_router(security.router)

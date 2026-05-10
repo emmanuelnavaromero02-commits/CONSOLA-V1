@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.sap_client import SapTimeClient
+from app.core.sap_time_client import SAP Time ManagementClient
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -12,6 +12,6 @@ def health() -> dict:
 
 @router.get("/sap_time")
 def health_sap_time() -> dict:
-    client = SapTimeClient()
+    client = SAP Time ManagementClient()
     info = client.test_connection()
     return {"ok": True, "service": "sap_time", **info}

@@ -2,6 +2,7 @@ connector:
   id: sap_successfactors
   name: SAP SuccessFactors HXM
   version: "1.0"
+  description: SAP SuccessFactors Connector
   auth:
     type: oauth2_client_credentials
     token_url_env: SF_TOKEN_URL
@@ -24,3 +25,10 @@ connector:
     storage: postgres
     buffer_minutes: 5
     field_format: iso8601
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+  entities:
+    count: 15
+    watermark_field_default: lastModifiedDateTime
+    page_size_default: 200

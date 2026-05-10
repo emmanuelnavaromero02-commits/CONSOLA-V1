@@ -4,6 +4,7 @@ Handles DAG management, triggers, status, logs, variables and dynamic DAG creati
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
@@ -13,11 +14,28 @@ from app.registry import tool
 
 _AUTH = (settings.airflow_user, settings.airflow_password)
 _BASE = settings.airflow_url.rstrip("/")
+_DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(auth=_AUTH, timeout=30)
+
+
+def _validate_dag_id(dag_id: str) -> str:
+    dag_id = (dag_id or "").strip()
+    if not _DAG_ID_RE.fullmatch(dag_id):
+        raise ValueError("Invalid dag_id: use letters, numbers and underscores only, starting with a letter")
+    return dag_id
+
+
+def _dag_file_path(dag_id: str) -> Path:
+    dag_id = _validate_dag_id(dag_id)
+    base = Path(settings.airflow_dags_path).resolve()
+    path = (base / f"{dag_id}.py").resolve()
+    if path.parent != base:
+        raise ValueError("Invalid dag_id path")
+    return path
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
@@ -59,6 +77,7 @@ async def airflow_list_dags() -> dict:
     },
 )
 async def airflow_trigger_dag(dag_id: str, conf: dict | None = None) -> dict:
+    dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
         r = await c.post(
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
@@ -87,6 +106,7 @@ async def airflow_trigger_dag(dag_id: str, conf: dict | None = None) -> dict:
     },
 )
 async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
+    dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
         r = await c.get(f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}")
         r.raise_for_status()
@@ -112,6 +132,7 @@ async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
     },
 )
 async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> dict:
+    dag_id = _validate_dag_id(dag_id)
     async with httpx.AsyncClient(auth=_AUTH, timeout=60) as c:
         r = await c.get(
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
@@ -150,7 +171,8 @@ async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> d
 async def airflow_create_dag(dag_id: str, code: str,
                               cartridge_id: str | None = None,
                               description: str | None = None) -> dict:
-    path = Path(settings.airflow_dags_path) / f"{dag_id}.py"
+    dag_id = _validate_dag_id(dag_id)
+    path = _dag_file_path(dag_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Fuerza is_paused_upon_creation=False para que el DAG arranque activo
     import re
@@ -212,7 +234,8 @@ async def airflow_create_dag(dag_id: str, code: str,
     },
 )
 async def airflow_delete_dag(dag_id: str) -> dict:
-    path = Path(settings.airflow_dags_path) / f"{dag_id}.py"
+    dag_id = _validate_dag_id(dag_id)
+    path = _dag_file_path(dag_id)
     deleted_file = False
     if path.exists():
         path.unlink()
@@ -281,6 +304,7 @@ async def airflow_set_variable(key: str, value: str) -> dict:
     },
 )
 async def airflow_list_task_instances(dag_id: str, dag_run_id: str) -> dict:
+    dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
         r = await c.get(
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances"
@@ -312,6 +336,7 @@ async def airflow_list_task_instances(dag_id: str, dag_run_id: str) -> dict:
     },
 )
 async def airflow_list_dag_runs(dag_id: str, limit: int = 10) -> dict:
+    dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
         r = await c.get(
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",

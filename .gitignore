@@ -27,3 +27,5 @@ Thumbs.db
 
 # Docker
 *.log
+__pycache__/
+*.pyc

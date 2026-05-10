@@ -753,7 +753,7 @@
         <span class="ci-name">${esc(c.name)}</span>
         <span class="ci-badge">v${esc(c.version || '0.1.0')}</span>
         <span class="ci-badge">${esc(conn)}</span>
-        <span class="ci-badge">${ents} entidades</span>`;
+        <span class="ci-badge">${esc(ents)} entidades</span>`;
       if (btn) btn.style.display = '';
     }
 
@@ -844,8 +844,8 @@
           <input type="file" id="fi-${containerId}" accept=".yaml,.yml,.json,.xml,.wsdl"
                  onchange="handleSpecFile(this,'${containerId}')">
           <div class="uz-icon">↑</div>
-          <div class="uz-label">${label}</div>
-          <div class="uz-sub">${sublabel}</div>
+          <div class="uz-label">${esc(label)}</div>
+          <div class="uz-sub">${esc(sublabel)}</div>
           <div id="uz-status-${containerId}" style="margin-top:8px;font-size:10px"></div>
         </div>`;
     }
@@ -1151,7 +1151,7 @@
       return `
         <div class="et-row" id="erow-${rawName.replace(/\W/g,'_')}">
           <span>
-            <span class="et-name">${name}
+            <span class="et-name">${esc(name)}
               <button class="btn-sm" title="Renombrar entidad"
                       style="font-size:8px;padding:0 4px;margin-left:3px;opacity:.5"
                       onclick="renameEntity(${escJsArg(cartridge)},${escJsArg(rawName)})">✎</button>
@@ -3231,7 +3231,7 @@ FROM silver_${entity || 'entity'}`;
           const div  = document.createElement('div');
           div.className = `ai-msg ai-${role}`;
           const label = role === 'user' ? 'TÚ' : '◈ MOD·AI';
-          div.innerHTML = `<span class="ai-role">${label}</span><div class="ai-body">${sanitizeAiHtml(html)}</div>`;
+          div.innerHTML = `<span class="ai-role">${esc(label)}</span><div class="ai-body">${sanitizeAiHtml(html)}</div>`;
           chat.appendChild(div);
         });
         chat.scrollTop = chat.scrollHeight;

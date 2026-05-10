@@ -1,20 +1,19 @@
+"""
+Credential helpers for the SAP SuccessFactors cartridge (non-Airflow services).
+Reads from environment variables / Settings — no external Vault service needed.
+"""
+from __future__ import annotations
+
 from app.core.config import settings
 
-def get_sap_successfactors_credentials() -> tuple[str, str, str, str, str]:
-    """Return SF OAuth credentials from environment configuration."""
-    base_url = settings.sf_base_url
-    company_id = settings.sf_company_id
-    client_id = settings.sf_client_id
-    client_secret = settings.sf_client_secret
-    token_url = settings.sf_token_url
 
-    if not all([company_id, client_id, client_secret, token_url]):
+def get_sap_successfactors_credentials() -> tuple[str, str]:
+    """Return (base_url, token) from environment configuration."""
+    base_url = settings.sap_successfactors_base_url
+    token    = settings.sap_successfactors_api_token or ""
+    if not token:
         raise ValueError(
-            "SAP SuccessFactors credentials not configured.\n"
-            "Set SF_COMPANY_ID, SF_CLIENT_ID, SF_CLIENT_SECRET, and SF_TOKEN_URL environment variables."
+            "SAP SuccessFactors API token not configured.\n"
+            "Set SF_API_TOKEN environment variable for the cartridge service."
         )
-    return base_url, company_id, client_id, client_secret, token_url
-
-def get_secret(key: str, default: str = "") -> str:
-    import os
-    return os.environ.get(key, default)
+    return base_url, token

@@ -1,5 +1,5 @@
 """
-SAP HCM Batch Job Runner
+SAP HCM Core Batch Job Runner
 =========================
 Manages async extraction jobs within the cartridge process.
 
@@ -223,6 +223,10 @@ async def _trigger_silver_refresh(entity: str) -> None:
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
+                headers={
+                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+                    "x-internal-service": "sap_hcm",
+                },
                 json={"source": source},
             )
     except Exception:
@@ -246,7 +250,6 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
-        "sap_hcm_base_url": settings.sap_hcm_base_url,
     }
     url = f"{settings.airflow_url}/api/v1/dags/sap_hcm_extract/dagRuns"
     loop = asyncio.get_event_loop()

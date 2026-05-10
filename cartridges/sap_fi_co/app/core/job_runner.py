@@ -223,6 +223,10 @@ async def _trigger_silver_refresh(entity: str) -> None:
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
+                headers={
+                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+                    "x-internal-service": "sap_fi_co",
+                },
                 json={"source": source},
             )
     except Exception:
@@ -246,7 +250,6 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
-        "sap_fi_co_base_url": settings.sap_fi_co_base_url,
     }
     url = f"{settings.airflow_url}/api/v1/dags/sap_fi_co_extract/dagRuns"
     loop = asyncio.get_event_loop()

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.sap_client import SapFiCoClient
+from app.core.sap_fi_co_client import SAP FI/CO FinanzasClient
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -12,6 +12,6 @@ def health() -> dict:
 
 @router.get("/sap_fi_co")
 def health_sap_fi_co() -> dict:
-    client = SapFiCoClient()
+    client = SAP FI/CO FinanzasClient()
     info = client.test_connection()
     return {"ok": True, "service": "sap_fi_co", **info}

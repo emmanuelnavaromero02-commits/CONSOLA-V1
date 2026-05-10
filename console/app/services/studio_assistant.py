@@ -84,6 +84,66 @@ STEP_TOOLS: dict[int | str, set[str]] = {
     },
 }
 
+ANALYST_READ_ONLY_EXACT = {
+    "airflow_get_run_status",
+    "airflow_get_task_logs",
+    "airflow_list_dag_runs",
+    "airflow_list_dags",
+    "airflow_list_task_instances",
+    "cartridge_get_job_status",
+    "cartridge_get_manifest",
+    "cartridge_get_run_logs",
+    "cartridge_get_schema",
+    "cartridge_get_semantic",
+    "cartridge_list_entities",
+    "cartridge_list_jobs",
+    "cartridge_list_kbs",
+    "cartridge_preview",
+    "cartridge_search_term",
+    "cartridge_query_kb",
+    "dag_get_source",
+    "describe_silver",
+    "describe_source",
+    "get_app_details",
+    "get_app_html",
+    "get_data_catalog",
+    "get_entity_logs",
+    "get_lineage",
+    "get_schema",
+    "get_source_partitions",
+    "list_apps",
+    "list_cartridges",
+    "list_datasets",
+    "list_datasets_with_schemas",
+    "list_entities",
+    "list_rag_sources",
+    "list_sources",
+    "minio_list_cartridge_specs",
+    "minio_read_spec",
+    "postgres_execute_query",
+    "postgres_get_sample",
+    "postgres_get_table_schema",
+    "postgres_list_schemas",
+    "postgres_list_tables",
+    "preview_source",
+    "preview_transform",
+    "query_dataset",
+    "search_rag",
+    "watermark_get",
+}
+
+
+def _bare_tool_name(tool_name: str) -> str:
+    return tool_name.split("__", 1)[-1]
+
+
+def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
+    """Server-side Studio tool policy. Analysts are read/query/preview only."""
+    if (role or "").lower() != "analyst":
+        return True
+    bare = _bare_tool_name(tool_name)
+    return bare in ANALYST_READ_ONLY_EXACT
+
 
 def _matches_pattern(bare_name: str, allowed: set[str]) -> bool:
     if bare_name in allowed:
@@ -206,8 +266,8 @@ Step IA SEMÁNTICA — vocabulario de negocio (semantic_terms + data_catalog).
 - Inventario actual: get_data_catalog(cartridge_id).
 - Inserta/actualiza términos: upsert_catalog_entries(...).
 - Relaciones entre datasets: register_relationship(...).
-- Para términos puros de glosario (no atados a columna): inserta en semantic_terms
-  con postgres_execute_ddl (cartridge_id, term, definition, maps_to).
+- Para términos puros de glosario (no atados a columna): usa herramientas
+  estructuradas de catálogo; postgres_execute_ddl no ejecuta DML.
 - Insumo: list_datasets_with_schemas, describe_silver.
 
 IMPORTANTE — DESPUÉS de cualquier edit a semantic_terms o data_catalog:
@@ -346,6 +406,7 @@ async def chat(
     step: int = 1,
     manifest: dict | None = None,
     on_event: Callable | None = None,
+    actor_role: str | None = None,
 ) -> dict:
     servers = await mcp_registry.list_servers()
     tools:           list[dict]       = []
@@ -366,6 +427,7 @@ async def chat(
     # Tool slimming: only expose tools relevant to the active step + common ones.
     # Reduces ~60 tools to 10–20 per call, sharply improving LLM accuracy.
     tools = filter_tools_for_step(tools, step)
+    tools = [t for t in tools if is_tool_allowed_for_role(actor_role, t["name"])]
 
     # Keep full history (including tool call/result blocks) so the model
     # remembers what tools it already ran and what they returned.
@@ -377,11 +439,17 @@ async def chat(
 
     system = _build_system_static()
 
+    async def _invoke_tool(srv: str, tool: str, args: dict):
+        full_name = f"{srv}__{tool}"
+        if not is_tool_allowed_for_role(actor_role, full_name):
+            return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
+        return await mcp_registry.invoke(srv, tool, args)
+
     reply, viewer_urls, full_msgs = await llm_client.chat(
         system=system,
         messages=messages,
         tools=tools,
-        invoke_tool=lambda srv, tool, a: mcp_registry.invoke(srv, tool, a),
+        invoke_tool=_invoke_tool,
         tool_server_map=tool_server_map,
         on_event=on_event,
     )

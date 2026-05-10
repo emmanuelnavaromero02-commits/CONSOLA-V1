@@ -2,9 +2,7 @@ connector:
   id: sap_hcm
   name: SAP HCM Core
   version: "1.0"
-  description: >
-    Connector for SAP HCM on-premise / S4HANA. Extracts employee master data,
-    org structure, absences and work schedules via SAP OData Gateway.
+  description: Connector for SAP HCM on-premise / S4HANA.
   auth:
     type: basic
     env_var_user: SAP_HCM_USER
