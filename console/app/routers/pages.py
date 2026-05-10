@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
-from app.dependencies import ROLE_ADMIN, require_role
+from app.services.permissions import require_permission
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
@@ -18,17 +18,17 @@ async def index():
     return FileResponse(STATIC / "index.html")
 
 
-@router.get("/monitor")
+@router.get("/monitor", dependencies=[Depends(require_permission("monitor.read"))])
 async def monitor_page():
     return FileResponse(STATIC / "monitor.html")
 
 
-@router.get("/security", dependencies=[Depends(require_role(ROLE_ADMIN))])
+@router.get("/security", dependencies=[Depends(require_permission("security.audit.read"))])
 async def security_page():
     return FileResponse(STATIC / "security.html")
 
 
-@router.get("/iam", dependencies=[Depends(require_role(ROLE_ADMIN))])
+@router.get("/iam", dependencies=[Depends(require_permission("iam.users.read"))])
 async def iam_page():
     return FileResponse(STATIC / "iam.html")
 

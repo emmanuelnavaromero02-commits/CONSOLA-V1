@@ -25,6 +25,9 @@ async def record_event(
     async def _insert_event() -> None:
         try:
             pool = await auth.pool()
+            exists = await pool.fetchval("SELECT to_regclass('public.audit_events')")
+            if not exists:
+                return
             meta_json = json.dumps(metadata) if metadata is not None else None
 
             await pool.execute(

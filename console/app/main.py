@@ -39,6 +39,8 @@ from app.dependencies import (
     require_authenticated,
     require_role,
 )
+from app.services import audit_service as _audit
+from app.services.permissions import ROLE_DEFINITIONS, require_permission
 
 
 async def _periodic_health_check():
@@ -797,7 +799,7 @@ async def dataset_data(name: str, limit: int = 100):
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/data", params={"limit": limit})
         return r.json()
 
-@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_permission("datasets.write"))])
 async def refresh_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
@@ -865,7 +867,7 @@ async def api_sources():
         return {"sources": sources}
     return {"sources": []}
 
-@app.post("/api/datasets/save", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/api/datasets/save", dependencies=[Depends(require_permission("datasets.write"))])
 async def api_dataset_save(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -883,7 +885,7 @@ async def api_dataset_detail(name: str):
     return r.json()
 
 
-@app.post("/api/bronze/query", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/bronze/query", dependencies=[Depends(require_permission("datasets.read"))])
 async def api_bronze_query(body: dict):
     sql     = body.get("sql", "").strip()
     limit   = min(int(body.get("limit", 200)), 2000)
@@ -897,7 +899,7 @@ async def api_bronze_query(body: dict):
     return r.json()
 
 
-@app.delete("/api/datasets", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.delete("/api/datasets", dependencies=[Depends(require_permission("datasets.delete"))])
 async def api_delete_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -1490,7 +1492,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
         return response
 
 
-@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_permission("pipelines.run"))])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
@@ -1773,7 +1775,7 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
     )
 
 
-@app.get("/studio")
+@app.get("/studio", dependencies=[Depends(require_permission("studio.read"))])
 async def studio_page():
     return FileResponse(STATIC / "studio.html")
 
@@ -1795,7 +1797,7 @@ async def rag_page():
 _VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
 _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
-@app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
 async def api_vault_list_connections(cartridge: str):
     try:
         async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
@@ -1814,7 +1816,7 @@ async def api_vault_list_connections(cartridge: str):
         return {"connections": []}
     return data
 
-@app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 async def api_vault_reveal_connection(cartridge: str, conn_id: str):
     """Returns full credentials including token (not masked)."""
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
@@ -1824,14 +1826,14 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_connection(cartridge: str, conn_id: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
@@ -1840,14 +1842,14 @@ async def api_vault_delete_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
-@app.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_permission("vault.secrets.read_masked"))])
 async def api_vault_list_secrets(scope: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}")
         r.raise_for_status()
         return r.json()
 
-@app.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 async def api_vault_reveal_secret(scope: str, key: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}/{key}")
@@ -1856,14 +1858,14 @@ async def api_vault_reveal_secret(scope: str, key: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_secret(scope: str, key: str, body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_secret(scope: str, key: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")
@@ -2848,56 +2850,71 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
 
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
+def _assignable_role(value: str | None) -> str:
+    role = (value or "user").strip()
+    info = ROLE_DEFINITIONS.get(role)
+    return role if info and info.get("assignable") else "user"
+
+
 @app.get("/api/users")
-async def api_users_list(user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_users_list(user: dict = Depends(require_permission("iam.users.read"))):
     return {"users": await _auth.list_users(active_only=True)}
 
 
 # ── Admin user management ───────────────────────────────────────────────────
 
 @app.get("/admin/users")
-async def viewer_admin_users(request: Request):
-    require_admin(request)
+async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
     return FileResponse(STATIC / "admin_users.html")
 
 
 @app.get("/api/admin/users")
-async def api_admin_users_list(admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_list(admin_user: dict = Depends(require_permission("iam.users.read"))):
     return {"users": await _auth.list_users(active_only=False)}
 
 
 @app.post("/api/admin/users")
-async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
     email = (body.get("email") or "").strip().lower()
     pw    = body.get("password") or ""
     if not email or not pw:
         raise HTTPException(400, "email and password are required")
     if await _auth.get_user_by_email(email):
         raise HTTPException(409, f"user with email {email} already exists")
-    role = body.get("role") if body.get("role") in ("user", "admin") else "user"
+    role = _assignable_role(body.get("role"))
     target_user = await _auth.create_user(email=email, password=pw, name=body.get("name"), role=role)
+    await _audit.record_event(admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]), metadata={"role": role})
     return target_user
 
 
 @app.patch("/api/admin/users/{user_id}")
-async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
     # Don't let an admin demote / disable themselves accidentally
-    if user_id == admin_user["id"] and (body.get("role") == "user" or body.get("is_active") is False):
+    if user_id == admin_user["id"] and (body.get("role") not in (None, admin_user.get("role")) or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
+    before = await _auth.get_user_by_id(user_id)
     target_user = await _auth.update_user(
         user_id,
         name=body.get("name"),
-        role=body.get("role") if body.get("role") in ("user", "admin") else None,
+        role=_assignable_role(body.get("role")) if body.get("role") else None,
         is_active=body.get("is_active"),
         password=body.get("password"),
     )
     if not target_user:
         raise HTTPException(404, "user not found")
+    action = "user.updated"
+    if before and before.get("role") != target_user.get("role"):
+        action = "user.role_changed"
+    elif before and before.get("is_active") and not target_user.get("is_active"):
+        action = "user.disabled"
+    elif before and not before.get("is_active") and target_user.get("is_active"):
+        action = "user.enabled"
+    await _audit.record_event(admin_user.get("id"), admin_user.get("email"), action, "user", str(user_id), metadata={"role": target_user.get("role"), "is_active": target_user.get("is_active")})
     return target_user
 
 
 @app.delete("/api/admin/users/{user_id}")
-async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(require_permission("iam.users.write"))):
     if user_id == admin_user["id"]:
         raise HTTPException(400, "you cannot delete your own account")
     ok = await _auth.delete_user(user_id)
@@ -2907,7 +2924,7 @@ async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(requir
 
 
 @app.post("/api/admin/users/invite")
-async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
     email = (body.get("email") or "").strip().lower()
@@ -2916,16 +2933,17 @@ async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_
     existing = await _auth.get_user_by_email(email)
     if existing:
         raise HTTPException(409, f"user with email {email} already exists")
-    role = body.get("role") if body.get("role") in ("user", "admin") else "user"
+    role = _assignable_role(body.get("role"))
     target_user = await _auth.create_invited_user(email=email, name=body.get("name"), role=role)
     tok, _ = await _tokens.create(target_user["id"], "invite")
     subject, html = _email.render_invitation(target_user.get("name"), email, _activation_link(tok), INVITE_TTL_HOURS)
     sent = await _email.send_email(email, subject, html)
+    await _audit.record_event(admin_user.get("id"), admin_user.get("email"), "user.invited", "user", str(target_user["id"]), metadata={"role": role, "email_sent": sent})
     return {"invited": True, "user": target_user, "email_sent": sent}
 
 
 @app.post("/api/admin/users/{user_id}/reinvite")
-async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Re-issue an invitation email (only for users that have not activated yet)."""
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user:
@@ -2941,7 +2959,7 @@ async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(requ
 
 
 @app.post("/api/admin/users/{user_id}/send-reset")
-async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require_role(ROLE_ADMIN))):
+async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require_permission("iam.users.write"))):
     """Email a password reset link to an existing active user."""
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user or not target_user.get("is_active"):
@@ -2949,6 +2967,7 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     tok, _ = await _tokens.create(user_id, "reset")
     subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
     sent = await _email.send_email(target_user["email"], subject, html)
+    await _audit.record_event(admin.get("id"), admin.get("email"), "password_reset.sent", "user", str(user_id), metadata={"email_sent": sent})
     return {"sent": sent}
 
 
