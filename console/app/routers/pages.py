@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
+
+from app.dependencies import ROLE_ADMIN, require_role
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
@@ -21,9 +23,14 @@ async def monitor_page():
     return FileResponse(STATIC / "monitor.html")
 
 
-@router.get("/security")
+@router.get("/security", dependencies=[Depends(require_role(ROLE_ADMIN))])
 async def security_page():
     return FileResponse(STATIC / "security.html")
+
+
+@router.get("/iam", dependencies=[Depends(require_role(ROLE_ADMIN))])
+async def iam_page():
+    return FileResponse(STATIC / "iam.html")
 
 
 @router.get("/viewer/jobs")

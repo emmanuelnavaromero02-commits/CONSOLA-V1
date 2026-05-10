@@ -211,38 +211,46 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
     """Returns user dict (without password_hash) on success, else None."""
     p = await pool()
     normalized_email = email.lower().strip()
+    login_attempts_enabled = True
 
     # Check for brute force (5 failures in 15 minutes)
-    recent_failures = await p.fetchval(
-        """SELECT COUNT(*) FROM login_attempts
-           WHERE email = $1 AND success = FALSE
-           AND created_at >= NOW() - INTERVAL '15 minutes'""",
-        normalized_email
-    )
+    try:
+        recent_failures = await p.fetchval(
+            """SELECT COUNT(*) FROM login_attempts
+               WHERE email = $1 AND success = FALSE
+               AND created_at >= NOW() - INTERVAL '15 minutes'""",
+            normalized_email
+        )
+    except asyncpg.UndefinedTableError:
+        login_attempts_enabled = False
+        recent_failures = 0
     if recent_failures >= 5:
         raise HTTPException(status_code=429, detail="Cuenta bloqueada temporalmente")
 
     u = await _get_user_auth_record_by_email(email)
 
     if not u or not u.get("is_active"):
-        await p.execute(
-            "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
-            normalized_email, ip
-        )
+        if login_attempts_enabled:
+            await p.execute(
+                "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
+                normalized_email, ip
+            )
         return None
 
     if not verify_password(password, u["password_hash"]):
-        await p.execute(
-            "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
-            normalized_email, ip
-        )
+        if login_attempts_enabled:
+            await p.execute(
+                "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
+                normalized_email, ip
+            )
         return None
 
     # Success
-    await p.execute(
-        "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, TRUE)",
-        normalized_email, ip
-    )
+    if login_attempts_enabled:
+        await p.execute(
+            "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, TRUE)",
+            normalized_email, ip
+        )
     await p.execute("UPDATE users SET last_login = NOW() WHERE id = $1", u["id"])
     return {k: v for k, v in u.items() if k != "password_hash"}
 

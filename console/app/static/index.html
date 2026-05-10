@@ -236,6 +236,18 @@
         </div>
         <div class="mc-cta">Gestionar Usuarios</div>
       </a>
+
+      <a href="/iam" class="mode-card" id="card-iam" style="display:none">
+        <div class="mc-icon">I</div>
+        <div class="mc-title">IAM / Access<span class="admin-pill">Admin</span></div>
+        <div class="mc-desc">Opera usuarios, permisos, sesiones, auditoría y políticas de acceso.</div>
+        <div class="mc-chips">
+          <span class="chip">IAM</span>
+          <span class="chip">Audit</span>
+          <span class="chip">RBAC</span>
+        </div>
+        <div class="mc-cta">Abrir IAM</div>
+      </a>
       </div>
 
     <div class="landing-status">
@@ -258,6 +270,7 @@
     fetch('/auth/me').then(r => r.json()).then(d => {
       if (d.user && d.user.role === 'admin') {
         document.getElementById('card-users').style.display = '';
+        document.getElementById('card-iam').style.display = '';
       }
     }).catch(() => {});
     fetch('/api/config').then(r => r.json()).then(d => {

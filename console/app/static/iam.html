@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IAM / Access Center · MODecissions</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    html, body {
+      min-height: 100%;
+      overflow: auto;
+      background: var(--color-bg);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+    }
+    .page { min-height: 100vh; padding: 28px 22px 44px; }
+    .shell { width: min(1320px, 100%); margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; gap: 22px; }
+    .rail, .panel, .card, .modal {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+    .rail { padding: 18px; height: fit-content; position: sticky; top: 22px; }
+    .brand { font-size: 13px; font-weight: 800; color: var(--color-accent); margin-bottom: 4px; }
+    .rail-title { font-size: 20px; font-weight: 780; margin-bottom: 18px; }
+    .nav { display: flex; flex-direction: column; gap: 6px; }
+    .nav button, .nav a {
+      width: 100%;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: transparent;
+      color: var(--color-text-secondary);
+      text-align: left;
+      text-decoration: none;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .nav button:hover, .nav a:hover { background: rgba(37, 99, 235, .07); color: var(--color-text-primary); }
+    .nav button.active { background: rgba(37, 99, 235, .10); color: var(--color-accent); }
+    .main { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+    .hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    .eyebrow { color: var(--color-accent); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+    h1 { margin: 6px 0 8px; font-size: clamp(30px, 4vw, 42px); line-height: 1.08; letter-spacing: 0; }
+    .sub { max-width: 720px; color: var(--color-text-secondary); font-size: 15px; line-height: 1.6; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn, .link-btn {
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-surface);
+      color: var(--color-text-primary);
+      min-height: 38px;
+      padding: 9px 13px;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+    .btn.danger { color: var(--color-error); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .card { padding: 16px; min-height: 112px; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+    .card-label { color: var(--color-text-secondary); font-weight: 700; }
+    .card-value { font-size: 26px; line-height: 1; font-weight: 800; }
+    .card-note { color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: rgba(5, 150, 105, .10);
+      color: var(--color-success);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .pill.warn { background: rgba(217, 119, 6, .12); color: var(--color-warning); }
+    .pill.err { background: rgba(220, 38, 38, .10); color: var(--color-error); }
+    .pill.neutral { background: rgba(107, 114, 128, .12); color: var(--color-text-secondary); }
+    .panel { display: none; overflow: hidden; }
+    .panel.active { display: block; }
+    .panel-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; padding: 18px; border-bottom: 1px solid var(--color-border); }
+    .panel-title { font-size: 18px; font-weight: 800; }
+    .panel-desc { margin-top: 4px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+    .panel-body { padding: 18px; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+    .search, input, select {
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--color-text-primary);
+      min-height: 38px;
+      padding: 9px 11px;
+      font: inherit;
+    }
+    .search { min-width: 260px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 860px; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; font-size: 13px; }
+    th { color: var(--color-text-secondary); background: rgba(248, 247, 244, .72); font-weight: 800; }
+    .muted { color: var(--color-text-secondary); }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .policy-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .policy { border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; background: rgba(248, 247, 244, .58); }
+    .policy strong { display: block; margin-bottom: 4px; }
+    .empty { padding: 26px; color: var(--color-text-secondary); text-align: center; }
+    .error { display: none; margin-bottom: 12px; border: 1px solid rgba(220, 38, 38, .22); background: rgba(220, 38, 38, .06); color: var(--color-error); padding: 11px; border-radius: 8px; }
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 50; align-items: flex-start; justify-content: center; padding-top: 8vh; }
+    .modal { width: min(520px, 92vw); overflow: hidden; }
+    .modal-head, .modal-foot { padding: 16px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center; }
+    .modal-foot { border-bottom: 0; border-top: 1px solid var(--color-border); justify-content: flex-end; gap: 10px; }
+    .modal-body { padding: 16px; display: grid; gap: 12px; }
+    .field { display: grid; gap: 6px; }
+    .field label { color: var(--color-text-secondary); font-weight: 700; }
+    .toast-wrap { position: fixed; right: 18px; bottom: 18px; z-index: 80; display: grid; gap: 8px; }
+    .toast { min-width: 260px; max-width: 420px; border-radius: 8px; padding: 12px 14px; box-shadow: var(--shadow-md); background: #111827; color: #fff; font-weight: 700; }
+    .toast.error { background: var(--color-error); color: #fff; display: block; margin: 0; border: 0; }
+    .toast.success { background: var(--color-success); }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      .rail { position: static; }
+      .cards, .grid-2, .policy-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .cards, .grid-2, .policy-list { grid-template-columns: 1fr; }
+      .hero, .panel-head { flex-direction: column; }
+      .actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">MODecissions</div>
+        <div class="rail-title">IAM / Access</div>
+        <nav class="nav" aria-label="IAM sections">
+          <button type="button" class="active" data-tab="overview">Overview</button>
+          <button type="button" data-tab="users">Users</button>
+          <button type="button" data-tab="roles">Roles &amp; Permissions</button>
+          <button type="button" data-tab="tester">Access Tester</button>
+          <button type="button" data-tab="sessions">Sessions</button>
+          <button type="button" data-tab="audit">Audit Trail</button>
+          <button type="button" data-tab="policies">Policies</button>
+          <button type="button" data-tab="vault">Vault / Secrets</button>
+          <a href="/security">Security Center</a>
+          <a href="/admin/users">Admin Users</a>
+          <a href="/monitor">Monitor</a>
+        </nav>
+      </aside>
+
+      <section class="main">
+        <header class="hero">
+          <div>
+            <div class="eyebrow">Identity and access management</div>
+            <h1>IAM / Access Center</h1>
+            <p class="sub">Centro unificado para operar usuarios, sesiones, auditoría, permisos, políticas y accesos sensibles de la consola.</p>
+          </div>
+          <div class="actions">
+            <button class="btn primary" type="button" id="refresh-btn">Actualizar</button>
+            <a class="link-btn" href="/viewer/vault">Vault</a>
+            <a class="link-btn" href="/">Home</a>
+          </div>
+        </header>
+
+        <section class="cards" aria-label="Access overview">
+          <article class="card"><div class="card-label">Usuarios</div><div class="card-value" id="m-users">—</div><div class="card-note" id="m-users-note">Total local</div></article>
+          <article class="card"><div class="card-label">Admins</div><div class="card-value" id="m-admins">—</div><div class="card-note">Rol legacy admin</div></article>
+          <article class="card"><div class="card-label">Sesiones activas</div><div class="card-value" id="m-sessions">—</div><div class="card-note">Tokens no expuestos</div></article>
+          <article class="card"><div class="card-label">Audit Trail</div><div class="card-value" id="m-audit">—</div><div class="card-note">Eventos recientes</div></article>
+        </section>
+
+        <article class="panel active" id="tab-overview">
+          <div class="panel-head"><div><div class="panel-title">Overview</div><div class="panel-desc">Estado de controles principales y superficies administrativas.</div></div></div>
+          <div class="panel-body grid-2">
+            <div class="policy"><strong>RBAC</strong><span class="pill">Protected</span><p class="muted">Enforced by require_admin, require_role and require_any_role.</p></div>
+            <div class="policy"><strong>Internal endpoints</strong><span class="pill">Protected</span><p class="muted">Internal API key required server-side. Key is never displayed.</p></div>
+            <div class="policy"><strong>Vault / Secrets</strong><span class="pill">Masked / Protected</span><p class="muted">Reveal operations require privileged roles.</p></div>
+            <div class="policy"><strong>Login hardening</strong><span class="pill warn">Configured</span><p class="muted">Failed attempts are recorded when the table exists.</p></div>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-users">
+          <div class="panel-head">
+            <div><div class="panel-title">Users</div><div class="panel-desc">Administración local de cuentas. El backend actual acepta roles legacy admin/user.</div></div>
+            <div class="actions">
+              <button class="btn" type="button" id="create-user">Crear usuario</button>
+              <button class="btn primary" type="button" id="invite-user">Invitar usuario</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="error" id="users-error"></div>
+            <div class="table-wrap"><table><thead><tr><th>Email</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Creado</th><th>Último login</th><th>Acciones</th></tr></thead><tbody id="users-body"></tbody></table></div>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-roles">
+          <div class="panel-head"><div><div class="panel-title">Roles &amp; Permissions</div><div class="panel-desc">Mapa read-only de permisos visibles según guards actuales.</div></div></div>
+          <div class="panel-body">
+            <div class="error" id="permissions-error"></div>
+            <div class="table-wrap"><table><thead><tr><th>Role</th><th>Console</th><th>Monitor</th><th>Studio</th><th>Pipelines</th><th>Datasets</th><th>Vault</th><th>Security</th><th>Users</th><th>Audit</th></tr></thead><tbody id="roles-body"></tbody></table></div>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-tester">
+          <div class="panel-head"><div><div class="panel-title">Access Tester</div><div class="panel-desc">Simulación basada en guards backend documentados. No suplanta al enforcement real.</div></div></div>
+          <div class="panel-body">
+            <div class="toolbar">
+              <select id="tester-role"></select>
+              <select id="tester-resource"></select>
+              <button class="btn primary" type="button" id="tester-run">Evaluar</button>
+            </div>
+            <div class="policy" id="tester-result">
+              <strong>Resultado</strong>
+              <span class="muted">Selecciona un rol y recurso.</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-sessions">
+          <div class="panel-head"><div><div class="panel-title">Sessions</div><div class="panel-desc">Sesiones activas y revocación segura por session_id irreversible.</div></div></div>
+          <div class="panel-body">
+            <div class="error" id="sessions-error"></div>
+            <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>IP</th><th>User agent</th><th>Creada</th><th>Last seen</th><th>Acción</th></tr></thead><tbody id="sessions-body"></tbody></table></div>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-audit">
+          <div class="panel-head"><div><div class="panel-title">Audit Trail</div><div class="panel-desc">Eventos recientes saneados. No se renderizan secretos.</div></div><input class="search" id="audit-filter" placeholder="Filtrar audit trail"></div>
+          <div class="panel-body">
+            <div class="policy" id="audit-schema-note" style="display:none;margin-bottom:12px"></div>
+            <div class="error" id="audit-error"></div>
+            <div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Target</th><th>Metadata</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-policies">
+          <div class="panel-head"><div><div class="panel-title">Policies</div><div class="panel-desc">Políticas actuales reportadas por backend/env, sin secretos.</div></div></div>
+          <div class="panel-body">
+            <div class="policy-list" id="policies-list"></div>
+            <section style="margin-top:18px">
+              <div class="panel-title" style="font-size:15px;margin-bottom:10px">Login attempts</div>
+              <div class="error" id="attempts-error"></div>
+              <div class="table-wrap"><table><thead><tr><th>Email</th><th>IP</th><th>Status</th><th>Timestamp</th></tr></thead><tbody id="attempts-body"></tbody></table></div>
+            </section>
+          </div>
+        </article>
+
+        <article class="panel" id="tab-vault">
+          <div class="panel-head"><div><div class="panel-title">Vault / Secrets</div><div class="panel-desc">Estado seguro de secretos. No se muestra ningún valor sensible.</div></div><a class="link-btn" href="/viewer/vault">Abrir Vault</a></div>
+          <div class="panel-body grid-2">
+            <div class="policy"><strong>Vault configured</strong><span class="pill">Protected</span><p class="muted">Conexiones y secrets se gestionan en Vault viewer.</p></div>
+            <div class="policy"><strong>Secrets masked</strong><span class="pill">Masked</span><p class="muted">Los listados muestran metadatos; reveal requiere rol privilegiado.</p></div>
+            <div class="policy"><strong>Access model</strong><span class="pill warn">admin / workspace_admin</span><p class="muted">Basado en guards de endpoints `/api/vault/*`.</p></div>
+            <div class="policy"><strong>Tokens</strong><span class="pill">Not displayed</span><p class="muted">JWT, refresh tokens, cookies e internal API keys no se imprimen.</p></div>
+          </div>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="user-modal">
+    <div class="modal">
+      <div class="modal-head"><strong id="modal-title">Usuario</strong><button class="btn" type="button" id="modal-close">Cerrar</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="user-id">
+        <input type="hidden" id="user-mode">
+        <div class="field"><label>Email</label><input id="user-email" type="email"></div>
+        <div class="field"><label>Nombre</label><input id="user-name" type="text"></div>
+        <div class="field" id="password-field"><label>Password temporal</label><input id="user-password" type="password" autocomplete="new-password"></div>
+        <div class="field"><label>Rol</label><select id="user-role"><option value="user">user</option><option value="admin">admin</option></select></div>
+        <div class="field" id="active-field"><label>Estado</label><select id="user-active"><option value="true">activo</option><option value="false">inactivo</option></select></div>
+      </div>
+      <div class="modal-foot"><button class="btn" type="button" id="modal-cancel">Cancelar</button><button class="btn primary" type="button" id="modal-save">Guardar</button></div>
+    </div>
+  </div>
+  <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
+
+    const state = { users: [], sessions: [], audit: [], permissions: null, attempts: [], editing: null };
+    const $ = (id) => document.getElementById(id);
+    const fmt = (v) => {
+      if (!v) return '-';
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+    };
+    const set = (id, value) => { $(id).textContent = value == null || value === '' ? '-' : String(value); };
+
+    function showError(id, message) {
+      const el = $(id);
+      el.style.display = message ? 'block' : 'none';
+      el.textContent = message || '';
+    }
+
+    function toast(message, type) {
+      const item = document.createElement('div');
+      item.className = `toast ${type || 'success'}`;
+      item.textContent = message;
+      $('toast-wrap').appendChild(item);
+      window.setTimeout(() => item.remove(), 4200);
+    }
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, { credentials: 'same-origin', ...(options || {}) });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `${res.status} ${res.statusText}`);
+      }
+      return res.json();
+    }
+
+    function clearRows(tbody, cols, message) {
+      tbody.replaceChildren();
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = cols;
+      td.className = 'empty';
+      td.textContent = message;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+
+    function td(row, text, className) {
+      const cell = document.createElement('td');
+      if (className) cell.className = className;
+      cell.textContent = text == null || text === '' ? '-' : String(text);
+      row.appendChild(cell);
+      return cell;
+    }
+
+    function accessCell(row, value) {
+      const cell = document.createElement('td');
+      const access = typeof value === 'object' && value ? value.access : value;
+      const status = typeof value === 'object' && value ? value.status : 'read-only';
+      const note = typeof value === 'object' && value ? value.note : '';
+      const line = document.createElement('div');
+      line.textContent = access || '-';
+      const badge = document.createElement('span');
+      badge.className = status === 'enforced' ? 'pill' : status === 'backend only' ? 'pill warn' : 'pill neutral';
+      badge.textContent = status || 'read-only';
+      badge.title = note || '';
+      cell.append(line, badge);
+      row.appendChild(cell);
+    }
+
+    function button(label, className, onClick) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = className || 'btn';
+      btn.textContent = label;
+      btn.addEventListener('click', onClick);
+      return btn;
+    }
+
+    function safeMetadata(obj) {
+      if (!obj) return '-';
+      if (typeof obj === 'string') return obj;
+      const clean = {};
+      Object.keys(obj).slice(0, 10).forEach((key) => {
+        if (!/token|secret|password|api[_-]?key|cookie|jwt|refresh/i.test(key)) clean[key] = obj[key];
+      });
+      return JSON.stringify(clean);
+    }
+
+    function renderMetrics() {
+      const admins = state.users.filter((u) => u.role === 'admin').length;
+      const active = state.users.filter((u) => u.is_active).length;
+      set('m-users', state.users.length);
+      set('m-users-note', `${active} activos / ${state.users.length - active} inactivos`);
+      set('m-admins', admins);
+      set('m-sessions', state.sessions.length);
+      set('m-audit', state.audit.length);
+    }
+
+    function renderUsers() {
+      const body = $('users-body');
+      body.replaceChildren();
+      if (!state.users.length) return clearRows(body, 7, 'No hay usuarios.');
+      state.users.forEach((u) => {
+        const tr = document.createElement('tr');
+        td(tr, u.email);
+        td(tr, u.name || '-');
+        td(tr, u.role);
+        td(tr, u.is_active ? 'activo' : 'inactivo');
+        td(tr, fmt(u.created_at), 'muted');
+        td(tr, fmt(u.last_login), 'muted');
+        const actions = document.createElement('td');
+        actions.appendChild(button('Editar', 'btn', () => openEditUser(u)));
+        if (!u.is_active && !u.last_login) actions.appendChild(button('Reinvite', 'btn', () => reinviteUser(u)));
+        if (u.is_active) actions.appendChild(button('Reset', 'btn', () => sendReset(u)));
+        tr.appendChild(actions);
+        body.appendChild(tr);
+      });
+    }
+
+    function renderRoles() {
+      const body = $('roles-body');
+      body.replaceChildren();
+      const rows = state.permissions?.matrix || [];
+      if (!rows.length) return clearRows(body, 10, 'No hay matriz de permisos.');
+      rows.forEach((r) => {
+        const tr = document.createElement('tr');
+        td(tr, r.role);
+        ['console', 'monitor', 'studio', 'pipelines', 'datasets', 'vault', 'security', 'users', 'audit'].forEach((key) => accessCell(tr, r[key]));
+        body.appendChild(tr);
+      });
+    }
+
+    function renderSessions() {
+      const body = $('sessions-body');
+      body.replaceChildren();
+      if (!state.sessions.length) return clearRows(body, 6, 'No hay sesiones activas.');
+      state.sessions.forEach((s) => {
+        const tr = document.createElement('tr');
+        td(tr, s.user_email || s.user_id);
+        td(tr, s.ip);
+        td(tr, s.user_agent, 'muted');
+        td(tr, fmt(s.created_at), 'muted');
+        td(tr, fmt(s.last_seen), 'muted');
+        const actions = document.createElement('td');
+        if (s.session_id) actions.appendChild(button('Revocar', 'btn danger', () => revokeSession(s.session_id)));
+        else actions.textContent = 'No revocable';
+        tr.appendChild(actions);
+        body.appendChild(tr);
+      });
+    }
+
+    function renderAudit() {
+      const q = $('audit-filter').value.trim().toLowerCase();
+      const rows = q ? state.audit.filter((a) => JSON.stringify(a).toLowerCase().includes(q)) : state.audit;
+      const body = $('audit-body');
+      body.replaceChildren();
+      if (!rows.length) return clearRows(body, 5, 'No hay eventos de auditoría.');
+      rows.forEach((a) => {
+        const tr = document.createElement('tr');
+        td(tr, fmt(a.created_at || a.timestamp), 'muted');
+        td(tr, a.user_email || a.email || a.user_id || 'System');
+        td(tr, a.action);
+        td(tr, a.resource_id || a.target || a.resource_type || '-');
+        td(tr, safeMetadata(a.details || a.metadata), 'muted');
+        body.appendChild(tr);
+      });
+    }
+
+    function renderSchemaNotes() {
+      const status = state.permissions?.schema_status || {};
+      const audit = status.audit_events;
+      const note = $('audit-schema-note');
+      if (audit && audit.exists === false) {
+        note.style.display = 'block';
+        note.replaceChildren();
+        const strong = document.createElement('strong');
+        strong.textContent = 'Audit migration pending';
+        const text = document.createElement('p');
+        text.className = 'muted';
+        text.textContent = 'Audit table not applied in current DB volume. Backend is compatible, but migration infra/init/16_audit_events.sql is pending.';
+        note.append(strong, text);
+      } else {
+        note.style.display = 'none';
+      }
+    }
+
+    function renderPolicies() {
+      const list = $('policies-list');
+      list.replaceChildren();
+      const policies = state.permissions?.policies || {};
+      Object.keys(policies).forEach((key) => {
+        const item = document.createElement('div');
+        item.className = 'policy';
+        const title = document.createElement('strong');
+        title.textContent = key.replaceAll('_', ' ');
+        const value = document.createElement('span');
+        value.className = 'muted';
+        value.textContent = policies[key];
+        item.append(title, value);
+        list.appendChild(item);
+      });
+      const schema = state.permissions?.schema_status || {};
+      Object.keys(schema).forEach((key) => {
+        const item = document.createElement('div');
+        item.className = 'policy';
+        const title = document.createElement('strong');
+        title.textContent = `${key} schema`;
+        const value = document.createElement('span');
+        value.className = schema[key].exists ? 'pill' : 'pill warn';
+        value.textContent = schema[key].exists ? 'Applied' : `Pending ${schema[key].migration || ''}`;
+        item.append(title, value);
+        if (schema[key].missing_columns && schema[key].missing_columns.length) {
+          const miss = document.createElement('p');
+          miss.className = 'muted';
+          miss.textContent = `Missing columns: ${schema[key].missing_columns.join(', ')}`;
+          item.appendChild(miss);
+        }
+        list.appendChild(item);
+      });
+      const body = $('attempts-body');
+      body.replaceChildren();
+      if (!state.attempts.length) return clearRows(body, 4, 'No hay intentos de login registrados.');
+      state.attempts.forEach((a) => {
+        const tr = document.createElement('tr');
+        td(tr, a.email);
+        td(tr, a.ip);
+        td(tr, a.success === true ? 'success' : 'failed');
+        td(tr, fmt(a.created_at), 'muted');
+        body.appendChild(tr);
+      });
+    }
+
+    function openCreateUser() {
+      state.editing = null;
+      $('modal-title').textContent = 'Crear usuario';
+      $('user-mode').value = 'create';
+      $('user-id').value = '';
+      $('user-email').value = '';
+      $('user-email').readOnly = false;
+      $('user-name').value = '';
+      $('user-password').value = '';
+      $('user-role').value = 'user';
+      $('password-field').style.display = '';
+      $('active-field').style.display = '';
+      $('user-active').value = 'true';
+      $('user-modal').style.display = 'flex';
+    }
+
+    function openInviteUser() {
+      state.editing = null;
+      $('modal-title').textContent = 'Invitar usuario';
+      $('user-mode').value = 'invite';
+      $('user-id').value = '';
+      $('user-email').value = '';
+      $('user-email').readOnly = false;
+      $('user-name').value = '';
+      $('user-password').value = '';
+      $('user-role').value = 'user';
+      $('password-field').style.display = 'none';
+      $('active-field').style.display = 'none';
+      $('user-modal').style.display = 'flex';
+    }
+
+    function openEditUser(user) {
+      state.editing = user;
+      $('modal-title').textContent = 'Editar usuario';
+      $('user-mode').value = 'edit';
+      $('user-id').value = user.id;
+      $('user-email').value = user.email || '';
+      $('user-email').readOnly = true;
+      $('user-name').value = user.name || '';
+      $('user-role').value = user.role === 'admin' ? 'admin' : 'user';
+      $('user-password').value = '';
+      $('password-field').style.display = 'none';
+      $('user-active').value = user.is_active ? 'true' : 'false';
+      $('active-field').style.display = '';
+      $('user-modal').style.display = 'flex';
+    }
+
+    async function saveUser() {
+      const id = $('user-id').value;
+      const mode = $('user-mode').value;
+      const body = {
+        name: $('user-name').value.trim() || null,
+        role: $('user-role').value
+      };
+      if (mode === 'invite') {
+        body.email = $('user-email').value.trim();
+        const data = await fetchJson('/api/admin/users/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        closeModal();
+        await loadUsers();
+        toast(data.email_sent ? 'Invitación enviada' : 'Usuario creado; correo no enviado', data.email_sent ? 'success' : 'error');
+        return;
+      }
+      if (mode === 'create') {
+        body.email = $('user-email').value.trim();
+        body.password = $('user-password').value;
+        if (!body.password || body.password.length < 8) throw new Error('Password temporal mínimo 8 caracteres');
+        const created = await fetchJson('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if ($('user-active').value === 'false') {
+          await fetchJson(`/api/admin/users/${encodeURIComponent(created.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: false })
+          });
+        }
+        closeModal();
+        await loadUsers();
+        toast('Usuario creado');
+        return;
+      }
+      body.is_active = $('user-active').value === 'true';
+      await fetchJson(`/api/admin/users/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      closeModal();
+      await loadUsers();
+      toast('Usuario actualizado');
+    }
+
+    async function sendReset(user) {
+      if (!window.confirm(`Enviar reset a ${user.email}?`)) return;
+      const data = await fetchJson(`/api/admin/users/${encodeURIComponent(user.id)}/send-reset`, { method: 'POST' });
+      toast(data.sent ? 'Reset enviado' : 'Token generado; correo no enviado', data.sent ? 'success' : 'error');
+    }
+
+    async function reinviteUser(user) {
+      if (!window.confirm(`Reenviar invitación a ${user.email}?`)) return;
+      const data = await fetchJson(`/api/admin/users/${encodeURIComponent(user.id)}/reinvite`, { method: 'POST' });
+      toast(data.email_sent ? 'Invitación reenviada' : 'Token generado; correo no enviado', data.email_sent ? 'success' : 'error');
+    }
+
+    async function revokeSession(sessionId) {
+      if (!window.confirm('¿Revocar esta sesión?')) return;
+      await fetchJson(`/security/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+      await loadSessions();
+      toast('Sesión revocada');
+    }
+
+    function closeModal() { $('user-modal').style.display = 'none'; }
+
+    async function loadUsers() {
+      showError('users-error', '');
+      try {
+        const data = await fetchJson('/api/admin/users');
+        state.users = data.users || [];
+        renderUsers();
+        renderMetrics();
+      } catch (err) {
+        showError('users-error', `Users API: ${err.message}`);
+      }
+    }
+
+    async function loadSessions() {
+      showError('sessions-error', '');
+      try {
+        state.sessions = await fetchJson('/security/sessions');
+        renderSessions();
+        renderMetrics();
+      } catch (err) {
+        showError('sessions-error', `Sessions API: ${err.message}`);
+      }
+    }
+
+    async function loadAudit() {
+      showError('audit-error', '');
+      try {
+        state.audit = await fetchJson('/security/audit');
+        renderAudit();
+        renderMetrics();
+      } catch (err) {
+        showError('audit-error', `Audit API: ${err.message}`);
+      }
+    }
+
+    async function loadPermissions() {
+      showError('permissions-error', '');
+      try {
+        state.permissions = await fetchJson('/security/permissions');
+        renderRoles();
+        renderSchemaNotes();
+        renderTesterOptions();
+        renderPolicies();
+      } catch (err) {
+        showError('permissions-error', `Permissions API: ${err.message}`);
+      }
+    }
+
+    function renderTesterOptions() {
+      const tests = state.permissions?.access_tests || [];
+      const roles = [...new Set(tests.map((t) => t.role))];
+      const resources = [...new Set(tests.map((t) => t.resource))];
+      const roleSel = $('tester-role');
+      const resSel = $('tester-resource');
+      roleSel.replaceChildren();
+      resSel.replaceChildren();
+      roles.forEach((role) => {
+        const opt = document.createElement('option');
+        opt.value = role;
+        opt.textContent = role;
+        roleSel.appendChild(opt);
+      });
+      resources.forEach((resource) => {
+        const opt = document.createElement('option');
+        opt.value = resource;
+        opt.textContent = resource;
+        resSel.appendChild(opt);
+      });
+      renderTesterResult();
+    }
+
+    function renderTesterResult() {
+      const tests = state.permissions?.access_tests || [];
+      const match = tests.find((t) => t.role === $('tester-role').value && t.resource === $('tester-resource').value);
+      const box = $('tester-result');
+      box.replaceChildren();
+      const title = document.createElement('strong');
+      title.textContent = match ? `${match.expected.toUpperCase()} (${match.status})` : 'No documented rule';
+      const detail = document.createElement('p');
+      detail.className = 'muted';
+      detail.textContent = match ? `${match.reason} This is a simulation from backend metadata unless you are testing the current logged-in user.` : 'Not implemented in the current permission matrix.';
+      box.append(title, detail);
+    }
+
+    async function loadAttempts() {
+      showError('attempts-error', '');
+      try {
+        state.attempts = await fetchJson('/security/login-attempts');
+        renderPolicies();
+      } catch (err) {
+        showError('attempts-error', `Login attempts API: ${err.message}`);
+      }
+    }
+
+    async function refreshAll() {
+      $('refresh-btn').disabled = true;
+      try {
+        await Promise.all([loadUsers(), loadSessions(), loadAudit(), loadPermissions(), loadAttempts()]);
+      } finally {
+        $('refresh-btn').disabled = false;
+      }
+    }
+
+    document.querySelectorAll('.nav button[data-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav button[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`));
+      });
+    });
+    $('refresh-btn').addEventListener('click', refreshAll);
+    $('create-user').addEventListener('click', openCreateUser);
+    $('invite-user').addEventListener('click', openInviteUser);
+    $('modal-close').addEventListener('click', closeModal);
+    $('modal-cancel').addEventListener('click', closeModal);
+    $('modal-save').addEventListener('click', () => saveUser().catch((err) => toast(err.message, 'error')));
+    $('audit-filter').addEventListener('input', renderAudit);
+    $('tester-run').addEventListener('click', renderTesterResult);
+    $('tester-role').addEventListener('change', renderTesterResult);
+    $('tester-resource').addEventListener('change', renderTesterResult);
+    refreshAll();
+  </script>
+</body>
+</html>
