@@ -106,6 +106,8 @@
     .policy-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .policy { border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; background: rgba(248, 247, 244, .58); }
     .policy strong { display: block; margin-bottom: 4px; }
+    .permission-list { display: flex; flex-wrap: wrap; gap: 6px; max-width: 560px; }
+    .permission-chip { display: inline-flex; border: 1px solid var(--color-border); border-radius: 999px; padding: 4px 8px; color: var(--color-text-secondary); background: #fff; font-size: 12px; font-weight: 700; }
     .empty { padding: 26px; color: var(--color-text-secondary); text-align: center; }
     .error { display: none; margin-bottom: 12px; border: 1px solid rgba(220, 38, 38, .22); background: rgba(220, 38, 38, .06); color: var(--color-error); padding: 11px; border-radius: 8px; }
     .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 50; align-items: flex-start; justify-content: center; padding-top: 8vh; }
@@ -185,7 +187,7 @@
 
         <article class="panel" id="tab-users">
           <div class="panel-head">
-            <div><div class="panel-title">Users</div><div class="panel-desc">Administración local de cuentas. El backend actual acepta roles legacy admin/user.</div></div>
+            <div><div class="panel-title">Users</div><div class="panel-desc">Administración local de cuentas con roles canónicos compatibles con admin/user legacy.</div></div>
             <div class="actions">
               <button class="btn" type="button" id="create-user">Crear usuario</button>
               <button class="btn primary" type="button" id="invite-user">Invitar usuario</button>
@@ -194,23 +196,25 @@
           <div class="panel-body">
             <div class="error" id="users-error"></div>
             <div class="table-wrap"><table><thead><tr><th>Email</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Creado</th><th>Último login</th><th>Acciones</th></tr></thead><tbody id="users-body"></tbody></table></div>
+            <div class="policy" id="user-permissions" style="display:none;margin-top:14px"></div>
           </div>
         </article>
 
         <article class="panel" id="tab-roles">
-          <div class="panel-head"><div><div class="panel-title">Roles &amp; Permissions</div><div class="panel-desc">Mapa read-only de permisos visibles según guards actuales.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Roles &amp; Permissions</div><div class="panel-desc">Matriz real desde el permission registry backend. Deny by default.</div></div></div>
           <div class="panel-body">
             <div class="error" id="permissions-error"></div>
-            <div class="table-wrap"><table><thead><tr><th>Role</th><th>Console</th><th>Monitor</th><th>Studio</th><th>Pipelines</th><th>Datasets</th><th>Vault</th><th>Security</th><th>Users</th><th>Audit</th></tr></thead><tbody id="roles-body"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Role</th><th>Tipo</th><th>Assignable</th><th>Permisos efectivos</th><th>Notas</th></tr></thead><tbody id="roles-body"></tbody></table></div>
           </div>
         </article>
 
         <article class="panel" id="tab-tester">
-          <div class="panel-head"><div><div class="panel-title">Access Tester</div><div class="panel-desc">Simulación basada en guards backend documentados. No suplanta al enforcement real.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Access Tester</div><div class="panel-desc">Evaluación backend contra el permission registry que usan los guards server-side.</div></div></div>
           <div class="panel-body">
             <div class="toolbar">
               <select id="tester-role"></select>
               <select id="tester-resource"></select>
+              <select id="tester-action"></select>
               <button class="btn primary" type="button" id="tester-run">Evaluar</button>
             </div>
             <div class="policy" id="tester-result">
@@ -271,7 +275,7 @@
         <div class="field"><label>Email</label><input id="user-email" type="email"></div>
         <div class="field"><label>Nombre</label><input id="user-name" type="text"></div>
         <div class="field" id="password-field"><label>Password temporal</label><input id="user-password" type="password" autocomplete="new-password"></div>
-        <div class="field"><label>Rol</label><select id="user-role"><option value="user">user</option><option value="admin">admin</option></select></div>
+        <div class="field"><label>Rol</label><select id="user-role"></select></div>
         <div class="field" id="active-field"><label>Estado</label><select id="user-active"><option value="true">activo</option><option value="false">inactivo</option></select></div>
       </div>
       <div class="modal-foot"><button class="btn" type="button" id="modal-cancel">Cancelar</button><button class="btn primary" type="button" id="modal-save">Guardar</button></div>
@@ -333,21 +337,6 @@
       return cell;
     }
 
-    function accessCell(row, value) {
-      const cell = document.createElement('td');
-      const access = typeof value === 'object' && value ? value.access : value;
-      const status = typeof value === 'object' && value ? value.status : 'read-only';
-      const note = typeof value === 'object' && value ? value.note : '';
-      const line = document.createElement('div');
-      line.textContent = access || '-';
-      const badge = document.createElement('span');
-      badge.className = status === 'enforced' ? 'pill' : status === 'backend only' ? 'pill warn' : 'pill neutral';
-      badge.textContent = status || 'read-only';
-      badge.title = note || '';
-      cell.append(line, badge);
-      row.appendChild(cell);
-    }
-
     function button(label, className, onClick) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -367,8 +356,61 @@
       return JSON.stringify(clean);
     }
 
+    function assignableRoles() {
+      const roles = state.permissions?.roles || [];
+      const assignable = roles.filter((role) => role.assignable).map((role) => role.name);
+      return assignable.length ? assignable : ['user', 'admin'];
+    }
+
+    function roleDefinition(name) {
+      return (state.permissions?.roles || []).find((role) => role.name === name) || null;
+    }
+
+    function rolePermissions(name) {
+      const matrix = state.permissions?.matrix || {};
+      const row = matrix[name] || {};
+      return Object.keys(row).filter((key) => row[key]).sort();
+    }
+
+    function populateRoleSelect(select, selected) {
+      select.replaceChildren();
+      const roles = assignableRoles();
+      roles.forEach((role) => {
+        const opt = document.createElement('option');
+        opt.value = role;
+        opt.textContent = role;
+        select.appendChild(opt);
+      });
+      select.value = roles.includes(selected) ? selected : (roles.includes('user') ? 'user' : roles[0]);
+    }
+
+    function appendPermissionChips(parent, permissions) {
+      const wrap = document.createElement('div');
+      wrap.className = 'permission-list';
+      if (!permissions.length) {
+        const muted = document.createElement('span');
+        muted.className = 'muted';
+        muted.textContent = 'Sin permisos efectivos.';
+        wrap.appendChild(muted);
+      } else {
+        permissions.slice(0, 22).forEach((key) => {
+          const chip = document.createElement('span');
+          chip.className = 'permission-chip';
+          chip.textContent = key;
+          wrap.appendChild(chip);
+        });
+        if (permissions.length > 22) {
+          const more = document.createElement('span');
+          more.className = 'permission-chip';
+          more.textContent = `+${permissions.length - 22}`;
+          wrap.appendChild(more);
+        }
+      }
+      parent.appendChild(wrap);
+    }
+
     function renderMetrics() {
-      const admins = state.users.filter((u) => u.role === 'admin').length;
+      const admins = state.users.filter((u) => ['owner', 'super_admin', 'admin'].includes(u.role)).length;
       const active = state.users.filter((u) => u.is_active).length;
       set('m-users', state.users.length);
       set('m-users-note', `${active} activos / ${state.users.length - active} inactivos`);
@@ -391,6 +433,7 @@
         td(tr, fmt(u.last_login), 'muted');
         const actions = document.createElement('td');
         actions.appendChild(button('Editar', 'btn', () => openEditUser(u)));
+        actions.appendChild(button('Permisos', 'btn', () => showUserPermissions(u)));
         if (!u.is_active && !u.last_login) actions.appendChild(button('Reinvite', 'btn', () => reinviteUser(u)));
         if (u.is_active) actions.appendChild(button('Reset', 'btn', () => sendReset(u)));
         tr.appendChild(actions);
@@ -401,14 +444,38 @@
     function renderRoles() {
       const body = $('roles-body');
       body.replaceChildren();
-      const rows = state.permissions?.matrix || [];
-      if (!rows.length) return clearRows(body, 10, 'No hay matriz de permisos.');
+      const rows = state.permissions?.roles || [];
+      if (!rows.length) return clearRows(body, 5, 'No hay matriz de permisos.');
       rows.forEach((r) => {
         const tr = document.createElement('tr');
-        td(tr, r.role);
-        ['console', 'monitor', 'studio', 'pipelines', 'datasets', 'vault', 'security', 'users', 'audit'].forEach((key) => accessCell(tr, r[key]));
+        td(tr, r.name);
+        td(tr, r.legacy ? 'legacy compatible' : r.builtin ? 'builtin' : 'custom');
+        const assignable = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = r.assignable ? 'pill' : 'pill neutral';
+        badge.textContent = r.assignable ? 'Assignable now' : 'Backend only';
+        assignable.appendChild(badge);
+        tr.appendChild(assignable);
+        const perms = document.createElement('td');
+        appendPermissionChips(perms, rolePermissions(r.name));
+        tr.appendChild(perms);
+        td(tr, r.description || '-');
         body.appendChild(tr);
       });
+    }
+
+    function showUserPermissions(user) {
+      const box = $('user-permissions');
+      box.style.display = 'block';
+      box.replaceChildren();
+      const title = document.createElement('strong');
+      title.textContent = `${user.email} · ${user.role}`;
+      const role = roleDefinition(user.role);
+      const desc = document.createElement('p');
+      desc.className = 'muted';
+      desc.textContent = role ? role.description : 'Rol no registrado en el permission registry; deny by default para permisos nuevos.';
+      box.append(title, desc);
+      appendPermissionChips(box, rolePermissions(user.role));
     }
 
     function renderSessions() {
@@ -468,15 +535,18 @@
     function renderPolicies() {
       const list = $('policies-list');
       list.replaceChildren();
-      const policies = state.permissions?.policies || {};
-      Object.keys(policies).forEach((key) => {
+      const sections = {
+        ...(state.permissions?.policies || {}),
+        ...(state.permissions?.credential_lifetimes || {})
+      };
+      Object.keys(sections).forEach((key) => {
         const item = document.createElement('div');
         item.className = 'policy';
         const title = document.createElement('strong');
         title.textContent = key.replaceAll('_', ' ');
         const value = document.createElement('span');
         value.className = 'muted';
-        value.textContent = policies[key];
+        value.textContent = sections[key] == null ? 'Not configured' : sections[key];
         item.append(title, value);
         list.appendChild(item);
       });
@@ -520,7 +590,7 @@
       $('user-email').readOnly = false;
       $('user-name').value = '';
       $('user-password').value = '';
-      $('user-role').value = 'user';
+      populateRoleSelect($('user-role'), 'user');
       $('password-field').style.display = '';
       $('active-field').style.display = '';
       $('user-active').value = 'true';
@@ -536,7 +606,7 @@
       $('user-email').readOnly = false;
       $('user-name').value = '';
       $('user-password').value = '';
-      $('user-role').value = 'user';
+      populateRoleSelect($('user-role'), 'user');
       $('password-field').style.display = 'none';
       $('active-field').style.display = 'none';
       $('user-modal').style.display = 'flex';
@@ -550,7 +620,7 @@
       $('user-email').value = user.email || '';
       $('user-email').readOnly = true;
       $('user-name').value = user.name || '';
-      $('user-role').value = user.role === 'admin' ? 'admin' : 'user';
+      populateRoleSelect($('user-role'), user.role || 'user');
       $('user-password').value = '';
       $('password-field').style.display = 'none';
       $('user-active').value = user.is_active ? 'true' : 'false';
@@ -678,13 +748,26 @@
     }
 
     function renderTesterOptions() {
-      const tests = state.permissions?.access_tests || [];
-      const roles = [...new Set(tests.map((t) => t.role))];
-      const resources = [...new Set(tests.map((t) => t.resource))];
       const roleSel = $('tester-role');
       const resSel = $('tester-resource');
+      const actionSel = $('tester-action');
       roleSel.replaceChildren();
       resSel.replaceChildren();
+      actionSel.replaceChildren();
+      const roles = (state.permissions?.roles || []).map((role) => role.name);
+      const resources = [
+        '/security',
+        '/security/audit',
+        '/security/sessions',
+        '/api/admin/users',
+        '/viewer/vault',
+        '/api/vault/connections/replicon',
+        '/studio',
+        '/monitor',
+        '/api/pipeline',
+        '/datasets'
+      ];
+      const actions = ['read', 'write', 'revoke', 'reveal', 'run', 'access'];
       roles.forEach((role) => {
         const opt = document.createElement('option');
         opt.value = role;
@@ -697,20 +780,38 @@
         opt.textContent = resource;
         resSel.appendChild(opt);
       });
-      renderTesterResult();
+      actions.forEach((action) => {
+        const opt = document.createElement('option');
+        opt.value = action;
+        opt.textContent = action;
+        actionSel.appendChild(opt);
+      });
+      if (roles.includes('viewer')) roleSel.value = 'viewer';
+      resSel.value = '/security/audit';
+      actionSel.value = 'read';
+      renderTesterResult().catch((err) => toast(err.message, 'error'));
     }
 
-    function renderTesterResult() {
-      const tests = state.permissions?.access_tests || [];
-      const match = tests.find((t) => t.role === $('tester-role').value && t.resource === $('tester-resource').value);
+    async function renderTesterResult() {
       const box = $('tester-result');
       box.replaceChildren();
       const title = document.createElement('strong');
-      title.textContent = match ? `${match.expected.toUpperCase()} (${match.status})` : 'No documented rule';
+      title.textContent = 'Evaluando...';
+      box.appendChild(title);
+      const params = new URLSearchParams({
+        role: $('tester-role').value,
+        resource: $('tester-resource').value,
+        action: $('tester-action').value
+      });
+      const result = await fetchJson(`/security/access-check?${params.toString()}`);
+      title.textContent = result.allowed ? 'ALLOWED' : 'DENIED';
+      const badge = document.createElement('span');
+      badge.className = result.allowed ? 'pill' : 'pill err';
+      badge.textContent = result.permission || 'no mapped permission';
       const detail = document.createElement('p');
       detail.className = 'muted';
-      detail.textContent = match ? `${match.reason} This is a simulation from backend metadata unless you are testing the current logged-in user.` : 'Not implemented in the current permission matrix.';
-      box.append(title, detail);
+      detail.textContent = `${result.role} ${result.action} ${result.resource}. Source: ${result.source}.`;
+      box.append(badge, detail);
     }
 
     async function loadAttempts() {
@@ -745,9 +846,10 @@
     $('modal-cancel').addEventListener('click', closeModal);
     $('modal-save').addEventListener('click', () => saveUser().catch((err) => toast(err.message, 'error')));
     $('audit-filter').addEventListener('input', renderAudit);
-    $('tester-run').addEventListener('click', renderTesterResult);
-    $('tester-role').addEventListener('change', renderTesterResult);
-    $('tester-resource').addEventListener('change', renderTesterResult);
+    $('tester-run').addEventListener('click', () => renderTesterResult().catch((err) => toast(err.message, 'error')));
+    $('tester-role').addEventListener('change', () => renderTesterResult().catch((err) => toast(err.message, 'error')));
+    $('tester-resource').addEventListener('change', () => renderTesterResult().catch((err) => toast(err.message, 'error')));
+    $('tester-action').addEventListener('change', () => renderTesterResult().catch((err) => toast(err.message, 'error')));
     refreshAll();
   </script>
 </body>
