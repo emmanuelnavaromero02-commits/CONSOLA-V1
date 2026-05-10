@@ -1,3 +1,6 @@
+import { permissionText, quickActions } from './actions.js';
+import { renderTopbar } from './navigation.js';
+import { humanizeTerm } from '../i18n/labels.js';
 import { hasPermission, state } from './state.js';
 
 function el(tag, className, text) {
@@ -24,62 +27,33 @@ function statusDot(status) {
   return dot;
 }
 
-function renderTopbar() {
-  const top = el('header', 'home-topbar');
-  const brand = el('div', 'home-brand');
-  brand.append(el('span', 'home-mark', 'M'), el('span', null, 'MODecissions PaaS'));
-
-  const nav = el('nav', 'home-nav');
-  nav.setAttribute('aria-label', 'Main navigation');
-  [
-    ['Workspace', state.workspaceUrl],
-    ['Monitor', '/monitor'],
-    ['Studio', '/studio'],
-    ['IAM', '/iam'],
-    ['Security', '/security'],
-  ].forEach(([label, href]) => {
-    const a = el('a', null, label);
-    a.href = href;
-    nav.appendChild(a);
-  });
-
-  const user = el('div', 'home-user');
-  const system = el('span', 'home-status-pill');
-  system.append(statusDot(state.statuses.mcp?.status), el('span', null, state.statuses.mcp?.label || 'Status not checked'));
-  user.append(system, el('span', 'home-role', state.role || 'anonymous'));
-  if (state.user?.email) user.append(el('span', null, state.user.email));
-
-  top.append(brand, nav, user);
-  return top;
-}
-
 function renderHero() {
   const hero = el('section', 'home-hero');
   const copy = el('div', 'home-hero-copy');
   copy.append(
-    el('div', 'home-eyebrow', 'Enterprise operational control plane'),
-    el('h1', null, 'MODecissions PaaS'),
-    el('p', null, 'Operational control plane for data, cartridges, pipelines and decisions.')
+    el('div', 'home-eyebrow', 'Panel operativo'),
+    el('h1', null, 'Panel operativo'),
+    el('p', null, 'Administra tus datos, fuentes, permisos y procesos desde un solo lugar.')
   );
   const actions = el('div', 'home-hero-actions');
   actions.append(
-    linkButton('Open Workspace', state.workspaceUrl, 'primary', hasPermission('workspace.access'), 'Requires workspace.access'),
-    linkButton('Open Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), 'Requires monitor.read'),
-    linkButton('Manage IAM', '/iam', 'secondary', hasPermission('iam.users.read'), 'Requires iam.users.read')
+    linkButton('Abrir Workspace', state.workspaceUrl, 'primary', hasPermission('workspace.access'), permissionText('workspace.access')),
+    linkButton('Ver Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), permissionText('monitor.read')),
+    linkButton('Gestionar IAM', '/iam', 'secondary', hasPermission('iam.users.read'), permissionText('iam.users.read'))
   );
   const badges = el('div', 'home-badges');
   badges.append(
-    el('span', 'home-badge red', 'IAM protected'),
-    el('span', 'home-badge', state.statuses.airflow?.label || 'Airflow not checked'),
-    el('span', 'home-badge', 'Replicon cartridge'),
-    el('span', 'home-badge', 'Bronze lakehouse')
+    el('span', 'home-badge red', 'IAM protegido'),
+    el('span', 'home-badge', state.statuses.airflow?.label || 'Airflow no verificado'),
+    el('span', 'home-badge', 'Fuente de datos Replicon'),
+    el('span', 'home-badge', 'Datos preparados')
   );
   copy.append(actions, badges);
 
   const panel = el('aside', 'home-panel home-hero-panel');
   panel.append(
-    el('h2', 'home-panel-title', 'Control plane status'),
-    el('p', 'home-panel-copy', 'Home adapts to the signed-in role and only promotes actions that the backend permits. Restricted cards explain the required permission.'),
+    el('h2', 'home-panel-title', 'Lo importante ahora'),
+    el('p', 'home-panel-copy', 'El panel se adapta a tu rol y muestra accesos, bloqueos y próximos pasos con lenguaje claro.'),
     renderStatusStrip()
   );
   hero.append(copy, panel);
@@ -96,15 +70,15 @@ function card({ title, icon, description, href, primary, permission, secondary =
   node.append(top, el('p', null, description));
 
   const metaWrap = el('div', 'home-card-meta');
-  if (permission) metaWrap.append(chip(allowed ? 'Allowed' : `Requires ${permission}`, allowed ? 'ok' : 'locked'));
+  if (permission) metaWrap.append(chip(allowed ? 'Disponible' : permissionText(permission), allowed ? 'ok' : 'locked'));
   meta.forEach((item) => metaWrap.append(chip(item.text, item.variant || '')));
   node.appendChild(metaWrap);
 
   const actions = el('div', 'home-card-actions');
-  actions.append(linkButton(primary, href, allowed ? 'primary' : 'secondary', allowed, permission ? `Requires ${permission}` : 'Limited access'));
+  actions.append(linkButton(primary, href, allowed ? 'primary' : 'secondary', allowed, permission ? permissionText(permission) : 'Acceso limitado'));
   secondary.forEach((action) => {
     const actionAllowed = !action.permission || hasPermission(action.permission);
-    actions.append(linkButton(action.label, action.href, 'secondary', actionAllowed, action.permission ? `Requires ${action.permission}` : 'Not available'));
+    actions.append(linkButton(action.label, action.href, 'secondary', actionAllowed, action.permission ? permissionText(action.permission) : 'Disponible desde el módulo'));
   });
   node.appendChild(actions);
   return node;
@@ -120,58 +94,71 @@ function renderSection(title, desc, content) {
   return section;
 }
 
+
+function renderQuickAccess() {
+  const panel = el('section', 'home-quick-panel');
+  const copy = el('div');
+  copy.append(el('h2', 'home-section-title', 'Acceso rápido'), el('p', 'home-section-desc', 'Tus accesos principales, ordenados por utilidad y permisos.'));
+  const actions = el('div', 'home-quick-actions');
+  quickActions().forEach((item) => {
+    actions.append(linkButton(item.label, item.href, item.allowed ? 'primary' : 'secondary', item.allowed, item.hint));
+  });
+  panel.append(copy, actions);
+  return panel;
+}
+
 function renderOperational() {
   const grid = el('div', 'home-operational-grid');
   grid.append(
     card({
       title: 'Workspace',
       icon: 'W',
-      description: 'Business apps, assistant and Gold data for day-to-day users.',
+      description: 'Aplicaciones, asistente y datos listos para usuarios de negocio.',
       href: state.workspaceUrl,
-      primary: 'Open Workspace',
+      primary: 'Abrir Workspace',
       permission: 'workspace.access',
       size: 'primary-card',
-      meta: [{ text: 'Apps' }, { text: 'Assistant' }],
-      secondary: [{ label: 'Open Apps', href: state.workspaceUrl, permission: 'workspace.access' }],
+      meta: [{ text: 'Apps' }, { text: 'Asistente' }],
+      secondary: [{ label: 'Abrir Apps', href: state.workspaceUrl, permission: 'workspace.access' }],
     }),
     card({
       title: 'Studio',
       icon: 'S',
-      description: 'Configure cartridges, entities, transformations and semantic knowledge.',
+      description: 'Configura fuentes de datos, tablas, transformaciones y conocimiento semántico.',
       href: '/studio',
-      primary: 'Open Studio',
+      primary: 'Abrir Studio',
       permission: 'studio.read',
       size: 'primary-card',
-      meta: [{ text: 'Cartridges' }, { text: 'Datasets' }],
-      secondary: [{ label: 'New Cartridge', href: '/studio', permission: 'studio.write' }],
+      meta: [{ text: 'Fuentes de datos' }, { text: 'Reportes' }],
+      secondary: [{ label: 'Nueva fuente', href: '/studio', permission: 'studio.write' }],
     }),
     card({
       title: 'Monitor',
       icon: 'M',
-      description: 'Track pipelines, jobs, datasets and MCP services.',
+      description: 'Revisa flujos automáticos, trabajos recientes, reportes y servicios internos.',
       href: '/monitor',
-      primary: 'Open Monitor',
+      primary: 'Abrir Monitor',
       permission: 'monitor.read',
-      meta: [{ text: state.statuses.mcp?.label || 'MCP not checked' }],
+      meta: [{ text: state.statuses.mcp?.label || 'Servicios internos no verificados' }],
     }),
     card({
       title: 'Decisions',
       icon: 'D',
-      description: 'Register decisions, KPIs, actions and operational follow-up.',
+      description: 'Registra decisiones, KPIs, acciones y seguimiento operativo.',
       href: '/decisions',
-      primary: 'Open Decisions',
+      primary: 'Abrir Decisiones',
       permission: 'workspace.access',
-      meta: [{ text: 'KPIs' }, { text: 'Actions' }],
+      meta: [{ text: 'KPIs' }, { text: 'Acciones' }],
     })
   );
-  return renderSection('Operational Workspace', 'Primary modules for business users and operators.', grid);
+  return renderSection('Trabajo operativo', 'Lo que usas para trabajar con datos, fuentes y decisiones.', grid);
 }
 
 function usersMeta() {
-  if (!state.usersSummary) return [{ text: 'Limited access', variant: 'locked' }];
+  if (!state.usersSummary) return [{ text: 'Acceso limitado', variant: 'locked' }];
   return [
-    { text: `${state.usersSummary.total} users`, variant: 'ok' },
-    { text: `${state.usersSummary.active} active` },
+    { text: `${state.usersSummary.total} usuarios`, variant: 'ok' },
+    { text: `${state.usersSummary.active} activos` },
     { text: `${state.usersSummary.admins} admins` },
   ];
 }
@@ -182,62 +169,74 @@ function renderAdministration() {
     card({
       title: 'IAM / Access',
       icon: 'I',
-      description: 'Operate users, permissions, sessions and access policies.',
+      description: 'Administra accesos, roles, sesiones y reglas visibles.',
       href: '/iam',
-      primary: 'Open IAM',
+      primary: 'Abrir IAM',
       permission: 'iam.users.read',
       kind: 'admin',
-      meta: [{ text: 'RBAC' }],
-      secondary: [{ label: 'Manage users', href: '/admin/users', permission: 'iam.users.read' }],
+      meta: [{ text: 'Permisos por rol' }],
+      secondary: [{ label: 'Gestionar usuarios', href: '/admin/users', permission: 'iam.users.read' }],
     }),
     card({
-      title: 'Users',
+      title: 'Usuarios',
       icon: 'U',
-      description: 'Manage accounts, roles, active status and invitations.',
+      description: 'Gestiona cuentas, roles, estado e invitaciones.',
       href: '/admin/users',
-      primary: 'Manage Users',
+      primary: 'Gestionar usuarios',
       permission: 'iam.users.read',
       kind: 'admin',
       meta: usersMeta(),
-      secondary: [{ label: 'Invite User', href: '/iam', permission: 'iam.users.write' }],
+      secondary: [{ label: 'Invitar usuario', href: '/iam', permission: 'iam.users.write' }],
     }),
     card({
       title: 'Security Center',
       icon: 'A',
-      description: 'Review audit, sessions, login attempts and security posture.',
+      description: 'Revisa auditoría, sesiones e intentos de acceso.',
       href: '/security',
-      primary: 'Open Security',
+      primary: 'Abrir Seguridad',
       permission: 'security.audit.read',
       kind: 'admin',
-      meta: [{ text: state.activity.audit || 'Audit not checked' }],
-      secondary: [{ label: 'View Audit', href: '/security', permission: 'security.audit.read' }],
+      meta: [{ text: state.activity.audit || 'Auditoría no verificada' }],
+      secondary: [{ label: 'Ver auditoría', href: '/security', permission: 'security.audit.read' }],
     }),
     card({
-      title: 'Vault',
+      title: 'Caja fuerte',
       icon: 'V',
-      description: 'View masked connection metadata and configure protected integrations.',
+      description: 'Consulta conexiones protegidas y configura integraciones.',
       href: '/viewer/vault',
-      primary: 'Open Vault',
+      primary: 'Abrir Caja fuerte',
       permission: 'vault.connections.read',
       kind: 'admin',
-      meta: [{ text: 'Secrets masked' }],
-      secondary: [{ label: 'Configure Connections', href: '/viewer/vault', permission: 'vault.connections.write' }],
+      meta: [{ text: 'Secretos ocultos' }],
+      secondary: [{ label: 'Configurar conexiones', href: '/viewer/vault', permission: 'vault.connections.write' }],
     })
   );
-  return renderSection('Administration Center', 'Security and identity modules are separated from operational work.', grid);
+  return renderSection('Administración', 'Identidad, seguridad y accesos viven separados del trabajo diario.', grid);
+}
+
+
+function renderDataProcesses() {
+  const grid = el('div', 'home-admin-grid');
+  grid.append(
+    card({ title: humanizeTerm('datasets'), icon: 'DT', description: 'Explora reportes y tablas preparadas para análisis.', href: '/viewer/datasets', primary: 'Ver reportes', permission: 'datasets.read', kind: 'system', meta: [{ text: 'Datos preparados' }] }),
+    card({ title: humanizeTerm('pipelines'), icon: 'F', description: 'Revisa ejecuciones, estados y próximos procesos.', href: '/monitor', primary: 'Ver flujos', permission: 'pipelines.read', kind: 'system', secondary: [{ label: 'Ejecutar Replicon', href: '/monitor', permission: 'pipelines.run' }] }),
+    card({ title: 'Replicon', icon: 'R', description: 'Fuente de datos operativa para extracción y gobierno de datos Replicon.', href: '/studio', primary: 'Abrir fuente', permission: 'studio.read', kind: 'system', meta: [{ text: state.statuses.replicon?.label || 'No verificado' }] }),
+    card({ title: 'Trabajos', icon: 'T', description: 'Consulta historial y detalle de trabajos recientes.', href: '/viewer/jobs', primary: 'Ver trabajos', permission: 'monitor.read', kind: 'system' })
+  );
+  return renderSection('Datos y procesos', 'Flujos automáticos, fuentes y reportes en una zona operativa compacta.', grid);
 }
 
 function renderSystemOps() {
   const panel = el('section', 'home-status-panel');
   const head = el('div', 'home-section-head');
   const copy = el('div');
-  copy.append(el('h2', 'home-section-title', 'System Operations'), el('p', 'home-section-desc', 'Technical status is checked only where APIs are available. Unknown means not checked, not online.'));
+  copy.append(el('h2', 'home-section-title', 'Estado del sistema'), el('p', 'home-section-desc', 'Mostramos estado real cuando existe API. “No verificado” no significa online.'));
   head.appendChild(copy);
   panel.appendChild(head);
 
   const grid = el('div', 'home-status-grid');
   ['console', 'workspace', 'airflow', 'mcp', 'replicon', 'minio'].forEach((key) => {
-    const item = state.statuses[key] || { label: 'Not checked', status: 'unknown' };
+    const item = state.statuses[key] || { label: 'No verificado', status: 'unknown' };
     const box = el('div', 'home-service');
     const title = el('strong');
     title.append(statusDot(item.status), document.createTextNode(` ${item.name || key}`));
@@ -248,10 +247,10 @@ function renderSystemOps() {
 
   const activity = el('div', 'home-activity');
   const pipe = el('div', 'home-activity-item');
-  pipe.append(el('strong', null, 'Pipeline / Replicon'), el('p', null, state.activity.pipeline || 'Pipeline status not checked.'));
+  pipe.append(el('strong', null, 'Flujo Replicon'), el('p', null, state.activity.pipeline || 'Flujo automático no verificado.'));
   const next = el('div', 'home-activity-item');
-  const text = hasPermission('pipelines.run') ? 'View pipelines or run a safe Replicon extraction from Monitor/Studio.' : 'Run extraction disabled. Requires pipelines.run.';
-  next.append(el('strong', null, 'Next step'), el('p', null, text));
+  const text = hasPermission('pipelines.run') ? 'Puedes revisar flujos automáticos o ejecutar una extracción segura desde Monitor o Studio.' : 'Ejecución deshabilitada. Pide permiso para ejecutar flujos automáticos.';
+  next.append(el('strong', null, 'Siguiente paso'), el('p', null, text));
   activity.append(pipe, next);
   panel.appendChild(activity);
   return panel;
@@ -271,7 +270,7 @@ export function renderHome(root) {
   root.replaceChildren();
   const shell = el('div', 'home-shell');
   const container = el('div', 'home-container');
-  container.append(renderHero(), renderOperational(), renderAdministration(), renderSystemOps());
+  container.append(renderHero(), renderQuickAccess(), renderOperational(), renderAdministration(), renderDataProcesses(), renderSystemOps());
   shell.append(renderTopbar(), container);
   root.appendChild(shell);
 }

@@ -1,5 +1,6 @@
 import { createCartridge } from './cartridges.js';
 import { setState } from './state.js';
+import { humanizeError } from '../i18n/labels.js';
 
 const IDS = {
   overlay: 'cc-overlay',
@@ -69,9 +70,9 @@ function buildModal() {
 
   const header = el('div', 'cc-modal-header');
   const titleWrap = el('div');
-  const title = el('h3', 'cc-modal-title', 'Nuevo Cartucho');
+  const title = el('h3', 'cc-modal-title', 'Nueva fuente de datos');
   title.id = 'cc-title';
-  const subtitle = el('p', 'cc-modal-subtitle', 'Registra un cartucho para conectar entidades, DAGs y datasets.');
+  const subtitle = el('p', 'cc-modal-subtitle', 'Registra una fuente para conectar tablas, tareas automáticas y reportes.');
   titleWrap.append(title, subtitle);
   const closeBtn = el('button', 'cc-close', '×');
   closeBtn.type = 'button';
@@ -90,19 +91,19 @@ function buildModal() {
   );
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    submitNewCartridge().catch((err) => setMessage(err.message, 'error'));
+    submitNewCartridge().catch((err) => setMessage(humanizeError(err), 'error'));
   });
 
   const actions = el('div', 'cc-actions');
   const cancel = el('button', 'btn', 'Cancelar');
   cancel.type = 'button';
   cancel.addEventListener('click', closeModal);
-  const save = el('button', 'btn btn-primary', 'Crear cartucho');
+  const save = el('button', 'btn btn-primary', 'Crear fuente');
   save.id = IDS.submit;
   save.type = 'submit';
   save.addEventListener('click', (event) => {
     event.preventDefault();
-    submitNewCartridge().catch((err) => setMessage(err.message, 'error'));
+    submitNewCartridge().catch((err) => setMessage(humanizeError(err), 'error'));
   });
   actions.append(cancel, save);
 
@@ -133,10 +134,10 @@ export async function submitNewCartridge() {
   }
 
   submitBtn.disabled = true;
-  setMessage('Creando cartucho...', '');
+  setMessage('Creando fuente...', '');
   try {
     await createCartridge({ id, name, description });
-    setMessage('Cartucho creado.', 'success');
+    setMessage('Fuente de datos creada.', 'success');
     const callback = afterSubmit;
     closeModal();
     if (typeof callback === 'function') await callback(true);
