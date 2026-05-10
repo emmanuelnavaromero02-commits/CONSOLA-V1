@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security Center · MODecissions</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    html, body {
+      min-height: 100%;
+      overflow: auto;
+      background: var(--color-bg);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+    }
+
+    .security-page {
+      min-height: 100vh;
+      padding: 34px 24px 48px;
+    }
+
+    .security-shell {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .security-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      padding-bottom: 4px;
+    }
+
+    .eyebrow {
+      color: var(--color-accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 42px);
+      line-height: 1.1;
+      letter-spacing: 0;
+      font-weight: 750;
+    }
+
+    .security-subtitle {
+      margin-top: 10px;
+      color: var(--color-text-secondary);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 620px;
+    }
+
+    .security-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .link-button,
+    .button {
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-surface);
+      color: var(--color-text-primary);
+      padding: 10px 14px;
+      min-height: 38px;
+      font: inherit;
+      font-weight: 650;
+      text-decoration: none;
+      cursor: pointer;
+      transition: border-color .16s, box-shadow .16s, background .16s, color .16s;
+    }
+
+    .link-button:hover,
+    .button:hover {
+      border-color: rgba(37, 99, 235, .45);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .button.primary {
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+      color: #fff;
+    }
+
+    .button.danger {
+      color: var(--color-error);
+    }
+
+    .button:disabled {
+      cursor: not-allowed;
+      opacity: .48;
+      box-shadow: none;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .summary-card,
+    .data-panel {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .summary-card {
+      min-height: 126px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .summary-label {
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .summary-value {
+      font-size: 26px;
+      line-height: 1;
+      font-weight: 760;
+    }
+
+    .summary-note {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      gap: 7px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(5, 150, 105, .10);
+      color: var(--color-success);
+    }
+
+    .status-pill.warning {
+      background: rgba(217, 119, 6, .12);
+      color: var(--color-warning);
+    }
+
+    .status-pill.error {
+      background: rgba(220, 38, 38, .10);
+      color: var(--color-error);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .panels {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 18px 12px;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .panel-title {
+      font-size: 17px;
+      font-weight: 750;
+    }
+
+    .panel-description {
+      margin-top: 4px;
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 820px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--color-border);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    th {
+      color: var(--color-text-secondary);
+      font-weight: 700;
+      background: rgba(248, 247, 244, .72);
+    }
+
+    td {
+      color: var(--color-text-primary);
+    }
+
+    .muted {
+      color: var(--color-text-secondary);
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .state-row {
+      padding: 22px 18px;
+      color: var(--color-text-secondary);
+      font-size: 14px;
+    }
+
+    .error-box {
+      margin: 0 18px 18px;
+      padding: 12px 14px;
+      border: 1px solid rgba(220, 38, 38, .22);
+      border-radius: 8px;
+      background: rgba(220, 38, 38, .06);
+      color: var(--color-error);
+      display: none;
+    }
+
+    @media (max-width: 900px) {
+      .security-header {
+        flex-direction: column;
+      }
+
+      .security-actions {
+        justify-content: flex-start;
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .security-page {
+        padding: 24px 14px 36px;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="security-page">
+    <div class="security-shell">
+      <header class="security-header">
+        <div>
+          <div class="eyebrow">Administration</div>
+          <h1>Security Center</h1>
+          <p class="security-subtitle">Sesiones, auditoría y estado de seguridad de la consola.</p>
+        </div>
+        <nav class="security-actions" aria-label="Navegación">
+          <a class="link-button" href="/monitor">Monitor</a>
+          <a class="link-button" href="/">Home</a>
+          <button class="button primary" id="refresh-btn" type="button">Actualizar</button>
+        </nav>
+      </header>
+
+      <section class="summary-grid" aria-label="Resumen de seguridad">
+        <article class="summary-card">
+          <div class="summary-label">Sesiones activas</div>
+          <div class="summary-value" id="active-sessions">—</div>
+          <div class="summary-note">Sesiones emitidas en la consola.</div>
+        </article>
+        <article class="summary-card">
+          <div class="summary-label">Auditoría reciente</div>
+          <div class="summary-value" id="audit-count">—</div>
+          <div class="summary-note">Últimos eventos registrados.</div>
+        </article>
+        <article class="summary-card">
+          <div class="summary-label">RBAC</div>
+          <div class="status-pill" id="rbac-state"><span class="status-dot"></span><span>Protected</span></div>
+          <div class="summary-note">APIs administrativas protegidas por rol admin.</div>
+        </article>
+        <article class="summary-card">
+          <div class="summary-label">Internal API Key</div>
+          <div class="status-pill" id="internal-key-state"><span class="status-dot"></span><span>Protected</span></div>
+          <div class="summary-note">Endpoints internos protegidos. La clave nunca se muestra.</div>
+        </article>
+      </section>
+
+      <section class="panels">
+        <article class="data-panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Sessions</div>
+              <div class="panel-description">Sesiones activas visibles para administradores.</div>
+            </div>
+            <span class="status-pill warning" id="sessions-status"><span class="status-dot"></span><span>Loading</span></span>
+          </div>
+          <div class="error-box" id="sessions-error"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>IP</th>
+                  <th>User agent</th>
+                  <th>Creada</th>
+                  <th>Última actividad</th>
+                  <th>Token</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body">
+                <tr><td colspan="7" class="state-row">Cargando sesiones...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="data-panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Audit Trail</div>
+              <div class="panel-description">Últimos eventos de seguridad y administración.</div>
+            </div>
+            <span class="status-pill warning" id="audit-status"><span class="status-dot"></span><span>Loading</span></span>
+          </div>
+          <div class="error-box" id="audit-error"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Actor</th>
+                  <th>Action</th>
+                  <th>Target</th>
+                  <th>Metadata</th>
+                </tr>
+              </thead>
+              <tbody id="audit-body">
+                <tr><td colspan="5" class="state-row">Cargando auditoría...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
+
+    const state = {
+      sessions: [],
+      audit: []
+    };
+
+    const els = {
+      activeSessions: document.getElementById('active-sessions'),
+      auditCount: document.getElementById('audit-count'),
+      sessionsBody: document.getElementById('sessions-body'),
+      auditBody: document.getElementById('audit-body'),
+      sessionsStatus: document.getElementById('sessions-status'),
+      auditStatus: document.getElementById('audit-status'),
+      sessionsError: document.getElementById('sessions-error'),
+      auditError: document.getElementById('audit-error'),
+      refreshBtn: document.getElementById('refresh-btn')
+    };
+
+    function setText(el, value) {
+      el.textContent = value == null || value === '' ? '—' : String(value);
+    }
+
+    function setStatus(el, label, type) {
+      el.classList.toggle('warning', type === 'warning');
+      el.classList.toggle('error', type === 'error');
+      const text = el.querySelector('span:last-child');
+      text.textContent = label;
+    }
+
+    function showError(el, message) {
+      el.style.display = message ? 'block' : 'none';
+      el.textContent = message || '';
+    }
+
+    function formatDate(value) {
+      if (!value) return '—';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value);
+      return d.toLocaleString();
+    }
+
+    function tokenPreview(session) {
+      if (session.token_preview) return String(session.token_preview);
+      if (session.token) {
+        const token = String(session.token);
+        return token.length > 6 ? '...' + token.slice(-6) : '***';
+      }
+      return 'Not exposed';
+    }
+
+    function revocationToken(session) {
+      if (session.session_id) return String(session.session_id);
+      if (session.token) return String(session.token);
+      return '';
+    }
+
+    function clearBody(tbody, colspan, message) {
+      tbody.replaceChildren();
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = colspan;
+      td.className = 'state-row';
+      td.textContent = message;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+
+    function appendCell(row, value, className) {
+      const td = document.createElement('td');
+      if (className) td.className = className;
+      td.textContent = value == null || value === '' ? '—' : String(value);
+      row.appendChild(td);
+      return td;
+    }
+
+    function renderSessions() {
+      els.sessionsBody.replaceChildren();
+      setText(els.activeSessions, state.sessions.length);
+      if (!state.sessions.length) {
+        clearBody(els.sessionsBody, 7, 'No hay sesiones activas para mostrar.');
+        return;
+      }
+
+      state.sessions.forEach((session) => {
+        const tr = document.createElement('tr');
+        appendCell(tr, session.user_email || session.email || session.user_id);
+        appendCell(tr, session.ip);
+        appendCell(tr, session.user_agent, 'muted');
+        appendCell(tr, formatDate(session.created_at));
+        appendCell(tr, formatDate(session.last_seen));
+        appendCell(tr, tokenPreview(session), 'mono muted');
+
+        const action = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'button danger';
+        btn.textContent = 'Revocar';
+        const token = revocationToken(session);
+        if (!token) {
+          btn.disabled = true;
+          btn.title = 'El API no entrega un identificador revocable sin exponer el token completo.';
+        } else {
+          btn.addEventListener('click', () => revokeSession(token));
+        }
+        action.appendChild(btn);
+        tr.appendChild(action);
+        els.sessionsBody.appendChild(tr);
+      });
+    }
+
+    function auditTarget(event) {
+      const details = event.details || event.metadata || {};
+      if (typeof details === 'object' && details !== null) {
+        return details.target || details.entity || details.resource || event.target || '—';
+      }
+      return event.target || '—';
+    }
+
+    function auditSummary(event) {
+      const details = event.details || event.metadata || {};
+      if (!details) return '—';
+      if (typeof details === 'string') return details;
+      try {
+        const clean = {};
+        Object.keys(details).slice(0, 8).forEach((key) => {
+          if (!/token|secret|password|api[_-]?key|cookie/i.test(key)) {
+            clean[key] = details[key];
+          }
+        });
+        return JSON.stringify(clean);
+      } catch (err) {
+        return 'Metadata unavailable';
+      }
+    }
+
+    function renderAudit() {
+      els.auditBody.replaceChildren();
+      setText(els.auditCount, state.audit.length);
+      if (!state.audit.length) {
+        clearBody(els.auditBody, 5, 'No hay eventos de auditoría recientes.');
+        return;
+      }
+
+      state.audit.forEach((event) => {
+        const tr = document.createElement('tr');
+        appendCell(tr, formatDate(event.created_at || event.timestamp));
+        appendCell(tr, event.user_email || event.email || event.user_id || 'System');
+        appendCell(tr, event.action);
+        appendCell(tr, auditTarget(event));
+        appendCell(tr, auditSummary(event), 'mono muted');
+        els.auditBody.appendChild(tr);
+      });
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return response.json();
+    }
+
+    async function loadSessions() {
+      setStatus(els.sessionsStatus, 'Loading', 'warning');
+      showError(els.sessionsError, '');
+      try {
+        const data = await fetchJson('/security/sessions');
+        state.sessions = Array.isArray(data) ? data : [];
+        renderSessions();
+        setStatus(els.sessionsStatus, 'Healthy', 'healthy');
+      } catch (err) {
+        state.sessions = [];
+        setText(els.activeSessions, '—');
+        clearBody(els.sessionsBody, 7, 'No se pudieron cargar las sesiones.');
+        showError(els.sessionsError, `Sessions API: ${err.message}`);
+        setStatus(els.sessionsStatus, 'Error', 'error');
+      }
+    }
+
+    async function loadAudit() {
+      setStatus(els.auditStatus, 'Loading', 'warning');
+      showError(els.auditError, '');
+      try {
+        const data = await fetchJson('/security/audit');
+        state.audit = Array.isArray(data) ? data : [];
+        renderAudit();
+        setStatus(els.auditStatus, 'Healthy', 'healthy');
+      } catch (err) {
+        state.audit = [];
+        setText(els.auditCount, '—');
+        clearBody(els.auditBody, 5, 'No se pudo cargar la auditoría.');
+        showError(els.auditError, `Audit API: ${err.message}`);
+        setStatus(els.auditStatus, 'Error', 'error');
+      }
+    }
+
+    async function revokeSession(token) {
+      const confirmed = window.confirm('¿Revocar esta sesión?');
+      if (!confirmed) return;
+      const response = await fetch(`/security/sessions/${encodeURIComponent(token)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (!response.ok) {
+        showError(els.sessionsError, `No se pudo revocar la sesión: ${response.status}`);
+        setStatus(els.sessionsStatus, 'Warning', 'warning');
+        return;
+      }
+      await loadSessions();
+    }
+
+    async function refreshAll() {
+      els.refreshBtn.disabled = true;
+      try {
+        await Promise.all([loadSessions(), loadAudit()]);
+      } finally {
+        els.refreshBtn.disabled = false;
+      }
+    }
+
+    els.refreshBtn.addEventListener('click', refreshAll);
+    refreshAll();
+  </script>
+</body>
+</html>
