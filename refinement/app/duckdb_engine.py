@@ -28,6 +28,11 @@ import re
 import threading
 from datetime import datetime, timezone
 
+import logging
+import uuid
+
+logger = logging.getLogger(__name__)
+
 import duckdb
 import psycopg2
 
@@ -202,7 +207,9 @@ class DuckDBEngine:
                 rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
             return {"source": source, "fields": [{"name": r[0], "type": r[1]} for r in rows]}
         except Exception as exc:
-            return {"source": source, "error": str(exc)}
+            error_id = uuid.uuid4().hex
+            logger.exception(f"[{error_id}] DuckDB error")
+            return {"source": source, "error": "Internal server error", "error_id": error_id}
 
     def get_source_partitions(self, source: str) -> dict:
         """
@@ -228,7 +235,9 @@ class DuckDBEngine:
                 ) if latest else None,
             }
         except Exception as exc:
-            return {"source": source, "error": str(exc)}
+            error_id = uuid.uuid4().hex
+            logger.exception(f"[{error_id}] DuckDB error")
+            return {"source": source, "error": "Internal server error", "error_id": error_id}
 
     def preview_source(self, source: str, limit: int = 5) -> dict:
         try:
@@ -244,7 +253,9 @@ class DuckDBEngine:
                 "data": [dict(zip(cols, row)) for row in data],
             }
         except Exception as exc:
-            return {"source": source, "error": str(exc)}
+            error_id = uuid.uuid4().hex
+            logger.exception(f"[{error_id}] DuckDB error")
+            return {"source": source, "error": "Internal server error", "error_id": error_id}
 
     # ── SQL preview ───────────────────────────────────────────────────────────
 
@@ -253,14 +264,23 @@ class DuckDBEngine:
     _DANGEROUS_PATH_RE = re.compile(r"(?i)(file://|['\"]/(?:etc|proc|var)/)")
 
     def _validate_safe_sql(self, sql: str) -> None:
+        upper_sql = sql.upper()
+        # Strictly enforce acceptance gates for SQL modifications
+        # Use regex to block any whitespace character after the keyword
+        import re
+        if re.search(r"\b(DROP|INSTALL|LOAD|COPY)\s+", upper_sql):
+            raise ValueError("Dangerous SQL keywords are not allowed")
+
         if self._DANGEROUS_READ_RE.search(sql):
             raise ValueError("SQL contains a blocked local/external read function")
+
         if self._DANGEROUS_PATH_RE.search(sql):
             raise ValueError("SQL contains a blocked local file path")
         for match in self._READ_PARQUET_RE.finditer(sql):
             path = match.group(2).strip()
             if not path.startswith("s3://"):
                 raise ValueError("read_parquet is only allowed for s3:// sources")
+
 
     def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
         self._validate_safe_sql(sql)
@@ -294,7 +314,9 @@ class DuckDBEngine:
                 "row_count": len(data),
             }
         except Exception as exc:
-            return {"error": str(exc)}
+            error_id = uuid.uuid4().hex
+            logger.exception(f"[{error_id}] DuckDB error")
+            return {"error": "Internal server error", "error_id": error_id}
 
     # ── Dataset query ─────────────────────────────────────────────────────────
 
@@ -308,7 +330,9 @@ class DuckDBEngine:
                 ).fetchall()
             return {"name": ds["name"], "fields": [{"name": r[0], "type": r[1]} for r in rows]}
         except Exception as exc:
-            return {"name": ds.get("name"), "error": str(exc)}
+            error_id = uuid.uuid4().hex
+            logger.exception(f"[{error_id}] DuckDB error")
+            return {"name": ds.get("name"), "error": "Internal server error", "error_id": error_id}
 
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:

@@ -17,10 +17,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+
 import duckdb
 import httpx
 import pandas as pd
+import re
 from sqlalchemy import create_engine, text
+
+SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+def validate_safe_identifier(value: str, label: str = "identifier") -> None:
+    if not SAFE_IDENTIFIER_RE.fullmatch(value or ""):
+        raise ValueError(f"Invalid {label} name")
+
 
 from app.config import settings
 from app.registry import tool
@@ -425,6 +434,10 @@ def cartridge_list_entities(cartridge_id: str) -> list[dict[str, Any]]:
     },
 )
 def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
+    validate_safe_identifier(cartridge_id, 'cartridge_id')
+    validate_safe_identifier(entity, 'entity')
+    validate_safe_identifier(cartridge_id, "cartridge_id")
+    validate_safe_identifier(entity, "entity")
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             """
@@ -473,6 +486,8 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
     },
 )
 def cartridge_preview(cartridge_id: str, entity: str, limit: int = 20) -> dict[str, Any]:
+    validate_safe_identifier(cartridge_id, "cartridge_id")
+    validate_safe_identifier(entity, "entity")
     limit = min(limit, 200)
     path  = _bronze_path(cartridge_id, entity)
     sql   = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"

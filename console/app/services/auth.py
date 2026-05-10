@@ -386,7 +386,7 @@ def _user_to_dict(row) -> dict | None:
 
 
 def cookie_secure() -> bool:
-    return os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+    return os.environ.get("COOKIE_SECURE", "true").lower() == "true"
 
 
 def verify_internal_api_key(

@@ -13,8 +13,8 @@ SQLALCHEMY_DATABASE_URI = (
 )
 
 # Internal-only deployment behind VPN — relax CSP/CSRF that block local devs.
-TALISMAN_ENABLED  = False
-WTF_CSRF_ENABLED  = False
+TALISMAN_ENABLED  = True
+WTF_CSRF_ENABLED  = True
 
 # Avoid the in-memory rate-limiter warning. Redis would be ideal long-term.
 RATELIMIT_ENABLED = False

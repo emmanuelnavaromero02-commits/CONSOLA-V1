@@ -77,8 +77,9 @@ async def invoke_tool(req: InvokeRequest):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
-        # Return structured error so the LLM can reason about it
-        return {"error": str(exc), "tool": req.tool}
+        error_id = uuid.uuid4().hex
+        logger.exception(f"[{error_id}] Internal error during invoke_tool")
+        return {"error": "Internal server error", "error_id": error_id, "tool": req.tool}
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────

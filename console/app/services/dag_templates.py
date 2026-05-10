@@ -134,7 +134,7 @@ def _upload_parquet(df, cartridge_id: str, entity: str) -> tuple[str, int]:
 
     client = Minio(Variable.get("minio_endpoint"),
                    access_key=Variable.get("minio_access_key"),
-                   secret_key=Variable.get("minio_secret_key"), secure=False)
+                   secret_key=Variable.get("minio_secret_key"), secure=Variable.get("minio_secure", default_var="false").lower() == "true")
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     for obj in client.list_objects(bucket, prefix=prefix, recursive=True):

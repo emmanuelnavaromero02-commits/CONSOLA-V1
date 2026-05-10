@@ -66,6 +66,7 @@ def _validate_dataset_name(dataset: str) -> None:
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Referrer-Policy": "same-origin",
     "Content-Security-Policy": (
         "default-src 'self'; "

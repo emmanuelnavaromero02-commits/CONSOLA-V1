@@ -314,6 +314,7 @@ async def _refresh_dag_run_status(row: dict) -> dict:
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Referrer-Policy": "same-origin",
     "Content-Security-Policy": (
         "default-src 'self'; "

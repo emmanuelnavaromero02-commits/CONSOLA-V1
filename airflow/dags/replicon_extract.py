@@ -168,7 +168,7 @@ def _minio_client():
         endpoint=Variable.get("minio_endpoint"),
         access_key=Variable.get("minio_access_key"),
         secret_key=Variable.get("minio_secret_key"),
-        secure=False,
+        secure=Variable.get("minio_secure", default_var="false").lower() == "true",
     )
 
 

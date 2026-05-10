@@ -78,7 +78,7 @@ services:
       WORKSPACE_URL:       ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
       RAG_URL:             http://mcp-infra:8010   # RAG migrado a mcp-infra
       # SMTP: MailHog en VPC interno hasta que se enchufe SES
-      SMTP_HOST:           ${SMTP_HOST:-mailhog}
+      SMTP_HOST:           ${SMTP_HOST}
       SMTP_PORT:           ${SMTP_PORT:-1025}
       SMTP_USER:           ${SMTP_USER:-}
       SMTP_PASSWORD:       ${SMTP_PASSWORD:-}
@@ -100,9 +100,13 @@ services:
     depends_on:
       - postgres
       - mcp-infra
-      - mailhog
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   workspace:
     image: modecissions/workspace:latest
@@ -129,6 +133,11 @@ services:
       - mcp-infra
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   refinement:
     image: modecissions/refinement:latest
@@ -155,6 +164,11 @@ services:
       - postgres_gold
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 
   vault:
@@ -170,17 +184,11 @@ services:
       - postgres
     restart: unless-stopped
     logging: *default-logging
-
-  mailhog:
-    image: mailhog/mailhog:v1.0.1
-    container_name: mode_mailhog
-    ports:
-      - "1025:1025"   # SMTP (consumed by console)
-      - "8025:8025"   # Web UI (only accessible from VPN peers via App SG)
-    networks:
-      - modecissions_net
-    restart: unless-stopped
-    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8300/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── MCP Infrastructure ────────────────────────────────────────────────────
 
@@ -223,6 +231,11 @@ services:
       - airflow
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── Superset ──────────────────────────────────────────────────────────────
 
@@ -245,6 +258,11 @@ services:
       - postgres
     restart: "no"
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   superset:
     image: apache/superset:3.1.3
@@ -259,7 +277,7 @@ services:
     # -h 0.0.0.0: bindear en todas las interfaces, NO solo 127.0.0.1, para que
     # docker-proxy pueda forwardear desde el host al contenedor. Sin esto,
     # "Up (healthy)" pero curl desde host devuelve 000.
-    command: superset run -h 0.0.0.0 -p 8088 --with-threads --reload
+    command: superset run -h 0.0.0.0 -p 8088 --with-threads
     ports:
       - "8088:8088"
     networks:

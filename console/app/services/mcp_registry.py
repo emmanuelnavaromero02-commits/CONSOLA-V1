@@ -8,8 +8,11 @@ Contract each MCP server must implement:
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
+import urllib.parse
 
 import asyncpg
 import httpx
@@ -97,7 +100,40 @@ async def list_servers() -> list[dict]:
     return result
 
 
+
+
+def validate_mcp_server_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("URL de servidor MCP no permitida por seguridad.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL de servidor MCP no permitida por seguridad.")
+
+    # Internal known hosts whitelist
+    if hostname in ("console", "workspace", "refinement", "mcp-infra", "airflow", "vault", "postgres", "postgres_gold", "replicon-mock", "superset"):
+        return
+
+    if hostname in ("localhost", "metadata.google.internal", "metadata"):
+        raise ValueError("URL de servidor MCP no permitida por seguridad.")
+
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+        for family, type, proto, canonname, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            ip_obj = ipaddress.ip_address(ip_str)
+            if ip_obj.is_loopback or ip_obj.is_link_local:
+                raise ValueError("URL de servidor MCP no permitida por seguridad.")
+            if ip_obj.is_private:
+                raise ValueError("URL de servidor MCP no permitida por seguridad.")
+            if str(ip_obj) in ("0.0.0.0", "::"):
+                raise ValueError("URL de servidor MCP no permitida por seguridad.")
+    except socket.gaierror:
+        pass
+
+
 async def register(server: dict) -> dict:
+    validate_mcp_server_url(server["url"])
     pool = await _get_pool()
     tools = await _fetch_tools(server["url"])
     await pool.execute("""
