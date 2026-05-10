@@ -23,8 +23,7 @@ function chip(text, variant = '') {
 }
 
 function statusDot(status) {
-  const dot = el('span', `home-dot ${status === 'online' ? 'ok' : status === 'offline' ? 'off' : ''}`.trim());
-  return dot;
+  return el('span', `home-dot ${status === 'online' ? 'ok' : status === 'offline' ? 'off' : ''}`.trim());
 }
 
 function renderHero() {
@@ -35,12 +34,14 @@ function renderHero() {
     el('h1', null, 'Panel operativo'),
     el('p', null, 'Administra tus datos, fuentes, permisos y procesos desde un solo lugar.')
   );
+
   const actions = el('div', 'home-hero-actions');
   actions.append(
     linkButton('Abrir Workspace', state.workspaceUrl, 'primary', hasPermission('workspace.access'), permissionText('workspace.access')),
-    linkButton('Ver Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), permissionText('monitor.read')),
+    linkButton('Abrir Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), permissionText('monitor.read')),
     linkButton('Gestionar IAM', '/iam', 'secondary', hasPermission('iam.users.read'), permissionText('iam.users.read'))
   );
+
   const badges = el('div', 'home-badges');
   badges.append(
     el('span', 'home-badge red', 'IAM protegido'),
@@ -93,7 +94,6 @@ function renderSection(title, desc, content) {
   section.append(head, content);
   return section;
 }
-
 
 function renderQuickAccess() {
   const panel = el('section', 'home-quick-panel');
@@ -167,7 +167,7 @@ function renderAdministration() {
   const grid = el('div', 'home-admin-grid');
   grid.append(
     card({
-      title: 'IAM / Access',
+      title: 'IAM / Accesos',
       icon: 'I',
       description: 'Administra accesos, roles, sesiones y reglas visibles.',
       href: '/iam',
@@ -189,7 +189,7 @@ function renderAdministration() {
       secondary: [{ label: 'Invitar usuario', href: '/iam', permission: 'iam.users.write' }],
     }),
     card({
-      title: 'Security Center',
+      title: 'Centro de seguridad',
       icon: 'A',
       description: 'Revisa auditoría, sesiones e intentos de acceso.',
       href: '/security',
@@ -214,14 +214,48 @@ function renderAdministration() {
   return renderSection('Administración', 'Identidad, seguridad y accesos viven separados del trabajo diario.', grid);
 }
 
-
 function renderDataProcesses() {
   const grid = el('div', 'home-admin-grid');
   grid.append(
-    card({ title: humanizeTerm('datasets'), icon: 'DT', description: 'Explora reportes y tablas preparadas para análisis.', href: '/viewer/datasets', primary: 'Ver reportes', permission: 'datasets.read', kind: 'system', meta: [{ text: 'Datos preparados' }] }),
-    card({ title: humanizeTerm('pipelines'), icon: 'F', description: 'Revisa ejecuciones, estados y próximos procesos.', href: '/monitor', primary: 'Ver flujos', permission: 'pipelines.read', kind: 'system', secondary: [{ label: 'Ejecutar Replicon', href: '/monitor', permission: 'pipelines.run' }] }),
-    card({ title: 'Replicon', icon: 'R', description: 'Fuente de datos operativa para extracción y gobierno de datos Replicon.', href: '/studio', primary: 'Abrir fuente', permission: 'studio.read', kind: 'system', meta: [{ text: state.statuses.replicon?.label || 'No verificado' }] }),
-    card({ title: 'Trabajos', icon: 'T', description: 'Consulta historial y detalle de trabajos recientes.', href: '/viewer/jobs', primary: 'Ver trabajos', permission: 'monitor.read', kind: 'system' })
+    card({
+      title: humanizeTerm('datasets'),
+      icon: 'DT',
+      description: 'Explora reportes y tablas preparadas para análisis.',
+      href: '/viewer/datasets',
+      primary: 'Ver reportes',
+      permission: 'datasets.read',
+      kind: 'system',
+      meta: [{ text: 'Datos preparados' }],
+    }),
+    card({
+      title: humanizeTerm('pipelines'),
+      icon: 'F',
+      description: 'Revisa ejecuciones, estados y próximos procesos.',
+      href: '/monitor',
+      primary: 'Ver flujos',
+      permission: 'pipelines.read',
+      kind: 'system',
+      secondary: [{ label: 'Ejecutar Replicon', href: '/monitor', permission: 'pipelines.run' }],
+    }),
+    card({
+      title: 'Replicon',
+      icon: 'R',
+      description: 'Fuente de datos operativa para extracción y gobierno de datos Replicon.',
+      href: '/studio',
+      primary: 'Abrir fuente',
+      permission: 'studio.read',
+      kind: 'system',
+      meta: [{ text: state.statuses.replicon?.label || 'No verificado' }],
+    }),
+    card({
+      title: 'Trabajos',
+      icon: 'T',
+      description: 'Consulta historial y detalle de trabajos recientes.',
+      href: '/viewer/jobs',
+      primary: 'Ver trabajos',
+      permission: 'monitor.read',
+      kind: 'system',
+    })
   );
   return renderSection('Datos y procesos', 'Flujos automáticos, fuentes y reportes en una zona operativa compacta.', grid);
 }
@@ -230,7 +264,7 @@ function renderSystemOps() {
   const panel = el('section', 'home-status-panel');
   const head = el('div', 'home-section-head');
   const copy = el('div');
-  copy.append(el('h2', 'home-section-title', 'Estado del sistema'), el('p', 'home-section-desc', 'Mostramos estado real cuando existe API. “No verificado” no significa online.'));
+  copy.append(el('h2', 'home-section-title', 'Estado del sistema'), el('p', 'home-section-desc', 'Mostramos estado real cuando existe API. “No verificado” no significa en línea.'));
   head.appendChild(copy);
   panel.appendChild(head);
 
