@@ -4,198 +4,244 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MODecissions PaaS</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
+    html, body {
+      min-height: 100%;
+      overflow: auto;
+      background: var(--color-bg);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+    }
+
+    html[data-theme="dark"],
+    html[data-theme="dark"] body {
+      background: var(--color-bg-dark);
+      color: #f8fafc;
+    }
+
     .landing {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      height: 100vh;
-      gap: 36px;
-      padding: 20px;
+      justify-content: flex-start;
+      min-height: 100vh;
+      gap: 28px;
+      padding: 64px 24px 36px;
       box-sizing: border-box;
     }
-    .brand-logo {
-      font-family: var(--font-ui);
-      font-size: 28px;
-      font-weight: 700;
-      color: var(--green);
-      letter-spacing: 2px;
-      text-align: center;
-    }
-    .brand-logo .accent { color: var(--amber); }
-    .brand-tagline {
-      text-align: center;
-      font-size: 10px;
-      color: var(--text3);
-      letter-spacing: 2px;
-      margin-top: 8px;
-    }
-    .mode-cards {
-      display: flex;
-      gap: 28px;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-    .mode-card {
-      width: 290px;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 30px 26px;
-      text-decoration: none;
-      transition: border-color .2s, box-shadow .2s, transform .15s;
+
+    .landing-inner {
+      width: min(1120px, 100%);
       display: flex;
       flex-direction: column;
-      gap: 13px;
+      gap: 28px;
+    }
+
+    .landing-header {
+      text-align: center;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .brand-logo {
+      font-family: var(--font-sans);
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 700;
+      color: var(--color-text-primary);
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+    html[data-theme="dark"] .brand-logo { color: #f8fafc; }
+    .brand-logo .accent { color: var(--color-accent); }
+    .brand-tagline {
+      font-size: 16px;
+      color: var(--color-text-secondary);
+      letter-spacing: 0;
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+    html[data-theme="dark"] .brand-tagline { color: rgba(248,250,252,.72); }
+
+    .mode-cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .mode-card {
+      min-height: 220px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 24px;
+      text-decoration: none;
+      transition: border-color .2s, box-shadow .2s, transform .15s, background .2s;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      color: inherit;
+    }
+    html[data-theme="dark"] .mode-card {
+      background: #202638;
+      border-color: rgba(255,255,255,.12);
     }
     .mode-card:hover {
-      border-color: var(--green);
-      box-shadow: 0 4px 20px rgba(0,0,0,.2);
-      transform: translateY(-3px);
+      border-color: var(--color-accent);
+      box-shadow: 0 14px 36px rgba(15, 23, 42, .10);
+      transform: translateY(-2px);
     }
-    .mode-card-studio:hover {
-      border-color: var(--amber);
-      box-shadow: 0 4px 20px rgba(0,0,0,.2);
+    html[data-theme="dark"] .mode-card:hover { box-shadow: 0 14px 36px rgba(0,0,0,.28); }
+    .mc-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: rgba(37, 99, 235, .10);
+      color: var(--color-accent);
+      font-size: 20px;
     }
-    .mc-icon  { font-size: 22px; color: var(--green); }
-    .mode-card-studio .mc-icon { color: var(--amber); }
     .mc-title {
-      font-family: var(--font-pixel);
-      font-size: 10px;
-      color: var(--green);
-      letter-spacing: 3px;
+      font-family: var(--font-sans);
+      font-size: 18px;
+      color: var(--color-text-primary);
+      font-weight: 700;
+      letter-spacing: 0;
     }
-    .mode-card-studio .mc-title { color: var(--amber); }
-    .mc-desc  { font-size: 11px; color: var(--text2); line-height: 1.8; }
+    html[data-theme="dark"] .mc-title { color: #f8fafc; }
+    .mc-desc {
+      font-size: 14px;
+      color: var(--color-text-secondary);
+      line-height: 1.6;
+      flex: 1;
+    }
+    html[data-theme="dark"] .mc-desc { color: rgba(248,250,252,.70); }
     .mc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
     .chip {
-      padding: 2px 8px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-size: 9px;
-      color: var(--text3);
-      font-family: var(--font-mono);
+      padding: 4px 10px;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      font-size: 11px;
+      color: var(--color-text-secondary);
+      font-family: var(--font-sans);
     }
-    .mc-cta { font-size: 11px; color: var(--green); font-family: var(--font-mono); margin-top: 4px; }
-    .mode-card-studio .mc-cta { color: var(--amber); }
-    .mode-card-apps { border-color: var(--border); }
-    .mode-card-apps:hover { border-color: #7c9fff; box-shadow: 0 4px 20px rgba(0,0,0,.2); }
-    .mode-card-apps .mc-icon  { color: #7c9fff; }
-    .mode-card-apps .mc-title { color: #7c9fff; font-family: var(--font-pixel); font-size: 10px; letter-spacing: 3px; }
-    .mode-card-apps .mc-cta   { color: #7c9fff; }
-    .mode-card-decisions:hover { border-color: var(--amber); box-shadow: 0 4px 20px rgba(0,0,0,.2); }
-    .mode-card-decisions .mc-icon  { color: var(--amber); }
-    .mode-card-decisions .mc-title { color: var(--amber); }
-    .mode-card-decisions .mc-cta   { color: var(--amber); }
-    .mode-card-users:hover { border-color: var(--cyan); box-shadow: 0 4px 20px rgba(0,0,0,.2); }
-    .mode-card-users .mc-icon  { color: var(--cyan); }
-    .mode-card-users .mc-title { color: var(--cyan); }
-    .mode-card-users .mc-cta   { color: var(--cyan); }
-    .mode-card-workspace:hover { border-color: var(--cyan); box-shadow: 0 4px 20px rgba(0,0,0,.2); }
-    .mode-card-workspace .mc-icon  { color: var(--cyan); }
-    .mode-card-workspace .mc-title { color: var(--cyan); }
-    .mode-card-workspace .mc-cta   { color: var(--cyan); }
+    html[data-theme="dark"] .chip {
+      background: rgba(255,255,255,.06);
+      border-color: rgba(255,255,255,.10);
+      color: rgba(248,250,252,.72);
+    }
+    .mc-cta {
+      font-size: 14px;
+      color: var(--color-accent);
+      font-family: var(--font-sans);
+      font-weight: 700;
+      margin-top: 4px;
+    }
     .admin-pill {
-      display: inline-block; padding: 2px 8px; margin-left: 6px;
-      background: rgba(248,81,73,.12); color: var(--red);
-      font-size: 8px; letter-spacing: 1.5px; border-radius: 3px;
+      display: inline-block; padding: 3px 8px; margin-left: 8px;
+      background: rgba(220,38,38,.10); color: var(--color-error);
+      font-size: 10px; letter-spacing: 0; border-radius: 999px;
       vertical-align: 1px;
+      font-weight: 700;
     }
     .landing-status {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 10px;
-      color: var(--text3);
+      justify-content: center;
+      font-size: 13px;
+      color: var(--color-text-secondary);
+      padding-top: 4px;
+    }
+    html[data-theme="dark"] .landing-status { color: rgba(248,250,252,.68); }
+
+    @media (max-width: 980px) {
+      .mode-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .landing { padding: 40px 16px 28px; }
+      .mode-cards { grid-template-columns: 1fr; }
+      .mode-card { min-height: 0; }
     }
   </style>
 </head>
 <body>
-  <div class="crt-overlay"></div>
-  <div class="scanlines"></div>
-
   <div class="landing">
-    <div>
-      <div class="brand-logo">MO<span class="accent">D</span>ECISSIONS <span style="color:var(--text3)">PAAS</span></div>
-      <div class="brand-tagline">DECISION INTELLIGENCE PLATFORM · MCP-FIRST · LAKEHOUSE · LLM-ASSISTED</div>
-    </div>
+    <div class="landing-inner">
+      <header class="landing-header">
+        <div class="brand-logo">MO<span class="accent">D</span>ecissions PaaS</div>
+        <div class="brand-tagline">Consola operativa para datos, cartuchos, pipelines y decisiones.</div>
+      </header>
 
-    <div class="mode-cards">
-      <a href="#" id="card-workspace" class="mode-card mode-card-workspace">
-        <div class="mc-icon">▣</div>
-        <div class="mc-title">WORKSPACE</div>
-        <div class="mc-desc">Vista de usuario final: aplicaciones publicadas y asistente IA con acceso al modelo semántico, RAG y datos GOLD.</div>
+      <div class="mode-cards">
+      <a href="#" id="card-workspace" class="mode-card">
+        <div class="mc-icon">W</div>
+        <div class="mc-title">Workspace</div>
+        <div class="mc-desc">Aplicaciones publicadas, asistente y datos Gold para usuarios de negocio.</div>
         <div class="mc-chips">
           <span class="chip">Apps</span>
           <span class="chip">Asistente</span>
-          <span class="chip">RAG</span>
           <span class="chip">GOLD</span>
         </div>
-        <div class="mc-cta">→ ABRIR WORKSPACE</div>
+        <div class="mc-cta">Abrir Workspace</div>
       </a>
 
       <a href="/monitor" class="mode-card">
-        <div class="mc-icon">◈</div>
-        <div class="mc-title">MONITOR</div>
-        <div class="mc-desc">Observa el estado del pipeline, extrae datos, consulta con el asistente IA y monitorea jobs en tiempo real.</div>
+        <div class="mc-icon">M</div>
+        <div class="mc-title">Monitor</div>
+        <div class="mc-desc">Supervisa pipelines, jobs, datasets y servidores MCP en tiempo real.</div>
         <div class="mc-chips">
-          <span class="chip">Pipeline DAG</span>
-          <span class="chip">Jobs &amp; logs</span>
+          <span class="chip">Pipelines</span>
+          <span class="chip">Jobs</span>
           <span class="chip">Datasets</span>
-          <span class="chip">Asistente IA</span>
         </div>
-        <div class="mc-cta">→ ABRIR MONITOR</div>
+        <div class="mc-cta">Abrir Monitor</div>
       </a>
 
-      <a href="/studio" class="mode-card mode-card-studio">
-        <div class="mc-icon">⚙</div>
-        <div class="mc-title">STUDIO</div>
-        <div class="mc-desc">Crea cartuchos, configura extractores, refina datos en Silver/Gold y entrena la IA con tu vocabulario de negocio.</div>
+      <a href="/studio" class="mode-card">
+        <div class="mc-icon">S</div>
+        <div class="mc-title">Studio</div>
+        <div class="mc-desc">Configura cartuchos, entidades, transformaciones y conocimiento semántico.</div>
         <div class="mc-chips">
           <span class="chip">Cartuchos</span>
           <span class="chip">Entidades</span>
-          <span class="chip">Silver / Gold</span>
-          <span class="chip">IA Semántica</span>
+          <span class="chip">Semántica</span>
         </div>
-        <div class="mc-cta">→ ABRIR STUDIO</div>
+        <div class="mc-cta">Abrir Studio</div>
       </a>
 
-      <a href="/decisions" class="mode-card mode-card-decisions">
-        <div class="mc-icon">▣</div>
-        <div class="mc-title">DECISIONES</div>
-        <div class="mc-desc">Registra decisiones tomadas a partir de KPIs y dashboards, define metas, lleva bitácora de acciones y cierra con resultado verificable.</div>
+      <a href="/decisions" class="mode-card">
+        <div class="mc-icon">D</div>
+        <div class="mc-title">Decisiones</div>
+        <div class="mc-desc">Registra decisiones, KPIs, acciones y seguimiento operativo.</div>
         <div class="mc-chips">
           <span class="chip">Registro</span>
           <span class="chip">KPIs</span>
-          <span class="chip">Bitácora</span>
           <span class="chip">Seguimiento</span>
         </div>
-        <div class="mc-cta">→ ABRIR DECISIONES</div>
+        <div class="mc-cta">Abrir Decisiones</div>
       </a>
 
-      <a href="/admin/users" class="mode-card mode-card-users" id="card-users" style="display:none">
-        <div class="mc-icon">◉</div>
-        <div class="mc-title">USUARIOS<span class="admin-pill">ADMIN</span></div>
-        <div class="mc-desc">Alta, baja, modificación y revocación de cuentas locales. Asigna roles (user / admin) y resetea contraseñas.</div>
+      <a href="/admin/users" class="mode-card" id="card-users" style="display:none">
+        <div class="mc-icon">U</div>
+        <div class="mc-title">Usuarios<span class="admin-pill">Admin</span></div>
+        <div class="mc-desc">Administra cuentas, roles, sesiones y accesos locales.</div>
         <div class="mc-chips">
-          <span class="chip">ABCD</span>
+          <span class="chip">Cuentas</span>
           <span class="chip">Roles</span>
           <span class="chip">Sesiones</span>
-          <span class="chip">Reset password</span>
         </div>
-        <div class="mc-cta">→ GESTIONAR USUARIOS</div>
+        <div class="mc-cta">Gestionar Usuarios</div>
       </a>
-
-    </div>
+      </div>
 
     <div class="landing-status">
       <span class="status-dot blink"></span>
       <span id="status-text">Verificando sistema...</span>
+    </div>
     </div>
   </div>
 
