@@ -119,7 +119,7 @@ def _save_run(batch_id: str, **kwargs) -> None:
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
             json={"tool": "pipeline_run_save",
-                  "args": {"dag_id": "replicon_projects_detail",
+                  "args": {"dag_id": "replicon_projects_billing",
                            "cartridge_id": CARTRIDGE_ID,
                            "entity": ENTITY,
                            "run_id": batch_id,
