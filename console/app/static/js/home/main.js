@@ -9,6 +9,8 @@ import {
 } from './api.js';
 import { applyPermissionsFromRole, setState, state } from './state.js';
 import { renderHome } from './render.js';
+import { cycleTheme } from '../theme.js';
+import { humanizeError, humanizeTerm } from '../i18n/labels.js';
 
 function status(name, label, value = 'unknown') {
   return { name, label, status: value };
@@ -59,29 +61,29 @@ async function loadHomeData() {
   if (mcp) {
     const servers = mcp.servers || [];
     const healthy = servers.filter((server) => server.healthy).length;
-    state.statuses.mcp = status('MCP', `${healthy}/${servers.length} services`, healthy ? 'online' : 'unknown');
-    state.statuses.replicon = status('Replicon', servers.some((server) => String(server.name || server.id || '').includes('replicon')) ? 'Registered' : 'Not checked', 'unknown');
+    state.statuses.mcp = status(humanizeTerm('mcp'), `${healthy}/${servers.length} servicios`, healthy ? 'online' : 'unknown');
+    state.statuses.replicon = status('Replicon', servers.some((server) => String(server.name || server.id || '').includes('replicon')) ? 'Registrado' : 'No verificado', 'unknown');
   } else {
-    state.statuses.mcp = status('MCP', 'Limited access', 'unknown');
-    state.statuses.replicon = status('Replicon', 'Not checked', 'unknown');
+    state.statuses.mcp = status(humanizeTerm('mcp'), 'Acceso limitado', 'unknown');
+    state.statuses.replicon = status('Replicon', 'No verificado', 'unknown');
   }
 
-  state.statuses.console = status('Console', 'Online', 'online');
-  state.statuses.workspace = status('Workspace', state.workspaceUrl ? 'Configured' : 'Not checked', state.workspaceUrl ? 'online' : 'unknown');
-  state.statuses.airflow = status('Airflow', 'Not checked', 'unknown');
-  state.statuses.minio = status('MinIO / Bronze', 'Not checked', 'unknown');
+  state.statuses.console = status('Consola', 'En línea', 'online');
+  state.statuses.workspace = status('Workspace', state.workspaceUrl ? 'Configurado' : 'No verificado', state.workspaceUrl ? 'online' : 'unknown');
+  state.statuses.airflow = status('Airflow', 'No verificado', 'unknown');
+  state.statuses.minio = status('MinIO', 'No verificado', 'unknown');
 
   const adminUsers = await optional('admin users', fetchAdminUsers, null);
   if (adminUsers) setState({ usersSummary: summarizeUsers(adminUsers) });
 
   const audit = await optional('audit', fetchAudit, null);
-  state.activity.audit = audit ? `${audit.length} recent events` : 'Audit limited';
+  state.activity.audit = audit ? `${audit.length} eventos recientes` : 'Auditoría con acceso limitado';
 
   const pipeline = await optional('pipeline', fetchPipeline, null);
   if (pipeline?.pipeline) {
-    state.activity.pipeline = `${pipeline.pipeline.length} pipeline rows available`;
+    state.activity.pipeline = `${pipeline.pipeline.length} registros del flujo disponibles`;
   } else {
-    state.activity.pipeline = 'Pipeline not checked';
+    state.activity.pipeline = 'Flujo automático no verificado';
   }
 
   setState({ loading: false });
@@ -94,8 +96,31 @@ export async function initHomeControlPlane() {
     await loadHomeData();
     renderHome(root);
   } catch (error) {
-    console.warn('Home control plane fallback:', error);
+    console.warn('Home control plane fallback:', humanizeError(error));
   }
 }
 
 document.addEventListener('DOMContentLoaded', initHomeControlPlane);
+
+document.addEventListener('click', async (event) => {
+  const themeToggle = event.target.closest('[data-theme-toggle]');
+  if (themeToggle) {
+    const next = cycleTheme();
+    themeToggle.textContent = next === 'light' ? 'Tema: claro' : next === 'dark' ? 'Tema: oscuro' : 'Tema: sistema';
+    return;
+  }
+
+  const logout = event.target.closest('[data-logout]');
+  if (logout) {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => null);
+    window.location.href = '/login';
+  }
+});
+
+document.addEventListener('toggle', (event) => {
+  const menu = event.target;
+  if (!menu.matches?.('.home-action-menu') || !menu.open) return;
+  document.querySelectorAll('.home-action-menu[open]').forEach((item) => {
+    if (item !== menu) item.removeAttribute('open');
+  });
+}, true);

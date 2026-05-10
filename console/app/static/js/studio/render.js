@@ -2,6 +2,7 @@ import { exportCartridge, importCartridge } from './api.js';
 import { selectCartridge } from './cartridges.js';
 import { openNewCartridgeModal } from './modals.js';
 import { state } from './state.js';
+import { humanizeTerm } from '../i18n/labels.js';
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -36,7 +37,7 @@ function cartridgeName(cartridge) {
 }
 
 function cartridgeDescription(cartridge) {
-  return cartridge?.description || 'Cartucho operativo para conectar entidades, DAGs, datasets y conocimiento semántico.';
+  return cartridge?.description || 'Fuente de datos operativa para conectar tablas, tareas automáticas, reportes y conocimiento semántico.';
 }
 
 function renderHeader() {
@@ -45,7 +46,7 @@ function renderHeader() {
   copy.append(
     el('div', 'studio-modern-eyebrow', 'MODecissions Console'),
     el('h1', 'studio-modern-title', 'Studio'),
-    el('p', 'studio-modern-desc', 'Configura cartuchos, entidades, transformaciones y conocimiento semántico desde una consola operativa clara.')
+    el('p', 'studio-modern-desc', 'Configura fuentes de datos, tablas, transformaciones y conocimiento semántico desde una consola operativa clara.')
   );
   const nav = el('nav', 'studio-modern-nav');
   nav.setAttribute('aria-label', 'Studio navigation');
@@ -59,7 +60,7 @@ export function renderToolbar(onRender) {
   const toolbar = el('section', 'studio-modern-toolbar');
 
   const selectWrap = el('div');
-  const label = el('label', 'studio-modern-label', 'Cartucho');
+  const label = el('label', 'studio-modern-label', humanizeTerm('cartridge'));
   label.htmlFor = 'studio-modern-cartridge';
   const select = el('select', 'studio-modern-select');
   select.id = 'studio-modern-cartridge';
@@ -80,14 +81,14 @@ export function renderToolbar(onRender) {
   summary.append(
     chip(cartridgeName(cartridge)),
     chip(`v${cartridge?.version || '0.1.0'}`),
-    chip(`${entityCount(cartridge)} entidades`),
-    chip(cartridge?.pattern || cartridge?.category || 'dag-based'),
+    chip(`${entityCount(cartridge)} tablas`),
+    chip(cartridge?.pattern || cartridge?.category || 'tarea automática'),
     chip('Operativo', 'success')
   );
 
   const actions = el('div', 'studio-modern-toolbar-actions');
   actions.append(
-    button('Nuevo cartucho', 'primary', () => openNewCartridgeModal(onRender)),
+    button('Nueva fuente', 'primary', () => openNewCartridgeModal(onRender)),
     button('Descargar ZIP', '', () => exportCartridge(cartridge?.id))
   );
 
@@ -114,14 +115,14 @@ export function renderCartridgeCard(onRender) {
 
   const stats = el('div', 'studio-modern-stats');
   stats.append(
-    stat('Tipo', cartridge?.pattern || 'dag-based'),
-    stat('Entidades', String(entityCount(cartridge))),
+    stat('Tipo', cartridge?.pattern || 'tarea automática'),
+    stat('Tablas', String(entityCount(cartridge))),
     stat('Estado', cartridge?.healthy === false ? 'Revisar' : 'Operativo')
   );
 
   const actions = el('div', 'studio-modern-actions');
   actions.append(
-    button('Ver entidades', 'primary', () => { if (typeof window.goStep === 'function') window.goStep(3); }),
+    button('Ver tablas', 'primary', () => { if (typeof window.goStep === 'function') window.goStep(3); }),
     button('ZIP', '', () => exportCartridge(cartridge?.id)),
     button('Configurar', '', () => { if (typeof window.goStep === 'function') window.goStep(2); }),
     button('Nuevo', 'success', () => openNewCartridgeModal(onRender))
@@ -147,8 +148,8 @@ export function renderImportCard(onRender) {
   const body = el('div');
   body.append(
     el('div', 'studio-import-icon', 'ZIP'),
-    el('h2', 'studio-import-title', 'Importar cartucho desde ZIP'),
-    el('p', 'studio-import-copy', 'Sube un paquete exportado previamente para registrarlo en esta instalación sin tocar backend ni rutas.'),
+    el('h2', 'studio-import-title', 'Importar fuente desde ZIP'),
+    el('p', 'studio-import-copy', 'Sube un paquete exportado previamente para registrarlo en esta instalación sin tocar servicios internos ni rutas.'),
     el('div', 'studio-import-drop', 'Arrastra un ZIP aquí o usa el botón de importación.')
   );
 
@@ -162,7 +163,7 @@ export function renderImportCard(onRender) {
     try {
       await importCartridge(file);
       status.className = 'studio-import-status success';
-      status.textContent = 'Cartucho importado.';
+      status.textContent = 'Fuente de datos importada.';
       if (typeof window.loadCartridges === 'function') await window.loadCartridges();
       await onRender(true);
     } catch (error) {

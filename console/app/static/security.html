@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Security Center · MODecissions</title>
   <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/help-tooltips.css">
   <style>
     html, body {
       min-height: 100%;
@@ -285,14 +286,14 @@
     <div class="security-shell">
       <header class="security-header">
         <div>
-          <div class="eyebrow">Administration</div>
-          <h1>Security Center</h1>
+          <div class="eyebrow">Administración</div>
+          <h1>Centro de seguridad</h1>
           <p class="security-subtitle">Sesiones, auditoría y estado de seguridad de la consola.</p>
         </div>
         <nav class="security-actions" aria-label="Navegación">
-          <a class="link-button" href="/iam">IAM / Access</a>
+          <a class="link-button" href="/iam">IAM / Accesos</a>
           <a class="link-button" href="/monitor">Monitor</a>
-          <a class="link-button" href="/">Home</a>
+          <a class="link-button" href="/">Inicio</a>
           <button class="button primary" id="refresh-btn" type="button">Actualizar</button>
         </nav>
       </header>
@@ -309,14 +310,14 @@
           <div class="summary-note">Últimos eventos registrados.</div>
         </article>
         <article class="summary-card">
-          <div class="summary-label">RBAC</div>
-          <div class="status-pill" id="rbac-state"><span class="status-dot"></span><span>Protected</span></div>
+          <div class="summary-label">Roles y permisos</div>
+          <div class="status-pill" id="rbac-state"><span class="status-dot"></span><span>Protegido</span></div>
           <div class="summary-note">APIs administrativas protegidas por rol admin.</div>
         </article>
         <article class="summary-card">
-          <div class="summary-label">Internal API Key</div>
-          <div class="status-pill" id="internal-key-state"><span class="status-dot"></span><span>Protected</span></div>
-          <div class="summary-note">Endpoints internos protegidos. La clave nunca se muestra.</div>
+          <div class="summary-label">Llave interna de API</div>
+          <div class="status-pill" id="internal-key-state"><span class="status-dot"></span><span>Protegida</span></div>
+          <div class="summary-note">Servicios internos protegidos. La clave nunca se muestra.</div>
         </article>
       </section>
 
@@ -324,10 +325,10 @@
         <article class="data-panel">
           <div class="panel-header">
             <div>
-              <div class="panel-title">Sessions</div>
+              <div class="panel-title">Sesiones</div>
               <div class="panel-description">Sesiones activas visibles para administradores.</div>
             </div>
-            <span class="status-pill warning" id="sessions-status"><span class="status-dot"></span><span>Loading</span></span>
+            <span class="status-pill warning" id="sessions-status"><span class="status-dot"></span><span>Cargando</span></span>
           </div>
           <div class="error-box" id="sessions-error"></div>
           <div class="table-wrap">
@@ -336,10 +337,10 @@
                 <tr>
                   <th>Usuario</th>
                   <th>IP</th>
-                  <th>User agent</th>
+                  <th>Navegador / agente</th>
                   <th>Creada</th>
                   <th>Última actividad</th>
-                  <th>Token</th>
+                  <th>Llave temporal</th>
                   <th>Acción</th>
                 </tr>
               </thead>
@@ -353,21 +354,21 @@
         <article class="data-panel">
           <div class="panel-header">
             <div>
-              <div class="panel-title">Audit Trail</div>
+              <div class="panel-title">Auditoría</div>
               <div class="panel-description">Últimos eventos de seguridad y administración.</div>
             </div>
-            <span class="status-pill warning" id="audit-status"><span class="status-dot"></span><span>Loading</span></span>
+            <span class="status-pill warning" id="audit-status"><span class="status-dot"></span><span>Cargando</span></span>
           </div>
           <div class="error-box" id="audit-error"></div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Timestamp</th>
+                  <th>Fecha</th>
                   <th>Actor</th>
-                  <th>Action</th>
-                  <th>Target</th>
-                  <th>Metadata</th>
+                  <th>Acción</th>
+                  <th>Objetivo</th>
+                  <th>Resumen</th>
                 </tr>
               </thead>
               <tbody id="audit-body">
@@ -380,6 +381,7 @@
     </div>
   </main>
 
+  <script type="module" src="/static/js/i18n/labels.js"></script>
   <script>
     document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
 
@@ -416,6 +418,8 @@
       el.textContent = message || '';
     }
 
+    const humanizeError = (err) => window.ModLabels?.humanizeError?.(err) || (err?.message || String(err || 'Error'));
+
     function formatDate(value) {
       if (!value) return '—';
       const d = new Date(value);
@@ -429,7 +433,7 @@
         const token = String(session.token);
         return token.length > 6 ? '...' + token.slice(-6) : '***';
       }
-      return 'Not exposed';
+      return 'No visible';
     }
 
     function revocationToken(session) {
@@ -513,7 +517,7 @@
         });
         return JSON.stringify(clean);
       } catch (err) {
-        return 'Metadata unavailable';
+        return 'Resumen no disponible';
       }
     }
 
@@ -545,35 +549,35 @@
     }
 
     async function loadSessions() {
-      setStatus(els.sessionsStatus, 'Loading', 'warning');
+      setStatus(els.sessionsStatus, 'Cargando', 'warning');
       showError(els.sessionsError, '');
       try {
         const data = await fetchJson('/security/sessions');
         state.sessions = Array.isArray(data) ? data : [];
         renderSessions();
-        setStatus(els.sessionsStatus, 'Healthy', 'healthy');
+        setStatus(els.sessionsStatus, 'Correcto', 'healthy');
       } catch (err) {
         state.sessions = [];
         setText(els.activeSessions, '—');
         clearBody(els.sessionsBody, 7, 'No se pudieron cargar las sesiones.');
-        showError(els.sessionsError, `Sessions API: ${err.message}`);
+        showError(els.sessionsError, `Sesiones: ${humanizeError(err)}`);
         setStatus(els.sessionsStatus, 'Error', 'error');
       }
     }
 
     async function loadAudit() {
-      setStatus(els.auditStatus, 'Loading', 'warning');
+      setStatus(els.auditStatus, 'Cargando', 'warning');
       showError(els.auditError, '');
       try {
         const data = await fetchJson('/security/audit');
         state.audit = Array.isArray(data) ? data : [];
         renderAudit();
-        setStatus(els.auditStatus, 'Healthy', 'healthy');
+        setStatus(els.auditStatus, 'Correcto', 'healthy');
       } catch (err) {
         state.audit = [];
         setText(els.auditCount, '—');
         clearBody(els.auditBody, 5, 'No se pudo cargar la auditoría.');
-        showError(els.auditError, `Audit API: ${err.message}`);
+        showError(els.auditError, `Auditoría: ${humanizeError(err)}`);
         setStatus(els.auditStatus, 'Error', 'error');
       }
     }
@@ -587,7 +591,7 @@
       });
       if (!response.ok) {
         showError(els.sessionsError, `No se pudo revocar la sesión: ${response.status}`);
-        setStatus(els.sessionsStatus, 'Warning', 'warning');
+        setStatus(els.sessionsStatus, 'Advertencia', 'warning');
         return;
       }
       await loadSessions();

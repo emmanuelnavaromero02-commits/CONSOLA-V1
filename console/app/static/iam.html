@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>IAM / Access Center · MODecissions</title>
   <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/help-tooltips.css">
   <style>
     html, body {
       min-height: 100%;
@@ -138,18 +139,18 @@
     <div class="shell">
       <aside class="rail">
         <div class="brand">MODecissions</div>
-        <div class="rail-title">IAM / Access</div>
+        <div class="rail-title">IAM / Accesos</div>
         <nav class="nav" aria-label="IAM sections">
-          <button type="button" class="active" data-tab="overview">Overview</button>
-          <button type="button" data-tab="users">Users</button>
-          <button type="button" data-tab="roles">Roles &amp; Permissions</button>
-          <button type="button" data-tab="tester">Access Tester</button>
-          <button type="button" data-tab="sessions">Sessions</button>
-          <button type="button" data-tab="audit">Audit Trail</button>
-          <button type="button" data-tab="policies">Policies</button>
-          <button type="button" data-tab="vault">Vault / Secrets</button>
-          <a href="/security">Security Center</a>
-          <a href="/admin/users">Admin Users</a>
+          <button type="button" class="active" data-tab="overview">Resumen</button>
+          <button type="button" data-tab="users">Usuarios</button>
+          <button type="button" data-tab="roles">Roles y permisos</button>
+          <button type="button" data-tab="tester">Probar acceso</button>
+          <button type="button" data-tab="sessions">Sesiones</button>
+          <button type="button" data-tab="audit">Auditoría</button>
+          <button type="button" data-tab="policies">Reglas de acceso</button>
+          <button type="button" data-tab="vault">Caja fuerte</button>
+          <a href="/security">Centro de seguridad</a>
+          <a href="/admin/users">Usuarios admin</a>
           <a href="/monitor">Monitor</a>
         </nav>
       </aside>
@@ -157,37 +158,37 @@
       <section class="main">
         <header class="hero">
           <div>
-            <div class="eyebrow">Identity and access management</div>
+            <div class="eyebrow">Identidad y accesos</div>
             <h1>IAM / Access Center</h1>
-            <p class="sub">Centro unificado para operar usuarios, sesiones, auditoría, permisos, políticas y accesos sensibles de la consola.</p>
+            <p class="sub">Centro unificado para operar usuarios, sesiones, auditoría, permisos, reglas de acceso y credenciales protegidas.</p>
           </div>
           <div class="actions">
             <button class="btn primary" type="button" id="refresh-btn">Actualizar</button>
-            <a class="link-btn" href="/viewer/vault">Vault</a>
-            <a class="link-btn" href="/">Home</a>
+            <a class="link-btn" href="/viewer/vault">Caja fuerte</a>
+            <a class="link-btn" href="/">Inicio</a>
           </div>
         </header>
 
         <section class="cards" aria-label="Access overview">
           <article class="card"><div class="card-label">Usuarios</div><div class="card-value" id="m-users">—</div><div class="card-note" id="m-users-note">Total local</div></article>
-          <article class="card"><div class="card-label">Admins</div><div class="card-value" id="m-admins">—</div><div class="card-note">Rol legacy admin</div></article>
-          <article class="card"><div class="card-label">Sesiones activas</div><div class="card-value" id="m-sessions">—</div><div class="card-note">Tokens no expuestos</div></article>
-          <article class="card"><div class="card-label">Audit Trail</div><div class="card-value" id="m-audit">—</div><div class="card-note">Eventos recientes</div></article>
+          <article class="card"><div class="card-label">Admins</div><div class="card-value" id="m-admins">—</div><div class="card-note">Rol administrador compatible</div></article>
+          <article class="card"><div class="card-label">Sesiones activas</div><div class="card-value" id="m-sessions">—</div><div class="card-note">Llaves temporales ocultas</div></article>
+          <article class="card"><div class="card-label">Auditoría</div><div class="card-value" id="m-audit">—</div><div class="card-note">Eventos recientes</div></article>
         </section>
 
         <article class="panel active" id="tab-overview">
-          <div class="panel-head"><div><div class="panel-title">Overview</div><div class="panel-desc">Estado de controles principales y superficies administrativas.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Resumen</div><div class="panel-desc">Estado de controles principales y superficies administrativas.</div></div></div>
           <div class="panel-body grid-2">
-            <div class="policy"><strong>RBAC</strong><span class="pill">Protected</span><p class="muted">Enforced by require_admin, require_role and require_any_role.</p></div>
-            <div class="policy"><strong>Internal endpoints</strong><span class="pill">Protected</span><p class="muted">Internal API key required server-side. Key is never displayed.</p></div>
-            <div class="policy"><strong>Vault / Secrets</strong><span class="pill">Masked / Protected</span><p class="muted">Reveal operations require privileged roles.</p></div>
-            <div class="policy"><strong>Login hardening</strong><span class="pill warn">Configured</span><p class="muted">Failed attempts are recorded when the table exists.</p></div>
+            <div class="policy"><strong>Roles y permisos</strong><span class="pill">Protegido</span><p class="muted">El backend valida roles y permisos antes de ejecutar acciones sensibles.</p></div>
+            <div class="policy"><strong>Servicios internos</strong><span class="pill">Protegido</span><p class="muted">Los endpoints internos requieren llave de servicio del lado servidor. La llave nunca se muestra.</p></div>
+            <div class="policy"><strong>Caja fuerte</strong><span class="pill">Oculta / protegida</span><p class="muted">Revelar secretos requiere roles privilegiados.</p></div>
+            <div class="policy"><strong>Protección de login</strong><span class="pill warn">Configurado</span><p class="muted">Los intentos fallidos se registran cuando la tabla existe.</p></div>
           </div>
         </article>
 
         <article class="panel" id="tab-users">
           <div class="panel-head">
-            <div><div class="panel-title">Users</div><div class="panel-desc">Administración local de cuentas con roles canónicos compatibles con admin/user legacy.</div></div>
+            <div><div class="panel-title">Usuarios</div><div class="panel-desc">Administración local de cuentas con roles compatibles con usuarios existentes.</div></div>
             <div class="actions">
               <button class="btn" type="button" id="create-user">Crear usuario</button>
               <button class="btn primary" type="button" id="invite-user">Invitar usuario</button>
@@ -201,15 +202,15 @@
         </article>
 
         <article class="panel" id="tab-roles">
-          <div class="panel-head"><div><div class="panel-title">Roles &amp; Permissions</div><div class="panel-desc">Matriz real desde el permission registry backend. Deny by default.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Roles y permisos</div><div class="panel-desc">Matriz real desde el registro de permisos del backend. Lo no permitido se bloquea por defecto.</div></div></div>
           <div class="panel-body">
             <div class="error" id="permissions-error"></div>
-            <div class="table-wrap"><table><thead><tr><th>Role</th><th>Tipo</th><th>Assignable</th><th>Permisos efectivos</th><th>Notas</th></tr></thead><tbody id="roles-body"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Rol</th><th>Tipo</th><th>Asignable</th><th>Permisos efectivos</th><th>Notas</th></tr></thead><tbody id="roles-body"></tbody></table></div>
           </div>
         </article>
 
         <article class="panel" id="tab-tester">
-          <div class="panel-head"><div><div class="panel-title">Access Tester</div><div class="panel-desc">Evaluación backend contra el permission registry que usan los guards server-side.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Probar acceso</div><div class="panel-desc">Evaluación real contra el registro de permisos que usa el backend.</div></div></div>
           <div class="panel-body">
             <div class="toolbar">
               <select id="tester-role"></select>
@@ -225,41 +226,41 @@
         </article>
 
         <article class="panel" id="tab-sessions">
-          <div class="panel-head"><div><div class="panel-title">Sessions</div><div class="panel-desc">Sesiones activas y revocación segura por session_id irreversible.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Sesiones</div><div class="panel-desc">Sesiones activas y revocación segura por identificador irreversible.</div></div></div>
           <div class="panel-body">
             <div class="error" id="sessions-error"></div>
-            <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>IP</th><th>User agent</th><th>Creada</th><th>Last seen</th><th>Acción</th></tr></thead><tbody id="sessions-body"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>IP</th><th>Navegador / agente</th><th>Creada</th><th>Última actividad</th><th>Acción</th></tr></thead><tbody id="sessions-body"></tbody></table></div>
           </div>
         </article>
 
         <article class="panel" id="tab-audit">
-          <div class="panel-head"><div><div class="panel-title">Audit Trail</div><div class="panel-desc">Eventos recientes saneados. No se renderizan secretos.</div></div><input class="search" id="audit-filter" placeholder="Filtrar audit trail"></div>
+          <div class="panel-head"><div><div class="panel-title">Auditoría</div><div class="panel-desc">Eventos recientes saneados. No se muestran secretos.</div></div><input class="search" id="audit-filter" placeholder="Filtrar auditoría"></div>
           <div class="panel-body">
             <div class="policy" id="audit-schema-note" style="display:none;margin-bottom:12px"></div>
             <div class="error" id="audit-error"></div>
-            <div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Target</th><th>Metadata</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Actor</th><th>Acción</th><th>Objetivo</th><th>Resumen</th></tr></thead><tbody id="audit-body"></tbody></table></div>
           </div>
         </article>
 
         <article class="panel" id="tab-policies">
-          <div class="panel-head"><div><div class="panel-title">Policies</div><div class="panel-desc">Políticas actuales reportadas por backend/env, sin secretos.</div></div></div>
+          <div class="panel-head"><div><div class="panel-title">Reglas de acceso</div><div class="panel-desc">Reglas actuales reportadas por backend/env, sin secretos.</div></div></div>
           <div class="panel-body">
             <div class="policy-list" id="policies-list"></div>
             <section style="margin-top:18px">
-              <div class="panel-title" style="font-size:15px;margin-bottom:10px">Login attempts</div>
+              <div class="panel-title" style="font-size:15px;margin-bottom:10px">Intentos de acceso</div>
               <div class="error" id="attempts-error"></div>
-              <div class="table-wrap"><table><thead><tr><th>Email</th><th>IP</th><th>Status</th><th>Timestamp</th></tr></thead><tbody id="attempts-body"></tbody></table></div>
+              <div class="table-wrap"><table><thead><tr><th>Email</th><th>IP</th><th>Estado</th><th>Fecha</th></tr></thead><tbody id="attempts-body"></tbody></table></div>
             </section>
           </div>
         </article>
 
         <article class="panel" id="tab-vault">
-          <div class="panel-head"><div><div class="panel-title">Vault / Secrets</div><div class="panel-desc">Estado seguro de secretos. No se muestra ningún valor sensible.</div></div><a class="link-btn" href="/viewer/vault">Abrir Vault</a></div>
+          <div class="panel-head"><div><div class="panel-title">Caja fuerte</div><div class="panel-desc">Estado seguro de secretos. No se muestra ningún valor sensible.</div></div><a class="link-btn" href="/viewer/vault">Abrir caja fuerte</a></div>
           <div class="panel-body grid-2">
-            <div class="policy"><strong>Vault configured</strong><span class="pill">Protected</span><p class="muted">Conexiones y secrets se gestionan en Vault viewer.</p></div>
-            <div class="policy"><strong>Secrets masked</strong><span class="pill">Masked</span><p class="muted">Los listados muestran metadatos; reveal requiere rol privilegiado.</p></div>
-            <div class="policy"><strong>Access model</strong><span class="pill warn">admin / workspace_admin</span><p class="muted">Basado en guards de endpoints `/api/vault/*`.</p></div>
-            <div class="policy"><strong>Tokens</strong><span class="pill">Not displayed</span><p class="muted">JWT, refresh tokens, cookies e internal API keys no se imprimen.</p></div>
+            <div class="policy"><strong>Caja fuerte configurada</strong><span class="pill">Protegida</span><p class="muted">Conexiones y secretos se gestionan en el visor de caja fuerte.</p></div>
+            <div class="policy"><strong>Secretos ocultos</strong><span class="pill">Ocultos</span><p class="muted">Los listados muestran metadatos; revelar valores requiere rol privilegiado.</p></div>
+            <div class="policy"><strong>Modelo de acceso</strong><span class="pill warn">admin / workspace_admin</span><p class="muted">Basado en permisos de endpoints `/api/vault/*`.</p></div>
+            <div class="policy"><strong>Llaves temporales</strong><span class="pill">No visibles</span><p class="muted">JWT, refresh tokens, cookies e internal API keys no se imprimen.</p></div>
           </div>
         </article>
       </section>
@@ -274,7 +275,7 @@
         <input type="hidden" id="user-mode">
         <div class="field"><label>Email</label><input id="user-email" type="email"></div>
         <div class="field"><label>Nombre</label><input id="user-name" type="text"></div>
-        <div class="field" id="password-field"><label>Password temporal</label><input id="user-password" type="password" autocomplete="new-password"></div>
+        <div class="field" id="password-field"><label>Contraseña temporal</label><input id="user-password" type="password" autocomplete="new-password"></div>
         <div class="field"><label>Rol</label><select id="user-role"></select></div>
         <div class="field" id="active-field"><label>Estado</label><select id="user-active"><option value="true">activo</option><option value="false">inactivo</option></select></div>
       </div>
@@ -283,6 +284,7 @@
   </div>
   <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
+  <script type="module" src="/static/js/i18n/labels.js"></script>
   <script>
     document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
 
@@ -308,6 +310,10 @@
       $('toast-wrap').appendChild(item);
       window.setTimeout(() => item.remove(), 4200);
     }
+
+    const humanizePermission = (key) => window.ModLabels?.humanizePermission?.(key) || key;
+    const humanizePermissionKey = (key) => window.ModLabels?.humanizePermissionKey?.(key) || key;
+    const humanizeError = (err) => window.ModLabels?.humanizeError?.(err) || (err?.message || String(err || 'Error'));
 
     async function fetchJson(url, options) {
       const res = await fetch(url, { credentials: 'same-origin', ...(options || {}) });
@@ -396,7 +402,8 @@
         permissions.slice(0, 22).forEach((key) => {
           const chip = document.createElement('span');
           chip.className = 'permission-chip';
-          chip.textContent = key;
+          chip.title = humanizePermission(key);
+          chip.textContent = humanizePermissionKey(key);
           wrap.appendChild(chip);
         });
         if (permissions.length > 22) {
@@ -435,7 +442,7 @@
         actions.appendChild(button('Editar', 'btn', () => openEditUser(u)));
         actions.appendChild(button('Permisos', 'btn', () => showUserPermissions(u)));
         if (!u.is_active && !u.last_login) actions.appendChild(button('Reinvite', 'btn', () => reinviteUser(u)));
-        if (u.is_active) actions.appendChild(button('Reset', 'btn', () => sendReset(u)));
+        if (u.is_active) actions.appendChild(button('Restablecer', 'btn', () => sendReset(u)));
         tr.appendChild(actions);
         body.appendChild(tr);
       });
@@ -449,11 +456,11 @@
       rows.forEach((r) => {
         const tr = document.createElement('tr');
         td(tr, r.name);
-        td(tr, r.legacy ? 'legacy compatible' : r.builtin ? 'builtin' : 'custom');
+        td(tr, r.legacy ? 'compatible con rol existente' : r.builtin ? 'rol integrado' : 'personalizado');
         const assignable = document.createElement('td');
         const badge = document.createElement('span');
         badge.className = r.assignable ? 'pill' : 'pill neutral';
-        badge.textContent = r.assignable ? 'Assignable now' : 'Backend only';
+        badge.textContent = r.assignable ? 'Asignable ahora' : 'Solo backend';
         assignable.appendChild(badge);
         tr.appendChild(assignable);
         const perms = document.createElement('td');
@@ -473,7 +480,7 @@
       const role = roleDefinition(user.role);
       const desc = document.createElement('p');
       desc.className = 'muted';
-      desc.textContent = role ? role.description : 'Rol no registrado en el permission registry; deny by default para permisos nuevos.';
+      desc.textContent = role ? role.description : 'Rol no registrado en el registro de permisos; los permisos nuevos se bloquean por defecto.';
       box.append(title, desc);
       appendPermissionChips(box, rolePermissions(user.role));
     }
@@ -522,10 +529,10 @@
         note.style.display = 'block';
         note.replaceChildren();
         const strong = document.createElement('strong');
-        strong.textContent = 'Audit migration pending';
+        strong.textContent = 'Migración de auditoría pendiente';
         const text = document.createElement('p');
         text.className = 'muted';
-        text.textContent = 'Audit table not applied in current DB volume. Backend is compatible, but migration infra/init/16_audit_events.sql is pending.';
+        text.textContent = 'La tabla de auditoría no está aplicada en este volumen de base de datos. El backend es compatible, pero falta la migración infra/init/16_audit_events.sql.';
         note.append(strong, text);
       } else {
         note.style.display = 'none';
@@ -546,7 +553,7 @@
         title.textContent = key.replaceAll('_', ' ');
         const value = document.createElement('span');
         value.className = 'muted';
-        value.textContent = sections[key] == null ? 'Not configured' : sections[key];
+        value.textContent = sections[key] == null ? 'No configurado' : sections[key];
         item.append(title, value);
         list.appendChild(item);
       });
@@ -555,15 +562,15 @@
         const item = document.createElement('div');
         item.className = 'policy';
         const title = document.createElement('strong');
-        title.textContent = `${key} schema`;
+        title.textContent = `${key.replaceAll('_', ' ')} · estructura`;
         const value = document.createElement('span');
         value.className = schema[key].exists ? 'pill' : 'pill warn';
-        value.textContent = schema[key].exists ? 'Applied' : `Pending ${schema[key].migration || ''}`;
+        value.textContent = schema[key].exists ? 'Aplicada' : `Pendiente ${schema[key].migration || ''}`;
         item.append(title, value);
         if (schema[key].missing_columns && schema[key].missing_columns.length) {
           const miss = document.createElement('p');
           miss.className = 'muted';
-          miss.textContent = `Missing columns: ${schema[key].missing_columns.join(', ')}`;
+          miss.textContent = `Columnas faltantes: ${schema[key].missing_columns.join(', ')}`;
           item.appendChild(miss);
         }
         list.appendChild(item);
@@ -575,7 +582,7 @@
         const tr = document.createElement('tr');
         td(tr, a.email);
         td(tr, a.ip);
-        td(tr, a.success === true ? 'success' : 'failed');
+        td(tr, a.success === true ? 'correcto' : 'fallido');
         td(tr, fmt(a.created_at), 'muted');
         body.appendChild(tr);
       });
@@ -650,7 +657,7 @@
       if (mode === 'create') {
         body.email = $('user-email').value.trim();
         body.password = $('user-password').value;
-        if (!body.password || body.password.length < 8) throw new Error('Password temporal mínimo 8 caracteres');
+        if (!body.password || body.password.length < 8) throw new Error('La contraseña temporal debe tener al menos 8 caracteres');
         const created = await fetchJson('/api/admin/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -682,13 +689,13 @@
     async function sendReset(user) {
       if (!window.confirm(`Enviar reset a ${user.email}?`)) return;
       const data = await fetchJson(`/api/admin/users/${encodeURIComponent(user.id)}/send-reset`, { method: 'POST' });
-      toast(data.sent ? 'Reset enviado' : 'Token generado; correo no enviado', data.sent ? 'success' : 'error');
+      toast(data.sent ? 'Correo de recuperación enviado' : 'Llave temporal generada; correo no enviado', data.sent ? 'success' : 'error');
     }
 
     async function reinviteUser(user) {
       if (!window.confirm(`Reenviar invitación a ${user.email}?`)) return;
       const data = await fetchJson(`/api/admin/users/${encodeURIComponent(user.id)}/reinvite`, { method: 'POST' });
-      toast(data.email_sent ? 'Invitación reenviada' : 'Token generado; correo no enviado', data.email_sent ? 'success' : 'error');
+      toast(data.email_sent ? 'Invitación reenviada' : 'Llave temporal generada; correo no enviado', data.email_sent ? 'success' : 'error');
     }
 
     async function revokeSession(sessionId) {
@@ -708,7 +715,7 @@
         renderUsers();
         renderMetrics();
       } catch (err) {
-        showError('users-error', `Users API: ${err.message}`);
+        showError('users-error', `Usuarios: ${humanizeError(err)}`);
       }
     }
 
@@ -719,7 +726,7 @@
         renderSessions();
         renderMetrics();
       } catch (err) {
-        showError('sessions-error', `Sessions API: ${err.message}`);
+        showError('sessions-error', `Sesiones: ${humanizeError(err)}`);
       }
     }
 
@@ -730,7 +737,7 @@
         renderAudit();
         renderMetrics();
       } catch (err) {
-        showError('audit-error', `Audit API: ${err.message}`);
+        showError('audit-error', `Auditoría: ${humanizeError(err)}`);
       }
     }
 
@@ -743,7 +750,7 @@
         renderTesterOptions();
         renderPolicies();
       } catch (err) {
-        showError('permissions-error', `Permissions API: ${err.message}`);
+        showError('permissions-error', `Permisos: ${humanizeError(err)}`);
       }
     }
 
@@ -783,7 +790,8 @@
       actions.forEach((action) => {
         const opt = document.createElement('option');
         opt.value = action;
-        opt.textContent = action;
+        const labels = { read: 'ver', write: 'modificar', revoke: 'revocar', reveal: 'revelar', run: 'ejecutar', access: 'acceder' };
+        opt.textContent = labels[action] || action;
         actionSel.appendChild(opt);
       });
       if (roles.includes('viewer')) roleSel.value = 'viewer';
@@ -804,13 +812,13 @@
         action: $('tester-action').value
       });
       const result = await fetchJson(`/security/access-check?${params.toString()}`);
-      title.textContent = result.allowed ? 'ALLOWED' : 'DENIED';
+      title.textContent = result.allowed ? 'Permitido' : 'Bloqueado';
       const badge = document.createElement('span');
       badge.className = result.allowed ? 'pill' : 'pill err';
-      badge.textContent = result.permission || 'no mapped permission';
+      badge.textContent = result.permission ? humanizePermissionKey(result.permission) : 'sin permiso mapeado';
       const detail = document.createElement('p');
       detail.className = 'muted';
-      detail.textContent = `${result.role} ${result.action} ${result.resource}. Source: ${result.source}.`;
+      detail.textContent = `Rol ${result.role}, acción ${$('tester-action').selectedOptions[0]?.textContent || result.action}, recurso ${result.resource}. Fuente: ${result.source}.`;
       box.append(badge, detail);
     }
 
@@ -820,7 +828,7 @@
         state.attempts = await fetchJson('/security/login-attempts');
         renderPolicies();
       } catch (err) {
-        showError('attempts-error', `Login attempts API: ${err.message}`);
+        showError('attempts-error', `Intentos de acceso: ${humanizeError(err)}`);
       }
     }
 
@@ -844,7 +852,7 @@
     $('invite-user').addEventListener('click', openInviteUser);
     $('modal-close').addEventListener('click', closeModal);
     $('modal-cancel').addEventListener('click', closeModal);
-    $('modal-save').addEventListener('click', () => saveUser().catch((err) => toast(err.message, 'error')));
+    $('modal-save').addEventListener('click', () => saveUser().catch((err) => toast(humanizeError(err), 'error')));
     $('audit-filter').addEventListener('input', renderAudit);
     $('tester-run').addEventListener('click', () => renderTesterResult().catch((err) => toast(err.message, 'error')));
     $('tester-role').addEventListener('change', () => renderTesterResult().catch((err) => toast(err.message, 'error')));
