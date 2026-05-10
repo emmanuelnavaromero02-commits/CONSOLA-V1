@@ -187,6 +187,8 @@ services:
       context: ./replicon-mock
       dockerfile: Dockerfile
     container_name: mode_replicon_mock
+    environment:
+      REPLICON_MOCK_USER_COUNT: ${REPLICON_MOCK_USER_COUNT:-1000}
     ports:
       - "8100:8100"
     restart: unless-stopped

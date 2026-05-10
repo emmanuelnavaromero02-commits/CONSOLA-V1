@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -12,32 +13,9 @@ from fastapi.responses import PlainTextResponse
 app = FastAPI(title="Replicon Local Mock", version="1.0.0")
 
 MOCK_BASE_URL = "http://replicon-mock:8100"
+DEFAULT_USER_COUNT = 1000
 
 MOCK_DATA: dict[str, list[dict[str, Any]]] = {
-    "User": [
-        {
-            "user_id": "U001",
-            "email": "ana.garcia@example.com",
-            "name": "Ana Garcia",
-            "department_id": "D001",
-            "role_id": "R002",
-            "active": True,
-            "cost_rate": 65.0,
-            "billing_rate": 120.0,
-            "last_modified": "2026-05-01T10:00:00Z",
-        },
-        {
-            "user_id": "U002",
-            "email": "marco.lee@example.com",
-            "name": "Marco Lee",
-            "department_id": "D003",
-            "role_id": "R001",
-            "active": True,
-            "cost_rate": 52.0,
-            "billing_rate": 95.0,
-            "last_modified": "2026-05-02T11:30:00Z",
-        },
-    ],
     "Client": [
         {"client_id": "C001", "name": "Acme Corp", "currency": "USD", "last_modified": "2026-05-01T09:00:00Z"},
         {"client_id": "C002", "name": "Globex", "currency": "EUR", "last_modified": "2026-05-03T09:00:00Z"},
@@ -144,6 +122,41 @@ MOCK_DATA: dict[str, list[dict[str, Any]]] = {
 _EXTRACTS: dict[str, str] = {}
 
 
+def _user_count() -> int:
+    raw = os.environ.get("REPLICON_MOCK_USER_COUNT", str(DEFAULT_USER_COUNT))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_USER_COUNT
+    return max(0, value)
+
+
+def _user_rows() -> list[dict[str, Any]]:
+    departments = ("Engineering", "Finance", "Operations", "Sales", "Customer Success")
+    roles = ("Consultant", "Manager", "Analyst", "Architect", "Director")
+    statuses = ("active", "active", "active", "inactive")
+    rows: list[dict[str, Any]] = []
+    for i in range(1, _user_count() + 1):
+        rows.append({
+            "id": i,
+            "userId": f"U{i:06d}",
+            "displayName": f"Mock User {i:06d}",
+            "email": f"mock.user.{i:06d}@example.test",
+            "status": statuses[i % len(statuses)],
+            "department": departments[i % len(departments)],
+            "role": roles[i % len(roles)],
+            "costCenter": f"CC-{(i % 25) + 1:03d}",
+            "last_modified": f"2026-05-{(i % 28) + 1:02d}T{(i % 24):02d}:00:00Z",
+        })
+    return rows
+
+
+def _rows_for_entity(entity: str) -> list[dict[str, Any]] | None:
+    if entity == "User":
+        return _user_rows()
+    return MOCK_DATA.get(entity)
+
+
 def _extract_entity(payload: dict[str, Any]) -> str:
     tables = payload.get("tables")
     if not isinstance(tables, list) or not tables:
@@ -154,7 +167,7 @@ def _extract_entity(payload: dict[str, Any]) -> str:
         raise HTTPException(status_code=400, detail="tables[0].tableId is required")
 
     entity = str(table["tableId"])
-    if entity not in MOCK_DATA:
+    if _rows_for_entity(entity) is None:
         raise HTTPException(status_code=404, detail=f"unsupported mock entity: {entity}")
     return entity
 
@@ -165,7 +178,7 @@ def _extract_id(entity: str) -> str:
 
 
 def _csv_for_entity(entity: str) -> str:
-    rows = MOCK_DATA.get(entity)
+    rows = _rows_for_entity(entity)
     if rows is None:
         raise HTTPException(status_code=404, detail=f"unknown extract entity: {entity}")
     if not rows:
@@ -223,6 +236,7 @@ def download_analytics_extract(extract_id: str) -> PlainTextResponse:
 
 @app.get("/services/{entity}")
 def get_service_entity(entity: str) -> dict[str, Any]:
-    if entity not in MOCK_DATA:
+    rows = _rows_for_entity(entity)
+    if rows is None:
         raise HTTPException(status_code=404, detail=f"unsupported mock entity: {entity}")
-    return {"entity": entity, "records": MOCK_DATA[entity]}
+    return {"entity": entity, "records": rows}
