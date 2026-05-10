@@ -4,64 +4,65 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Workspace — MODecissions</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <style>
     /* ── Tokens ─────────────────────────────────────────────────────────── */
     :root {
-      --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
-      --border: #30363d;
-      --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
-      --green: #3fb950; --amber: #d29922; --cyan: #58a6ff; --red: #f85149;
-      --font-ui: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-      --font-mono: 'Share Tech Mono', 'Cascadia Code', 'Fira Code', monospace;
+      --bg: #f8f7f4; --bg2: #ffffff; --bg3: #f3f4f6;
+      --border: #e5e7eb;
+      --text: #111827; --text2: #6b7280; --text3: #9ca3af;
+      --green: #059669; --amber: #2563eb; --cyan: #2563eb; --red: #dc2626;
+      --font-ui: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%; background: var(--bg); color: var(--text);
-      font-family: var(--font-ui); font-size: 13px; overflow: hidden;
+      font-family: var(--font-ui); font-size: 14px; overflow: hidden;
     }
 
     /* ── Header ─────────────────────────────────────────────────────────── */
     .header {
       display: flex; align-items: center; gap: 16px;
-      padding: 0 20px; height: 48px;
+      padding: 0 28px; height: 64px;
       background: var(--bg2); border-bottom: 1px solid var(--border);
     }
     .logo {
-      font-family: var(--font-ui); font-weight: 700; letter-spacing: 2px;
-      color: var(--green); font-size: 14px;
+      font-family: var(--font-ui); font-weight: 700; letter-spacing: 0;
+      color: var(--text); font-size: 18px;
     }
-    .logo .accent { color: var(--amber); }
+    .logo .accent { color: var(--cyan); }
     .tagline {
-      font-size: 9px; color: var(--text3); letter-spacing: 2px;
+      font-size: 13px; color: var(--text2); letter-spacing: 0; margin-top: 2px;
     }
     .user-bar {
       display: flex; align-items: center; gap: 14px; margin-left: auto;
-      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
-      color: var(--text3);
+      font-family: var(--font-ui); font-size: 13px; letter-spacing: 0;
+      color: var(--text2);
     }
     .user-bar .me { color: var(--text2); }
     .user-bar .me strong { color: var(--text); }
     .user-bar a { color: var(--text3); text-decoration: none; }
-    .user-bar a:hover { color: var(--amber); }
+    .user-bar a:hover { color: var(--cyan); }
     .role-pill {
-      padding: 1px 6px; border-radius: 3px; font-size: 8px;
-      letter-spacing: 1.5px; background: var(--bg3); color: var(--text2);
+      padding: 3px 8px; border-radius: 999px; font-size: 11px;
+      letter-spacing: 0; background: var(--bg3); color: var(--text2);
     }
-    .role-pill.admin { background: rgba(210,153,34,.15); color: var(--amber); }
+    .role-pill.admin { background: rgba(37,99,235,.10); color: var(--cyan); }
 
     /* ── Main split ─────────────────────────────────────────────────────── */
     .main {
-      display: grid; grid-template-columns: 1fr 480px;
-      height: calc(100vh - 48px);
-      gap: 1px; background: var(--border);
+      display: grid; grid-template-columns: minmax(0, 1fr) 440px;
+      height: calc(100vh - 64px);
+      gap: 20px; background: var(--bg); padding: 20px;
     }
     @media (max-width: 1100px) {
       .main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
     }
 
-    .pane { background: var(--bg); overflow-y: auto; }
+    .pane {
+      background: var(--bg2); overflow-y: auto;
+      border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(17, 24, 39, .04);
+    }
     .pane-head {
       padding: 14px 22px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 12px;
@@ -69,34 +70,34 @@
     }
     .pane-head .icon { color: var(--cyan); font-size: 18px; }
     .pane-head h2 {
-      font-family: var(--font-mono); font-size: 12px;
-      color: var(--cyan); letter-spacing: 2px; flex: 1;
+      font-family: var(--font-ui); font-size: 16px;
+      color: var(--text); letter-spacing: 0; flex: 1;
     }
 
     /* ── Apps grid ──────────────────────────────────────────────────────── */
     .apps-grid {
       padding: 22px; display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
       gap: 16px;
     }
     .app-card {
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
-      padding: 18px 20px; display: flex; flex-direction: column;
-      gap: 10px; transition: border-color .15s, transform .15s;
+      background: #ffffff; border: 1px solid var(--border); border-radius: 12px;
+      padding: 20px; display: flex; flex-direction: column;
+      gap: 12px; transition: border-color .15s, transform .15s, box-shadow .15s;
       text-decoration: none; color: inherit;
     }
-    .app-card:hover { border-color: var(--cyan); transform: translateY(-2px); }
+    .app-card:hover { border-color: var(--cyan); transform: translateY(-2px); box-shadow: 0 10px 24px rgba(17,24,39,.08); }
     .app-icon { font-size: 18px; color: var(--cyan); }
     .app-title {
-      font-family: var(--font-mono); font-size: 12px;
-      color: var(--text); letter-spacing: 1px;
+      font-family: var(--font-ui); font-size: 16px; font-weight: 700;
+      color: var(--text); letter-spacing: 0;
     }
-    .app-desc { font-size: 11px; color: var(--text2); line-height: 1.6; flex: 1; }
-    .app-meta { font-size: 9px; color: var(--text3); font-family: var(--font-mono); }
+    .app-desc { font-size: 13px; color: var(--text2); line-height: 1.6; flex: 1; }
+    .app-meta { font-size: 12px; color: var(--text3); font-family: var(--font-ui); }
     .empty-state {
       padding: 60px 20px; text-align: center;
-      color: var(--text3); font-size: 11px; line-height: 1.7;
-      font-family: var(--font-mono);
+      color: var(--text2); font-size: 13px; line-height: 1.7;
+      font-family: var(--font-ui);
     }
     .empty-icon { font-size: 32px; opacity: .4; margin-bottom: 10px; }
 
@@ -108,14 +109,14 @@
     .tab-btn {
       padding: 14px 20px; cursor: pointer;
       background: transparent; border: none; border-bottom: 2px solid transparent;
-      font-family: var(--font-mono); font-size: 11px; color: var(--text3);
-      letter-spacing: 2px; transition: color .15s, border-color .15s;
+      font-family: var(--font-ui); font-size: 13px; color: var(--text2);
+      letter-spacing: 0; transition: color .15s, border-color .15s;
     }
     .tab-btn:hover { color: var(--text2); }
     .tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
     .tab-btn .count {
       display: inline-block; margin-left: 6px; padding: 1px 6px;
-      background: var(--bg3); border-radius: 8px; font-size: 9px; color: var(--text3);
+      background: var(--bg3); border-radius: 999px; font-size: 11px; color: var(--text2);
     }
     .tab-btn.active .count { background: rgba(88,166,255,.15); color: var(--cyan); }
     .tab-page { display: none; }
@@ -134,14 +135,14 @@
       text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
     }
     .dec-table th {
-      font-family: var(--font-mono); font-size: 9px; color: var(--text3);
-      letter-spacing: 1.5px; background: var(--bg2);
+      font-family: var(--font-ui); font-size: 12px; color: var(--text2);
+      letter-spacing: 0; background: var(--bg3);
     }
     .dec-table tbody tr { cursor: pointer; transition: background .12s; }
     .dec-table tbody tr:hover { background: var(--bg3); }
     .badge {
       display: inline-block; padding: 2px 7px; border-radius: 3px;
-      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
+      font-family: var(--font-ui); font-size: 11px; letter-spacing: 0;
     }
     .b-open    { background: rgba(63,185,80,.12);  color: var(--green); }
     .b-closed  { background: rgba(110,118,129,.18); color: var(--text2); }
@@ -152,66 +153,67 @@
     .b-private { background: rgba(110,118,129,.18); color: var(--text2); }
 
     .btn-pri {
-      background: var(--amber); border: none; color: #1a1408;
-      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px;
-      padding: 7px 14px; border-radius: 4px; cursor: pointer; font-weight: 600;
+      background: var(--cyan); border: none; color: #ffffff;
+      font-family: var(--font-ui); font-size: 13px; letter-spacing: 0;
+      padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 600;
     }
     .btn-pri:hover { filter: brightness(1.1); }
     .btn-ghost {
       background: transparent; border: 1px solid var(--border);
-      color: var(--text2); font-family: var(--font-mono); font-size: 10px;
-      letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+      color: var(--text2); font-family: var(--font-ui); font-size: 13px;
+      letter-spacing: 0; padding: 7px 12px; border-radius: 8px; cursor: pointer;
     }
     .btn-ghost:hover { color: var(--text); border-color: var(--text2); }
     .btn-danger {
       background: transparent; border: 1px solid var(--red);
-      color: var(--red); font-family: var(--font-mono); font-size: 10px;
-      letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+      color: var(--red); font-family: var(--font-ui); font-size: 13px;
+      letter-spacing: 0; padding: 7px 12px; border-radius: 8px; cursor: pointer;
     }
     .filter-pill {
       background: var(--bg2); border: 1px solid var(--border); cursor: pointer;
-      color: var(--text3); padding: 5px 10px; border-radius: 4px;
-      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.5px;
+      color: var(--text2); padding: 7px 12px; border-radius: 999px;
+      font-family: var(--font-ui); font-size: 12px; letter-spacing: 0;
     }
     .filter-pill.active { color: var(--cyan); border-color: var(--cyan); }
 
     /* ── Modal ──────────────────────────────────────────────────────────── */
     .modal-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
+      position: fixed; inset: 0; background: rgba(17,24,39,.35); z-index: 100;
       display: flex; align-items: flex-start; justify-content: center;
       padding-top: 5vh;
     }
     .modal {
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      background: #ffffff; border: 1px solid var(--border); border-radius: 12px;
       width: min(620px, 92vw); max-height: 88vh; overflow: auto;
+      box-shadow: 0 24px 60px rgba(17,24,39,.16);
     }
     .modal-head {
       padding: 14px 20px; display: flex; justify-content: space-between;
       align-items: center; border-bottom: 1px solid var(--border);
     }
-    .modal-head h3 { margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--cyan); letter-spacing: 2px; }
+    .modal-head h3 { margin: 0; font-family: var(--font-ui); font-size: 18px; color: var(--text); letter-spacing: 0; }
     .modal-close { background: transparent; border: none; color: var(--text3); font-size: 18px; cursor: pointer; }
     .modal-body { padding: 20px; }
     .modal-foot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
     .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-    .field label { font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; }
+    .field label { font-family: var(--font-ui); font-size: 12px; color: var(--text2); letter-spacing: 0; font-weight: 600; }
     .field input, .field select, .field textarea {
       background: var(--bg); border: 1px solid var(--border); color: var(--text);
-      padding: 8px 10px; border-radius: 4px; font-family: var(--font-ui); font-size: 12px;
+      padding: 9px 11px; border-radius: 8px; font-family: var(--font-ui); font-size: 13px;
     }
     .field textarea { min-height: 70px; resize: vertical; }
-    .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--amber); }
+    .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--cyan); }
     .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
     .sub-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
-    .sub-tab { padding: 8px 14px; cursor: pointer; font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; border-bottom: 2px solid transparent; }
+    .sub-tab { padding: 8px 14px; cursor: pointer; font-family: var(--font-ui); font-size: 13px; color: var(--text2); letter-spacing: 0; border-bottom: 2px solid transparent; }
     .sub-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
     .actions-list { display: flex; flex-direction: column; gap: 8px; }
     .action-card {
       background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
       padding: 10px 12px;
     }
-    .action-meta { display: flex; gap: 12px; font-family: var(--font-mono); font-size: 9px; color: var(--text3); margin-bottom: 5px; }
+    .action-meta { display: flex; gap: 12px; font-family: var(--font-ui); font-size: 12px; color: var(--text3); margin-bottom: 5px; }
 
     /* ── KPI editor ──────────────────────────────────────────────────── */
     .kpi-row {
@@ -219,16 +221,16 @@
       gap: 6px; align-items: end; padding: 8px 0; border-bottom: 1px dashed var(--border);
     }
     .kpi-row > div > label {
-      font-family: var(--font-mono); font-size: 8px; color: var(--text3);
-      letter-spacing: 1.5px; display: block; margin-bottom: 3px;
+      font-family: var(--font-ui); font-size: 11px; color: var(--text2);
+      letter-spacing: 0; display: block; margin-bottom: 3px;
     }
     .kpi-row select, .kpi-row input {
       width: 100%; background: var(--bg); border: 1px solid var(--border);
       color: var(--text); padding: 5px 7px; border-radius: 3px;
-      font-size: 11px; font-family: var(--font-mono);
+      font-size: 12px; font-family: var(--font-ui);
     }
-    .kpi-row select:focus, .kpi-row input:focus { outline: none; border-color: var(--amber); }
-    .kpi-empty { padding: 14px; text-align: center; color: var(--text3); font-size: 10px; font-family: var(--font-mono); }
+    .kpi-row select:focus, .kpi-row input:focus { outline: none; border-color: var(--cyan); }
+    .kpi-empty { padding: 14px; text-align: center; color: var(--text2); font-size: 13px; font-family: var(--font-ui); }
 
     /* ── Chat: convert-to-decision button ─────────────────────────────── */
     .chat-actions {
@@ -236,8 +238,8 @@
     }
     .chat-action-btn {
       background: transparent; border: 1px solid var(--border);
-      color: var(--text3); font-family: var(--font-mono); font-size: 9px;
-      letter-spacing: 1px; padding: 3px 8px; border-radius: 3px; cursor: pointer;
+      color: var(--text2); font-family: var(--font-ui); font-size: 12px;
+      letter-spacing: 0; padding: 5px 9px; border-radius: 999px; cursor: pointer;
     }
     .chat-action-btn:hover { color: var(--cyan); border-color: var(--cyan); }
 
@@ -249,22 +251,22 @@
     }
     .msg { max-width: 92%; line-height: 1.5; font-size: 13px; }
     .msg.user {
-      align-self: flex-end; background: rgba(210,153,34,.10);
-      border: 1px solid rgba(210,153,34,.25);
-      padding: 10px 14px; border-radius: 8px 8px 0 8px;
+      align-self: flex-end; background: rgba(37,99,235,.08);
+      border: 1px solid rgba(37,99,235,.16);
+      padding: 10px 14px; border-radius: 12px 12px 4px 12px;
     }
     .msg.assistant {
       align-self: flex-start; color: var(--text);
       padding: 4px 0;
     }
     .msg.assistant pre {
-      background: var(--bg2); border: 1px solid var(--border); padding: 10px;
-      border-radius: 4px; font-family: var(--font-mono); font-size: 11px;
+      background: var(--bg3); border: 1px solid var(--border); padding: 10px;
+      border-radius: 8px; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12px;
       overflow-x: auto; margin: 8px 0;
     }
     .msg.assistant code {
-      background: var(--bg2); padding: 1px 5px; border-radius: 3px;
-      font-family: var(--font-mono); font-size: 11px;
+      background: var(--bg3); padding: 1px 5px; border-radius: 3px;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12px;
     }
     .msg.assistant pre code { background: transparent; padding: 0; }
     .msg.assistant a { color: var(--cyan); text-decoration: none; }
@@ -273,7 +275,7 @@
     .msg.assistant p:last-child { margin-bottom: 0; }
     .msg.thinking {
       align-self: flex-start; color: var(--text3); font-style: italic;
-      font-size: 11px; font-family: var(--font-mono); letter-spacing: 1px;
+      font-size: 12px; font-family: var(--font-ui); letter-spacing: 0;
     }
     .dot { animation: blink 1.4s infinite; }
     .dot:nth-child(2) { animation-delay: .2s; }
@@ -283,8 +285,8 @@
     /* ── Reasoning trail ────────────────────────────────────────────── */
     .trail {
       align-self: flex-start; max-width: 92%;
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 4px;
-      padding: 8px 12px; font-family: var(--font-mono); font-size: 10px;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; font-family: var(--font-ui); font-size: 12px;
       color: var(--text2); display: flex; flex-direction: column; gap: 4px;
     }
     .trail-row { display: flex; gap: 8px; align-items: baseline; line-height: 1.4; }
@@ -299,43 +301,43 @@
     .trail.collapsed .trail-row:not(.thinking) { display: none; }
     .trail-toggle {
       align-self: flex-start; background: transparent; border: none;
-      color: var(--text3); font-family: var(--font-mono); font-size: 9px;
-      letter-spacing: 1px; cursor: pointer; padding: 0; margin-top: 2px;
+      color: var(--text2); font-family: var(--font-ui); font-size: 12px;
+      letter-spacing: 0; cursor: pointer; padding: 0; margin-top: 2px;
     }
     .trail-toggle:hover { color: var(--cyan); }
 
     .chat-empty {
       flex: 1; display: flex; flex-direction: column;
       align-items: center; justify-content: center; padding: 24px;
-      color: var(--text3); text-align: center; font-size: 11px;
-      line-height: 1.7; font-family: var(--font-mono); letter-spacing: 1px;
+      color: var(--text2); text-align: center; font-size: 13px;
+      line-height: 1.7; font-family: var(--font-ui); letter-spacing: 0;
     }
     .chat-empty .icon { font-size: 28px; margin-bottom: 10px; opacity: .5; }
     .examples { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
     .example {
-      background: var(--bg2); border: 1px solid var(--border); padding: 8px 12px;
-      border-radius: 4px; font-size: 11px; color: var(--text2);
+      background: #ffffff; border: 1px solid var(--border); padding: 8px 12px;
+      border-radius: 8px; font-size: 13px; color: var(--text2);
       cursor: pointer; text-align: left; font-family: var(--font-ui);
       letter-spacing: 0;
     }
     .example:hover { border-color: var(--cyan); color: var(--text); }
 
     .chat-input-bar {
-      border-top: 1px solid var(--border); padding: 12px 16px;
+      border-top: 1px solid var(--border); padding: 14px 16px;
       background: var(--bg2);
       display: flex; gap: 10px; align-items: flex-end;
     }
     .chat-input-bar textarea {
       flex: 1; background: var(--bg); border: 1px solid var(--border);
-      color: var(--text); border-radius: 4px;
+      color: var(--text); border-radius: 10px;
       padding: 9px 12px; font-family: var(--font-ui); font-size: 13px;
       resize: none; min-height: 40px; max-height: 200px;
     }
-    .chat-input-bar textarea:focus { outline: none; border-color: var(--amber); }
+    .chat-input-bar textarea:focus { outline: none; border-color: var(--cyan); }
     .btn-send {
-      background: var(--amber); border: none; color: #1a1408;
-      padding: 9px 14px; border-radius: 4px; cursor: pointer; font-weight: 600;
-      font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.5px;
+      background: var(--cyan); border: none; color: #ffffff;
+      padding: 9px 14px; border-radius: 10px; cursor: pointer; font-weight: 600;
+      font-family: var(--font-ui); font-size: 13px; letter-spacing: 0;
     }
     .btn-send:hover { filter: brightness(1.1); }
     .btn-send:disabled { opacity: .4; cursor: not-allowed; }
@@ -344,8 +346,8 @@
 <body>
   <div class="header">
     <div>
-      <div class="logo">MO<span class="accent">D</span>ECISSIONS <span style="color:var(--text3)">WORKSPACE</span></div>
-      <div class="tagline">CONSULTAS · DASHBOARDS · ASISTENTE IA</div>
+      <div class="logo">MO<span class="accent">D</span>ecissions Workspace</div>
+      <div class="tagline">Aplicaciones, decisiones y asistente operativo</div>
     </div>
     <div class="user-bar" id="user-bar"><span class="me">…</span></div>
   </div>
@@ -354,15 +356,15 @@
     <!-- ── Left pane: tabs APPS / DECISIONES ── -->
     <div class="pane">
       <div class="tab-nav">
-        <button class="tab-btn active" data-tab="apps" onclick="switchTab('apps')">▦ APPS <span class="count" id="cnt-apps">·</span></button>
-        <button class="tab-btn"        data-tab="decisions" onclick="switchTab('decisions')">▣ DECISIONES <span class="count" id="cnt-decisions">·</span></button>
+        <button class="tab-btn active" data-tab="apps" onclick="switchTab('apps')">Apps <span class="count" id="cnt-apps">·</span></button>
+        <button class="tab-btn"        data-tab="decisions" onclick="switchTab('decisions')">Decisiones <span class="count" id="cnt-decisions">·</span></button>
       </div>
 
       <!-- APPS tab -->
       <div class="tab-page active" id="tab-apps">
         <div class="pane-toolbar">
-          <h2 style="font-family:var(--font-mono);font-size:11px;color:var(--text2);letter-spacing:2px;flex:1">APLICACIONES PUBLICADAS</h2>
-          <button class="btn-ghost" onclick="loadApps()">↻ ACTUALIZAR</button>
+          <h2 style="font-family:var(--font-ui);font-size:15px;color:var(--text);letter-spacing:0;flex:1">Aplicaciones publicadas</h2>
+          <button class="btn-ghost" onclick="loadApps()">Actualizar</button>
         </div>
         <div id="apps-container"><div class="empty-state">Cargando…</div></div>
       </div>
@@ -370,12 +372,12 @@
       <!-- DECISIONES tab -->
       <div class="tab-page" id="tab-decisions">
         <div class="pane-toolbar">
-          <button class="filter-pill active" data-filter="visible" onclick="setDecFilter('visible')">VISIBLES</button>
-          <button class="filter-pill" data-filter="mine"     onclick="setDecFilter('mine')">MÍAS</button>
-          <button class="filter-pill" data-filter="open"     onclick="setDecFilter('open')">ABIERTAS</button>
-          <button class="filter-pill" data-filter="overdue"  onclick="setDecFilter('overdue')">VENCIDAS</button>
+          <button class="filter-pill active" data-filter="visible" onclick="setDecFilter('visible')">Visibles</button>
+          <button class="filter-pill" data-filter="mine"     onclick="setDecFilter('mine')">Mías</button>
+          <button class="filter-pill" data-filter="open"     onclick="setDecFilter('open')">Abiertas</button>
+          <button class="filter-pill" data-filter="overdue"  onclick="setDecFilter('overdue')">Vencidas</button>
           <div class="spacer"></div>
-          <button class="btn-pri" onclick="openNewDecision()">+ NUEVA</button>
+          <button class="btn-pri" onclick="openNewDecision()">Nueva decisión</button>
         </div>
         <div id="decisions-container"><div class="empty-state">Cargando…</div></div>
       </div>
@@ -384,14 +386,14 @@
     <!-- ── Chat pane ── -->
     <div class="pane chat-pane">
       <div class="pane-head">
-        <span class="icon">▣</span>
-        <h2>ASISTENTE</h2>
-        <button class="btn-send" style="background:transparent;color:var(--text3);border:1px solid var(--border)"
-                onclick="resetChat()" title="Nueva conversación">⟲</button>
+        <span class="icon">●</span>
+        <h2>Asistente</h2>
+        <button class="btn-send" style="background:transparent;color:var(--text2);border:1px solid var(--border)"
+                onclick="resetChat()" title="Nueva conversación">Nuevo chat</button>
       </div>
       <div class="chat-history" id="chat-history">
         <div class="chat-empty" id="chat-empty">
-          <div class="icon">▣</div>
+          <div class="icon">●</div>
           <div>Pregúntame algo sobre los datos, los KPIs o pídeme un dashboard.</div>
           <div class="examples">
             <button class="example" onclick="askExample(this)">¿Cuál fue el margen bruto del último trimestre?</button>
@@ -403,7 +405,7 @@
       <div class="chat-input-bar">
         <textarea id="chat-input" placeholder="Escribe tu pregunta…  (Shift+Enter = salto de línea)"
                   rows="1" onkeydown="onChatKey(event)"></textarea>
-        <button class="btn-send" id="btn-send" onclick="sendMessage()">ENVIAR ▸</button>
+        <button class="btn-send" id="btn-send" onclick="sendMessage()">Enviar</button>
       </div>
     </div>
   </div>
@@ -420,12 +422,12 @@
       try { const r = await fetch('/auth/me'); const d = await r.json(); ME = d.user; }
       catch { ME = null; }
       const bar = document.getElementById('user-bar');
-      if (!ME) { bar.innerHTML = '<a href="/">RECARGAR</a>'; return; }
+      if (!ME) { bar.innerHTML = '<a href="/">Recargar</a>'; return; }
       bar.innerHTML = `
         <span class="me"><strong>${escHtml(ME.email)}</strong></span>
-        <span class="role-pill ${ME.role==='admin'?'admin':''}">${ME.role.toUpperCase()}</span>
-        <a href="${CONSOLE_URL}/me">MI PERFIL</a>
-        <a href="#" onclick="event.preventDefault();doLogout()">SALIR</a>`;
+        <span class="role-pill ${ME.role==='admin'?'admin':''}">${escHtml(ME.role)}</span>
+        <a href="${CONSOLE_URL}/me">Mi perfil</a>
+        <a href="#" onclick="event.preventDefault();doLogout()">Salir</a>`;
     }
     async function doLogout(){
       await fetch('/auth/logout', {method:'POST'});
@@ -528,7 +530,7 @@
       wrap.className = 'chat-actions';
       const btn = document.createElement('button');
       btn.className = 'chat-action-btn';
-      btn.textContent = '＋ CONVERTIR EN DECISIÓN';
+      btn.textContent = 'Convertir en decisión';
       btn.onclick = () => decisionFromChat(question, reply);
       wrap.appendChild(btn);
       const h = document.getElementById('chat-history');
@@ -762,14 +764,14 @@
             <div class="empty-state">
               <div class="empty-icon">▣</div>
               <div>Sin decisiones en este filtro.</div>
-              <div style="margin-top:8px;color:var(--text2)">Pulsa "+ NUEVA" para registrar la primera.</div>
+              <div style="margin-top:8px;color:var(--text2)">Pulsa "Nueva decisión" para registrar la primera.</div>
             </div>`;
           return;
         }
         cont.innerHTML = `<table class="dec-table">
           <thead><tr>
-            <th>TÍTULO</th><th>RESPONSABLE</th><th>VIS</th><th>COMPROMISO</th>
-            <th>STATUS</th><th>OUTCOME</th><th>DÍAS</th>
+            <th>Título</th><th>Responsable</th><th>Visibilidad</th><th>Compromiso</th>
+            <th>Estado</th><th>Resultado</th><th>Días</th>
           </tr></thead>
           <tbody>${rows.map(decRowHtml).join('')}</tbody>
         </table>`;
@@ -783,20 +785,21 @@
 
     function decRowHtml(r) {
       const days = daysUntil(r.commitment_date);
-      let statusBadge = `<span class="badge b-${r.status}">${r.status.toUpperCase()}</span>`;
+      const statusLabel = r.status === 'open' ? 'Abierta' : (r.status === 'closed' ? 'Cerrada' : r.status);
+      let statusBadge = `<span class="badge b-${r.status}">${escHtml(statusLabel)}</span>`;
       let daysCell = '—';
       if (r.status === 'open' && days !== null) {
-        if (days < 0)      { statusBadge = `<span class="badge b-overdue">VENCIDA</span>`; daysCell = `<span style="color:var(--red)">${days}d</span>`; }
+        if (days < 0)      { statusBadge = `<span class="badge b-overdue">Vencida</span>`; daysCell = `<span style="color:var(--red)">${days}d</span>`; }
         else if (days <= 7) daysCell = `<span style="color:var(--amber)">${days}d</span>`;
         else                daysCell = `<span style="color:var(--text2)">${days}d</span>`;
       }
       let outcomeCell = '—';
-      if (r.outcome === 'achieved')         outcomeCell = `<span class="badge b-ok">LOGRADO</span>`;
-      else if (r.outcome === 'not_achieved') outcomeCell = `<span class="badge b-fail">NO LOGRADO</span>`;
+      if (r.outcome === 'achieved')         outcomeCell = `<span class="badge b-ok">Logrado</span>`;
+      else if (r.outcome === 'not_achieved') outcomeCell = `<span class="badge b-fail">No logrado</span>`;
       const responsable = userLabel(r.assignee_id) || `<span style="color:var(--text3)">—</span>`;
       const visBadge = r.visibility === 'shared'
-        ? '<span class="badge b-shared" title="Visible para todo el equipo">EQUIPO</span>'
-        : '<span class="badge b-private" title="Solo creador, responsable y admins">PRIVADA</span>';
+        ? '<span class="badge b-shared" title="Visible para todo el equipo">Equipo</span>'
+        : '<span class="badge b-private" title="Solo creador, responsable y admins">Privada</span>';
       return `<tr data-id="${r.id}">
         <td><strong>${escHtml(r.title)}</strong></td>
         <td style="color:var(--text2)">${responsable}</td>
@@ -830,27 +833,27 @@
       showModal(`
         <div class="modal">
           <div class="modal-head">
-            <h3>NUEVA DECISIÓN</h3>
+            <h3>Nueva decisión</h3>
             <button class="modal-close" onclick="closeModal()">×</button>
           </div>
           <div class="modal-body">
-            <div class="field"><label>TÍTULO</label><input id="nd-title" placeholder="Reducir overhead en proyecto X" value="${escHtml(pTitle)}"></div>
-            <div class="field"><label>DESCRIPCIÓN</label><textarea id="nd-desc" placeholder="Contexto, motivación, criterio de éxito…">${escHtml(pDesc)}</textarea></div>
+            <div class="field"><label>Título</label><input id="nd-title" placeholder="Reducir overhead en proyecto X" value="${escHtml(pTitle)}"></div>
+            <div class="field"><label>Descripción</label><textarea id="nd-desc" placeholder="Contexto, motivación, criterio de éxito…">${escHtml(pDesc)}</textarea></div>
             <div class="field-grid">
-              <div class="field"><label>FECHA COMPROMISO</label><input id="nd-commit" type="date"></div>
-              <div class="field"><label>RESPONSABLE</label><select id="nd-assignee">${userOpts(meId)}</select></div>
-              <div class="field"><label>VISIBILIDAD</label>
+              <div class="field"><label>Fecha compromiso</label><input id="nd-commit" type="date"></div>
+              <div class="field"><label>Responsable</label><select id="nd-assignee">${userOpts(meId)}</select></div>
+              <div class="field"><label>Visibilidad</label>
                 <select id="nd-vis">
                   <option value="private">private — creador, responsable y admins</option>
                   <option value="shared">shared — todo el equipo</option>
                 </select>
               </div>
             </div>
-            <div style="font-size:9px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px">Los KPIs se editan después en el detalle.</div>
+            <div style="font-size:12px;color:var(--text2);font-family:var(--font-ui);letter-spacing:0">Los KPIs se editan después en el detalle.</div>
           </div>
           <div class="modal-foot">
-            <button class="btn-ghost" onclick="closeModal()">CANCELAR</button>
-            <button class="btn-pri" onclick="submitNewDecision()">CREAR</button>
+            <button class="btn-ghost" onclick="closeModal()">Cancelar</button>
+            <button class="btn-pri" onclick="submitNewDecision()">Crear</button>
           </div>
         </div>`);
       setTimeout(() => document.getElementById('nd-title').focus(), 50);
@@ -905,14 +908,14 @@
             <button class="modal-close" onclick="closeModal()">×</button>
           </div>
           <div class="modal-body">
-            <div style="font-size:10px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px;margin-bottom:14px">
+            <div style="font-size:12px;color:var(--text2);font-family:var(--font-ui);letter-spacing:0;margin-bottom:14px">
               creada por <strong style="color:var(--text2)">${escHtml(owner)}</strong> · ${escHtml((d.created_at||'').slice(0,16).replace('T',' '))}
               ${d.closed_at ? ' · cerrada ' + escHtml(d.closed_at.slice(0,10)) : ''}
             </div>
             <div class="sub-tabs">
-              <div class="sub-tab ${tab==='overview'?'active':''}"  onclick="renderDetailModal('overview')">OVERVIEW</div>
+              <div class="sub-tab ${tab==='overview'?'active':''}"  onclick="renderDetailModal('overview')">Resumen</div>
               <div class="sub-tab ${tab==='kpis'?'active':''}"      onclick="renderDetailModal('kpis')">KPIs (${(d.kpis||[]).length})</div>
-              <div class="sub-tab ${tab==='actions'?'active':''}"   onclick="renderDetailModal('actions')">BITÁCORA (${(d.actions||[]).length})</div>
+              <div class="sub-tab ${tab==='actions'?'active':''}"   onclick="renderDetailModal('actions')">Bitácora (${(d.actions||[]).length})</div>
             </div>
             <div id="detail-body">${
               tab==='overview' ? detailOverviewHtml(d) :
@@ -921,11 +924,11 @@
             }</div>
           </div>
           <div class="modal-foot">
-            ${tab==='overview' ? `<button class="btn-danger" onclick="deleteDecision(${d.id})">🗑 ELIMINAR</button>` : ''}
+            ${tab==='overview' ? `<button class="btn-danger" onclick="deleteDecision(${d.id})">Eliminar</button>` : ''}
             <div style="flex:1"></div>
-            <button class="btn-ghost" onclick="closeModal()">CERRAR</button>
-            ${tab==='overview' ? `<button class="btn-pri" onclick="saveDecisionOverview(${d.id})">GUARDAR</button>` : ''}
-            ${tab==='kpis'     ? `<button class="btn-pri" onclick="saveDecisionKpis(${d.id})">GUARDAR KPIs</button>` : ''}
+            <button class="btn-ghost" onclick="closeModal()">Cerrar</button>
+            ${tab==='overview' ? `<button class="btn-pri" onclick="saveDecisionOverview(${d.id})">Guardar</button>` : ''}
+            ${tab==='kpis'     ? `<button class="btn-pri" onclick="saveDecisionKpis(${d.id})">Guardar KPIs</button>` : ''}
           </div>
         </div>`);
       if (tab === 'kpis') initKpiEditor();
@@ -934,27 +937,27 @@
 
     function detailOverviewHtml(d) {
       return `
-        <div class="field"><label>TÍTULO</label><input id="ed-title" value="${escHtml(d.title)}"></div>
-        <div class="field"><label>DESCRIPCIÓN</label><textarea id="ed-desc">${escHtml(d.description)}</textarea></div>
+        <div class="field"><label>Título</label><input id="ed-title" value="${escHtml(d.title)}"></div>
+        <div class="field"><label>Descripción</label><textarea id="ed-desc">${escHtml(d.description)}</textarea></div>
         <div class="field-grid">
-          <div class="field"><label>FECHA COMPROMISO</label>
+          <div class="field"><label>Fecha compromiso</label>
             <input id="ed-commit" type="date" value="${d.commitment_date ? d.commitment_date.slice(0,10) : ''}">
           </div>
-          <div class="field"><label>RESPONSABLE</label><select id="ed-assignee">${userOpts(d.assignee_id)}</select></div>
-          <div class="field"><label>STATUS</label>
+          <div class="field"><label>Responsable</label><select id="ed-assignee">${userOpts(d.assignee_id)}</select></div>
+          <div class="field"><label>Estado</label>
             <select id="ed-status">
               <option value="open"   ${d.status==='open'?'selected':''}>open</option>
               <option value="closed" ${d.status==='closed'?'selected':''}>closed</option>
             </select>
           </div>
-          <div class="field"><label>OUTCOME</label>
+          <div class="field"><label>Resultado</label>
             <select id="ed-outcome">
               <option value=""             ${!d.outcome?'selected':''}>(pendiente)</option>
-              <option value="achieved"     ${d.outcome==='achieved'?'selected':''}>achieved · LOGRADO</option>
-              <option value="not_achieved" ${d.outcome==='not_achieved'?'selected':''}>not_achieved · NO LOGRADO</option>
+              <option value="achieved"     ${d.outcome==='achieved'?'selected':''}>achieved · logrado</option>
+              <option value="not_achieved" ${d.outcome==='not_achieved'?'selected':''}>not_achieved · no logrado</option>
             </select>
           </div>
-          <div class="field"><label>VISIBILIDAD</label>
+          <div class="field"><label>Visibilidad</label>
             <select id="ed-vis">
               <option value="private" ${d.visibility==='private'?'selected':''}>private — creador, responsable, admins</option>
               <option value="shared"  ${d.visibility==='shared' ?'selected':''}>shared — todo el equipo</option>
@@ -971,8 +974,8 @@
           ${a.note ? `<div style="font-size:11px;color:var(--text2);margin-top:5px">${escHtml(a.note)}</div>` : ''}
         </div>`).join('');
       return `
-        <div class="field"><label>NUEVA ENTRADA</label><textarea id="ac-text" placeholder="Acción tomada o nota…"></textarea></div>
-        <div style="margin-bottom:14px"><button class="btn-pri" onclick="addDecisionAction(${d.id})">AÑADIR</button></div>
+        <div class="field"><label>Nueva entrada</label><textarea id="ac-text" placeholder="Acción tomada o nota…"></textarea></div>
+        <div style="margin-bottom:14px"><button class="btn-pri" onclick="addDecisionAction(${d.id})">Añadir</button></div>
         <div class="actions-list">${items || '<div class="empty-state" style="padding:20px">Sin entradas</div>'}</div>`;
     }
 
@@ -987,9 +990,9 @@
       return `
         <div id="kpi-list"></div>
         <div style="margin-top:14px">
-          <button class="btn-ghost" onclick="addKpiRow()">+ AÑADIR KPI</button>
+          <button class="btn-ghost" onclick="addKpiRow()">Añadir KPI</button>
         </div>
-        <div style="font-size:9px;color:var(--text3);font-family:var(--font-mono);margin-top:14px;letter-spacing:1px">
+        <div style="font-size:12px;color:var(--text2);font-family:var(--font-ui);margin-top:14px;letter-spacing:0">
           Cada KPI define una métrica medible: dataset → columna → operador → target → periodo.
           El agente futuro evaluará automáticamente estos KPIs en la fecha compromiso.
         </div>`;
@@ -1027,7 +1030,7 @@
       const cont = document.getElementById('kpi-list');
       if (!cont) return;
       if (!WORKING_KPIS.length) {
-        cont.innerHTML = '<div class="kpi-empty">Sin KPIs definidos. Pulsa "+ AÑADIR KPI" para crear el primero.</div>';
+        cont.innerHTML = '<div class="kpi-empty">Sin KPIs definidos. Pulsa "Añadir KPI" para crear el primero.</div>';
         return;
       }
       cont.innerHTML = WORKING_KPIS.map((k, i) => kpiRowHtml(k, i)).join('');
@@ -1039,18 +1042,18 @@
         `<option value="${escHtml(d.name)}" ${k.dataset===d.name?'selected':''}>${escHtml(d.name)} [${d.layer}]</option>`
       ).join('');
       return `<div class="kpi-row" data-i="${i}">
-        <div><label>DATASET</label>
+        <div><label>Dataset</label>
           <select data-f="dataset"><option value="">—</option>${dsOpts}</select>
         </div>
-        <div><label>COLUMNA</label>
+        <div><label>Columna</label>
           <select data-f="column"><option value="">—</option></select>
         </div>
         <div><label>OP</label>
           <select data-f="operator">${KPI_OPS.map(o=>`<option ${k.operator===o?'selected':''}>${o}</option>`).join('')}</select>
         </div>
-        <div><label>TARGET</label><input data-f="target" value="${escHtml(k.target||'')}" placeholder="15"></div>
-        <div><label>PERIODO</label><input data-f="period" value="${escHtml(k.period||'')}" placeholder="2026-Q2"></div>
-        <div><label>ETIQUETA</label><input data-f="label" value="${escHtml(k.label||'')}" placeholder="Margen mínimo"></div>
+        <div><label>Target</label><input data-f="target" value="${escHtml(k.target||'')}" placeholder="15"></div>
+        <div><label>Periodo</label><input data-f="period" value="${escHtml(k.period||'')}" placeholder="2026-Q2"></div>
+        <div><label>Etiqueta</label><input data-f="label" value="${escHtml(k.label||'')}" placeholder="Margen mínimo"></div>
         <div><button class="btn-danger" onclick="removeKpiRow(${i})">×</button></div>
       </div>`;
     }

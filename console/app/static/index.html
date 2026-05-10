@@ -246,7 +246,7 @@
   </div>
 
   <script>
-    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
+    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
     fetch('/mcp/servers').then(r => r.json()).then(d => {
       const healthy = (d.servers || []).filter(s => s.healthy).length;
       const total   = (d.servers || []).length;
