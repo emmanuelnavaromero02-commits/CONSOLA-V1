@@ -14,6 +14,105 @@ app = FastAPI(title="Replicon Local Mock", version="1.0.0")
 MOCK_BASE_URL = "http://replicon-mock:8100"
 
 MOCK_DATA: dict[str, list[dict[str, Any]]] = {
+    "User": [
+        {
+            "user_id": "U001",
+            "email": "ana.garcia@example.com",
+            "name": "Ana Garcia",
+            "department_id": "D001",
+            "role_id": "R002",
+            "active": True,
+            "cost_rate": 65.0,
+            "billing_rate": 120.0,
+            "last_modified": "2026-05-01T10:00:00Z",
+        },
+        {
+            "user_id": "U002",
+            "email": "marco.lee@example.com",
+            "name": "Marco Lee",
+            "department_id": "D003",
+            "role_id": "R001",
+            "active": True,
+            "cost_rate": 52.0,
+            "billing_rate": 95.0,
+            "last_modified": "2026-05-02T11:30:00Z",
+        },
+    ],
+    "Client": [
+        {"client_id": "C001", "name": "Acme Corp", "currency": "USD", "last_modified": "2026-05-01T09:00:00Z"},
+        {"client_id": "C002", "name": "Globex", "currency": "EUR", "last_modified": "2026-05-03T09:00:00Z"},
+    ],
+    "Project": [
+        {
+            "project_id": "P001",
+            "client_id": "C001",
+            "name": "ERP Modernization",
+            "status": "active",
+            "budget_hours": 420,
+            "start_date": "2026-04-01",
+            "end_date": "2026-09-30",
+            "last_modified": "2026-05-04T08:15:00Z",
+        },
+        {
+            "project_id": "P002",
+            "client_id": "C002",
+            "name": "Analytics Enablement",
+            "status": "active",
+            "budget_hours": 260,
+            "start_date": "2026-05-01",
+            "end_date": "2026-08-15",
+            "last_modified": "2026-05-05T12:00:00Z",
+        },
+    ],
+    "Task": [
+        {"task_id": "T001", "project_id": "P001", "name": "Discovery", "billable": True, "estimated_hours": 40, "last_modified": "2026-05-01T12:00:00Z"},
+        {"task_id": "T002", "project_id": "P002", "name": "Dashboard Build", "billable": True, "estimated_hours": 80, "last_modified": "2026-05-02T12:00:00Z"},
+    ],
+    "TimeEntry": [
+        {
+            "entry_id": "TE001",
+            "user_id": "U001",
+            "project_id": "P001",
+            "task_id": "T001",
+            "activity_id": "A001",
+            "date": "2026-05-06",
+            "hours": 7.5,
+            "billable": True,
+            "approved": True,
+            "last_modified": "2026-05-06T17:30:00Z",
+        },
+        {
+            "entry_id": "TE002",
+            "user_id": "U002",
+            "project_id": "P002",
+            "task_id": "T002",
+            "activity_id": "A001",
+            "date": "2026-05-06",
+            "hours": 6.0,
+            "billable": True,
+            "approved": False,
+            "last_modified": "2026-05-06T18:00:00Z",
+        },
+    ],
+    "Timesheet": [
+        {"timesheet_id": "TS001", "user_id": "U001", "period_start": "2026-05-04", "period_end": "2026-05-10", "status": "approved", "hours": 37.5, "last_modified": "2026-05-10T18:00:00Z"},
+        {"timesheet_id": "TS002", "user_id": "U002", "period_start": "2026-05-04", "period_end": "2026-05-10", "status": "submitted", "hours": 32.0, "last_modified": "2026-05-10T18:10:00Z"},
+    ],
+    "ExpenseEntry": [
+        {"expense_id": "E001", "user_id": "U001", "project_id": "P001", "date": "2026-05-05", "category": "Travel", "amount": 180.25, "billable": True, "last_modified": "2026-05-06T09:00:00Z"},
+    ],
+    "BillingItem": [
+        {"billing_item_id": "B001", "project_id": "P001", "user_id": "U001", "date": "2026-05-06", "hours": 7.5, "rate": 120.0, "amount": 900.0, "last_modified": "2026-05-06T18:30:00Z"},
+    ],
+    "InvoiceItem": [
+        {"invoice_item_id": "I001", "billing_item_id": "B001", "project_id": "P001", "amount": 900.0, "currency": "USD", "last_modified": "2026-05-07T10:00:00Z"},
+    ],
+    "CostItem": [
+        {"cost_item_id": "CO001", "project_id": "P001", "user_id": "U001", "date": "2026-05-06", "hours": 7.5, "rate": 65.0, "amount": 487.5, "last_modified": "2026-05-06T18:30:00Z"},
+    ],
+    "ProfitItem": [
+        {"profit_item_id": "PR001", "project_id": "P001", "revenue": 900.0, "cost": 487.5, "profit": 412.5, "last_modified": "2026-05-07T11:00:00Z"},
+    ],
     "Department": [
         {"department_id": "D001", "name": "Engineering", "active": True},
         {"department_id": "D002", "name": "Finance", "active": True},
@@ -26,6 +125,19 @@ MOCK_DATA: dict[str, list[dict[str, Any]]] = {
     "Activity": [
         {"activity_id": "A001", "name": "Billable Work"},
         {"activity_id": "A002", "name": "Internal"},
+    ],
+    "ResourceAllocation": [
+        {"allocation_id": "RA001", "project_id": "P001", "user_id": "U001", "role_id": "R002", "hours": 160},
+    ],
+    "ResourceAssignment": [
+        {"assignment_id": "AS001", "project_id": "P001", "user_id": "U001", "role_id": "R002", "allocation_hours": 160, "last_modified": "2026-05-03T10:00:00Z"},
+    ],
+    "ResourceRequest": [
+        {"request_id": "RR001", "project_id": "P002", "role_id": "R001", "hours": 80, "status": "open"},
+    ],
+    "ProjectTeamMember": [
+        {"member_id": "M001", "project_id": "P001", "user_id": "U001", "role_id": "R002"},
+        {"member_id": "M002", "project_id": "P002", "user_id": "U002", "role_id": "R001"},
     ],
 }
 

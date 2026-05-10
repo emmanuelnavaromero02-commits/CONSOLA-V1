@@ -72,6 +72,36 @@ default_args = {
 
 # ── Helpers (módulo-level, no son tareas de Airflow) ─────────────────────────
 
+def _scalar_conf_value(value, default=None):
+    if value is None or value == "":
+        return default
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return default
+
+
+def _runtime_conf(ctx: dict, task_params: dict | None = None) -> dict:
+    dag_run = ctx.get("dag_run")
+    dag_conf = getattr(dag_run, "conf", None) or {}
+    ctx_params = ctx.get("params") if isinstance(ctx.get("params"), dict) else {}
+    task_params = task_params if isinstance(task_params, dict) else {}
+
+    def get(name: str, default=None):
+        if name in dag_conf:
+            return _scalar_conf_value(dag_conf.get(name), default)
+        if name in task_params:
+            return _scalar_conf_value(task_params.get(name), default)
+        if name in ctx_params:
+            return _scalar_conf_value(ctx_params.get(name), default)
+        return default
+
+    return {
+        "entity": get("entity", "User"),
+        "mode": get("mode", "incremental"),
+        "from_date": get("from_date"),
+        "to_date": get("to_date"),
+    }
+
 def _get_connection(conn_id: str) -> tuple[str, str]:
     """Devuelve (base_url, token) desde una Airflow Connection replicon_<conn_id>."""
     from airflow.hooks.base import BaseHook
@@ -275,7 +305,7 @@ def replicon_extract():
         ctx           = get_current_context()
         airflow_run_id = ctx.get("run_id", "")
 
-        conf      = params or {}
+        conf      = _runtime_conf(ctx, params)
         entity    = conf.get("entity", "User")
         mode      = conf.get("mode", "incremental")
         from_date = conf.get("from_date") or None
