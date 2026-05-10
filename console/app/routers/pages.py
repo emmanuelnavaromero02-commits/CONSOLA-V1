@@ -21,6 +21,11 @@ async def monitor_page():
     return FileResponse(STATIC / "monitor.html")
 
 
+@router.get("/security")
+async def security_page():
+    return FileResponse(STATIC / "security.html")
+
+
 @router.get("/viewer/jobs")
 async def viewer_jobs():
     return FileResponse(STATIC / "viewers" / "jobs.html")

@@ -1,9 +1,16 @@
+import hashlib
+import hmac
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from app.dependencies import require_admin
 from app.services import auth as _auth
-import json
 
 router = APIRouter(prefix="/security", tags=["Security Center"])
+
+
+def _session_id(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 @router.get("/sessions")
 async def get_sessions(user: dict = Depends(require_admin)):
@@ -18,6 +25,7 @@ async def get_sessions(user: dict = Depends(require_admin)):
     for r in rows:
         d = dict(r)
         token = d.pop("token")
+        d["session_id"] = _session_id(token)
         d["token_preview"] = token[:8] + "..." if token and len(token) > 8 else "***"
         res.append(d)
     return res
@@ -26,6 +34,18 @@ async def get_sessions(user: dict = Depends(require_admin)):
 async def revoke_session(token: str, user: dict = Depends(require_admin)):
     p = await _auth.pool()
     res = await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+    if res == "DELETE 0" and len(token) == 64:
+        rows = await p.fetch("SELECT token FROM user_sessions")
+        matched = next(
+            (
+                r["token"]
+                for r in rows
+                if hmac.compare_digest(_session_id(r["token"]), token)
+            ),
+            None,
+        )
+        if matched:
+            res = await p.execute("DELETE FROM user_sessions WHERE token = $1", matched)
     if res == "DELETE 0":
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "ok"}
