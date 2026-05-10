@@ -9,10 +9,6 @@
 </head>
 <body>
 
-  <!-- CRT overlay -->
-  <div class="crt-overlay"></div>
-  <div class="scanlines"></div>
-
   <!-- Enterprise Shell -->
   <div class="ent-shell">
     <aside class="ent-sidebar">
@@ -38,9 +34,9 @@
           <select class="ent-workspace-sel"><option>Default Workspace</option></select>
         </div>
         <div class="ent-topbar-right">
-          <button class="btn-theme" id="theme-btn" onclick="cycleTheme()" title="Cambiar tema" style="margin-right:12px; font-size:11px;">☾ DARK</button>
-          <span class="status-dot blink" style="margin-right:4px;"></span>
-          <span class="status-text" id="sys-status" style="margin-right:12px; font-size:11px;">ONLINE</span>
+          <button class="btn-theme" id="theme-btn" onclick="cycleTheme()" title="Cambiar tema">☾ DARK</button>
+          <span class="status-dot blink"></span>
+          <span class="status-text" id="sys-status">ONLINE</span>
           <div class="ent-user">
             <div class="ent-user-name">Usuario</div>
             <div class="ent-avatar">U</div>
@@ -52,24 +48,24 @@
         <!-- Main layout -->
         <div class="app-body">
           <main class="layout">
-            <!-- LEFT: Assistant terminal -->
+            <!-- LEFT: Assistant -->
             <section class="panel panel-main">
               <div class="panel-title">
-                <span class="panel-icon">▶</span> ASSISTANT TERMINAL
+                <span class="panel-icon">▶</span> Assistant
                 <span class="panel-badge" id="model-badge">CLAUDE SONNET 4.6</span>
               </div>
 
               <div class="chat-window" id="chat-window">
                 <div class="chat-boot">
                   <div class="boot-line">MODecissions Monitor — Pipeline &amp; Data Intelligence</div>
-                  <div class="boot-line">Initializing MCP registry...</div>
-                  <div class="boot-line" id="boot-mcp-line">Scanning cartridges...</div>
-                  <div class="boot-line success" id="boot-ready">SYSTEM READY. Abriendo Pipeline Monitor...</div>
+                  <div class="boot-line">Preparing MCP registry...</div>
+                  <div class="boot-line" id="boot-mcp-line">Checking cartridges...</div>
+                  <div class="boot-line success" id="boot-ready">Ready. Opening Pipeline Monitor...</div>
                 </div>
               </div>
 
               <div class="input-bar">
-                <span class="prompt-symbol">&gt;_</span>
+                <span class="prompt-symbol">•</span>
                 <textarea id="chat-input" class="chat-input" rows="1"
                   placeholder="Consulta el estado del pipeline, jobs, datasets..."
                   onkeydown="handleKey(event)"></textarea>
