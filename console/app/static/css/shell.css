@@ -1,13 +1,17 @@
 :root {
   --shell-sidebar-bg: #1e2433;
   --shell-sidebar-width: 240px;
-  --shell-topbar-bg: #ffffff;
-  --shell-topbar-border: var(--border);
-  --color-accent: var(--cyan);
+  --shell-topbar-bg: var(--color-surface);
+  --shell-topbar-border: var(--color-border);
+  --shell-topbar-text: var(--color-text-primary);
+  --shell-topbar-text-muted: var(--color-text-secondary);
 }
 
-[data-theme="dark"] {
-  --shell-topbar-bg: #ffffff;
+html[data-theme="dark"] {
+  --shell-topbar-bg: var(--color-bg-dark);
+  --shell-topbar-border: rgba(255, 255, 255, 0.12);
+  --shell-topbar-text: #ffffff;
+  --shell-topbar-text-muted: rgba(255, 255, 255, 0.72);
 }
 
 .ent-shell {
@@ -15,7 +19,7 @@
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--color-bg);
   font-family: var(--font-sans);
 }
 
@@ -26,7 +30,7 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--color-border);
   z-index: 10;
 }
 
@@ -100,10 +104,10 @@
 
 .ent-breadcrumb {
   font-size: 14px;
-  color: var(--text2);
+  color: var(--shell-topbar-text-muted);
 }
 .ent-breadcrumb span {
-  color: var(--text);
+  color: var(--shell-topbar-text);
   font-weight: 600;
   margin: 0 4px;
 }
@@ -118,10 +122,10 @@
   font-family: inherit;
   font-size: 13px;
   padding: 6px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--bg2);
-  color: var(--text);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
   outline: none;
   cursor: pointer;
 }
@@ -137,6 +141,20 @@
   flex: 1;
 }
 
+.ent-topbar .btn-theme {
+  margin-right: 12px;
+  font-size: 11px;
+}
+
+.ent-topbar .status-dot {
+  margin-right: 4px;
+}
+
+.ent-topbar .status-text {
+  margin-right: 12px;
+  font-size: 11px;
+}
+
 .ent-user {
   display: flex;
   align-items: center;
@@ -145,7 +163,7 @@
 
 .ent-user-name {
   font-size: 14px;
-  color: var(--text);
+  color: var(--shell-topbar-text);
   font-weight: 500;
 }
 
