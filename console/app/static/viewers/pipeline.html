@@ -382,7 +382,7 @@
 let pipelineData  = [];
 let activeJobs    = {};   // entity → job_id (jobs being polled)
 let _autoTimer    = null;
-let _cartridge    = 'replicon';
+let _cartridge    = 'sap_s4hana';
 let _activeTab    = 'pipeline';
 let _selectedDag  = null;  // currently selected dag_id in editor
 
@@ -401,7 +401,7 @@ async function loadCartridgeSelector() {
 
 function onCartridgeChange() {
   const sel = document.getElementById('cart-sel');
-  _cartridge = sel.value || 'replicon';
+  _cartridge = sel.value || 'sap_s4hana';
   activeJobs = {};
   load();
   loadDags();

@@ -111,7 +111,7 @@ async def test_dag_based_cartridge_triggers_airflow_dag(console_main, monkeypatc
         return {
             "pattern": "dag-based",
             "entity": entity,
-            "dag_id": "replicon_extract",
+            "dag_id": "sap_s4hana_extract",
             "mode": "full",
             "enabled": True,
             "primary_key": "department_id",
@@ -126,28 +126,28 @@ async def test_dag_based_cartridge_triggers_airflow_dag(console_main, monkeypatc
     monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
     monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
 
-    result = await console_main.api_pipeline_extract("replicon", "Department", {})
+    result = await console_main.api_pipeline_extract("sap_s4hana", "Department", {})
 
     assert calls == [
         (
             "infra",
             "airflow_trigger_dag",
             {
-                "dag_id": "replicon_extract",
+                "dag_id": "sap_s4hana_extract",
                 "conf": {"entity": "Department", "mode": "full"},
             },
         )
     ]
     assert result["triggered"] is True
-    assert result["cartridge"] == "replicon"
+    assert result["cartridge"] == "sap_s4hana"
     assert result["entity"] == "Department"
-    assert result["dag_id"] == "replicon_extract"
+    assert result["dag_id"] == "sap_s4hana_extract"
     assert result["run_id"] == "manual__test"
     assert console_main._test_asyncpg_stub.executed
     _, args = console_main._test_asyncpg_stub.executed[-1]
     assert args[0] == "manual__test"
-    assert args[1] == "replicon_extract"
-    assert args[2] == "replicon"
+    assert args[1] == "sap_s4hana_extract"
+    assert args[2] == "sap_s4hana"
     assert args[3] == "Department"
     assert args[5] == "full"
     assert args[6] == "queued"
@@ -159,7 +159,7 @@ async def test_dag_based_incremental_conf_preserves_dates(console_main, monkeypa
         return {
             "pattern": "dag-based",
             "entity": entity,
-            "dag_id": "replicon_extract",
+            "dag_id": "sap_s4hana_extract",
             "mode": "incremental",
             "enabled": True,
             "primary_key": "entry_id",
@@ -175,7 +175,7 @@ async def test_dag_based_incremental_conf_preserves_dates(console_main, monkeypa
     monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
 
     await console_main.api_pipeline_extract(
-        "replicon",
+        "sap_s4hana",
         "TimeEntry",
         {"mode": "incremental", "from_date": "2026-01-01", "to_date": "2026-01-31"},
     )
@@ -216,7 +216,7 @@ async def test_dag_based_missing_entity_returns_404(console_main, monkeypatch):
     monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
 
     with pytest.raises(HTTPException) as exc:
-        await console_main.api_pipeline_extract("replicon", "Missing", {})
+        await console_main.api_pipeline_extract("sap_s4hana", "Missing", {})
 
     assert exc.value.status_code == 404
 
@@ -227,7 +227,7 @@ async def test_dag_based_disabled_entity_returns_400(console_main, monkeypatch):
         return {
             "pattern": "dag-based",
             "entity": entity,
-            "dag_id": "replicon_extract",
+            "dag_id": "sap_s4hana_extract",
             "mode": "full",
             "enabled": False,
         }
@@ -235,19 +235,19 @@ async def test_dag_based_disabled_entity_returns_400(console_main, monkeypatch):
     monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
 
     with pytest.raises(HTTPException) as exc:
-        await console_main.api_pipeline_extract("replicon", "Department", {})
+        await console_main.api_pipeline_extract("sap_s4hana", "Department", {})
 
     assert exc.value.status_code == 400
 
 
 def test_bronze_latest_date_from_real_minio_paths(console_main):
     latest_date = console_main._bronze_latest_date_from_objects(
-        "replicon",
+        "sap_s4hana",
         "Department",
         [
-            "raw/replicon/Department/load_date=2026-05-08/data.parquet",
-            "raw/replicon/Department/load_date=2026-05-09/data.parquet",
-            "silver/replicon/replicon_department_latest/data.parquet",
+            "raw/sap_s4hana/Department/load_date=2026-05-08/data.parquet",
+            "raw/sap_s4hana/Department/load_date=2026-05-09/data.parquet",
+            "silver/sap_s4hana/sap_s4hana_department_latest/data.parquet",
         ],
     )
 
@@ -264,7 +264,7 @@ async def test_api_pipeline_uses_physical_bronze_when_run_metadata_missing(conso
         }
 
     async def physical_snapshot(cartridge, entity):
-        assert cartridge == "replicon"
+        assert cartridge == "sap_s4hana"
         assert entity == "Department"
         return {"latest_date": "2026-05-09", "record_count": 3}
 
@@ -282,9 +282,9 @@ async def test_api_pipeline_uses_physical_bronze_when_run_metadata_missing(conso
             return _FakeResponse({
                 "datasets": [
                     {
-                        "name": "replicon_department_latest",
+                        "name": "sap_s4hana_department_latest",
                         "layer": "silver",
-                        "sources": ["raw/replicon/Department"],
+                        "sources": ["raw/sap_s4hana/Department"],
                         "row_count": 3,
                         "last_refresh": "2026-05-09T00:00:00+00:00",
                     }
@@ -295,15 +295,15 @@ async def test_api_pipeline_uses_physical_bronze_when_run_metadata_missing(conso
     monkeypatch.setattr(console_main, "_bronze_physical_snapshot", physical_snapshot)
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
 
-    result = await console_main.api_pipeline("replicon")
+    result = await console_main.api_pipeline("sap_s4hana")
     department = result["pipeline"][0]
 
     assert department["entity"] == "Department"
-    assert department["bronze"]["source"] == "raw/replicon/Department"
+    assert department["bronze"]["source"] == "raw/sap_s4hana/Department"
     assert department["bronze"]["latest_date"] == "2026-05-09"
     assert department["bronze"]["record_count"] == 3
     assert department["bronze"]["status"] != "never"
-    assert department["silver"][0]["name"] == "replicon_department_latest"
+    assert department["silver"][0]["name"] == "sap_s4hana_department_latest"
     assert department["silver"][0]["row_count"] == 3
 
 
@@ -322,7 +322,7 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
     async def invoke(server, tool, args):
         assert server == "infra"
         assert tool == "airflow_get_run_status"
-        assert args == {"dag_id": "replicon_extract", "dag_run_id": "manual__test"}
+        assert args == {"dag_id": "sap_s4hana_extract", "dag_run_id": "manual__test"}
         return {
             "state": "success",
             "start_date": "2026-05-09T04:09:57+00:00",
@@ -343,9 +343,9 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
             return _FakeResponse({
                 "datasets": [
                     {
-                        "name": "replicon_department_latest",
+                        "name": "sap_s4hana_department_latest",
                         "layer": "silver",
-                        "sources": ["raw/replicon/Department"],
+                        "sources": ["raw/sap_s4hana/Department"],
                         "row_count": 3,
                         "last_refresh": "2026-05-09T04:10:00+00:00",
                     }
@@ -354,7 +354,7 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
 
     console_main._test_asyncpg_stub.fetch_rows = [{
         "run_id": "manual__test",
-        "dag_id": "replicon_extract",
+        "dag_id": "sap_s4hana_extract",
         "entity": "Department",
         "airflow_dag_run_id": "manual__test",
         "status": "queued",
@@ -374,17 +374,17 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
     monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
     monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
 
-    result = await console_main.api_pipeline("replicon")
+    result = await console_main.api_pipeline("sap_s4hana")
     department = result["pipeline"][0]
 
     assert department["bronze"]["status"] != "never"
     assert department["bronze"]["record_count"] == 3
     assert department["silver"][0]["status"] == "fresh"
     assert department["silver"][0]["row_count"] == 3
-    assert department["last_run"]["dag_id"] == "replicon_extract"
+    assert department["last_run"]["dag_id"] == "sap_s4hana_extract"
     assert department["last_run"]["dag_run_id"] == "manual__test"
     assert department["last_run"]["status"] == "success"
-    assert department["last_job"]["dag_id"] == "replicon_extract"
+    assert department["last_job"]["dag_id"] == "sap_s4hana_extract"
     assert department["last_job"]["dag_run_id"] == "manual__test"
     assert department["last_job"]["status"] == "success"
     assert department["last_job"]["mode"] == "full"
@@ -397,14 +397,14 @@ async def test_api_pipeline_entity_runs_returns_recent_history(console_main, mon
         return {
             "pattern": "dag-based",
             "entity": entity,
-            "dag_id": "replicon_extract",
+            "dag_id": "sap_s4hana_extract",
             "mode": "full",
             "enabled": True,
         }
 
     console_main._test_asyncpg_stub.fetch_rows = [{
         "run_id": "manual__test",
-        "dag_id": "replicon_extract",
+        "dag_id": "sap_s4hana_extract",
         "airflow_dag_run_id": "manual__test",
         "status": "success",
         "mode": "full",
@@ -415,12 +415,12 @@ async def test_api_pipeline_entity_runs_returns_recent_history(console_main, mon
     }]
     monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
 
-    result = await console_main.api_pipeline_entity_runs("replicon", "Department", limit=20)
+    result = await console_main.api_pipeline_entity_runs("sap_s4hana", "Department", limit=20)
 
-    assert result["cartridge"] == "replicon"
+    assert result["cartridge"] == "sap_s4hana"
     assert result["entity"] == "Department"
     assert result["runs"] == [{
-        "dag_id": "replicon_extract",
+        "dag_id": "sap_s4hana_extract",
         "dag_run_id": "manual__test",
         "status": "success",
         "mode": "full",
@@ -438,7 +438,7 @@ async def test_api_pipeline_run_logs_returns_summary(console_main, monkeypatch):
         return {
             "pattern": "dag-based",
             "entity": entity,
-            "dag_id": "replicon_extract",
+            "dag_id": "sap_s4hana_extract",
             "mode": "full",
             "enabled": True,
         }
@@ -455,7 +455,7 @@ async def test_api_pipeline_run_logs_returns_summary(console_main, monkeypatch):
 
     console_main._test_asyncpg_stub.fetch_rows = [{
         "run_id": "manual__test",
-        "dag_id": "replicon_extract",
+        "dag_id": "sap_s4hana_extract",
         "airflow_dag_run_id": "manual__test",
         "status": "success",
         "mode": "full",
@@ -467,11 +467,11 @@ async def test_api_pipeline_run_logs_returns_summary(console_main, monkeypatch):
     monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
     monkeypatch.setattr(console_main.mcp_registry, "invoke", invoke)
 
-    result = await console_main.api_pipeline_run_logs("replicon", "Department", "manual__test")
+    result = await console_main.api_pipeline_run_logs("sap_s4hana", "Department", "manual__test")
 
-    assert result["cartridge"] == "replicon"
+    assert result["cartridge"] == "sap_s4hana"
     assert result["entity"] == "Department"
-    assert result["dag_id"] == "replicon_extract"
+    assert result["dag_id"] == "sap_s4hana_extract"
     assert result["dag_run_id"] == "manual__test"
     assert result["status"] == "success"
     assert result["available"] is True

@@ -43,7 +43,7 @@
     <div class="card-title">CARTUCHO</div>
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
       <select id="cartridge-sel" onchange="loadSemantic()">
-        <option value="replicon">replicon</option>
+        <option value="sap_s4hana">sap_s4hana</option>
       </select>
       <button class="btn" onclick="loadSemantic()">↺ Recargar</button>
     </div>
@@ -66,7 +66,7 @@ async function loadCartridges(){
     const d = await r.json();
     const servers = d.servers || [];
     const sel = document.getElementById('cartridge-sel');
-    const cartridge = params.get('cartridge') || 'replicon';
+    const cartridge = params.get('cartridge') || 'sap_s4hana';
     sel.innerHTML = servers.map(s=>`<option value="${esc(s.id)}" ${s.id===cartridge?'selected':''}>${esc(s.id)}</option>`).join('');
     loadSemantic();
   } catch(e) {
@@ -75,7 +75,7 @@ async function loadCartridges(){
 }
 
 async function loadSemantic(){
-  const cartridge = document.getElementById('cartridge-sel').value || 'replicon';
+  const cartridge = document.getElementById('cartridge-sel').value || 'sap_s4hana';
   history.replaceState(null,'',`?cartridge=${encodeURIComponent(cartridge)}`);
   document.getElementById('main-area').innerHTML = '<div class="empty-state">Cargando modelo semántico...</div>';
   document.getElementById('server-info').innerHTML = '';

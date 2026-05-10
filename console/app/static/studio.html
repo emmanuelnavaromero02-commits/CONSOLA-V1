@@ -2099,7 +2099,7 @@
 
     function applyTemplate(type) {
       const entity    = _currentEditorEntity();
-      const cartridge = _currentCartridge?.id || 'replicon';
+      const cartridge = _currentCartridge?.id || 'sap_s4hana';
       const base      = `s3://{bucket}/raw/${cartridge}/${entity || '{ENTITY}'}`;
       let sql = '';
       if (type === 'full_latest') {
@@ -2872,7 +2872,7 @@ FROM silver_${entity || 'entity'}`;
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
               <div>
                 <div style="font-size:9px;color:var(--text3);margin-bottom:3px">Dataset origen</div>
-                <input id="rel-from-ds" placeholder="replicon_timeentry_latest" class="cat-inp">
+                <input id="rel-from-ds" placeholder="sap_s4hana_timeentry_latest" class="cat-inp">
               </div>
               <div>
                 <div style="font-size:9px;color:var(--text3);margin-bottom:3px">Columna origen</div>
@@ -2880,7 +2880,7 @@ FROM silver_${entity || 'entity'}`;
               </div>
               <div>
                 <div style="font-size:9px;color:var(--text3);margin-bottom:3px">Dataset destino</div>
-                <input id="rel-to-ds" placeholder="replicon_project_latest" class="cat-inp">
+                <input id="rel-to-ds" placeholder="sap_s4hana_project_latest" class="cat-inp">
               </div>
               <div>
                 <div style="font-size:9px;color:var(--text3);margin-bottom:3px">Columna destino</div>
