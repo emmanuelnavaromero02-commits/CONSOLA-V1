@@ -6,6 +6,18 @@ All templates follow the 4-task pattern:
 """
 from __future__ import annotations
 
+import re
+
+
+_SAFE_TEMPLATE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _validate_template_identifier(value: str, field_name: str) -> str:
+    if not isinstance(value, str) or not _SAFE_TEMPLATE_IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(f"{field_name} inválido")
+    return value
+
+
 # ── Shared helpers injected into every template ───────────────────────────────
 
 _CONN_BLOCK = '''\
@@ -767,4 +779,6 @@ def get_code(template_id: str, cartridge: str = "my_cartridge",
     tpl = next((t for t in TEMPLATES if t["id"] == template_id), None)
     if not tpl:
         return None
-    return tpl["code"].replace("{cartridge}", cartridge).replace("{entity}", entity)
+    safe_cartridge = _validate_template_identifier(cartridge, "cartridge")
+    safe_entity = _validate_template_identifier(entity, "entity")
+    return tpl["code"].replace("{cartridge}", safe_cartridge).replace("{entity}", safe_entity)

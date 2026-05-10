@@ -75,5 +75,5 @@ def main():
 
 
 if __name__ == "__main__":
-    print(f"Sincronizando DAGs -> PostgreSQL ({PG_DSN})\n")
+    print("Sincronizando DAGs -> PostgreSQL (DSN oculto)\n")
     main()
