@@ -10,6 +10,12 @@ build/
 # Env
 .env
 *.env.local
+*.env.save
+.env.save
+infra/.env.save
+vault/secrets.yaml
+*.secret
+*.secrets
 secrets/
 
 # Data

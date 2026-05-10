@@ -77,6 +77,18 @@ def _is_insecure_secret(secret_key: str) -> bool:
     if not secret_key or len(secret_key.strip()) < 32:
         return True
     lowered = secret_key.strip().lower()
+    insecure_fragments = (
+        "change_me",
+        "changeme",
+        "local_dev",
+        "replace",
+        "example",
+        "dummy",
+        "secret_key",
+        "do_not_use",
+    )
+    if any(fragment in lowered for fragment in insecure_fragments):
+        return True
     insecure_values = {
         "secret",
         "jwt-secret",
