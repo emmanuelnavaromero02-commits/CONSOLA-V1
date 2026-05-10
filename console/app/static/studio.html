@@ -573,6 +573,7 @@
     .tpl-tag        { font-size: 8px; font-family: var(--font-mono); padding: 1px 4px;
                       border: 1px solid var(--border); border-radius: 2px; color: var(--text3); }
   </style>
+  <link rel="stylesheet" href="/static/css/studio-modern.css">
 </head>
 <body>
   <div class="crt-overlay"></div>
@@ -633,6 +634,8 @@
       <button class="btn btn-sm" id="btn-export-cart" style="display:none;margin-left:auto"
               onclick="exportCartridge()">↓ ZIP</button>
     </div>
+
+    <section id="studio-modern-root" aria-label="Studio overview"></section>
 
     <!-- Body -->
     <div class="studio-body">
@@ -758,59 +761,31 @@
     }
 
     function showCreateCartridge() {
-      // Inline modal
-      const overlay = document.createElement('div');
-      overlay.className = 'cc-modal-overlay';
-      overlay.id = 'cc-overlay';
-      overlay.innerHTML = `
-        <div class="cc-modal">
-          <h3>Nuevo Cartucho</h3>
-          <div class="form-grid" style="margin-bottom:16px">
-            <label>ID único</label>
-            <input type="text" id="cc-id" placeholder="ej: sap_erp" autocomplete="off">
-            <label>Nombre</label>
-            <input type="text" id="cc-name" placeholder="ej: SAP ERP">
-            <label>Descripción</label>
-            <input type="text" id="cc-desc" placeholder="Opcional">
-          </div>
-          <div id="cc-msg" style="font-size:11px;min-height:16px;margin-bottom:10px"></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn" onclick="doCreateCartridge()">✓ Crear</button>
-            <button class="btn" onclick="document.getElementById('cc-overlay').remove()">✕ Cancelar</button>
-          </div>
-        </div>`;
-      document.body.appendChild(overlay);
-      document.getElementById('cc-id').focus();
+      window.StudioCartridgeModal?.open();
     }
 
     async function doCreateCartridge() {
-      const id   = document.getElementById('cc-id').value.trim();
-      const name = document.getElementById('cc-name').value.trim();
-      const desc = document.getElementById('cc-desc').value.trim();
-      const msg  = document.getElementById('cc-msg');
-      if (!id || !name) { msg.innerHTML = '<span style="color:#ff2d55">ID y nombre son obligatorios</span>'; return; }
-      try {
-        const r = await fetch('/studio/cartridges', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({id, name, description: desc}),
-        });
-        const d = await r.json();
-        if (r.ok) {
-          _currentCartridge = d;
-          await loadCartridges();
-          document.getElementById('cartridge-sel').value = id;
-          _updateCartridgeInfo();
-          document.getElementById('cc-overlay').remove();
-          // Suggest starting Step 1
-          if (currentStep === 1) renderCartridges();
-        } else {
-          msg.innerHTML = `<span style="color:#ff2d55">${esc(d.detail || JSON.stringify(d))}</span>`;
-        }
-      } catch(e) {
-        document.getElementById('cc-msg').innerHTML = `<span style="color:#ff2d55">${esc(e.message)}</span>`;
-      }
+      await window.StudioCartridgeModal?.submit();
     }
+
+    window.__studioCreateCartridge = async function(payload) {
+      const r = await fetch('/studio/cartridges', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || JSON.stringify(d) || 'No se pudo crear el cartucho');
+      return d;
+    };
+
+    window.__studioCartridgeCreated = async function(cartridge, id) {
+      _currentCartridge = cartridge;
+      await loadCartridges();
+      document.getElementById('cartridge-sel').value = id;
+      _updateCartridgeInfo();
+      if (currentStep === 1) renderCartridges();
+    };
 
     async function exportCartridge() {
       if (!_currentCartridge) return;
@@ -895,6 +870,7 @@
     async function goStep(n) {
       currentStep = n;
       aiHistory = [];
+      document.body.classList.toggle('studio-modern-summary-active', n === 1);
 
       // Update step nav UI
       for (let i = 1; i <= 6; i++) {
@@ -4564,6 +4540,7 @@ FROM silver_${entity || 'entity'}`;
       }
     })();
   </script>
+  <script type="module" src="/static/js/studio/main.js"></script>
 
   <!-- ── SQL Runner Modal ──────────────────────────────────────────────── -->
   <div id="sql-runner-overlay" onclick="if(event.target===this)closeSqlRunner()"
