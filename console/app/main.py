@@ -848,7 +848,7 @@ async def dataset_data(name: str, limit: int = 100):
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/data", params={"limit": limit})
         return r.json()
 
-@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def refresh_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
@@ -948,7 +948,7 @@ async def api_sources():
         return {"sources": sources}
     return {"sources": []}
 
-@app.post("/api/datasets/save", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/datasets/save", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_dataset_save(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -980,7 +980,7 @@ async def api_bronze_query(body: dict):
     return r.json()
 
 
-@app.delete("/api/datasets", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.delete("/api/datasets", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_delete_dataset(name: str):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -1028,7 +1028,7 @@ async def api_apps():
     return r.json()
 
 
-@app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_apps_delete(name: str):
     """Delete a published analytic app by name."""
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
@@ -1573,7 +1573,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
         return response
 
 
-@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
@@ -1691,7 +1691,7 @@ def _is_transient_airflow_trigger_error(error: str) -> bool:
 
 # ── Studio — Entity config ───────────────────────────────────────────────────
 
-@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     new_name = (body.get("new_name") or "").strip()
     if not new_name:
@@ -1711,7 +1711,7 @@ async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
 
-@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
     """Update entity_config fields."""
     allowed = {"display_name", "mode", "primary_key", "dag_id",
@@ -1730,7 +1730,7 @@ async def studio_list_cartridges():
     return {"cartridges": await cartridge_service.list_cartridges()}
 
 
-@app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
     name = body.get("name", "").strip()
@@ -1751,14 +1751,14 @@ async def studio_get_cartridge(cartridge_id: str):
     return manifest
 
 
-@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_update_cartridge(cartridge_id: str, body: dict):
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return await cartridge_service.update_cartridge(cartridge_id, body)
 
 
-@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
     """Upload a spec file (OpenAPI YAML, WSDL, OData $metadata) for the cartridge."""
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -1781,7 +1781,7 @@ async def studio_export_cartridge(cartridge_id: str):
     )
 
 
-@app.post("/studio/import", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/studio/import", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_import_cartridge(file: UploadFile = File(...)):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
@@ -1794,8 +1794,8 @@ async def studio_import_cartridge(file: UploadFile = File(...)):
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat", dependencies=[Depends(require_authenticated)])
-async def studio_chat(body: dict):
+@app.post("/studio/chat")
+async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
     return await studio_assistant.chat(
@@ -1803,11 +1803,12 @@ async def studio_chat(body: dict):
         history  = body.get("history", []),
         step     = body.get("step", 1),
         manifest = manifest,
+        actor_role = user.get("workspace_role") or user.get("role"),
     )
 
 
-@app.post("/studio/chat/stream", dependencies=[Depends(require_authenticated)])
-async def studio_chat_stream(body: dict):
+@app.post("/studio/chat/stream")
+async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
     cartridge_id = body.get("cartridge_id")
@@ -1831,6 +1832,7 @@ async def studio_chat_stream(body: dict):
                 step     = step,
                 manifest = manifest,
                 on_event = on_event,
+                actor_role = user.get("workspace_role") or user.get("role"),
             )
             await queue.put({"type": "done", **result})
         except Exception as exc:
@@ -1967,7 +1969,7 @@ async def api_rag_sources():
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_delete_source(source_id: int):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
@@ -1983,7 +1985,7 @@ async def api_rag_search(body: dict):
         r.raise_for_status()
         return r.json()
 
-@app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_ingest(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
@@ -2082,12 +2084,12 @@ async def api_catalog_get(layer: str = "", cartridge: str = "", tags: str = "", 
     return result
 
 
-@app.post("/api/catalog/entries", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/catalog/entries", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_catalog_upsert(body: dict):
     return await _refinement_invoke("upsert_catalog_entries", body)
 
 
-@app.post("/api/catalog/relationships", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
+@app.post("/api/catalog/relationships", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_catalog_relationship(body: dict):
     return await _refinement_invoke("register_relationship", body)
 
@@ -2119,9 +2121,21 @@ async def monitoring_mcp_invoke(body: dict):
 
 # ── Studio-ops MCP server — cartridge & entity management tools ───────────────
 
-@app.get("/studio_ops/mcp/tools", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
-async def studio_ops_tools():
-    return {"tools": [
+STUDIO_OPS_WRITE_TOOLS = {"rename_entity", "delete_entity", "update_entity"}
+
+
+def _role_name(user: dict) -> str:
+    return user.get("workspace_role") or user.get("role") or ""
+
+
+def _require_studio_ops_write_role(user: dict) -> None:
+    if _role_name(user) not in {ROLE_ADMIN, ROLE_WORKSPACE_ADMIN}:
+        raise HTTPException(403, "admin or workspace_admin role required")
+
+
+@app.get("/studio_ops/mcp/tools")
+async def studio_ops_tools(user: dict = Depends(require_authenticated)):
+    tools = [
         {
             "name": "rename_entity",
             "description": (
@@ -2209,13 +2223,19 @@ async def studio_ops_tools():
                 "required": ["cartridge_id", "entity"],
             },
         },
-    ]}
+    ]
+    if _role_name(user) == ROLE_ANALYST:
+        tools = [tool for tool in tools if tool["name"] not in STUDIO_OPS_WRITE_TOOLS]
+    return {"tools": tools}
 
 
-@app.post("/studio_ops/mcp/invoke", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN, ROLE_ANALYST))])
-async def studio_ops_invoke(body: dict):
+@app.post("/studio_ops/mcp/invoke")
+async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticated)):
     tool = body.get("tool")
     args = body.get("args", {})
+
+    if tool in STUDIO_OPS_WRITE_TOOLS:
+        _require_studio_ops_write_role(user)
 
     if tool == "delete_entity":
         cartridge_id = args["cartridge_id"]
