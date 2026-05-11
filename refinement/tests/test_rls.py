@@ -72,6 +72,28 @@ def test_rls_user_isolation(engine):
     assert "user_id = ?" in rls_sql
     assert "user-789" in params
 
+@pytest.mark.parametrize("sql", [
+    'SELECT * FROM pggold."gold_sales"',
+    'SELECT * FROM "pggold"."gold_sales"',
+    'SELECT * FROM "pggold".gold_sales',
+    'SELECT * FROM pggold .gold_sales',
+    'SELECT * FROM pggold\n.gold_sales',
+    'SELECT * FROM pggold/*x*/.gold_sales',
+    'SELECT * FROM pggold.gold_sales -- WHERE 1=1',
+    'WITH x AS (SELECT * FROM pggold.gold_sales) SELECT * FROM x',
+    'SELECT * FROM PGGOLD.gold_sales',
+])
+def test_rls_blocks_bypass_attempts(engine, sql):
+    e, mock_conn = engine
+    mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
+    ctx = {"tenant_id": "tenantA"}
+
+    rls_sql, params = e.get_rls_filters(sql, ctx)
+
+    assert "tenant_id = ?" in rls_sql, f"RLS bypass for: {sql!r} -> {rls_sql!r}"
+    assert "tenantA" in params
+
+
 def test_rls_admin_bypass(engine):
     e, mock_conn = engine
     mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]

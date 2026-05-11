@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 from app.services.jwt_auth import create_access_token, decode_access_token
 
 
-JWT_SECRET = "test_jwt_secret_key_with_more_than_32_chars"
-INTERNAL_KEY = "test_internal_api_key_with_more_than_32_chars"
+JWT_SECRET = "unit_signing_material_aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+INTERNAL_KEY = "unit_internal_api_token_aaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
 def _module(**attrs):
@@ -203,7 +203,10 @@ def console_main(monkeypatch):
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)
     main = importlib.import_module("app.main")
-    main._RATE_BUCKETS.clear()
+    # Force a fresh in-memory limiter for each test so rate-limit counters
+    # from earlier tests don't bleed across cases.
+    from app.services.rate_limiter import reset_rate_limiter
+    reset_rate_limiter()
     yield main
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)

@@ -34,16 +34,20 @@ dag = DAG(
 # CONFIGURACIÓN
 # ============================================================================
 
+from _secrets import get_secret
+
 OUTLOOK_RECEIVER_EMAIL = Variable.get("outlook_receiver_email")
 OUTLOOK_SENDER_EMAIL = Variable.get("outlook_sender_email")
-OUTLOOK_PASSWORD = Variable.get("outlook_app_password")
+# Secret — prefer env injection over Airflow Variables to keep the value out
+# of the metadata DB and the task-log diff.
+OUTLOOK_PASSWORD = get_secret("outlook_app_password", env="OUTLOOK_APP_PASSWORD")
 OUTLOOK_SUBJECT = "VO_PRD_KPI_PROJECT_PROGRESS_AUDIT from Replicon"
 ZIP_FILENAME = "VO_PRD_KPI_PROJECT_AUDIT Daily.zip"
 CSV_FILENAME = "VO_PRD_KPI_PROJECT_AUDIT Daily.csv"
 
 MINIO_ENDPOINT   = Variable.get("minio_endpoint")
-MINIO_ACCESS_KEY = Variable.get("minio_access_key")
-MINIO_SECRET_KEY = Variable.get("minio_secret_key")
+MINIO_ACCESS_KEY = get_secret("minio_access_key", env="MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = get_secret("minio_secret_key", env="MINIO_SECRET_KEY")
 MINIO_BUCKET     = Variable.get("minio_bucket")
 MINIO_SECURE     = Variable.get("minio_secure", default_var="false").lower() == "true"
 MINIO_UPLOAD_PATH = "uploads/replicon/in"

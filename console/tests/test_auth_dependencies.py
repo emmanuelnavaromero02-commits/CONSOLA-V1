@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.services.jwt_auth import create_access_token
 
 
-JWT_SECRET = "test_jwt_secret_key_with_more_than_32_chars"
+JWT_SECRET = "unit_signing_material_aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
 def _module(**attrs):

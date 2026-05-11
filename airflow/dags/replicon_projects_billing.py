@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from _secrets import get_secret
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN — edita estos valores en Studio y da Deploy
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -43,8 +45,8 @@ def _internal_headers() -> dict:
 def _get_minio_config() -> dict[str, str]:
     return {
         "endpoint":   Variable.get("minio_endpoint"),
-        "access_key": Variable.get("minio_access_key"),
-        "secret_key": Variable.get("minio_secret_key"),
+        "access_key": get_secret("minio_access_key", env="MINIO_ACCESS_KEY"),
+        "secret_key": get_secret("minio_secret_key", env="MINIO_SECRET_KEY"),
         "bucket":     Variable.get("minio_bucket"),
     }
 

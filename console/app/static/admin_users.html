@@ -157,7 +157,10 @@
         ? '<span class="badge" style="background:rgba(210,153,34,.15);color:var(--amber)">PENDIENTE</span>'
         : `<span class="badge ${u.is_active?'b-active':'b-inactive'}">${u.is_active?'ACTIVO':'INACTIVO'}</span>`;
       const actions = [];
-      actions.push(`<button class="btn-ghost" onclick='editUser(${JSON.stringify(u)})'>EDITAR</button>`);
+      // JSON.stringify escapes JSON syntax but not HTML — a name containing `'`
+      // would break out of the single-quoted attribute. escHtml the payload
+      // so it survives the attribute boundary intact.
+      actions.push(`<button class="btn-ghost" onclick='editUser(${escHtml(JSON.stringify(u))})'>EDITAR</button>`);
       if (pending) {
         actions.push(`<button class="btn-ghost" onclick="reinvite(${u.id}, '${escHtml(u.email)}')">↻ REENVIAR</button>`);
       } else if (u.is_active) {
@@ -169,7 +172,7 @@
       return `<tr>
         <td><strong>${escHtml(u.email)}</strong>${isMe ? ' <span style="color:var(--text3)">(tú)</span>' : ''}</td>
         <td style="color:var(--text2)">${escHtml(u.name || '—')}</td>
-        <td><span class="badge b-${u.role}">${u.role.toUpperCase()}</span></td>
+        <td><span class="badge b-${escHtml(u.role)}">${escHtml(String(u.role || '').toUpperCase())}</span></td>
         <td>${stateBadge}</td>
         <td style="color:var(--text2)">${fmtDate(u.created_at)}</td>
         <td style="color:var(--text2)">${fmtDate(u.last_login)}</td>

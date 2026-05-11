@@ -317,6 +317,26 @@ class DuckDBEngine:
             return {"name": ds.get("name"), "error": str(exc)}
 
 
+    # Matches any reference to the analytical schema, defeating common bypass
+    # vectors before the named-replacer regex runs. Covered cases:
+    #   pggold.foo                  pggold."foo"
+    #   "pggold".foo                "pggold"."foo"
+    #   pggold .foo  /  pggold\n.foo  /  pggold/*x*/.foo
+    # The first capture group preserves whether the table identifier was
+    # originally quoted so the rewritten SQL stays syntactically valid.
+    _PGGOLD_REF_RE = re.compile(
+        r'(?ix)'
+        r'"?\s*pggold\s*"?'                       # schema (optionally quoted, optionally trailing space)
+        r'(?:\s|/\*.*?\*/)*'                      # whitespace / block comments
+        r'\.'                                     # the dot
+        r'(?:\s|/\*.*?\*/)*'                      # whitespace / block comments
+        r'(?:"(?P<qname>[a-zA-Z_][a-zA-Z0-9_]*)"|(?P<name>[a-zA-Z_][a-zA-Z0-9_]*))'
+    )
+
+    def _strip_line_comments(self, sql: str) -> str:
+        # Drop -- line comments so attackers cannot hide a bypass inside one.
+        return re.sub(r'--[^\n]*', '', sql)
+
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
         if user_context and user_context.get("role") == "admin":
             return sql, []
@@ -326,9 +346,12 @@ class DuckDBEngine:
 
         params = []
 
+        # Normalize line comments first; block comments are handled by the regex
+        # itself (so quoted strings remain untouched).
+        sql = self._strip_line_comments(sql)
+
         def replacer(match):
-            table = match.group(0)
-            table_name = table.split('.')[-1]
+            table_name = match.group("qname") or match.group("name")
             try:
                 validate_safe_identifier(table_name, "table")
                 con = self._conn()
@@ -336,6 +359,10 @@ class DuckDBEngine:
                 cols = [r[0].lower() for r in schema_rows]
             except Exception:
                 cols = []
+
+            # Canonicalize the rewritten reference so downstream SQL is uniform
+            # regardless of the original quoting/whitespace/comment styling.
+            table = f"pggold.{table_name}"
 
             filters = []
             if 'tenant_id' in cols:
@@ -357,13 +384,10 @@ class DuckDBEngine:
             if not filters:
                 return f"(SELECT * FROM {table} WHERE 1=0)"
 
-            if filters:
-                return f"(SELECT * FROM {table} WHERE {' OR '.join(filters)})"
-
-            return table
+            return f"(SELECT * FROM {table} WHERE {' OR '.join(filters)})"
 
         with self._duckdb_lock:
-            new_sql = re.sub(r'pggold\.[a-zA-Z0-9_]+', replacer, sql, flags=re.IGNORECASE)
+            new_sql = self._PGGOLD_REF_RE.sub(replacer, sql)
         return new_sql, params
 
     def apply_rls(self, sql: str, user_context: dict) -> str:

@@ -29,6 +29,8 @@ from datetime import datetime, timedelta, timezone
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from _secrets import get_secret
+
 CARTRIDGE_ID   = "replicon"
 MCP_INFRA_URL  = "http://mcp-infra:8010"
 REFINEMENT_URL = "http://refinement:8500"
@@ -176,8 +178,8 @@ def _minio_client():
     from minio import Minio
     return Minio(
         endpoint=Variable.get("minio_endpoint"),
-        access_key=Variable.get("minio_access_key"),
-        secret_key=Variable.get("minio_secret_key"),
+        access_key=get_secret("minio_access_key", env="MINIO_ACCESS_KEY"),
+        secret_key=get_secret("minio_secret_key", env="MINIO_SECRET_KEY"),
         secure=False,
     )
 

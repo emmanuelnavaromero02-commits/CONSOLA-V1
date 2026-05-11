@@ -365,13 +365,16 @@
     let outcomeCell = '—';
     if (r.outcome === 'achieved')      outcomeCell = `<span class="badge b-ok">LOGRADO</span>`;
     else if (r.outcome === 'not_achieved') outcomeCell = `<span class="badge b-fail">NO LOGRADO</span>`;
-    const responsable = userLabel(r.assignee_id) || `<span style="color:var(--text3)">—</span>`;
+    const responsableLabel = userLabel(r.assignee_id);
+    const responsable = responsableLabel
+      ? escHtml(responsableLabel)
+      : `<span style="color:var(--text3)">—</span>`;
     const visBadge = r.visibility === 'shared'
       ? `<span class="badge" style="background:rgba(88,166,255,.12);color:var(--cyan)" title="Visible para todo el equipo">EQUIPO</span>`
       : `<span class="badge" style="background:rgba(110,118,129,.18);color:var(--text2)" title="Solo creador, responsable y admins">PRIVADA</span>`;
     return `<tr data-id="${Number(r.id)}" class="${SELECTED_ID === r.id ? 'selected' : ''}">
       <td style="color:var(--text)"><strong>${escHtml(r.title)}</strong></td>
-      <td style="color:var(--text2)">${escHtml(responsable)}</td>
+      <td style="color:var(--text2)">${responsable}</td>
       <td>${visBadge}</td>
       <td>${escHtml(fmtDate(r.commitment_date))}</td>
       <td>${statusBadge}</td>

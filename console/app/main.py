@@ -150,6 +150,24 @@ def _validate_dataset_name(dataset: str) -> None:
         raise HTTPException(400, "Invalid dataset name")
 
 
+def _rls_user_context(user: dict | None) -> dict:
+    # Forward only the fields the refinement RLS layer consumes, so a
+    # downstream tenant filter is always populated. Without this, calls into
+    # preview_transform default to an empty context and would skip RLS or
+    # match against an empty tenant_id.
+    if not user:
+        return {}
+    return {
+        "id": user.get("id"),
+        "email": user.get("email", ""),
+        "name": user.get("name") or user.get("email", ""),
+        "role": user.get("role"),
+        "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+        "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        "workspace_role": user.get("workspace_role"),
+    }
+
+
 def _safe_pipeline_name(value: str) -> bool:
     return bool(DATASET_NAME_RE.fullmatch(value or ""))
 
@@ -349,6 +367,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Permissions-Policy": (
         "camera=(), microphone=(), geolocation=(), payment=(), "
         "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
@@ -367,6 +386,7 @@ SECURITY_HEADERS = {
 VIEWER_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Permissions-Policy": (
         "camera=(), microphone=(), geolocation=(), payment=(), "
         "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
@@ -389,9 +409,11 @@ RATE_LIMITS = {
     "/auth/forgot-password": (5, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/reset-password": (8, RATE_LIMIT_WINDOW_SECONDS),
 }
-_RATE_BUCKETS: dict[tuple[str, str], list[float]] = {}
-# TODO(hardening): this in-memory limiter is per process. Multi-replica
-# deployments need a shared backend such as Redis to enforce global limits.
+# The limiter backend picks Redis when REDIS_URL is set, otherwise falls back
+# to an in-memory sliding window. The in-memory path is per-process and can be
+# multiplied by an attacker across replicas; configure REDIS_URL in any
+# multi-replica deployment.
+from app.services.rate_limiter import get_rate_limiter  # noqa: E402
 
 
 _TRUSTED_PROXY_IPS: frozenset[str] = frozenset(
@@ -411,16 +433,13 @@ def _client_ip(request: Request) -> str:
     return real_ip
 
 
-def _rate_limit(request: Request, action: str, subject: str = "") -> None:
+async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     limit, window = RATE_LIMITS[action]
-    now = time.monotonic()
     subject_key = subject.lower().strip() or "-"
-    key = (action, f"{_client_ip(request)}:{subject_key}")
-    hits = [ts for ts in _RATE_BUCKETS.get(key, []) if now - ts < window]
-    if len(hits) >= limit:
+    key = f"{action}:{_client_ip(request)}:{subject_key}"
+    allowed = await get_rate_limiter().check(key, limit, window)
+    if not allowed:
         raise HTTPException(status_code=429, detail="too many requests")
-    hits.append(now)
-    _RATE_BUCKETS[key] = hits
 
 
 def _is_viewer_path(path: str) -> bool:
@@ -598,7 +617,7 @@ async def login_page():
 async def auth_login(request: Request, body: dict):
     email = (body.get("email") or "").strip()
     pw    = body.get("password") or ""
-    _rate_limit(request, "/auth/login", email)
+    await _rate_limit(request, "/auth/login", email)
     if not email or not pw:
         raise HTTPException(400, "email and password are required")
     ip = request.client.host if request.client else None
@@ -749,7 +768,7 @@ async def viewer_forgot():
 async def auth_forgot(request: Request, body: dict):
     """Generic OK regardless of whether the email exists (avoids enum oracle)."""
     email = (body.get("email") or "").strip().lower()
-    _rate_limit(request, "/auth/forgot-password", email)
+    await _rate_limit(request, "/auth/forgot-password", email)
     if email:
         u = await _auth.get_user_by_email(email)
         if u and u.get("is_active"):
@@ -776,7 +795,7 @@ async def auth_reset_info(token: str = ""):
 async def auth_reset(request: Request, body: dict):
     token = (body.get("token") or "").strip()
     pw    = body.get("new_password") or ""
-    _rate_limit(request, "/auth/reset-password", token[:16])
+    await _rate_limit(request, "/auth/reset-password", token[:16])
     if not token or not pw:
         raise HTTPException(400, "token and new_password are required")
     info = await _tokens.lookup(token, "reset")
@@ -956,8 +975,11 @@ async def api_dataset_detail(name: str):
     return r.json()
 
 
-@app.post("/api/bronze/query", dependencies=[Depends(require_permission("datasets.read"))])
-async def api_bronze_query(body: dict):
+@app.post("/api/bronze/query")
+async def api_bronze_query(body: dict, user: dict = Depends(require_permission("datasets.write"))):
+    # Restricted to datasets.write because this endpoint accepts arbitrary SQL.
+    # Read-only roles (viewer) must use the dataset-scoped endpoints below,
+    # which build SQL server-side instead of trusting client input.
     sql     = body.get("sql", "").strip()
     limit   = min(int(body.get("limit", 200)), 2000)
     sources = body.get("sources") or []
@@ -966,7 +988,12 @@ async def api_bronze_query(body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": sql, "limit": limit, "sources": sources}})
+                               "args": {
+                                   "sql": sql,
+                                   "limit": limit,
+                                   "sources": sources,
+                                   "user_context": _rls_user_context(user),
+                               }})
     return r.json()
 
 
@@ -1039,8 +1066,8 @@ async def api_data(dataset: str, limit: int = 5000):
     return data.get("data", data)
 
 
-@app.get("/api/data/{dataset}/options", dependencies=[Depends(require_authenticated)])
-async def api_data_options(dataset: str, columns: str = ""):
+@app.get("/api/data/{dataset}/options")
+async def api_data_options(dataset: str, columns: str = "", user: dict = Depends(require_authenticated)):
     """Return distinct values per column for building filter selectors."""
     _validate_dataset_name(dataset)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
@@ -1060,7 +1087,11 @@ async def api_data_options(dataset: str, columns: str = ""):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": union_sql, "limit": 5000}})
+                               "args": {
+                                   "sql": union_sql,
+                                   "limit": 5000,
+                                   "user_context": _rls_user_context(user),
+                               }})
     result = r.json()
     rows = result.get("data", [])
 
