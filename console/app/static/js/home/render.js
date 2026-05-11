@@ -308,3 +308,16 @@ export function renderHome(root) {
   shell.append(renderTopbar(), container);
   root.appendChild(shell);
 }
+
+export function renderVersionBadge(info) {
+  const header = document.querySelector('header, .home-header, .topbar') || document.body;
+  let badge = document.getElementById('version-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'version-badge';
+    badge.className = 'version-badge';
+    header.appendChild(badge);
+  }
+  badge.textContent = info && info.version ? `v${info.version}` : 'v? — offline';
+  badge.title = info ? `${info.service} · ${info.env}` : 'system info unavailable';
+}

@@ -6,9 +6,10 @@ import {
   fetchMcpServers,
   fetchPermissions,
   fetchPipeline,
+  fetchSystemInfo,
 } from './api.js';
 import { applyPermissionsFromRole, setState, state } from './state.js';
-import { renderHome } from './render.js';
+import { renderHome, renderVersionBadge } from './render.js';
 import { cycleTheme } from '../theme.js';
 import { humanizeError, humanizeTerm } from '../i18n/labels.js';
 
@@ -98,6 +99,12 @@ export async function initHomeControlPlane() {
   } catch (error) {
     console.warn('Home control plane fallback:', humanizeError(error));
   }
+  fetchSystemInfo()
+    .then(renderVersionBadge)
+    .catch((err) => {
+      console.warn('version badge fallback:', err);
+      renderVersionBadge(null);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', initHomeControlPlane);

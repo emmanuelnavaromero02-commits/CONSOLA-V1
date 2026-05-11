@@ -849,6 +849,27 @@ async def api_config(request: Request):
     }
 
 
+@app.get("/api/system/info")
+async def system_info(user: dict = Depends(require_authenticated)):
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent / "VERSION",         # docker: /app/VERSION
+        here.parent.parent.parent / "VERSION",  # local dev: repo root
+    ]
+    version = "unknown"
+    for path in candidates:
+        try:
+            version = path.read_text().strip()
+            break
+        except Exception:
+            continue
+    return {
+        "version": version,
+        "env": os.environ.get("MODE", "local"),
+        "service": "console",
+    }
+
+
 @app.get("/me")
 async def viewer_me(request: Request):
     require_user(request)

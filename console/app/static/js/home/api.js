@@ -37,3 +37,13 @@ export async function fetchAudit() {
 export async function fetchPipeline() {
   return getJson('/api/pipeline');
 }
+
+/**
+ * GET /api/system/info — returns {version, env, service}.
+ * Throws if not authenticated or backend down.
+ */
+export async function fetchSystemInfo() {
+  const response = await fetch('/api/system/info', { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`system info failed: ${response.status}`);
+  return response.json();
+}
