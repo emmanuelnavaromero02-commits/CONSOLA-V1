@@ -177,3 +177,117 @@ def test_preview_sql_uses_duckdb_lock(engine):
 
     assert result["row_count"] == 1
     assert lock.entered == 1
+
+
+# ── RLS + caller_params coexistence tests ─────────────────────────────────────
+
+def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
+    """RLS must NOT be skipped when the caller supplies params."""
+    e, mock_conn = engine
+
+    describe_cursor = MagicMock()
+    describe_cursor.fetchall.return_value = [('tenant_id', 'varchar')]
+
+    execute_cursor = MagicMock()
+    execute_cursor.description = [('col', 'VARCHAR')]
+    execute_cursor.fetchall.return_value = [('val',)]
+
+    # First execute = DESCRIBE (inside get_rls_filters), second = SELECT
+    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+
+    sql = "SELECT col FROM pggold.gold_sales WHERE col = ?"
+    e.preview_sql(sql, params=["Garcia"], user_context={"tenant_id": "t-123"})
+
+    # Final execute call must have combined_params = [rls_param, caller_param]
+    final_call = mock_conn.execute.call_args_list[-1]
+    _, combined_params = final_call[0]
+    assert "t-123" in combined_params, "RLS tenant_id param missing from execute call"
+    assert "Garcia" in combined_params, "Caller param missing from execute call"
+    assert combined_params.index("t-123") < combined_params.index("Garcia"), \
+        "RLS params must precede caller params (positional order)"
+
+
+def test_preview_sql_rls_precedes_caller_params_positionally(engine):
+    """Param order: rls_params first (inner subquery ?), then caller_params (outer WHERE ?)."""
+    e, mock_conn = engine
+
+    describe_cursor = MagicMock()
+    describe_cursor.fetchall.return_value = [('workspace_id', 'varchar')]
+
+    execute_cursor = MagicMock()
+    execute_cursor.description = [('revenue', 'DOUBLE')]
+    execute_cursor.fetchall.return_value = [(99.0,)]
+
+    # first call = DESCRIBE, second call = actual SELECT
+    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+
+    sql = "SELECT revenue FROM pggold.gold_sales WHERE year = ? AND month = ?"
+    e.preview_sql(sql, params=["2025", "3"], user_context={"workspace_id": "ws-42"})
+
+    actual_call = mock_conn.execute.call_args_list[-1]
+    _, combined_params = actual_call[0]
+    assert combined_params[0] == "ws-42",  "RLS workspace_id must be first param"
+    assert combined_params[1] == "2025",   "First caller param must come after RLS"
+    assert combined_params[2] == "3",      "Second caller param must be last"
+
+
+def test_preview_sql_admin_with_caller_params_skips_rls_injection(engine):
+    """Admin role bypasses RLS but still uses caller params unmodified."""
+    e, mock_conn = engine
+
+    cursor = MagicMock()
+    cursor.description = [('col', 'VARCHAR')]
+    cursor.fetchall.return_value = [('x',)]
+    mock_conn.execute.return_value = cursor
+
+    sql = "SELECT col FROM pggold.gold_sales WHERE col = ?"
+    e.preview_sql(sql, params=["admin_value"], user_context={"role": "admin"})
+
+    actual_call = mock_conn.execute.call_args_list[-1]
+    _, combined_params = actual_call[0]
+    # Admin: rls_params=[], caller_params=["admin_value"] → combined=["admin_value"]
+    assert combined_params == ["admin_value"], \
+        f"Admin should have only caller params, got: {combined_params}"
+
+
+def test_query_dataset_does_not_double_apply_rls(engine):
+    """query_dataset must not call get_rls_filters separately — preview_sql does it."""
+    e, mock_conn = engine
+
+    describe_cursor = MagicMock()
+    describe_cursor.fetchall.return_value = [('tenant_id', 'varchar')]
+
+    execute_cursor = MagicMock()
+    execute_cursor.description = [('col', 'VARCHAR')]
+    execute_cursor.fetchall.return_value = []
+
+    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+
+    ds = {"name": "gold_sales", "sql_def": "SELECT col FROM pggold.gold_sales"}
+    e.query_dataset(ds, filters={"col": "x"}, user_context={"tenant_id": "t-abc"})
+
+    # Check the final SELECT call — tenant_id should appear exactly once
+    final_sql_call = mock_conn.execute.call_args_list[-1][0][0]
+    assert final_sql_call.count("tenant_id = ?") == 1, \
+        f"RLS applied multiple times: {final_sql_call}"
+
+
+def test_preview_sql_no_user_context_with_caller_params_defaults_to_deny(engine):
+    """No user_context: get_rls_filters runs with empty ctx → deny-by-default for unrecognised tables."""
+    e, mock_conn = engine
+
+    # Table has 'some_col' only — not a recognised RLS column → 1=0 default deny
+    describe_cursor = MagicMock()
+    describe_cursor.fetchall.return_value = [('some_col', 'varchar')]
+
+    execute_cursor = MagicMock()
+    execute_cursor.description = [('col', 'VARCHAR')]
+    execute_cursor.fetchall.return_value = []
+
+    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+
+    sql = "SELECT col FROM pggold.gold_unknown WHERE col = ?"
+    e.preview_sql(sql, params=["value"], user_context=None)
+
+    final_sql = mock_conn.execute.call_args_list[-1][0][0]
+    assert "1=0" in final_sql, "No user_context with unrecognised table must default to deny (WHERE 1=0)"

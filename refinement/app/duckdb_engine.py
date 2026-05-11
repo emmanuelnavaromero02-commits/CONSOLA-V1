@@ -263,26 +263,32 @@ class DuckDBEngine:
                 raise ValueError("read_parquet is only allowed for s3:// sources")
 
     def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
+        """Execute SQL with RLS applied and caller params merged.
+
+        RLS is ALWAYS applied regardless of whether the caller supplies params.
+        get_rls_filters() injects ? placeholders inside inner subqueries; those
+        placeholders appear first in the SQL, so rls_params must come before
+        caller_params in the combined list (positional DuckDB binding is L→R).
+
+        Callers that already applied RLS (e.g. query_dataset) must NOT call
+        get_rls_filters separately — delegate entirely to preview_sql instead.
+        """
         self._validate_safe_sql(sql)
+        caller_params = list(params or [])
         try:
             with self._duckdb_lock:
-                if params is None:
-                    sql, params = self.get_rls_filters(sql, user_context)
+                rls_sql, rls_params = self.get_rls_filters(sql, user_context)
+                combined_params = rls_params + caller_params
 
-                # Using cached connection. The user requested read_only if possible, but DuckDB doesn't allow changing it on the fly.
                 con = self._conn()
 
-                effective_sql = self._inject_bucket(self._inject_latest_date(sql, sources or []))
+                effective_sql = self._inject_bucket(self._inject_latest_date(rls_sql, sources or []))
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
-                cursor = con.execute(limited, params)
+                cursor = con.execute(limited, combined_params)
                 desc = cursor.description
                 data = cursor.fetchall()
 
-            # duckdb Python API description returns (name, type_code, display_size, internal_size, precision, scale, null_ok)
-            # type_code is usually None or unhelpful in DuckDB, but we can return "UNKNOWN" or just map it as string.
-            # Actually, `cursor.description` in duckdb returns types like 'VARCHAR' in the second tuple item in newer duckdb versions.
-            # For robustness, we will extract it if available or fallback.
             schema_rows = [
                 {"name": c[0], "type": c[1] if len(c) > 1 and isinstance(c[1], str) else "VARCHAR"}
                 for c in desc
@@ -382,10 +388,10 @@ class DuckDBEngine:
             filter_params = list(filters.values())
             sql = f"SELECT * FROM ({sql}) _q WHERE {' AND '.join(clauses)}"
 
-        with self._duckdb_lock:
-            rls_sql, rls_params = self.get_rls_filters(sql, user_context)
-        combined_params = rls_params + filter_params
-        return self.preview_sql(rls_sql, limit, params=combined_params)
+        # Delegate RLS to preview_sql — do NOT call get_rls_filters here.
+        # preview_sql always applies RLS and combines rls_params + filter_params
+        # in the correct positional order (RLS ? inside subqueries come first).
+        return self.preview_sql(sql, limit, params=filter_params, user_context=user_context)
 
     def _inject_latest_date(self, sql: str, sources: list[str]) -> str:
         """

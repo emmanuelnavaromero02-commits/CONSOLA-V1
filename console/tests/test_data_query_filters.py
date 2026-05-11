@@ -394,3 +394,26 @@ def test_invalid_dataset_name_rejected(console_main, monkeypatch):
         json={"filters": {}, "columns": ["*"]},
     )
     assert resp.status_code == 400
+
+
+def test_user_context_forwarded_to_refinement(console_main, monkeypatch):
+    """user_context must be included in the args sent to refinement so RLS can run."""
+    cap = _RefinementCapture(monkeypatch, console_main).install()
+    main = console_main
+    from app.dependencies import require_authenticated
+    main.app.dependency_overrides[require_authenticated] = lambda: None
+    client = TestClient(main.app, raise_server_exceptions=True)
+    # Use the session cookie that _fake_get_session_user recognises
+    client.cookies.set("mod_session", "fake-session-token")
+
+    resp = client.post(
+        "/api/data/ventas/query",
+        json={"filters": {"col": "v"}, "columns": ["col"]},
+    )
+    assert resp.status_code == 200
+    args = cap.calls[0]["json"]["args"]
+    assert "user_context" in args, "user_context must be forwarded to refinement for RLS"
+    uc = args["user_context"]
+    # The session user set up in _fake_get_session_user has role=admin, email set
+    assert uc.get("role") is not None, "role must be present in user_context"
+    assert uc.get("email") == "test@test.com", "email must be present in user_context"

@@ -1074,7 +1074,7 @@ async def api_data_options(dataset: str, columns: str = ""):
 
 
 @app.post("/api/data/{dataset}/query", dependencies=[Depends(require_authenticated)])
-async def api_data_query_filtered(dataset: str, body: dict):
+async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     """
     Execute a filtered query against a gold dataset.
     Body: {"filters": {"revenue_manager": "X", "fiscal_year": 2025,
@@ -1087,6 +1087,17 @@ async def api_data_query_filtered(dataset: str, body: dict):
     filters   = body.get("filters", {})
     limit     = min(int(body.get("limit", 2000)), 10000)
     columns   = body.get("columns", ["*"])
+
+    # Forward the authenticated user's context so refinement can apply RLS.
+    _user = getattr(request.state, "user", None) or {}
+    _user_context = {
+        "role":         _user.get("workspace_role") or _user.get("role"),
+        "tenant_id":    _user.get("tenant_id"),
+        "workspace_id": _user.get("workspace_id"),
+        "id":           _user.get("user_id"),
+        "email":        _user.get("email"),
+        "name":         _user.get("name"),
+    }
 
     # Validate column names
     safe_cols = []
@@ -1141,7 +1152,8 @@ async def api_data_query_filtered(dataset: str, body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": sql, "params": params, "limit": limit}})
+                               "args": {"sql": sql, "params": params, "limit": limit,
+                                        "user_context": _user_context}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()
