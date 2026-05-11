@@ -211,7 +211,7 @@ def get_connection(cartridge: str, conn_id: str):
 
 
 @app.put("/connections/{cartridge}/{conn_id}")
-async def put_connection(cartridge: str, conn_id: str, body: dict):
+def put_connection(cartridge: str, conn_id: str, body: dict):
     _db_upsert("connections", cartridge, conn_id, body)
     return {"saved": True, "conn_id": conn_id}
 
@@ -240,7 +240,7 @@ def get_secret(scope: str, key: str):
 
 
 @app.put("/secrets/{scope}/{key}")
-async def put_secret(scope: str, key: str, body: dict):
+def put_secret(scope: str, key: str, body: dict):
     _db_upsert("secrets", scope, key, {"value": body.get("value", body)})
     return {"saved": True}
 
