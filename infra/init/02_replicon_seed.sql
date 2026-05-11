@@ -50,17 +50,18 @@ VALUES
     ('replicon',   'InvoiceItem',        'incremental', 'last_modified',  'invoice_item_id',  'analytics',   'replicon_extract',  'Items de factura con monto, horas y tarifa',                    TRUE),
     ('replicon',   'CostItem',           'incremental', 'last_modified',  'cost_item_id',     'analytics',   'replicon_extract',  'Items de costo por proyecto',                                   TRUE),
     ('replicon',   'ProfitItem',         'incremental', 'last_modified',  'profit_item_id',   'analytics',   'replicon_extract',  'Items de ganancia por proyecto',                                TRUE),
-    -- Services API — extraídas por replicon_projects_detail (GET síncrono paginado)
+    -- Analytics API — ruta estable para extracciones Bronze. ProjectDetail queda
+    -- separado porque usa Services API síncrona y un DAG específico.
     ('replicon',   'ProjectDetail',      'incremental', 'lastUpdated',    'project_id',       'services',    'replicon_projects_detail', 'Detalle completo de proyectos: budget, estado, fechas, equipo', TRUE),
-    ('replicon',   'User',               'full',        'last_modified',  'user_id',          'services',    'replicon_projects_detail', 'Usuarios del sistema con costos y tarifas',                     TRUE),
-    ('replicon',   'Client',             'full',        'last_modified',  'client_id',        'services',    'replicon_projects_detail', 'Clientes con moneda y tarifa de facturación',                   TRUE),
-    ('replicon',   'Task',               'full',        'last_modified',  'task_id',          'services',    'replicon_projects_detail', 'Tareas de proyectos con horas estimadas',                       TRUE),
-    ('replicon',   'Department',         'full',        NULL,             'department_id',    'services',    'replicon_extract',        'Departamentos organizacionales',                                 TRUE),
-    ('replicon',   'Role',               'full',        NULL,             'role_id',          'services',    'replicon_projects_detail', 'Roles de usuario',                                              TRUE),
-    ('replicon',   'Activity',           'full',        NULL,             'activity_id',      'services',    'replicon_projects_detail', 'Actividades / códigos de trabajo',                              TRUE),
-    ('replicon',   'Project',            'incremental', 'last_modified',  'project_id',       'services',    'replicon_projects_detail', 'Proyectos con presupuesto, estado y fechas',                    TRUE),
-    ('replicon',   'ResourceAssignment', 'incremental', 'last_modified',  'assignment_id',    'services',    'replicon_projects_detail', 'Asignaciones de recursos a proyectos',                          TRUE),
-    ('replicon',   'ProjectTeamMember',  'full',        NULL,             'member_id',        'services',    'replicon_projects_detail', 'Miembros del equipo por proyecto',                              TRUE)
+    ('replicon',   'User',               'full',        'last_modified',  'user_id',          'analytics',   'replicon_extract',  'Usuarios del sistema con costos y tarifas',                     TRUE),
+    ('replicon',   'Client',             'full',        'last_modified',  'client_id',        'analytics',   'replicon_extract',  'Clientes con moneda y tarifa de facturación',                   TRUE),
+    ('replicon',   'Task',               'full',        'last_modified',  'task_id',          'analytics',   'replicon_extract',  'Tareas de proyectos con horas estimadas',                       TRUE),
+    ('replicon',   'Department',         'full',        NULL,             'department_id',    'analytics',   'replicon_extract',  'Departamentos organizacionales',                                TRUE),
+    ('replicon',   'Role',               'full',        NULL,             'role_id',          'analytics',   'replicon_extract',  'Roles de usuario',                                              TRUE),
+    ('replicon',   'Activity',           'full',        NULL,             'activity_id',      'analytics',   'replicon_extract',  'Actividades / códigos de trabajo',                              TRUE),
+    ('replicon',   'Project',            'incremental', 'last_modified',  'project_id',       'analytics',   'replicon_extract',  'Proyectos con presupuesto, estado y fechas',                    TRUE),
+    ('replicon',   'ResourceAssignment', 'incremental', 'last_modified',  'assignment_id',    'analytics',   'replicon_extract',  'Asignaciones de recursos a proyectos',                          TRUE),
+    ('replicon',   'ProjectTeamMember',  'full',        NULL,             'member_id',        'analytics',   'replicon_extract',  'Miembros del equipo por proyecto',                              TRUE)
 ON CONFLICT (cartridge_id, entity) DO UPDATE
     SET mode           = EXCLUDED.mode,
         watermark_field= EXCLUDED.watermark_field,

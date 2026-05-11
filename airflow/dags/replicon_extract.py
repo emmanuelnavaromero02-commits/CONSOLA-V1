@@ -120,11 +120,19 @@ def _get_connection(conn_id: str) -> tuple[str, str]:
     return base_url, token
 
 
+def _internal_headers() -> dict:
+    return {
+        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-internal-service": "airflow",
+    }
+
+
 def _watermark_get(entity: str) -> str | None:
     import requests
     try:
         r = requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "watermark_get",
                   "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity}},
             timeout=10,
@@ -139,6 +147,7 @@ def _watermark_set(entity: str, field: str, value: str, run_id: str) -> None:
     try:
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "watermark_set",
                   "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity,
                            "watermark_field": field, "value": value, "run_id": run_id}},
@@ -153,6 +162,7 @@ def _pipeline_run_save(dag_id: str, entity: str, **kwargs) -> None:
     try:
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": dag_id, "cartridge_id": CARTRIDGE_ID,
                            "entity": entity, **kwargs}},
@@ -416,9 +426,10 @@ def replicon_extract():
         Registra el run en pipeline_runs vía mcp-infra.
         Independiente del watermark: si falla solo se reintenta el registro.
         """
+        tracked_run_id = result.get("airflow_run_id") or result["run_id"]
         _pipeline_run_save(
             DAG_ID, result["entity"],
-            run_id=result["run_id"],
+            run_id=tracked_run_id,
             mode=result["mode"],
             status=result["status"],
             airflow_dag_run_id=result.get("airflow_run_id", ""),
@@ -429,6 +440,7 @@ def replicon_extract():
             bytes_written=result.get("bytes_written", 0),
             storage_uri=result.get("storage_uri"),
             watermark_updated_to=result.get("new_watermark"),
+            extra={"extract_run_id": result["run_id"]},
         )
         return result
 

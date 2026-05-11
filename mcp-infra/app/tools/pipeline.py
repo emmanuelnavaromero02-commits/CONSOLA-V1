@@ -153,7 +153,7 @@ def pipeline_run_save(
                    storage_uri          = EXCLUDED.storage_uri,
                    watermark_updated_to = EXCLUDED.watermark_updated_to,
                    error_message        = EXCLUDED.error_message,
-                   extra                = EXCLUDED.extra""",
+                   extra                = pipeline_runs.extra || EXCLUDED.extra""",
             (
                 run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
                 mode, status, started_at, finished_at, duration_seconds,

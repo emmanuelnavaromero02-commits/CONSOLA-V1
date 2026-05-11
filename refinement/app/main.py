@@ -66,6 +66,7 @@ def _migrate_yaml_datasets():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine.setup()
+    _ensure_semantic_catalog_tables()
     _migrate_yaml_datasets()
     _seed_catalog_from_existing()
     _seed_relationships()
@@ -731,6 +732,43 @@ def _pg_exec(query: str, params=None, fetch=False):
     conn.commit()
     conn.close()
     return result
+
+
+def _ensure_semantic_catalog_tables() -> None:
+    _pg_exec("""
+        CREATE TABLE IF NOT EXISTS data_catalog (
+            dataset        TEXT NOT NULL,
+            layer          TEXT NOT NULL DEFAULT 'silver',
+            cartridge      TEXT NOT NULL DEFAULT '',
+            column_name    TEXT NOT NULL,
+            data_type      TEXT NOT NULL DEFAULT '',
+            description    TEXT NOT NULL DEFAULT '',
+            example_values JSONB,
+            tags           TEXT[] NOT NULL DEFAULT '{}',
+            is_key         BOOLEAN,
+            is_metric      BOOLEAN,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (dataset, column_name)
+        )
+    """)
+    _pg_exec("CREATE INDEX IF NOT EXISTS idx_data_catalog_layer ON data_catalog (layer)")
+    _pg_exec("CREATE INDEX IF NOT EXISTS idx_data_catalog_cartridge ON data_catalog (cartridge)")
+    _pg_exec("CREATE INDEX IF NOT EXISTS idx_data_catalog_tags ON data_catalog USING GIN (tags)")
+    _pg_exec("""
+        CREATE TABLE IF NOT EXISTS data_relationships (
+            from_dataset TEXT NOT NULL,
+            from_column  TEXT NOT NULL,
+            to_dataset   TEXT NOT NULL,
+            to_column    TEXT NOT NULL,
+            join_hint    TEXT NOT NULL DEFAULT 'LEFT',
+            description  TEXT NOT NULL DEFAULT '',
+            transform    TEXT,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (from_dataset, from_column, to_dataset, to_column)
+        )
+    """)
 
 
 def _get_data_catalog(
