@@ -47,6 +47,7 @@ def console_main(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_with_more_than_32_chars")
     monkeypatch.setenv("JWT_ALGORITHM", "HS256")
     monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost/test")
 
     auth_stub = _module(
         COOKIE_NAME="mod_session",

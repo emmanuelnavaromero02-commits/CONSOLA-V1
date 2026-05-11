@@ -501,7 +501,11 @@ async def mcp_invoke(body: dict):
         return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
 
     if tool == "preview_transform":
-        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"), args.get("user_context"))
+        # params: externally-supplied positional parameters (? placeholders) from callers
+        # that build parameterized SQL (e.g. api_data_query_filtered).  When params is
+        # provided, preview_sql skips internal RLS filter injection.
+        caller_params = args.get("params")  # None → apply RLS; list → use as-is
+        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"), args.get("user_context"), caller_params)
 
     if tool == "save_dataset":
         store.save_dataset(args)

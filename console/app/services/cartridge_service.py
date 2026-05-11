@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 
 import asyncpg
 
+from app.security import required_secret
+
 _DATABASE_URL = (
     os.environ.get("DATABASE_URL", "")
     .replace("postgresql+psycopg2://", "postgresql://")
@@ -31,7 +33,7 @@ _POOL: asyncpg.Pool | None = None
 
 _MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "minio:9000")
 _MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
-_MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+_MINIO_SECRET_KEY = required_secret("MINIO_SECRET_KEY", dev_default="minioadmin")
 _MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
 _MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
 
