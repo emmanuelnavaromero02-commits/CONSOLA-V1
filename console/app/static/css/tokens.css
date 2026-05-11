@@ -1,0 +1,219 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   tokens.css — single source of truth for design tokens (light + dark).
+
+   Why this file exists
+   --------------------
+   The legacy console shipped three CSS files (`theme.css`, `main.css`,
+   `viewer.css`) that each declared their own token names. `viewer.css`
+   consumed names (`--bg2`, `--text3`, `--cyan`, `--amber`) that nobody
+   defined, so on dark mode the viewer pages collapsed to default browser
+   colors → black text over dark blue. This file unifies everything in one
+   place and provides explicit dark-mode overrides for every legacy token
+   the existing HTMLs already reference.
+
+   Load this BEFORE any other stylesheet so per-page CSS can override but
+   the cascade still has every var available.
+   ────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* ── Surfaces ─────────────────────────────────────────────────────── */
+  --bg: #f5f7fa;
+  --bg2: #ffffff;
+  --bg3: #eef2f7;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --surface-elevated: #ffffff;
+  --modal-bg: #ffffff;
+  --input-bg: #ffffff;
+  --backdrop: rgba(15, 23, 42, 0.45);
+
+  /* ── Text ─────────────────────────────────────────────────────────── */
+  --text: #0f172a;
+  --text2: #334155;
+  --text3: #64748b;
+  --text-muted: #64748b;
+  --muted: #64748b;
+
+  /* ── Borders ──────────────────────────────────────────────────────── */
+  --border: #d8dee8;
+  --border-strong: #b7c1d1;
+
+  /* ── Accents (enterprise: SAP blue, sober greens, low-sat reds) ──── */
+  --primary: #0a6ed1;             /* SAP-style blue */
+  --primary-hover: #085caf;
+  --primary-dark: #064079;
+  --primary-soft: rgba(10, 110, 209, 0.10);
+
+  --cyan: #0a6ed1;                /* legacy alias → primary */
+  --amber: #b06d00;               /* sober amber for warnings */
+  --red:   #b3261e;
+  --green: #117a3d;
+
+  --accent-red: #b3261e;
+  --success:  #117a3d;
+  --warning:  #b06d00;
+  --danger:   #b3261e;
+
+  /* ── Typography ───────────────────────────────────────────────────── */
+  --font-ui:   'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
+  --font-sans: var(--font-ui);
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Geometry ─────────────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius:    6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.10);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+/* ── Dark mode ────────────────────────────────────────────────────────
+   Triggered by theme.js setting data-theme="dark" on <html>. Petroleum /
+   slate palette — never pure black, never saturated blue. ────────── */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:  #0f1822;                  /* deep petroleum, not black */
+  --bg2: #182331;                  /* slate elevated */
+  --bg3: #1f2c3d;                  /* row hover / table head */
+  --surface:          #182331;
+  --surface-soft:     #1a2535;
+  --surface-elevated: #1f2c3d;
+  --modal-bg:         #1c2839;
+  --input-bg:         #0f1a26;
+  --backdrop: rgba(5, 10, 16, 0.72);
+
+  --text:  #e6edf6;                /* soft white, not #fff */
+  --text2: #c5cfdc;
+  --text3: #8a96a8;
+  --text-muted: #8a96a8;
+  --muted:      #8a96a8;
+
+  --border:        rgba(226, 232, 240, 0.14);
+  --border-strong: rgba(226, 232, 240, 0.26);
+
+  --primary:       #4ea3e0;        /* SAP-blue toned for dark surfaces */
+  --primary-hover: #74b8e8;
+  --primary-dark:  #1d6fb0;
+  --primary-soft:  rgba(78, 163, 224, 0.16);
+
+  --cyan:   #4ea3e0;
+  --amber:  #d4a042;               /* low-sat amber, not neon */
+  --red:    #e0716b;
+  --green:  #4cb27b;
+
+  --accent-red: #e0716b;
+  --success:    #4cb27b;
+  --warning:    #d4a042;
+  --danger:     #e0716b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+/* ── Legacy aliases ───────────────────────────────────────────────────
+   main.css still uses `--color-*` names. Re-export them from the unified
+   tokens so its existing rules pick up the dark-mode swap automatically
+   without touching every legacy rule. ──────────────────────────────── */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+  --color-bg:             var(--bg);
+  --color-bg-dark:        var(--bg);
+  --color-surface:        var(--surface);
+  --color-border:         var(--border);
+  --color-text-primary:   var(--text);
+  --color-text-secondary: var(--text2);
+  --color-accent:         var(--primary);
+  --color-accent-hover:   var(--primary-hover);
+  --color-success:        var(--success);
+  --color-warning:        var(--warning);
+  --color-error:          var(--danger);
+}
+
+/* ── Defensive baseline ───────────────────────────────────────────────
+   Force foreground on body and form controls so a page that forgets to
+   set `color` cannot end up rendering #000 on a dark surface. ────── */
+html, body { background: var(--bg); color: var(--text); }
+input, select, textarea, button { color: inherit; font-family: inherit; }
+input::placeholder, textarea::placeholder { color: var(--text3); opacity: 1; }
+
+/* ── Shared primitives (light/dark via tokens) ───────────────────── */
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 12px;
+  box-shadow: var(--shadow-md);
+  z-index: 2000;
+  max-width: 360px;
+}
+.toast.error   { border-left-color: var(--danger); }
+.toast.success { border-left-color: var(--success); }
+.toast.warning { border-left-color: var(--warning); }
+
+.empty-state {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text3);
+  font-size: 13px;
+}
+
+.loading {
+  color: var(--text3);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.loading::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.alert {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 12px;
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.alert.error   { border-left: 3px solid var(--danger); }
+.alert.success { border-left: 3px solid var(--success); }
+.alert.warning { border-left: 3px solid var(--warning); }
+
+.permission-denied {
+  max-width: 420px;
+  margin: 80px auto;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+}
+.permission-denied h2 {
+  font-size: 16px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+.permission-denied p { color: var(--text2); font-size: 13px; line-height: 1.5; }

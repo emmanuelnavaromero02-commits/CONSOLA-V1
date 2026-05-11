@@ -1,19 +1,14 @@
+/* tokens.css must come first so every legacy --color-*/--bg2/--cyan/...
+   reference below resolves to a value (and re-maps in dark mode). */
+@import url("./tokens.css");
+
 /* ── RESET ───────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* ── DESIGN TOKENS — Dark (default) ─────────────────────────────────────── */
 :root {
-  --color-bg: #F8F7F4;
-  --color-bg-dark: #1a1f2e;
-  --color-surface: #FFFFFF;
-  --color-border: #E2E0DB;
-  --color-text-primary: #1a1a2e;
-  --color-text-secondary: #6b7280;
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-success: #059669;
-  --color-warning: #d97706;
-  --color-error: #dc2626;
+  /* Color tokens are now sourced from tokens.css. Kept here for non-color
+     primitives that legacy rules depend on. */
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --radius-sm: 4px;
