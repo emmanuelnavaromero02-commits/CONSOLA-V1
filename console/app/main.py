@@ -8,11 +8,14 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import logging
 import os
 import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header
@@ -473,7 +476,7 @@ async def auth_middleware(request: Request, call_next):
                         })
                     user = jwt_user
             except Exception:
-                pass
+                logger.debug("Bearer JWT auth fallback failed", exc_info=True)
 
     request.state.user = user
 
