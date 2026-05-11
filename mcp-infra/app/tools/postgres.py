@@ -213,11 +213,14 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
     if not clean.startswith("SELECT") and not clean.startswith("WITH"):
         return {"error": "Only SELECT / WITH queries allowed via this tool"}
     limit = min(limit, 200)
-    if "limit" not in sql.lower():
-        sql = f"{sql.rstrip(';')} LIMIT {limit}"
+    # Wrap the caller's query so the cap is always enforced — checking for a
+    # "LIMIT" keyword in the raw SQL was bypassable by hiding it inside `--`
+    # or /* */ comments (the comment eats the rest of the line, the check
+    # sees no "limit", and we append one that gets eaten too).
+    wrapped_sql = f"SELECT * FROM ({sql.rstrip(';')}) _capped LIMIT {limit}"
     conn = _conn(gold)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql)
+        cur.execute(wrapped_sql)
         rows = [dict(r) for r in cur.fetchall()]
         cols = [d.name for d in cur.description] if cur.description else []
     conn.close()

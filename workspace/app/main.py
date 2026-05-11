@@ -63,6 +63,23 @@ def _validate_dataset_name(dataset: str) -> None:
         raise HTTPException(400, "Invalid dataset name")
 
 
+def _rls_user_context(user: dict | None) -> dict:
+    # Forward only the fields refinement's RLS layer consumes. Avoid sending
+    # the raw session dict downstream — it may carry fields we don't want the
+    # internal API surface to depend on.
+    if not user:
+        return {}
+    return {
+        "id": user.get("id"),
+        "email": user.get("email", ""),
+        "name": user.get("name") or user.get("email", ""),
+        "role": user.get("role"),
+        "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+        "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        "workspace_role": user.get("workspace_role"),
+    }
+
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -312,7 +329,8 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
-                               "args": {"name": dataset, "limit": limit, "user_context": user}})
+                               "args": {"name": dataset, "limit": limit,
+                                        "user_context": _rls_user_context(user)}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
@@ -328,8 +346,11 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     if not cols:
         raise HTTPException(400, "columns param required")
     import re as _re
+    # Strict identifier regex — no spaces. Allowing whitespace lets a caller
+    # smuggle `col1 UNION SELECT secrets ...` past validation since the regex
+    # has no semantic understanding of SQL.
     for col in cols:
-        if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_ ]*$', col):
+        if not _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
             raise HTTPException(400, f"Invalid column name: {col}")
     sqls = [
         f"SELECT DISTINCT {col} AS val, '{col}' AS col "
@@ -341,7 +362,8 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": union_sql, "limit": 5000, "user_context": user}})
+                               "args": {"sql": union_sql, "limit": 5000,
+                                        "user_context": _rls_user_context(user)}})
     result = r.json()
     rows = result.get("data", [])
     options: dict = {col: [] for col in cols}
@@ -355,7 +377,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
 @app.post("/api/data/{dataset}/query")
 async def api_data_query(request: Request, dataset: str, body: dict):
     """Filtered query against a gold dataset (mirrors console for app compat)."""
-    require_user(request)
+    user = require_user(request)
     _validate_dataset_name(dataset)
     import re as _re
     filters = body.get("filters", {})
@@ -368,6 +390,24 @@ async def api_data_query(request: Request, dataset: str, body: dict):
             safe_cols.append(col)
     select_clause = ", ".join(safe_cols) if safe_cols else "*"
 
+    if not isinstance(filters, dict):
+        raise HTTPException(400, "filters must be an object")
+    if len(filters) > 20:
+        raise HTTPException(400, "Too many filters (max 20)")
+
+    # Parameterised filter values — earlier code interpolated strings with
+    # `'`-doubling, which breaks the moment an attacker uses backslashes or
+    # newlines that DuckDB recognises in dollar-quoted contexts. Use real
+    # placeholders so refinement binds the values via the driver.
+    params: list = []
+
+    def _add_param(v) -> str:
+        s = str(v)
+        if len(s) > 500:
+            raise HTTPException(400, "Filter value too long (max 500 chars)")
+        params.append(s)
+        return "?"
+
     conditions = []
     for key, val in filters.items():
         if val is None or val == "" or val == []:
@@ -376,25 +416,28 @@ async def api_data_query(request: Request, dataset: str, body: dict):
             fy_expr = ("(CASE WHEN EXTRACT(MONTH FROM mes)<=2 "
                        "THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END)")
             vals = val if isinstance(val, list) else [val]
-            in_clause = ",".join(str(int(v)) for v in vals)
-            conditions.append(f"{fy_expr} IN ({in_clause})")
+            if len(vals) > 50:
+                raise HTTPException(400, "Too many fiscal_year values (max 50)")
+            placeholders = ",".join(_add_param(int(v)) for v in vals)
+            conditions.append(f"{fy_expr} IN ({placeholders})")
         elif _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
             vals = val if isinstance(val, list) else [val]
+            if len(vals) > 100:
+                raise HTTPException(400, f"Too many values for filter '{key}' (max 100)")
             if len(vals) == 1:
-                escaped = str(vals[0]).replace("'", "''")
-                conditions.append(f"{key} = '{escaped}'")
+                conditions.append(f"{key} = {_add_param(vals[0])}")
             else:
-                in_list = ",".join(f"'{str(v).replace(chr(39), chr(39)*2)}'" for v in vals)
-                conditions.append(f"{key} IN ({in_list})")
+                placeholders = ",".join(_add_param(v) for v in vals)
+                conditions.append(f"{key} IN ({placeholders})")
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
 
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
-        user = require_user(request)
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": sql, "limit": limit, "user_context": user}})
+                               "args": {"sql": sql, "params": params, "limit": limit,
+                                        "user_context": _rls_user_context(user)}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()

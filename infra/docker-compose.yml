@@ -39,6 +39,19 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    container_name: mode_redis
+    # Shared rate-limit backend for the console (see console/app/services/
+    # rate_limiter.py). Without this, the in-memory limiter applies per-replica
+    # and an attacker can multiply the limit by the number of pods.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   minio:
     image: minio/minio:latest
     container_name: mode_minio
@@ -93,6 +106,7 @@ services:
       JWT_SECRET_KEY:    ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       JWT_ALGORITHM:     ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REDIS_URL:         ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
     volumes:
@@ -105,6 +119,8 @@ services:
         condition: service_started
       mailhog:
         condition: service_started
+      redis:
+        condition: service_healthy
 
   workspace:
     build:
@@ -345,6 +361,11 @@ services:
       AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
       AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
       AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
+      # DAG get_secret() prefers these env names over Variable.get; kept
+      # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
+      MINIO_ACCESS_KEY:     "minio"
+      MINIO_SECRET_KEY:     "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
@@ -389,6 +410,11 @@ services:
       AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
       AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
       AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
+      # DAG get_secret() prefers these env names over Variable.get; kept
+      # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
+      MINIO_ACCESS_KEY:     "minio"
+      MINIO_SECRET_KEY:     "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
     volumes:
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs

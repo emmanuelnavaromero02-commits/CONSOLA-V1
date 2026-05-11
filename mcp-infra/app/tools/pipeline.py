@@ -218,6 +218,13 @@ def dag_save_source(cartridge_id: str, dag_id: str, source_code: str) -> dict:
 def dag_get_source(cartridge_id: str, dag_id: str) -> dict:
     from app.config import settings
     from pathlib import Path
+    import re as _re
+
+    # Validate dag_id up front — it's about to be used as a filesystem path.
+    # Without this, dag_id="../../../etc/passwd" reaches read_text below.
+    if not _re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", dag_id or ""):
+        return {"found": False, "cartridge_id": cartridge_id, "dag_id": dag_id,
+                "error": "invalid dag_id"}
 
     # 1. Try DB first
     with _conn() as conn, conn.cursor() as cur:
@@ -239,7 +246,15 @@ def dag_get_source(cartridge_id: str, dag_id: str) -> dict:
         }
 
     # 2. Fallback: read from Airflow dags directory on disk
-    dag_path = Path(settings.airflow_dags_path) / f"{dag_id}.py"
+    dags_root = Path(settings.airflow_dags_path).resolve()
+    dag_path = (dags_root / f"{dag_id}.py").resolve()
+    # Defence in depth: even with the regex above, follow-symlinks resolution
+    # guards against a misconfigured dags_path that points at a symlink farm.
+    try:
+        dag_path.relative_to(dags_root)
+    except ValueError:
+        return {"found": False, "cartridge_id": cartridge_id, "dag_id": dag_id,
+                "error": "dag_id escapes dags directory"}
     if dag_path.exists():
         source_code = dag_path.read_text(encoding="utf-8")
         # Auto-save to DB so next call hits the cache
