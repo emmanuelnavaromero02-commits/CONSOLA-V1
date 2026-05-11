@@ -21,4 +21,4 @@ RUN adduser --disabled-password --gecos "" --home /app appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8206"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8205"]

@@ -63,7 +63,7 @@ def write_parquet_and_upload(
         df.to_parquet(local_path, index=False, engine="pyarrow", compression="snappy")
 
         object_name = (
-            f"raw/replicon/{entity}/load_date={load_date}/"
+            f"raw/sap_hcm/{entity}/load_date={load_date}/"
             f"batch_id={run_id}/{entity}.parquet"
         )
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)

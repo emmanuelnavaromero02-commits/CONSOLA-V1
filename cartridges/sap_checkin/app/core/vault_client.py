@@ -1,19 +1,18 @@
-"""
-Credential helpers for the Replicon cartridge (non-Airflow services).
-Reads from environment variables / Settings — no external Vault service needed.
-"""
-from __future__ import annotations
-
 from app.core.config import settings
 
+def get_sap_checkin_credentials() -> tuple[str, str, str]:
+    """Return (base_url, user, pass) from environment configuration."""
+    base_url = settings.sap_checkin_base_url
+    user = settings.sap_checkin_user
+    password = settings.sap_checkin_pass
 
-def get_replicon_credentials() -> tuple[str, str]:
-    """Return (base_url, token) from environment configuration."""
-    base_url = settings.replicon_base_url
-    token    = settings.replicon_api_token or ""
-    if not token:
+    if not user or not password:
         raise ValueError(
-            "Replicon API token not configured.\n"
-            "Set REPLICON_API_TOKEN environment variable for the cartridge service."
+            "SAP Check-In Empleados credentials not configured.\n"
+            "Set SAP_CHECKIN_USER and SAP_CHECKIN_PASS environment variables."
         )
-    return base_url, token
+    return base_url, user, password
+
+def get_secret(key: str, default: str = "") -> str:
+    import os
+    return os.environ.get(key, default)

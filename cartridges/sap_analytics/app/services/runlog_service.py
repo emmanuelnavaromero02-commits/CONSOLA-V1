@@ -95,7 +95,7 @@ def get_last_run_status(entity_name: str | None = None) -> list[dict]:
                            records_extracted, storage_uri, error_message,
                            started_at, finished_at
                     FROM extraction_runs
-                    WHERE cartridge_id = 'replicon'
+                    WHERE cartridge_id = 'sap_analytics'
                     ORDER BY started_at DESC LIMIT 20
                     """
                 )

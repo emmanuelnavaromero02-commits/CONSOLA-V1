@@ -1,17 +1,13 @@
 :root {
   --shell-sidebar-bg: #1e2433;
   --shell-sidebar-width: 240px;
-  --shell-topbar-bg: var(--color-surface);
-  --shell-topbar-border: var(--color-border);
-  --shell-topbar-text: var(--color-text-primary);
-  --shell-topbar-text-muted: var(--color-text-secondary);
+  --shell-topbar-bg: #ffffff;
+  --shell-topbar-border: var(--border);
+  --color-accent: var(--cyan);
 }
 
-html[data-theme="dark"] {
-  --shell-topbar-bg: var(--color-bg-dark);
-  --shell-topbar-border: rgba(255, 255, 255, 0.12);
-  --shell-topbar-text: #ffffff;
-  --shell-topbar-text-muted: rgba(255, 255, 255, 0.72);
+[data-theme="dark"] {
+  --shell-topbar-bg: #ffffff;
 }
 
 .ent-shell {
@@ -19,7 +15,7 @@ html[data-theme="dark"] {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background: var(--color-bg);
+  background: var(--bg);
   font-family: var(--font-sans);
 }
 
@@ -30,7 +26,7 @@ html[data-theme="dark"] {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  border-right: 1px solid var(--color-border);
+  border-right: 1px solid var(--border);
   z-index: 10;
 }
 
@@ -104,10 +100,10 @@ html[data-theme="dark"] {
 
 .ent-breadcrumb {
   font-size: 14px;
-  color: var(--shell-topbar-text-muted);
+  color: var(--text2);
 }
 .ent-breadcrumb span {
-  color: var(--shell-topbar-text);
+  color: var(--text);
   font-weight: 600;
   margin: 0 4px;
 }
@@ -122,10 +118,10 @@ html[data-theme="dark"] {
   font-family: inherit;
   font-size: 13px;
   padding: 6px 12px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--color-bg);
-  color: var(--color-text-primary);
+  background: var(--bg2);
+  color: var(--text);
   outline: none;
   cursor: pointer;
 }
@@ -141,20 +137,6 @@ html[data-theme="dark"] {
   flex: 1;
 }
 
-.ent-topbar .btn-theme {
-  margin-right: 12px;
-  font-size: 11px;
-}
-
-.ent-topbar .status-dot {
-  margin-right: 4px;
-}
-
-.ent-topbar .status-text {
-  margin-right: 12px;
-  font-size: 11px;
-}
-
 .ent-user {
   display: flex;
   align-items: center;
@@ -163,7 +145,7 @@ html[data-theme="dark"] {
 
 .ent-user-name {
   font-size: 14px;
-  color: var(--shell-topbar-text);
+  color: var(--text);
   font-weight: 500;
 }
 

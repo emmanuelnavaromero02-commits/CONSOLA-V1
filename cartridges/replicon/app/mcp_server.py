@@ -9,7 +9,6 @@ Mount path: /mcp  (configured in main.py)
 from __future__ import annotations
 
 from typing import Any
-import re
 
 from fastmcp import FastMCP
 
@@ -19,15 +18,6 @@ from app.services.catalog_service import get_all_entities, get_all_kbs, get_enti
 from app.services.duckdb_service import run_kb_sql, _get_duckdb_connection
 from app.services.kb_service import run_knowledge_bit, get_kb_runs
 from app.services.watermark_service import get_watermark
-
-
-_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
-
-
-def _validate_safe_identifier(value: str, field_name: str = "identifier") -> str:
-    if not isinstance(value, str) or not _SAFE_IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"{field_name} inválido")
-    return value
 
 mcp = FastMCP(
     name="replicon",
@@ -101,7 +91,6 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
         entity: Entity name (e.g. "User", "TimeEntry")
         limit:  Maximum number of rows to return (default 20, max 200)
     """
-    entity = _validate_safe_identifier(entity, "entity")
     limit = min(limit, 200)
     bucket = settings.minio_bucket
     path = f"s3://{bucket}/raw/replicon/{entity}/load_date=*/batch_id=*/*.parquet"

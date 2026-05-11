@@ -1,5 +1,5 @@
 {
-  "displayName": "replicon_ingest_bi_all",
+  "displayName": "sap_payroll_ingest_bi_all",
   "trigger": {
     "name": "trigger",
     "displayName": "Webhook — recibe mode + run_id",
@@ -26,8 +26,8 @@
             "type": "json",
             "data": {
               "run_id":       "{{ trigger.body.run_id }}",
-              "workflow":     "replicon_ingest_bi_all",
-              "cartridge_id": "replicon",
+              "workflow":     "sap_payroll_ingest_bi_all",
+              "cartridge_id": "sap_payroll",
               "entity":       "_all",
               "level":        "INFO",
               "status":       "started",
@@ -47,7 +47,7 @@
           "actionName": "send_request",
           "input": {
             "method": "GET",
-            "url": "http://replicon:8201/skills/entities",
+            "url": "http://sap_payroll:8204/skills/entities",
             "headers": {},
             "queryParams": {},
             "body": { "type": "none" },
@@ -78,8 +78,8 @@
                   "type": "json",
                   "data": {
                     "run_id":       "{{ trigger.body.run_id }}",
-                    "workflow":     "replicon_ingest_bi_all",
-                    "cartridge_id": "replicon",
+                    "workflow":     "sap_payroll_ingest_bi_all",
+                    "cartridge_id": "sap_payroll",
                     "entity":       "{{ loop_entities.item.entity }}",
                     "level":        "INFO",
                     "status":       "processing",
@@ -105,7 +105,7 @@
                   "body": {
                     "type": "json",
                     "data": {
-                      "cartridge_id":  "replicon",
+                      "cartridge_id":  "sap_payroll",
                       "entity":        "{{ loop_entities.item.entity }}",
                       "mode":          "{{ trigger.body.mode ?? loop_entities.item.mode ?? 'incremental' }}",
                       "retention_days": 30
@@ -124,7 +124,7 @@
                   "actionName": "send_request",
                   "input": {
                     "method": "POST",
-                    "url": "{{ 'http://replicon:8201/skills/run_' + (trigger.body.mode ?? loop_entities.item.mode ?? 'incremental') + '/' + loop_entities.item.entity }}",
+                    "url": "{{ 'http://sap_payroll:8204/skills/run_' + (trigger.body.mode ?? loop_entities.item.mode ?? 'incremental') + '/' + loop_entities.item.entity }}",
                     "headers": {},
                     "queryParams": {},
                     "body": { "type": "none" },
@@ -148,8 +148,8 @@
                         "type": "json",
                         "data": {
                           "run_id":       "{{ trigger.body.run_id }}",
-                          "workflow":     "replicon_ingest_bi_all",
-                          "cartridge_id": "replicon",
+                          "workflow":     "sap_payroll_ingest_bi_all",
+                          "cartridge_id": "sap_payroll",
                           "entity":       "{{ loop_entities.item.entity }}",
                           "level":        "{{ extract_entity.body.error ? 'ERROR' : 'INFO' }}",
                           "status":       "{{ extract_entity.body.error ? 'failed' : 'completed' }}",

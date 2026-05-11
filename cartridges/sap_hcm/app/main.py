@@ -1,13 +1,15 @@
 from __future__ import annotations
+import os
+import secrets
 
 import inspect
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
-from app.security import InternalApiKeyASGIGuard, verify_api_key
+from app.security import get_internal_api_key
 from app.api.routes_health import router as health_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
@@ -26,13 +28,20 @@ async def lifespan(app: FastAPI):
 
 # ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
 _mcp_app = mcp.http_app(path="/")
+INTERNAL_API_KEY = get_internal_api_key()
+def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+    # Validate the key and that the caller explicitly declares itself
+    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+        raise HTTPException(status_code=403, detail="Invalid internal service origin")
+    if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
-app = FastAPI(title="Sap Hcm Cartridge", lifespan=lifespan)
+app = FastAPI(title="SAP HCM Cartridge", lifespan=lifespan)
 
 app.include_router(health_router)
 app.include_router(skills_router)
 
-app.mount("/mcp/rpc", InternalApiKeyASGIGuard(_mcp_app))
+app.mount("/mcp/rpc", _mcp_app)
 
 
 # ── REST adapter — contract for the MODecissions console registry ─────────────
@@ -125,7 +134,7 @@ async def mcp_invoke(body: dict):
 
 # ── Custom tools reload ───────────────────────────────────────────────────────
 
-@app.post("/mcp-reload", dependencies=[Depends(verify_api_key)])
+@app.post("/mcp-reload")
 def mcp_reload():
     count = load_custom_tools()
     return JSONResponse({"reloaded": count, "status": "ok"})

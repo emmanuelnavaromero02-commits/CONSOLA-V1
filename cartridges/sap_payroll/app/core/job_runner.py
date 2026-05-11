@@ -1,5 +1,5 @@
 """
-Replicon Batch Job Runner
+SAP Payroll Batch Job Runner
 =========================
 Manages async extraction jobs within the cartridge process.
 
@@ -70,7 +70,7 @@ async def cleanup_stale() -> None:
         pool = await _get_pool()
         await pool.execute(
             "UPDATE jobs SET status='failed', error='Process restarted', "
-            "finished_at=NOW() WHERE status='running' AND tool LIKE 'replicon__%'"
+            "finished_at=NOW() WHERE status='running' AND tool LIKE 'sap_payroll__%'"
         )
     except Exception:
         pass
@@ -124,7 +124,7 @@ async def _log(
         pool = await _get_pool()
         await pool.execute(
             "INSERT INTO run_logs (run_id, cartridge, entity, level, message, detail) "
-            "VALUES ($1, 'replicon', $2, $3, $4, $5::jsonb)",
+            "VALUES ($1, 'sap_payroll', $2, $3, $4, $5::jsonb)",
             job_id, entity, level, message,
             json.dumps(detail) if detail else None,
         )
@@ -141,7 +141,7 @@ async def create_extract_job(
 ) -> dict:
     """
     Create a background extraction job and return immediately.
-    - Si AIRFLOW_URL está configurado: delega al DAG replicon_extract en Airflow.
+    - Si AIRFLOW_URL está configurado: delega al DAG sap_payroll_extract en Airflow.
     - Si no: corre la extracción inline en un asyncio Task (comportamiento original).
     The LLM should use get_job_status(job_id) to track progress.
     """
@@ -150,7 +150,7 @@ async def create_extract_job(
     job_id = str(uuid.uuid4())[:8]
     args   = {"entity": entity, "mode": mode, "from_date": from_date, "to_date": to_date}
 
-    await _insert(job_id, "replicon__extract", args)
+    await _insert(job_id, "sap_payroll__extract", args)
 
     if settings.airflow_url:
         await _trigger_airflow(job_id, config, from_date, to_date)
@@ -176,7 +176,7 @@ async def create_extract_all_job(mode: str = "incremental") -> dict:
     Logs progress to run_logs; updates job message after each entity.
     """
     job_id = str(uuid.uuid4())[:8]
-    await _insert(job_id, "replicon__extract_all", {"mode": mode})
+    await _insert(job_id, "sap_payroll__extract_all", {"mode": mode})
 
     task = asyncio.create_task(
         _run_extract_all(job_id, mode),
@@ -203,7 +203,7 @@ async def get_job(job_id: str) -> dict:
 async def list_jobs(limit: int = 10) -> list[dict]:
     pool = await _get_pool()
     rows = await pool.fetch(
-        "SELECT * FROM jobs WHERE tool LIKE 'replicon__%' "
+        "SELECT * FROM jobs WHERE tool LIKE 'sap_payroll__%' "
         "ORDER BY created_at DESC LIMIT $1",
         min(limit, 50),
     )
@@ -218,15 +218,11 @@ async def _trigger_silver_refresh(entity: str) -> None:
     El engine re-materializa todos los datasets Silver que dependen de esa fuente.
     Fire-and-forget — los errores no bloquean el job.
     """
-    source = f"raw/replicon/{entity}"
+    source = f"raw/sap_payroll/{entity}"
     try:
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
-                headers={
-                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
-                    "x-internal-service": "replicon",
-                },
                 json={"source": source},
             )
     except Exception:
@@ -241,7 +237,7 @@ async def _trigger_airflow(
     from_date: str | None,
     to_date: str | None,
 ) -> None:
-    """POST to Airflow REST API to trigger the replicon_extract DAG."""
+    """POST to Airflow REST API to trigger the sap_payroll_extract DAG."""
     entity = config.get("entity", "")
     conf = {
         "job_id":            job_id,
@@ -250,8 +246,9 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
+        "sap_payroll_base_url": settings.sap_payroll_base_url,
     }
-    url = f"{settings.airflow_url}/api/v1/dags/replicon_extract/dagRuns"
+    url = f"{settings.airflow_url}/api/v1/dags/sap_payroll_extract/dagRuns"
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,

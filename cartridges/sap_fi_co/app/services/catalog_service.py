@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 ENTITIES_PATH = BASE_DIR / "config" / "entities.yaml"
 KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 
-CARTRIDGE_ID = "replicon"
+CARTRIDGE_ID = "sap_fi_co"
 
 _engine = None
 

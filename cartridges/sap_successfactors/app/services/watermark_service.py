@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.core.pg_client import get_connection
 
-_CARTRIDGE_ID = "replicon"
+_CARTRIDGE_ID = "sap_successfactors"
 
 
 def get_watermark(entity_name: str) -> str | None:

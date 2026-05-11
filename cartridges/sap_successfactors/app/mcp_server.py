@@ -1,15 +1,14 @@
 """
-Replicon MCP Server
+SAP SuccessFactors MCP Server
 ===================
 Exposes 8 tools over Streamable HTTP so that Claude (or any MCP client)
-can inspect, extract, and query Replicon data without writing custom code.
+can inspect, extract, and query SAP SuccessFactors data without writing custom code.
 
 Mount path: /mcp  (configured in main.py)
 """
 from __future__ import annotations
 
 from typing import Any
-import re
 
 from fastmcp import FastMCP
 
@@ -20,19 +19,10 @@ from app.services.duckdb_service import run_kb_sql, _get_duckdb_connection
 from app.services.kb_service import run_knowledge_bit, get_kb_runs
 from app.services.watermark_service import get_watermark
 
-
-_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
-
-
-def _validate_safe_identifier(value: str, field_name: str = "identifier") -> str:
-    if not isinstance(value, str) or not _SAFE_IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"{field_name} inválido")
-    return value
-
 mcp = FastMCP(
-    name="replicon",
+    name="sap_successfactors",
     instructions=(
-        "You have access to the Replicon workforce-management cartridge. "
+        "You have access to the SAP SuccessFactors workforce-management cartridge. "
         "Use list_entities to discover what data is available, preview to inspect rows, "
         "extract to ingest data into Bronze storage, and query_kb for analytics."
     ),
@@ -44,7 +34,7 @@ mcp = FastMCP(
 @mcp.tool()
 def list_entities() -> list[dict[str, Any]]:
     """
-    List all Replicon entities with their extraction mode, watermark field,
+    List all SAP SuccessFactors entities with their extraction mode, watermark field,
     last recorded watermark value, and description.
     """
     entities = get_all_entities()
@@ -67,7 +57,7 @@ def list_entities() -> list[dict[str, Any]]:
 @mcp.tool()
 def get_schema(entity: str) -> dict[str, Any]:
     """
-    Return the configuration schema for a Replicon entity including field list,
+    Return the configuration schema for a SAP SuccessFactors entity including field list,
     watermark config, and extraction mode.
 
     Args:
@@ -94,17 +84,16 @@ def get_schema(entity: str) -> dict[str, Any]:
 @mcp.tool()
 def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     """
-    Preview the most recent rows for a Replicon entity from Bronze (MinIO Parquet).
+    Preview the most recent rows for a SAP SuccessFactors entity from Bronze (MinIO Parquet).
     Returns column names and up to `limit` rows.
 
     Args:
         entity: Entity name (e.g. "User", "TimeEntry")
         limit:  Maximum number of rows to return (default 20, max 200)
     """
-    entity = _validate_safe_identifier(entity, "entity")
     limit = min(limit, 200)
     bucket = settings.minio_bucket
-    path = f"s3://{bucket}/raw/replicon/{entity}/load_date=*/batch_id=*/*.parquet"
+    path = f"s3://{bucket}/raw/sap_successfactors/{entity}/load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()
@@ -134,7 +123,7 @@ async def extract(
     to_date: str | None = None,
 ) -> dict[str, Any]:
     """
-    [BATCH — async] Trigger extraction of a Replicon entity into Bronze (MinIO Parquet).
+    [BATCH — async] Trigger extraction of a SAP SuccessFactors entity into Bronze (MinIO Parquet).
 
     Returns IMMEDIATELY with a job_id. The extraction runs in the background.
     Use get_job_status(job_id) to poll progress, or list_jobs() to see all jobs.
@@ -158,7 +147,7 @@ async def extract(
 @mcp.tool()
 async def extract_all(mode: str = "incremental") -> dict[str, Any]:
     """
-    [BATCH — async] Extrae TODAS las entidades de Replicon en paralelo (máx 4 simultáneas).
+    [BATCH — async] Extrae TODAS las entidades de SAP SuccessFactors en paralelo (máx 4 simultáneas).
 
     Regresa INMEDIATAMENTE con un job_id. El progreso se actualiza en tiempo real:
     cada entidad completada actualiza el mensaje del job y escribe en los logs centrales.
@@ -188,7 +177,7 @@ async def get_run_logs(job_id: str, limit: int = 50) -> list[dict[str, Any]]:
     pool = await job_runner._get_pool()
     rows = await pool.fetch(
         "SELECT entity, level, message, detail, ts "
-        "FROM run_logs WHERE run_id=$1 AND cartridge='replicon' "
+        "FROM run_logs WHERE run_id=$1 AND cartridge='sap_successfactors' "
         "ORDER BY ts ASC LIMIT $2",
         job_id, limit,
     )
@@ -242,7 +231,7 @@ async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
 @mcp.tool()
 def list_kbs() -> list[dict[str, Any]]:
     """
-    List all Knowledge Bits defined for the Replicon cartridge, including
+    List all Knowledge Bits defined for the SAP SuccessFactors cartridge, including
     their description and output table.
     """
     kbs = get_all_kbs()
@@ -280,13 +269,13 @@ def run_kb(kb_id: str) -> dict[str, Any]:
 @mcp.tool()
 def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
     """
-    Run arbitrary DuckDB SQL against Replicon Bronze/Silver Parquet data.
+    Run arbitrary DuckDB SQL against SAP SuccessFactors Bronze/Silver Parquet data.
     The query runs in-process via DuckDB with MinIO S3 access pre-configured.
     Use {bucket} as a placeholder for the MinIO bucket name.
 
     Args:
         sql:   DuckDB SQL query. Wrap table refs like:
-               read_parquet('s3://{bucket}/raw/replicon/TimeEntry/**/*.parquet')
+               read_parquet('s3://{bucket}/raw/sap_successfactors/TimeEntry/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
     limit = min(limit, 5000)
@@ -377,7 +366,7 @@ def load_custom_tools() -> int:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT name, description, tool_type, config FROM mcp_custom_tools "
-                    "WHERE cartridge_id='replicon' AND enabled=TRUE"
+                    "WHERE cartridge_id='sap_successfactors' AND enabled=TRUE"
                 )
                 rows = cur.fetchall()
         finally:

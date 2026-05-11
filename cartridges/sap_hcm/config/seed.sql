@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: Replicon PSA — seed configuration
+-- MODecissions Cartridge: SAP HCM Core — seed configuration
 -- Run once to register this cartridge in a new installation.
 -- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -8,9 +8,9 @@
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_hcm',
-    'Replicon PSA',
-    '3.0.0',
-    'Replicon Professional Services Automation — extrae datos de workforce: usuarios, proyectos, tiempo registrado, tareas, clientes, facturas, asignaciones y gastos.',
+    'SAP HCM Core',
+    '1.0.0',
+    'SAP HCM on-premise / S4HANA — extrae datos maestros de empleados, estructura organizacional, ausencias y horarios.',
     'dag-based',
     'cartridge',
     'raw/sap_hcm/{entity}/load_date={date}/'
@@ -33,26 +33,19 @@ ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 -- mode:         full | incremental
 -- dag_id:       DAG que maneja la extracción
 -- trigger_type: manual | scheduled
--- The DAG itself owns: connection logic, watermark field, API call, mapping
 INSERT INTO entity_config
     (cartridge_id, entity,               display_name,                         mode,          primary_key,        dag_id,              description,                                                   enabled, trigger_type)
 VALUES
-    ('sap_hcm',   'TimeEntry',          'Registros de Tiempo',                'incremental', 'entry_id',         'sap_hcm_extract',  'Registros de tiempo con horas, estado facturable y aprobación', TRUE, 'manual'),
-    ('sap_hcm',   'Timesheet',          'Hojas de Tiempo',                    'incremental', 'timesheet_id',     'sap_hcm_extract',  'Hojas de tiempo con período, usuario y aprobación',             TRUE, 'manual'),
-    ('sap_hcm',   'ExpenseEntry',       'Gastos',                             'incremental', 'expense_id',       'sap_hcm_extract',  'Gastos con monto, categoría y flag facturable',                 TRUE, 'manual'),
-    ('sap_hcm',   'BillingItem',        'Items de Facturación',               'incremental', 'billing_item_id',  'sap_hcm_extract',  'Items de facturación por proyecto',                             TRUE, 'manual'),
-    ('sap_hcm',   'InvoiceItem',        'Items de Factura',                   'incremental', 'invoice_item_id',  'sap_hcm_extract',  'Items de factura con monto, horas y tarifa',                    TRUE, 'manual'),
-    ('sap_hcm',   'CostItem',           'Items de Costo',                     'incremental', 'cost_item_id',     'sap_hcm_extract',  'Items de costo por proyecto',                                   TRUE, 'manual'),
-    ('sap_hcm',   'ProfitItem',         'Items de Ganancia',                  'incremental', 'profit_item_id',   'sap_hcm_extract',  'Items de ganancia por proyecto',                                TRUE, 'manual'),
-    ('sap_hcm',   'User',               'Usuarios',                           'full',        'user_id',          'sap_hcm_extract',  'Usuarios del sistema con costos y tarifas',                     TRUE, 'manual'),
-    ('sap_hcm',   'Client',             'Clientes',                           'full',        'client_id',        'sap_hcm_extract',  'Clientes con moneda y tarifa de facturación',                   TRUE, 'manual'),
-    ('sap_hcm',   'Task',               'Tareas',                             'full',        'task_id',          'sap_hcm_extract',  'Tareas de proyectos con horas estimadas',                       TRUE, 'manual'),
-    ('sap_hcm',   'Department',         'Departamentos',                      'full',        'department_id',    'sap_hcm_extract',  'Departamentos organizacionales',                                 TRUE, 'manual'),
-    ('sap_hcm',   'Role',               'Roles',                              'full',        'role_id',          'sap_hcm_extract',  'Roles de usuario',                                              TRUE, 'manual'),
-    ('sap_hcm',   'Activity',           'Actividades',                        'full',        'activity_id',      'sap_hcm_extract',  'Actividades / códigos de trabajo',                              TRUE, 'manual'),
-    ('sap_hcm',   'Project',            'Proyectos',                          'incremental', 'project_id',       'sap_hcm_extract',  'Proyectos con presupuesto, estado y fechas',                    TRUE, 'manual'),
-    ('sap_hcm',   'ResourceAssignment', 'Asignaciones de Recursos',           'incremental', 'assignment_id',    'sap_hcm_extract',  'Asignaciones de recursos a proyectos',                          TRUE, 'manual'),
-    ('sap_hcm',   'ProjectTeamMember',  'Miembros de Equipo',                 'full',        'member_id',        'sap_hcm_extract',  'Miembros del equipo por proyecto',                              TRUE, 'manual')
+    ('sap_hcm', 'EmployeeMaster',      'Maestro de Empleados',       'incremental', 'Pernr',        'sap_hcm_extract', 'Asignación organizacional del empleado (infotipo 0001)', TRUE, 'manual'),
+    ('sap_hcm', 'PersonalData',        'Datos Personales',           'incremental', 'Pernr',        'sap_hcm_extract', 'Datos personales del empleado', TRUE, 'manual'),
+    ('sap_hcm', 'ContractData',        'Datos de Contrato',          'incremental', 'Pernr',        'sap_hcm_extract', 'Datos del contrato del empleado', TRUE, 'manual'),
+    ('sap_hcm', 'OrgUnit',             'Unidad Organizacional',      'full',        'ObjId',        'sap_hcm_extract', 'Unidad Organizacional', TRUE, 'manual'),
+    ('sap_hcm', 'Position',            'Posición',                   'full',        'ObjId',        'sap_hcm_extract', 'Posición', TRUE, 'manual'),
+    ('sap_hcm', 'CostCenter',          'Centro de Costos',           'full',        'Kostl',        'sap_hcm_extract', 'Centro de Costos', TRUE, 'manual'),
+    ('sap_hcm', 'JobCode',             'Código de Trabajo',          'full',        'ObjId',        'sap_hcm_extract', 'Código de Trabajo', TRUE, 'manual'),
+    ('sap_hcm', 'EmployeeActions',     'Acciones de Empleados',      'incremental', 'Pernr',        'sap_hcm_extract', 'Acciones de personal', TRUE, 'manual'),
+    ('sap_hcm', 'LeaveAbsence',        'Ausencias',                  'incremental', 'Pernr',        'sap_hcm_extract', 'Ausencias y permisos', TRUE, 'manual'),
+    ('sap_hcm', 'WorkSchedule',        'Horarios',                   'full',        'Pernr',        'sap_hcm_extract', 'Horario de trabajo', TRUE, 'manual')
 ON CONFLICT (cartridge_id, entity) DO UPDATE
     SET display_name  = EXCLUDED.display_name,
         mode          = EXCLUDED.mode,
@@ -64,7 +57,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
 -- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
-    ('sap_hcm', 'horas facturables', 'Horas de TimeEntry con billable_status = Billable',                          'TimeEntry.hours WHERE billable_status=''Billable'''),
-    ('sap_hcm', 'utilización',       'Porcentaje de horas facturables sobre horas totales por usuario',            'SUM(billable_hours) / SUM(total_hours)'),
-    ('sap_hcm', 'backlog',           'Proyectos con status InProgress y budget_hours no consumido',                'Project WHERE status=''InProgress''')
+    ('sap_hcm', 'headcount activo', 'Número de empleados activos hoy', 'EmployeeMaster WHERE Endda >= CURRENT_DATE AND Begda <= CURRENT_DATE'),
+    ('sap_hcm', 'ausencia', 'Días de ausencia', 'LeaveAbsence.Abwtg')
 ON CONFLICT (cartridge_id, term) DO NOTHING;

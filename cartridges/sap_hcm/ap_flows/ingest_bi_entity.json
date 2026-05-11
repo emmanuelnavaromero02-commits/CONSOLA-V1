@@ -1,5 +1,5 @@
 {
-  "displayName": "replicon_ingest_bi_entity",
+  "displayName": "sap_hcm_ingest_bi_entity",
   "trigger": {
     "name": "trigger",
     "displayName": "Webhook — recibe entity + mode + run_id",
@@ -26,8 +26,8 @@
             "type": "json",
             "data": {
               "run_id":       "{{ trigger.body.run_id }}",
-              "workflow":     "replicon_ingest_bi_entity",
-              "cartridge_id": "replicon",
+              "workflow":     "sap_hcm_ingest_bi_entity",
+              "cartridge_id": "sap_hcm",
               "entity":       "{{ trigger.body.entity }}",
               "level":        "INFO",
               "status":       "started",
@@ -53,7 +53,7 @@
             "body": {
               "type": "json",
               "data": {
-                "cartridge_id":  "replicon",
+                "cartridge_id":  "sap_hcm",
                 "entity":        "{{ trigger.body.entity }}",
                 "mode":          "{{ trigger.body.mode }}",
                 "retention_days": 30
@@ -79,8 +79,8 @@
                 "type": "json",
                 "data": {
                   "run_id":       "{{ trigger.body.run_id }}",
-                  "workflow":     "replicon_ingest_bi_entity",
-                  "cartridge_id": "replicon",
+                  "workflow":     "sap_hcm_ingest_bi_entity",
+                  "cartridge_id": "sap_hcm",
                   "entity":       "{{ trigger.body.entity }}",
                   "level":        "INFO",
                   "status":       "cleanup_done",
@@ -100,7 +100,7 @@
               "actionName": "send_request",
               "input": {
                 "method": "POST",
-                "url": "{{ 'http://replicon:8201/skills/run_' + trigger.body.mode + '/' + trigger.body.entity }}",
+                "url": "{{ 'http://sap_hcm:8202/skills/run_' + trigger.body.mode + '/' + trigger.body.entity }}",
                 "headers": {},
                 "queryParams": {},
                 "body": { "type": "none" },
@@ -124,8 +124,8 @@
                     "type": "json",
                     "data": {
                       "run_id":       "{{ trigger.body.run_id }}",
-                      "workflow":     "replicon_ingest_bi_entity",
-                      "cartridge_id": "replicon",
+                      "workflow":     "sap_hcm_ingest_bi_entity",
+                      "cartridge_id": "sap_hcm",
                       "entity":       "{{ trigger.body.entity }}",
                       "level":        "{{ extract.body.error ? 'ERROR' : 'INFO' }}",
                       "status":       "{{ extract.body.error ? 'failed' : 'completed' }}",

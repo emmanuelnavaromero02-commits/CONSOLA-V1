@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: Replicon PSA — seed configuration
+-- MODecissions Cartridge: SAP SuccessFactors HXM — seed configuration
 -- Run once to register this cartridge in a new installation.
 -- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -8,9 +8,9 @@
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
 VALUES (
     'sap_successfactors',
-    'Replicon PSA',
-    '3.0.0',
-    'Replicon Professional Services Automation — extrae datos de workforce: usuarios, proyectos, tiempo registrado, tareas, clientes, facturas, asignaciones y gastos.',
+    'SAP SuccessFactors HXM',
+    '1.0.0',
+    'SAP SuccessFactors Human Experience Management — extrae datos de Empleados, Posiciones, Departamentos, y Módulos de Talento (Candidatos, Objetivos, Desempeño).',
     'dag-based',
     'cartridge',
     'raw/sap_successfactors/{entity}/load_date={date}/'
@@ -33,26 +33,24 @@ ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 -- mode:         full | incremental
 -- dag_id:       DAG que maneja la extracción
 -- trigger_type: manual | scheduled
--- The DAG itself owns: connection logic, watermark field, API call, mapping
 INSERT INTO entity_config
     (cartridge_id, entity,               display_name,                         mode,          primary_key,        dag_id,              description,                                                   enabled, trigger_type)
 VALUES
-    ('sap_successfactors',   'TimeEntry',          'Registros de Tiempo',                'incremental', 'entry_id',         'sap_successfactors_extract',  'Registros de tiempo con horas, estado facturable y aprobación', TRUE, 'manual'),
-    ('sap_successfactors',   'Timesheet',          'Hojas de Tiempo',                    'incremental', 'timesheet_id',     'sap_successfactors_extract',  'Hojas de tiempo con período, usuario y aprobación',             TRUE, 'manual'),
-    ('sap_successfactors',   'ExpenseEntry',       'Gastos',                             'incremental', 'expense_id',       'sap_successfactors_extract',  'Gastos con monto, categoría y flag facturable',                 TRUE, 'manual'),
-    ('sap_successfactors',   'BillingItem',        'Items de Facturación',               'incremental', 'billing_item_id',  'sap_successfactors_extract',  'Items de facturación por proyecto',                             TRUE, 'manual'),
-    ('sap_successfactors',   'InvoiceItem',        'Items de Factura',                   'incremental', 'invoice_item_id',  'sap_successfactors_extract',  'Items de factura con monto, horas y tarifa',                    TRUE, 'manual'),
-    ('sap_successfactors',   'CostItem',           'Items de Costo',                     'incremental', 'cost_item_id',     'sap_successfactors_extract',  'Items de costo por proyecto',                                   TRUE, 'manual'),
-    ('sap_successfactors',   'ProfitItem',         'Items de Ganancia',                  'incremental', 'profit_item_id',   'sap_successfactors_extract',  'Items de ganancia por proyecto',                                TRUE, 'manual'),
-    ('sap_successfactors',   'User',               'Usuarios',                           'full',        'user_id',          'sap_successfactors_extract',  'Usuarios del sistema con costos y tarifas',                     TRUE, 'manual'),
-    ('sap_successfactors',   'Client',             'Clientes',                           'full',        'client_id',        'sap_successfactors_extract',  'Clientes con moneda y tarifa de facturación',                   TRUE, 'manual'),
-    ('sap_successfactors',   'Task',               'Tareas',                             'full',        'task_id',          'sap_successfactors_extract',  'Tareas de proyectos con horas estimadas',                       TRUE, 'manual'),
-    ('sap_successfactors',   'Department',         'Departamentos',                      'full',        'department_id',    'sap_successfactors_extract',  'Departamentos organizacionales',                                 TRUE, 'manual'),
-    ('sap_successfactors',   'Role',               'Roles',                              'full',        'role_id',          'sap_successfactors_extract',  'Roles de usuario',                                              TRUE, 'manual'),
-    ('sap_successfactors',   'Activity',           'Actividades',                        'full',        'activity_id',      'sap_successfactors_extract',  'Actividades / códigos de trabajo',                              TRUE, 'manual'),
-    ('sap_successfactors',   'Project',            'Proyectos',                          'incremental', 'project_id',       'sap_successfactors_extract',  'Proyectos con presupuesto, estado y fechas',                    TRUE, 'manual'),
-    ('sap_successfactors',   'ResourceAssignment', 'Asignaciones de Recursos',           'incremental', 'assignment_id',    'sap_successfactors_extract',  'Asignaciones de recursos a proyectos',                          TRUE, 'manual'),
-    ('sap_successfactors',   'ProjectTeamMember',  'Miembros de Equipo',                 'full',        'member_id',        'sap_successfactors_extract',  'Miembros del equipo por proyecto',                              TRUE, 'manual')
+    ('sap_successfactors', 'User',               'Usuarios',                 'incremental', 'userId',           'sap_successfactors_extract', 'Datos maestros del usuario (User)', TRUE, 'manual'),
+    ('sap_successfactors', 'EmpEmployment',      'Empleo',                   'incremental', 'userId',           'sap_successfactors_extract', 'Datos de Empleo (EmpEmployment)', TRUE, 'manual'),
+    ('sap_successfactors', 'EmpJob',             'Puesto (Job)',             'incremental', 'userId',           'sap_successfactors_extract', 'Datos de Puesto (EmpJob)', TRUE, 'manual'),
+    ('sap_successfactors', 'EmpCompensation',    'Compensación',             'incremental', 'userId',           'sap_successfactors_extract', 'Datos de Compensación (EmpCompensation)', TRUE, 'manual'),
+    ('sap_successfactors', 'Position',           'Posición',                 'full',        'positionCode',     'sap_successfactors_extract', 'Datos de Posición', TRUE, 'manual'),
+    ('sap_successfactors', 'Department',         'Departamento',             'full',        'externalCode',     'sap_successfactors_extract', 'Datos de Departamento', TRUE, 'manual'),
+    ('sap_successfactors', 'Division',           'División',                 'full',        'externalCode',     'sap_successfactors_extract', 'Datos de División', TRUE, 'manual'),
+    ('sap_successfactors', 'Location',           'Ubicación',                'full',        'externalCode',     'sap_successfactors_extract', 'Datos de Ubicación', TRUE, 'manual'),
+    ('sap_successfactors', 'CostCenter',         'Centro de Costos',         'full',        'externalCode',     'sap_successfactors_extract', 'Datos de Centro de Costos', TRUE, 'manual'),
+    ('sap_successfactors', 'EmpJob_History',     'Relaciones Laborales',     'incremental', 'userId',           'sap_successfactors_extract', 'Histórico Job (EmpJobRelationships)', TRUE, 'manual'),
+    ('sap_successfactors', 'JobRequisition',     'Requisición de Puesto',    'incremental', 'jobReqId',         'sap_successfactors_extract', 'Requisiciones de empleo activas', TRUE, 'manual'),
+    ('sap_successfactors', 'Candidate',          'Candidatos',               'incremental', 'candidateId',      'sap_successfactors_extract', 'Candidatos en pipeline', TRUE, 'manual'),
+    ('sap_successfactors', 'LearningItem',       'Items de Aprendizaje',     'incremental', 'learningItemId',   'sap_successfactors_extract', 'Cursos de SF LMS', TRUE, 'manual'),
+    ('sap_successfactors', 'PerformanceReview',  'Evaluación de Desempeño',  'incremental', 'formDataId',       'sap_successfactors_extract', 'Evaluaciones de Desempeño (PMGM)', TRUE, 'manual'),
+    ('sap_successfactors', 'GoalPlan',           'Plan de Objetivos',        'incremental', 'planId',           'sap_successfactors_extract', 'Plan de Objetivos', TRUE, 'manual')
 ON CONFLICT (cartridge_id, entity) DO UPDATE
     SET display_name  = EXCLUDED.display_name,
         mode          = EXCLUDED.mode,
@@ -64,7 +62,7 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
 -- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
-    ('sap_successfactors', 'horas facturables', 'Horas de TimeEntry con billable_status = Billable',                          'TimeEntry.hours WHERE billable_status=''Billable'''),
-    ('sap_successfactors', 'utilización',       'Porcentaje de horas facturables sobre horas totales por usuario',            'SUM(billable_hours) / SUM(total_hours)'),
-    ('sap_successfactors', 'backlog',           'Proyectos con status InProgress y budget_hours no consumido',                'Project WHERE status=''InProgress''')
+    ('sap_successfactors', 'headcount activo', 'Número de empleados activos (startDate <= hoy <= endDate)', 'EmpEmployment WHERE isActive = true'),
+    ('sap_successfactors', 'turnover', 'Rotación de personal', 'User.status changes'),
+    ('sap_successfactors', 'evaluación', 'Rating en PerformanceReview', 'PerformanceReview.overallRating')
 ON CONFLICT (cartridge_id, term) DO NOTHING;
