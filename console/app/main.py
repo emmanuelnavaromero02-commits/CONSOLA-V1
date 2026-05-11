@@ -337,10 +337,18 @@ async def _refresh_dag_run_status(row: dict) -> dict:
     return row
 
 
+# NOTE: 'unsafe-inline' for script-src/style-src is required because the
+# static HTML pages use inline scripts and styles. To remove it, all inline
+# JS must be moved to external .js files and inline styles to external .css
+# files, then CSP can use strict nonces or SHA-256 hashes instead.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
+    "Permissions-Policy": (
+        "camera=(), microphone=(), geolocation=(), payment=(), "
+        "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+    ),
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -355,6 +363,10 @@ SECURITY_HEADERS = {
 VIEWER_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
+    "Permissions-Policy": (
+        "camera=(), microphone=(), geolocation=(), payment=(), "
+        "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+    ),
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -1079,6 +1091,20 @@ async def api_data_query_filtered(dataset: str, body: dict):
             safe_cols.append(col)
     select_clause = ", ".join(safe_cols) if safe_cols else "*"
 
+    if not isinstance(filters, dict):
+        raise HTTPException(400, "filters must be an object")
+    if len(filters) > 20:
+        raise HTTPException(400, "Too many filters (max 20)")
+
+    def _escape_sql_str(v) -> str:
+        """Escape a scalar value for a DuckDB/PG string literal (single-quote doubling)."""
+        s = str(v)
+        if len(s) > 500:
+            raise HTTPException(400, "Filter value too long (max 500 chars)")
+        # Strip null bytes — they are rejected by DuckDB but could cause unexpected truncation
+        s = s.replace("\x00", "")
+        return s.replace("'", "''")
+
     conditions = []
     for key, val in filters.items():
         if val is None or val == "" or val == []:
@@ -1087,15 +1113,18 @@ async def api_data_query_filtered(dataset: str, body: dict):
             # March-February fiscal year: month<=2 belongs to previous year
             fy_expr = "(CASE WHEN EXTRACT(MONTH FROM mes)<=2 THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END)"
             vals = val if isinstance(val, list) else [val]
+            if len(vals) > 50:
+                raise HTTPException(400, "Too many fiscal_year values (max 50)")
             in_clause = ",".join(str(int(v)) for v in vals)
             conditions.append(f"{fy_expr} IN ({in_clause})")
         elif _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
             vals = val if isinstance(val, list) else [val]
+            if len(vals) > 100:
+                raise HTTPException(400, f"Too many values for filter '{key}' (max 100)")
             if len(vals) == 1:
-                escaped = str(vals[0]).replace("'", "''")
-                conditions.append(f"{key} = '{escaped}'")
+                conditions.append(f"{key} = '{_escape_sql_str(vals[0])}'")
             else:
-                in_list = ",".join(f"'{str(v).replace(chr(39), chr(39)*2)}'" for v in vals)
+                in_list = ",".join(f"'{_escape_sql_str(v)}'" for v in vals)
                 conditions.append(f"{key} IN ({in_list})")
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
