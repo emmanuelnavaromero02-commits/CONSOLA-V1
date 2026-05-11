@@ -4,12 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Usuarios — MODecissions</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/tokens.css?v=3">
+  <link rel="stylesheet" href="/static/css/main.css?v=3">
+  <script type="module" src="/static/js/theme.js?v=3"></script>
   <style>
-    body { padding: 0; margin: 0; overflow: auto; }
+    body { padding: 0; margin: 0; overflow: auto; background: var(--bg); color: var(--text); }
     .shell { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+
     .topbar {
       display: flex; align-items: center; gap: 16px; margin-bottom: 24px;
       padding-bottom: 14px; border-bottom: 1px solid var(--border);
@@ -18,69 +19,131 @@
       font-size: 10px; color: var(--text3); font-family: var(--font-mono);
       letter-spacing: 1px; text-decoration: none;
     }
-    .topbar a.back:hover { color: var(--green); }
-    .title  { font-size: 13px; color: var(--amber); letter-spacing: 3px; font-family: var(--font-mono); }
+    .topbar a.back:hover { color: var(--primary); }
+    .title    { font-size: 13px; color: var(--text); letter-spacing: 3px; font-family: var(--font-mono); font-weight: 700; }
     .subtitle { font-size: 10px; color: var(--text3); letter-spacing: 1px; margin-top: 4px; }
+
     .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .spacer  { flex: 1; }
+
     .btn-primary {
-      background: var(--amber); border: none; color: #1a1408;
+      background: var(--primary); border: 1px solid var(--primary); color: #fff;
       font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
-      padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600;
+      padding: 8px 16px; border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
     }
-    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
     .btn-ghost {
-      background: transparent; border: 1px solid var(--border);
+      background: transparent; border: 1px solid var(--border-strong);
       color: var(--text2); font-family: var(--font-mono); font-size: 10px;
-      letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+      letter-spacing: 1px; padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer;
     }
+    .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-ghost:disabled { opacity: .5; cursor: not-allowed; }
     .btn-danger {
-      background: transparent; border: 1px solid var(--red);
-      color: var(--red); font-family: var(--font-mono); font-size: 10px;
-      letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer;
+      background: transparent; border: 1px solid var(--danger);
+      color: var(--danger); font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 1px; padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer;
     }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+    .btn-danger:disabled { opacity: .5; cursor: not-allowed; }
+
     table {
-      width: 100%; border-collapse: collapse; background: var(--bg2);
-      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+      width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
     }
-    th, td { text-align: left; padding: 10px 14px; font-size: 12px; border-bottom: 1px solid var(--border); }
-    th { background: var(--bg3); font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; }
+    th, td { text-align: left; padding: 10px 14px; font-size: 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+    tr:last-child td { border-bottom: none; }
+    th {
+      background: var(--bg3); font-family: var(--font-mono);
+      font-size: 9px; color: var(--text2); letter-spacing: 1.5px; font-weight: 600;
+    }
+
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 3px;
       font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
     }
-    .b-admin    { background: rgba(210,153,34,.18); color: var(--amber); }
-    .b-user     { background: rgba(110,118,129,.18); color: var(--text2); }
-    .b-active   { background: rgba(63,185,80,.18); color: var(--green); }
-    .b-inactive { background: rgba(248,81,73,.12); color: var(--red); }
+    .b-admin    { background: var(--primary-soft); color: var(--primary);  border: 1px solid var(--primary); }
+    .b-user     { background: rgba(110,118,129,.18); color: var(--text2);  border: 1px solid var(--border-strong); }
+    .b-active   { background: rgba(17,122,61,.15);  color: var(--success); border: 1px solid var(--success); }
+    .b-inactive { background: rgba(179,38,30,.10);  color: var(--danger);  border: 1px solid var(--danger); }
+    .b-pending  { background: rgba(176,109,0,.14);  color: var(--warning); border: 1px solid var(--warning); }
 
-    .modal-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,.65);
-      display: flex; align-items: flex-start; justify-content: center;
-      padding-top: 7vh; z-index: 100;
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: var(--backdrop);
+      z-index: 1000; align-items: center; justify-content: center;
     }
-    .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; width: min(480px, 92vw); }
-    .modal-head { padding: 14px 20px; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
-    .modal-head h3 { margin:0; font-family: var(--font-mono); font-size: 12px; color: var(--amber); letter-spacing: 2px; }
-    .modal-close { background: transparent; border: none; color: var(--text3); font-size: 18px; cursor: pointer; }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--modal-bg); border: 1px solid var(--border-strong);
+      border-radius: var(--radius); width: min(480px, 92vw);
+      color: var(--text); box-shadow: var(--shadow-lg);
+    }
+    .modal-head {
+      padding: 14px 20px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal-head h3 {
+      margin: 0; font-family: var(--font-mono); font-size: 12px;
+      color: var(--text); letter-spacing: 2px;
+    }
+    .modal-close {
+      background: transparent; border: none; color: var(--text2);
+      font-size: 18px; cursor: pointer; padding: 4px 8px;
+    }
+    .modal-close:hover { color: var(--text); }
     .modal-body { padding: 20px; }
-    .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }
-    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-    .field label { font-family: var(--font-mono); font-size: 9px; color: var(--text3); letter-spacing: 1.5px; }
-    .field input, .field select {
-      background: var(--bg); border: 1px solid var(--border); color: var(--text);
-      padding: 8px 10px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px;
+    .modal-foot {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 14px 20px; border-top: 1px solid var(--border);
     }
-    .empty-state { text-align:center; padding:60px; color:var(--text3); font-size:11px; font-family: var(--font-mono); }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label {
+      font-family: var(--font-mono); font-size: 9px; color: var(--text2);
+      letter-spacing: 1.5px; font-weight: 600;
+    }
+    .field input, .field select {
+      background: var(--input-bg); border: 1px solid var(--border-strong);
+      color: var(--text); padding: 8px 10px; border-radius: var(--radius-sm);
+      font-family: var(--font-mono); font-size: 12px;
+    }
+    .field input:focus, .field select:focus {
+      outline: none; border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+    .field input:read-only, .field select:disabled {
+      background: var(--bg3); color: var(--text2);
+    }
+    .modal-hint {
+      font-size: 10px; color: var(--text3); font-family: var(--font-mono);
+      letter-spacing: 1px; line-height: 1.5;
+    }
+    .modal-err {
+      color: var(--danger); font-size: 12px; padding: 8px 10px; margin-top: 4px;
+      background: rgba(179,38,30,.08); border: 1px solid var(--danger);
+      border-radius: var(--radius-sm); display: none;
+    }
+    :root[data-theme="dark"] .modal-err { background: rgba(224,113,107,.10); }
+
+    .empty-state {
+      text-align: center; padding: 60px 16px; color: var(--text3);
+      font-size: 12px; font-family: var(--font-mono);
+    }
+    .status-err { color: var(--danger); }
+
     .user-bar {
       display: flex; align-items: center; gap: 12px; margin-left: auto;
       font-family: var(--font-mono); font-size: 10px; color: var(--text3); letter-spacing: 1px;
     }
     .user-bar .me strong { color: var(--text); }
     .user-bar a { color: var(--text3); text-decoration: none; }
-    .user-bar a:hover { color: var(--amber); }
-    .role-pill { padding: 1px 6px; border-radius: 3px; font-size: 8px; letter-spacing: 1.5px; background: var(--bg3); color: var(--text2); }
-    .role-pill.admin { background: rgba(210,153,34,.15); color: var(--amber); }
+    .user-bar a:hover { color: var(--primary); }
+    .role-pill {
+      padding: 1px 6px; border-radius: 3px; font-size: 8px; letter-spacing: 1.5px;
+      background: var(--bg3); color: var(--text2); border: 1px solid var(--border);
+    }
+    .role-pill.admin { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
   </style>
 </head>
 <body>
@@ -97,234 +160,130 @@
 
     <div class="toolbar">
       <div class="spacer"></div>
-      <button class="btn-primary" id="btn-invite">+ INVITAR USUARIO</button>
+      <button type="button" class="btn-primary" id="btn-invite" hidden>+ INVITAR USUARIO</button>
     </div>
 
-    <div id="users-container"><div class="empty-state">Cargando…</div></div>
+    <div id="users-container">
+      <div class="empty-state"><span class="loading">Cargando…</span></div>
+    </div>
   </div>
 
-  <div id="modal" style="display:none"></div>
+  <!-- ── Table template, cloned by JS ─────────────────────────────── -->
+  <template id="tpl-users-table">
+    <table>
+      <thead>
+        <tr>
+          <th>EMAIL</th>
+          <th>NOMBRE</th>
+          <th>ROL</th>
+          <th>ESTADO</th>
+          <th>CREADO</th>
+          <th>ÚLTIMO LOGIN</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </template>
 
-  <script>
-    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-    function escHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-    function fmtDate(s){ return s ? String(s).slice(0,10) : '—'; }
+  <!-- ── Invite modal ─────────────────────────────────────────────── -->
+  <div class="modal-overlay" id="invite-modal" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="invite-title">INVITAR USUARIO</h3>
+        <button type="button" class="modal-close" id="btn-invite-close" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="i-email">EMAIL</label>
+          <input id="i-email" type="email" placeholder="usuario@empresa.com" autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="i-name">NOMBRE (opcional)</label>
+          <input id="i-name" type="text" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="i-role">ROL</label>
+          <select id="i-role">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <div class="modal-hint">
+          El usuario recibirá un email con un link para activar su cuenta y elegir su password.
+        </div>
+        <div id="invite-err" class="modal-err" role="alert"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-ghost"   id="btn-invite-cancel">CANCELAR</button>
+        <button type="button" class="btn-primary" id="btn-invite-submit">ENVIAR INVITACIÓN</button>
+      </div>
+    </div>
+  </div>
 
-    let ME = null;
+  <!-- ── Edit modal ───────────────────────────────────────────────── -->
+  <div class="modal-overlay" id="edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="edit-title">EDITAR USUARIO</h3>
+        <button type="button" class="modal-close" id="btn-edit-close" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-user-id">
+        <div class="field">
+          <label for="f-email">EMAIL</label>
+          <input id="f-email" type="email" readonly>
+        </div>
+        <div class="field">
+          <label for="f-name">NOMBRE</label>
+          <input id="f-name" type="text" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="f-role">ROL</label>
+          <select id="f-role">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-active">ESTADO</label>
+          <select id="f-active">
+            <option value="true">activo</option>
+            <option value="false">inactivo</option>
+          </select>
+        </div>
+        <div id="edit-self-hint" class="modal-hint" hidden>
+          No puedes cambiar tu propio rol o estado de actividad desde aquí. Pídeselo a otro administrador.
+        </div>
+        <div class="modal-hint">
+          Para resetear el password, usa el botón "🔑 RESET" en la fila — el usuario recibirá un email con link.
+        </div>
+        <div id="edit-err" class="modal-err" role="alert"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-ghost"   id="btn-edit-cancel">CANCELAR</button>
+        <button type="button" class="btn-primary" id="btn-edit-submit">GUARDAR</button>
+      </div>
+    </div>
+  </div>
 
-    async function loadMe(){
-      try { const r = await fetch('/auth/me'); const d = await r.json(); ME = d.user; } catch { ME = null; }
-      const bar = document.getElementById('user-bar');
-      if (!ME) { bar.innerHTML = `<a href="/login">INICIAR SESIÓN</a>`; return; }
-      bar.innerHTML = `
-        <span class="me"><strong>${escHtml(ME.email)}</strong></span>
-        <span class="role-pill ${ME.role==='admin'?'admin':''}">${ME.role.toUpperCase()}</span>
-        <a href="/me">MI PERFIL</a>
-        <a href="#" onclick="event.preventDefault();doLogout()">SALIR</a>`;
-    }
-    window.doLogout = async function(){
-      await fetch('/auth/logout', {method:'POST'});
-      location.href = '/login';
-    };
+  <!-- ── Generic confirm modal (delete / reinvite / send-reset) ──── -->
+  <div class="modal-overlay" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="confirm-title">CONFIRMAR</h3>
+        <button type="button" class="modal-close" id="btn-confirm-close" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message" style="font-size:13px;line-height:1.6;color:var(--text);"></p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-ghost"   id="btn-confirm-cancel">CANCELAR</button>
+        <button type="button" class="btn-primary" id="confirm-ok">CONFIRMAR</button>
+      </div>
+    </div>
+  </div>
 
-    async function loadUsers(){
-      const cont = document.getElementById('users-container');
-      cont.innerHTML = '<div class="empty-state">Cargando…</div>';
-      try {
-        const r = await fetch('/api/admin/users');
-        if (!r.ok) {
-          cont.innerHTML = `<div class="empty-state" style="color:var(--red)">No autorizado o sin sesión</div>`;
-          return;
-        }
-        const d = await r.json();
-        const users = d.users || [];
-        if (!users.length) { cont.innerHTML = '<div class="empty-state">Sin usuarios</div>'; return; }
-        cont.innerHTML = `
-          <table>
-            <thead><tr>
-              <th>EMAIL</th><th>NOMBRE</th><th>ROL</th><th>ESTADO</th><th>CREADO</th><th>ÚLTIMO LOGIN</th><th></th>
-            </tr></thead>
-            <tbody>${users.map(rowHtml).join('')}</tbody>
-          </table>`;
-      } catch (e) {
-        cont.innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${escHtml(e.message)}</div>`;
-      }
-    }
-    function rowHtml(u){
-      const isMe = ME && ME.id === u.id;
-      const pending = !u.is_active && !u.last_login;
-      const stateBadge = pending
-        ? '<span class="badge" style="background:rgba(210,153,34,.15);color:var(--amber)">PENDIENTE</span>'
-        : `<span class="badge ${u.is_active?'b-active':'b-inactive'}">${u.is_active?'ACTIVO':'INACTIVO'}</span>`;
-      const actions = [];
-      // JSON.stringify escapes JSON syntax but not HTML — a name containing `'`
-      // would break out of the single-quoted attribute. escHtml the payload
-      // so it survives the attribute boundary intact.
-      actions.push(`<button class="btn-ghost" onclick='editUser(${escHtml(JSON.stringify(u))})'>EDITAR</button>`);
-      if (pending) {
-        actions.push(`<button class="btn-ghost" onclick="reinvite(${u.id}, '${escHtml(u.email)}')">↻ REENVIAR</button>`);
-      } else if (u.is_active) {
-        actions.push(`<button class="btn-ghost" onclick="sendReset(${u.id}, '${escHtml(u.email)}')">🔑 RESET</button>`);
-      }
-      if (!isMe) {
-        actions.push(`<button class="btn-danger" onclick="deleteUser(${u.id}, '${escHtml(u.email)}')">×</button>`);
-      }
-      return `<tr>
-        <td><strong>${escHtml(u.email)}</strong>${isMe ? ' <span style="color:var(--text3)">(tú)</span>' : ''}</td>
-        <td style="color:var(--text2)">${escHtml(u.name || '—')}</td>
-        <td><span class="badge b-${escHtml(u.role)}">${escHtml(String(u.role || '').toUpperCase())}</span></td>
-        <td>${stateBadge}</td>
-        <td style="color:var(--text2)">${fmtDate(u.created_at)}</td>
-        <td style="color:var(--text2)">${fmtDate(u.last_login)}</td>
-        <td style="text-align:right">${actions.join(' ')}</td>
-      </tr>`;
-    }
-
-    document.getElementById('btn-invite').addEventListener('click', () => openInviteModal());
-
-    window.openInviteModal = function(){
-      const m = document.getElementById('modal');
-      m.style.display = 'block';
-      m.innerHTML = `
-        <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-          <div class="modal">
-            <div class="modal-head">
-              <h3>INVITAR USUARIO</h3>
-              <button class="modal-close" onclick="closeModal()">×</button>
-            </div>
-            <div class="modal-body">
-              <div class="field"><label>EMAIL</label>
-                <input id="i-email" type="email" placeholder="usuario@epiuse.com" autofocus>
-              </div>
-              <div class="field"><label>NOMBRE (opcional)</label>
-                <input id="i-name">
-              </div>
-              <div class="field"><label>ROL</label>
-                <select id="i-role">
-                  <option value="user">user</option>
-                  <option value="admin">admin</option>
-                </select>
-              </div>
-              <div style="font-size:10px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px">
-                El usuario recibirá un email con un link para activar su cuenta y elegir su password.
-              </div>
-            </div>
-            <div class="modal-foot">
-              <button class="btn-ghost" onclick="closeModal()">CANCELAR</button>
-              <button class="btn-primary" onclick="submitInvite()">ENVIAR INVITACIÓN</button>
-            </div>
-          </div>
-        </div>`;
-    };
-
-    window.editUser = function(u){
-      const m = document.getElementById('modal');
-      m.style.display = 'block';
-      m.innerHTML = `
-        <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
-          <div class="modal">
-            <div class="modal-head">
-              <h3>EDITAR USUARIO</h3>
-              <button class="modal-close" onclick="closeModal()">×</button>
-            </div>
-            <div class="modal-body">
-              <div class="field"><label>EMAIL</label>
-                <input id="f-email" type="email" value="${escHtml(u.email)}" readonly>
-              </div>
-              <div class="field"><label>NOMBRE</label>
-                <input id="f-name" value="${escHtml(u.name || '')}">
-              </div>
-              <div class="field"><label>ROL</label>
-                <select id="f-role">
-                  <option value="user"  ${u.role==='user' ?'selected':''}>user</option>
-                  <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
-                </select>
-              </div>
-              <div class="field"><label>ACTIVO</label>
-                <select id="f-active">
-                  <option value="true"  ${u.is_active ?'selected':''}>activo</option>
-                  <option value="false" ${!u.is_active ?'selected':''}>inactivo</option>
-                </select>
-              </div>
-              <div style="font-size:10px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px;margin-top:8px">
-                Para resetear el password, usa el botón "🔑 RESET" en la fila — el usuario recibirá un email con link.
-              </div>
-            </div>
-            <div class="modal-foot">
-              <button class="btn-ghost" onclick="closeModal()">CANCELAR</button>
-              <button class="btn-primary" onclick="saveUser(${u.id})">GUARDAR</button>
-            </div>
-          </div>
-        </div>`;
-    };
-    window.closeModal = function(){ document.getElementById('modal').style.display = 'none'; };
-
-    window.submitInvite = async function(){
-      const email = document.getElementById('i-email').value.trim();
-      if (!email) { alert('Email obligatorio'); return; }
-      const body = {
-        email,
-        name: document.getElementById('i-name').value.trim() || null,
-        role: document.getElementById('i-role').value,
-      };
-      const r = await fetch('/api/admin/users/invite', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const e = await r.json().catch(()=>({}));
-        alert('Error: ' + (e.detail || r.statusText));
-        return;
-      }
-      const d = await r.json();
-      closeModal();
-      loadUsers();
-      if (!d.email_sent) {
-        alert('Usuario creado, pero falló el envío del correo. Verifica la configuración SMTP.');
-      }
-    };
-
-    window.saveUser = async function(id){
-      const body = {
-        name:      document.getElementById('f-name').value.trim() || null,
-        role:      document.getElementById('f-role').value,
-        is_active: document.getElementById('f-active').value === 'true',
-      };
-      const r = await fetch('/api/admin/users/' + id, {
-        method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const e = await r.json().catch(()=>({}));
-        alert('Error: ' + (e.detail || r.statusText));
-        return;
-      }
-      closeModal();
-      loadUsers();
-    };
-
-    window.reinvite = async function(id, email){
-      if (!confirm(`Reenviar invitación a "${email}"?`)) return;
-      const r = await fetch('/api/admin/users/' + id + '/reinvite', {method:'POST'});
-      if (!r.ok) { alert('Error: ' + r.statusText); return; }
-      const d = await r.json();
-      alert(d.email_sent ? '✓ Invitación reenviada' : 'Generado el token, pero el envío falló');
-    };
-
-    window.sendReset = async function(id, email){
-      if (!confirm(`Enviar link de reset de password a "${email}"?`)) return;
-      const r = await fetch('/api/admin/users/' + id + '/send-reset', {method:'POST'});
-      if (!r.ok) { alert('Error: ' + r.statusText); return; }
-      const d = await r.json();
-      alert(d.sent ? '✓ Email de reset enviado' : 'Token generado, pero el envío falló');
-    };
-
-    window.deleteUser = async function(id, email){
-      if (!confirm(`¿Eliminar usuario "${email}"? No se puede deshacer.`)) return;
-      const r = await fetch('/api/admin/users/' + id, {method:'DELETE'});
-      if (!r.ok) { alert('Error: ' + r.statusText); return; }
-      loadUsers();
-    };
-
-    (async () => { await loadMe(); loadUsers(); })();
-  </script>
+  <script type="module" src="/static/js/admin_users.js?v=3" defer></script>
 </body>
 </html>
