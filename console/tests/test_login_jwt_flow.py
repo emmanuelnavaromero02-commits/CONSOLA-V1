@@ -55,7 +55,7 @@ def console_main(monkeypatch):
         "workspace_role": "analyst",
     }]
 
-    async def authenticate(email, password):
+    async def authenticate(email, password, ip=None):
         user = dict(auth_stub.user)
         user["email"] = email
         return user
@@ -188,6 +188,17 @@ def console_main(monkeypatch):
     for name, mod in service_stubs.items():
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
+
+    # Also patch the package attributes so `from app.services import auth` gets the stub
+    import app.services as _svc_pkg
+    for attr, mod in [
+        ("auth", service_stubs["app.services.auth"]),
+        ("job_service", service_stubs["app.services.job_service"]),
+        ("token_store", service_stubs["app.services.token_store"]),
+        ("mcp_registry", service_stubs["app.services.mcp_registry"]),
+        ("cartridge_service", service_stubs["app.services.cartridge_service"]),
+    ]:
+        monkeypatch.setattr(_svc_pkg, attr, mod, raising=False)
 
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)

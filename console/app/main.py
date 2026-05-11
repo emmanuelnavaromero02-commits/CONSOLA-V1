@@ -8,11 +8,14 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import logging
 import os
 import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header
@@ -34,6 +37,7 @@ from app.dependencies import (
     ROLE_ADMIN,
     ROLE_ANALYST,
     ROLE_WORKSPACE_ADMIN,
+    _workspace_memberships,
     get_current_user as get_current_user_dependency,
     require_any_role,
     require_authenticated,
@@ -453,6 +457,27 @@ async def auth_middleware(request: Request, call_next):
 
     token = request.cookies.get(_auth.COOKIE_NAME)
     user  = await _auth.get_session_user(token) if token else None
+
+    # Fall back to JWT bearer so require_permission() routes get request.state.user set.
+    if not user:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            try:
+                claims = decode_access_token(auth_header[7:])
+                jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
+                if jwt_user and jwt_user.get("is_active"):
+                    workspaces = await _workspace_memberships(jwt_user["id"])
+                    if workspaces:
+                        jwt_user = dict(jwt_user)
+                        jwt_user.update({
+                            "workspace_role": workspaces[0]["workspace_role"],
+                            "active_workspace_id": workspaces[0]["workspace_id"],
+                            "active_tenant_id": workspaces[0]["tenant_id"],
+                        })
+                    user = jwt_user
+            except Exception:
+                logger.debug("Bearer JWT auth fallback failed", exc_info=True)
+
     request.state.user = user
 
     if not user and not is_public and _uses_rbac_dependency(path):

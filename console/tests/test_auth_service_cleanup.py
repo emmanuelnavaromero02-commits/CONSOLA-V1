@@ -24,10 +24,22 @@ def auth_module(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY", "test_internal_api_key_with_more_than_32_chars")
     monkeypatch.setitem(sys.modules, "bcrypt", _module())
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
+    import app.services as _svc_pkg
+    _original = sys.modules.get("app.services.auth")
+    _original_pkg_attr = getattr(_svc_pkg, "auth", None)
     sys.modules.pop("app.services.auth", None)
     auth = importlib.import_module("app.services.auth")
+    sys.modules["app.services.auth"] = auth
+    setattr(_svc_pkg, "auth", auth)
     yield auth
-    sys.modules.pop("app.services.auth", None)
+    # Restore original — do NOT use monkeypatch for this to avoid ordering issues
+    if _original is not None:
+        sys.modules["app.services.auth"] = _original
+        setattr(_svc_pkg, "auth", _original)
+    else:
+        sys.modules.pop("app.services.auth", None)
+        if _original_pkg_attr is not None:
+            setattr(_svc_pkg, "auth", _original_pkg_attr)
 
 
 @pytest.mark.anyio
