@@ -15,6 +15,18 @@ KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 
 CARTRIDGE_ID = "sap_hcm"
 
+CARTRIDGE_META = {
+    "name":        "SAP HCM",
+    "version":     "1.0.0",
+    "description": (
+        "SAP HCM / NetWeaver Gateway — infotypes PA/PT/OM, empleados, "
+        "organización, ausencias, tiempos."
+    ),
+    "pattern":     "dag-based",
+    "category":    "cartridge",
+    "bronze_path": "raw/sap_hcm/{entity}/load_date={date}/",
+}
+
 _engine = None
 
 
@@ -44,10 +56,24 @@ def _yaml_kbs() -> list[dict[str, Any]]:
 # ── Seed on startup ───────────────────────────────────────────────────────────
 
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML."""
+    """If entity_config has no rows for this cartridge, import from YAML.
+    Also upserts the cartridge header so Studio's dropdown picks it up."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
+                VALUES (:cid, :name, :version, :description, :pattern, :category, :bronze_path)
+                ON CONFLICT (id) DO UPDATE
+                    SET name        = EXCLUDED.name,
+                        version     = EXCLUDED.version,
+                        description = EXCLUDED.description,
+                        pattern     = EXCLUDED.pattern,
+                        category    = EXCLUDED.category,
+                        bronze_path = EXCLUDED.bronze_path,
+                        updated_at  = NOW()
+            """), {"cid": CARTRIDGE_ID, **CARTRIDGE_META})
+
             count = conn.execute(
                 text("SELECT COUNT(*) FROM entity_config WHERE cartridge_id = :cid"),
                 {"cid": CARTRIDGE_ID},

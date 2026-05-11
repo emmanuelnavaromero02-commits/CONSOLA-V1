@@ -13,6 +13,7 @@ from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.mcp_server import load_custom_tools, mcp
+from app.services import catalog_service
 
 
 # ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
@@ -29,6 +30,10 @@ async def lifespan(app: FastAPI):
         await job_runner.cleanup_stale()
     except Exception:
         # DB unavailable — cartridge still serves /health, /skills/entities (yaml fallback)
+        pass
+    try:
+        catalog_service._seed_if_empty()
+    except Exception:
         pass
     async with _mcp_app.router.lifespan_context(app):
         yield

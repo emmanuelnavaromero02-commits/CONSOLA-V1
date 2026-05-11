@@ -1761,6 +1761,81 @@ async def studio_list_cartridges():
     return {"cartridges": await cartridge_service.list_cartridges()}
 
 
+# ── Microservice-backed cartridges (probed via internal HTTP) ───────────────
+# Maps cartridge_id → internal base URL of the cartridge microservice. When a
+# cartridge is in this map, /studio/cartridges/{id}/status probes the service's
+# /health endpoint to decide whether to report it as operational, degraded
+# (live but missing credentials) or offline (not responding).
+_MICROSERVICE_CARTRIDGES = {
+    "sap_successfactors": os.environ.get(
+        "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"
+    ),
+    "sap_hcm": os.environ.get(
+        "SAP_HCM_URL", "http://sap-hcm:8202"
+    ),
+    "sap_s4hana": os.environ.get(
+        "SAP_S4HANA_URL", "http://sap-s4hana:8204"
+    ),
+}
+
+
+def _internal_headers() -> dict:
+    return {"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}
+
+
+async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:
+    """Probe a cartridge microservice and classify its status.
+
+    Returns one of:
+      - {"status": "operational",            ...} — /health and credentials OK
+      - {"status": "degraded",     "reason": ...} — /health OK, credentials missing
+      - {"status": "offline",      "reason": ...} — /health unreachable
+    """
+    try:
+        async with httpx.AsyncClient(timeout=3) as c:
+            r = await c.get(f"{base_url}/health")
+    except (httpx.HTTPError, OSError) as exc:
+        return {"status": "offline", "reason": f"/health unreachable: {exc!s}"}
+    if r.status_code >= 500 or not r.is_success:
+        return {"status": "offline", "reason": f"/health HTTP {r.status_code}"}
+
+    # Liveness ok — try the deep check that hits SAP. Anything other than 200
+    # means the service is up but credentials / connectivity are pending.
+    try:
+        async with httpx.AsyncClient(timeout=5, headers=_internal_headers()) as c:
+            deep = await c.get(f"{base_url}/health/{cartridge_id}")
+        if deep.is_success:
+            data = deep.json() if "application/json" in deep.headers.get("content-type", "") else {}
+            return {"status": "operational", **(data or {})}
+        try:
+            payload = deep.json()
+        except Exception:
+            payload = {"detail": deep.text[:200]}
+        return {"status": "degraded", "reason": payload}
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        return {"status": "degraded", "reason": f"deep health unavailable: {exc!s}"}
+
+
+@app.get("/studio/cartridges/{cartridge_id}/status", dependencies=[Depends(require_authenticated)])
+async def studio_cartridge_status(cartridge_id: str):
+    """Lightweight status probe for the cartridge.
+
+    For Replicon (and any cartridge not backed by a dedicated microservice in
+    this deployment) we just report ``operational`` if it is registered.
+    For SAP cartridges we probe the corresponding FastAPI service.
+    """
+    manifest = await cartridge_service.get_cartridge(cartridge_id)
+    if not manifest:
+        raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
+
+    base_url = _MICROSERVICE_CARTRIDGES.get(cartridge_id)
+    if not base_url:
+        return {"cartridge_id": cartridge_id, "status": "operational"}
+
+    probe = await _probe_microservice(base_url, cartridge_id)
+    return {"cartridge_id": cartridge_id, **probe}
+
+
 @app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
