@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MODecissions · Vault</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/css/main.css?v=2">
-<link rel="stylesheet" href="/static/css/viewer.css?v=2">
+<link rel="stylesheet" href="/static/css/tokens.css?v=3">
+<link rel="stylesheet" href="/static/css/main.css?v=3">
+<link rel="stylesheet" href="/static/css/viewer.css?v=3">
 <style>
 .viewer-wrap { max-width: 1100px; }
 
@@ -19,11 +19,11 @@
   padding:7px 20px; font-size:11px; font-weight:600; font-family:var(--font-ui);
   letter-spacing:.05em; cursor:pointer; border:1px solid transparent;
   border-bottom:none; border-radius:3px 3px 0 0;
-  color:var(--text3); background:transparent; transition:color .15s;
+  color:var(--text3); background:transparent; transition:color .15s, background .15s;
 }
-.vtab:hover  { color:var(--text2); }
-.vtab.active { border-color:var(--border); border-bottom-color:var(--bg);
-               color:var(--cyan); background:var(--bg); margin-bottom:-1px; }
+.vtab:hover  { color:var(--text2); background:var(--bg3); }
+.vtab.active { border-color:var(--border); border-bottom-color:var(--surface);
+               color:var(--primary); background:var(--surface); margin-bottom:-1px; }
 
 /* ── Section header ── */
 .section-hdr {
@@ -33,75 +33,88 @@
 .section-title { font-family:var(--font-ui); font-size:11px; font-weight:600;
                  color:var(--text2); letter-spacing:.06em; text-transform:uppercase; flex:1; }
 
+/* ── Buttons ── */
+.btn-primary {
+  border-color: var(--primary); color: #fff; background: var(--primary);
+}
+.btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: #fff; }
+.btn-primary:disabled { opacity: .6; cursor: default; }
+.btn-danger-text { color: var(--danger); border-color: var(--danger); }
+.btn-danger-text:hover { background: var(--danger); color: #fff; }
+
 /* ── Table overrides ── */
-.vault-table { border:1px solid var(--border); border-radius:4px; overflow:hidden; }
-.vault-table table { margin:0; }
-.vault-table th { background:var(--bg2); }
-.vault-table td { font-size:11px; }
+.vault-table { border:1px solid var(--border); border-radius:4px; overflow:hidden; background:var(--surface); }
+.vault-table table { margin:0; background:var(--surface); }
+.vault-table th { background:var(--bg3); color:var(--text2); }
+.vault-table td { font-size:11px; color:var(--text); background:var(--surface); }
 .conn-id  { font-family:var(--font-mono); color:var(--amber); }
-.base-url { font-family:var(--font-mono); color:var(--cyan); font-size:10px;
-            max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.base-url { font-family:var(--font-mono); color:var(--primary); font-size:10px;
+            max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+            display:inline-block; vertical-align:middle; }
 .token-cell { font-family:var(--font-mono); font-size:10px; color:var(--text3); }
-.token-revealed { color:var(--green); word-break:break-all; }
+.token-revealed { color:var(--success); word-break:break-all; }
 .method-badge {
-  display:inline-block; padding:1px 7px; border-radius:2px; font-size:9px;
-  font-family:var(--font-mono); background:rgba(88,166,255,.1);
-  color:var(--cyan); border:1px solid var(--cyan);
+  display:inline-block; padding:1px 7px; border-radius:3px; font-size:9px;
+  font-family:var(--font-mono); background:var(--primary-soft);
+  color:var(--primary); border:1px solid var(--primary);
 }
 .actions-cell { white-space:nowrap; }
 .actions-cell button { margin-right:4px; }
 
 /* ── Modal ── */
 .modal-overlay {
-  display:none; position:fixed; inset:0; background:rgba(0,0,0,.75);
+  display:none; position:fixed; inset:0; background:var(--backdrop);
   z-index:1000; align-items:center; justify-content:center;
 }
 .modal-overlay.open { display:flex; }
 .modal-box {
-  background:var(--bg); border:1px solid var(--cyan); border-radius:4px;
-  width:min(520px,95vw); display:flex; flex-direction:column;
+  background:var(--modal-bg); border:1px solid var(--border-strong); border-radius:var(--radius);
+  width:min(540px,95vw); display:flex; flex-direction:column;
+  box-shadow: var(--shadow-lg);
+  color:var(--text);
 }
 .modal-hdr {
   display:flex; align-items:center; gap:10px; padding:12px 16px;
   border-bottom:1px solid var(--border); flex-shrink:0;
 }
-.modal-title { font-family:var(--font-mono); color:var(--cyan); font-size:13px; flex:1; }
-.modal-body  { padding:16px; display:flex; flex-direction:column; gap:12px; }
+.modal-title { font-family:var(--font-ui); color:var(--text); font-size:14px; font-weight:600; flex:1; }
+.modal-body  { padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
 .modal-footer {
-  display:flex; gap:8px; padding:10px 16px;
+  display:flex; gap:8px; padding:12px 16px;
   border-top:1px solid var(--border); justify-content:flex-end;
 }
 
 /* ── Form ── */
-.field-label { font-size:10px; color:var(--text3); letter-spacing:.04em;
-               text-transform:uppercase; margin-bottom:4px; font-family:var(--font-ui); }
+.field-label { font-size:10px; color:var(--text2); letter-spacing:.04em;
+               text-transform:uppercase; margin-bottom:4px; font-family:var(--font-ui); font-weight:600; }
 .field-input {
-  width:100%; box-sizing:border-box; background:var(--bg2);
-  border:1px solid var(--border); border-radius:3px;
+  width:100%; box-sizing:border-box; background:var(--input-bg);
+  border:1px solid var(--border-strong); border-radius:var(--radius-sm);
   color:var(--text); font-family:var(--font-mono); font-size:12px;
-  padding:7px 10px;
+  padding:8px 10px; line-height:1.4;
 }
-.field-input:focus { outline:none; border-color:var(--cyan); }
+.field-input:focus { outline:none; border-color:var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.field-input:read-only { background: var(--bg3); color: var(--text2); }
 .field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 
 /* ── Delete confirm ── */
-.modal-box.danger { border-color:#ff2d55; }
-.modal-box.danger .modal-title { color:#ff2d55; }
-.btn-danger { border-color:#ff2d55; color:#ff2d55; }
-.btn-danger:hover { background:#ff2d55; color:var(--bg); }
+.modal-box.danger { border-color:var(--danger); }
+.modal-box.danger .modal-title { color:var(--danger); }
 
-/* ── Empty / loading ── */
-.empty-row td { text-align:center; padding:32px; color:var(--text3);
-                font-style:italic; }
+/* ── Empty / loading / status ── */
+.empty-row td { text-align:center; padding:32px; color:var(--text3); font-style:italic; }
 .status-bar { font-size:11px; color:var(--text3); margin-bottom:14px;
-              display:flex; align-items:center; gap:10px; }
-.status-ok  { color:var(--green); }
-.status-err { color:#ff2d55; }
+              display:flex; align-items:center; gap:10px; min-height:18px; }
+.status-ok  { color:var(--success); }
+.status-err { color:var(--danger); }
+
+/* ── Inline error banner inside modal ── */
+.modal-err { color:var(--danger); font-size:12px; display:none; padding:8px 10px;
+             background: rgba(179,38,30,.08); border:1px solid var(--danger); border-radius:var(--radius-sm); }
+:root[data-theme="dark"] .modal-err { background: rgba(224,113,107,.10); }
 </style>
 </head>
 <body>
-<div class="crt-overlay"></div>
-<div class="scanlines"></div>
 <div class="viewer-wrap">
 
   <div class="vheader">
@@ -109,23 +122,22 @@
     <a href="/">← Consola</a>
     <div class="header-actions">
       <span style="font-size:10px;color:var(--text3);font-family:var(--font-ui);font-weight:600">CARTUCHO</span>
-      <select id="cart-sel" onchange="onCartridgeChange()" style="height:26px;padding:0 8px;font-size:11px;min-width:160px"></select>
-      <button class="btn" onclick="load()">↺ Refresh</button>
+      <select id="cart-sel" style="height:28px;padding:0 8px;font-size:11px;min-width:160px" aria-label="Cartucho"></select>
+      <button type="button" class="btn" id="btn-refresh">↺ Refresh</button>
     </div>
   </div>
 
   <!-- Tabs -->
-  <div class="vtab-bar">
-    <button class="vtab active" id="tab-conn"    onclick="switchTab('conn')">CONEXIONES</button>
-    <button class="vtab"        id="tab-secrets" onclick="switchTab('secrets')">SECRETS</button>
+  <div class="vtab-bar" role="tablist">
+    <button type="button" class="vtab active" id="tab-conn"    role="tab" aria-selected="true"  aria-controls="pane-conn">CONEXIONES</button>
+    <button type="button" class="vtab"        id="tab-secrets" role="tab" aria-selected="false" aria-controls="pane-secrets">SECRETS</button>
   </div>
 
   <!-- ── CONEXIONES tab ─────────────────────────────────── -->
-  <div id="pane-conn">
+  <div id="pane-conn" role="tabpanel" aria-labelledby="tab-conn">
     <div class="section-hdr">
       <span class="section-title">Conexiones del cartucho</span>
-      <button class="btn" style="border-color:var(--green);color:var(--green)"
-              onclick="openAddConn()">+ Agregar</button>
+      <button type="button" class="btn btn-primary" id="btn-add-conn">+ Agregar</button>
     </div>
     <div id="conn-status" class="status-bar"></div>
     <div class="vault-table">
@@ -140,22 +152,20 @@
           </tr>
         </thead>
         <tbody id="conn-tbody">
-          <tr class="empty-row"><td colspan="5">Cargando...</td></tr>
+          <tr class="empty-row"><td colspan="5"><span class="loading">Cargando…</span></td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
   <!-- ── SECRETS tab ────────────────────────────────────── -->
-  <div id="pane-secrets" style="display:none">
+  <div id="pane-secrets" role="tabpanel" aria-labelledby="tab-secrets" style="display:none">
     <div class="section-hdr">
       <span class="section-title" id="secrets-title">Secrets</span>
       <input id="scope-input" type="text" placeholder="scope" value="platform"
-             style="height:26px;padding:0 8px;font-size:11px;width:120px"
-             onchange="loadSecrets()">
-      <button class="btn" onclick="loadSecrets()">Cargar</button>
-      <button class="btn" style="border-color:var(--green);color:var(--green)"
-              onclick="openAddSecret()">+ Agregar</button>
+             style="height:28px;padding:0 8px;font-size:11px;width:140px" aria-label="Scope">
+      <button type="button" class="btn" id="btn-load-secrets">Cargar</button>
+      <button type="button" class="btn btn-primary" id="btn-add-secret">+ Agregar</button>
     </div>
     <div id="secrets-status" class="status-bar"></div>
     <div class="vault-table">
@@ -173,33 +183,32 @@
 </div><!-- viewer-wrap -->
 
 <!-- ── Add/Edit Connection Modal ── -->
-<div class="modal-overlay" id="conn-modal" onclick="if(event.target===this)closeConnModal()">
+<div class="modal-overlay" id="conn-modal" role="dialog" aria-modal="true" aria-labelledby="conn-modal-title">
   <div class="modal-box">
     <div class="modal-hdr">
       <span class="modal-title" id="conn-modal-title">Nueva conexión</span>
-      <button class="btn-sm" onclick="closeConnModal()">✕</button>
+      <button type="button" class="btn-sm" id="btn-close-conn" aria-label="Cerrar">✕</button>
     </div>
     <div class="modal-body">
       <div class="field-row">
         <div>
-          <div class="field-label">Cartucho</div>
-          <input id="f-cartridge" class="field-input" type="text" placeholder="replicon" readonly
-                 style="color:var(--text3)">
+          <div class="field-label"><label for="f-cartridge">Cartucho</label></div>
+          <input id="f-cartridge" class="field-input" type="text" placeholder="replicon" readonly>
         </div>
         <div>
-          <div class="field-label">Conn ID</div>
-          <input id="f-conn-id" class="field-input" type="text" placeholder="analytics">
+          <div class="field-label"><label for="f-conn-id">Conn ID</label></div>
+          <input id="f-conn-id" class="field-input" type="text" placeholder="analytics" autocomplete="off">
         </div>
       </div>
       <div>
-        <div class="field-label">Base URL</div>
-        <input id="f-base-url" class="field-input" type="text"
-               placeholder="https://tenant.replicon.com/analyticsapi">
+        <div class="field-label"><label for="f-base-url">Base URL</label></div>
+        <input id="f-base-url" class="field-input" type="url"
+               placeholder="https://tenant.replicon.com/analyticsapi" autocomplete="off">
       </div>
       <div class="field-row">
         <div>
-          <div class="field-label">Método de autenticación</div>
-          <select id="f-auth-method" class="field-input" style="height:34px">
+          <div class="field-label"><label for="f-auth-method">Método de autenticación</label></div>
+          <select id="f-auth-method" class="field-input" style="height:36px">
             <option value="bearer_token">bearer_token</option>
             <option value="basic">basic</option>
             <option value="api_key">api_key</option>
@@ -207,460 +216,73 @@
           </select>
         </div>
         <div>
-          <div class="field-label">Token / Contraseña</div>
-          <input id="f-token" class="field-input" type="password" placeholder="••••••••">
+          <div class="field-label"><label for="f-token">Token / Contraseña</label></div>
+          <input id="f-token" class="field-input" type="password" placeholder="••••••••" autocomplete="off">
         </div>
       </div>
       <div>
-        <div class="field-label">Campos adicionales <span style="color:var(--text3)">(JSON opcional)</span></div>
+        <div class="field-label"><label for="f-extra">Campos adicionales <span style="color:var(--text3);font-weight:normal">(JSON opcional)</span></label></div>
         <textarea id="f-extra" class="field-input" rows="3"
                   placeholder='{"username": "user@company.com"}'
                   style="resize:vertical;font-size:11px"></textarea>
       </div>
-      <div id="conn-modal-err" style="color:#ff2d55;font-size:11px;display:none"></div>
+      <div id="conn-modal-err" class="modal-err" role="alert"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeConnModal()">Cancelar</button>
-      <button class="btn" style="border-color:var(--green);color:var(--green)"
-              onclick="saveConn()">Guardar</button>
+      <button type="button" class="btn" id="btn-cancel-conn">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-save-conn">Guardar</button>
     </div>
   </div>
 </div>
 
 <!-- ── Add/Edit Secret Modal ── -->
-<div class="modal-overlay" id="secret-modal" onclick="if(event.target===this)closeSecretModal()">
+<div class="modal-overlay" id="secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-modal-title">
   <div class="modal-box">
     <div class="modal-hdr">
       <span class="modal-title" id="secret-modal-title">Nuevo secret</span>
-      <button class="btn-sm" onclick="closeSecretModal()">✕</button>
+      <button type="button" class="btn-sm" id="btn-close-secret" aria-label="Cerrar">✕</button>
     </div>
     <div class="modal-body">
       <div class="field-row">
         <div>
-          <div class="field-label">Scope</div>
-          <input id="fs-scope" class="field-input" type="text" placeholder="platform" readonly
-                 style="color:var(--text3)">
+          <div class="field-label"><label for="fs-scope">Scope</label></div>
+          <input id="fs-scope" class="field-input" type="text" placeholder="platform" readonly>
         </div>
         <div>
-          <div class="field-label">Key</div>
-          <input id="fs-key" class="field-input" type="text" placeholder="mi_secreto">
+          <div class="field-label"><label for="fs-key">Key</label></div>
+          <input id="fs-key" class="field-input" type="text" placeholder="mi_secreto" autocomplete="off">
         </div>
       </div>
       <div>
-        <div class="field-label">Valor</div>
-        <input id="fs-value" class="field-input" type="password" placeholder="valor secreto">
+        <div class="field-label"><label for="fs-value">Valor</label></div>
+        <input id="fs-value" class="field-input" type="password" placeholder="valor secreto" autocomplete="off">
       </div>
-      <div id="secret-modal-err" style="color:#ff2d55;font-size:11px;display:none"></div>
+      <div id="secret-modal-err" class="modal-err" role="alert"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeSecretModal()">Cancelar</button>
-      <button class="btn" style="border-color:var(--green);color:var(--green)"
-              onclick="saveSecret()">Guardar</button>
+      <button type="button" class="btn" id="btn-cancel-secret">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-save-secret">Guardar</button>
     </div>
   </div>
 </div>
 
 <!-- ── Delete confirm modal ── -->
-<div class="modal-overlay" id="del-modal" onclick="if(event.target===this)closeDelModal()">
+<div class="modal-overlay" id="del-modal" role="dialog" aria-modal="true" aria-labelledby="del-modal-title">
   <div class="modal-box danger">
     <div class="modal-hdr">
-      <span class="modal-title">Confirmar eliminación</span>
-      <button class="btn-sm" onclick="closeDelModal()">✕</button>
+      <span class="modal-title" id="del-modal-title">Confirmar eliminación</span>
+      <button type="button" class="btn-sm" id="btn-close-del" aria-label="Cerrar">✕</button>
     </div>
     <div class="modal-body">
       <div id="del-msg" style="color:var(--text);font-size:13px;line-height:1.6"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn" onclick="closeDelModal()">Cancelar</button>
-      <button class="btn btn-danger" id="del-confirm-btn">Eliminar</button>
+      <button type="button" class="btn" id="btn-cancel-del">Cancelar</button>
+      <button type="button" class="btn btn-danger-text" id="del-confirm-btn">Eliminar</button>
     </div>
   </div>
 </div>
 
-<script>
-let _cartridge = 'replicon';
-let _currentTab = 'conn';
-let _editingConnId = null;   // null = new, string = editing existing
-let _editingSecretKey = null;
-let _revealedTokens = {};   // conn_id → token string
-let _revealedSecrets = {};  // key → value string
-
-// ── Tabs ──────────────────────────────────────────────────────────────────────
-
-function switchTab(tab) {
-  _currentTab = tab;
-  document.getElementById('pane-conn').style.display    = tab === 'conn'    ? '' : 'none';
-  document.getElementById('pane-secrets').style.display = tab === 'secrets' ? '' : 'none';
-  document.getElementById('tab-conn').classList.toggle('active',    tab === 'conn');
-  document.getElementById('tab-secrets').classList.toggle('active', tab === 'secrets');
-}
-
-// ── Cartridge selector ────────────────────────────────────────────────────────
-
-async function loadCartridgeSelector() {
-  try {
-    const r = await fetch('/studio/cartridges');
-    const d = await r.json();
-    const list = d.cartridges || [];
-    const sel  = document.getElementById('cart-sel');
-    sel.innerHTML = list.map(c =>
-      `<option value="${esc(c.id)}" ${c.id === _cartridge ? 'selected' : ''}>${esc(c.name)} (${esc(c.id)})</option>`
-    ).join('');
-    if (list.length) _cartridge = sel.value;
-  } catch(e) {}
-}
-
-function onCartridgeChange() {
-  _cartridge = document.getElementById('cart-sel').value;
-  _revealedTokens = {};
-  load();
-}
-
-function load() {
-  if (_currentTab === 'conn') loadConnections();
-  else loadSecrets();
-}
-
-// ── Connections ───────────────────────────────────────────────────────────────
-
-async function loadConnections() {
-  const tbody  = document.getElementById('conn-tbody');
-  const status = document.getElementById('conn-status');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Cargando...</td></tr>';
-  status.innerHTML = '';
-  try {
-    const r = await fetch(`/api/vault/connections/${encodeURIComponent(_cartridge)}`);
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-    const conns = d.connections || [];
-    if (!conns.length) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">
-        Sin conexiones para el cartucho <b>${esc(_cartridge)}</b>.
-        Usa "+ Agregar" para crear la primera.
-      </td></tr>`;
-      status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — 0 conexiones`;
-      return;
-    }
-    tbody.innerHTML = conns.map(c => renderConnRow(c)).join('');
-    status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — ${esc(conns.length)} conexión${conns.length>1?'es':''}`;
-  } catch(e) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="5" style="color:#ff2d55">Error: ${esc(e.message)}</td></tr>`;
-    status.innerHTML = `<span class="status-err">✖ ${esc(e.message)}</span>`;
-  }
-}
-
-function renderConnRow(c) {
-  const cid    = c.conn_id;
-  const masked = c.token === '***' || !c.token;
-  const tokenHtml = _revealedTokens[cid]
-    ? `<span class="token-cell token-revealed">${esc(_revealedTokens[cid])}</span>
-       <button class="btn-sm" onclick="hideToken('${esc(cid)}')">ocultar</button>`
-    : `<span class="token-cell">•••••••••••••</span>
-       <button class="btn-sm" onclick="revealToken('${esc(cid)}')">revelar</button>`;
-
-  return `
-    <tr>
-      <td><span class="conn-id">${esc(cid)}</span></td>
-      <td><span class="base-url" title="${esc(c.base_url||'')}">${esc(c.base_url||'—')}</span></td>
-      <td><span class="method-badge">${esc(c.auth_method||'—')}</span></td>
-      <td class="token-cell">${tokenHtml}</td>
-      <td class="actions-cell">
-        <button class="btn-sm" onclick="openEditConn('${esc(cid)}')">✎ Editar</button>
-        <button class="btn-sm" style="color:#ff2d55;border-color:#ff2d55"
-                onclick="confirmDeleteConn('${esc(cid)}')">✕ Eliminar</button>
-      </td>
-    </tr>`;
-}
-
-async function revealToken(connId) {
-  try {
-    const r = await fetch(`/api/vault/connections/${encodeURIComponent(_cartridge)}/${encodeURIComponent(connId)}/reveal`);
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-    _revealedTokens[connId] = d.token || '(vacío)';
-    renderConnRowInPlace(connId);
-  } catch(e) { alert('Error: ' + e.message); }
-}
-
-function hideToken(connId) {
-  delete _revealedTokens[connId];
-  renderConnRowInPlace(connId);
-}
-
-async function renderConnRowInPlace(connId) {
-  // Re-fetch the masked row and re-render just that row
-  try {
-    const r = await fetch(`/api/vault/connections/${encodeURIComponent(_cartridge)}`);
-    const d = await r.json();
-    const c = (d.connections || []).find(x => x.conn_id === connId);
-    if (c) {
-      const rows = document.querySelectorAll('#conn-tbody tr');
-      rows.forEach(row => {
-        if (row.querySelector('.conn-id')?.textContent === connId) {
-          row.outerHTML = renderConnRow(c);
-        }
-      });
-    }
-  } catch(_) {}
-}
-
-// ── Connection modal ──────────────────────────────────────────────────────────
-
-function openAddConn() {
-  _editingConnId = null;
-  document.getElementById('conn-modal-title').textContent = 'Nueva conexión';
-  document.getElementById('f-cartridge').value  = _cartridge;
-  document.getElementById('f-conn-id').value    = '';
-  document.getElementById('f-conn-id').readOnly = false;
-  document.getElementById('f-base-url').value   = '';
-  document.getElementById('f-auth-method').value = 'bearer_token';
-  document.getElementById('f-token').value      = '';
-  document.getElementById('f-extra').value      = '';
-  document.getElementById('conn-modal-err').style.display = 'none';
-  document.getElementById('conn-modal').classList.add('open');
-}
-
-async function openEditConn(connId) {
-  _editingConnId = connId;
-  document.getElementById('conn-modal-title').textContent = `Editar — ${connId}`;
-  document.getElementById('f-cartridge').value  = _cartridge;
-  document.getElementById('f-conn-id').value    = connId;
-  document.getElementById('f-conn-id').readOnly = true;
-  document.getElementById('conn-modal-err').style.display = 'none';
-
-  // Reveal full creds to pre-fill
-  try {
-    const r = await fetch(`/api/vault/connections/${encodeURIComponent(_cartridge)}/${encodeURIComponent(connId)}/reveal`);
-    const d = await r.json();
-    document.getElementById('f-base-url').value    = d.base_url    || '';
-    document.getElementById('f-auth-method').value = d.auth_method || 'bearer_token';
-    document.getElementById('f-token').value       = d.token       || '';
-    // Extra fields: anything not base_url, auth_method, token, conn_id
-    const extra = Object.fromEntries(
-      Object.entries(d).filter(([k]) => !['conn_id','base_url','auth_method','token'].includes(k))
-    );
-    document.getElementById('f-extra').value = Object.keys(extra).length
-      ? JSON.stringify(extra, null, 2) : '';
-  } catch(_) {}
-
-  document.getElementById('conn-modal').classList.add('open');
-}
-
-function closeConnModal() {
-  document.getElementById('conn-modal').classList.remove('open');
-}
-
-async function saveConn() {
-  const connId    = document.getElementById('f-conn-id').value.trim();
-  const baseUrl   = document.getElementById('f-base-url').value.trim();
-  const authMethod = document.getElementById('f-auth-method').value;
-  const token     = document.getElementById('f-token').value.trim();
-  const extraStr  = document.getElementById('f-extra').value.trim();
-  const errEl     = document.getElementById('conn-modal-err');
-
-  if (!connId)  { showErr(errEl, 'Conn ID es requerido'); return; }
-  if (!baseUrl) { showErr(errEl, 'Base URL es requerida'); return; }
-
-  let extra = {};
-  if (extraStr) {
-    try { extra = JSON.parse(extraStr); }
-    catch { showErr(errEl, 'JSON inválido en campos adicionales'); return; }
-  }
-
-  const body = { base_url: baseUrl, auth_method: authMethod, ...extra };
-  if (token) body.token = token;
-
-  try {
-    const r = await fetch(
-      `/api/vault/connections/${encodeURIComponent(_cartridge)}/${encodeURIComponent(connId)}`,
-      { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    closeConnModal();
-    loadConnections();
-  } catch(e) { showErr(errEl, e.message); }
-}
-
-// ── Delete connection ─────────────────────────────────────────────────────────
-
-function confirmDeleteConn(connId) {
-  document.getElementById('del-msg').innerHTML =
-    `¿Eliminar la conexión <b style="color:var(--amber)">${esc(connId)}</b> del cartucho <b>${esc(_cartridge)}</b>?<br>
-     <span style="color:var(--text3);font-size:11px">Esta acción no se puede deshacer.</span>`;
-  document.getElementById('del-confirm-btn').onclick = () => deleteConn(connId);
-  document.getElementById('del-modal').classList.add('open');
-}
-
-async function deleteConn(connId) {
-  try {
-    const r = await fetch(
-      `/api/vault/connections/${encodeURIComponent(_cartridge)}/${encodeURIComponent(connId)}`,
-      { method: 'DELETE' }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    closeDelModal();
-    loadConnections();
-  } catch(e) { alert('Error: ' + e.message); }
-}
-
-// ── Secrets ───────────────────────────────────────────────────────────────────
-
-async function loadSecrets() {
-  const scope  = document.getElementById('scope-input').value.trim() || 'platform';
-  const tbody  = document.getElementById('secrets-tbody');
-  const status = document.getElementById('secrets-status');
-  document.getElementById('secrets-title').textContent = `Secrets — scope: ${scope}`;
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="3">Cargando...</td></tr>';
-  status.innerHTML = '';
-  try {
-    const r = await fetch(`/api/vault/secrets/${encodeURIComponent(scope)}`);
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-    const keys = d.keys || [];
-    if (!keys.length) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="3">Sin secrets en scope <b>${esc(scope)}</b></td></tr>`;
-      status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — 0 secrets`;
-      return;
-    }
-    tbody.innerHTML = keys.map(k => renderSecretRow(scope, k)).join('');
-    status.innerHTML = `<span class="status-ok">✓ Vault OK</span> — ${esc(keys.length)} secret${keys.length>1?'s':''}`;
-  } catch(e) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="3" style="color:#ff2d55">Error: ${esc(e.message)}</td></tr>`;
-    status.innerHTML = `<span class="status-err">✖ ${esc(e.message)}</span>`;
-  }
-}
-
-function renderSecretRow(scope, key) {
-  const val = _revealedSecrets[key];
-  const valHtml = val !== undefined
-    ? `<span class="token-cell token-revealed">${esc(val)}</span>
-       <button class="btn-sm" onclick="hideSecret('${esc(key)}','${esc(scope)}')">ocultar</button>`
-    : `<span class="token-cell">•••••••••••••</span>
-       <button class="btn-sm" onclick="revealSecret('${esc(key)}','${esc(scope)}')">revelar</button>`;
-
-  return `
-    <tr>
-      <td><span class="conn-id">${esc(key)}</span></td>
-      <td>${valHtml}</td>
-      <td class="actions-cell">
-        <button class="btn-sm" onclick="openEditSecret('${esc(key)}','${esc(scope)}')">✎ Editar</button>
-        <button class="btn-sm" style="color:#ff2d55;border-color:#ff2d55"
-                onclick="confirmDeleteSecret('${esc(key)}','${esc(scope)}')">✕ Eliminar</button>
-      </td>
-    </tr>`;
-}
-
-async function revealSecret(key, scope) {
-  try {
-    const r = await fetch(`/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/reveal`);
-    if (!r.ok) throw new Error(await r.text());
-    const d = await r.json();
-    _revealedSecrets[key] = String(d.value ?? '(vacío)');
-    await loadSecrets();
-  } catch(e) { alert('Error: ' + e.message); }
-}
-
-function hideSecret(key) {
-  delete _revealedSecrets[key];
-  loadSecrets();
-}
-
-// ── Secret modal ──────────────────────────────────────────────────────────────
-
-function openAddSecret() {
-  _editingSecretKey = null;
-  const scope = document.getElementById('scope-input').value.trim() || 'platform';
-  document.getElementById('secret-modal-title').textContent = 'Nuevo secret';
-  document.getElementById('fs-scope').value = scope;
-  document.getElementById('fs-key').value   = '';
-  document.getElementById('fs-key').readOnly = false;
-  document.getElementById('fs-value').value = '';
-  document.getElementById('secret-modal-err').style.display = 'none';
-  document.getElementById('secret-modal').classList.add('open');
-}
-
-async function openEditSecret(key, scope) {
-  _editingSecretKey = key;
-  document.getElementById('secret-modal-title').textContent = `Editar — ${key}`;
-  document.getElementById('fs-scope').value = scope;
-  document.getElementById('fs-key').value   = key;
-  document.getElementById('fs-key').readOnly = true;
-  document.getElementById('secret-modal-err').style.display = 'none';
-  try {
-    const r = await fetch(`/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/reveal`);
-    const d = await r.json();
-    document.getElementById('fs-value').value = String(d.value ?? '');
-  } catch(_) {}
-  document.getElementById('secret-modal').classList.add('open');
-}
-
-function closeSecretModal() {
-  document.getElementById('secret-modal').classList.remove('open');
-}
-
-async function saveSecret() {
-  const scope  = document.getElementById('fs-scope').value.trim();
-  const key    = document.getElementById('fs-key').value.trim();
-  const value  = document.getElementById('fs-value').value;
-  const errEl  = document.getElementById('secret-modal-err');
-
-  if (!key) { showErr(errEl, 'Key es requerida'); return; }
-
-  try {
-    const r = await fetch(
-      `/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`,
-      { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({value}) }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    closeSecretModal();
-    loadSecrets();
-  } catch(e) { showErr(errEl, e.message); }
-}
-
-// ── Delete secret ─────────────────────────────────────────────────────────────
-
-function confirmDeleteSecret(key, scope) {
-  document.getElementById('del-msg').innerHTML =
-    `¿Eliminar el secret <b style="color:var(--amber)">${esc(key)}</b> del scope <b>${esc(scope)}</b>?<br>
-     <span style="color:var(--text3);font-size:11px">Esta acción no se puede deshacer.</span>`;
-  document.getElementById('del-confirm-btn').onclick = () => deleteSecret(key, scope);
-  document.getElementById('del-modal').classList.add('open');
-}
-
-async function deleteSecret(key, scope) {
-  try {
-    const r = await fetch(
-      `/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`,
-      { method: 'DELETE' }
-    );
-    if (!r.ok) throw new Error(await r.text());
-    closeDelModal();
-    loadSecrets();
-  } catch(e) { alert('Error: ' + e.message); }
-}
-
-// ── Delete modal ──────────────────────────────────────────────────────────────
-
-function closeDelModal() {
-  document.getElementById('del-modal').classList.remove('open');
-}
-
-// ── Utils ─────────────────────────────────────────────────────────────────────
-
-function esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
-                      .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
-                      .replace(/'/g,'&#39;');
-}
-
-function showErr(el, msg) {
-  el.textContent = msg;
-  el.style.display = '';
-}
-
-// ── Init ──────────────────────────────────────────────────────────────────────
-
-loadCartridgeSelector().then(() => loadConnections());
-</script>
+<script type="module" src="/static/js/viewers/vault.js?v=3" defer></script>
 </body>
 </html>

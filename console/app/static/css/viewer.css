@@ -1,6 +1,7 @@
 /* ── viewer.css — shared styles for all viewers ─────────────────────────────
    Import after main.css. Viewers define only truly unique local styles.
    ───────────────────────────────────────────────────────────────────────── */
+@import url("./tokens.css");
 
 /* Viewers live inside iframes or standalone pages — need their own scroll */
 html, body { overflow: auto; }
