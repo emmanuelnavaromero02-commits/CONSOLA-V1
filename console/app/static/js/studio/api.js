@@ -23,6 +23,10 @@ export async function getCartridge(id) {
   return requestJson(`/studio/cartridges/${encodeURIComponent(id)}`);
 }
 
+export async function getCartridgeStatus(id) {
+  return requestJson(`/studio/cartridges/${encodeURIComponent(id)}/status`);
+}
+
 export async function createCartridge(payload) {
   if (typeof window.__studioCreateCartridge === 'function') {
     return window.__studioCreateCartridge(payload);

@@ -1,0 +1,63 @@
+knowledge_bits:
+  - id: kb_open_sales_orders
+    name: "Open sales orders"
+    description: "Sales orders not fully delivered, by company code and customer."
+    sql: >
+      WITH OrderHeader AS (
+        SELECT DISTINCT ON (SalesOrder) SalesOrder, SalesOrderType, SoldToParty,
+               SalesOrganization, SalesOrderDate, OverallSDProcessStatus
+        FROM read_parquet('s3://{bucket}/raw/sap_s4hana/A_SalesOrder/load_date=*/batch_id=*/*.parquet')
+        ORDER BY SalesOrder, _extracted_at DESC
+      )
+      SELECT SalesOrganization, SoldToParty, COUNT(*) AS open_orders
+      FROM OrderHeader
+      WHERE OverallSDProcessStatus IN ('A','B')
+      GROUP BY SalesOrganization, SoldToParty
+    pg_table: kb_open_sales_orders
+    output_path: silver/sap_s4hana/kb_open_sales_orders
+
+  - id: kb_overdue_invoices
+    name: "Overdue billing documents"
+    description: "Billing documents past their due date and still unpaid."
+    sql: >
+      SELECT BillingDocument, BillingDocumentDate, SoldToParty,
+             TotalNetAmount, TransactionCurrency
+      FROM read_parquet('s3://{bucket}/raw/sap_s4hana/A_BillingDocument/load_date=*/batch_id=*/*.parquet')
+      WHERE CAST(BillingDocumentDate AS DATE) < CURRENT_DATE - INTERVAL 30 DAY
+    pg_table: kb_overdue_invoices
+    output_path: silver/sap_s4hana/kb_overdue_invoices
+
+  - id: kb_purchase_spend_by_supplier
+    name: "Purchase spend by supplier"
+    description: "Spend (PO net amount) per supplier in the last 12 months."
+    sql: >
+      WITH PO AS (
+        SELECT DISTINCT ON (PurchaseOrder) PurchaseOrder, Supplier, CompanyCode,
+               PurchaseOrderDate
+        FROM read_parquet('s3://{bucket}/raw/sap_s4hana/A_PurchaseOrder/load_date=*/batch_id=*/*.parquet')
+        ORDER BY PurchaseOrder, _extracted_at DESC
+      ),
+      Items AS (
+        SELECT PurchaseOrder, NetPriceAmount, OrderQuantity
+        FROM read_parquet('s3://{bucket}/raw/sap_s4hana/A_PurchaseOrderItem/load_date=*/batch_id=*/*.parquet')
+      )
+      SELECT po.Supplier, po.CompanyCode,
+             SUM(it.NetPriceAmount * it.OrderQuantity) AS spend_amount,
+             COUNT(DISTINCT po.PurchaseOrder) AS po_count
+      FROM PO po
+      JOIN Items it ON it.PurchaseOrder = po.PurchaseOrder
+      WHERE CAST(po.PurchaseOrderDate AS DATE) >= CURRENT_DATE - INTERVAL 365 DAY
+      GROUP BY po.Supplier, po.CompanyCode
+    pg_table: kb_purchase_spend_by_supplier
+    output_path: silver/sap_s4hana/kb_purchase_spend_by_supplier
+
+  - id: kb_gl_balance_by_account
+    name: "G/L balance by account"
+    description: "Posted balance by GL account from journal entry items (ACDOCA)."
+    sql: >
+      SELECT CompanyCode, GLAccount, FiscalYear,
+             SUM(AmountInCompanyCodeCurrency) AS balance
+      FROM read_parquet('s3://{bucket}/raw/sap_s4hana/A_JournalEntryItem/load_date=*/batch_id=*/*.parquet')
+      GROUP BY CompanyCode, GLAccount, FiscalYear
+    pg_table: kb_gl_balance_by_account
+    output_path: silver/sap_s4hana/kb_gl_balance_by_account

@@ -54,6 +54,18 @@ jobs:
             echo "::warning::workspace/tests/ no existe — pendiente de crear suite"
           fi
 
+      # Root tests/ exercises cartridge contracts (replicon + SAP). They were
+      # added in #82 / #84 but never wired to CI, so a regression in any
+      # cartridge passed CI silently. Install every cartridge's deps then run.
+      - name: Install cartridge requirements for root tests/
+        run: |
+          for cart in cartridges/*/requirements.txt; do
+            pip install -r "$cart"
+          done
+
+      - name: Run root tests/ (cartridge contracts)
+        run: pytest tests/ -q
+
   compose-validate:
     runs-on: ubuntu-latest
     steps:
@@ -97,6 +109,12 @@ jobs:
             context: ./mcp-infra
           - service: replicon
             context: ./cartridges/replicon
+          - service: sap_hcm
+            context: ./cartridges/sap_hcm
+          - service: sap_s4hana
+            context: ./cartridges/sap_s4hana
+          - service: sap_successfactors
+            context: ./cartridges/sap_successfactors
     steps:
       - uses: actions/checkout@v4
       - name: Build the ${{ matrix.service }} Docker image

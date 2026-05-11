@@ -1,0 +1,26 @@
+connector:
+  id: sap_successfactors
+  name: SAP SuccessFactors HXM
+  version: "1.0"
+  auth:
+    type: oauth2_client_credentials
+    token_url_env: SF_TOKEN_URL
+    client_id_env: SF_CLIENT_ID
+    client_secret_env: SF_CLIENT_SECRET
+    company_id_env: SF_COMPANY_ID
+  api:
+    base_url_env: SF_BASE_URL
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 200
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/sap_successfactors/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601

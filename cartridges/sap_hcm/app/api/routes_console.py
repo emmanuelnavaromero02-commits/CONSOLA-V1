@@ -1,0 +1,185 @@
+"""
+Console-style endpoint aliases.
+
+Clean RESTful routes for the MODecissions console UI. They thin-wrap the
+existing service functions used by ``/skills/*`` — no logic is duplicated.
+
+Authentication:
+    All routes require ``X-Internal-Api-Key`` via ``Depends(verify_api_key)``.
+
+Errors:
+    * missing/invalid key       → 401
+    * unknown entity            → 404
+    * SAP / Postgres / MinIO not configured → 503 with
+      ``{status:"degraded", configured:false, missing:[...], components:[...]}``
+    * unexpected SAP / runtime  → 503 with the underlying error message
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+
+from app.api.deps import verify_api_key
+from app.core.sap_client import SAPClientError
+from app.services.catalog_service import get_all_entities, get_entity_config
+from app.services.extraction_service import run_entity
+from app.services.preflight import preflight_for_extract
+from app.services.runlog_service import get_last_run_status
+from app.services.watermark_service import list_watermarks
+
+router = APIRouter(
+    tags=["console"],
+    dependencies=[Depends(verify_api_key)],
+)
+
+
+def _get_entity_or_404(entity_id: str) -> dict:
+    config = get_entity_config(entity_id)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
+    return config
+
+
+def _degraded_503(report: dict) -> JSONResponse:
+    return JSONResponse(report, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+# ── Catalogue ────────────────────────────────────────────────────────────────
+
+@router.get("/entities")
+def entities() -> dict:
+    """List every configured entity for this cartridge."""
+    return {"entities": get_all_entities()}
+
+
+@router.get("/entities/{entity_id}/schema")
+def entity_schema(entity_id: str) -> dict:
+    """Return the configuration / schema for one entity."""
+    config = _get_entity_or_404(entity_id)
+    return {
+        "entity": config.get("entity"),
+        "mode": config.get("mode"),
+        "watermark_field": config.get("watermark_field"),
+        "watermark_format": config.get("watermark_format"),
+        "page_size": config.get("page_size"),
+        "select_fields": config.get("select_fields"),
+        "effective_dated": config.get("effective_dated"),
+        "date_field": config.get("date_field"),
+        "description": config.get("description"),
+        "protection": config.get("protection") or {},
+    }
+
+
+# ── Preview ──────────────────────────────────────────────────────────────────
+
+@router.get("/entities/{entity_id}/preview")
+def entity_preview(
+    entity_id: str,
+    limit: int = Query(20, ge=1, le=200),
+):
+    """Preview up to ``limit`` rows of an entity from Bronze (DuckDB → MinIO).
+
+    Returns 503 ``{status:"degraded"}`` when MinIO/Bronze can't be reached
+    instead of bubbling a 500.
+    """
+    _get_entity_or_404(entity_id)
+
+    try:
+        from app.mcp_server import preview as _preview_tool  # FastMCP @tool
+    except Exception as exc:                                   # noqa: BLE001
+        return _degraded_503({
+            "status": "degraded",
+            "error": f"preview unavailable: {exc}",
+        })
+    try:
+        return _preview_tool(entity=entity_id, limit=limit)
+    except Exception as exc:                                   # noqa: BLE001
+        return _degraded_503({
+            "status": "degraded",
+            "error": f"preview failed: {exc}",
+        })
+
+
+# ── Extract ──────────────────────────────────────────────────────────────────
+
+@router.post("/entities/{entity_id}/extract")
+def entity_extract(
+    entity_id: str,
+    mode: str = Query("incremental", pattern="^(full|incremental|historical)$"),
+    from_date: str | None = None,
+    to_date: str | None = None,
+):
+    """Trigger an extraction for one entity (synchronous, returns when done).
+
+    For background batch execution use the MCP ``extract`` tool which
+    persists a job in PostgreSQL — this endpoint is the synchronous variant.
+    """
+    config = _get_entity_or_404(entity_id)
+    if mode == "historical" and not config.get("date_field"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Entity {entity_id} has no date_field — cannot run historical",
+        )
+
+    report = preflight_for_extract()
+    if report is not None:
+        return _degraded_503(report)
+
+    try:
+        return run_entity({**config, "mode": mode}, from_date=from_date, to_date=to_date)
+    except SAPClientError as exc:
+        return _degraded_503({
+            "status": "degraded",
+            "configured": True,
+            "error": str(exc),
+        })
+
+
+@router.post("/extract-all")
+def extract_all(
+    mode: str = Query("incremental", pattern="^(full|incremental)$"),
+):
+    """Run every enabled entity, one after the other."""
+    report = preflight_for_extract()
+    if report is not None:
+        return _degraded_503(report)
+
+    results = []
+    for config in get_all_entities():
+        effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
+        try:
+            results.append(run_entity({**config, "mode": effective_mode}))
+        except SAPClientError as exc:
+            results.append({
+                "entity": config.get("entity"),
+                "status": "degraded",
+                "error": str(exc),
+            })
+        except Exception as exc:                       # noqa: BLE001
+            results.append({
+                "entity": config.get("entity"),
+                "status": "failed",
+                "error": str(exc),
+            })
+    return {"results": results}
+
+
+# ── Observability ────────────────────────────────────────────────────────────
+
+@router.get("/runs")
+def runs(entity: str | None = None) -> dict:
+    """Last extraction runs, optionally filtered by entity."""
+    return {"runs": get_last_run_status(entity_name=entity)}
+
+
+@router.get("/runs/latest")
+def runs_latest() -> dict:
+    """Most recent run record (any entity), or ``None`` when there are none yet."""
+    rows = get_last_run_status()
+    return {"run": rows[0] if rows else None}
+
+
+@router.get("/watermarks")
+def watermarks() -> dict:
+    """All per-entity watermarks tracked by this cartridge."""
+    return {"watermarks": list_watermarks()}
