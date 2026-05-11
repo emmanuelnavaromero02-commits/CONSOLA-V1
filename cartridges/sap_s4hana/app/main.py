@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
 from app.api.routes_health import router as health_router
+from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.mcp_server import load_custom_tools, mcp
@@ -37,6 +38,7 @@ app = FastAPI(title="SAP S/4HANA Cartridge", lifespan=lifespan)
 
 app.include_router(health_router)
 app.include_router(skills_router)
+app.include_router(console_router)
 app.mount("/mcp/rpc", _mcp_app)
 
 

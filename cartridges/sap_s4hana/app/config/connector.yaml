@@ -8,11 +8,12 @@ connector:
     sales / procurement / finance documents via the public S/4HANA OData APIs.
   auth:
     type: basic
-    env_var_user: S4_USER
-    env_var_pass: S4_PASS
-    env_var_client: S4_CLIENT_MANDANT
+    env_var_user: SAP_S4_USER
+    env_var_pass: SAP_S4_PASS
+    env_var_client: SAP_S4_CLIENT_MANDANT
+    env_var_api_key: SAP_S4_API_KEY
   api:
-    base_url_env: S4_BASE_URL
+    base_url_env: SAP_S4_BASE_URL
     timeout_seconds: 120
     retry_max: 3
     retry_backoff_factor: 2

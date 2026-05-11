@@ -246,7 +246,7 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
-        "sap_s4hana_base_url": settings.s4_base_url,
+        "sap_s4_base_url": settings.sap_s4_base_url,
     }
     url = f"{settings.airflow_url}/api/v1/dags/sap_s4hana_extract/dagRuns"
     loop = asyncio.get_event_loop()

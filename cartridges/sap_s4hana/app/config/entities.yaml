@@ -1,14 +1,18 @@
-# SAP S/4HANA OData APIs — entities exposed by the standard S/4HANA APIs.
-# Entity names match the OData EntitySet name. Each entity below assumes
-# its own service path on the host:
-#   /sap/opu/odata/sap/<API_NAME>/<EntitySet>
+# SAP S/4HANA OData APIs.
 #
-# In production, point S4_BASE_URL at the API service path
-# (e.g. https://my-s4.example.com:44300/sap/opu/odata/sap)
-# and reference each entity as "<API_NAME>/<EntitySet>".
+# Each entry uses a URL-safe ``entity:`` id (no slashes) so it can travel
+# through console routes like /entities/{entity}/schema. The real OData
+# path lives in ``odata_entity:`` — extraction_service uses it when calling
+# fetch_entity().
+#
+# In production, point SAP_S4_BASE_URL at the API service root, e.g.
+#   https://my-s4.example.com:44300/sap/opu/odata/sap
+# The full URL fetched for an entity is then:
+#   {SAP_S4_BASE_URL}/{odata_entity}
 entities:
   # ── Master data: business partners ────────────────────────────────────────
-  - entity: API_BUSINESS_PARTNER/A_BusinessPartner
+  - entity: BusinessPartner
+    odata_entity: API_BUSINESS_PARTNER/A_BusinessPartner
     description: "Business Partner header (customers, vendors, employees)."
     mode: incremental
     watermark_field: LastChangeDate
@@ -25,19 +29,22 @@ entities:
     protection:
       BusinessPartnerFullName: masked
 
-  - entity: API_BUSINESS_PARTNER/A_Customer
+  - entity: Customer
+    odata_entity: API_BUSINESS_PARTNER/A_Customer
     description: "Customer master."
     mode: incremental
     watermark_field: LastChangeDate
     page_size: 500
 
-  - entity: API_BUSINESS_PARTNER/A_Supplier
+  - entity: Supplier
+    odata_entity: API_BUSINESS_PARTNER/A_Supplier
     description: "Supplier (vendor) master."
     mode: incremental
     watermark_field: LastChangeDate
     page_size: 500
 
-  - entity: API_BUSINESS_PARTNER/A_BusinessPartnerAddress
+  - entity: BusinessPartnerAddress
+    odata_entity: API_BUSINESS_PARTNER/A_BusinessPartnerAddress
     description: "Business partner addresses."
     mode: incremental
     watermark_field: LastChangeDate
@@ -47,107 +54,124 @@ entities:
       PostalCode: masked
 
   # ── Master data: products / materials ────────────────────────────────────
-  - entity: API_PRODUCT_SRV/A_Product
+  - entity: Product
+    odata_entity: API_PRODUCT_SRV/A_Product
     description: "Product (material) master."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
 
-  - entity: API_PRODUCT_SRV/A_ProductDescription
+  - entity: ProductDescription
+    odata_entity: API_PRODUCT_SRV/A_ProductDescription
     description: "Product descriptions per language."
     mode: full
     page_size: 1000
 
   # ── Master data: organisation / cost objects ─────────────────────────────
-  - entity: API_COMPANYCODE_SRV/A_CompanyCode
+  - entity: CompanyCode
+    odata_entity: API_COMPANYCODE_SRV/A_CompanyCode
     description: "Company code master."
     mode: full
     page_size: 1000
 
-  - entity: API_COSTCENTER_SRV/A_CostCenter
+  - entity: CostCenter
+    odata_entity: API_COSTCENTER_SRV/A_CostCenter
     description: "Cost centers."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  - entity: API_PROFITCENTER_SRV/A_ProfitCenter
+  - entity: ProfitCenter
+    odata_entity: API_PROFITCENTER_SRV/A_ProfitCenter
     description: "Profit centers."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  - entity: API_GLACCOUNT_SRV/A_GLAccount
+  - entity: GLAccount
+    odata_entity: API_GLACCOUNT_SRV/A_GLAccount
     description: "G/L account master (chart of accounts)."
     mode: full
     page_size: 1000
 
   # ── Sales (SD) ────────────────────────────────────────────────────────────
-  - entity: API_SALES_ORDER_SRV/A_SalesOrder
+  - entity: SalesOrder
+    odata_entity: API_SALES_ORDER_SRV/A_SalesOrder
     description: "Sales order header."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
     date_field: SalesOrderDate
 
-  - entity: API_SALES_ORDER_SRV/A_SalesOrderItem
+  - entity: SalesOrderItem
+    odata_entity: API_SALES_ORDER_SRV/A_SalesOrderItem
     description: "Sales order line items."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  - entity: API_SALES_ORDER_SRV/A_SalesOrderScheduleLine
+  - entity: SalesOrderScheduleLine
+    odata_entity: API_SALES_ORDER_SRV/A_SalesOrderScheduleLine
     description: "Sales order schedule lines (delivery dates)."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  - entity: API_BILLING_DOCUMENT_SRV/A_BillingDocument
+  - entity: BillingDocument
+    odata_entity: API_BILLING_DOCUMENT_SRV/A_BillingDocument
     description: "Billing document header (invoice header)."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
     date_field: BillingDocumentDate
 
-  - entity: API_BILLING_DOCUMENT_SRV/A_BillingDocumentItem
+  - entity: BillingDocumentItem
+    odata_entity: API_BILLING_DOCUMENT_SRV/A_BillingDocumentItem
     description: "Billing document items."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
   # ── Procurement (MM) ──────────────────────────────────────────────────────
-  - entity: API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder
+  - entity: PurchaseOrder
+    odata_entity: API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder
     description: "Purchase order header."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
     date_field: PurchaseOrderDate
 
-  - entity: API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrderItem
+  - entity: PurchaseOrderItem
+    odata_entity: API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrderItem
     description: "Purchase order line items."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  - entity: API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionHeader
+  - entity: PurchaseRequisitionHeader
+    odata_entity: API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionHeader
     description: "Purchase requisition header."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
 
-  - entity: API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionItem
+  - entity: PurchaseRequisitionItem
+    odata_entity: API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionItem
     description: "Purchase requisition line items."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 1000
 
-  - entity: API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice
+  - entity: SupplierInvoice
+    odata_entity: API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice
     description: "Supplier invoice header (vendor invoice)."
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
 
   # ── Finance (FI / CO) ─────────────────────────────────────────────────────
-  - entity: API_GLACCOUNTLINEITEM_SRV/YY1_GLAccountLineItem
+  - entity: GLAccountLineItem
+    odata_entity: API_GLACCOUNTLINEITEM_SRV/YY1_GLAccountLineItem
     description: "G/L account line items (FI ledger detail)."
     mode: incremental
     watermark_field: LastChangeDate
@@ -156,14 +180,16 @@ entities:
     protection:
       AmountInCompanyCodeCurrency: plain
 
-  - entity: API_OPLACCTGDOCITEMCUBE_SRV/YY1_OPLAcctgDocItemCube
+  - entity: OPLAcctgDocItemCube
+    odata_entity: API_OPLACCTGDOCITEMCUBE_SRV/YY1_OPLAcctgDocItemCube
     description: "Operational accounting document cube (matrix view of FI postings)."
     mode: incremental
     watermark_field: LastChangeDate
     page_size: 1000
     date_field: PostingDate
 
-  - entity: API_JOURNALENTRYITEM_SRV/A_JournalEntryItem
+  - entity: JournalEntryItem
+    odata_entity: API_JOURNALENTRYITEM_SRV/A_JournalEntryItem
     description: "Universal Journal entry items (ACDOCA)."
     mode: incremental
     watermark_field: LastChangeDateTime
@@ -171,12 +197,14 @@ entities:
     date_field: PostingDate
 
   # ── Inventory ─────────────────────────────────────────────────────────────
-  - entity: API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod
+  - entity: MatlStkInAcctMod
+    odata_entity: API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod
     description: "Material stock by account modification."
     mode: full
     page_size: 1000
 
-  - entity: API_MATERIAL_DOCUMENT_SRV/A_MaterialDocumentHeader
+  - entity: MaterialDocumentHeader
+    odata_entity: API_MATERIAL_DOCUMENT_SRV/A_MaterialDocumentHeader
     description: "Material document header (goods movements)."
     mode: incremental
     watermark_field: LastChangeDateTime

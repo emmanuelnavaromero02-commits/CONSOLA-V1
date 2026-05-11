@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,10 +10,13 @@ class Settings(BaseSettings):
     app_name: str = "sap_hcm"
 
     # SAP HCM (NetWeaver Gateway OData) — Basic Auth
+    # Canonical env vars:
+    #   SAP_HCM_BASE_URL, SAP_HCM_USER, SAP_HCM_PASS, SAP_HCM_CLIENT_MANDANT
+    # Legacy SAP_HCM_CLIENT is honoured as fallback (see __init__ below).
     sap_hcm_base_url: str = ""
     sap_hcm_user: str = ""
     sap_hcm_pass: str = ""
-    sap_hcm_client: str = "100"
+    sap_hcm_client_mandant: str = "100"
 
     # Database
     database_url: str = ""
@@ -41,6 +45,13 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    def __init__(self, **values):
+        # Back-compat: accept the legacy short name for the mandant.
+        if os.environ.get("SAP_HCM_CLIENT_MANDANT") is None \
+                and os.environ.get("SAP_HCM_CLIENT") is not None:
+            os.environ["SAP_HCM_CLIENT_MANDANT"] = os.environ["SAP_HCM_CLIENT"]
+        super().__init__(**values)
 
 
 settings = Settings()

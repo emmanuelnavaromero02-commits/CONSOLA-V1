@@ -10,10 +10,18 @@ Examples (whitelisted in app/config/entities.yaml):
 
 Auth: HTTP Basic (technical user). For Cloud edition the same client also
 works against the SAP API Hub trial host with an extra "APIKey" header,
-which is honoured if S4_API_KEY is set.
+which is honoured if SAP_S4_API_KEY is set.
 
 If credentials are missing the client refuses to fetch and returns a
 structured "degraded" status — it never invents data.
+
+Environment variables (canonical):
+    SAP_S4_BASE_URL, SAP_S4_USER, SAP_S4_PASS,
+    SAP_S4_CLIENT_MANDANT (optional, default "100"),
+    SAP_S4_API_KEY        (optional, SAP API Hub only).
+
+Legacy short names (S4_BASE_URL, S4_USER, S4_PASS, S4_CLIENT_MANDANT,
+S4_API_KEY) are still accepted via fallback in ``app.core.config``.
 """
 from __future__ import annotations
 
@@ -37,14 +45,14 @@ class SapS4Client:
     """SAP S/4HANA OData v2 client (Basic Auth)."""
 
     CARTRIDGE_ID = "sap_s4hana"
-    REQUIRED_ENV = ("s4_base_url", "s4_user", "s4_pass")
+    REQUIRED_ENV = ("sap_s4_base_url", "sap_s4_user", "sap_s4_pass")
 
     def __init__(self) -> None:
-        self.base_url = (settings.s4_base_url or "").rstrip("/")
-        self.user = settings.s4_user
-        self.password = settings.s4_pass
-        self.client_mandant = settings.s4_client_mandant or "100"
-        self.api_key = os.environ.get("S4_API_KEY", "")
+        self.base_url = (settings.sap_s4_base_url or "").rstrip("/")
+        self.user = settings.sap_s4_user
+        self.password = settings.sap_s4_pass
+        self.client_mandant = settings.sap_s4_client_mandant or "100"
+        self.api_key = settings.sap_s4_api_key or os.environ.get("S4_API_KEY", "")
 
     # ------------------------------------------------------------------
     # Configuration

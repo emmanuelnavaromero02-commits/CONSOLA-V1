@@ -38,7 +38,7 @@ class SapHcmClient:
         self.base_url = (settings.sap_hcm_base_url or "").rstrip("/")
         self.user = settings.sap_hcm_user
         self.password = settings.sap_hcm_pass
-        self.client_mandant = settings.sap_hcm_client or "100"
+        self.client_mandant = settings.sap_hcm_client_mandant or "100"
 
     # ------------------------------------------------------------------
     # Configuration
