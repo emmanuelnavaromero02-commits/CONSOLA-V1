@@ -415,6 +415,86 @@ def test_api_data_with_valid_jwt_returns_200(console_main, monkeypatch):
     assert response.json() == [{"customer_id": "cust-1"}]
 
 
+def test_api_data_forwards_user_context_to_refinement(console_main, monkeypatch):
+    """Regression: /api/data/{dataset} previously called refinement with no
+    user_context, which caused tenant-keyed datasets to silently filter to
+    nothing AND let revenue_manager-keyed datasets leak 'N/D' rows across
+    tenants. The endpoint must now forward an authenticated user context."""
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"data": [{"row": 1}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        async def post(self, url, json=None, **kwargs):
+            captured["url"] = url
+            captured["body"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/api/data/gold_sales", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    args = captured["body"]["args"]
+    assert "user_context" in args, \
+        "console must forward a user_context so refinement can apply RLS"
+    ctx = args["user_context"]
+    assert ctx.get("id") == 42
+    assert ctx.get("email") == "analyst@example.com"
+    # `_trusted_admin` MUST be False for non-admin users so a downstream
+    # service cannot bypass RLS by trusting role alone.
+    assert ctx.get("_trusted_admin") is False
+
+
+def test_datasets_data_proxy_forwards_user_context(console_main, monkeypatch):
+    """Regression: GET /datasets/{name}/data used to proxy via REST without
+    a user_context, which let any authenticated user read non-pggold datasets
+    in full. The endpoint now goes through /mcp/invoke with the caller's
+    context attached."""
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"data": [{"row": 2}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        async def post(self, url, json=None, **kwargs):
+            captured["url"] = url
+            captured["body"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeAsyncClient)
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/datasets/gold_sales/data", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+    assert captured["url"].endswith("/mcp/invoke"), \
+        "the legacy GET REST proxy must route through /mcp/invoke with context"
+    args = captured["body"]["args"]
+    assert "user_context" in args
+    assert args["user_context"].get("id") == 42
+
+
 def test_uses_rbac_dependency_does_not_match_false_prefixes(console_main):
     assert console_main._uses_rbac_dependency("/jobs") is True
     assert console_main._uses_rbac_dependency("/jobs/job-1") is True

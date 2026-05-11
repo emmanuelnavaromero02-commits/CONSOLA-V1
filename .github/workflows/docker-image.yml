@@ -77,7 +77,27 @@ jobs:
   build:
     needs: [test, compose-validate]
     runs-on: ubuntu-latest
+    strategy:
+      # Build every service image so a Dockerfile regression in any of them
+      # fails CI instead of being discovered at deploy time. The previous
+      # workflow only built `console`, which let workspace/refinement/vault/
+      # mcp-infra/replicon images break silently for entire commits.
+      fail-fast: false
+      matrix:
+        include:
+          - service: console
+            context: ./console
+          - service: workspace
+            context: ./workspace
+          - service: refinement
+            context: ./refinement
+          - service: vault
+            context: ./vault
+          - service: mcp-infra
+            context: ./mcp-infra
+          - service: replicon
+            context: ./cartridges/replicon
     steps:
       - uses: actions/checkout@v4
-      - name: Build the console Docker image
-        run: docker build ./console --file console/Dockerfile --tag console:ci-$(date +%s)
+      - name: Build the ${{ matrix.service }} Docker image
+        run: docker build ${{ matrix.context }} --file ${{ matrix.context }}/Dockerfile --tag ${{ matrix.service }}:ci-${{ github.sha }}

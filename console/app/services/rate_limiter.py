@@ -38,12 +38,20 @@ class RateLimiter(Protocol):
 
 
 class InMemoryRateLimiter:
+    # Run an opportunistic sweep every N check() calls so dict keys for IPs
+    # that stop sending traffic don't accumulate forever. The sweep cost is
+    # O(keys), amortised once per CLEANUP_INTERVAL — cheap compared to the
+    # per-request work the FastAPI app already does.
+    CLEANUP_INTERVAL = 1000
+
     def __init__(self) -> None:
         # Per-key list of monotonic timestamps for a sliding window.
         self._buckets: dict[str, list[float]] = {}
+        self._calls_since_cleanup = 0
 
     async def check(self, key: str, limit: int, window: int, sensitive: bool = False) -> bool:
         now = time.monotonic()
+        self._maybe_cleanup(now)
         hits = [ts for ts in self._buckets.get(key, []) if now - ts < window]
         if len(hits) >= limit:
             self._buckets[key] = hits
@@ -51,6 +59,22 @@ class InMemoryRateLimiter:
         hits.append(now)
         self._buckets[key] = hits
         return True
+
+    def _maybe_cleanup(self, now: float) -> None:
+        self._calls_since_cleanup += 1
+        if self._calls_since_cleanup < self.CLEANUP_INTERVAL:
+            return
+        self._calls_since_cleanup = 0
+        # 24h is comfortably larger than any window we register, so any bucket
+        # whose newest hit is older than this is guaranteed to be stale for
+        # every active limit. Conservative on purpose.
+        stale_after = 60 * 60 * 24
+        empty_keys = [
+            k for k, hits in self._buckets.items()
+            if not hits or now - hits[-1] > stale_after
+        ]
+        for k in empty_keys:
+            self._buckets.pop(k, None)
 
 
 class RedisRateLimiter:

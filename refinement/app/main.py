@@ -1182,10 +1182,14 @@ async def dataset_schema(name: str):
 
 @app.get("/datasets/{name}/data", dependencies=[Depends(verify_api_key)])
 async def dataset_data(name: str, limit: int = 100):
-    ds = store.get_dataset(name)
-    if not ds:
-        raise HTTPException(404)
-    return engine.query_dataset(ds, {}, limit)
+    # This GET endpoint cannot carry a per-user context, so it must not
+    # return data — callers must use POST /mcp/invoke with tool=query_dataset
+    # and a forwarded user_context. Returning data here would silently bypass
+    # RLS for every dataset whose SQL doesn't reference the pggold schema.
+    raise HTTPException(
+        status_code=410,
+        detail="Use POST /mcp/invoke with tool=query_dataset and user_context.",
+    )
 
 
 @app.post("/datasets/{name}/refresh", dependencies=[Depends(verify_api_key)])

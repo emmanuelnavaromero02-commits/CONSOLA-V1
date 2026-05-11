@@ -67,16 +67,22 @@ def _rls_user_context(user: dict | None) -> dict:
     # Forward only the fields refinement's RLS layer consumes. Avoid sending
     # the raw session dict downstream — it may carry fields we don't want the
     # internal API surface to depend on.
+    #
+    # `_trusted_admin` is the explicit flag refinement requires before
+    # honouring an admin-role bypass. Setting it only when this process
+    # validated an admin session prevents a forged body from escaping RLS.
     if not user:
         return {}
+    role = user.get("role")
     return {
         "id": user.get("id"),
         "email": user.get("email", ""),
         "name": user.get("name") or user.get("email", ""),
-        "role": user.get("role"),
+        "role": role,
         "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
         "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
         "workspace_role": user.get("workspace_role"),
+        "_trusted_admin": role == "admin",
     }
 
 

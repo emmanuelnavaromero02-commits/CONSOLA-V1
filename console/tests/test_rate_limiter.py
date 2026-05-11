@@ -129,3 +129,23 @@ async def test_in_memory_accepts_sensitive_flag():
     assert await limiter.check("k", limit=2, window=60, sensitive=True) is True
     assert await limiter.check("k", limit=2, window=60, sensitive=True) is True
     assert await limiter.check("k", limit=2, window=60, sensitive=True) is False
+
+
+@pytest.mark.asyncio
+async def test_in_memory_cleans_up_stale_keys():
+    """Without periodic cleanup the bucket dict grows forever as new
+    (ip, subject) keys arrive. The sweep keys-empty buckets and any whose
+    last hit is older than the conservative stale-after threshold."""
+    limiter = InMemoryRateLimiter()
+    # Force the cleanup interval to a small number for the test, then prime
+    # buckets that should be considered stale.
+    limiter.CLEANUP_INTERVAL = 5
+    import time as _t
+    fake_old = _t.monotonic() - (60 * 60 * 25)  # 25h ago
+    for i in range(3):
+        limiter._buckets[f"stale-{i}"] = [fake_old]
+    # Trigger the sweep by issuing the threshold number of fresh checks.
+    for i in range(limiter.CLEANUP_INTERVAL):
+        await limiter.check(f"fresh-{i}", limit=10, window=60)
+    assert all(k.startswith("fresh-") for k in limiter._buckets), \
+        f"stale keys not cleaned up: {list(limiter._buckets)}"

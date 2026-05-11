@@ -69,3 +69,17 @@ async def test_describe_silver_rejects_invalid_name_before_path_build(refinement
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid dataset name"
+
+
+@pytest.mark.anyio
+async def test_rest_dataset_data_endpoint_is_disabled(refinement_main):
+    """Regression: GET /datasets/{name}/data used to call query_dataset
+    without a user context. Any peer holding INTERNAL_API_KEY (workspace,
+    mcp-infra, replicon, airflow) could trigger an RLS-less read of any
+    dataset whose SQL did not reference pggold.* . The endpoint is now
+    disabled in favour of POST /mcp/invoke with a forwarded user_context."""
+    with pytest.raises(HTTPException) as exc:
+        await refinement_main.dataset_data("gold_sales", limit=10)
+
+    assert exc.value.status_code == 410
+    assert "user_context" in exc.value.detail.lower()
