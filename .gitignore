@@ -33,3 +33,6 @@ Thumbs.db
 
 # Docker
 *.log
+
+# Airflow runtime artefacts
+airflow/logs/
