@@ -1,0 +1,34 @@
+connector:
+  id: sap_hcm
+  name: SAP HCM Core
+  version: "1.0"
+  description: >
+    Connector for SAP HCM on-premise / S4HANA. Extracts employee master data,
+    org structure, absences and work schedules via SAP OData Gateway.
+  auth:
+    type: basic
+    env_var_user: SAP_HCM_USER
+    env_var_pass: SAP_HCM_PASS
+  api:
+    base_url_env: SAP_HCM_BASE_URL
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 500
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/sap_hcm/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+  entities:
+    count: 10
+    watermark_field_default: lastModifiedDateTime
+    page_size_default: 500

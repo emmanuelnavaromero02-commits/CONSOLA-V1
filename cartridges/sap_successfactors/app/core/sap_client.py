@@ -1,0 +1,185 @@
+"""
+SAP SuccessFactors OData v2 client.
+
+Auth: OAuth2 client_credentials per SAP docs:
+  https://help.sap.com/docs/successfactors-platform/sap-successfactors-platform/oauth-token-authentication
+
+If credentials are missing the client REFUSES to fetch and returns a
+structured "degraded" error - it never invents data.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+import requests
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class SAPClientError(RuntimeError):
+    pass
+
+
+class SapSfClient:
+    """SuccessFactors OData v2 client with OAuth2 client_credentials."""
+
+    CARTRIDGE_ID = "sap_successfactors"
+    REQUIRED_ENV = ("sf_base_url", "sf_client_id", "sf_client_secret", "sf_token_url", "sf_company_id")
+
+    def __init__(self) -> None:
+        self.base_url = (settings.sf_base_url or "").rstrip("/")
+        self.token_url = settings.sf_token_url
+        self.client_id = settings.sf_client_id
+        self.client_secret = settings.sf_client_secret
+        self.company_id = settings.sf_company_id
+        self._token: str | None = None
+        self._token_expires_at = 0.0
+
+    # ------------------------------------------------------------------
+    # Configuration / introspection
+    # ------------------------------------------------------------------
+
+    def configuration_status(self) -> dict[str, Any]:
+        missing = [name.upper() for name in self.REQUIRED_ENV if not getattr(settings, name)]
+        return {
+            "cartridge": self.CARTRIDGE_ID,
+            "configured": not missing,
+            "missing": missing,
+            "base_url": self.base_url or None,
+        }
+
+    def _require_configured(self) -> None:
+        status = self.configuration_status()
+        if not status["configured"]:
+            raise SAPClientError(
+                f"sap_successfactors not configured; missing env: {status['missing']}"
+            )
+
+    # ------------------------------------------------------------------
+    # OAuth2
+    # ------------------------------------------------------------------
+
+    def _get_token(self) -> str:
+        if self._token and time.time() < self._token_expires_at:
+            return self._token
+
+        self._require_configured()
+        try:
+            resp = requests.post(
+                self.token_url,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.client_id,
+                    "company_id": self.company_id,
+                },
+                auth=(self.client_id, self.client_secret),
+                headers={"Accept": "application/json"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        except requests.RequestException as exc:
+            raise SAPClientError(f"OAuth token request failed: {exc}") from exc
+
+        token = payload.get("access_token")
+        if not token:
+            raise SAPClientError(f"OAuth response missing access_token: {payload}")
+        expires_in = int(payload.get("expires_in", 3600))
+        self._token = token
+        self._token_expires_at = time.time() + expires_in - 60
+        return token
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._get_token()}",
+            "Accept": "application/json",
+        }
+
+    # ------------------------------------------------------------------
+    # Connectivity
+    # ------------------------------------------------------------------
+
+    def test_connection(self) -> dict[str, Any]:
+        status = self.configuration_status()
+        if not status["configured"]:
+            return {"status": "degraded", **status}
+        try:
+            resp = requests.get(
+                f"{self.base_url}/$metadata",
+                headers=self._headers(),
+                params={"$format": "json"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return {"status": "ok", "configured": True, "base_url": self.base_url}
+        except requests.RequestException as exc:
+            return {"status": "error", "configured": True, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Discovery (uses local catalog as the source of truth)
+    # ------------------------------------------------------------------
+
+    def list_tables(self) -> list[dict[str, Any]]:
+        from app.services.catalog_service import get_all_entities
+        return [
+            {"id": e.get("entity"), "name": e.get("entity"),
+             "description": e.get("description", "")}
+            for e in get_all_entities() if e.get("entity")
+        ]
+
+    def get_table_schema(self, table_id: str) -> dict[str, Any]:
+        from app.services.catalog_service import get_entity_config
+        cfg = get_entity_config(table_id)
+        if not cfg:
+            return {"error": f"Entity '{table_id}' not in local catalog"}
+        return {
+            "entity": cfg.get("entity"),
+            "fields": cfg.get("select_fields", []),
+            "watermark_field": cfg.get("watermark_field"),
+        }
+
+    # ------------------------------------------------------------------
+    # Fetch
+    # ------------------------------------------------------------------
+
+    def fetch_entity(
+        self,
+        entity: str,
+        select: list[str] | None = None,
+        page_size: int = 200,
+        skip: int = 0,
+        filter_expr: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """OData v2 GET with pagination. Refuses to run if not configured."""
+        self._require_configured()
+
+        params: dict[str, Any] = {
+            "$format": "json",
+            "$top": page_size,
+            "$skip": skip,
+        }
+        if select:
+            params["$select"] = ",".join(select)
+        if filter_expr:
+            params["$filter"] = filter_expr
+
+        url = f"{self.base_url}/{entity}"
+        try:
+            resp = requests.get(url, params=params, headers=self._headers(), timeout=120)
+            resp.raise_for_status()
+            payload = resp.json()
+        except requests.RequestException as exc:
+            raise SAPClientError(f"GET {url} failed: {exc}") from exc
+
+        if isinstance(payload, dict) and "d" in payload:
+            inner = payload["d"]
+            if isinstance(inner, dict) and "results" in inner:
+                return inner["results"]
+            return [inner] if isinstance(inner, dict) else list(inner or [])
+        if isinstance(payload, dict) and "value" in payload:
+            return payload["value"]
+        return [payload] if isinstance(payload, dict) else list(payload or [])
