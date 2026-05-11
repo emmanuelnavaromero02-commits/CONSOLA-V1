@@ -40,6 +40,19 @@ function cartridgeDescription(cartridge) {
   return cartridge?.description || 'Fuente de datos operativa para conectar tablas, tareas automáticas, reportes y conocimiento semántico.';
 }
 
+// Maps the status returned by /studio/cartridges/{id}/status into the chip
+// label + variant rendered in Studio.
+function statusBadge(cartridge) {
+  if (cartridge?.healthy === false) return { label: 'Revisar', variant: 'warning' };
+  switch (cartridge?.status) {
+    case 'operational': return { label: 'Operativo',              variant: 'success' };
+    case 'degraded':    return { label: 'Configuración pendiente', variant: 'warning' };
+    case 'offline':     return { label: 'Offline',                 variant: 'error' };
+    case 'unknown':     return { label: 'Sin diagnóstico',         variant: '' };
+    default:            return { label: 'Operativo',               variant: 'success' };
+  }
+}
+
 function renderHeader() {
   const top = el('div', 'studio-modern-top');
   const copy = el('div');
@@ -77,13 +90,14 @@ export function renderToolbar(onRender) {
   });
   selectWrap.append(label, select);
 
+  const badge = statusBadge(cartridge);
   const summary = el('div', 'studio-modern-summary');
   summary.append(
     chip(cartridgeName(cartridge)),
     chip(`v${cartridge?.version || '0.1.0'}`),
     chip(`${entityCount(cartridge)} tablas`),
     chip(cartridge?.pattern || cartridge?.category || 'tarea automática'),
-    chip('Operativo', 'success')
+    chip(badge.label, badge.variant)
   );
 
   const actions = el('div', 'studio-modern-toolbar-actions');
@@ -113,11 +127,12 @@ export function renderCartridgeCard(onRender) {
   );
   head.append(copy, el('span', 'studio-status', 'Protected'));
 
+  const badge = statusBadge(cartridge);
   const stats = el('div', 'studio-modern-stats');
   stats.append(
     stat('Tipo', cartridge?.pattern || 'tarea automática'),
     stat('Tablas', String(entityCount(cartridge))),
-    stat('Estado', cartridge?.healthy === false ? 'Revisar' : 'Operativo')
+    stat('Estado', badge.label)
   );
 
   const actions = el('div', 'studio-modern-actions');
