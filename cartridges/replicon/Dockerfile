@@ -1,6 +1,5 @@
 FROM python:3.12-slim
 
-RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1

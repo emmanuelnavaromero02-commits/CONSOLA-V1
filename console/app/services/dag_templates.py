@@ -579,14 +579,14 @@ dag_func()
     },
     # ─────────────────────────────────────────────────────────────────────────
     {
-        "id":          "sap_s4hana_odata",
-        "name":        "SAP S4HANA OData API",
-        "description": "Extracción async para SAP: POST /extracts → poll → download CSV. Patrón probado en producción.",
-        "tags":        ["sap_s4hana", "analytics", "async"],
+        "id":          "replicon_analytics",
+        "name":        "Replicon Analytics API",
+        "description": "Extracción async para Replicon: POST /extracts → poll → download CSV. Patrón probado en producción.",
+        "tags":        ["replicon", "analytics", "async"],
         "code": '''\
 """
 DAG: replicon_{entity}
-Patrón: SAP S4HANA OData API (async extract → poll → CSV → Parquet)
+Patrón: Replicon Analytics API (async extract → poll → CSV → Parquet)
 
 Tareas:
   1. extract          — inicia extract async, hace polling, descarga CSV, sube Parquet
@@ -595,7 +595,7 @@ Tareas:
   4. trigger_silver   — refresca datasets Silver/Master dependientes
 
 Airflow UI > Admin > Connections > + :
-  Conn Id:   sap_s4hana_odata   Conn Type: HTTP
+  Conn Id:   replicon_analytics   Conn Type: HTTP
   Host:      https://<tenant>.replicon.com/analyticsapi
   Password:  <bearer_token>
 """
@@ -606,10 +606,10 @@ from datetime import datetime, timedelta, timezone
 from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 
-CARTRIDGE_ID    = "sap_s4hana"
+CARTRIDGE_ID    = "replicon"
 ENTITY          = "{entity}"         # e.g. "ProjectDetail"
 DAG_ID          = f"replicon_{{ENTITY.lower()}}"
-CONN_ID         = "analytics"        # Airflow conn_id = sap_s4hana_odata
+CONN_ID         = "analytics"        # Airflow conn_id = replicon_analytics
 WATERMARK_FIELD = "last_modified"    # None si la entidad no tiene campo de fecha
 POLL_INTERVAL   = 3.0                # segundos entre polls del extract async
 POLL_TIMEOUT    = 300                # segundos máximo esperando el extract
@@ -618,12 +618,12 @@ POLL_TIMEOUT    = 300                # segundos máximo esperando el extract
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
 
 
-@dag(dag_id=DAG_ID, description=f"Extrae {{ENTITY}} de SAP → Bronze",
+@dag(dag_id=DAG_ID, description=f"Extrae {{ENTITY}} de Replicon → Bronze",
      default_args=default_args, schedule=None, catchup=False,
-     tags=["sap_s4hana", "bronze"],
+     tags=["replicon", "bronze"],
      params={{
          "entity": {{"type": "string", "default": ENTITY,
-                     "description": "Entidad SAP (e.g. TimeEntry, Project, User)"}},
+                     "description": "Entidad Replicon (e.g. TimeEntry, Project, User)"}},
          "mode":   {{"type": "string", "default": "incremental",
                      "description": "full | incremental"}},
      }})
@@ -631,7 +631,7 @@ def dag_func():
 
     @task(retries=2, retry_delay=timedelta(minutes=5))
     def extract(params: dict = None) -> dict:
-        """Inicia extracción async en SAP, hace polling, descarga CSV y sube a Bronze."""
+        """Inicia extracción async en Replicon, hace polling, descarga CSV y sube a Bronze."""
         import logging, pandas as pd, requests as _req
         log = logging.getLogger("airflow.task")
         ctx            = get_current_context()
@@ -669,7 +669,7 @@ def dag_func():
             if data["status"] == "completed":
                 break
             if data["status"] == "failed":
-                raise RuntimeError(f"SAP extract fallido: {{data}}")
+                raise RuntimeError(f"Replicon extract fallido: {{data}}")
             time.sleep(POLL_INTERVAL)
         else:
             raise TimeoutError(f"Extract {{extract_id}} timeout ({{POLL_TIMEOUT}}s)")

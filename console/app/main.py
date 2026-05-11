@@ -905,7 +905,7 @@ async def api_job_logs(job_id: str, limit: int = 200):
     try:
         rows = await pool.fetch(
             "SELECT entity, level, message, detail, ts FROM run_logs "
-            "WHERE run_id=$1 AND cartridge='sap_s4hana' ORDER BY ts ASC LIMIT $2",
+            "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
             job_id, limit
         )
     finally:
@@ -1164,7 +1164,7 @@ async def studio_cartridge_connections(cartridge_id: str):
 
 
 @app.get("/api/pipeline", dependencies=[Depends(require_authenticated)])
-async def api_pipeline(cartridge: str = "sap_s4hana"):
+async def api_pipeline(cartridge: str = "replicon"):
     """
     Ensambla el DAG completo: entidades × bronze status × silver datasets × gold deps.
     Fuentes: entity_config (entities), pipeline_runs + jobs (run history), refinement (datasets).
@@ -1399,7 +1399,7 @@ async def api_dag_template_code(template_id: str,
 
 
 @app.get("/api/pipeline_runs", dependencies=[Depends(require_authenticated)])
-async def api_pipeline_runs(cartridge: str = "sap_s4hana", entity: str = None, limit: int = 50):
+async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50):
     """Recent DAG run history from pipeline_runs table."""
     import asyncpg as _asyncpg, os as _os
     _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
@@ -2054,7 +2054,7 @@ async def api_rag_ask(body: dict):
 
 
 @app.get("/api/semantic", dependencies=[Depends(require_authenticated)])
-async def api_semantic(cartridge: str = "sap_s4hana"):
+async def api_semantic(cartridge: str = "replicon"):
     from app.services import cartridge_service as _cs
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
@@ -2147,7 +2147,7 @@ async def studio_ops_tools(user: dict = Depends(require_authenticated)):
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "cartridge_id": {"type": "string", "description": "Cartridge ID, e.g. 'sap_s4hana'"},
+                    "cartridge_id": {"type": "string", "description": "Cartridge ID, e.g. 'replicon'"},
                     "old_name":     {"type": "string", "description": "Current entity name"},
                     "new_name":     {"type": "string", "description": "New entity name"},
                 },
@@ -2195,7 +2195,7 @@ async def studio_ops_tools(user: dict = Depends(require_authenticated)):
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "cartridge_id": {"type": "string", "description": "Cartridge ID, e.g. 'sap_s4hana'"},
+                    "cartridge_id": {"type": "string", "description": "Cartridge ID, e.g. 'replicon'"},
                     "entity":       {"type": "string", "description": "Entity name to delete"},
                 },
                 "required": ["cartridge_id", "entity"],
@@ -2461,7 +2461,7 @@ async def monitoring_tools():
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "cartridge": {"type": "string", "default": "sap_s4hana"},
+                    "cartridge": {"type": "string", "default": "replicon"},
                 },
             },
         },
@@ -2521,7 +2521,7 @@ async def monitoring_invoke(body: dict):
         }
 
     if tool == "view_semantic":
-        cartridge = args.get("cartridge", "sap_s4hana")
+        cartridge = args.get("cartridge", "replicon")
         return {
             "url":   f"{CONSOLE_URL}/viewer/semantic?cartridge={cartridge}",
             "label": f"Ver modelo semantico de {cartridge}",

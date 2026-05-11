@@ -1,0 +1,172 @@
+{
+  "displayName": "replicon_ingest_bi_all",
+  "trigger": {
+    "name": "trigger",
+    "displayName": "Webhook — recibe mode + run_id",
+    "type": "PIECE_TRIGGER",
+    "settings": {
+      "pieceName": "@activepieces/piece-webhook",
+      "triggerName": "catch_webhook",
+      "input": { "authType": "none" },
+      "inputUiInfo": {}
+    },
+    "nextAction": {
+      "name": "log_start",
+      "displayName": "Log inicio",
+      "type": "PIECE",
+      "settings": {
+        "pieceName": "@activepieces/piece-http",
+        "actionName": "send_request",
+        "input": {
+          "method": "POST",
+          "url": "http://console:8000/n8n/log",
+          "headers": {},
+          "queryParams": {},
+          "body": {
+            "type": "json",
+            "data": {
+              "run_id":       "{{ trigger.body.run_id }}",
+              "workflow":     "replicon_ingest_bi_all",
+              "cartridge_id": "replicon",
+              "entity":       "_all",
+              "level":        "INFO",
+              "status":       "started",
+              "message":      "{{ 'Iniciando ingest all en modo ' + trigger.body.mode }}"
+            }
+          },
+          "failsafe": true,
+          "timeout": 10
+        }
+      },
+      "nextAction": {
+        "name": "get_entities",
+        "displayName": "Obtener entidades",
+        "type": "PIECE",
+        "settings": {
+          "pieceName": "@activepieces/piece-http",
+          "actionName": "send_request",
+          "input": {
+            "method": "GET",
+            "url": "http://replicon:8201/skills/entities",
+            "headers": {},
+            "queryParams": {},
+            "body": { "type": "none" },
+            "failsafe": false,
+            "timeout": 15
+          }
+        },
+        "nextAction": {
+          "name": "loop_entities",
+          "displayName": "Por cada entidad",
+          "type": "LOOP_ON_ITEMS",
+          "settings": {
+            "items": "{{ get_entities.body.entities }}"
+          },
+          "firstLoopAction": {
+            "name": "log_entity_start",
+            "displayName": "Log entidad inicio",
+            "type": "PIECE",
+            "settings": {
+              "pieceName": "@activepieces/piece-http",
+              "actionName": "send_request",
+              "input": {
+                "method": "POST",
+                "url": "http://console:8000/n8n/log",
+                "headers": {},
+                "queryParams": {},
+                "body": {
+                  "type": "json",
+                  "data": {
+                    "run_id":       "{{ trigger.body.run_id }}",
+                    "workflow":     "replicon_ingest_bi_all",
+                    "cartridge_id": "replicon",
+                    "entity":       "{{ loop_entities.item.entity }}",
+                    "level":        "INFO",
+                    "status":       "processing",
+                    "message":      "{{ 'Procesando ' + loop_entities.item.entity + ' en modo ' + (trigger.body.mode ?? loop_entities.item.mode ?? 'incremental') }}"
+                  }
+                },
+                "failsafe": true,
+                "timeout": 10
+              }
+            },
+            "nextAction": {
+              "name": "cleanup_entity",
+              "displayName": "Limpiar raw entidad",
+              "type": "PIECE",
+              "settings": {
+                "pieceName": "@activepieces/piece-http",
+                "actionName": "send_request",
+                "input": {
+                  "method": "POST",
+                  "url": "http://console:8000/raw/cleanup",
+                  "headers": {},
+                  "queryParams": {},
+                  "body": {
+                    "type": "json",
+                    "data": {
+                      "cartridge_id":  "replicon",
+                      "entity":        "{{ loop_entities.item.entity }}",
+                      "mode":          "{{ trigger.body.mode ?? loop_entities.item.mode ?? 'incremental' }}",
+                      "retention_days": 30
+                    }
+                  },
+                  "failsafe": true,
+                  "timeout": 30
+                }
+              },
+              "nextAction": {
+                "name": "extract_entity",
+                "displayName": "Extraer entidad",
+                "type": "PIECE",
+                "settings": {
+                  "pieceName": "@activepieces/piece-http",
+                  "actionName": "send_request",
+                  "input": {
+                    "method": "POST",
+                    "url": "{{ 'http://replicon:8201/skills/run_' + (trigger.body.mode ?? loop_entities.item.mode ?? 'incremental') + '/' + loop_entities.item.entity }}",
+                    "headers": {},
+                    "queryParams": {},
+                    "body": { "type": "none" },
+                    "failsafe": true,
+                    "timeout": 600
+                  }
+                },
+                "nextAction": {
+                  "name": "log_entity_done",
+                  "displayName": "Log entidad resultado",
+                  "type": "PIECE",
+                  "settings": {
+                    "pieceName": "@activepieces/piece-http",
+                    "actionName": "send_request",
+                    "input": {
+                      "method": "POST",
+                      "url": "http://console:8000/n8n/log",
+                      "headers": {},
+                      "queryParams": {},
+                      "body": {
+                        "type": "json",
+                        "data": {
+                          "run_id":       "{{ trigger.body.run_id }}",
+                          "workflow":     "replicon_ingest_bi_all",
+                          "cartridge_id": "replicon",
+                          "entity":       "{{ loop_entities.item.entity }}",
+                          "level":        "{{ extract_entity.body.error ? 'ERROR' : 'INFO' }}",
+                          "status":       "{{ extract_entity.body.error ? 'failed' : 'completed' }}",
+                          "message":      "{{ extract_entity.body.error ? ('Error en ' + loop_entities.item.entity + ': ' + extract_entity.body.error) : (loop_entities.item.entity + ' completado: ' + (extract_entity.body.record_count ?? 0) + ' registros') }}",
+                          "detail":       "{{ extract_entity.body }}"
+                        }
+                      },
+                      "failsafe": true,
+                      "timeout": 10
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,127 @@
+entities:
+
+  # ---------------------------------------------------------------
+  # Dimensions — full load daily
+  # ---------------------------------------------------------------
+
+  - entity: User
+    mode: full
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Replicon users with cost and billing rates"
+
+  - entity: Client
+    mode: full
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Clients with currency and default billing rate"
+
+  - entity: Task
+    mode: full
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Project tasks with estimated hours and billable type"
+
+  - entity: Department
+    mode: full
+    page_size: 1000
+    description: "Organizational departments"
+
+  - entity: Role
+    mode: full
+    page_size: 1000
+    description: "User roles"
+
+  - entity: Activity
+    mode: full
+    page_size: 1000
+    description: "Activities / work codes"
+
+  # ---------------------------------------------------------------
+  # Projects — incremental by last_modified
+  # ---------------------------------------------------------------
+
+  - entity: Project
+    mode: incremental
+    watermark_field: last_modified
+    page_size: 1000
+    description: "Projects with budget, status and date range"
+
+  # ---------------------------------------------------------------
+  # Time — incremental by date
+  # ---------------------------------------------------------------
+
+  - entity: TimeEntry
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 5000
+    description: "Time entries with hours, billable status and approval"
+
+  - entity: Timesheet
+    mode: incremental
+    watermark_field: last_modified
+    page_size: 2000
+    description: "Timesheets with period, user and approval status"
+
+  # ---------------------------------------------------------------
+  # Expenses — incremental
+  # ---------------------------------------------------------------
+
+  - entity: ExpenseEntry
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Expense entries with amount, category and billable flag"
+
+  # ---------------------------------------------------------------
+  # Resources — full load daily
+  # ---------------------------------------------------------------
+
+  - entity: ResourceAllocation
+    mode: full
+    page_size: 2000
+    description: "Resource allocations with hours and role per project"
+
+  - entity: ResourceRequest
+    mode: full
+    page_size: 1000
+    description: "Open resource requests"
+
+  - entity: ProjectTeamMember
+    mode: full
+    page_size: 2000
+    description: "Project team members"
+
+  # ---------------------------------------------------------------
+  # Financial — incremental
+  # ---------------------------------------------------------------
+
+  - entity: BillingItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Billing items per project"
+
+  - entity: InvoiceItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Invoice items with amount, hours and rate"
+
+  - entity: CostItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Cost items per project"
+
+  - entity: ProfitItem
+    mode: incremental
+    watermark_field: last_modified
+    date_field: date
+    page_size: 2000
+    description: "Profit items per project"
