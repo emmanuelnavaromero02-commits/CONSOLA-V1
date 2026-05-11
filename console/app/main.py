@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -32,7 +33,7 @@ from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
-from app.security import get_internal_api_key
+from app.security import get_internal_api_key, required_secret
 from app.dependencies import (
     ROLE_ADMIN,
     ROLE_ANALYST,
@@ -55,7 +56,7 @@ async def _periodic_health_check():
         try:
             await mcp_registry.health_check_all()
         except Exception:
-            pass
+            logger.debug("Periodic health check failed", exc_info=True)
         # Evict rate-limit buckets whose last hit is older than the longest window.
         _sweep_counter += 1
         if _sweep_counter % 15 == 0:
@@ -83,7 +84,10 @@ async def _get_db_pool() -> "asyncpg.Pool":
     global _MAIN_POOL
     import asyncpg as _asyncpg
     if _MAIN_POOL is None:
-        _MAIN_POOL = await _asyncpg.create_pool(_db_dsn(), min_size=1, max_size=5)
+        dsn = _db_dsn()
+        if not dsn:
+            raise RuntimeError("DATABASE_URL is not configured (console)")
+        _MAIN_POOL = await _asyncpg.create_pool(dsn, min_size=1, max_size=5)
     return _MAIN_POOL
 
 
@@ -172,7 +176,7 @@ def _minio_client():
     return Minio(
         os.environ.get("MINIO_ENDPOINT", "minio:9000"),
         access_key=os.environ.get("MINIO_ACCESS_KEY", "minio"),
-        secret_key=os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
+        secret_key=required_secret("MINIO_SECRET_KEY", dev_default="minioadmin"),
         secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
     )
 
@@ -337,10 +341,18 @@ async def _refresh_dag_run_status(row: dict) -> dict:
     return row
 
 
+# NOTE: 'unsafe-inline' for script-src/style-src is required because the
+# static HTML pages use inline scripts and styles. To remove it, all inline
+# JS must be moved to external .js files and inline styles to external .css
+# files, then CSP can use strict nonces or SHA-256 hashes instead.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
+    "Permissions-Policy": (
+        "camera=(), microphone=(), geolocation=(), payment=(), "
+        "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+    ),
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -355,6 +367,10 @@ SECURITY_HEADERS = {
 VIEWER_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
+    "Permissions-Policy": (
+        "camera=(), microphone=(), geolocation=(), payment=(), "
+        "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+    ),
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -1058,7 +1074,7 @@ async def api_data_options(dataset: str, columns: str = ""):
 
 
 @app.post("/api/data/{dataset}/query", dependencies=[Depends(require_authenticated)])
-async def api_data_query_filtered(dataset: str, body: dict):
+async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     """
     Execute a filtered query against a gold dataset.
     Body: {"filters": {"revenue_manager": "X", "fiscal_year": 2025,
@@ -1072,6 +1088,18 @@ async def api_data_query_filtered(dataset: str, body: dict):
     limit     = min(int(body.get("limit", 2000)), 10000)
     columns   = body.get("columns", ["*"])
 
+    # Forward the authenticated user's context so refinement can apply RLS.
+    _user = getattr(request.state, "user", None) or {}
+    _user_context = {
+        "role":         _user.get("workspace_role") or _user.get("role"),
+        "tenant_id":    _user.get("active_tenant_id") or _user.get("tenant_id"),
+        "workspace_id": _user.get("active_workspace_id") or _user.get("workspace_id"),
+        "project_id":   _user.get("project_id"),
+        "id":           _user.get("id") or _user.get("user_id"),
+        "email":        _user.get("email"),
+        "name":         _user.get("name"),
+    }
+
     # Validate column names
     safe_cols = []
     for col in columns:
@@ -1079,24 +1107,45 @@ async def api_data_query_filtered(dataset: str, body: dict):
             safe_cols.append(col)
     select_clause = ", ".join(safe_cols) if safe_cols else "*"
 
+    if not isinstance(filters, dict):
+        raise HTTPException(400, "filters must be an object")
+    if len(filters) > 20:
+        raise HTTPException(400, "Too many filters (max 20)")
+
+    # Build a parameterized query — values go into `params`, never interpolated into SQL.
+    # Column/table identifiers are allowlisted via regex; only values are parametrized.
+    params: list = []
+
+    def _add_param(v) -> str:
+        """Append value to params list and return a DuckDB positional placeholder."""
+        s = str(v)
+        if len(s) > 500:
+            raise HTTPException(400, "Filter value too long (max 500 chars)")
+        params.append(s)
+        return "?"
+
     conditions = []
     for key, val in filters.items():
         if val is None or val == "" or val == []:
             continue
         if key == "fiscal_year":
-            # March-February fiscal year: month<=2 belongs to previous year
+            # March-February fiscal year: month<=2 belongs to previous calendar year.
+            # fiscal_year values must be integers — cast before adding to params.
             fy_expr = "(CASE WHEN EXTRACT(MONTH FROM mes)<=2 THEN EXTRACT(YEAR FROM mes)-1 ELSE EXTRACT(YEAR FROM mes) END)"
             vals = val if isinstance(val, list) else [val]
-            in_clause = ",".join(str(int(v)) for v in vals)
-            conditions.append(f"{fy_expr} IN ({in_clause})")
+            if len(vals) > 50:
+                raise HTTPException(400, "Too many fiscal_year values (max 50)")
+            placeholders = ",".join(_add_param(int(v)) for v in vals)
+            conditions.append(f"{fy_expr} IN ({placeholders})")
         elif _re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
             vals = val if isinstance(val, list) else [val]
+            if len(vals) > 100:
+                raise HTTPException(400, f"Too many values for filter '{key}' (max 100)")
             if len(vals) == 1:
-                escaped = str(vals[0]).replace("'", "''")
-                conditions.append(f"{key} = '{escaped}'")
+                conditions.append(f"{key} = {_add_param(vals[0])}")
             else:
-                in_list = ",".join(f"'{str(v).replace(chr(39), chr(39)*2)}'" for v in vals)
-                conditions.append(f"{key} IN ({in_list})")
+                placeholders = ",".join(_add_param(v) for v in vals)
+                conditions.append(f"{key} IN ({placeholders})")
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
@@ -1104,7 +1153,8 @@ async def api_data_query_filtered(dataset: str, body: dict):
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
-                               "args": {"sql": sql, "limit": limit}})
+                               "args": {"sql": sql, "params": params, "limit": limit,
+                                        "user_context": _user_context}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()
@@ -1378,8 +1428,10 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
                 cartridge, limit,
             )
         return {"runs": [dict(r) for r in rows]}
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+    except Exception:
+        _eid = uuid.uuid4().hex
+        logger.exception("pipeline runs query failed error_id=%s", _eid)
+        raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
 
 def _format_pipeline_entity_run(row: dict) -> dict:
@@ -1421,8 +1473,10 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20)
             entity,
             safe_limit,
         )
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+    except Exception:
+        _eid = uuid.uuid4().hex
+        logger.exception("entity runs query failed error_id=%s", _eid)
+        raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
     runs = []
     for row in rows:
@@ -1460,8 +1514,10 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
             entity,
             dag_run_id,
         )
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+    except Exception:
+        _eid = uuid.uuid4().hex
+        logger.exception("run logs query failed error_id=%s", _eid)
+        raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
     if not row:
         raise HTTPException(404, f"Run '{dag_run_id}' not found for {cartridge}/{entity}")
@@ -1510,8 +1566,10 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
         response["logs"] = logs
         response["available"] = bool(tasks) and all(item.get("available") for item in logs)
         return response
-    except Exception as exc:
-        response["error"] = str(exc)
+    except Exception:
+        _eid = uuid.uuid4().hex
+        logger.exception("run logs Airflow fetch failed error_id=%s", _eid)
+        response["error"] = f"Internal server error. error_id={_eid}"
         return response
 
 
@@ -1768,8 +1826,10 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
                 actor_role = user.get("workspace_role") or user.get("role"),
             )
             await queue.put({"type": "done", **result})
-        except Exception as exc:
-            await queue.put({"type": "error", "message": str(exc)})
+        except Exception:
+            _eid = uuid.uuid4().hex
+            logger.exception("studio assistant chat failed error_id=%s", _eid)
+            await queue.put({"type": "error", "message": f"Internal server error. error_id={_eid}"})
 
     asyncio.create_task(run())
 
@@ -1976,8 +2036,10 @@ async def api_rag_ask(body: dict):
                 messages=[{"role": "user", "content": user_msg}],
             )
             answer = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "").strip() or "(sin respuesta)"
-    except Exception as exc:
-        raise HTTPException(500, f"LLM synthesis failed: {exc}")
+    except Exception:
+        _eid = uuid.uuid4().hex
+        logger.exception("LLM synthesis failed error_id=%s", _eid)
+        raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
     return {"answer": answer, "results": results}
 
@@ -2248,8 +2310,10 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
             )
             if row:
                 last_run = dict(row)
-        except Exception as exc:
-            return {"error": f"DB error: {exc}"}
+        except Exception:
+            _eid = uuid.uuid4().hex
+            logger.exception("get_entity_logs DB query failed error_id=%s", _eid)
+            return {"error": f"Internal server error. error_id={_eid}"}
 
         if not last_run:
             return {"error": f"No pipeline runs found for {cartridge_id}/{entity}"}
@@ -2283,8 +2347,9 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
                                                     "dag_run_id": airflow_run_id,
                                                     "task_id":    "extract"})
                 airflow_logs = (logs_r or {}).get("logs", "")
-        except Exception as exc:
-            airflow_logs = f"(No se pudieron obtener logs de Airflow: {exc})"
+        except Exception:
+            logger.debug("Airflow log fetch failed for %s/%s", cartridge_id, entity, exc_info=True)
+            airflow_logs = "(No se pudieron obtener logs de Airflow)"
 
         return {
             "entity":        entity,
