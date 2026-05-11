@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # refinement/tests/test_rls.py imports `refinement.app.duckdb_engine`, so
+      # the repo root must be on PYTHONPATH. Per-service conftests only add
+      # their own service directory.
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
 
