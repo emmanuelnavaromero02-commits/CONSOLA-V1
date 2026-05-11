@@ -8,19 +8,72 @@ on:
 
 jobs:
 
-  build:
-
+  test:
     runs-on: ubuntu-latest
-
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-    - name: Run Pytest
-      run: pip install pytest && export PYTHONPATH=$PYTHONPATH:$(pwd) && pytest refinement/tests/test_rls.py
-    - name: Build the Docker image
-      run: docker build ./console --file console/Dockerfile --tag my-image-name:$(date +%s)
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest pytest-asyncio
+
+      - name: Install console requirements
+        run: pip install -r console/requirements.txt
+
+      - name: Run console tests
+        run: pytest console/tests/ -q
+
+      - name: Install refinement requirements
+        run: pip install -r refinement/requirements.txt
+
+      - name: Run refinement tests
+        run: pytest refinement/tests/ -q
+
+      - name: Install vault requirements
+        run: pip install -r vault/requirements.txt
+
+      - name: Run vault tests
+        run: pytest vault/tests/ -q
+
+      - name: Check for workspace tests
+        run: |
+          if [ -d workspace/tests ]; then
+            pip install -r workspace/requirements.txt
+            pytest workspace/tests/ -q
+          else
+            echo "::warning::workspace/tests/ no existe — pendiente de crear suite"
+          fi
+
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker compose configuration
+        working-directory: infra
+        env:
+          POSTGRES_PASSWORD: dummy_postgres_password_for_ci_only
+          MINIO_SECRET_KEY: dummy_minio_secret_key_for_ci_only
+          INTERNAL_API_KEY: dummy_internal_api_key_for_ci_only_minimum_64_chars_xxxxxxxxxxxx
+          JWT_SECRET_KEY: dummy_jwt_secret_key_for_ci_only_minimum_64_chars_xxxxxxxxxxxxxx
+          SUPERSET_SECRET_KEY: dummy_superset_secret_key_for_ci_only
+          SUPERSET_ADMIN_USER: ci_admin
+          SUPERSET_ADMIN_PASSWORD: dummy_superset_admin_password_for_ci_only
+          AIRFLOW_SECRET_KEY: dummy_airflow_secret_key_for_ci_only
+          AIRFLOW_ADMIN_USER: ci_admin
+          AIRFLOW_ADMIN_PASSWORD: dummy_airflow_admin_password_for_ci_only
+        run: docker compose config --quiet
+
+  build:
+    needs: [test, compose-validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the console Docker image
+        run: docker build ./console --file console/Dockerfile --tag console:ci-$(date +%s)

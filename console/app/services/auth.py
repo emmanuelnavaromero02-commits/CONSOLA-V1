@@ -31,7 +31,7 @@ async def pool() -> asyncpg.Pool:
     global _POOL
     if _POOL is None:
         dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-        _POOL = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
+        _POOL = await asyncpg.create_pool(dsn, min_size=1, max_size=4, command_timeout=10)
     return _POOL
 
 

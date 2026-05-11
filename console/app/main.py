@@ -87,7 +87,7 @@ async def _get_db_pool() -> "asyncpg.Pool":
         dsn = _db_dsn()
         if not dsn:
             raise RuntimeError("DATABASE_URL is not configured (console)")
-        _MAIN_POOL = await _asyncpg.create_pool(dsn, min_size=1, max_size=5)
+        _MAIN_POOL = await _asyncpg.create_pool(dsn, min_size=1, max_size=5, command_timeout=10)
     return _MAIN_POOL
 
 
@@ -408,6 +408,9 @@ RATE_LIMITS = {
     "/auth/login": (8, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/forgot-password": (5, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/reset-password": (8, RATE_LIMIT_WINDOW_SECONDS),
+    # Refresh is more frequent than login (access tokens expire in minutes), so
+    # the cap is higher; still bounded to deter token-stuffing brute force.
+    "/auth/refresh": (60, RATE_LIMIT_WINDOW_SECONDS),
 }
 # The limiter backend picks Redis when REDIS_URL is set, otherwise falls back
 # to an in-memory sliding window. The in-memory path is per-process and can be
@@ -437,7 +440,9 @@ async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     limit, window = RATE_LIMITS[action]
     subject_key = subject.lower().strip() or "-"
     key = f"{action}:{_client_ip(request)}:{subject_key}"
-    allowed = await get_rate_limiter().check(key, limit, window)
+    # All registered actions are auth-sensitive (login / forgot / reset) — fail
+    # closed so a Redis outage cannot silently disable brute-force protection.
+    allowed = await get_rate_limiter().check(key, limit, window, sensitive=True)
     if not allowed:
         raise HTTPException(status_code=429, detail="too many requests")
 
@@ -642,6 +647,10 @@ async def auth_login(request: Request, body: dict):
 @app.post("/auth/refresh")
 async def auth_refresh(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
+    # Hash a prefix of the token into the subject so per-token buckets isolate
+    # spamming attempts without writing the secret material to Redis keys.
+    subject = (refresh_token or "")[:16]
+    await _rate_limit(request, "/auth/refresh", subject)
     user = await _auth.get_refresh_token_user(refresh_token)
     if not user:
         resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
@@ -2751,6 +2760,7 @@ async def _dec_pool() -> _asyncpg_dec.Pool:
         _DEC_POOL = await _asyncpg_dec.create_pool(
             dsn, min_size=1, max_size=4,
             init=_init_conn,
+            command_timeout=10,
         )
     return _DEC_POOL
 

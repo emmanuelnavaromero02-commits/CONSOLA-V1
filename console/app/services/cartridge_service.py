@@ -58,7 +58,7 @@ class _PooledConnection:
 async def pool() -> asyncpg.Pool:
     global _POOL
     if _POOL is None:
-        _POOL = await asyncpg.create_pool(_DATABASE_URL, min_size=1, max_size=4)
+        _POOL = await asyncpg.create_pool(_DATABASE_URL, min_size=1, max_size=4, command_timeout=10)
     return _POOL
 
 

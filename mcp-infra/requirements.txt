@@ -11,4 +11,4 @@ sqlalchemy==2.0.34
 asyncpg==0.29.0
 pgvector==0.3.2
 pypdf==4.3.1
-google-genai>=1.0.0
+google-genai==1.2.0
