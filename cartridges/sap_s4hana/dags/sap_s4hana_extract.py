@@ -1,14 +1,14 @@
 """
 sap_s4hana_extract DAG
 ===================
-Extrae UNA entidad llamando al cartucho SAP S/4HANA (Puerto 8202).
+Extrae UNA entidad llamando al cartucho SAP S/4HANA (Puerto 8204).
 """
 from __future__ import annotations
 import os
 import httpx
 from airflow.decorators import dag, task
 
-CARTRIDGE_URL = "http://sap_s4hana:8202"
+CARTRIDGE_URL = "http://sap_s4hana:8204"
 
 @dag(schedule=None, catchup=False)
 def sap_s4hana_extract():

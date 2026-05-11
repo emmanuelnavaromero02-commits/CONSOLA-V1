@@ -33,13 +33,15 @@ Full list with watermark / select fields:
 [`app/config/entities.yaml`](app/config/entities.yaml).
 
 > **Heads-up on `SAP_HCM_BASE_URL`.** SAP HCM exposes many small services
-> (one per functional area) under `/sap/opu/odata/sap/`. The current
-> design points `SAP_HCM_BASE_URL` at a single service root and asks for
-> entities by their EntitySet name relative to that root. If your
-> infotypes live across multiple services (typical), either point
-> `SAP_HCM_BASE_URL` at the most-used service and override per entity in
-> a follow-up patch, or extend `entities.yaml` with a per-entity
-> `service:` field (not implemented in this PR).
+> (one per functional area) under `/sap/opu/odata/sap/`. Point
+> `SAP_HCM_BASE_URL` at `/sap/opu/odata/sap` (NOT at one specific
+> service) and use the per-entity `odata_entity:` field in
+> `app/config/entities.yaml` to spell out `<SERVICE>/<EntitySet>` per
+> entity. The default catalogue ships with realistic mappings (PA
+> infotypes → `HRPA_EE_PA_SRV`, time → `HRESS_TEAM_SRV` /
+> `HRESS_TIMEACCOUNT_SRV`, OM → `HRORG_OBJECT_SRV`). Confirm the actual
+> service names against your tenant — they vary slightly between SAP
+> releases / namespaces.
 
 ## Environment variables
 

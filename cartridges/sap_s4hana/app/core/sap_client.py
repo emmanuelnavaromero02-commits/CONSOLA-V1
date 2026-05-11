@@ -96,12 +96,40 @@ class SapS4Client:
     # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
+        """Probe connectivity using the first catalogued entity's $metadata.
+
+        S/4HANA exposes one ``$metadata`` document per OData service
+        (``API_BUSINESS_PARTNER``, ``API_SALES_ORDER_SRV``, ...) — there is
+        no single root metadata. We resolve a catalogued entity, derive its
+        service path, and call ``<base>/<service>/$metadata``.
+        """
         status = self.configuration_status()
         if not status["configured"]:
             return {"status": "degraded", **status}
+
+        # Pick a service path from the local catalogue. Fall back to the
+        # generic root only if the catalogue is empty.
+        try:
+            from app.services.catalog_service import get_all_entities
+            catalogue = get_all_entities() or []
+        except Exception:
+            catalogue = []
+
+        probe_path = ""
+        for entry in catalogue:
+            odata_path = entry.get("odata_entity") or entry.get("entity")
+            if not odata_path:
+                continue
+            # odata_entity is "<SERVICE>/<EntitySet>" — keep just the service segment
+            probe_path = odata_path.split("/", 1)[0] if "/" in odata_path else odata_path
+            break
+
+        probe_url = f"{self.base_url}/{probe_path}/$metadata" if probe_path \
+            else f"{self.base_url}/$metadata"
+
         try:
             resp = requests.get(
-                f"{self.base_url}/$metadata",
+                probe_url,
                 auth=self._auth(),
                 headers=self._headers(),
                 params={"sap-client": self.client_mandant},
@@ -112,10 +140,16 @@ class SapS4Client:
                 "status": "ok",
                 "configured": True,
                 "base_url": self.base_url,
+                "probe": probe_url,
                 "client": self.client_mandant,
             }
         except requests.RequestException as exc:
-            return {"status": "error", "configured": True, "error": str(exc)}
+            return {
+                "status": "error",
+                "configured": True,
+                "probe": probe_url,
+                "error": str(exc),
+            }
 
     # ------------------------------------------------------------------
     # Discovery

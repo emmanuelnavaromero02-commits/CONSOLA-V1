@@ -3,19 +3,25 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.core.sap_client import SapSfClient as SapSfClient
+from app.core.sap_client import SapSfClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, update_watermark
 
+# Flush a parquet file every BATCH_SIZE rows. Buffer is drained after every
+# OData page is appended, so memory stays bounded regardless of total volume —
+# important for S/4HANA entities like JournalEntryItem (millions of rows).
 BATCH_SIZE = 10_000
 WATERMARK_BUFFER_MINUTES = 5
+CARTRIDGE_ID = "sap_successfactors"
 
-def _extract_max_watermark(rows: list[dict[str, Any]], watermark_field: str | None) -> str | None:
+
+def _max_watermark(rows: list[dict[str, Any]], watermark_field: str | None) -> str | None:
     if not rows or not watermark_field:
         return None
     values = [r[watermark_field] for r in rows if r.get(watermark_field) is not None]
     return max(values) if values else None
+
 
 def _apply_watermark_filter(
     rows: list[dict[str, Any]],
@@ -23,6 +29,23 @@ def _apply_watermark_filter(
     watermark_value: str,
 ) -> list[dict[str, Any]]:
     return [r for r in rows if str(r.get(watermark_field, "")) > watermark_value]
+
+
+def _apply_date_range_filter(
+    rows: list[dict[str, Any]],
+    date_field: str | None,
+    from_date: str | None,
+    to_date: str | None,
+) -> list[dict[str, Any]]:
+    if not date_field or (not from_date and not to_date):
+        return rows
+    out = rows
+    if from_date:
+        out = [r for r in out if str(r.get(date_field, "")) >= from_date]
+    if to_date:
+        out = [r for r in out if str(r.get(date_field, "")) <= to_date]
+    return out
+
 
 def run_entity(
     config: dict[str, Any],
@@ -33,6 +56,7 @@ def run_entity(
     watermark_field = config.get("watermark_field")
     page_size = config.get("page_size", 200)
     select_fields = config.get("select_fields", [])
+    date_field = config.get("date_field")
 
     if from_date or to_date:
         mode = "historical"
@@ -40,7 +64,7 @@ def run_entity(
         mode = config.get("mode", "full")
 
     run_id = create_run(
-        cartridge_id="sap_successfactors",
+        cartridge_id=CARTRIDGE_ID,
         entity_name=entity,
         run_type=mode,
         status="running",
@@ -54,8 +78,29 @@ def run_entity(
         if mode == "incremental" and watermark_field:
             watermark = get_watermark(entity)
 
-        all_rows = []
+        # Streaming buffer — flushed every BATCH_SIZE rows.
+        buffer: list[dict[str, Any]] = []
         offset = 0
+        batch_num = 0
+        storage_uri = ""
+        total_records = 0
+        max_wm: str | None = None
+
+        def _flush_buffer() -> None:
+            nonlocal buffer, batch_num, storage_uri
+            if not buffer:
+                return
+            batch_run_id = run_id if batch_num == 0 else f"{run_id}-b{batch_num}"
+            storage_uri = write_parquet_and_upload(
+                entity=entity,
+                rows=buffer,
+                run_id=batch_run_id,
+                load_type=mode,
+                watermark_field=watermark_field,
+            )
+            batch_num += 1
+            buffer = []
+
         while True:
             filter_expr = None
             if mode == "incremental" and watermark and watermark_field:
@@ -66,53 +111,38 @@ def run_entity(
                 select=select_fields,
                 page_size=page_size,
                 skip=offset,
-                filter_expr=filter_expr
+                filter_expr=filter_expr,
             )
             if not page:
                 break
-            all_rows.extend(page)
+
+            # Belt-and-suspenders client-side filters (the OData server
+            # MIGHT have ignored $filter — re-apply locally).
+            if mode == "incremental" and watermark and watermark_field and not filter_expr:
+                page = _apply_watermark_filter(page, watermark_field, watermark)
+            page = _apply_date_range_filter(page, date_field, from_date, to_date)
+
+            page_wm = _max_watermark(page, watermark_field)
+            if page_wm and (max_wm is None or page_wm > max_wm):
+                max_wm = page_wm
+
+            buffer.extend(page)
+            total_records += len(page)
             offset += page_size
 
-        if mode == "incremental" and watermark and watermark_field and not filter_expr:
-            all_rows = _apply_watermark_filter(all_rows, watermark_field, watermark)
+            if len(buffer) >= BATCH_SIZE:
+                _flush_buffer()
 
-        date_field = config.get("date_field")
-        if date_field and from_date:
-            all_rows = [r for r in all_rows if str(r.get(date_field, "")) >= from_date]
-        if date_field and to_date:
-            all_rows = [r for r in all_rows if str(r.get(date_field, "")) <= to_date]
+        # Drain any remainder. If we never received any rows, write an empty
+        # parquet so consumers can still observe a (zero-row) Bronze artifact.
+        if buffer or total_records == 0:
+            _flush_buffer()
 
-        storage_uri = ""
-        batch_num = 0
-        max_watermark: str | None = None
-
-        def _flush(batch: list, num: int) -> str:
-            batch_run_id = run_id if num == 0 else f"{run_id}-b{num}"
-            return write_parquet_and_upload(
-                entity=entity,
-                rows=batch,
-                run_id=batch_run_id,
-                load_type=mode,
-                watermark_field=watermark_field,
-            )
-
-        for i in range(0, max(len(all_rows), 1), BATCH_SIZE):
-            batch = all_rows[i : i + BATCH_SIZE]
-
-            page_wm = _extract_max_watermark(batch, watermark_field)
-            if page_wm and (max_watermark is None or page_wm > max_watermark):
-                max_watermark = page_wm
-
-            storage_uri = _flush(batch, batch_num)
-            batch_num += 1
-
-        total_records = len(all_rows)
-
-        if mode == "incremental" and watermark_field and max_watermark:
-            safe_watermark = max_watermark
+        if mode == "incremental" and watermark_field and max_wm:
+            safe_watermark = max_wm
             try:
                 dt = datetime.fromisoformat(
-                    max_watermark.replace("Z", "+00:00").replace(" ", "T")
+                    max_wm.replace("Z", "+00:00").replace(" ", "T")
                 )
                 safe_watermark = (
                     dt - timedelta(minutes=WATERMARK_BUFFER_MINUTES)
@@ -142,7 +172,8 @@ def run_entity(
             "record_count": total_records,
             "storage_uri": storage_uri,
             "watermark_used": watermark,
-            "watermark_updated_to": max_watermark,
+            "watermark_updated_to": max_wm,
+            "batches": batch_num,
             "status": "success",
         }
 

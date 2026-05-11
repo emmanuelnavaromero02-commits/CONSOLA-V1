@@ -1,12 +1,20 @@
-# SAP HCM (NetWeaver Gateway OData) — entities exposed by SAP HR services.
-# Entity names match the OData EntitySet name on the customer's gateway.
-# Typical service paths:
-#   /sap/opu/odata/sap/PT_PERSON_INFO_SRV/
-#   /sap/opu/odata/sap/HRPA_EE_PA_SRV/
-#   /sap/opu/odata/sap/HRESS_TIMEACCOUNT_SRV/
+# SAP HCM (NetWeaver Gateway OData).
+#
+# SAP HCM exposes many small OData services under
+# /sap/opu/odata/sap/<SERVICE>/, each with its own $metadata document.
+# Point ``SAP_HCM_BASE_URL`` at /sap/opu/odata/sap (NOT at one specific
+# service) and use ``odata_entity:`` to spell out "<SERVICE>/<EntitySet>"
+# per entity. extraction_service uses ``config.get("odata_entity", entity)``
+# so this works without any client change.
+#
+# ``entity:`` is the URL-safe id used by /entities/{entity}/* console
+# routes and DAGs. ``odata_entity:`` is the real OData path that
+# fetch_entity hits. When the two are equal, ``odata_entity`` may be
+# omitted.
 entities:
   # ── PA infotypes (Personnel Administration) ───────────────────────────────
   - entity: PA0000Set
+    odata_entity: HRPA_EE_PA_SRV/PA0000Set
     description: "Infotype 0000 — Actions (hire, transfer, termination)."
     mode: incremental
     watermark_field: AedtmAed
@@ -23,6 +31,7 @@ entities:
       Pernr: shadowed
 
   - entity: PA0001Set
+    odata_entity: HRPA_EE_PA_SRV/PA0001Set
     description: "Infotype 0001 — Organizational Assignment (org unit, position, cost center)."
     mode: incremental
     watermark_field: AedtmAed
@@ -45,6 +54,7 @@ entities:
       Pernr: shadowed
 
   - entity: PA0002Set
+    odata_entity: HRPA_EE_PA_SRV/PA0002Set
     description: "Infotype 0002 — Personal Data (name, gender, DOB, marital status)."
     mode: incremental
     watermark_field: AedtmAed
@@ -64,6 +74,7 @@ entities:
       Nachn: masked
 
   - entity: PA0006Set
+    odata_entity: HRPA_EE_PA_SRV/PA0006Set
     description: "Infotype 0006 — Addresses (subtypes 1=permanent, 2=temporary)."
     mode: incremental
     watermark_field: AedtmAed
@@ -73,6 +84,7 @@ entities:
       Pstlz: masked
 
   - entity: PA0007Set
+    odata_entity: HRPA_EE_PA_SRV/PA0007Set
     description: "Infotype 0007 — Planned Working Time (work schedule rule)."
     mode: incremental
     watermark_field: AedtmAed
@@ -81,6 +93,7 @@ entities:
     date_field: Begda
 
   - entity: PA0008Set
+    odata_entity: HRPA_EE_PA_SRV/PA0008Set
     description: "Infotype 0008 — Basic Pay (wage type, amount)."
     mode: incremental
     watermark_field: AedtmAed
@@ -93,6 +106,7 @@ entities:
       Bet03: encrypted
 
   - entity: PA0009Set
+    odata_entity: HRPA_EE_PA_SRV/PA0009Set
     description: "Infotype 0009 — Bank Details."
     mode: incremental
     watermark_field: AedtmAed
@@ -102,6 +116,7 @@ entities:
       Bkont: encrypted
 
   - entity: PA0014Set
+    odata_entity: HRPA_EE_PA_SRV/PA0014Set
     description: "Infotype 0014 — Recurring Payments/Deductions."
     mode: incremental
     watermark_field: AedtmAed
@@ -110,6 +125,7 @@ entities:
     date_field: Begda
 
   - entity: PA0015Set
+    odata_entity: HRPA_EE_PA_SRV/PA0015Set
     description: "Infotype 0015 — Additional Payments (one-time)."
     mode: incremental
     watermark_field: AedtmAed
@@ -117,11 +133,13 @@ entities:
     date_field: Begda
 
   - entity: PA0019Set
+    odata_entity: HRPA_EE_PA_SRV/PA0019Set
     description: "Infotype 0019 — Monitoring of Tasks."
     mode: full
     page_size: 1000
 
   - entity: PA0021Set
+    odata_entity: HRPA_EE_PA_SRV/PA0021Set
     description: "Infotype 0021 — Family / Related Person."
     mode: incremental
     watermark_field: AedtmAed
@@ -131,12 +149,14 @@ entities:
       Nachn: masked
 
   - entity: PA0041Set
+    odata_entity: HRPA_EE_PA_SRV/PA0041Set
     description: "Infotype 0041 — Date Specifications (entry, seniority, leaving)."
     mode: incremental
     watermark_field: AedtmAed
     page_size: 1000
 
   - entity: PA0105Set
+    odata_entity: HRPA_EE_PA_SRV/PA0105Set
     description: "Infotype 0105 — Communication (email, phone, MSO_ID)."
     mode: incremental
     watermark_field: AedtmAed
@@ -146,6 +166,7 @@ entities:
 
   # ── Time Management (PT*) ─────────────────────────────────────────────────
   - entity: PA2001Set
+    odata_entity: HRESS_TEAM_SRV/PA2001Set
     description: "Infotype 2001 — Absences (leave, sickness)."
     mode: incremental
     watermark_field: AedtmAed
@@ -153,6 +174,7 @@ entities:
     date_field: Begda
 
   - entity: PA2002Set
+    odata_entity: HRESS_TEAM_SRV/PA2002Set
     description: "Infotype 2002 — Attendances."
     mode: incremental
     watermark_field: AedtmAed
@@ -160,6 +182,7 @@ entities:
     date_field: Begda
 
   - entity: PA2006Set
+    odata_entity: HRESS_TIMEACCOUNT_SRV/PA2006Set
     description: "Infotype 2006 — Absence Quotas (vacation balance)."
     mode: incremental
     watermark_field: AedtmAed
@@ -167,6 +190,7 @@ entities:
 
   # ── OM (Organizational Management) ────────────────────────────────────────
   - entity: HRP1000Set
+    odata_entity: HRORG_OBJECT_SRV/HRP1000Set
     description: "OM Object header (org unit / position / job, by ObjectType+ObjectId)."
     mode: incremental
     watermark_field: AedtmAed
@@ -175,6 +199,7 @@ entities:
     date_field: Begda
 
   - entity: HRP1001Set
+    odata_entity: HRORG_OBJECT_SRV/HRP1001Set
     description: "OM Relationships (org structure edges A002, A003, B007 etc)."
     mode: incremental
     watermark_field: AedtmAed

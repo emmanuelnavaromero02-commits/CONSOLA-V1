@@ -83,9 +83,30 @@ class SapHcmClient:
         status = self.configuration_status()
         if not status["configured"]:
             return {"status": "degraded", **status}
+
+        # SAP NetWeaver Gateway exposes one $metadata per service. We probe
+        # the service that owns the first catalogued entity (via its
+        # ``service_path:`` / ``odata_entity:`` field) instead of assuming a
+        # single global metadata document.
+        try:
+            from app.services.catalog_service import get_all_entities
+            catalogue = get_all_entities() or []
+        except Exception:
+            catalogue = []
+
+        probe_path = ""
+        for entry in catalogue:
+            service_path = entry.get("service_path") or entry.get("odata_entity")
+            if service_path and "/" in service_path:
+                probe_path = service_path.split("/", 1)[0]
+                break
+
+        probe_url = f"{self.base_url}/{probe_path}/$metadata" if probe_path \
+            else f"{self.base_url}/$metadata"
+
         try:
             resp = requests.get(
-                f"{self.base_url}/$metadata",
+                probe_url,
                 auth=self._auth(),
                 headers=self._headers(),
                 params={"sap-client": self.client_mandant},
@@ -96,10 +117,16 @@ class SapHcmClient:
                 "status": "ok",
                 "configured": True,
                 "base_url": self.base_url,
+                "probe": probe_url,
                 "client": self.client_mandant,
             }
         except requests.RequestException as exc:
-            return {"status": "error", "configured": True, "error": str(exc)}
+            return {
+                "status": "error",
+                "configured": True,
+                "probe": probe_url,
+                "error": str(exc),
+            }
 
     # ------------------------------------------------------------------
     # Discovery

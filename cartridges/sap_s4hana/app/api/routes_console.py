@@ -10,7 +10,9 @@ Authentication:
 Errors:
     * missing/invalid key       → 401
     * unknown entity            → 404
-    * SAP not configured        → 503 with ``{status:"degraded", missing:[...]}``
+    * SAP / Postgres / MinIO not configured → 503 with
+      ``{status:"degraded", configured:false, missing:[...], components:[...]}``
+    * unexpected SAP / runtime  → 503 with the underlying error message
 """
 from __future__ import annotations
 
@@ -18,8 +20,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
+from app.core.sap_client import SAPClientError
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
+from app.services.preflight import preflight_for_extract
 from app.services.runlog_service import get_last_run_status
 from app.services.watermark_service import list_watermarks
 
@@ -34,6 +38,10 @@ def _get_entity_or_404(entity_id: str) -> dict:
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
     return config
+
+
+def _degraded_503(report: dict) -> JSONResponse:
+    return JSONResponse(report, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 # ── Catalogue ────────────────────────────────────────────────────────────────
@@ -68,22 +76,28 @@ def entity_schema(entity_id: str) -> dict:
 def entity_preview(
     entity_id: str,
     limit: int = Query(20, ge=1, le=200),
-) -> dict:
+):
     """Preview up to ``limit`` rows of an entity from Bronze (DuckDB → MinIO).
 
-    Returns ``{status: "degraded", ...}`` with 503 when the bucket cannot
-    be reached. Returns ``{status: "empty"}`` when no parquet files exist yet.
+    Returns 503 ``{status:"degraded"}`` when MinIO/Bronze can't be reached
+    instead of bubbling a 500.
     """
     _get_entity_or_404(entity_id)
 
     try:
-        from app.mcp_server import preview  # FastMCP @tool registered there
-    except Exception as exc:                           # noqa: BLE001
-        return JSONResponse(
-            {"status": "degraded", "error": f"preview unavailable: {exc}"},
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
-    return preview(entity=entity_id, limit=limit)
+        from app.mcp_server import preview as _preview_tool  # FastMCP @tool
+    except Exception as exc:                                   # noqa: BLE001
+        return _degraded_503({
+            "status": "degraded",
+            "error": f"preview unavailable: {exc}",
+        })
+    try:
+        return _preview_tool(entity=entity_id, limit=limit)
+    except Exception as exc:                                   # noqa: BLE001
+        return _degraded_503({
+            "status": "degraded",
+            "error": f"preview failed: {exc}",
+        })
 
 
 # ── Extract ──────────────────────────────────────────────────────────────────
@@ -94,7 +108,7 @@ def entity_extract(
     mode: str = Query("incremental", pattern="^(full|incremental|historical)$"),
     from_date: str | None = None,
     to_date: str | None = None,
-) -> dict:
+):
     """Trigger an extraction for one entity (synchronous, returns when done).
 
     For background batch execution use the MCP ``extract`` tool which
@@ -106,19 +120,41 @@ def entity_extract(
             status_code=400,
             detail=f"Entity {entity_id} has no date_field — cannot run historical",
         )
-    return run_entity({**config, "mode": mode}, from_date=from_date, to_date=to_date)
+
+    report = preflight_for_extract()
+    if report is not None:
+        return _degraded_503(report)
+
+    try:
+        return run_entity({**config, "mode": mode}, from_date=from_date, to_date=to_date)
+    except SAPClientError as exc:
+        return _degraded_503({
+            "status": "degraded",
+            "configured": True,
+            "error": str(exc),
+        })
 
 
 @router.post("/extract-all")
 def extract_all(
     mode: str = Query("incremental", pattern="^(full|incremental)$"),
-) -> dict:
+):
     """Run every enabled entity, one after the other."""
+    report = preflight_for_extract()
+    if report is not None:
+        return _degraded_503(report)
+
     results = []
     for config in get_all_entities():
         effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
         try:
             results.append(run_entity({**config, "mode": effective_mode}))
+        except SAPClientError as exc:
+            results.append({
+                "entity": config.get("entity"),
+                "status": "degraded",
+                "error": str(exc),
+            })
         except Exception as exc:                       # noqa: BLE001
             results.append({
                 "entity": config.get("entity"),
