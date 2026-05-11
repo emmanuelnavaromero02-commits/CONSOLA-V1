@@ -26,7 +26,7 @@ async def _get_pool() -> asyncpg.Pool:
         dsn = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
         if not dsn:
             raise RuntimeError("DATABASE_URL is not configured (mcp_registry)")
-        _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5)
+        _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, command_timeout=10)
     return _pool
 
 

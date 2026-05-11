@@ -102,5 +102,30 @@ async def test_redis_backend_fails_open_on_error():
             pass
 
     limiter = RedisRateLimiter(BrokenRedis())
-    # Must not raise — auth endpoints should stay reachable when Redis is down.
-    assert await limiter.check("login", limit=1, window=60) is True
+    # Non-sensitive endpoints stay reachable when Redis is down.
+    assert await limiter.check("non-sensitive", limit=1, window=60) is True
+
+
+@pytest.mark.asyncio
+async def test_redis_backend_fails_closed_for_sensitive_on_error():
+    class BrokenRedis:
+        async def incr(self, k):
+            raise ConnectionError("boom")
+
+        async def expire(self, k, ttl):
+            pass
+
+    limiter = RedisRateLimiter(BrokenRedis())
+    # Sensitive endpoints (login / refresh / reset) MUST deny when Redis is
+    # unreachable — silently disabling rate limits on auth is unacceptable.
+    assert await limiter.check("login", limit=1, window=60, sensitive=True) is False
+
+
+@pytest.mark.asyncio
+async def test_in_memory_accepts_sensitive_flag():
+    # The in-memory backend cannot lose state on its own, so the flag is a
+    # no-op for it; the contract is just that the call signature accepts it.
+    limiter = InMemoryRateLimiter()
+    assert await limiter.check("k", limit=2, window=60, sensitive=True) is True
+    assert await limiter.check("k", limit=2, window=60, sensitive=True) is True
+    assert await limiter.check("k", limit=2, window=60, sensitive=True) is False

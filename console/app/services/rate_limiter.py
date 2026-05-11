@@ -12,8 +12,13 @@ Two implementations are provided:
 
 `get_rate_limiter()` performs the selection. It silently falls back to the
 in-memory implementation if redis-py is not installed or the connection cannot
-be established at first use, so the auth endpoints always have *some*
-limiting rather than failing closed.
+be established at first use.
+
+Failure policy: `check(..., sensitive=True)` fails CLOSED — if Redis is
+unreachable for a sensitive endpoint (login / password reset / token refresh),
+the request is denied so brute-force protection is never silently disabled.
+Non-sensitive endpoints fail open to keep the service reachable under a Redis
+outage.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimiter(Protocol):
-    async def check(self, key: str, limit: int, window: int) -> bool:
+    async def check(self, key: str, limit: int, window: int, sensitive: bool = False) -> bool:
         """Return True if the request is allowed, False if it must be denied."""
         ...
 
@@ -37,7 +42,7 @@ class InMemoryRateLimiter:
         # Per-key list of monotonic timestamps for a sliding window.
         self._buckets: dict[str, list[float]] = {}
 
-    async def check(self, key: str, limit: int, window: int) -> bool:
+    async def check(self, key: str, limit: int, window: int, sensitive: bool = False) -> bool:
         now = time.monotonic()
         hits = [ts for ts in self._buckets.get(key, []) if now - ts < window]
         if len(hits) >= limit:
@@ -59,7 +64,7 @@ class RedisRateLimiter:
     def __init__(self, redis_client) -> None:
         self._redis = redis_client
 
-    async def check(self, key: str, limit: int, window: int) -> bool:
+    async def check(self, key: str, limit: int, window: int, sensitive: bool = False) -> bool:
         # Bucketize wall time so all replicas agree on the current window.
         bucket = int(time.time() // window)
         redis_key = f"rl:{key}:{bucket}"
@@ -69,9 +74,11 @@ class RedisRateLimiter:
                 # First write in the window owns the TTL.
                 await self._redis.expire(redis_key, window)
         except Exception:
-            # Fail open with a warning rather than locking users out when Redis
-            # is unreachable. The in-memory fallback in the factory handles
-            # startup-time failures; this branch covers transient outages.
+            if sensitive:
+                # Fail closed: a silently-disabled rate limit on /auth/* is
+                # worse than a 503 for the duration of the Redis outage.
+                logger.error("RedisRateLimiter unavailable; denying sensitive request", exc_info=True)
+                return False
             logger.warning("RedisRateLimiter unavailable; allowing request", exc_info=True)
             return True
         return count <= limit
