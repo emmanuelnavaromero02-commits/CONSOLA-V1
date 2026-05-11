@@ -116,11 +116,19 @@ def _get_connection(conn_id: str) -> tuple[str, str]:
 
 # ── mcp-infra watermark helpers ───────────────────────────────────────────────
 
+def _internal_headers() -> dict:
+    return {
+        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-internal-service": "airflow",
+    }
+
+
 def _watermark_get(entity: str) -> str | None:
     import requests
     try:
         r = requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "watermark_get",
                   "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity}},
             timeout=10,
@@ -137,6 +145,7 @@ def _watermark_set(entity: str, watermark_field: str, value: str, run_id: str) -
     try:
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "watermark_set",
                   "args": {
                       "cartridge_id":    CARTRIDGE_ID,
@@ -156,6 +165,7 @@ def _pipeline_run_save(dag_id: str, entity: str, **kwargs) -> None:
     try:
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": dag_id, "cartridge_id": CARTRIDGE_ID,
                            "entity": entity, **kwargs}},

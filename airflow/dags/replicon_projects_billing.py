@@ -32,6 +32,14 @@ SHEET_NAME   = 0            # solo para Excel: índice 0-based o nombre de hoja
 MCP_INFRA_URL = "http://mcp-infra:8010"
 
 
+def _internal_headers() -> dict:
+    import os
+    return {
+        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-internal-service": "airflow",
+    }
+
+
 def _get_minio_config() -> dict[str, str]:
     return {
         "endpoint":   Variable.get("minio_endpoint"),
@@ -118,6 +126,7 @@ def _save_run(batch_id: str, **kwargs) -> None:
     try:
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
+            headers=_internal_headers(),
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": "replicon_projects_billing",
                            "cartridge_id": CARTRIDGE_ID,
