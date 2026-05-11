@@ -1,0 +1,147 @@
+knowledge_bits:
+  - id: kb_headcount_snapshot
+    name: "Headcount snapshot"
+    description: "Headcount activo hoy por OrgUnit y CostCenter."
+    sql: >
+      WITH ActiveEmployees AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Orgeh, Kostl
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY Pernr, _extracted_at DESC
+      ),
+      OrgUnits AS (
+          SELECT DISTINCT ON (ObjId) ObjId, Name
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/OrgUnit/load_date=*/batch_id=*/*.parquet')
+          ORDER BY ObjId, _extracted_at DESC
+      ),
+      CostCenters AS (
+          SELECT DISTINCT ON (Kostl) Kostl, Ktext
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/CostCenter/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Kostl, _extracted_at DESC
+      )
+      SELECT
+          ae.Orgeh AS orgunit_id,
+          ou.Name AS orgunit_name,
+          ae.Kostl AS kostl,
+          cc.Ktext AS kostl_name,
+          COUNT(ae.Pernr) AS headcount
+      FROM ActiveEmployees ae
+      LEFT JOIN OrgUnits ou ON ae.Orgeh = ou.ObjId
+      LEFT JOIN CostCenters cc ON ae.Kostl = cc.Kostl
+      GROUP BY ae.Orgeh, ou.Name, ae.Kostl, cc.Ktext
+
+  - id: kb_employee_actions_30d
+    name: "Employee actions 30 days"
+    description: "Altas (Massn='01'), bajas ('02'), cambios ('04') últimos 30 días"
+    sql: >
+      WITH Actions AS (
+          SELECT DISTINCT ON (Pernr, Begda, Massn) Pernr, Begda, Massn, Massg
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeActions/load_date=*/batch_id=*/*.parquet')
+          WHERE Massn IN ('01', '02', '04') AND CAST(Begda AS DATE) >= CURRENT_DATE - INTERVAL '30' DAY
+          ORDER BY Pernr, Begda, Massn, _extracted_at DESC
+      ),
+      Employees AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Vorna, Nachn
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/PersonalData/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, _extracted_at DESC
+      )
+      SELECT
+          a.Pernr AS pernr,
+          CONCAT(e.Vorna, ' ', e.Nachn) AS full_name,
+          a.Massn AS action_type,
+          a.Begda AS action_date,
+          a.Massg AS reason
+      FROM Actions a
+      LEFT JOIN Employees e ON a.Pernr = e.Pernr
+
+  - id: kb_absence_analysis
+    name: "Absence analysis"
+    description: "Días de ausencia por empleado y tipo (Awart) año en curso"
+    sql: >
+      WITH Absences AS (
+          SELECT DISTINCT ON (Pernr, Begda, Awart) Pernr, Awart, Kaltd, Abwtg, EXTRACT(YEAR FROM CAST(Begda AS DATE)) AS year
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/LeaveAbsence/load_date=*/batch_id=*/*.parquet')
+          WHERE EXTRACT(YEAR FROM CAST(Begda AS DATE)) = EXTRACT(YEAR FROM CURRENT_DATE)
+          ORDER BY Pernr, Begda, Awart, _extracted_at DESC
+      ),
+      Employees AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Vorna, Nachn
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/PersonalData/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, _extracted_at DESC
+      )
+      SELECT
+          a.Pernr AS pernr,
+          CONCAT(e.Vorna, ' ', e.Nachn) AS full_name,
+          a.Awart AS awart,
+          SUM(CAST(a.Kaltd AS DECIMAL)) AS absence_days_calendar,
+          SUM(CAST(a.Abwtg AS DECIMAL)) AS absence_days_workable,
+          a.year
+      FROM Absences a
+      LEFT JOIN Employees e ON a.Pernr = e.Pernr
+      GROUP BY a.Pernr, full_name, a.Awart, a.year
+
+  - id: kb_org_hierarchy
+    name: "Org hierarchy"
+    description: "Jerarquía 3 niveles: OrgUnit -> Position -> EmployeeMaster"
+    sql: >
+      WITH OrgUnits AS (
+          SELECT DISTINCT ON (ObjId) ObjId, Name, ParentObjId
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/OrgUnit/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY ObjId, _extracted_at DESC
+      ),
+      Positions AS (
+          SELECT DISTINCT ON (ObjId) ObjId, Name, OrgUnitId
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/Position/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY ObjId, _extracted_at DESC
+      ),
+      Employees AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Plans, Kostl, Orgeh
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY Pernr, _extracted_at DESC
+      ),
+      Personal AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Vorna, Nachn
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/PersonalData/load_date=*/batch_id=*/*.parquet')
+          ORDER BY Pernr, _extracted_at DESC
+      )
+      SELECT
+          ou.ObjId AS orgunit_id,
+          ou.Name AS orgunit_name,
+          ou.ParentObjId AS parent_orgunit_id,
+          p.ObjId AS position_id,
+          p.Name AS position_name,
+          e.Pernr AS pernr,
+          CONCAT(pd.Vorna, ' ', pd.Nachn) AS employee_name,
+          e.Kostl AS kostl
+      FROM OrgUnits ou
+      LEFT JOIN Positions p ON p.OrgUnitId = ou.ObjId
+      LEFT JOIN Employees e ON e.Plans = p.ObjId
+      LEFT JOIN Personal pd ON e.Pernr = pd.Pernr
+
+  - id: kb_contract_type_distribution
+    name: "Contract type distribution"
+    description: "Distribución de empleados activos por tipo de contrato (Ktart)"
+    sql: >
+      WITH ActiveEmployees AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Persk
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/EmployeeMaster/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY Pernr, _extracted_at DESC
+      ),
+      Contracts AS (
+          SELECT DISTINCT ON (Pernr) Pernr, Ktart
+          FROM read_parquet('s3://{bucket}/raw/sap_hcm/ContractData/load_date=*/batch_id=*/*.parquet')
+          WHERE CAST(Endda AS DATE) >= CURRENT_DATE AND CAST(Begda AS DATE) <= CURRENT_DATE
+          ORDER BY Pernr, _extracted_at DESC
+      )
+      SELECT
+          c.Ktart AS ktart,
+          ae.Persk AS persk,
+          COUNT(ae.Pernr) AS employee_count,
+          COUNT(ae.Pernr) * 100.0 / SUM(COUNT(ae.Pernr)) OVER () AS pct_total
+      FROM ActiveEmployees ae
+      JOIN Contracts c ON ae.Pernr = c.Pernr
+      GROUP BY c.Ktart, ae.Persk

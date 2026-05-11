@@ -209,6 +209,97 @@ services:
       - "8100:8100"
     restart: unless-stopped
 
+  # ── SAP cartridges (opt-in via `--profile sap`) ─────────────────────────────
+  # These cartridges are part of the registry mount and run as standalone
+  # FastAPI services for direct console / MCP access. They're under the
+  # ``sap`` profile so the default ``docker compose up`` is unchanged.
+
+  sap-successfactors:
+    profiles: ["sap"]
+    build:
+      context: ../cartridges/sap_successfactors
+      dockerfile: Dockerfile
+    container_name: mode_sap_successfactors
+    environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      DATABASE_URL:     "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT:   minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET:     lakehouse
+      MINIO_SECURE:     "false"
+      REFINEMENT_URL:   http://refinement:8500
+      SF_BASE_URL:      ${SF_BASE_URL:-}
+      SF_COMPANY_ID:    ${SF_COMPANY_ID:-}
+      SF_CLIENT_ID:     ${SF_CLIENT_ID:-}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
+      SF_TOKEN_URL:     ${SF_TOKEN_URL:-}
+    ports:
+      - "8203:8203"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  sap-hcm:
+    profiles: ["sap"]
+    build:
+      context: ../cartridges/sap_hcm
+      dockerfile: Dockerfile
+    container_name: mode_sap_hcm
+    environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      DATABASE_URL:     "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT:   minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET:     lakehouse
+      MINIO_SECURE:     "false"
+      REFINEMENT_URL:   http://refinement:8500
+      SAP_HCM_BASE_URL:        ${SAP_HCM_BASE_URL:-}
+      SAP_HCM_USER:            ${SAP_HCM_USER:-}
+      SAP_HCM_PASS:            ${SAP_HCM_PASS:-}
+      SAP_HCM_CLIENT_MANDANT:  ${SAP_HCM_CLIENT_MANDANT:-100}
+    ports:
+      - "8202:8202"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  sap-s4hana:
+    profiles: ["sap"]
+    build:
+      context: ../cartridges/sap_s4hana
+      dockerfile: Dockerfile
+    container_name: mode_sap_s4hana
+    environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      DATABASE_URL:     "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT:   minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET:     lakehouse
+      MINIO_SECURE:     "false"
+      REFINEMENT_URL:   http://refinement:8500
+      SAP_S4_BASE_URL:        ${SAP_S4_BASE_URL:-}
+      SAP_S4_USER:            ${SAP_S4_USER:-}
+      SAP_S4_PASS:            ${SAP_S4_PASS:-}
+      SAP_S4_CLIENT_MANDANT:  ${SAP_S4_CLIENT_MANDANT:-100}
+      SAP_S4_API_KEY:         ${SAP_S4_API_KEY:-}
+    ports:
+      - "8204:8204"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
   # ── MCP Infrastructure (incluye RAG) ─────────────────────────────────────────
 
   mcp-infra:

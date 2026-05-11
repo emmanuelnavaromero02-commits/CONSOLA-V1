@@ -36,3 +36,7 @@ Thumbs.db
 
 # Airflow runtime artefacts
 airflow/logs/
+
+# Local audit / review artefacts (never committed)
+_audit_out/
+*.zip

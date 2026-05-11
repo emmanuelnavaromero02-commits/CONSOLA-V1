@@ -1,0 +1,219 @@
+# SAP SuccessFactors Employee Central — OData v2 entities
+# Names match the OData EntitySet name on the customer's API URL
+# (e.g. https://api{N}.sapsf.{eu|com}/odata/v2/<EntitySet>).
+entities:
+  # ── Core people master ────────────────────────────────────────────────────
+  - entity: User
+    description: "Platform user (login, email, manager, dept). Master record across modules."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    watermark_format: iso8601
+    page_size: 200
+    select_fields:
+      - userId
+      - username
+      - email
+      - status
+      - firstName
+      - lastName
+      - department
+      - division
+      - location
+      - manager
+      - hireDate
+      - lastModifiedDateTime
+    protection:
+      email: masked
+
+  - entity: PerPerson
+    description: "Personal information (Employee Central core person record)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    watermark_format: iso8601
+    page_size: 200
+    select_fields:
+      - personIdExternal
+      - personId
+      - dateOfBirth
+      - countryOfBirth
+      - createdDateTime
+      - lastModifiedDateTime
+    protection:
+      dateOfBirth: encrypted
+      personIdExternal: shadowed
+
+  - entity: PerPersonal
+    description: "Personal-info effective-dated record (legal name, gender, marital status)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    effective_dated: true
+    date_field: startDate
+
+  - entity: PerEmail
+    description: "Person email addresses (business / personal)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    protection:
+      emailAddress: masked
+
+  - entity: PerPhone
+    description: "Person phone numbers."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    protection:
+      phoneNumber: masked
+
+  - entity: PerAddressDEFLT
+    description: "Person home / mailing addresses (default country variant)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    protection:
+      address1: masked
+      zipCode: masked
+
+  - entity: PerNationalId
+    description: "National identifiers (SSN, RFC, CURP, etc)."
+    mode: full
+    page_size: 200
+    protection:
+      nationalId: encrypted
+
+  # ── Employment ────────────────────────────────────────────────────────────
+  - entity: EmpEmployment
+    description: "Employment record per person (start date, employee class, end date)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    select_fields:
+      - personIdExternal
+      - userId
+      - startDate
+      - endDate
+      - employeeClass
+      - originalStartDate
+      - lastModifiedDateTime
+
+  - entity: EmpJob
+    description: "Job assignment history (effective-dated). Org/job/position changes."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    effective_dated: true
+    date_field: startDate
+    select_fields:
+      - userId
+      - startDate
+      - endDate
+      - jobCode
+      - position
+      - department
+      - division
+      - location
+      - businessUnit
+      - company
+      - costCenter
+      - managerId
+      - eventReason
+      - lastModifiedDateTime
+
+  - entity: EmpCompensation
+    description: "Compensation header (pay group, frequency, currency)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    effective_dated: true
+    date_field: startDate
+
+  - entity: EmpPayCompRecurring
+    description: "Recurring pay components (base salary, allowances)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    effective_dated: true
+    date_field: startDate
+    protection:
+      paycompValue: encrypted
+
+  - entity: EmpPayCompNonRecurring
+    description: "Non-recurring pay components (bonus, one-time payments)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    date_field: payDate
+    protection:
+      paycompValue: encrypted
+
+  - entity: EmpEmploymentTermination
+    description: "Termination record (last day, reason)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    date_field: endDate
+
+  # ── Org structure (Foundation Objects) ────────────────────────────────────
+  - entity: FOCompany
+    description: "Foundation Object: legal companies."
+    mode: full
+    page_size: 500
+
+  - entity: FODepartment
+    description: "Foundation Object: departments."
+    mode: full
+    page_size: 1000
+
+  - entity: FODivision
+    description: "Foundation Object: divisions."
+    mode: full
+    page_size: 500
+
+  - entity: FOLocation
+    description: "Foundation Object: locations / sites."
+    mode: full
+    page_size: 1000
+
+  - entity: FOBusinessUnit
+    description: "Foundation Object: business units."
+    mode: full
+    page_size: 500
+
+  - entity: FOCostCenter
+    description: "Foundation Object: cost centers."
+    mode: full
+    page_size: 1000
+
+  - entity: FOJobCode
+    description: "Foundation Object: job codes / job classifications."
+    mode: full
+    page_size: 1000
+
+  - entity: Position
+    description: "Position Management: positions (incumbent, parent, FTE)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+
+  # ── Time off ──────────────────────────────────────────────────────────────
+  - entity: EmployeeTime
+    description: "Time off requests (leave, vacation, sick)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    date_field: startDate
+
+  - entity: TimeAccount
+    description: "Time off accruals / balances per employee."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+
+  - entity: WorkSchedule
+    description: "Work schedule assignments."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 500
+    effective_dated: true
+    date_field: startDate

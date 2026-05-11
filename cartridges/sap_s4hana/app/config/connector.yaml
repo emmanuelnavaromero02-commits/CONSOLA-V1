@@ -1,0 +1,33 @@
+connector:
+  id: sap_s4hana
+  name: SAP S/4HANA Core
+  version: "1.0"
+  description: >
+    Connector for SAP S/4HANA (on-premise or Cloud edition).
+    Extracts master data (Business Partner, Product, Cost Center),
+    sales / procurement / finance documents via the public S/4HANA OData APIs.
+  auth:
+    type: basic
+    env_var_user: SAP_S4_USER
+    env_var_pass: SAP_S4_PASS
+    env_var_client: SAP_S4_CLIENT_MANDANT
+    env_var_api_key: SAP_S4_API_KEY
+  api:
+    base_url_env: SAP_S4_BASE_URL
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 500
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/sap_s4hana/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
