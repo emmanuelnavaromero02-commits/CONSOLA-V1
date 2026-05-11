@@ -50,12 +50,48 @@ from app.services.permissions import ROLE_DEFINITIONS, require_permission
 async def _periodic_health_check():
     """Wait for cartridges to boot, then re-check every 60 s."""
     await asyncio.sleep(12)          # grace period for sibling containers
+    _sweep_counter = 0
     while True:
         try:
             await mcp_registry.health_check_all()
         except Exception:
             pass
+        # Evict rate-limit buckets whose last hit is older than the longest window.
+        _sweep_counter += 1
+        if _sweep_counter % 15 == 0:
+            _now = time.monotonic()
+            _max_window = max(w for _, w in RATE_LIMITS.values()) if RATE_LIMITS else 900
+            _stale = [k for k, ts_list in _RATE_BUCKETS.items()
+                      if not any(_now - ts < _max_window for ts in ts_list)]
+            for k in _stale:
+                _RATE_BUCKETS.pop(k, None)
         await asyncio.sleep(60)
+
+
+_MAIN_POOL: "asyncpg.Pool | None" = None
+
+
+def _db_dsn() -> str:
+    return (
+        os.environ.get("DATABASE_URL", "")
+        .replace("postgresql+psycopg2://", "postgresql://")
+        .replace("postgres+psycopg2://", "postgresql://")
+    )
+
+
+async def _get_db_pool() -> "asyncpg.Pool":
+    global _MAIN_POOL
+    import asyncpg as _asyncpg
+    if _MAIN_POOL is None:
+        _MAIN_POOL = await _asyncpg.create_pool(_db_dsn(), min_size=1, max_size=5)
+    return _MAIN_POOL
+
+
+async def _close_main_pool() -> None:
+    global _MAIN_POOL
+    if _MAIN_POOL is not None:
+        await _MAIN_POOL.close()
+        _MAIN_POOL = None
 
 
 @asynccontextmanager
@@ -76,6 +112,7 @@ async def lifespan(app: FastAPI):
         await token_store.close_pool()
         await mcp_registry.close_pool()
         await cartridge_service.close_pool()
+        await _close_main_pool()
         await _close_dec_pool()
 
 
@@ -135,7 +172,7 @@ def _minio_client():
     return Minio(
         os.environ.get("MINIO_ENDPOINT", "minio:9000"),
         access_key=os.environ.get("MINIO_ACCESS_KEY", "minio"),
-        secret_key=os.environ.get("MINIO_SECRET_KEY"),
+        secret_key=os.environ.get("MINIO_SECRET_KEY", "minioadmin"),
         secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
     )
 
@@ -230,40 +267,32 @@ async def _record_dag_pipeline_trigger(
     status: str,
     conf: dict,
 ) -> None:
-    import asyncpg as _asyncpg
-
     if not dag_run_id:
         return
 
-    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
-    try:
-        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
-        await pool.execute(
-            """
-            INSERT INTO pipeline_runs (
-                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                mode, status, started_at, extra
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
-            ON CONFLICT (run_id) DO UPDATE SET
-                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-                mode = EXCLUDED.mode,
-                status = EXCLUDED.status,
-                extra = pipeline_runs.extra || EXCLUDED.extra
-            """,
-            dag_run_id,
-            dag_id,
-            cartridge,
-            entity,
-            dag_run_id,
-            mode,
-            _normalize_airflow_state(status),
-            json.dumps({"raw_conf": conf, "triggered_by": "console"}),
+    pool = await _get_db_pool()
+    await pool.execute(
+        """
+        INSERT INTO pipeline_runs (
+            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+            mode, status, started_at, extra
         )
-    finally:
-        if pool:
-            await pool.close()
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
+        ON CONFLICT (run_id) DO UPDATE SET
+            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+            mode = EXCLUDED.mode,
+            status = EXCLUDED.status,
+            extra = pipeline_runs.extra || EXCLUDED.extra
+        """,
+        dag_run_id,
+        dag_id,
+        cartridge,
+        entity,
+        dag_run_id,
+        mode,
+        _normalize_airflow_state(status),
+        json.dumps({"raw_conf": conf, "triggered_by": "console"}),
+    )
 
 
 async def _refresh_dag_run_status(row: dict) -> dict:
@@ -286,12 +315,8 @@ async def _refresh_dag_run_status(row: dict) -> dict:
     row["finished_at"] = _parse_iso_datetime(result.get("end_date")) or row.get("finished_at")
     row["duration_seconds"] = _duration_seconds(row.get("started_at"), row.get("finished_at"))
 
-    import asyncpg as _asyncpg
-
-    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
     try:
-        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        pool = await _get_db_pool()
         await pool.execute(
             """
             UPDATE pipeline_runs
@@ -308,10 +333,7 @@ async def _refresh_dag_run_status(row: dict) -> dict:
             row.get("duration_seconds"),
         )
     except Exception:
-        pass
-    finally:
-        if pool:
-            await pool.close()
+        logger.debug("Failed to persist updated run status for %s", row.get("run_id"), exc_info=True)
     return row
 
 
@@ -356,11 +378,21 @@ _RATE_BUCKETS: dict[tuple[str, str], list[float]] = {}
 # deployments need a shared backend such as Redis to enforce global limits.
 
 
+_TRUSTED_PROXY_IPS: frozenset[str] = frozenset(
+    ip.strip()
+    for ip in os.environ.get("TRUSTED_PROXY_IPS", "").split(",")
+    if ip.strip()
+)
+
+
 def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-    return request.client.host if request.client else "unknown"
+    real_ip = request.client.host if request.client else "unknown"
+    # Only trust X-Forwarded-For when the direct connection comes from a declared proxy.
+    if _TRUSTED_PROXY_IPS and real_ip in _TRUSTED_PROXY_IPS:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
+    return real_ip
 
 
 def _rate_limit(request: Request, action: str, subject: str = "") -> None:
@@ -843,23 +875,21 @@ async def api_job(job_id: str):
 
 @app.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_authenticated)])
 async def api_job_logs(job_id: str, limit: int = 200):
-    import asyncpg, os, json as _json
-    dsn = os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
-    pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
-    try:
-        rows = await pool.fetch(
-            "SELECT entity, level, message, detail, ts FROM run_logs "
-            "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
-            job_id, limit
-        )
-    finally:
-        await pool.close()
+    import json as _json
+    pool = await _get_db_pool()
+    rows = await pool.fetch(
+        "SELECT entity, level, message, detail, ts FROM run_logs "
+        "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
+        job_id, limit
+    )
     result = []
     for row in rows:
         detail = row["detail"]
         if isinstance(detail, str):
-            try: detail = _json.loads(detail)
-            except: pass
+            try:
+                detail = _json.loads(detail)
+            except (json.JSONDecodeError, ValueError):
+                pass
         result.append({
             "ts": row["ts"].isoformat(),
             "entity": row["entity"],
@@ -947,17 +977,11 @@ async def api_dataset_lineage(name: str):
 @app.get("/apps/{name}")
 async def serve_app(name: str):
     """Serve a published analytic app HTML page."""
-    import asyncpg as _asyncpg
-    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
     try:
-        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        pool = await _get_db_pool()
         row  = await pool.fetchrow("SELECT html FROM analytic_apps WHERE name=$1", name)
     except Exception:
         raise HTTPException(503, "Database unavailable")
-    finally:
-        if pool:
-            await pool.close()
     if not row:
         raise HTTPException(404, f"App '{name}' not found")
     return Response(content=row["html"], media_type="text/html")
@@ -1146,12 +1170,9 @@ async def api_pipeline(cartridge: str = "replicon"):
             entity_list = entities_raw
 
     # 2a. pipeline_runs — most recent run per entity (written by Airflow DAGs)
-    import asyncpg as _asyncpg, os as _os
-    _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
     dag_runs_by_entity: dict[str, dict] = {}
-    _pool = None
     try:
-        _pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
+        _pool = await _get_db_pool()
         rows_pg = await _pool.fetch(
             """SELECT DISTINCT ON (entity)
                    run_id, dag_id, entity, airflow_dag_run_id,
@@ -1168,10 +1189,7 @@ async def api_pipeline(cartridge: str = "replicon"):
             run = await _refresh_dag_run_status(dict(row))
             dag_runs_by_entity[row["entity"]] = run
     except Exception:
-        pass
-    finally:
-        if _pool:
-            await _pool.close()
+        logger.debug("Could not load pipeline_runs for %s", cartridge, exc_info=True)
 
     # 2b. jobs table — internal queue (legacy / console-triggered runs)
     all_jobs = await job_service.list_recent(100)
@@ -1345,11 +1363,8 @@ async def api_dag_template_code(template_id: str,
 @app.get("/api/pipeline_runs", dependencies=[Depends(require_authenticated)])
 async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50):
     """Recent DAG run history from pipeline_runs table."""
-    import asyncpg as _asyncpg, os as _os
-    _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
     try:
-        pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
+        pool = await _get_db_pool()
         if entity:
             rows = await pool.fetch(
                 "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
@@ -1365,9 +1380,6 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
         return {"runs": [dict(r) for r in rows]}
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    finally:
-        if pool:
-            await pool.close()
 
 
 def _format_pipeline_entity_run(row: dict) -> dict:
@@ -1394,12 +1406,8 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20)
 
     safe_limit = max(1, min(int(limit or 20), 100))
 
-    import asyncpg as _asyncpg
-
-    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
     try:
-        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        pool = await _get_db_pool()
         rows = await pool.fetch(
             """
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
@@ -1415,9 +1423,6 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20)
         )
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    finally:
-        if pool:
-            await pool.close()
 
     runs = []
     for row in rows:
@@ -1438,12 +1443,8 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
     if not metadata.get("entity"):
         raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
 
-    import asyncpg as _asyncpg
-
-    dsn = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
     try:
-        pool = await _asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        pool = await _get_db_pool()
         row = await pool.fetchrow(
             """
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
@@ -1461,9 +1462,6 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
         )
     except Exception as exc:
         raise HTTPException(500, str(exc))
-    finally:
-        if pool:
-            await pool.close()
 
     if not row:
         raise HTTPException(404, f"Run '{dag_run_id}' not found for {cartridge}/{entity}")
@@ -1565,38 +1563,29 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
 
 
 async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
-    import asyncpg as _asyncpg
-    import os as _os
-
-    _dsn = _os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
-    pool = None
-    try:
-        pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
-        row = await pool.fetchrow(
-            """
-            SELECT
-                c.id AS cartridge_id,
-                c.pattern AS pattern,
-                e.entity AS entity,
-                e.dag_id AS dag_id,
-                e.mode AS mode,
-                e.enabled AS enabled,
-                e.primary_key AS primary_key
-            FROM cartridges c
-            LEFT JOIN entity_config e
-              ON e.cartridge_id = c.id
-             AND e.entity = $2
-            WHERE c.id = $1
-            """,
-            cartridge,
-            entity,
-        )
-        if not row:
-            raise HTTPException(404, f"Cartridge '{cartridge}' not found")
-        return dict(row)
-    finally:
-        if pool:
-            await pool.close()
+    pool = await _get_db_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT
+            c.id AS cartridge_id,
+            c.pattern AS pattern,
+            e.entity AS entity,
+            e.dag_id AS dag_id,
+            e.mode AS mode,
+            e.enabled AS enabled,
+            e.primary_key AS primary_key
+        FROM cartridges c
+        LEFT JOIN entity_config e
+          ON e.cartridge_id = c.id
+         AND e.entity = $2
+        WHERE c.id = $1
+        """,
+        cartridge,
+        entity,
+    )
+    if not row:
+        raise HTTPException(404, f"Cartridge '{cartridge}' not found")
+    return dict(row)
 
 
 def _build_dag_extract_conf(entity: str, configured_mode: str | None, body: dict) -> dict:
@@ -2213,13 +2202,10 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
         manifest     = await cartridge_service.get_cartridge(cartridge_id)
         if not manifest:
             return {"error": f"Cartridge '{cartridge_id}' not found"}
-        import asyncpg as _asyncpg, os as _os
-        _dsn = _os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
         runs_map = {}
-        pool = None
         try:
-            pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
-            rows = await pool.fetch(
+            _pool = await _get_db_pool()
+            rows = await _pool.fetch(
                 "SELECT DISTINCT ON (entity) entity, status, started_at, finished_at, record_count, error_message "
                 "FROM pipeline_runs WHERE cartridge_id=$1 ORDER BY entity, started_at DESC",
                 cartridge_id,
@@ -2231,10 +2217,7 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
                                          "record_count": r["record_count"],
                                          "error": r["error_message"]}
         except Exception:
-            pass
-        finally:
-            if pool:
-                await pool.close()
+            logger.debug("Could not load pipeline_runs for list_entities %s", cartridge_id, exc_info=True)
         entities = []
         for e in (manifest.get("entities") or []):
             name = e.get("entity") or e.get("id") or ""
@@ -2253,13 +2236,10 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
         entity       = args["entity"]
 
         # 1. Last pipeline_run for this entity — includes airflow_dag_run_id stored by the DAG
-        import asyncpg as _asyncpg, os as _os
-        _dsn = _os.environ.get("DATABASE_URL","").replace("postgresql+psycopg2://","postgresql://")
         last_run = None
-        pool = None
         try:
-            pool = await _asyncpg.create_pool(_dsn, min_size=1, max_size=2)
-            row  = await pool.fetchrow(
+            _pool = await _get_db_pool()
+            row  = await _pool.fetchrow(
                 "SELECT dag_id, airflow_dag_run_id, status, mode, "
                 "       started_at, finished_at, record_count, error_message, extra "
                 "FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
@@ -2270,9 +2250,6 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
                 last_run = dict(row)
         except Exception as exc:
             return {"error": f"DB error: {exc}"}
-        finally:
-            if pool:
-                await pool.close()
 
         if not last_run:
             return {"error": f"No pipeline runs found for {cartridge_id}/{entity}"}

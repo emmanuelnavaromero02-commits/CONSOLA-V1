@@ -20,6 +20,8 @@ async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         dsn = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
+        if not dsn:
+            raise RuntimeError("DATABASE_URL is not configured (job_service)")
         _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
     return _pool
 
