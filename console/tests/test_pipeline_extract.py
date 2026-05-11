@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -95,6 +96,17 @@ def console_main(monkeypatch):
     for name, mod in service_stubs.items():
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.setitem(sys.modules, "asyncpg", asyncpg_stub)
+
+    # Also patch package attributes so `from app.services import xxx` gets the stub
+    import app.services as _svc_pkg
+    for attr, mod in [
+        ("auth", service_stubs["app.services.auth"]),
+        ("job_service", service_stubs["app.services.job_service"]),
+        ("token_store", service_stubs["app.services.token_store"]),
+        ("mcp_registry", service_stubs["app.services.mcp_registry"]),
+        ("cartridge_service", service_stubs["app.services.cartridge_service"]),
+    ]:
+        monkeypatch.setattr(_svc_pkg, attr, mod, raising=False)
 
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)
@@ -329,6 +341,8 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
             "end_date": "2026-05-09T04:10:00+00:00",
         }
 
+    _recent_refresh = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -347,7 +361,7 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
                         "layer": "silver",
                         "sources": ["raw/replicon/Department"],
                         "row_count": 3,
-                        "last_refresh": "2026-05-09T04:10:00+00:00",
+                        "last_refresh": _recent_refresh,
                     }
                 ]
             })

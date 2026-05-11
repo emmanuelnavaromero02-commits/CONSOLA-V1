@@ -8,7 +8,7 @@ CARTRIDGE_SERVICE_SOURCE = Path("console/app/services/cartridge_service.py")
 def test_admin_handlers_use_explicit_admin_and_target_user_names():
     source = MAIN_SOURCE.read_text(encoding="utf-8")
 
-    assert "admin_user: dict = Depends(require_role(ROLE_ADMIN))" in source
+    assert 'admin_user: dict = Depends(require_permission("iam.users.write"))' in source
     assert "target_user = await _auth.create_user" in source
     assert "target_user = await _auth.update_user" in source
     assert "async def api_admin_users_create(body: dict, user:" not in source
