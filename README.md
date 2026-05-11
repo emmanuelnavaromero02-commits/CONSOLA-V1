@@ -29,3 +29,44 @@
 | **Secrets** | Hardcoded defaults | Sourced safely from ENV or Vault |
 | **Internal MCP APIs** | Mixed authentication | `verify_internal_api_key` enforced universally |
 | **Frontend UI** | Bare `innerHTML` injection risks | Standardized `esc()` sanitization wrapper |
+
+---
+
+## Known Security Debt
+
+### CSP `'unsafe-inline'` (script-src and style-src)
+
+**Status:** OPEN. Not resolved in any hardening round to date.
+
+Both `console/app/main.py` and `workspace/app/main.py` ship a CSP that still
+includes `script-src 'self' 'unsafe-inline'` and `style-src 'self' 'unsafe-inline'`.
+This neutralises CSP's primary protection against XSS: any reflected or stored
+script injection becomes immediately exploitable in the browser even though
+the response headers advertise a CSP.
+
+The defence-in-depth fix (escaping in templates, output sanitisation in the
+`esc()` wrapper, the `editUser(...)` attribute-quoting fix, etc.) is in place
+and verified, so a known XSS is not currently exploitable. But the surface
+remains one missed `escHtml()` away from compromise.
+
+**Why it's still open:** the console HTML files contain on the order of 6,000
+lines of inline `<script>` blocks across ~15 pages. Removing `'unsafe-inline'`
+requires either:
+
+1. Extracting every inline script into a separate `.js` asset; or
+2. Serving the HTMLs through Jinja templates so the middleware can inject a
+   per-request `nonce-{...}` token into every `<script>` and `<style>` tag.
+
+Either path is a multi-day refactor. See `docs/security/csp-migration-plan.md`
+for the proposed approach.
+
+**Workarounds in effect today:**
+- Strict `esc()` / `escHtml()` discipline in every dynamic `innerHTML`
+- `X-Frame-Options: DENY` on non-viewer routes
+- `frame-ancestors 'none'` (or `'self'` for `/viewer`)
+- Strict `Referrer-Policy: same-origin`
+- HSTS + `Permissions-Policy` block sensor APIs
+
+Do not consider this resolved until both services serve responses with no
+`'unsafe-inline'` directive and the inline-script discipline is enforced
+by a lint rule in CI.
