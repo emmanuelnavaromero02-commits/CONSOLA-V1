@@ -51,8 +51,13 @@ def console_main(monkeypatch):
 
     async def _fake_get_session_user(token):
         if token == "fake-session-token":
-            return {"user_id": 1, "email": "test@test.com", "role": "admin",
-                    "workspace_role": "admin", "workspace_id": 1, "tenant_id": 1}
+            return {
+                "user_id": 99, "id": 99, "email": "test@test.com", "role": "admin",
+                "workspace_role": "admin",
+                "active_tenant_id": "t-active", "tenant_id": "t-fallback",
+                "active_workspace_id": "ws-active", "workspace_id": "ws-fallback",
+                "project_id": "proj-1",
+            }
         return None
 
     auth_stub = _module(
@@ -397,13 +402,12 @@ def test_invalid_dataset_name_rejected(console_main, monkeypatch):
 
 
 def test_user_context_forwarded_to_refinement(console_main, monkeypatch):
-    """user_context must be included in the args sent to refinement so RLS can run."""
+    """user_context must be forwarded to refinement with active_* fields taking priority."""
     cap = _RefinementCapture(monkeypatch, console_main).install()
     main = console_main
     from app.dependencies import require_authenticated
     main.app.dependency_overrides[require_authenticated] = lambda: None
     client = TestClient(main.app, raise_server_exceptions=True)
-    # Use the session cookie that _fake_get_session_user recognises
     client.cookies.set("mod_session", "fake-session-token")
 
     resp = client.post(
@@ -411,9 +415,19 @@ def test_user_context_forwarded_to_refinement(console_main, monkeypatch):
         json={"filters": {"col": "v"}, "columns": ["col"]},
     )
     assert resp.status_code == 200
+    assert cap.calls, "refinement was never called"
     args = cap.calls[0]["json"]["args"]
     assert "user_context" in args, "user_context must be forwarded to refinement for RLS"
     uc = args["user_context"]
-    # The session user set up in _fake_get_session_user has role=admin, email set
-    assert uc.get("role") is not None, "role must be present in user_context"
-    assert uc.get("email") == "test@test.com", "email must be present in user_context"
+
+    # active_* fields take precedence over bare fields
+    assert uc.get("tenant_id") == "t-active", \
+        f"active_tenant_id must win over tenant_id; got {uc.get('tenant_id')!r}"
+    assert uc.get("workspace_id") == "ws-active", \
+        f"active_workspace_id must win over workspace_id; got {uc.get('workspace_id')!r}"
+    # id resolution: id field wins over user_id
+    assert uc.get("id") == 99, f"id must be resolved; got {uc.get('id')!r}"
+    # Other required fields
+    assert uc.get("role") == "admin"
+    assert uc.get("email") == "test@test.com"
+    assert uc.get("project_id") == "proj-1"

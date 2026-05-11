@@ -1092,9 +1092,10 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     _user = getattr(request.state, "user", None) or {}
     _user_context = {
         "role":         _user.get("workspace_role") or _user.get("role"),
-        "tenant_id":    _user.get("tenant_id"),
-        "workspace_id": _user.get("workspace_id"),
-        "id":           _user.get("user_id"),
+        "tenant_id":    _user.get("active_tenant_id") or _user.get("tenant_id"),
+        "workspace_id": _user.get("active_workspace_id") or _user.get("workspace_id"),
+        "project_id":   _user.get("project_id"),
+        "id":           _user.get("id") or _user.get("user_id"),
         "email":        _user.get("email"),
         "name":         _user.get("name"),
     }
