@@ -155,16 +155,23 @@ def _rls_user_context(user: dict | None) -> dict:
     # downstream tenant filter is always populated. Without this, calls into
     # preview_transform default to an empty context and would skip RLS or
     # match against an empty tenant_id.
+    #
+    # `_trusted_admin` opts the caller into the RLS admin bypass and is only
+    # set when this process has authenticated an admin via its own session/JWT.
+    # Refinement requires this flag so that a body-supplied `role=admin` alone
+    # cannot bypass tenant isolation.
     if not user:
         return {}
+    role = user.get("role")
     return {
         "id": user.get("id"),
         "email": user.get("email", ""),
         "name": user.get("name") or user.get("email", ""),
-        "role": user.get("role"),
+        "role": role,
         "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
         "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
         "workspace_role": user.get("workspace_role"),
+        "_trusted_admin": role == "admin",
     }
 
 
@@ -408,6 +415,7 @@ RATE_LIMITS = {
     "/auth/login": (8, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/forgot-password": (5, RATE_LIMIT_WINDOW_SECONDS),
     "/auth/reset-password": (8, RATE_LIMIT_WINDOW_SECONDS),
+    "/auth/activate": (8, RATE_LIMIT_WINDOW_SECONDS),
     # Refresh is more frequent than login (access tokens expire in minutes), so
     # the cap is higher; still bounded to deter token-stuffing brute force.
     "/auth/refresh": (60, RATE_LIMIT_WINDOW_SECONDS),
@@ -438,13 +446,22 @@ def _client_ip(request: Request) -> str:
 
 async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     limit, window = RATE_LIMITS[action]
+    ip = _client_ip(request)
     subject_key = subject.lower().strip() or "-"
-    key = f"{action}:{_client_ip(request)}:{subject_key}"
-    # All registered actions are auth-sensitive (login / forgot / reset) — fail
-    # closed so a Redis outage cannot silently disable brute-force protection.
-    allowed = await get_rate_limiter().check(key, limit, window, sensitive=True)
-    if not allowed:
-        raise HTTPException(status_code=429, detail="too many requests")
+    # Two checks both must pass:
+    #   1) per (ip, subject) — keeps a noisy single user from drowning others
+    #   2) per ip — prevents subject-rotation bypass (e.g. an attacker
+    #      cycling many invitation tokens from one IP gets a fresh
+    #      (ip, subject) bucket for each token; the per-IP key is the
+    #      one that actually caps the brute-force budget).
+    # All registered actions are auth-sensitive (login / forgot / reset /
+    # activate) — fail closed so a Redis outage cannot silently disable
+    # brute-force protection.
+    limiter = get_rate_limiter()
+    keys = [f"{action}:{ip}:{subject_key}", f"{action}:{ip}:-"]
+    for key in keys:
+        if not await limiter.check(key, limit, window, sensitive=True):
+            raise HTTPException(status_code=429, detail="too many requests")
 
 
 def _is_viewer_path(path: str) -> bool:
@@ -741,6 +758,7 @@ async def viewer_activate():
 async def auth_activate(request: Request, body: dict):
     token = (body.get("token") or "").strip()
     pw    = body.get("new_password") or ""
+    await _rate_limit(request, "/auth/activate", token[:16])
     if not token or not pw:
         raise HTTPException(400, "token and new_password are required")
     info = await _tokens.lookup(token, "invite")
@@ -895,9 +913,19 @@ async def dataset_schema(name: str):
         return r.json()
 
 @app.get("/datasets/{name}/data", dependencies=[Depends(require_authenticated)])
-async def dataset_data(name: str, limit: int = 100):
+async def dataset_data(name: str, request: Request, limit: int = 100):
+    # Forward user context so refinement can apply RLS. Without it the GOLD
+    # tables fall through to the empty-tenant filter (or the revenue_manager
+    # 'N/D' fallback) and any authenticated user could read cross-tenant rows.
+    user = getattr(request.state, "user", None) or {}
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
-        r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/data", params={"limit": limit})
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json={
+                "tool": "query_dataset",
+                "args": {"name": name, "limit": limit, "user_context": _rls_user_context(user)},
+            },
+        )
         return r.json()
 
 @app.post("/datasets/{name}/refresh", dependencies=[Depends(require_permission("datasets.write"))])
@@ -1062,13 +1090,15 @@ async def api_apps_delete(name: str):
 
 
 @app.get("/api/data/{dataset}", dependencies=[Depends(require_authenticated)])
-async def api_data(dataset: str, limit: int = 5000):
+async def api_data(dataset: str, request: Request, limit: int = 5000):
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
+    user = getattr(request.state, "user", None) or {}
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
-                               "args": {"name": dataset, "limit": limit}})
+                               "args": {"name": dataset, "limit": limit,
+                                        "user_context": _rls_user_context(user)}})
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
@@ -1130,14 +1160,16 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 
     # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
+    _resolved_role = _user.get("workspace_role") or _user.get("role")
     _user_context = {
-        "role":         _user.get("workspace_role") or _user.get("role"),
+        "role":         _resolved_role,
         "tenant_id":    _user.get("active_tenant_id") or _user.get("tenant_id"),
         "workspace_id": _user.get("active_workspace_id") or _user.get("workspace_id"),
         "project_id":   _user.get("project_id"),
         "id":           _user.get("id") or _user.get("user_id"),
         "email":        _user.get("email"),
         "name":         _user.get("name"),
+        "_trusted_admin": _resolved_role == "admin",
     }
 
     # Validate column names
@@ -3076,6 +3108,7 @@ async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = De
     if user_id == admin_user["id"] and (body.get("role") not in (None, admin_user.get("role")) or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
     before = await _auth.get_user_by_id(user_id)
+    password_changed = bool(body.get("password"))
     target_user = await _auth.update_user(
         user_id,
         name=body.get("name"),
@@ -3092,7 +3125,30 @@ async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = De
         action = "user.disabled"
     elif before and not before.get("is_active") and target_user.get("is_active"):
         action = "user.enabled"
-    await _audit.record_event(admin_user.get("id"), admin_user.get("email"), action, "user", str(user_id), metadata={"role": target_user.get("role"), "is_active": target_user.get("is_active")})
+    await _audit.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        action,
+        "user",
+        str(user_id),
+        metadata={
+            "role": target_user.get("role"),
+            "is_active": target_user.get("is_active"),
+            "password_changed": password_changed,
+        },
+    )
+    if password_changed:
+        # Password change is independently auditable: an admin overriding a
+        # user's credential is privileged enough to warrant its own row, even
+        # when bundled with other field updates in the same request.
+        await _audit.record_event(
+            admin_user.get("id"),
+            admin_user.get("email"),
+            "user.password_changed",
+            "user",
+            str(user_id),
+            metadata={"target_email": target_user.get("email")},
+        )
     return target_user
 
 

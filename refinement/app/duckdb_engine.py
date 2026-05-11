@@ -39,6 +39,14 @@ def _normalize_postgres_dsn(raw: str) -> str:
     return (raw or "").replace("postgresql+psycopg2://", "postgresql://")
 
 
+def _sql_quote(value: str) -> str:
+    """Single-quote a string literal for direct interpolation into a SQL
+    statement that DuckDB will execute. We use this for ATTACH/SET arguments
+    that DuckDB does not accept as parameter placeholders. Doubling embedded
+    single quotes is the standard SQL escape and is what DuckDB expects."""
+    return "'" + (value or "").replace("'", "''") + "'"
+
+
 def validate_safe_identifier(value: str, label: str = "identifier") -> None:
     if not SAFE_IDENTIFIER_RE.fullmatch(value or ""):
         raise ValueError(f"Invalid {label} name")
@@ -65,13 +73,17 @@ class DuckDBEngine:
             self._con = duckdb.connect()
             self._con.execute("INSTALL httpfs; LOAD httpfs;")
             self._con.execute("INSTALL postgres; LOAD postgres;")
-            self._con.execute(f"""
-                SET s3_endpoint='{self.minio_endpoint}';
-                SET s3_access_key_id='{self.minio_access}';
-                SET s3_secret_access_key='{self.minio_secret}';
-                SET s3_url_style='path';
-                SET s3_use_ssl={'true' if self.minio_secure else 'false'};
-            """)
+            # SET ... requires the literal inline, so we escape single
+            # quotes ourselves. Without escaping, a MinIO secret containing
+            # a quote would terminate the literal early and the rest of
+            # the credential would be parsed as SQL.
+            self._con.execute(
+                f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
+                f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
+                f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
+                "SET s3_url_style='path';"
+                f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
+            )
         return self._con
 
     def setup(self):
@@ -99,18 +111,18 @@ class DuckDBEngine:
 
     def _pg_attach(self, con: duckdb.DuckDBPyConnection) -> str:
         """Attach service Postgres (pgdb) and return alias."""
-        dsn = self.pg_url.replace("postgresql+psycopg2://", "postgresql://")
+        dsn = _normalize_postgres_dsn(self.pg_url)
         try:
-            con.execute(f"ATTACH '{dsn}' AS pgdb (TYPE postgres);")
+            con.execute(f"ATTACH {_sql_quote(dsn)} AS pgdb (TYPE postgres);")
         except Exception:
             pass  # already attached
         return "pgdb"
 
     def _pg_gold_attach(self, con: duckdb.DuckDBPyConnection) -> str:
         """Attach analytical Postgres (pggold) and return alias."""
-        dsn = self.pg_gold_url.replace("postgresql+psycopg2://", "postgresql://")
+        dsn = _normalize_postgres_dsn(self.pg_gold_url)
         try:
-            con.execute(f"ATTACH '{dsn}' AS pggold (TYPE postgres);")
+            con.execute(f"ATTACH {_sql_quote(dsn)} AS pggold (TYPE postgres);")
         except Exception:
             pass  # already attached
         return "pggold"
@@ -338,7 +350,13 @@ class DuckDBEngine:
         return re.sub(r'--[^\n]*', '', sql)
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
-        if user_context and user_context.get("role") == "admin":
+        # Admin bypass requires the caller to mark the context as
+        # `_trusted_admin=True`. The upstream service only sets this flag
+        # after authenticating the user from its own session/JWT — it cannot
+        # be forged by a request-body that just claims `role=admin`. This is
+        # defense-in-depth: even a compromised peer holding INTERNAL_API_KEY
+        # cannot escape RLS unless it also forges the trust flag.
+        if user_context and user_context.get("role") == "admin" and user_context.get("_trusted_admin"):
             return sql, []
 
         if not user_context:
@@ -389,16 +407,6 @@ class DuckDBEngine:
         with self._duckdb_lock:
             new_sql = self._PGGOLD_REF_RE.sub(replacer, sql)
         return new_sql, params
-
-    def apply_rls(self, sql: str, user_context: dict) -> str:
-        # We must not use this unsafe fallback. Any caller MUST use get_rls_filters to get params, OR use preview_sql/query_dataset.
-        # But if anything calls apply_rls directly and expects a string without params, we have to handle it carefully.
-        # Currently only query_dataset and preview_sql call apply_rls, and I updated them to use get_rls_filters and params.
-        # Let's remove this danger loop entirely and just return the string if there are no params, else raise.
-        sql_with_placeholders, params = self.get_rls_filters(sql, user_context)
-        if params:
-             raise ValueError("apply_rls cannot safely return a parameterized string. Use get_rls_filters instead.")
-        return sql_with_placeholders
 
     def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
         validate_safe_identifier(ds.get("name", ""), "dataset")

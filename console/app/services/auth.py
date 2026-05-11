@@ -43,16 +43,39 @@ async def close_pool() -> None:
 
 
 # ── Password hashing ────────────────────────────────────────────────────────
+#
+# bcrypt silently truncates inputs at 72 bytes, so a long password manager
+# entry like "a"*73 would collide with "a"*72. Pre-hashing with SHA-256 and
+# encoding the digest in URL-safe base64 (44 ASCII chars, well under 72)
+# keeps the entropy of the original password while staying inside bcrypt's
+# bounds. Both hash and verify must use the same pre-hash, so existing
+# stored hashes from the previous (truncating) implementation continue to
+# verify only when the original password was ≤72 bytes — passwords longer
+# than that were silently truncated before, and anyone affected can reset.
+
+import base64 as _b64
+
+
+def _bcrypt_input(plain: str) -> bytes:
+    return _b64.urlsafe_b64encode(hashlib.sha256(plain.encode("utf-8")).digest())
+
 
 def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+    return bcrypt.hashpw(_bcrypt_input(plain), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str | None) -> bool:
     if not hashed:                       # invited but not yet activated → cannot log in
         return False
+    hashed_bytes = hashed.encode("utf-8")
     try:
-        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+        if bcrypt.checkpw(_bcrypt_input(plain), hashed_bytes):
+            return True
+        # Backward-compat: hashes written before the SHA-256 pre-hash was
+        # introduced used the raw password bytes. Accept those once so
+        # existing users can still log in; a successful login can re-hash
+        # via the normal change-password flow.
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed_bytes)
     except Exception:
         return False
 
