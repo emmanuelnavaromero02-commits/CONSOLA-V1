@@ -1,0 +1,66 @@
+"""Proxy para leer system_settings desde el console. Fallback a env si falla.
+
+Uso:
+    from app.core.settings_proxy import get_setting
+    token = get_setting("replicon_token", default="", env_fallback="REPLICON_TOKEN")
+"""
+from __future__ import annotations
+
+import logging
+import os
+import time
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+_CACHE: dict[str, tuple[float, str]] = {}
+_CACHE_TTL_SECONDS = 30
+_CONSOLE_URL = os.environ.get("CONSOLE_URL", "http://console:8000")
+_INTERNAL_KEY = os.environ.get("INTERNAL_API_KEY", "")
+
+
+def _fetch_from_console(key: str) -> str | None:
+    if not _INTERNAL_KEY:
+        return None
+    try:
+        # x-internal-service must be one of the whitelisted values in
+        # console/app/services/auth.py verify_internal_api_key. Use "airflow"
+        # as a safe default; future work: whitelist "cartridge".
+        headers = {"x-api-key": _INTERNAL_KEY, "x-internal-service": "airflow"}
+        with httpx.Client(timeout=2.0) as c:
+            r = c.get(f"{_CONSOLE_URL}/internal/settings/{key}/reveal", headers=headers)
+            if r.status_code == 200:
+                body = r.json()
+                v = body.get("value")
+                if isinstance(v, str):
+                    return v
+                if v is None:
+                    return ""
+                return str(v)
+    except Exception as e:
+        logger.debug("settings_proxy fetch failed for %s: %s", key, e)
+    return None
+
+
+def get_setting(key: str, default: str = "", env_fallback: str | None = None) -> str:
+    """Lee setting desde console (cacheado 30s). Fallback a env si console falla.
+
+    Args:
+        key: nombre del setting en system_settings (ej. 'replicon_token').
+        default: valor si nada está configurado.
+        env_fallback: nombre de variable de entorno a usar como fallback.
+    """
+    now = time.time()
+    cached = _CACHE.get(key)
+    if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
+        return cached[1]
+
+    value = _fetch_from_console(key)
+    if value is None and env_fallback:
+        value = os.environ.get(env_fallback, default)
+    elif value is None:
+        value = default
+
+    _CACHE[key] = (now, value)
+    return value
