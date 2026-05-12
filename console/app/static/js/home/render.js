@@ -209,6 +209,17 @@ function renderAdministration() {
       kind: 'admin',
       meta: [{ text: 'Secretos ocultos' }],
       secondary: [{ label: 'Configurar conexiones', href: '/viewer/vault', permission: 'vault.connections.write' }],
+    }),
+    card({
+      title: 'Configuración',
+      icon: 'C',
+      description: 'Credenciales, integraciones, feature flags y rotación de secretos.',
+      href: '/settings',
+      primary: 'Abrir Configuración',
+      permission: 'settings.read',
+      kind: 'admin',
+      meta: [{ text: 'Editable desde UI' }],
+      secondary: [{ label: 'Editar secretos', href: '/settings', permission: 'settings.write' }],
     })
   );
   return renderSection('Administración', 'Identidad, seguridad y accesos viven separados del trabajo diario.', grid);

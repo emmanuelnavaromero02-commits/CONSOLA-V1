@@ -1,0 +1,93 @@
+.settings-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1f2937;
+}
+
+.settings-header { margin-bottom: 24px; }
+.settings-back {
+  display: inline-block;
+  margin-bottom: 12px;
+  color: #2563eb;
+  text-decoration: none;
+  font-size: 14px;
+}
+.settings-back:hover { text-decoration: underline; }
+.settings-header h1 { margin: 0 0 4px; font-size: 28px; }
+.settings-subtitle { margin: 0; color: #6b7280; font-size: 14px; }
+
+.settings-status { padding: 16px; color: #6b7280; font-style: italic; }
+
+.settings-section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.settings-section h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #374151;
+}
+
+.settings-item {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid #f3f4f6;
+}
+.settings-item:first-of-type { border-top: 0; }
+
+.settings-item-label strong { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.settings-item-desc { display: block; color: #6b7280; font-size: 12px; margin-top: 2px; }
+
+.settings-item-text {
+  display: inline-block;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 4px 8px;
+  word-break: break-all;
+}
+
+.settings-item-input {
+  width: 100%;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+
+.settings-item-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.settings-item-actions button {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid;
+}
+.btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.btn-primary:hover { background: #1d4ed8; }
+.btn-secondary { background: #fff; color: #374151; border-color: #d1d5db; }
+.btn-secondary:hover { background: #f3f4f6; }
+.btn-danger { background: #fff; color: #b91c1c; border-color: #fecaca; }
+.btn-danger:hover { background: #fef2f2; }
+
+.settings-empty { color: #6b7280; font-style: italic; }
+.settings-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 12px;
+  border-radius: 6px;
+}
