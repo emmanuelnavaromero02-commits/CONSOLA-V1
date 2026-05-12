@@ -3231,9 +3231,10 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     return {"sent": sent}
 
 
-from app.routers import mcp, mcp_public, pages, security
+from app.routers import mcp, mcp_public, pages, security, settings
 
 app.include_router(pages.router)
 app.include_router(mcp.router)
 app.include_router(mcp_public.router)
+app.include_router(settings.router)
 app.include_router(security.router)
