@@ -1,86 +1,60 @@
+import { state } from './legacy-state.js';
+
     // Apply saved theme
     document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
 
     // S3/MinIO bucket — viene de /api/config; default cubre dev local.
-    let S3_BUCKET = 'lakehouse';
     fetch('/api/config').then(r => r.json())
-      .then(d => { if (d.s3_bucket) S3_BUCKET = d.s3_bucket; })
+      .then(d => { if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket; })
       .catch(() => {});
 
-    let currentStep       = 0;
-    let aiHistory         = [];
-    let aiBusy            = false;
-    let _allDatasets      = [];
-    let _activeLayer      = 'bronze';
-    let _bronzeSources    = [];   // [{source, cartridge, entity, partitions}]
-    let _bronzeQuery      = '';   // last query text
-    let _currentCartridge = null;   // full manifest object
-    let _cartridges       = [];     // list from /studio/cartridges
 
-    const STEP_LABELS = {
-      1: 'RESUMEN',
-      2: 'DAGS',
-      3: 'ENTIDADES',
-      4: 'REFINAR',
-      5: 'ANALYTICS',
-      6: 'IA SEMÁNTICA',
-      7: 'RAG',
-    };
 
-    const STEP_HINTS = {
-      1: 'Paso 1 — Resumen: visión general del cartucho seleccionado. Puedo ayudarte a crear uno nuevo o importar desde un ZIP. Describe el sistema origen y te guío.',
-      2: 'Paso 2 — DAGs: edita y despliega los DAGs de Airflow de este cartucho. Puedo generar un DAG completo si me describes la API o la lógica de extracción.',
-      3: 'Paso 3 — Entidades: qué objetos extraer del sistema origen, en qué modo (full/incremental) y qué DAG de Airflow los procesa. Puedo generar DAGs nuevos si me describes la API.',
-      4: 'Paso 4 — Refinamiento: crea datasets Silver (snapshot limpio) y Gold (agregaciones). Soy experto en DuckDB y SQL para lakehouse.',
-      5: 'Paso 5 — Analytics: publica datasets Gold en herramientas de reporting. Superset, métricas de negocio, KPIs.',
-      6: 'Paso 6 — IA Semántica: define el vocabulario de negocio para que el asistente entienda lenguaje natural.',
-      7: 'Paso 7 — RAG: ingresa documentos a la base de conocimiento (texto o PDF). Puedo buscar semánticamente en ellos y citarlos en mis respuestas.',
-    };
 
     // ── Cartridge management ───────────────────────────────────────────────────
 
-    async function loadCartridges() {
+    export async function loadCartridges() {
       try {
         const r = await fetch('/studio/cartridges');
         const d = await r.json();
-        _cartridges = d.cartridges || [];
-      } catch(e) { _cartridges = []; }
+        state._cartridges = d.cartridges || [];
+      } catch(e) { state._cartridges = []; }
 
       const sel = document.getElementById('cartridge-sel');
-      const cur = _currentCartridge?.id || '';
+      const cur = state._currentCartridge?.id || '';
       sel.innerHTML = '<option value="">— seleccionar o crear —</option>'
-        + _cartridges.map(c =>
+        + state._cartridges.map(c =>
             `<option value="${esc(c.id)}" ${c.id === cur ? 'selected' : ''}>${esc(c.name)} (${esc(c.id)})</option>`
           ).join('');
     }
 
-    async function selectCartridge(id) {
-      if (!id) { _currentCartridge = null; _updateCartridgeInfo(); return; }
+    export async function selectCartridge(id) {
+      if (!id) { state._currentCartridge = null; _updateCartridgeInfo(); return; }
       try {
         const r = await fetch(`/studio/cartridges/${encodeURIComponent(id)}`);
-        _currentCartridge = await r.json();
+        state._currentCartridge = await r.json();
         _updateCartridgeInfo();
         const sel = document.getElementById('cartridge-sel');
         if (sel) sel.value = id;
         // Reset per-cartridge state
-        _selectedDag = null;
-        _selectedDS  = null;
+        state._selectedDag = null;
+        state._selectedDS  = null;
         // Refresh current step with new context
-        if (currentStep > 0) goStep(currentStep);
+        if (state.currentStep > 0) goStep(state.currentStep);
       } catch(e) {
-        _currentCartridge = null;
+        state._currentCartridge = null;
       }
     }
 
-    function _updateCartridgeInfo() {
+    export function _updateCartridgeInfo() {
       const info = document.getElementById('cartridge-info');
       const btn  = document.getElementById('btn-export-cart');
-      if (!_currentCartridge) {
+      if (!state._currentCartridge) {
         info.innerHTML = '';
         if (btn) btn.style.display = 'none';
         return;
       }
-      const c = _currentCartridge;
+      const c = state._currentCartridge;
       const ents = (c.entities || []).length;
       const conn = c.connector?.type || '—';
       info.innerHTML = `
@@ -91,11 +65,11 @@
       if (btn) btn.style.display = '';
     }
 
-    function showCreateCartridge() {
+    export function showCreateCartridge() {
       window.StudioCartridgeModal?.open();
     }
 
-    async function doCreateCartridge() {
+    export async function doCreateCartridge() {
       await window.StudioCartridgeModal?.submit();
     }
 
@@ -111,36 +85,36 @@
     };
 
     window.__studioCartridgeCreated = async function(cartridge, id) {
-      _currentCartridge = cartridge;
+      state._currentCartridge = cartridge;
       await loadCartridges();
       document.getElementById('cartridge-sel').value = id;
       _updateCartridgeInfo();
-      if (currentStep === 1) renderCartridges();
+      if (state.currentStep === 1) renderCartridges();
     };
 
-    async function exportCartridge() {
-      if (!_currentCartridge) return;
-      const id = _currentCartridge.id;
+    export async function exportCartridge() {
+      if (!state._currentCartridge) return;
+      const id = state._currentCartridge.id;
       window.open(`/studio/cartridges/${encodeURIComponent(id)}/export`, '_blank');
     }
 
-    async function patchCartridge(updates) {
-      if (!_currentCartridge) return;
-      const id = _currentCartridge.id;
+    export async function patchCartridge(updates) {
+      if (!state._currentCartridge) return;
+      const id = state._currentCartridge.id;
       const r  = await fetch(`/studio/cartridges/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(updates),
       });
       if (r.ok) {
-        _currentCartridge = await r.json();
+        state._currentCartridge = await r.json();
         _updateCartridgeInfo();
       }
     }
 
     // ── File upload (specs) ────────────────────────────────────────────────────
 
-    function makeUploadZone(containerId, label, sublabel) {
+    export function makeUploadZone(containerId, label, sublabel) {
       return `
         <div class="upload-zone" id="${containerId}"
              onclick="document.getElementById('fi-${containerId}').click()"
@@ -156,13 +130,13 @@
         </div>`;
     }
 
-    async function handleSpecFile(input, zoneId) {
+    export async function handleSpecFile(input, zoneId) {
       const file = input.files[0];
       if (!file) return;
       await doUploadSpec(file, zoneId);
     }
 
-    async function handleSpecDrop(event, zoneId) {
+    export async function handleSpecDrop(event, zoneId) {
       event.preventDefault();
       document.getElementById(zoneId).classList.remove('drag-over');
       const file = event.dataTransfer.files[0];
@@ -170,8 +144,8 @@
       await doUploadSpec(file, zoneId);
     }
 
-    async function doUploadSpec(file, zoneId) {
-      if (!_currentCartridge) {
+    export async function doUploadSpec(file, zoneId) {
+      if (!state._currentCartridge) {
         alert('Primero selecciona o crea un cartucho.');
         return;
       }
@@ -180,7 +154,7 @@
       const form = new FormData();
       form.append('file', file);
       try {
-        const r = await fetch(`/studio/cartridges/${encodeURIComponent(_currentCartridge.id)}/spec`, {
+        const r = await fetch(`/studio/cartridges/${encodeURIComponent(state._currentCartridge.id)}/spec`, {
           method: 'POST', body: form,
         });
         const d = await r.json();
@@ -188,7 +162,7 @@
         // Auto-notify assistant
         document.getElementById('ai-input').value =
           `Acabo de subir el spec "${file.name}". Léelo con infra__minio_read_spec y dime qué ${
-            currentStep === 1 ? 'tipo de conexión describe y cómo conectarse' : 'entidades hay disponibles'
+            state.currentStep === 1 ? 'tipo de conexión describe y cómo conectarse' : 'entidades hay disponibles'
           }.`;
         aiSend();
       } catch(e) {
@@ -198,9 +172,9 @@
 
     // ── Navigation ─────────────────────────────────────────────────────────────
 
-    async function goStep(n) {
-      currentStep = n;
-      aiHistory = [];
+    export async function goStep(n) {
+      state.currentStep = n;
+      state.aiHistory = [];
       document.body.classList.toggle('studio-modern-summary-active', n === 1);
 
       // Update step nav UI
@@ -212,9 +186,9 @@
       }
 
       // Update AI context badge + hint
-      document.getElementById('ai-ctx-badge').textContent = `Paso ${n}: ${STEP_LABELS[n]}`;
+      document.getElementById('ai-ctx-badge').textContent = `Paso ${n}: ${state.STEP_LABELS[n]}`;
       document.getElementById('ai-chat').innerHTML =
-        `<div class="ai-hint">${esc(STEP_HINTS[n])}</div>`;
+        `<div class="ai-hint">${esc(state.STEP_HINTS[n])}</div>`;
       // Restore saved chat history for this step (if any, within TTL)
       _restoreChatHistory();
 
@@ -236,8 +210,8 @@
 
     // ── Step 1: Resumen ───────────────────────────────────────────────────────
 
-    async function renderResumen() {
-      const cartridges = _cartridges;
+    export async function renderResumen() {
+      const cartridges = state._cartridges;
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -254,18 +228,18 @@
     }
 
 
-    function prefillConnConfig(cartridgeId, connId) {
+    export function prefillConnConfig(cartridgeId, connId) {
       document.getElementById('ai-input').value =
         `Configura la conexión "${connId}" del cartucho ${cartridgeId}. La URL base es: `;
       document.getElementById('ai-input').focus();
     }
 
-    function cartCard(c) {
+    export function cartCard(c) {
       const pattern  = c.pattern || 'dag-based';
       const isDag    = pattern === 'dag-based';
       const entities = c.entities || 0;
       const version  = c.version  || '—';
-      const selected = _currentCartridge && _currentCartridge.id === c.id;
+      const selected = state._currentCartridge && state._currentCartridge.id === c.id;
       const cls      = selected ? 'ok' : '';
       const patternLabel = isDag ? 'DAG-BASED' : 'FASTAPI-MCP';
       const patternColor = isDag ? 'var(--cyan)' : 'var(--amber)';
@@ -294,8 +268,8 @@
 
     // ── Step 2: Entidades ──────────────────────────────────────────────────────
 
-    async function renderEntities() {
-      const cartridges = _cartridges;
+    export async function renderEntities() {
+      const cartridges = state._cartridges;
 
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
@@ -319,12 +293,10 @@
     }
 
     // entity → last pipeline_run record
-    let _runsByEntity = {};
     // entity → 'extracting' | null  (for polling)
-    let _extractingEntities = {};
 
-    async function loadEntityList() {
-      const cartridge = _currentCartridge?.id;
+    export async function loadEntityList() {
+      const cartridge = state._currentCartridge?.id;
       if (!cartridge) return;
 
       const area = document.getElementById('entity-list-area');
@@ -352,11 +324,11 @@
         }
 
         // Build last-run map (most recent per entity — API returns DESC so first = latest)
-        _runsByEntity = {};
+        state._runsByEntity = {};
         if (runsRes?.ok) {
           const runsData = await runsRes.json();
           for (const run of (runsData.runs || [])) {
-            if (!_runsByEntity[run.entity]) _runsByEntity[run.entity] = run;
+            if (!state._runsByEntity[run.entity]) state._runsByEntity[run.entity] = run;
           }
         }
 
@@ -386,7 +358,7 @@
       }
     }
 
-    function renderEntityRow(e, cartridge, dagOptions) {
+    export function renderEntityRow(e, cartridge, dagOptions) {
       const name        = esc(e.entity || e.id || e.name || '?');
       const rawName     = e.entity || e.id || e.name || '';
       const modeRaw     = e.mode || 'full';
@@ -397,8 +369,8 @@
       const isScheduled = triggerType === 'scheduled';
 
       // Run status badge
-      const run = _runsByEntity[rawName];
-      const isExtracting = !!_extractingEntities[rawName];
+      const run = state._runsByEntity[rawName];
+      const isExtracting = !!state._extractingEntities[rawName];
       let runBadgeHtml = '';
       if (isExtracting) {
         runBadgeHtml = `<div class="run-badge"><span class="run-dot-run">●</span><span style="color:var(--cyan)">extrayendo...</span></div>`;
@@ -487,7 +459,7 @@
         <div class="et-preview" id="elogs-${rawName.replace(/\W/g,'_')}" style="display:none"></div>`;
     }
 
-    async function patchEntityField(cartridge, entity, field, value, el) {
+    export async function patchEntityField(cartridge, entity, field, value, el) {
       const prev = el.dataset.prev ?? (el.tagName === 'SELECT' ? el.value : el.defaultValue);
       el.dataset.prev = value;
       el.style.borderColor = 'var(--cyan)';
@@ -503,8 +475,8 @@
         if (r.ok) {
           el.style.borderColor = 'var(--green)';
           setTimeout(() => { el.style.borderColor = ''; }, 1400);
-          if (_currentCartridge?.entities) {
-            const ent = _currentCartridge.entities.find(e => (e.id || e.entity) === entity);
+          if (state._currentCartridge?.entities) {
+            const ent = state._currentCartridge.entities.find(e => (e.id || e.entity) === entity);
             if (ent) ent[field] = value;
           }
         } else {
@@ -517,7 +489,7 @@
       }
     }
 
-    async function renameEntity(cartridge, entity) {
+    export async function renameEntity(cartridge, entity) {
       const newName = prompt(`Nuevo nombre para la entidad "${entity}":`, entity);
       if (!newName || newName.trim() === entity) return;
       try {
@@ -535,11 +507,11 @@
       } catch(e) { alert(`Error: ${e.message}`); }
     }
 
-    function updateEntityConn(cartridge, entity, val, el) {
+    export function updateEntityConn(cartridge, entity, val, el) {
       patchEntityField(cartridge, entity, 'connection_id', val, el);
     }
 
-    async function toggleEntitySchedule(cartridge, entity, currentType, currentCron) {
+    export async function toggleEntitySchedule(cartridge, entity, currentType, currentCron) {
       if (currentType === 'scheduled') {
         // Switch to manual — clear schedule in Airflow
         if (!confirm(`¿Desactivar el schedule de ${entity} y dejarlo en manual?`)) return;
@@ -557,7 +529,7 @@
       loadEntityList(); // refresh
     }
 
-    async function _setEntitySchedule(cartridge, entity, triggerType, cronExpression) {
+    export async function _setEntitySchedule(cartridge, entity, triggerType, cronExpression) {
       // 1. Persist in entity_config
       await fetch(
         `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
@@ -568,7 +540,7 @@
         }
       );
       // 2. Update Airflow DAG schedule via MCP infra
-      const dagId = ((_currentCartridge?.entities || [])
+      const dagId = ((state._currentCartridge?.entities || [])
         .find(e => (e.entity || e.id) === entity) || {}).dag_id || '';
       if (dagId) {
         await fetch('/api/mcp/invoke', {
@@ -595,14 +567,14 @@
       }
     }
 
-    function showAddEntityRow() {
+    export function showAddEntityRow() {
       const area = document.getElementById('entity-list-area');
       if (!area) return;
       // Don't add duplicate rows
       if (document.getElementById('new-entity-row')) return;
 
-      const cartridge = _currentCartridge?.id || '';
-      const conns = (_currentCartridge?.connections || []).map(c => c.conn_id || c.id || c);
+      const cartridge = state._currentCartridge?.id || '';
+      const conns = (state._currentCartridge?.connections || []).map(c => c.conn_id || c.id || c);
       const connOpts = conns.length
         ? conns.map(cid => `<option value="${esc(cid)}">${esc(cid)}</option>`).join('')
         : '<option value="services">services</option><option value="analytics">analytics</option>';
@@ -636,7 +608,7 @@
       _loadDagSelector('ne-dag', cartridge);
     }
 
-    async function _loadDagSelector(selectId, cartridge) {
+    export async function _loadDagSelector(selectId, cartridge) {
       const sel = document.getElementById(selectId);
       if (!sel) return;
       try {
@@ -659,7 +631,7 @@
       }
     }
 
-    async function saveNewEntity(cartridge) {
+    export async function saveNewEntity(cartridge) {
       const name = document.getElementById('ne-name')?.value?.trim();
       if (!name) {
         document.getElementById('ne-name').style.borderColor = '#ff2d55';
@@ -695,18 +667,18 @@
       }
     }
 
-    function openDagEditor(dagId) {
-      _selectedDag = dagId;
+    export function openDagEditor(dagId) {
+      state._selectedDag = dagId;
       goStep(2);
     }
 
-    async function extractNow(cartridge, entity, mode, dagId) {
+    export async function extractNow(cartridge, entity, mode, dagId) {
       dagId = dagId || `${cartridge}_extract`;  // fallback if none assigned
       const safeId = entity.replace(/\W/g,'_');
       const btn    = document.getElementById(`ebtn-${safeId}`);
       const row    = document.getElementById(`erow-${safeId}`);
 
-      _extractingEntities[entity] = true;
+      state._extractingEntities[entity] = true;
       if (btn) { btn.textContent = '⟳ ...'; btn.disabled = true; btn.style.color = 'var(--cyan)'; }
       _updateRunBadge(row, entity, 'extracting');
 
@@ -725,13 +697,13 @@
         // Poll pipeline_runs + Airflow run state in parallel
         _pollExtraction(cartridge, entity, safeId, dagId, runId);
       } catch(e) {
-        delete _extractingEntities[entity];
+        delete state._extractingEntities[entity];
         if (btn) { btn.textContent = '► Extraer'; btn.disabled = false; btn.style.color = ''; }
         _updateRunBadge(row, entity, 'error', e.message);
       }
     }
 
-    async function _pollExtraction(cartridge, entity, safeId, dagId, runId) {
+    export async function _pollExtraction(cartridge, entity, safeId, dagId, runId) {
       const since = new Date().toISOString();
       const btn   = document.getElementById(`ebtn-${safeId}`);
       const row   = document.getElementById(`erow-${safeId}`);
@@ -739,7 +711,7 @@
       const MAX   = 60;  // ~5 min
 
       const _resetBtn = () => {
-        delete _extractingEntities[entity];
+        delete state._extractingEntities[entity];
         if (btn) { btn.textContent = '► Extraer'; btn.disabled = false; btn.style.color = ''; }
       };
 
@@ -779,10 +751,10 @@
           const isNew = run && run.status !== 'running' && (
             !run.started_at ||
             run.started_at >= since ||
-            run.run_id !== (_runsByEntity[entity]?.run_id)
+            run.run_id !== (state._runsByEntity[entity]?.run_id)
           );
           if (isNew) {
-            _runsByEntity[entity] = run;
+            state._runsByEntity[entity] = run;
             _resetBtn();
             _updateRunBadge(row, entity, run.status === 'success' ? 'ok' : 'fail', run);
             return;
@@ -794,7 +766,7 @@
       _updateRunBadge(row, entity, 'fail', { error_message: 'timeout — revisar Airflow' });
     }
 
-    async function _showAirflowErrorLogs(safeId, dagId, runId, entity, cartridge) {
+    export async function _showAirflowErrorLogs(safeId, dagId, runId, entity, cartridge) {
       const panel = document.getElementById(`elogs-${safeId}`);
       if (!panel) return;
       panel.style.display = '';
@@ -869,7 +841,7 @@
       }
     }
 
-    function _updateRunBadge(row, entity, state, data) {
+    export function _updateRunBadge(row, entity, state, data) {
       if (!row) return;
       const badgeEl = row.querySelector('.run-badge');
       if (!badgeEl) return;
@@ -893,7 +865,7 @@
 
     // ── Bronze preview ─────────────────────────────────────────────────────────
 
-    async function toggleEntityPreview(cartridge, entity, btn) {
+    export async function toggleEntityPreview(cartridge, entity, btn) {
       const safeId  = entity.replace(/\W/g,'_');
       const panel   = document.getElementById(`eprev-${safeId}`);
       if (!panel) return;
@@ -915,7 +887,7 @@
         const d = await r.json();
 
         // Last run stats
-        const run      = _runsByEntity[entity];
+        const run      = state._runsByEntity[entity];
         const statsHtml = run ? `
           <div class="preview-stats">
             <div class="preview-stat">Estado: <span>${run.status === 'success' ? '✓ success' : '✗ '+run.status}</span></div>
@@ -975,7 +947,7 @@
 
     // ── Entity logs panel ─────────────────────────────────────────────────────
 
-    async function toggleEntityLogs(cartridge, entity, btn) {
+    export async function toggleEntityLogs(cartridge, entity, btn) {
       const safeId = entity.replace(/\W/g,'_');
       const panel  = document.getElementById(`elogs-${safeId}`);
       if (!panel) return;
@@ -992,7 +964,7 @@
       panel.innerHTML = `<div class="et-preview-inner" style="color:var(--text3);font-size:11px">Cargando logs...</div>`;
 
       // Show error from pipeline_runs immediately (no extra fetch needed)
-      const run = _runsByEntity[entity];
+      const run = state._runsByEntity[entity];
       const errMsg = run?.error_message || '';
 
       // Then fetch full Airflow logs
@@ -1064,7 +1036,7 @@
       }
     }
 
-    function sendLogsToAssistant(prompt) {
+    export function sendLogsToAssistant(prompt) {
       const input = document.getElementById('ai-input');
       if (!input) return;
       input.value = prompt;
@@ -1076,22 +1048,22 @@
 
     // ── Step 3: Refinar ────────────────────────────────────────────────────────
 
-    async function renderRefine() {
+    export async function renderRefine() {
       try {
         const [dsRes, srcRes] = await Promise.all([
           fetch('/datasets'),
           fetch('/api/sources'),
         ]);
-        _allDatasets = (await dsRes.json()).datasets || [];
+        state._allDatasets = (await dsRes.json()).datasets || [];
         const sd = await srcRes.json();
-        _bronzeSources = (sd.sources || []).map(s => {
+        state._bronzeSources = (sd.sources || []).map(s => {
           const parts = s.split('/');
           return { source: s, cartridge: parts[1] || '', entity: parts[2] || '' };
         });
-      } catch(e) { _allDatasets = []; }
+      } catch(e) { state._allDatasets = []; }
 
-      const _cart = _currentCartridge?.id || '';
-      const _visDS = _cart ? _allDatasets.filter(d => d.cartridge === _cart) : _allDatasets;
+      const _cart = state._currentCartridge?.id || '';
+      const _visDS = _cart ? state._allDatasets.filter(d => d.cartridge === _cart) : state._allDatasets;
       const counts = {
         silver: _visDS.filter(d => d.layer === 'silver').length,
         master: _visDS.filter(d => d.layer === 'master').length,
@@ -1116,20 +1088,20 @@
 
           <!-- Tab bar (shrinks to content) -->
           <div class="tab-bar" style="flex-shrink:0;margin:0;display:flex;align-items:center">
-            <div class="tab ${_activeLayer==='bronze'?'active':''}" onclick="filterDS('bronze')">
+            <div class="tab ${state._activeLayer==='bronze'?'active':''}" onclick="filterDS('bronze')">
               BRONZE <span style="opacity:.6" id="bronze-count"></span>
             </div>
-            <div class="tab ${_activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">
+            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">
               SILVER <span style="opacity:.6">(${counts.silver})</span>
             </div>
-            <div class="tab ${_activeLayer==='master'?'active':''}" onclick="filterDS('master')">
+            <div class="tab ${state._activeLayer==='master'?'active':''}" onclick="filterDS('master')">
               MASTER <span style="opacity:.6">(${counts.master})</span>
             </div>
-            <div class="tab ${_activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">
+            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">
               GOLD <span style="opacity:.6">(${counts.gold})</span>
             </div>
             <button class="btn btn-amber btn-sm" id="btn-new-ds" onclick="toggleNewDS()"
-                    style="margin-left:auto;margin-right:8px;${_activeLayer==='bronze'?'display:none':''}">+ Nuevo</button>
+                    style="margin-left:auto;margin-right:8px;${state._activeLayer==='bronze'?'display:none':''}">+ Nuevo</button>
           </div>
 
           <!-- Workspace (fills remaining height) -->
@@ -1141,15 +1113,13 @@
 
         </div>
       `;
-      if (_activeLayer === 'bronze') loadBronzeTab();
-      else renderDSWorkspace(_activeLayer);
+      if (state._activeLayer === 'bronze') loadBronzeTab();
+      else renderDSWorkspace(state._activeLayer);
     }
 
-    let _selectedDS   = null;   // dataset object currently in editor
-    let _dsEditorDirty = false;
 
-    function filterDS(layer) {
-      _activeLayer = layer;
+    export function filterDS(layer) {
+      state._activeLayer = layer;
       document.querySelectorAll('#step-content .tab').forEach((t, i) => {
         t.classList.toggle('active', ['bronze','silver','master','gold'][i] === layer);
       });
@@ -1163,22 +1133,22 @@
       }
     }
 
-    function toggleNewDS() {
+    export function toggleNewDS() {
       selectDS(null);
       // Pre-select the active layer in the form dropdown
       const sel = document.getElementById('ds-layer');
-      if (sel && _activeLayer && _activeLayer !== 'bronze') sel.value = _activeLayer;
+      if (sel && state._activeLayer && state._activeLayer !== 'bronze') sel.value = state._activeLayer;
     }
 
     // ── Silver/Gold two-panel workspace ────────────────────────────────────────
 
-    function renderDSWorkspace(layer) {
+    export function renderDSWorkspace(layer) {
       const area = document.getElementById('ds-list-area');
       if (!area) return;
-      const _cart = _currentCartridge?.id || '';
-      const ds = _allDatasets.filter(d => d.layer === layer && (!_cart || d.cartridge === _cart));
+      const _cart = state._currentCartridge?.id || '';
+      const ds = state._allDatasets.filter(d => d.layer === layer && (!_cart || d.cartridge === _cart));
       const listHtml = ds.length ? ds.map(d => `
-        <div class="ds-row ds-list-item ${_selectedDS?.name===d.name?'ds-row-active':''}"
+        <div class="ds-row ds-list-item ${state._selectedDS?.name===d.name?'ds-row-active':''}"
              style="cursor:pointer;padding:8px 10px"
              onclick="selectDS(${escJsArg(d.name)})">
           <div style="min-width:0">
@@ -1210,16 +1180,16 @@
         </div>`;
 
       // Auto-select first or restore selection
-      if (_selectedDS && ds.find(d => d.name === _selectedDS.name)) {
-        selectDS(_selectedDS.name);
+      if (state._selectedDS && ds.find(d => d.name === state._selectedDS.name)) {
+        selectDS(state._selectedDS.name);
       } else if (ds.length) {
         selectDS(ds[0].name);
       }
     }
 
-    async function selectDS(name) {
-      _selectedDS = name ? (_allDatasets.find(d => d.name === name) || { name }) : null;
-      _dsEditorDirty = false;
+    export async function selectDS(name) {
+      state._selectedDS = name ? (state._allDatasets.find(d => d.name === name) || { name }) : null;
+      state._dsEditorDirty = false;
 
       // Highlight in list
       document.querySelectorAll('.ds-list-item').forEach(el => {
@@ -1229,20 +1199,20 @@
       const panel = document.getElementById('ds-editor-panel');
       if (!panel) return;
 
-      const cartridge = _currentCartridge?.id || '';
-      const entities  = (_currentCartridge?.entities || []).map(e => e.entity || e.id || '');
+      const cartridge = state._currentCartridge?.id || '';
+      const entities  = (state._currentCartridge?.entities || []).map(e => e.entity || e.id || '');
 
       if (!name) {
         // ── New dataset form ──────────────────────────────────────────────────
         panel.innerHTML = _dsEditorHtml({
-          name: '', layer: _activeLayer, cartridge, entity: '', description: '', sql: '', isNew: true
+          name: '', layer: state._activeLayer, cartridge, entity: '', description: '', sql: '', isNew: true
         });
         return;
       }
 
       panel.innerHTML = `<div style="color:var(--text3);padding:20px">Cargando...</div>`;
 
-      let sqlDef = '', description = '', sources = [], layer = _activeLayer;
+      let sqlDef = '', description = '', sources = [], layer = state._activeLayer;
       try {
         const r = await fetch(`/api/datasets/${encodeURIComponent(name)}/detail`);
         const d = await r.json();
@@ -1250,10 +1220,10 @@
         sqlDef      = detail.sql_def || '';
         description = detail.description || '';
         sources     = detail.sources || [];
-        layer       = detail.layer || _activeLayer;
+        layer       = detail.layer || state._activeLayer;
       } catch(e) {}
 
-      const meta = _allDatasets.find(d => d.name === name) || {};
+      const meta = state._allDatasets.find(d => d.name === name) || {};
       const entity = (sources[0] || '').split('/')[2] || meta.source_entity || '';
 
       panel.innerHTML = _dsEditorHtml({
@@ -1262,9 +1232,9 @@
       });
     }
 
-    function _dsEditorHtml({ name, layer, cartridge, entity, description, sql, isNew,
+    export function _dsEditorHtml({ name, layer, cartridge, entity, description, sql, isNew,
                               rowCount, lastRefresh }) {
-      const bronzeSources = _bronzeSources.filter(s => !cartridge || s.cartridge === cartridge);
+      const bronzeSources = state._bronzeSources.filter(s => !cartridge || s.cartridge === cartridge);
       const entityOpts = bronzeSources.map(s =>
         `<option value="${esc(s.entity)}" ${s.entity===entity?'selected':''}>${esc(s.entity)}</option>`
       ).join('');
@@ -1291,7 +1261,7 @@
                 style="font-size:13px;font-family:var(--font-mono);background:transparent;
                        border:none;border-bottom:1px solid var(--border);color:var(--green);
                        width:100%;outline:none;padding-bottom:4px"
-                oninput="_dsEditorDirty=true">
+                oninput="state._dsEditorDirty=true">
             </div>
             <span style="font-size:9px;letter-spacing:1px;color:var(--amber);border:1px solid var(--amber);
                          padding:2px 8px;border-radius:2px;font-family:var(--font-mono)">
@@ -1304,7 +1274,7 @@
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <div style="display:flex;gap:6px;align-items:center;font-size:10px;color:var(--text3)">
               Entidad:
-              <select id="ds-ed-entity" onchange="_dsEditorDirty=true;_onEntityChange()"
+              <select id="ds-ed-entity" onchange="state._dsEditorDirty=true;_onEntityChange()"
                 style="background:var(--bg2);border:1px solid var(--border);color:var(--cyan);
                        font-size:10px;padding:3px 6px;border-radius:2px;max-width:160px">
                 <option value="">— selecciona —</option>
@@ -1317,12 +1287,12 @@
               style="display:${entity && !bronzeSources.find(s=>s.entity===entity)?'block':'none'};
                      font-size:10px;background:var(--bg2);border:1px solid var(--border);
                      color:var(--cyan);padding:3px 6px;border-radius:2px;outline:none;width:120px"
-              oninput="_dsEditorDirty=true">
+              oninput="state._dsEditorDirty=true">
             <input id="ds-ed-desc" type="text" value="${esc(description)}"
               placeholder="descripción (opcional)"
               style="flex:1;font-size:10px;background:transparent;border:none;border-bottom:1px solid var(--border);
                      color:var(--text2);outline:none;padding-bottom:2px;min-width:0"
-              oninput="_dsEditorDirty=true">
+              oninput="state._dsEditorDirty=true">
           </div>
 
           ${statsHtml}
@@ -1340,7 +1310,7 @@
                    color:var(--cyan);font-family:var(--font-mono);font-size:11px;
                    padding:10px;resize:vertical;border-radius:2px;outline:none"
             onkeydown="if(event.ctrlKey&&event.shiftKey&&event.key==='Enter'){event.preventDefault();_openRunnerFromActiveTextarea();}else if(event.ctrlKey&&event.key==='Enter'){previewDS();}"
-            oninput="_dsEditorDirty=true"
+            oninput="state._dsEditorDirty=true"
             placeholder="SELECT ... FROM read_parquet('s3://lakehouse/raw/...') ..."
           >${esc(sql)}</textarea>
 
@@ -1371,7 +1341,7 @@
         </div>`;
     }
 
-    function _templateButtons(layer) {
+    export function _templateButtons(layer) {
       if (layer === 'gold') {
         return `<span style="font-size:9px;color:var(--text3)">Plantillas:</span>
           <button class="btn btn-sm" onclick="applyTemplate('gold_agg')">∑ Agregación</button>
@@ -1383,20 +1353,20 @@
         <button class="btn btn-sm" onclick="applyTemplate('incremental')">⊕ Incremental — consolidado</button>`;
     }
 
-    function _refreshTemplateButtons() {
+    export function _refreshTemplateButtons() {
       const layer = document.getElementById('ds-ed-layer')?.value || 'silver';
       const bar   = document.getElementById('ds-tpl-bar');
       if (bar) bar.innerHTML = _templateButtons(layer);
     }
 
-    function _onEntityChange() {
+    export function _onEntityChange() {
       const sel    = document.getElementById('ds-ed-entity');
       const custom = document.getElementById('ds-ed-entity-custom');
       if (!sel || !custom) return;
       custom.style.display = sel.value === '__custom__' ? 'block' : 'none';
     }
 
-    function _currentEditorEntity() {
+    export function _currentEditorEntity() {
       const sel = document.getElementById('ds-ed-entity');
       if (!sel) return '';
       if (sel.value === '__custom__')
@@ -1404,9 +1374,9 @@
       return sel.value;
     }
 
-    function applyTemplate(type) {
+    export function applyTemplate(type) {
       const entity    = _currentEditorEntity();
-      const cartridge = _currentCartridge?.id || 'replicon';
+      const cartridge = state._currentCartridge?.id || 'replicon';
       const base      = `s3://{bucket}/raw/${cartridge}/${entity || '{ENTITY}'}`;
       let sql = '';
       if (type === 'full_latest') {
@@ -1455,10 +1425,10 @@ SELECT
 FROM silver_${entity || 'entity'}`;
       }
       const ta = document.getElementById('ds-ed-sql');
-      if (ta && sql) { ta.value = sql; _dsEditorDirty = true; }
+      if (ta && sql) { ta.value = sql; state._dsEditorDirty = true; }
     }
 
-    async function previewDS() {
+    export async function previewDS() {
       const sql    = document.getElementById('ds-ed-sql')?.value.trim();
       const status = document.getElementById('ds-ed-status');
       const area   = document.getElementById('ds-preview-area');
@@ -1493,7 +1463,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function _renderQueryTable(schema, rows, maxHeight = 300) {
+    export function _renderQueryTable(schema, rows, maxHeight = 300) {
       if (!rows.length) return `<div style="color:var(--text3);font-style:italic;padding:8px 0">Sin resultados</div>`;
       const cols = schema.length ? schema.map(s => s.name || s[0]) : Object.keys(rows[0]);
       const thead = `<tr>${cols.map(c => `<th style="padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap;color:var(--text3);font-weight:normal;text-align:left">${esc(c)}</th>`).join('')}</tr>`;
@@ -1507,14 +1477,14 @@ FROM silver_${entity || 'entity'}`;
         </table></div>`;
     }
 
-    async function saveDS() {
+    export async function saveDS() {
       const name    = document.getElementById('ds-ed-name')?.value.trim();
       const layer   = document.getElementById('ds-ed-layer')?.value || 'silver';
       const entity  = _currentEditorEntity();
       const desc    = document.getElementById('ds-ed-desc')?.value.trim() || '';
       const sql     = document.getElementById('ds-ed-sql')?.value.trim() || '';
       const status  = document.getElementById('ds-ed-status');
-      const cart    = _currentCartridge?.id || '';
+      const cart    = state._currentCartridge?.id || '';
 
       if (!name) { if (status) status.innerHTML = '<span style="color:#ff2d55">Nombre requerido</span>'; return; }
       if (!sql)  { if (status) status.innerHTML = '<span style="color:#ff2d55">SQL requerido</span>';    return; }
@@ -1528,11 +1498,11 @@ FROM silver_${entity || 'entity'}`;
         });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         if (status) status.innerHTML = '<span style="color:var(--green)">✓ guardado</span>';
-        _dsEditorDirty = false;
-        _selectedDS = { name };
+        state._dsEditorDirty = false;
+        state._selectedDS = { name };
         // Refresh dataset list
         const rd = await fetch('/datasets');
-        _allDatasets = (await rd.json()).datasets || [];
+        state._allDatasets = (await rd.json()).datasets || [];
         renderDSWorkspace(layer);
         selectDS(name);
         return name;   // for saveThenMaterialize
@@ -1542,12 +1512,12 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function saveThenMaterialize() {
+    export async function saveThenMaterialize() {
       const name = await saveDS();   // saveDS now returns the saved name
       if (name) await materializeDS(name);
     }
 
-    async function materializeDS(name) {
+    export async function materializeDS(name) {
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ materializando...';
       try {
@@ -1557,8 +1527,8 @@ FROM silver_${entity || 'entity'}`;
         if (status) status.innerHTML = `<span style="color:var(--green)">✓ ${rows != null ? Number(rows).toLocaleString('es')+' filas' : 'ok'}</span>`;
         // Refresh list stats
         const rd = await fetch('/datasets');
-        _allDatasets = (await rd.json()).datasets || [];
-        renderDSWorkspace(_activeLayer);
+        state._allDatasets = (await rd.json()).datasets || [];
+        renderDSWorkspace(state._activeLayer);
         selectDS(name);
         // Reload dataset data preview
         await loadDSDataPreview(name);
@@ -1567,7 +1537,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function deleteDS(name) {
+    export async function deleteDS(name) {
       if (!confirm(`¿Eliminar el dataset "${name}"?\n\nEsto borra el registro en Postgres, el Parquet en MinIO (silver/master) y la tabla en Postgres (master/gold). Esta acción no se puede deshacer.`)) return;
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ eliminando...';
@@ -1582,8 +1552,8 @@ FROM silver_${entity || 'entity'}`;
           return;
         }
         // Remove from local cache and re-render
-        _allDatasets = _allDatasets.filter(d => d.name !== name);
-        renderDSWorkspace(_activeLayer);
+        state._allDatasets = state._allDatasets.filter(d => d.name !== name);
+        renderDSWorkspace(state._activeLayer);
         const panel = document.getElementById('ds-workspace-panel');
         if (panel) panel.innerHTML = `<div style="color:var(--text3);padding:20px;font-size:12px">Dataset <strong>${esc(name)}</strong> eliminado.</div>`;
       } catch(e) {
@@ -1591,7 +1561,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function loadDSDataPreview(name) {
+    export async function loadDSDataPreview(name) {
       const area = document.getElementById('ds-preview-area');
       if (!area) return;
       try {
@@ -1606,39 +1576,39 @@ FROM silver_${entity || 'entity'}`;
       } catch(e) {}
     }
 
-    function sendDSToAI() {
+    export function sendDSToAI() {
       const name   = document.getElementById('ds-ed-name')?.value.trim() || '';
       const entity = _currentEditorEntity();
       const layer  = document.getElementById('ds-ed-layer')?.value || 'silver';
       const sql    = document.getElementById('ds-ed-sql')?.value.trim() || '';
-      const cart   = _currentCartridge?.id || '';
+      const cart   = state._currentCartridge?.id || '';
       const msg    = `Estoy diseñando el dataset "${name||'nuevo'}" (${layer.toUpperCase()}) `
         + `del cartucho "${cart}", entidad fuente: "${entity}".\n`
         + (sql ? `SQL actual:\n\`\`\`sql\n${sql}\n\`\`\`\n` : '')
-        + `¿Puedes revisar/mejorar el SQL? Path Bronze: s3://${S3_BUCKET}/raw/${cart}/${entity}/load_date=*/data.parquet`;
+        + `¿Puedes revisar/mejorar el SQL? Path Bronze: s3://${state.S3_BUCKET}/raw/${cart}/${entity}/load_date=*/data.parquet`;
       document.getElementById('ai-input').value = msg;
       aiSend();
     }
 
     // ── Bronze tab ─────────────────────────────────────────────────────────────
-    async function loadBronzeTab() {
+    export async function loadBronzeTab() {
       const area = document.getElementById('ds-list-area');
       if (!area) return;
 
-      let sources = _bronzeSources;
+      let sources = state._bronzeSources;
       if (!sources.length) {
         try {
           const r = await fetch('/api/sources');
           const d = await r.json();
-          _bronzeSources = (d.sources || []).map(s => {
+          state._bronzeSources = (d.sources || []).map(s => {
             const parts = s.split('/');           // raw / cartridge / entity
             return { source: s, cartridge: parts[1] || '', entity: parts[2] || '' };
           });
-          sources = _bronzeSources;
+          sources = state._bronzeSources;
         } catch(e) { sources = []; }
       }
 
-      const cartridge = _currentCartridge?.id || '';
+      const cartridge = state._currentCartridge?.id || '';
       const filtered  = cartridge ? sources.filter(s => s.cartridge === cartridge) : sources;
 
       const count = document.getElementById('bronze-count');
@@ -1676,7 +1646,7 @@ FROM silver_${entity || 'entity'}`;
                        resize:none;border-radius:2px;outline:none"
                 placeholder="-- Haz click en una entidad de la izquierda para auto-llenar el query&#10;-- o escribe directamente"
                 onkeydown="if(event.ctrlKey&&event.key==='Enter'){runBronzeQuery();}"
-              >${esc(_bronzeQuery)}</textarea>
+              >${esc(state._bronzeQuery)}</textarea>
               <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
                 <button class="btn btn-amber" onclick="runBronzeQuery()">▶ Ejecutar</button>
                 <span style="font-size:10px;color:var(--text3)">Ctrl+Enter</span>
@@ -1698,18 +1668,18 @@ FROM silver_${entity || 'entity'}`;
       `;
     }
 
-    function bronzeSelectSource(source) {
+    export function bronzeSelectSource(source) {
       const pattern = `s3://{bucket}/${source}/load_date=*/data.parquet`;
       const sql = `SELECT *\nFROM read_parquet('${pattern}',\n  hive_partitioning=true, union_by_name=true)\nLIMIT 100`;
       const ta = document.getElementById('bronze-sql');
-      if (ta) { ta.value = sql; _bronzeQuery = sql; }
+      if (ta) { ta.value = sql; state._bronzeQuery = sql; }
     }
 
-    async function runBronzeQuery() {
+    export async function runBronzeQuery() {
       const ta  = document.getElementById('bronze-sql');
       const sql = ta?.value.trim();
       if (!sql) return;
-      _bronzeQuery = sql;
+      state._bronzeQuery = sql;
       const statusEl  = document.getElementById('bronze-status');
       const resultsEl = document.getElementById('bronze-results');
       if (statusEl)  statusEl.textContent = '⟳ ejecutando...';
@@ -1742,18 +1712,18 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function askSqlHelp() {
+    export function askSqlHelp() {
       const cartridge = document.getElementById('ds-cart')?.value.trim() || '';
       const entity    = document.getElementById('ds-entity')?.value.trim() || '';
       const layer     = document.getElementById('ds-layer')?.value || 'silver';
       const msg = `Genera el SQL DuckDB para un dataset ${layer.toUpperCase()} del cartucho "${cartridge}", entidad "${entity}". `
-        + `El path Bronze es s3://${S3_BUCKET}/raw/${cartridge}/${entity}/load_date={latest_date}/*.parquet. `
+        + `El path Bronze es s3://${state.S3_BUCKET}/raw/${cartridge}/${entity}/load_date={latest_date}/*.parquet. `
         + `Incluye las columnas más relevantes y limpieza básica de datos.`;
       document.getElementById('ai-input').value = msg;
       aiSend();
     }
 
-    function createDatasetViaAI() {
+    export function createDatasetViaAI() {
       const name   = document.getElementById('ds-name')?.value.trim() || '';
       const layer  = document.getElementById('ds-layer')?.value || 'silver';
       const cart   = document.getElementById('ds-cart')?.value.trim() || '';
@@ -1775,7 +1745,7 @@ FROM silver_${entity || 'entity'}`;
       document.getElementById('new-ds-msg').innerHTML = '<span style="color:var(--cyan)">⟳ Enviado al asistente →</span>';
     }
 
-    async function refreshDS(name) {
+    export async function refreshDS(name) {
       try {
         await fetch(`/datasets/${name}/refresh`, {method: 'POST'});
         renderRefine();
@@ -1784,7 +1754,7 @@ FROM silver_${entity || 'entity'}`;
 
     // ── Step 4: Analytics ──────────────────────────────────────────────────────
 
-    function renderAnalytics() {
+    export function renderAnalytics() {
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -1858,7 +1828,7 @@ FROM silver_${entity || 'entity'}`;
       loadAppsInStep5();
     }
 
-    async function loadAppsInStep5() {
+    export async function loadAppsInStep5() {
       const el = document.getElementById('apps-step5-list');
       if (!el) return;
       try {
@@ -1899,7 +1869,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function deleteAnalyticApp(name, title) {
+    export async function deleteAnalyticApp(name, title) {
       if (!confirm(`¿Eliminar la aplicación "${title}"?\n\nEsto no se puede deshacer.`)) return;
       try {
         const r = await fetch('/api/apps/' + encodeURIComponent(name), {method: 'DELETE'});
@@ -1914,21 +1884,17 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function askSuperset(msg) {
+    export function askSuperset(msg) {
       document.getElementById('ai-input').value = msg;
       aiSend();
     }
 
     // ── Step 6: IA Semántica / Data Catalog ───────────────────────────────────
 
-    let _catData    = null;   // {datasets:{}, relationships:[]}
-    let _catTab     = 'cols'; // 'cols' | 'rels'
-    let _catFilter  = { layer:'', cartridge:'', search:'' };
-    let _catEditing = null;   // {dataset, column_name} being edited inline
 
     // ── Step 7: RAG ───────────────────────────────────────────────────────────
 
-    async function renderRAG() {
+    export async function renderRAG() {
       const el = document.getElementById('step-content');
       el.innerHTML = `
         <div class="step-title">
@@ -1975,7 +1941,7 @@ FROM silver_${entity || 'entity'}`;
       await ragLoadSources();
     }
 
-    async function ragLoadSources() {
+    export async function ragLoadSources() {
       const list = document.getElementById('rag-sources-list');
       try {
         const r = await fetch('/api/rag/sources');
@@ -1998,13 +1964,13 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function ragDeleteSource(id) {
+    export async function ragDeleteSource(id) {
       if (!confirm('¿Borrar esta fuente del RAG?')) return;
       await fetch(`/api/rag/sources/${id}`, {method: 'DELETE'});
       await ragLoadSources();
     }
 
-    async function ragIngest() {
+    export async function ragIngest() {
       const name = document.getElementById('rag-name').value.trim();
       const desc = document.getElementById('rag-desc').value.trim();
       const text = document.getElementById('rag-text').value;
@@ -2042,7 +2008,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function fileToBase64(file) {
+    export function fileToBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
@@ -2055,7 +2021,7 @@ FROM silver_${entity || 'entity'}`;
       });
     }
 
-    async function ragAsk() {
+    export async function ragAsk() {
       const q  = document.getElementById('rag-query').value.trim();
       const ul = document.getElementById('rag-results');
       if (!q) return;
@@ -2094,7 +2060,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function ragSearch() {
+    export async function ragSearch() {
       const q  = document.getElementById('rag-query').value.trim();
       const ul = document.getElementById('rag-results');
       if (!q) return;
@@ -2120,7 +2086,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function renderSemantic() {
+    export async function renderSemantic() {
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -2139,8 +2105,8 @@ FROM silver_${entity || 'entity'}`;
             <input id="cat-search" type="text" placeholder="Buscar dataset o columna…"
               style="flex:1;min-width:160px;background:var(--bg2);border:1px solid var(--border);
                      color:var(--text1);padding:4px 8px;font-size:11px;border-radius:3px"
-              oninput="_catFilter.search=this.value;catRender()">
-            <select id="cat-layer" onchange="_catFilter.layer=this.value;catReload()"
+              oninput="state._catFilter.search=this.value;catRender()">
+            <select id="cat-layer" onchange="state._catFilter.layer=this.value;catReload()"
               style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);
                      padding:4px 6px;font-size:10px;border-radius:3px">
               <option value="">Todas las capas</option>
@@ -2253,16 +2219,16 @@ FROM silver_${entity || 'entity'}`;
       catReload();
     }
 
-    async function catReload() {
-      const layer = _catFilter.layer;
+    export async function catReload() {
+      const layer = state._catFilter.layer;
       const qs    = layer ? `?layer=${layer}` : '';
       document.getElementById('cat-status').textContent = 'Cargando…';
       try {
         const r   = await fetch(`/api/catalog${qs}`);
-        _catData  = await r.json();
-        const nDs = Object.keys(_catData.datasets || {}).length;
-        const nCo = Object.values(_catData.datasets || {}).reduce((a,d)=>a+d.columns.length,0);
-        const nRe = (_catData.relationships || []).length;
+        state._catData  = await r.json();
+        const nDs = Object.keys(state._catData.datasets || {}).length;
+        const nCo = Object.values(state._catData.datasets || {}).reduce((a,d)=>a+d.columns.length,0);
+        const nRe = (state._catData.relationships || []).length;
         document.getElementById('cat-status').textContent =
           `${nDs} datasets · ${nCo} columnas · ${nRe} relaciones`;
         catRender();
@@ -2271,8 +2237,8 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function catSwitchTab(tab) {
-      _catTab = tab;
+    export function catSwitchTab(tab) {
+      state._catTab = tab;
       document.getElementById('cat-tab-cols').classList.toggle('active', tab==='cols');
       document.getElementById('cat-tab-rels').classList.toggle('active', tab==='rels');
       document.getElementById('cat-cols-panel').style.display = tab==='cols' ? '' : 'none';
@@ -2280,18 +2246,18 @@ FROM silver_${entity || 'entity'}`;
       catRender();
     }
 
-    function catRender() {
-      if (!_catData) return;
-      if (_catTab === 'cols') catRenderCols();
+    export function catRender() {
+      if (!state._catData) return;
+      if (state._catTab === 'cols') catRenderCols();
       else catRenderRels();
     }
 
-    function catRenderCols() {
-      const search = (_catFilter.search || '').toLowerCase();
+    export function catRenderCols() {
+      const search = (state._catFilter.search || '').toLowerCase();
       const wrap   = document.getElementById('cat-table-wrap');
       if (!wrap) return;
 
-      const datasets = _catData.datasets || {};
+      const datasets = state._catData.datasets || {};
       let rows = '';
       let totalVisible = 0;
 
@@ -2315,7 +2281,7 @@ FROM silver_${entity || 'entity'}`;
         totalVisible += cols.length;
         for (const col of cols) {
           const editId = `${dsName}||${col.name}`;
-          const isEditing = _catEditing && _catEditing.dataset===dsName && _catEditing.col===col.name;
+          const isEditing = state._catEditing && state._catEditing.dataset===dsName && state._catEditing.col===col.name;
           const tagsHtml  = (col.tags||[]).map(t=>`<span class="cat-tag">${esc(t)}</span>`).join('');
 
           rows += `<tr id="cat-row-${CSS.escape(editId)}">
@@ -2370,10 +2336,10 @@ FROM silver_${entity || 'entity'}`;
         </div>`;
     }
 
-    function catRenderRels() {
+    export function catRenderRels() {
       const wrap = document.getElementById('cat-rels-wrap');
       if (!wrap) return;
-      const rels = _catData?.relationships || [];
+      const rels = state._catData?.relationships || [];
       if (!rels.length) {
         wrap.innerHTML = `<div class="empty-card" style="padding:20px">Sin relaciones registradas</div>`;
         return;
@@ -2401,28 +2367,28 @@ FROM silver_${entity || 'entity'}`;
         </div>`;
     }
 
-    function catStartEdit(dataset, col) {
-      _catEditing = { dataset, col };
+    export function catStartEdit(dataset, col) {
+      state._catEditing = { dataset, col };
       catRenderCols();
       const id  = `${dataset}||${col}`;
       const inp = document.getElementById(`cat-desc-inp-${CSS.escape(id)}`);
       if (inp) { inp.focus(); inp.select(); }
     }
 
-    function catCancelEdit() {
-      _catEditing = null;
+    export function catCancelEdit() {
+      state._catEditing = null;
       catRenderCols();
     }
 
-    async function catSaveDesc(dataset, col) {
+    export async function catSaveDesc(dataset, col) {
       const id  = `${dataset}||${col}`;
       const inp = document.getElementById(`cat-desc-inp-${CSS.escape(id)}`);
       if (!inp) return;
       const desc = inp.value.trim();
-      _catEditing = null;
+      state._catEditing = null;
 
       // Optimistic update
-      const ds = _catData?.datasets?.[dataset];
+      const ds = state._catData?.datasets?.[dataset];
       const c  = ds?.columns?.find(x => x.name === col);
       if (c) c.description = desc;
       catRenderCols();
@@ -2433,8 +2399,8 @@ FROM silver_${entity || 'entity'}`;
       });
     }
 
-    async function catToggleFlag(dataset, col, flag, value) {
-      const ds = _catData?.datasets?.[dataset];
+    export async function catToggleFlag(dataset, col, flag, value) {
+      const ds = state._catData?.datasets?.[dataset];
       const c  = ds?.columns?.find(x => x.name === col);
       if (c) c[flag] = value;
       catRenderCols();
@@ -2445,10 +2411,10 @@ FROM silver_${entity || 'entity'}`;
       });
     }
 
-    async function catAddTagPrompt(dataset, col) {
+    export async function catAddTagPrompt(dataset, col) {
       const tag = prompt('Agregar tag (ej: pnl, metrica, join_key, tiempo):');
       if (!tag) return;
-      const ds = _catData?.datasets?.[dataset];
+      const ds = state._catData?.datasets?.[dataset];
       const c  = ds?.columns?.find(x => x.name === col);
       if (c) { c.tags = [...new Set([...(c.tags||[]), tag.trim()])]; }
       catRenderCols();
@@ -2459,14 +2425,14 @@ FROM silver_${entity || 'entity'}`;
       });
     }
 
-    function catAddRelModal() {
+    export function catAddRelModal() {
       ['rel-from-ds','rel-from-col','rel-to-ds','rel-to-col','rel-desc','rel-transform']
         .forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
       document.getElementById('cat-rel-modal').style.display = 'flex';
       document.getElementById('rel-from-ds').focus();
     }
 
-    async function catSaveRel() {
+    export async function catSaveRel() {
       const get = id => (document.getElementById(id)?.value||'').trim();
       const body = {
         from_dataset: get('rel-from-ds'), from_column: get('rel-from-col'),
@@ -2486,7 +2452,7 @@ FROM silver_${entity || 'entity'}`;
       catSwitchTab('rels');
     }
 
-    function askSemanticHelp() {
+    export function askSemanticHelp() {
       document.getElementById('ai-input').value =
         'Revisa el data catalog con get_data_catalog y enriquece las descripciones de las columnas más importantes usando upsert_catalog_entries. Enfócate en columnas sin descripción de los datasets gold y silver más usados en análisis.';
       aiSend();
@@ -2494,15 +2460,14 @@ FROM silver_${entity || 'entity'}`;
 
     // ── AI Chat Persistence ────────────────────────────────────────────────────
 
-    const _CHAT_TTL_MS = 8 * 60 * 60 * 1000;  // 8 hours
 
-    function _chatKey(cartridgeId, step) {
+    export function _chatKey(cartridgeId, step) {
       return `studio_chat_${cartridgeId}_step${step}`;
     }
 
-    function _saveChatHistory() {
-      const id   = _currentCartridge?.id;
-      const step = currentStep;
+    export function _saveChatHistory() {
+      const id   = state._currentCartridge?.id;
+      const step = state.currentStep;
       if (!id || !step) return;
       // Collect rendered messages from DOM (skip hints/typing)
       const msgs = [];
@@ -2513,26 +2478,26 @@ FROM silver_${entity || 'entity'}`;
       });
       try {
         localStorage.setItem(_chatKey(id, step), JSON.stringify({
-          messages: aiHistory,
+          messages: state.aiHistory,
           rendered: msgs,
           ts: Date.now(),
         }));
       } catch(e) { /* storage full — silently skip */ }
     }
 
-    function _restoreChatHistory() {
-      const id   = _currentCartridge?.id;
-      const step = currentStep;
+    export function _restoreChatHistory() {
+      const id   = state._currentCartridge?.id;
+      const step = state.currentStep;
       if (!id || !step) return false;
       try {
         const raw = localStorage.getItem(_chatKey(id, step));
         if (!raw) return false;
         const saved = JSON.parse(raw);
-        if (!saved || (Date.now() - saved.ts) > _CHAT_TTL_MS) {
+        if (!saved || (Date.now() - saved.ts) > state._CHAT_TTL_MS) {
           localStorage.removeItem(_chatKey(id, step));
           return false;
         }
-        aiHistory = saved.messages || [];
+        state.aiHistory = saved.messages || [];
         const chat = document.getElementById('ai-chat');
         (saved.rendered || []).forEach(({ role, html }) => {
           const div  = document.createElement('div');
@@ -2554,19 +2519,19 @@ FROM silver_${entity || 'entity'}`;
       } catch(e) { return false; }
     }
 
-    function aiClearHistory() {
-      const id   = _currentCartridge?.id;
-      const step = currentStep;
-      aiHistory = [];
+    export function aiClearHistory() {
+      const id   = state._currentCartridge?.id;
+      const step = state.currentStep;
+      state.aiHistory = [];
       if (id && step) localStorage.removeItem(_chatKey(id, step));
       const chat = document.getElementById('ai-chat');
-      const hint = STEP_HINTS[step] || '';
+      const hint = state.STEP_HINTS[step] || '';
       chat.innerHTML = hint ? `<div class="ai-hint">${esc(hint)}</div>` : '';
     }
 
     // ── AI Assistant ───────────────────────────────────────────────────────────
 
-    function aiMakeTrail() {
+    export function aiMakeTrail() {
       const chat = document.getElementById('ai-chat');
       const div  = document.createElement('div');
       div.className = 'ai-trail';
@@ -2579,7 +2544,7 @@ FROM silver_${entity || 'entity'}`;
       return { container: div, thinking: tk };
     }
 
-    function aiTrailUse(trail, evt) {
+    export function aiTrailUse(trail, evt) {
       if (trail.thinking) { trail.thinking.remove(); trail.thinking = null; }
       const row = document.createElement('div');
       row.className = 'trail-row use';
@@ -2590,7 +2555,7 @@ FROM silver_${entity || 'entity'}`;
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function aiTrailResult(trail, evt) {
+    export function aiTrailResult(trail, evt) {
       const row = document.createElement('div');
       row.className = 'trail-row result';
       row.innerHTML = `<span class="trail-arrow">↳</span><span class="summary">${esc(evt.summary || 'ok')}</span>`;
@@ -2599,7 +2564,7 @@ FROM silver_${entity || 'entity'}`;
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function aiTrailDone(trail, totalSteps) {
+    export function aiTrailDone(trail, totalSteps) {
       if (totalSteps === 0) {
         trail.container.remove();
         return;
@@ -2618,7 +2583,7 @@ FROM silver_${entity || 'entity'}`;
       trail.container.parentNode.insertBefore(tog, trail.container.nextSibling);
     }
 
-    function aiFormatArgs(args) {
+    export function aiFormatArgs(args) {
       if (!args || typeof args !== 'object') return '';
       const keys = Object.keys(args);
       if (!keys.length) return '';
@@ -2633,14 +2598,14 @@ FROM silver_${entity || 'entity'}`;
       return parts.join(', ') + more;
     }
 
-    async function aiSend() {
-      if (aiBusy) return;
+    export async function aiSend() {
+      if (state.aiBusy) return;
       const input = document.getElementById('ai-input');
       const msg   = input.value.trim();
       if (!msg) return;
       input.value = '';
       aiAutogrow(input);
-      aiBusy = true;
+      state.aiBusy = true;
 
       aiAppend('user', msg);
       const trail = aiMakeTrail();
@@ -2652,9 +2617,9 @@ FROM silver_${entity || 'entity'}`;
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             message:      msg,
-            history:      aiHistory,
-            step:         currentStep,
-            cartridge_id: _currentCartridge?.id || null,
+            history:      state.aiHistory,
+            step:         state.currentStep,
+            cartridge_id: state._currentCartridge?.id || null,
           }),
         });
 
@@ -2672,7 +2637,7 @@ FROM silver_${entity || 'entity'}`;
             else if (text) errMsg = text.slice(0, 200);
           }
           aiAppend('assistant', `⚠ ${errMsg}`);
-          aiBusy = false;
+          state.aiBusy = false;
           return;
         }
 
@@ -2716,16 +2681,16 @@ FROM silver_${entity || 'entity'}`;
 
         if (errored) {
           aiAppend('assistant', `⚠ ${errored}`);
-          aiBusy = false;
+          state.aiBusy = false;
           return;
         }
 
-        aiHistory = finalMessages || aiHistory;
+        state.aiHistory = finalMessages || state.aiHistory;
         aiAppend('assistant', finalReply || '(sin respuesta)');
         _saveChatHistory();
-        if (_currentCartridge?.id) {
-          const cr = await fetch(`/studio/cartridges/${encodeURIComponent(_currentCartridge.id)}`);
-          if (cr.ok) { _currentCartridge = await cr.json(); _updateCartridgeInfo(); }
+        if (state._currentCartridge?.id) {
+          const cr = await fetch(`/studio/cartridges/${encodeURIComponent(state._currentCartridge.id)}`);
+          if (cr.ok) { state._currentCartridge = await cr.json(); _updateCartridgeInfo(); }
         }
         finalUrls.forEach(({ url }) => window.open(url, '_blank'));
       } catch(e) {
@@ -2733,19 +2698,19 @@ FROM silver_${entity || 'entity'}`;
         aiAppend('assistant', `⚠ Sin conexión con el servidor — verifica que los servicios estén corriendo.`);
       }
 
-      aiBusy = false;
+      state.aiBusy = false;
     }
 
-    function aiKey(e) {
+    export function aiKey(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); }
     }
 
-    function aiAutogrow(el) {
+    export function aiAutogrow(el) {
       el.style.height = 'auto';
       el.style.height = Math.min(el.scrollHeight, 200) + 'px';
     }
 
-    function aiAppend(role, text) {
+    export function aiAppend(role, text) {
       const chat = document.getElementById('ai-chat');
       const div  = document.createElement('div');
       div.className = `ai-msg ai-${role}`;
@@ -2758,7 +2723,7 @@ FROM silver_${entity || 'entity'}`;
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function aiAppendTyping() {
+    export function aiAppendTyping() {
       const chat = document.getElementById('ai-chat');
       const div  = document.createElement('div');
       div.className = 'ai-typing';
@@ -2768,7 +2733,7 @@ FROM silver_${entity || 'entity'}`;
       return div;
     }
 
-    function renderAiText(text) {
+    export function renderAiText(text) {
       return esc(text)
         .replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre>$1</pre>')
         .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -2776,7 +2741,7 @@ FROM silver_${entity || 'entity'}`;
         .replace(/\n/g, '<br>');
     }
 
-    function sanitizeAiHtml(html) {
+    export function sanitizeAiHtml(html) {
       const tpl = document.createElement('template');
       tpl.innerHTML = String(html || '');
       const allowed = new Set(['BR', 'CODE', 'PRE', 'STRONG']);
@@ -2796,30 +2761,26 @@ FROM silver_${entity || 'entity'}`;
 
     // ── Utils ──────────────────────────────────────────────────────────────────
 
-    function esc(s) {
+    export function esc(s) {
       return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
-    function escJsArg(s) {
+    export function escJsArg(s) {
       return JSON.stringify(String(s || '')).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
     }
 
-    function fmt(iso) {
+    export function fmt(iso) {
       return iso ? iso.replace('T',' ').substring(0, 16) : '—';
     }
 
     // ── Step 2: DAG Editor ────────────────────────────────────────────────────
 
-    let _selectedDag  = null;
-    let _dagsCache    = [];
-    let _deployedCode = '';
-    let _tplOpen      = false;
 
-    function _dagCartridge() {
-      return _currentCartridge?.id || '';
+    export function _dagCartridge() {
+      return state._currentCartridge?.id || '';
     }
 
-    function renderDagEditor() {
+    export function renderDagEditor() {
       const el = document.getElementById('step-content');
       el.style.padding = '0';   // remove default padding so editor fills edge-to-edge
       el.innerHTML = `
@@ -2873,7 +2834,7 @@ FROM silver_${entity || 'entity'}`;
                        style="width:5px;flex-shrink:0;cursor:col-resize;background:var(--border);
                               transition:background .15s;position:relative;z-index:10"
                        onmouseenter="this.style.background='var(--amber)'"
-                       onmouseleave="this.style.background=_dagResizing?'var(--amber)':'var(--border)'"
+                       onmouseleave="this.style.background=state._dagResizing?'var(--amber)':'var(--border)'"
                        onmousedown="dagResizeStart(event)">
                     <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
                                 color:var(--text3);font-size:9px;letter-spacing:0;user-select:none">⋮</div>
@@ -2909,12 +2870,12 @@ FROM silver_${entity || 'entity'}`;
     }
 
     // Restore step-content padding when leaving step 2
-    function _showDagEditor() {
+    export function _showDagEditor() {
       document.getElementById('dag-empty-state').style.display = 'none';
       document.getElementById('dag-editor-body').style.display = 'flex';
     }
 
-    async function loadDags() {
+    export async function loadDags() {
       const list = document.getElementById('dag-list');
       if (!list) return;
       list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>';
@@ -2926,17 +2887,17 @@ FROM silver_${entity || 'entity'}`;
         });
         const d = await r.json();
         const allDags = (d.result?.dags || []).sort((a, b) => a.dag_id.localeCompare(b.dag_id));
-        _dagsCache = cartridge
+        state._dagsCache = cartridge
           ? allDags.filter(dag => dag.dag_id.startsWith(cartridge + '_'))
           : allDags;
 
-        if (!_dagsCache.length) {
+        if (!state._dagsCache.length) {
           list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">
             Sin DAGs${cartridge ? ' para <b>'+esc(cartridge)+'</b>' : ' en Airflow'}<br><br>
             <span style="font-size:9px">Usa + para crear uno o el asistente para generarlo.</span></div>`;
           return;
         }
-        list.innerHTML = _dagsCache.map(dag => {
+        list.innerHTML = state._dagsCache.map(dag => {
           const statusDot = dag.is_paused
             ? `<span style="color:#555">● pausado</span>`
             : `<span style="color:var(--green)">● activo</span>`;
@@ -2944,7 +2905,7 @@ FROM silver_${entity || 'entity'}`;
           const badge = prefix !== dag.dag_id
             ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>`
             : '';
-          return `<div class="dag-sidebar-item ${_selectedDag === dag.dag_id ? 'selected' : ''}"
+          return `<div class="dag-sidebar-item ${state._selectedDag === dag.dag_id ? 'selected' : ''}"
                        id="dagitem-${esc(dag.dag_id)}"
                        onclick="selectDag(${escJsArg(dag.dag_id)})">
             <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
@@ -2952,17 +2913,17 @@ FROM silver_${entity || 'entity'}`;
           </div>`;
         }).join('');
 
-        // Auto-select: _selectedDag if exists, else first
-        const toSelect = (_selectedDag && _dagsCache.find(d => d.dag_id === _selectedDag))
-          ? _selectedDag : _dagsCache[0]?.dag_id;
+        // Auto-select: state._selectedDag if exists, else first
+        const toSelect = (state._selectedDag && state._dagsCache.find(d => d.dag_id === state._selectedDag))
+          ? state._selectedDag : state._dagsCache[0]?.dag_id;
         if (toSelect) await selectDag(toSelect);
       } catch(e) {
         list.innerHTML = `<div style="padding:16px;color:#ff2d55;font-size:11px">Error: ${esc(e.message)}</div>`;
       }
     }
 
-    async function selectDag(dagId) {
-      _selectedDag = dagId;
+    export async function selectDag(dagId) {
+      state._selectedDag = dagId;
       document.querySelectorAll('.dag-sidebar-item').forEach(el => {
         el.classList.toggle('selected', el.id === `dagitem-${dagId}`);
       });
@@ -2978,7 +2939,7 @@ FROM silver_${entity || 'entity'}`;
       nameEl.textContent = dagId;
       if (afLink) afLink.href = `http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid`;
 
-      const dag = _dagsCache.find(d => d.dag_id === dagId);
+      const dag = state._dagsCache.find(d => d.dag_id === dagId);
       if (dag && badgeEl) {
         badgeEl.innerHTML = dag.is_paused
           ? `<span class="dag-badge dag-paused">pausado</span>`
@@ -3009,8 +2970,8 @@ FROM silver_${entity || 'entity'}`;
       );
     }
 
-    function newDag() {
-      _selectedDag = '__new__';
+    export function newDag() {
+      state._selectedDag = '__new__';
       document.querySelectorAll('.dag-sidebar-item').forEach(el => el.classList.remove('selected'));
       _showDagEditor();
       const cartridge = _dagCartridge();
@@ -3038,11 +2999,11 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('', '');
     }
 
-    async function deployDag() {
+    export async function deployDag() {
       const code = document.getElementById('dag-code-textarea')?.value?.trim();
       if (!code) { setDeployMsg('Sin código', 'err'); return; }
 
-      let dagId = _selectedDag === '__new__' ? '' : _selectedDag;
+      let dagId = state._selectedDag === '__new__' ? '' : state._selectedDag;
       const m = code.match(/dag_id\s*=\s*['"]([^'"]+)['"]/);
       if (m) dagId = m[1];
       if (!dagId) { setDeployMsg('No se encontró dag_id en el código', 'err'); return; }
@@ -3063,19 +3024,19 @@ FROM silver_${entity || 'entity'}`;
         const d = await r.json();
         if (d.result?.created || d.result?.dag_id) {
           setDeployMsg(`✓ Desplegado: ${esc(d.result.created || dagId)}`, 'ok');
-          _deployedCode = code;
+          state._deployedCode = code;
           dagMarkDirty();
           const nameEl = document.getElementById('dag-editor-name');
           if (nameEl) nameEl.textContent = dagId;
-          _selectedDag = dagId;
+          state._selectedDag = dagId;
           // Optimistic: show the DAG in the list immediately without waiting for Airflow
-          if (!_dagsCache.find(d => d.dag_id === dagId)) {
-            _dagsCache.push({ dag_id: dagId, is_paused: false });
-            _dagsCache.sort((a, b) => a.dag_id.localeCompare(b.dag_id));
+          if (!state._dagsCache.find(d => d.dag_id === dagId)) {
+            state._dagsCache.push({ dag_id: dagId, is_paused: false });
+            state._dagsCache.sort((a, b) => a.dag_id.localeCompare(b.dag_id));
             const list = document.getElementById('dag-list');
-            if (list) list.innerHTML = _dagsCache.map(dag => {
+            if (list) list.innerHTML = state._dagsCache.map(dag => {
               const dot = dag.is_paused ? `<span style="color:#555">● pausado</span>` : `<span style="color:var(--green)">● activo</span>`;
-              return `<div class="dag-sidebar-item ${_selectedDag===dag.dag_id?'selected':''}" id="dagitem-${esc(dag.dag_id)}" onclick="selectDag(${escJsArg(dag.dag_id)})">
+              return `<div class="dag-sidebar-item ${state._selectedDag===dag.dag_id?'selected':''}" id="dagitem-${esc(dag.dag_id)}" onclick="selectDag(${escJsArg(dag.dag_id)})">
                 <div class="dag-item-id">${esc(dag.dag_id)}</div>
                 <div class="dag-item-meta">${dot}</div></div>`;
             }).join('');
@@ -3091,11 +3052,11 @@ FROM silver_${entity || 'entity'}`;
       if (btn) btn.disabled = false;
     }
 
-    async function renameDag() {
-      if (!_selectedDag || _selectedDag === '__new__') {
+    export async function renameDag() {
+      if (!state._selectedDag || state._selectedDag === '__new__') {
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
-      const oldId = _selectedDag;
+      const oldId = state._selectedDag;
       const newId = prompt(`Nuevo nombre para "${oldId}":`, oldId);
       if (!newId || newId === oldId) return;
       if (!/^[a-zA-Z0-9_]+$/.test(newId)) {
@@ -3134,21 +3095,21 @@ FROM silver_${entity || 'entity'}`;
           }),
         });
         setDeployMsg(`✓ Renombrado a ${esc(newId)}`, 'ok');
-        _selectedDag = newId;
+        state._selectedDag = newId;
         textarea.value = newCode;
-        _deployedCode = newCode;
+        state._deployedCode = newCode;
         dagMarkDirty();
 
         // Actualiza cache localmente sin esperar a Airflow
-        _dagsCache = _dagsCache.filter(d => d.dag_id !== oldId);
-        if (!_dagsCache.find(d => d.dag_id === newId)) {
-          _dagsCache.push({ dag_id: newId, is_paused: false, is_active: true, tags: [] });
-          _dagsCache.sort((a, b) => a.dag_id.localeCompare(b.dag_id));
+        state._dagsCache = state._dagsCache.filter(d => d.dag_id !== oldId);
+        if (!state._dagsCache.find(d => d.dag_id === newId)) {
+          state._dagsCache.push({ dag_id: newId, is_paused: false, is_active: true, tags: [] });
+          state._dagsCache.sort((a, b) => a.dag_id.localeCompare(b.dag_id));
         }
         // Re-render sidebar con el nuevo nombre seleccionado
         const list = document.getElementById('dag-list');
         if (list) {
-          list.innerHTML = _dagsCache.map(dag => {
+          list.innerHTML = state._dagsCache.map(dag => {
             const statusDot = dag.is_paused
               ? `<span style="color:#555">● pausado</span>`
               : `<span style="color:var(--green)">● activo</span>`;
@@ -3172,11 +3133,11 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function deleteDag() {
-      if (!_selectedDag || _selectedDag === '__new__') {
+    export async function deleteDag() {
+      if (!state._selectedDag || state._selectedDag === '__new__') {
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
-      const dagId = _selectedDag;
+      const dagId = state._selectedDag;
       if (!confirm(`¿Eliminar el DAG "${dagId}"?\nEsto borra el archivo y lo elimina de Airflow.`)) return;
 
       setDeployMsg('Eliminando…', '');
@@ -3191,7 +3152,7 @@ FROM silver_${entity || 'entity'}`;
         const d = await r.json();
         if (d.result?.deleted_file || d.result?.deleted_db) {
           setDeployMsg(`✓ Eliminado: ${esc(dagId)}`, 'ok');
-          _selectedDag = null;
+          state._selectedDag = null;
           document.getElementById('dag-editor-body')?.style && (_hideDagEditor());
           setTimeout(loadDags, 1200);
         } else {
@@ -3202,14 +3163,14 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function _hideDagEditor() {
+    export function _hideDagEditor() {
       const body  = document.getElementById('dag-editor-body');
       const empty = document.getElementById('dag-empty-state');
       if (body)  body.style.display  = 'none';
       if (empty) empty.style.display = 'flex';
     }
 
-    function dagEditorKeydown(e) {
+    export function dagEditorKeydown(e) {
       const ta    = e.target;
       const start = ta.selectionStart;
       const end   = ta.selectionEnd;
@@ -3252,28 +3213,28 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function _dagInsertAt(ta, start, end, text, cursorOffset) {
+    export function _dagInsertAt(ta, start, end, text, cursorOffset) {
       const v = ta.value;
       ta.value = v.substring(0, start) + text + v.substring(end);
       ta.selectionStart = ta.selectionEnd = start + cursorOffset;
     }
 
-    function _dagReplaceBlock(ta, from, to, text) {
+    export function _dagReplaceBlock(ta, from, to, text) {
       const v = ta.value;
       ta.value = v.substring(0, from) + text + (to < 0 ? '' : v.substring(to));
       ta.selectionStart = from;
       ta.selectionEnd   = from + text.length;
     }
 
-    function dagEditorOnInput() { dagUpdateLineNumbers(); dagMarkDirty(); }
+    export function dagEditorOnInput() { dagUpdateLineNumbers(); dagMarkDirty(); }
 
-    function dagSyncLineScroll() {
+    export function dagSyncLineScroll() {
       const ta = document.getElementById('dag-code-textarea');
       const ln = document.getElementById('dag-line-numbers');
       if (ln && ta) ln.scrollTop = ta.scrollTop;
     }
 
-    function dagUpdateLineNumbers() {
+    export function dagUpdateLineNumbers() {
       const ta = document.getElementById('dag-code-textarea');
       const ln = document.getElementById('dag-line-numbers');
       if (!ta || !ln) return;
@@ -3283,22 +3244,21 @@ FROM silver_${entity || 'entity'}`;
       ln.innerHTML = Array.from({length: count}, (_, i) => `<span>${i + 1}</span>`).join('');
     }
 
-    function dagMarkDirty() {
+    export function dagMarkDirty() {
       const badge = document.getElementById('dag-dirty-badge');
       const ta    = document.getElementById('dag-code-textarea');
-      if (badge && ta) badge.style.display = ta.value !== _deployedCode ? '' : 'none';
+      if (badge && ta) badge.style.display = ta.value !== state._deployedCode ? '' : 'none';
     }
 
     // ── DAG Graph viewer ──────────────────────────────────────────────────────
 
-    let _dagGraphVisible = true;
 
-    function toggleDagGraph() {
-      _dagGraphVisible = !_dagGraphVisible;
+    export function toggleDagGraph() {
+      state._dagGraphVisible = !state._dagGraphVisible;
       const panel = document.getElementById('dag-graph-panel');
       const btn   = document.getElementById('btn-dag-graph');
       if (!panel) return;
-      if (_dagGraphVisible) {
+      if (state._dagGraphVisible) {
         panel.classList.remove('collapsed');
         if (btn) btn.style.background = 'rgba(0,230,230,.1)';
         _renderDagGraph().catch(()=>{});
@@ -3308,7 +3268,7 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function _parseDagGraph(code) {
+    export function _parseDagGraph(code) {
       const tasks = [];
       const edges = [];
       const lines = code.split('\n');
@@ -3446,7 +3406,7 @@ FROM silver_${entity || 'entity'}`;
       return { tasks, edges: dedupEdges };
     }
 
-    function _layoutDagGraph(tasks, edges) {
+    export function _layoutDagGraph(tasks, edges) {
       const taskMap = Object.fromEntries(tasks.map(t => [t.id, t]));
       const ids = tasks.map(t => t.id);
       const inDeg = Object.fromEntries(ids.map(id => [id, 0]));
@@ -3498,7 +3458,7 @@ FROM silver_${entity || 'entity'}`;
       return { pos, svgInnerW, svgH: yOff };
     }
 
-    async function _renderDagGraph() {
+    export async function _renderDagGraph() {
       const panel = document.getElementById('dag-graph-panel');
       if (!panel) return;
       const code = document.getElementById('dag-code-textarea')?.value || '';
@@ -3603,7 +3563,7 @@ FROM silver_${entity || 'entity'}`;
       </svg>`;
     }
 
-    function jumpToTaskLine(line, taskId) {
+    export function jumpToTaskLine(line, taskId) {
       const ta = document.getElementById('dag-code-textarea');
       if (!ta) return;
       const lines = ta.value.split('\n');
@@ -3620,25 +3580,17 @@ FROM silver_${entity || 'entity'}`;
     }
 
     // ── Split pane resize ─────────────────────────────────────────────────────
-    let _dagResizing  = false;
-    let _dagResizeX0  = 0;
-    let _dagResizeW0  = 0;
 
     // ── Generic vertical (top/bottom) panel resize ───────────────────────────
-    let _vResizing  = false;
-    let _vResizeY0  = 0;
-    let _vResizeH0  = 0;
-    let _vResizeEl  = null;
-    let _vResizeHandleEl = null;
 
-    function vResizeStart(e, topPanelId) {
-      _vResizeEl  = document.getElementById(topPanelId);
-      if (!_vResizeEl) return;
-      _vResizing       = true;
-      _vResizeY0       = e.clientY;
-      _vResizeH0       = _vResizeEl.getBoundingClientRect().height;
-      _vResizeHandleEl = e.currentTarget;
-      _vResizeHandleEl.classList.add('dragging');
+    export function vResizeStart(e, topPanelId) {
+      state._vResizeEl  = document.getElementById(topPanelId);
+      if (!state._vResizeEl) return;
+      state._vResizing       = true;
+      state._vResizeY0       = e.clientY;
+      state._vResizeH0       = state._vResizeEl.getBoundingClientRect().height;
+      state._vResizeHandleEl = e.currentTarget;
+      state._vResizeHandleEl.classList.add('dragging');
       const overlay = document.createElement('div');
       overlay.id = 'v-resize-overlay';
       overlay.style.cssText = 'position:fixed;inset:0;cursor:row-resize;z-index:9999';
@@ -3648,33 +3600,30 @@ FROM silver_${entity || 'entity'}`;
       e.preventDefault();
     }
 
-    function vResizeMove(e) {
-      if (!_vResizing || !_vResizeEl) return;
-      const delta = e.clientY - _vResizeY0;
-      const newH  = Math.max(60, _vResizeH0 + delta);
-      _vResizeEl.style.flex   = 'none';
-      _vResizeEl.style.height = newH + 'px';
+    export function vResizeMove(e) {
+      if (!state._vResizing || !state._vResizeEl) return;
+      const delta = e.clientY - state._vResizeY0;
+      const newH  = Math.max(60, state._vResizeH0 + delta);
+      state._vResizeEl.style.flex   = 'none';
+      state._vResizeEl.style.height = newH + 'px';
     }
 
-    function vResizeEnd() {
-      _vResizing = false;
-      if (_vResizeHandleEl) _vResizeHandleEl.classList.remove('dragging');
+    export function vResizeEnd() {
+      state._vResizing = false;
+      if (state._vResizeHandleEl) state._vResizeHandleEl.classList.remove('dragging');
       const overlay = document.getElementById('v-resize-overlay');
       if (overlay) overlay.remove();
-      _vResizeEl = _vResizeHandleEl = null;
+      state._vResizeEl = state._vResizeHandleEl = null;
     }
 
     // ── AI panel horizontal resize ────────────────────────────────────────────
-    let _aiResizing = false;
-    let _aiResizeX0 = 0;
-    let _aiResizeW0 = 0;
 
-    function aiResizeStart(e) {
+    export function aiResizeStart(e) {
       const panel = document.getElementById('ai-panel');
       if (!panel) return;
-      _aiResizing = true;
-      _aiResizeX0 = e.clientX;
-      _aiResizeW0 = panel.getBoundingClientRect().width;
+      state._aiResizing = true;
+      state._aiResizeX0 = e.clientX;
+      state._aiResizeW0 = panel.getBoundingClientRect().width;
       document.getElementById('ai-resize-handle').classList.add('dragging');
       const overlay = document.createElement('div');
       overlay.id = 'ai-resize-overlay';
@@ -3685,30 +3634,30 @@ FROM silver_${entity || 'entity'}`;
       e.preventDefault();
     }
 
-    function aiResizeMove(e) {
-      if (!_aiResizing) return;
+    export function aiResizeMove(e) {
+      if (!state._aiResizing) return;
       const panel = document.getElementById('ai-panel');
       if (!panel) return;
       // dragging left increases panel width (handle is on the left of the panel)
-      const delta = _aiResizeX0 - e.clientX;
-      const newW  = Math.max(180, Math.min(_aiResizeW0 + delta, window.innerWidth * 0.6));
+      const delta = state._aiResizeX0 - e.clientX;
+      const newW  = Math.max(180, Math.min(state._aiResizeW0 + delta, window.innerWidth * 0.6));
       panel.style.width = newW + 'px';
     }
 
-    function aiResizeEnd() {
-      _aiResizing = false;
+    export function aiResizeEnd() {
+      state._aiResizing = false;
       const handle = document.getElementById('ai-resize-handle');
       if (handle) handle.classList.remove('dragging');
       const overlay = document.getElementById('ai-resize-overlay');
       if (overlay) overlay.remove();
     }
 
-    function dagResizeStart(e) {
+    export function dagResizeStart(e) {
       const panel = document.getElementById('dag-graph-panel');
       if (!panel) return;
-      _dagResizing = true;
-      _dagResizeX0 = e.clientX;
-      _dagResizeW0 = panel.getBoundingClientRect().width;
+      state._dagResizing = true;
+      state._dagResizeX0 = e.clientX;
+      state._dagResizeW0 = panel.getBoundingClientRect().width;
       document.getElementById('dag-resize-handle').style.background = 'var(--amber)';
       // Overlay to capture mouse outside the handle
       const overlay = document.createElement('div');
@@ -3720,42 +3669,42 @@ FROM silver_${entity || 'entity'}`;
       e.preventDefault();
     }
 
-    function dagResizeMove(e) {
-      if (!_dagResizing) return;
+    export function dagResizeMove(e) {
+      if (!state._dagResizing) return;
       const container = document.getElementById('dag-split-container');
       const panel     = document.getElementById('dag-graph-panel');
       if (!container || !panel) return;
       const containerW = container.getBoundingClientRect().width;
-      const delta      = e.clientX - _dagResizeX0;
-      const newW       = Math.max(120, Math.min(_dagResizeW0 + delta, containerW - 180));
+      const delta      = e.clientX - state._dagResizeX0;
+      const newW       = Math.max(120, Math.min(state._dagResizeW0 + delta, containerW - 180));
       panel.style.width = newW + 'px';
     }
 
-    function dagResizeEnd() {
-      _dagResizing = false;
+    export function dagResizeEnd() {
+      state._dagResizing = false;
       const handle = document.getElementById('dag-resize-handle');
       if (handle) handle.style.background = 'var(--border)';
       const overlay = document.getElementById('dag-resize-overlay');
       if (overlay) overlay.remove();
     }
 
-    function dagSetEditorCode(code) {
+    export function dagSetEditorCode(code) {
       const ta = document.getElementById('dag-code-textarea');
       if (ta) ta.value = code;
-      _deployedCode = code;
+      state._deployedCode = code;
       dagUpdateLineNumbers();
       dagMarkDirty();
-      if (_dagGraphVisible) _renderDagGraph();
+      if (state._dagGraphVisible) _renderDagGraph();
     }
 
-    function setDeployMsg(msg, type) {
+    export function setDeployMsg(msg, type) {
       const el = document.getElementById('deploy-msg');
       if (!el) return;
       el.textContent = msg;
       el.className = 'deploy-msg' + (type === 'ok' ? ' deploy-ok' : type === 'err' ? ' deploy-err' : '');
     }
 
-    function copyDagCode() {
+    export function copyDagCode() {
       const code = document.getElementById('dag-code-textarea')?.value;
       if (!code) return;
       navigator.clipboard.writeText(code).then(() => setDeployMsg('⎘ Copiado', 'ok'))
@@ -3763,17 +3712,17 @@ FROM silver_${entity || 'entity'}`;
       setTimeout(() => setDeployMsg('', ''), 2000);
     }
 
-    function toggleDagTemplates() {
-      _tplOpen = !_tplOpen;
+    export function toggleDagTemplates() {
+      state._tplOpen = !state._tplOpen;
       const list = document.getElementById('tpl-list-s');
       const tog  = document.getElementById('tpl-toggle-s');
       if (!list) return;
-      list.style.display = _tplOpen ? '' : 'none';
-      if (tog) tog.textContent = _tplOpen ? '▼' : '▶';
-      if (_tplOpen) loadDagTemplates();
+      list.style.display = state._tplOpen ? '' : 'none';
+      if (tog) tog.textContent = state._tplOpen ? '▼' : '▶';
+      if (state._tplOpen) loadDagTemplates();
     }
 
-    async function loadDagTemplates() {
+    export async function loadDagTemplates() {
       const list = document.getElementById('tpl-list-s');
       if (!list) return;
       try {
@@ -3795,11 +3744,11 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    async function applyDagTemplate(templateId) {
+    export async function applyDagTemplate(templateId) {
       const cartridge = _dagCartridge();
       const entity = prompt('Nombre de la entidad (ej. "ProjectDetail"):',
-        _selectedDag && _selectedDag !== '__new__'
-          ? _selectedDag.replace(cartridge + '_', '').replace(/_/g, '')
+        state._selectedDag && state._selectedDag !== '__new__'
+          ? state._selectedDag.replace(cartridge + '_', '').replace(/_/g, '')
           : 'MyEntity');
       if (!entity) return;
 
@@ -3817,7 +3766,7 @@ FROM silver_${entity || 'entity'}`;
         const badgeEl = document.getElementById('dag-editor-badge');
         if (nameEl)  nameEl.textContent = `${cartridge}_${entity.toLowerCase()} (plantilla)`;
         if (badgeEl) badgeEl.innerHTML = '<span class="dag-badge dag-paused">borrador</span>';
-        _selectedDag = '__new__';
+        state._selectedDag = '__new__';
         setDeployMsg('Plantilla cargada — revisa los TODO y despliega', 'ok');
         setTimeout(() => setDeployMsg('', ''), 4000);
       } catch(e) {
@@ -3825,8 +3774,8 @@ FROM silver_${entity || 'entity'}`;
       }
     }
 
-    function sendDagToAssistantStudio() {
-      const dagId  = _selectedDag === '__new__' ? 'nuevo_dag' : (_selectedDag || 'dag');
+    export function sendDagToAssistantStudio() {
+      const dagId  = state._selectedDag === '__new__' ? 'nuevo_dag' : (state._selectedDag || 'dag');
       const source = document.getElementById('dag-code-textarea')?.value || '';
       const hasSource = source && !source.startsWith('# Fuente no encontrada');
       const msg = hasSource
@@ -3846,9 +3795,9 @@ FROM silver_${entity || 'entity'}`;
     (async () => {
       await loadCartridges();
       // Auto-select first cartridge if any
-      if (_cartridges.length > 0) {
-        document.getElementById('cartridge-sel').value = _cartridges[0].id;
-        await selectCartridge(_cartridges[0].id);
+      if (state._cartridges.length > 0) {
+        document.getElementById('cartridge-sel').value = state._cartridges[0].id;
+        await selectCartridge(state._cartridges[0].id);
       }
       goStep(1);
 
@@ -3859,12 +3808,12 @@ FROM silver_${entity || 'entity'}`;
         try {
           const p = JSON.parse(pending);
           if (p.type === 'dag_edit') {
-            if (p.cartridge && _cartridges.find(c => c.id === p.cartridge)) {
+            if (p.cartridge && state._cartridges.find(c => c.id === p.cartridge)) {
               document.getElementById('cartridge-sel').value = p.cartridge;
               await selectCartridge(p.cartridge);
             }
             // Open DAG editor step with the specific DAG selected
-            if (p.dag_id) _selectedDag = p.dag_id;
+            if (p.dag_id) state._selectedDag = p.dag_id;
             goStep(2);
           }
         } catch(_) {}

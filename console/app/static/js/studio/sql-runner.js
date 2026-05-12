@@ -1,25 +1,26 @@
     // ── SQL Runner ──────────────────────────────────────────────────────────
-    let _sqlRunnerSources = [];
+    import { state } from './legacy-state.js';
+    import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js';
 
-    function openSqlRunner(sql, label, sources) {
+    export function openSqlRunner(sql, label, sources) {
       const ta = document.getElementById('sql-runner-ta');
       const ov = document.getElementById('sql-runner-overlay');
       const src = document.getElementById('sql-runner-source');
       if (!ta || !ov) return;
       ta.value = sql || '';
       if (src) src.textContent = label || '';
-      _sqlRunnerSources = sources || [];
+      state._sqlRunnerSources = sources || [];
       document.getElementById('sql-runner-results').innerHTML = '';
       document.getElementById('sql-runner-status').textContent = '';
       ov.style.display = 'flex';
       ta.focus();
     }
 
-    function closeSqlRunner() {
+    export function closeSqlRunner() {
       document.getElementById('sql-runner-overlay').style.display = 'none';
     }
 
-    async function execSqlRunner() {
+    export async function execSqlRunner() {
       const ta      = document.getElementById('sql-runner-ta');
       const status  = document.getElementById('sql-runner-status');
       const results = document.getElementById('sql-runner-results');
@@ -37,7 +38,7 @@
       try {
         const r = await fetch('/api/bronze/query', {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ sql: sel, limit: 200, sources: _sqlRunnerSources }),
+          body: JSON.stringify({ sql: sel, limit: 200, sources: state._sqlRunnerSources }),
         });
         const d      = await r.json();
         const elapsed = ((Date.now()-t0)/1000).toFixed(2);
@@ -68,7 +69,7 @@
       }
     });
 
-    function openDsEditorRunner() {
+    export function openDsEditorRunner() {
       const ta     = document.getElementById('ds-ed-sql');
       if (!ta) return;
       const sel    = ta.selectionStart !== ta.selectionEnd
@@ -81,7 +82,7 @@
       openSqlRunner(sel, label, sources);
     }
 
-    function _openRunnerFromActiveTextarea() {
+    export function _openRunnerFromActiveTextarea() {
       const focused = document.activeElement;
       if (!focused || focused.tagName !== 'TEXTAREA') return;
       const id = focused.id;
