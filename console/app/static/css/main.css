@@ -785,3 +785,19 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
   border: 1px solid #e4e4e7;
   z-index: 100;
 }
+
+.version-badge--ok {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #6ee7b7;
+}
+.version-badge--warn {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+.version-badge--crit {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}

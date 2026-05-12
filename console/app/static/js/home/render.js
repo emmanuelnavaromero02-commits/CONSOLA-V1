@@ -334,20 +334,30 @@ export function renderHome(root) {
  * Render the version badge in the home header.
  * @param {{version:string, env:string, service:string}|null} info
  */
-export function renderVersionBadge(info) {
+export function renderVersionBadge(info, health = null) {
   const target = document.querySelector('header, .home-header, .topbar') || document.body;
   let badge = document.getElementById('version-badge');
   if (!badge) {
     badge = document.createElement('span');
     badge.id = 'version-badge';
-    badge.className = 'version-badge';
     target.appendChild(badge);
   }
+  // Reset class then add status modifier
+  badge.className = 'version-badge';
   if (info && info.version) {
     badge.textContent = `v${info.version}`;
-    badge.title = `${info.service} · ${info.env}`;
+    if (health && health.summary) {
+      const down = health.summary.down;
+      if (down === 0)         badge.classList.add('version-badge--ok');
+      else if (down <= 3)     badge.classList.add('version-badge--warn');
+      else                    badge.classList.add('version-badge--crit');
+      badge.title = `${info.service} · ${info.env} · ${health.summary.up}/${health.summary.total} UP`;
+    } else {
+      badge.title = `${info.service} · ${info.env}`;
+    }
   } else {
     badge.textContent = 'v? — offline';
+    badge.classList.add('version-badge--crit');
     badge.title = 'system info unavailable';
   }
 }

@@ -47,3 +47,15 @@ export async function fetchSystemInfo() {
   if (!response.ok) throw new Error(`system info failed: ${response.status}`);
   return response.json();
 }
+
+/**
+ * GET /api/operations/health — admin-only. Retorna null silenciosamente
+ * para usuarios sin rol admin (esperado: 401/403 sin permisos).
+ */
+export async function fetchHealth() {
+  try {
+    const r = await fetch('/api/operations/health', { credentials: 'same-origin' });
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
+}
