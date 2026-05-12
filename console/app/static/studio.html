@@ -30,31 +30,31 @@
 
     <!-- Step bar -->
     <div class="step-bar">
-      <div class="step-item active" id="si-1" onclick="goStep(1)">
+      <div class="step-item active" id="si-1">
         <span class="step-num">1</span> RESUMEN
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-2" onclick="goStep(2)" style="color:var(--amber)">
+      <div class="step-item" id="si-2" style="color:var(--amber)">
         <span class="step-num">2</span> DAGS
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-3" onclick="goStep(3)">
+      <div class="step-item" id="si-3">
         <span class="step-num">3</span> ENTIDADES
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-4" onclick="goStep(4)">
+      <div class="step-item" id="si-4">
         <span class="step-num">4</span> REFINAR
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-5" onclick="goStep(5)">
+      <div class="step-item" id="si-5">
         <span class="step-num">5</span> ANALYTICS
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-6" onclick="goStep(6)">
+      <div class="step-item" id="si-6">
         <span class="step-num">6</span> IA SEMÁNTICA
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-7" onclick="goStep(7)" style="color:var(--cyan)">
+      <div class="step-item" id="si-7" style="color:var(--cyan)">
         <span class="step-num">7</span> RAG
       </div>
     </div>
@@ -62,13 +62,12 @@
     <!-- Cartridge selector bar -->
     <div class="cartridge-bar">
       <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap">CARTUCHO</span>
-      <select id="cartridge-sel" onchange="selectCartridge(this.value)">
+      <select id="cartridge-sel">
         <option value="">— seleccionar o crear —</option>
       </select>
-      <button class="btn btn-sm" onclick="showCreateCartridge()">+ Nuevo</button>
+      <button class="btn btn-sm" id="btn-create-cartridge">+ Nuevo</button>
       <div class="cartridge-info" id="cartridge-info"></div>
-      <button class="btn btn-sm" id="btn-export-cart" style="display:none;margin-left:auto"
-              onclick="exportCartridge()">↓ ZIP</button>
+      <button class="btn btn-sm" id="btn-export-cart" style="display:none;margin-left:auto">↓ ZIP</button>
     </div>
 
     <section id="studio-modern-root" aria-label="Studio overview"></section>
@@ -82,20 +81,19 @@
       </main>
 
       <!-- AI panel resize handle -->
-      <div class="ai-resize-handle" id="ai-resize-handle"
-           onmousedown="aiResizeStart(event)"></div>
+      <div class="ai-resize-handle" id="ai-resize-handle"></div>
 
       <!-- AI assistant -->
       <aside class="ai-panel" id="ai-panel">
         <div class="ai-hdr">
           ◈ ASISTENTE IA
           <span class="ai-ctx-badge" id="ai-ctx-badge">Paso 1</span>
-          <button class="btn-sm" id="ai-clear-btn" onclick="aiClearHistory()" title="Borrar historial" style="margin-left:auto;color:var(--text3);opacity:0.6">🗑</button>
+          <button class="btn-sm" id="ai-clear-btn" title="Borrar historial" style="margin-left:auto;color:var(--text3);opacity:0.6">🗑</button>
         </div>
         <div class="ai-chat" id="ai-chat"></div>
         <div class="ai-input-bar">
-          <textarea id="ai-input" rows="2" placeholder="Pregunta al asistente... (Shift+Enter = nueva línea)" onkeydown="aiKey(event)" oninput="aiAutogrow(this)"></textarea>
-          <button class="btn" onclick="aiSend()">▶</button>
+          <textarea id="ai-input" rows="2" placeholder="Pregunta al asistente... (Shift+Enter = nueva línea)"></textarea>
+          <button class="btn" id="ai-send-btn">▶</button>
         </div>
       </aside>
 
@@ -106,7 +104,7 @@
   <script type="module" src="/static/js/studio/main.js"></script>
 
   <!-- ── SQL Runner Modal ──────────────────────────────────────────────── -->
-  <div id="sql-runner-overlay" onclick="if(event.target===this)closeSqlRunner()"
+  <div id="sql-runner-overlay"
        style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
               z-index:9000;align-items:center;justify-content:center">
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;
@@ -122,9 +120,9 @@
               font-family:var(--font-mono)"></span>
         <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
           <span id="sql-runner-status" style="font-size:10px;color:var(--text3)"></span>
-          <button class="btn btn-amber" onclick="execSqlRunner()">▶ Ejecutar</button>
+          <button class="btn btn-amber" id="sql-runner-exec-btn">▶ Ejecutar</button>
           <span style="font-size:10px;color:var(--text3)">Ctrl+Enter</span>
-          <button class="btn btn-sm" onclick="closeSqlRunner()"
+          <button class="btn btn-sm" id="sql-runner-close-btn"
                   style="color:var(--text3)">✕ Cerrar</button>
         </span>
       </div>
@@ -135,8 +133,7 @@
           style="width:100%;box-sizing:border-box;height:140px;
                  background:var(--bg);border:1px solid var(--border);border-radius:2px;
                  color:var(--cyan);font-family:var(--font-mono);font-size:11px;
-                 padding:10px;resize:vertical;outline:none"
-          onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();execSqlRunner();}">
+                 padding:10px;resize:vertical;outline:none">
         </textarea>
       </div>
 

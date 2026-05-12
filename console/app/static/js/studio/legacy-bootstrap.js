@@ -17,10 +17,18 @@
 
 import * as legacy from './legacy.js';
 import * as sqlRunner from './sql-runner.js';
+import { wireStudioHandlers } from './wire-handlers.js';
 
 for (const [name, value] of Object.entries(legacy)) {
   if (typeof value === 'function') window[name] = value;
 }
 for (const [name, value] of Object.entries(sqlRunner)) {
   if (typeof value === 'function') window[name] = value;
+}
+
+// Wire DOM listeners that replaced studio.html's former inline on*="" attrs.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wireStudioHandlers);
+} else {
+  wireStudioHandlers();
 }
