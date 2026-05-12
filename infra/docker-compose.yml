@@ -112,6 +112,7 @@ services:
     volumes:
       - ../cartridges:/registry/cartridges
       - ../console/app/static:/app/app/static:ro
+      - ../VERSION:/app/VERSION:ro
     depends_on:
       postgres:
         condition: service_healthy
