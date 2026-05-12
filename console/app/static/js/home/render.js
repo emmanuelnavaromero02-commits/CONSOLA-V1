@@ -308,3 +308,25 @@ export function renderHome(root) {
   shell.append(renderTopbar(), container);
   root.appendChild(shell);
 }
+
+/**
+ * Render the version badge in the home header.
+ * @param {{version:string, env:string, service:string}|null} info
+ */
+export function renderVersionBadge(info) {
+  const target = document.querySelector('header, .home-header, .topbar') || document.body;
+  let badge = document.getElementById('version-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'version-badge';
+    badge.className = 'version-badge';
+    target.appendChild(badge);
+  }
+  if (info && info.version) {
+    badge.textContent = `v${info.version}`;
+    badge.title = `${info.service} · ${info.env}`;
+  } else {
+    badge.textContent = 'v? — offline';
+    badge.title = 'system info unavailable';
+  }
+}

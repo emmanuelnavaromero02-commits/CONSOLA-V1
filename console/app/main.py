@@ -849,6 +849,27 @@ async def api_config(request: Request):
     }
 
 
+@app.get("/api/system/info")
+async def system_info(user: dict = Depends(require_authenticated)):
+    candidates = [
+        Path("/app/VERSION"),
+        Path(__file__).resolve().parent.parent.parent / "VERSION",
+    ]
+    version = "unknown"
+    for p in candidates:
+        try:
+            if p.exists():
+                version = p.read_text().strip()
+                break
+        except Exception:
+            continue
+    return {
+        "version": version,
+        "env": os.environ.get("MODE", "local"),
+        "service": "console",
+    }
+
+
 @app.get("/me")
 async def viewer_me(request: Request):
     require_user(request)
