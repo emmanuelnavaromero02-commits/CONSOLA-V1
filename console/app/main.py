@@ -493,7 +493,7 @@ _AUTH_PUBLIC_EXACT = {
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
 }
 _AUTH_PUBLIC_PREFIX = ("/static/",)
-_AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/datasets", "/jobs", "/tokens",
+_AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/internal/", "/datasets", "/jobs", "/tokens",
                          "/studio/", "/studio_ops/", "/monitoring/", "/auth/")
 
 # Routes a user is allowed to hit while in must_change_password=true state.
