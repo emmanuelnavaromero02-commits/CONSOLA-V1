@@ -3124,7 +3124,12 @@ async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_
     if await _auth.get_user_by_email(email):
         raise HTTPException(409, f"user with email {email} already exists")
     role = _assignable_role(body.get("role"))
-    target_user = await _auth.create_user(email=email, password=pw, name=body.get("name"), role=role)
+    try:
+        target_user = await _auth.create_user(email=email, password=pw, name=body.get("name"), role=role)
+    except RuntimeError as exc:
+        # create_user assigns workspace membership in the same transaction;
+        # surface a clear 500 when the RBAC seed (workspaces/roles) is missing.
+        raise HTTPException(500, str(exc)) from exc
     await _audit.record_event(admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]), metadata={"role": role})
     return target_user
 
