@@ -8,7 +8,7 @@ import os
 import httpx
 from airflow.decorators import dag, task
 
-CARTRIDGE_URL = "http://sap_successfactors:8203"
+CARTRIDGE_URL = "http://sap-successfactors:8203"
 
 @dag(schedule=None, catchup=False)
 def sap_successfactors_extract_all():
@@ -23,7 +23,7 @@ def sap_successfactors_extract_all():
 
         with httpx.Client(timeout=300) as client:
             res = client.post(
-                f"{CARTRIDGE_URL}/skills/entities/extract-all",
+                f"{CARTRIDGE_URL}/extract-all",
                 json=conf,
                 headers=headers
             )

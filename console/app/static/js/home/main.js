@@ -7,6 +7,7 @@ import {
   fetchPermissions,
   fetchPipeline,
   fetchSystemInfo,
+  fetchHealth,
 } from './api.js';
 import { applyPermissionsFromRole, setState, state } from './state.js';
 import { renderHome, renderVersionBadge } from './render.js';
@@ -99,9 +100,9 @@ export async function initHomeControlPlane() {
   } catch (error) {
     console.warn('Home control plane fallback:', humanizeError(error));
   }
-  fetchSystemInfo()
-    .then(renderVersionBadge)
-    .catch((err) => { console.warn('version badge fallback:', err); renderVersionBadge(null); });
+  Promise.all([fetchSystemInfo(), fetchHealth()])
+    .then(([info, health]) => renderVersionBadge(info, health))
+    .catch((err) => { console.warn('version badge fallback:', err); renderVersionBadge(null, null); });
 }
 
 document.addEventListener('DOMContentLoaded', initHomeControlPlane);

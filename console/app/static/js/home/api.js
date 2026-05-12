@@ -19,7 +19,7 @@ export async function fetchConfig() {
 }
 
 export async function fetchMcpServers() {
-  return getJson('/mcp/servers');
+  return getJson('/api/mcp/servers');
 }
 
 export async function fetchPermissions() {
@@ -46,4 +46,16 @@ export async function fetchSystemInfo() {
   const response = await fetch('/api/system/info', { credentials: 'same-origin' });
   if (!response.ok) throw new Error(`system info failed: ${response.status}`);
   return response.json();
+}
+
+/**
+ * GET /api/operations/health — admin-only. Retorna null silenciosamente
+ * para usuarios sin rol admin (esperado: 401/403 sin permisos).
+ */
+export async function fetchHealth() {
+  try {
+    const r = await fetch('/api/operations/health', { credentials: 'same-origin' });
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
 }

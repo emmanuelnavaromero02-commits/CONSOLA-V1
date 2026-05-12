@@ -209,6 +209,27 @@ function renderAdministration() {
       kind: 'admin',
       meta: [{ text: 'Secretos ocultos' }],
       secondary: [{ label: 'Configurar conexiones', href: '/viewer/vault', permission: 'vault.connections.write' }],
+    }),
+    card({
+      title: 'Configuración',
+      icon: 'C',
+      description: 'Credenciales, integraciones, feature flags y rotación de secretos.',
+      href: '/settings',
+      primary: 'Abrir Configuración',
+      permission: 'settings.read',
+      kind: 'admin',
+      meta: [{ text: 'Editable desde UI' }],
+      secondary: [{ label: 'Editar secretos', href: '/settings', permission: 'settings.write' }],
+    }),
+    card({
+      title: 'Operaciones',
+      icon: 'O',
+      description: 'Versión, migraciones y salud de servicios.',
+      href: '/operations',
+      primary: 'Abrir Operaciones',
+      permission: 'operations.read',
+      kind: 'admin',
+      meta: [{ text: 'Health en vivo' }],
     })
   );
   return renderSection('Administración', 'Identidad, seguridad y accesos viven separados del trabajo diario.', grid);
@@ -313,20 +334,30 @@ export function renderHome(root) {
  * Render the version badge in the home header.
  * @param {{version:string, env:string, service:string}|null} info
  */
-export function renderVersionBadge(info) {
+export function renderVersionBadge(info, health = null) {
   const target = document.querySelector('header, .home-header, .topbar') || document.body;
   let badge = document.getElementById('version-badge');
   if (!badge) {
     badge = document.createElement('span');
     badge.id = 'version-badge';
-    badge.className = 'version-badge';
     target.appendChild(badge);
   }
+  // Reset class then add status modifier
+  badge.className = 'version-badge';
   if (info && info.version) {
     badge.textContent = `v${info.version}`;
-    badge.title = `${info.service} · ${info.env}`;
+    if (health && health.summary) {
+      const down = health.summary.down;
+      if (down === 0)         badge.classList.add('version-badge--ok');
+      else if (down <= 3)     badge.classList.add('version-badge--warn');
+      else                    badge.classList.add('version-badge--crit');
+      badge.title = `${info.service} · ${info.env} · ${health.summary.up}/${health.summary.total} UP`;
+    } else {
+      badge.title = `${info.service} · ${info.env}`;
+    }
   } else {
     badge.textContent = 'v? — offline';
+    badge.classList.add('version-badge--crit');
     badge.title = 'system info unavailable';
   }
 }

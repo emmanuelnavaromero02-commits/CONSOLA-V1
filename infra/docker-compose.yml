@@ -421,6 +421,10 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
+    volumes:
+      - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
+      - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -466,6 +470,9 @@ services:
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
+      - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
+      - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -512,6 +519,9 @@ services:
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
+      - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
+      - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     depends_on:
       postgres:
         condition: service_healthy

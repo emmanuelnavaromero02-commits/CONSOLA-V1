@@ -493,7 +493,7 @@ _AUTH_PUBLIC_EXACT = {
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
 }
 _AUTH_PUBLIC_PREFIX = ("/static/",)
-_AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/datasets", "/jobs", "/tokens",
+_AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/internal/", "/datasets", "/jobs", "/tokens",
                          "/studio/", "/studio_ops/", "/monitoring/", "/auth/")
 
 # Routes a user is allowed to hit while in must_change_password=true state.
@@ -542,6 +542,12 @@ def _uses_rbac_dependency(path: str) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    # Internal routes (server-to-server) bypass session auth.
+    # Their own router-level dependency (verify_internal_api_key) handles auth via header.
+    if path.startswith("/internal/"):
+        return await call_next(request)
+
     is_public = path in _AUTH_PUBLIC_EXACT or any(path.startswith(p) for p in _AUTH_PUBLIC_PREFIX)
 
     token = request.cookies.get(_auth.COOKIE_NAME)
@@ -3231,8 +3237,12 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     return {"sent": sent}
 
 
-from app.routers import mcp, pages, security
+from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
 app.include_router(mcp.router)
+app.include_router(mcp_public.router)
+app.include_router(settings.router)
+app.include_router(settings_internal.router)
+app.include_router(operations.router)
 app.include_router(security.router)
