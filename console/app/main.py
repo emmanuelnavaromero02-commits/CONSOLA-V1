@@ -542,6 +542,12 @@ def _uses_rbac_dependency(path: str) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    # Internal routes (server-to-server) bypass session auth.
+    # Their own router-level dependency (verify_internal_api_key) handles auth via header.
+    if path.startswith("/internal/"):
+        return await call_next(request)
+
     is_public = path in _AUTH_PUBLIC_EXACT or any(path.startswith(p) for p in _AUTH_PUBLIC_PREFIX)
 
     token = request.cookies.get(_auth.COOKIE_NAME)

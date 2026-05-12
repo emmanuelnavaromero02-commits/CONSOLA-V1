@@ -8,7 +8,7 @@ import os
 import httpx
 from airflow.decorators import dag, task
 
-CARTRIDGE_URL = "http://sap_hcm:8202"
+CARTRIDGE_URL = "http://sap-hcm:8202"
 
 @dag(schedule=None, catchup=False)
 def sap_hcm_extract():
@@ -26,7 +26,7 @@ def sap_hcm_extract():
 
         with httpx.Client(timeout=300) as client:
             res = client.post(
-                f"{CARTRIDGE_URL}/skills/entities/{entity}/extract",
+                f"{CARTRIDGE_URL}/entities/{entity}/extract",
                 json=conf,
                 headers=headers
             )
