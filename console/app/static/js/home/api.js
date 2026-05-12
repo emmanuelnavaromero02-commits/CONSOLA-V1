@@ -19,7 +19,7 @@ export async function fetchConfig() {
 }
 
 export async function fetchMcpServers() {
-  return getJson('/mcp/servers');
+  return getJson('/api/mcp/servers');
 }
 
 export async function fetchPermissions() {

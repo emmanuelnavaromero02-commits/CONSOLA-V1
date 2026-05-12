@@ -176,8 +176,8 @@ function renderText(text) {
 // ── MCP Servers ───────────────────────────────────────────────────────────────
 
 async function loadServers(forceCheck = false) {
-  if (forceCheck) await apiFetch('/mcp/servers/health-check', 'POST');
-  const data = await apiFetch('/mcp/servers');
+  if (forceCheck) await apiFetch('/api/mcp/servers/health-check', 'POST');
+  const data = await apiFetch('/api/mcp/servers');
   const list = document.getElementById('servers-list');
   const servers = data?.servers || [];
 
@@ -220,7 +220,7 @@ async function loadServers(forceCheck = false) {
 }
 
 async function showServerTools(serverId, serverName) {
-  const data = await apiFetch(`/mcp/servers/${serverId}/tools`);
+  const data = await apiFetch(`/api/mcp/servers/${serverId}/tools`);
   const tools = data?.tools || [];
   if (!tools.length) { log('info', `No tools for ${serverName}`); return; }
 

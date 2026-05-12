@@ -3,15 +3,15 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.services import mcp_registry
-from app.services.auth import verify_internal_api_key
+from app.dependencies import require_authenticated
 
 
-# Router server-to-server. Llamadores: Airflow, Replicon DAGs, otros servicios internos.
-# Para llamadas desde el navegador usar /api/mcp/* (mcp_public.py).
+# Router para el navegador. Autenticación por sesión + RBAC.
+# Para llamadas server-to-server usar /internal/mcp/* (mcp.py).
 router = APIRouter(
-    prefix="/internal/mcp",
-    tags=["MCP Registry"],
-    dependencies=[Depends(verify_internal_api_key)],
+    prefix="/api/mcp",
+    tags=["MCP UI"],
+    dependencies=[Depends(require_authenticated)],
 )
 
 

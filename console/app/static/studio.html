@@ -1004,7 +1004,7 @@
         const [semRes, runsRes, dagRes] = await Promise.all([
           fetch(`/api/semantic?cartridge=${encodeURIComponent(cartridge)}`),
           fetch(`/api/pipeline_runs?cartridge=${encodeURIComponent(cartridge)}&limit=200`).catch(() => null),
-          fetch('/mcp/invoke', {
+          fetch('/api/mcp/invoke', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
@@ -1240,7 +1240,7 @@
       const dagId = ((_currentCartridge?.entities || [])
         .find(e => (e.entity || e.id) === entity) || {}).dag_id || '';
       if (dagId) {
-        await fetch('/mcp/invoke', {
+        await fetch('/api/mcp/invoke', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
@@ -1251,7 +1251,7 @@
         }).catch(() => {});
         // If scheduled, also set the cron via variable so the DAG can read it on next parse
         if (triggerType === 'scheduled' && cronExpression) {
-          await fetch('/mcp/invoke', {
+          await fetch('/api/mcp/invoke', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
@@ -1309,7 +1309,7 @@
       const sel = document.getElementById(selectId);
       if (!sel) return;
       try {
-        const r = await fetch('/mcp/invoke', {
+        const r = await fetch('/api/mcp/invoke', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
@@ -1380,7 +1380,7 @@
       _updateRunBadge(row, entity, 'extracting');
 
       try {
-        const r = await fetch('/mcp/invoke', {
+        const r = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({
             server: 'infra', tool: 'airflow_trigger_dag',
@@ -1418,7 +1418,7 @@
         // ── Check Airflow run state (fast path for failures) ──────────────────
         if (dagId && runId) {
           try {
-            const ar = await fetch('/mcp/invoke', {
+            const ar = await fetch('/api/mcp/invoke', {
               method: 'POST', headers: {'Content-Type':'application/json'},
               body: JSON.stringify({ server: 'infra', tool: 'airflow_get_run_status',
                                      args: { dag_id: dagId, dag_run_id: runId } }),
@@ -1471,7 +1471,7 @@
 
       try {
         // List task instances to find the failed one
-        const ti = await fetch('/mcp/invoke', {
+        const ti = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ server: 'infra', tool: 'airflow_list_task_instances',
                                  args: { dag_id: dagId, dag_run_id: runId } }),
@@ -1482,7 +1482,7 @@
         const taskId = failed?.task_id || 'ingest';
 
         // Get logs for the failed task
-        const lr = await fetch('/mcp/invoke', {
+        const lr = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ server: 'infra', tool: 'airflow_get_task_logs',
                                  args: { dag_id: dagId, dag_run_id: runId, task_id: taskId } }),
@@ -3589,7 +3589,7 @@ FROM silver_${entity || 'entity'}`;
       list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>';
       const cartridge = _dagCartridge();
       try {
-        const r = await fetch('/mcp/invoke', {
+        const r = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
         });
@@ -3658,7 +3658,7 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('', '');
 
       try {
-        const r = await fetch('/mcp/invoke', {
+        const r = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             server: 'infra', tool: 'dag_get_source',
@@ -3721,7 +3721,7 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('Desplegando…', '');
 
       try {
-        const r = await fetch('/mcp/invoke', {
+        const r = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             server: 'infra', tool: 'airflow_create_dag',
@@ -3782,7 +3782,7 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('Renombrando…', '');
       try {
         // Deploy with new dag_id
-        const r1 = await fetch('/mcp/invoke', {
+        const r1 = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             server: 'infra', tool: 'airflow_create_dag',
@@ -3795,7 +3795,7 @@ FROM silver_${entity || 'entity'}`;
           setDeployMsg(`Error al crear: ${esc(JSON.stringify(d1.result || d1))}`, 'err'); return;
         }
         // Delete old dag_id
-        await fetch('/mcp/invoke', {
+        await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             server: 'infra', tool: 'airflow_delete_dag',
@@ -3850,7 +3850,7 @@ FROM silver_${entity || 'entity'}`;
 
       setDeployMsg('Eliminando…', '');
       try {
-        const r = await fetch('/mcp/invoke', {
+        const r = await fetch('/api/mcp/invoke', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             server: 'infra', tool: 'airflow_delete_dag',
