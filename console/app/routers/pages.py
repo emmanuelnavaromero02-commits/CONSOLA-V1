@@ -38,6 +38,11 @@ async def settings_page():
     return FileResponse(STATIC / "settings.html")
 
 
+@router.get("/operations", dependencies=[Depends(require_permission("operations.read"))])
+async def operations_page():
+    return FileResponse(STATIC / "operations.html")
+
+
 @router.get("/viewer/jobs")
 async def viewer_jobs():
     return FileResponse(STATIC / "viewers" / "jobs.html")

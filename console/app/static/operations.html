@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operaciones — MODecissions</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/operations.css">
+</head>
+<body>
+  <main id="operations-root" class="operations-page">
+    <header class="operations-header">
+      <a href="/" class="operations-back">← Volver al panel</a>
+      <h1>Operaciones del sistema</h1>
+      <p class="operations-subtitle">Versión, migraciones aplicadas y estado live de servicios.</p>
+    </header>
+    <div class="operations-toolbar">
+      <button id="operations-refresh" type="button" class="btn-primary">Refrescar</button>
+      <span id="operations-version" class="operations-version"></span>
+    </div>
+    <section id="operations-services" class="operations-section"></section>
+    <section id="operations-migrations" class="operations-section"></section>
+    <div id="operations-error" class="operations-error" hidden role="alert"></div>
+  </main>
+  <script type="module" src="/static/js/operations/main.js"></script>
+</body>
+</html>

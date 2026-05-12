@@ -220,6 +220,16 @@ function renderAdministration() {
       kind: 'admin',
       meta: [{ text: 'Editable desde UI' }],
       secondary: [{ label: 'Editar secretos', href: '/settings', permission: 'settings.write' }],
+    }),
+    card({
+      title: 'Operaciones',
+      icon: 'O',
+      description: 'Versión, migraciones y salud de servicios.',
+      href: '/operations',
+      primary: 'Abrir Operaciones',
+      permission: 'operations.read',
+      kind: 'admin',
+      meta: [{ text: 'Health en vivo' }],
     })
   );
   return renderSection('Administración', 'Identidad, seguridad y accesos viven separados del trabajo diario.', grid);

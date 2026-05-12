@@ -37,6 +37,8 @@ PERMISSIONS = [
     {"key": "apps.write", "label": "Write apps", "category": "Apps", "description": "Modify analytic apps."},
     {"key": "settings.read", "label": "Read settings", "category": "Settings", "description": "View system settings (masked secrets)."},
     {"key": "settings.write", "label": "Write settings", "category": "Settings", "description": "Edit/reveal/rotate system settings."},
+    {"key": "operations.read", "label": "Read operations", "category": "Operations", "description": "View system migrations and service health."},
+    {"key": "operations.write", "label": "Write operations", "category": "Operations", "description": "Trigger operational actions."},
 ]
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSIONS}
