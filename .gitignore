@@ -7,12 +7,23 @@ venv/
 dist/
 build/
 
-# Env
+# Env (NEVER commit these — see SECURITY.md, enforced by
+# tests/test_env_never_in_git.py)
 .env
+.env.local
+*.env
+# but DO commit the placeholder templates that document the schema
+!.env.example
+!infra/.env.example
 *.env.local
 *.env.save
 .env.save
 infra/.env.save
+# Belt and suspenders for the audit — explicit per-service paths so a
+# stray `*.env` rule change can't accidentally re-expose any of them.
+infra/.env
+workspace/.env
+console/.env
 vault/secrets.yaml
 *.secret
 *.secrets

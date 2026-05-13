@@ -9,7 +9,7 @@ help:
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
 	@echo "  make smoke        (NOT IMPLEMENTED — exits 1)"
-	@echo "  make rotate-keys  (NOT IMPLEMENTED — exits 1)"
+	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
 up:
 	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d
@@ -36,5 +36,22 @@ test:
 smoke:
 	@echo "ERROR: 'make smoke' is not implemented yet — pending in roadmap" && exit 1
 
+# Sprint v1.14: real implementation. Backs up the current infra/.env to
+# infra/.env.save (gitignored), then regenerates ALL secrets via
+# bootstrap.sh + bootstrap-keys.sh. Every active user session becomes
+# invalid after `make down && make up` because JWT_SECRET_KEY rotates,
+# so this is a deliberately operator-driven action.
 rotate-keys:
-	@echo "ERROR: 'make rotate-keys' is not implemented — rotate manually via infra/bootstrap.sh" && exit 1
+	@echo "[rotate-keys] Backing up current .env to infra/.env.save..."
+	@if [ -f infra/.env ]; then cp infra/.env infra/.env.save; fi
+	@echo "[rotate-keys] Generating new infra/.env with fresh secrets..."
+	@rm -f infra/.env
+	@bash infra/bootstrap.sh
+	@bash infra/bootstrap-keys.sh infra/.env
+	@echo ""
+	@echo "[rotate-keys] DONE. New secrets generated."
+	@echo "[rotate-keys] OLD .env backed up to infra/.env.save (gitignored)."
+	@echo "[rotate-keys] NEXT STEPS:"
+	@echo "  1. Run: make down && make up"
+	@echo "  2. All sessions will be invalidated — users must re-login."
+	@echo "  3. Once verified, delete infra/.env.save"
