@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 
 import duckdb
 import psycopg2
+import sqlglot
+from sqlglot import exp as _sqlglot_exp
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
@@ -235,8 +237,12 @@ class DuckDBEngine:
                 "source":     source,
                 "partitions": partitions,
                 "latest":     latest,
+                # load_date comes from Parquet metadata and could in theory be
+                # tampered with — escape it for safe SQL interpolation. The
+                # SQL is returned to the caller (not executed here), so we
+                # can't use prepared-statement placeholders.
                 "sql_latest": (
-                    f"SELECT * FROM {expr} WHERE load_date = '{latest['load_date']}'"
+                    f"SELECT * FROM {expr} WHERE load_date = {_sql_quote(str(latest['load_date']))}"
                 ) if latest else None,
             }
         except Exception as exc:
@@ -260,13 +266,33 @@ class DuckDBEngine:
 
     # ── SQL preview ───────────────────────────────────────────────────────────
 
-    _DANGEROUS_READ_RE = re.compile(r"\bread_(?:csv|text|json)\s*\(", re.IGNORECASE)
+    # Blacklist of DuckDB constructs that must NEVER appear in user-supplied
+    # SQL. Each pattern is checked independently so the rejection reason can
+    # name the exact pattern that matched. _validate_safe_sql is only called
+    # for SQL that came from the LLM/user — internal engine calls (ATTACH at
+    # startup, INSTALL/LOAD of httpfs+postgres extensions in _conn) bypass
+    # this gate by going straight to con.execute().
+    _DANGEROUS_PATTERNS = [
+        re.compile(r"\bread_(?:csv|text|json|blob|parquet_objects)\s*\(", re.IGNORECASE),
+        re.compile(r"\bATTACH\b", re.IGNORECASE),
+        re.compile(r"\bDETACH\b", re.IGNORECASE),
+        re.compile(r"\bINSTALL\b", re.IGNORECASE),
+        re.compile(r"\bLOAD\b", re.IGNORECASE),
+        re.compile(r"\bPRAGMA\b", re.IGNORECASE),
+        re.compile(r"\bCOPY\s+(?:.*\s+)?FROM\b", re.IGNORECASE | re.DOTALL),
+        re.compile(r"\bSET\s+(?:GLOBAL|SESSION|memory_limit|threads|extension_directory)\b", re.IGNORECASE),
+        re.compile(r"\bCREATE\s+(?:TABLE|VIEW|FUNCTION|MACRO|SECRET)\b", re.IGNORECASE),
+        re.compile(r"\bDROP\s+(?:TABLE|VIEW|FUNCTION|MACRO|SECRET|SCHEMA|DATABASE)\b", re.IGNORECASE),
+    ]
     _READ_PARQUET_RE = re.compile(r"\bread_parquet\s*\(\s*(['\"])(.*?)\1", re.IGNORECASE | re.DOTALL)
     _DANGEROUS_PATH_RE = re.compile(r"(?i)(file://|['\"]/(?:etc|proc|var)/)")
 
     def _validate_safe_sql(self, sql: str) -> None:
-        if self._DANGEROUS_READ_RE.search(sql):
-            raise ValueError("SQL contains a blocked local/external read function")
+        for pattern in self._DANGEROUS_PATTERNS:
+            if pattern.search(sql):
+                raise ValueError(
+                    f"SQL blocked by safety policy: matched {pattern.pattern}"
+                )
         if self._DANGEROUS_PATH_RE.search(sql):
             raise ValueError("SQL contains a blocked local file path")
         for match in self._READ_PARQUET_RE.finditer(sql):
@@ -329,25 +355,106 @@ class DuckDBEngine:
             return {"name": ds.get("name"), "error": str(exc)}
 
 
-    # Matches any reference to the analytical schema, defeating common bypass
-    # vectors before the named-replacer regex runs. Covered cases:
-    #   pggold.foo                  pggold."foo"
-    #   "pggold".foo                "pggold"."foo"
-    #   pggold .foo  /  pggold\n.foo  /  pggold/*x*/.foo
-    # The first capture group preserves whether the table identifier was
-    # originally quoted so the rewritten SQL stays syntactically valid.
-    _PGGOLD_REF_RE = re.compile(
-        r'(?ix)'
-        r'"?\s*pggold\s*"?'                       # schema (optionally quoted, optionally trailing space)
-        r'(?:\s|/\*.*?\*/)*'                      # whitespace / block comments
-        r'\.'                                     # the dot
-        r'(?:\s|/\*.*?\*/)*'                      # whitespace / block comments
-        r'(?:"(?P<qname>[a-zA-Z_][a-zA-Z0-9_]*)"|(?P<name>[a-zA-Z_][a-zA-Z0-9_]*))'
-    )
+    def _rls_filter_clause(self, cols: list, user_context: dict, params: list) -> str:
+        """Return the WHERE clause body for a pggold table (no leading WHERE).
 
-    def _strip_line_comments(self, sql: str) -> str:
-        # Drop -- line comments so attackers cannot hide a bypass inside one.
-        return re.sub(r'--[^\n]*', '', sql)
+        The same precedence chain as the legacy regex-based RLS: tenant_id,
+        then workspace_id, then project_id, then user_id, then revenue_manager.
+        If none of the recognised tenancy columns are present we return "1=0"
+        (default-deny) and the caller appends no params for this table.
+        """
+        if 'tenant_id' in cols:
+            params.append(str(user_context.get("tenant_id") or ""))
+            return "tenant_id = ?"
+        if 'workspace_id' in cols:
+            params.append(str(user_context.get("workspace_id") or ""))
+            return "workspace_id = ?"
+        if 'project_id' in cols:
+            params.append(str(user_context.get("project_id") or ""))
+            return "project_id = ?"
+        if 'user_id' in cols:
+            params.append(str(user_context.get("id") or ""))
+            return "user_id = ?"
+        if 'revenue_manager' in cols:
+            params.append(str(user_context.get("email", "")))
+            params.append(str(user_context.get("name") or ""))
+            return "(revenue_manager = ? OR revenue_manager = ? OR revenue_manager = 'N/D')"
+        return "1=0"
+
+    def _inject_rls_ast(self, sql: str, user_context: dict) -> tuple[str, list]:
+        """AST-based RLS injection using sqlglot.
+
+        Walks every exp.Table node in the parsed tree (including CTEs,
+        subqueries and UNION branches), and for any table whose schema is
+        "pggold" replaces it with an inline subquery filtered on the user's
+        tenancy column. Original aliases are preserved so the surrounding
+        SQL (qualified column refs like `t.col`) keeps resolving.
+
+        Default-deny: if sqlglot cannot parse the SQL we raise ValueError
+        and the caller must NOT execute the query. There is no regex
+        fallback (that was the v1.0 design weakness called out by audit).
+        """
+        try:
+            tree = sqlglot.parse_one(sql, read='duckdb')
+        except sqlglot.errors.ParseError as exc:
+            raise ValueError(
+                f"SQL failed AST parse — default-deny applied: {exc}"
+            ) from exc
+        if tree is None:
+            raise ValueError("SQL produced empty AST — default-deny applied")
+
+        params: list = []
+
+        # Cache column lookups so a UNION of N pggold tables only fires N
+        # DESCRIBEs, not N×2.
+        cols_cache: dict[str, list] = {}
+
+        def _columns_for(table_name: str) -> list:
+            if table_name in cols_cache:
+                return cols_cache[table_name]
+            try:
+                validate_safe_identifier(table_name, "table")
+                con = self._conn()
+                rows = con.execute(
+                    f"DESCRIBE SELECT * FROM pggold.{table_name} LIMIT 0"
+                ).fetchall()
+                cols = [r[0].lower() for r in rows]
+            except Exception:
+                cols = []
+            cols_cache[table_name] = cols
+            return cols
+
+        def transformer(node):
+            if not isinstance(node, _sqlglot_exp.Table):
+                return node
+            if (node.db or "").lower() != "pggold":
+                return node
+
+            table_name = node.name
+            cols = _columns_for(table_name)
+            where_body = self._rls_filter_clause(cols, user_context, params)
+
+            # Capture original alias (if any) so qualified refs still resolve.
+            original_alias = node.alias
+
+            inner_sql = f"SELECT * FROM pggold.{table_name} WHERE {where_body}"
+            wrapper = sqlglot.parse_one(
+                f"SELECT * FROM ({inner_sql}) sub", read='duckdb'
+            )
+            sub_node = wrapper.find(_sqlglot_exp.Subquery)
+            if original_alias:
+                sub_node.set(
+                    "alias",
+                    _sqlglot_exp.TableAlias(
+                        this=_sqlglot_exp.to_identifier(original_alias)
+                    ),
+                )
+            else:
+                sub_node.set("alias", None)
+            return sub_node
+
+        new_tree = tree.transform(transformer)
+        return new_tree.sql(dialect='duckdb'), params
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
         # Admin bypass requires the caller to mark the context as
@@ -362,51 +469,8 @@ class DuckDBEngine:
         if not user_context:
             user_context = {}
 
-        params = []
-
-        # Normalize line comments first; block comments are handled by the regex
-        # itself (so quoted strings remain untouched).
-        sql = self._strip_line_comments(sql)
-
-        def replacer(match):
-            table_name = match.group("qname") or match.group("name")
-            try:
-                validate_safe_identifier(table_name, "table")
-                con = self._conn()
-                schema_rows = con.execute(f"DESCRIBE SELECT * FROM pggold.{table_name} LIMIT 0").fetchall()
-                cols = [r[0].lower() for r in schema_rows]
-            except Exception:
-                cols = []
-
-            # Canonicalize the rewritten reference so downstream SQL is uniform
-            # regardless of the original quoting/whitespace/comment styling.
-            table = f"pggold.{table_name}"
-
-            filters = []
-            if 'tenant_id' in cols:
-                filters.append("tenant_id = ?")
-                params.append(str(user_context.get("tenant_id") or ""))
-            elif 'workspace_id' in cols:
-                filters.append("workspace_id = ?")
-                params.append(str(user_context.get("workspace_id") or ""))
-            elif 'project_id' in cols:
-                filters.append("project_id = ?")
-                params.append(str(user_context.get("project_id") or ""))
-            elif 'user_id' in cols:
-                filters.append("user_id = ?")
-                params.append(str(user_context.get("id") or ""))
-            elif 'revenue_manager' in cols:
-                filters.append("(revenue_manager = ? OR revenue_manager = ? OR revenue_manager = 'N/D')")
-                params.extend([str(user_context.get("email", "")), str(user_context.get("name") or "")])
-
-            if not filters:
-                return f"(SELECT * FROM {table} WHERE 1=0)"
-
-            return f"(SELECT * FROM {table} WHERE {' OR '.join(filters)})"
-
         with self._duckdb_lock:
-            new_sql = self._PGGOLD_REF_RE.sub(replacer, sql)
-        return new_sql, params
+            return self._inject_rls_ast(sql, user_context)
 
     def query_dataset(self, ds: dict, filters: dict, limit: int = 100, user_context: dict = None) -> dict:
         validate_safe_identifier(ds.get("name", ""), "dataset")

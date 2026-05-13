@@ -339,6 +339,21 @@ async def serve_app(request: Request, name: str):
 async def api_data(request: Request, dataset: str, limit: int = 5000):
     user = require_user(request)
     _validate_dataset_name(dataset)
+    # Sprint v1.3 RLS hardening (CRIT-4): the dataset name alone is no
+    # longer sufficient — confirm the dataset is registered to this
+    # caller's workspace before proxying the query downstream. Returning
+    # 404 (not 403) so the response cannot be used to enumerate datasets
+    # in other tenants.
+    ws_id = user.get("active_workspace_id") or user.get("workspace_id")
+    if not ws_id:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    p = await pg()
+    row = await p.fetchrow(
+        "SELECT name FROM datasets WHERE name = $1 AND workspace_id = $2",
+        dataset, ws_id,
+    )
+    if not row:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
     async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",

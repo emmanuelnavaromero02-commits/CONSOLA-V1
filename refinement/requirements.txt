@@ -4,3 +4,4 @@ duckdb==1.2.2
 anthropic==0.49.0
 pyyaml==6.0.2
 psycopg2-binary==2.9.9
+sqlglot==25.16.1
