@@ -441,7 +441,7 @@ services:
     build:
       context: ./airflow
       dockerfile: Dockerfile
-    image: mode-airflow:2.9.2-local
+    image: mode-airflow:2.10.5-local
     container_name: mode_airflow_init
     entrypoint: /bin/bash
     command: >
@@ -481,7 +481,7 @@ services:
     build:
       context: ./airflow
       dockerfile: Dockerfile
-    image: mode-airflow:2.9.2-local
+    image: mode-airflow:2.10.5-local
     container_name: mode_airflow
     entrypoint: /bin/bash
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
@@ -533,7 +533,7 @@ services:
     build:
       context: ./airflow
       dockerfile: Dockerfile
-    image: mode-airflow:2.9.2-local
+    image: mode-airflow:2.10.5-local
     container_name: mode_airflow_scheduler
     command: scheduler
     environment:
