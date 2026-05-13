@@ -66,6 +66,16 @@ services:
       - type: bind
         source: ../data/lakehouse
         target: /data
+    # Without a healthcheck, dependents only get service_started semantics
+    # and race the MinIO bucket initialization at boot. The /minio/health/live
+    # endpoint is part of the MinIO public surface and responds 200 once the
+    # server has finished local setup.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # ── Application services ──────────────────────────────────────────────────────
 
@@ -122,6 +132,7 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+    restart: unless-stopped
 
   workspace:
     build:
@@ -175,7 +186,7 @@ services:
       postgres_gold:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
 
 
   vault:
@@ -186,6 +197,13 @@ services:
     environment:
       DATABASE_URL:      "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+    # Internal callers reach the service over the Docker network as
+    # http://vault:8300 (uvicorn already listens on 8300 — see
+    # ../vault/Dockerfile CMD). Exposing the same port to the host makes
+    # the smoke check `curl http://localhost:8300/health` work without
+    # having to docker-exec into a peer container.
+    ports:
+      - "8300:8300"
     depends_on:
       postgres:
         condition: service_healthy
@@ -241,7 +259,7 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   sap-hcm:
@@ -269,7 +287,7 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   sap-s4hana:
@@ -298,7 +316,7 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   # ── MCP Infrastructure (incluye RAG) ─────────────────────────────────────────
@@ -343,7 +361,7 @@ services:
       postgres_gold:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
       airflow:
         condition: service_started
     restart: unless-stopped
