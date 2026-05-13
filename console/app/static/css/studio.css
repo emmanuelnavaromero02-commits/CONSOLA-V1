@@ -611,3 +611,388 @@
     body[data-studio-step="1"] #ai-resize-handle {
       display: none !important;
     }
+
+    /* ════════════════════════════════════════════════════════════════════════
+       Sprint v1.2-pr2 — Studio visual polish for the 7 steps.
+       CSS-only: never changes JS render logic, never changes IDs, never adds
+       inline handlers. Targets the existing classes emitted by renderResumen,
+       renderEntities, renderRefine, renderAnalytics, renderSemantic,
+       renderRAG and renderDagEditor.
+       ════════════════════════════════════════════════════════════════════════ */
+
+    /* ── Local design tokens (not exported globally) ─────────────────────── */
+    .studio-layout {
+      --studio-radius-sm: 6px;
+      --studio-radius-md: 8px;
+      --studio-radius-lg: 12px;
+      --studio-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --studio-shadow-md: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+      --studio-shadow-lg: 0 4px 12px rgba(15, 23, 42, 0.10), 0 2px 4px rgba(15, 23, 42, 0.05);
+      --studio-transition: all 150ms ease;
+      --studio-spacing-xs: 4px;
+      --studio-spacing-sm: 8px;
+      --studio-spacing-md: 12px;
+      --studio-spacing-lg: 16px;
+      --studio-spacing-xl: 24px;
+    }
+
+    /* ── Step header (used by every step) ────────────────────────────────── */
+    .step-content .step-title {
+      align-items: center;
+      margin-bottom: var(--studio-spacing-xl);
+      padding-bottom: var(--studio-spacing-md);
+      border-bottom: 1px solid var(--border);
+    }
+    .step-content .step-title h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+      margin-bottom: 4px;
+    }
+    .step-content .step-desc {
+      font-size: 13px;
+      color: var(--text2);
+      line-height: 1.55;
+    }
+
+    /* ── Buttons inside the step content ─────────────────────────────────── */
+    .step-content .btn {
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: var(--studio-radius-md);
+      transition: var(--studio-transition);
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .step-content .btn:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    .step-content .btn:hover:not(:disabled) {
+      box-shadow: var(--studio-shadow-sm);
+      transform: translateY(-1px);
+    }
+    .step-content .btn-sm {
+      padding: 4px 10px;
+      font-size: 11px;
+      border-radius: var(--studio-radius-sm);
+      transition: var(--studio-transition);
+      min-height: 26px;
+    }
+    .step-content .btn-sm:hover:not(:disabled) { box-shadow: var(--studio-shadow-sm); }
+    .step-content .btn-amber { background: rgba(176, 109, 0, 0.06); }
+    .step-content .btn-amber:hover { background: var(--amber); color: #fff; }
+    .step-content .btn-danger { background: rgba(179, 38, 30, 0.06); }
+    .step-content .btn-danger:hover { background: var(--red); color: #fff; }
+
+    /* ── Form controls inside the step content ───────────────────────────── */
+    .step-content input[type=text],
+    .step-content input[type=search],
+    .step-content input[type=email],
+    .step-content input:not([type]),
+    .step-content textarea,
+    .step-content select {
+      border-radius: var(--studio-radius-sm);
+      padding: 7px 11px;
+      font-size: 12px;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .step-content input[type=text]:focus,
+    .step-content input[type=search]:focus,
+    .step-content input[type=email]:focus,
+    .step-content input:not([type]):focus,
+    .step-content textarea:focus,
+    .step-content select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    /* ── Cards (used by Analytics, Semantic, RAG, etc.) ──────────────────── */
+    .step-content .card {
+      border-radius: var(--studio-radius-lg);
+      box-shadow: var(--studio-shadow-md);
+      padding: 18px;
+      transition: var(--studio-transition);
+    }
+    .step-content .card-title {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: var(--text2);
+      margin-bottom: var(--studio-spacing-md);
+    }
+    .step-content .empty-card {
+      padding: 36px var(--studio-spacing-lg);
+      font-style: normal;
+      font-size: 12px;
+      color: var(--text2);
+      background: var(--surface-soft, var(--bg3));
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--studio-radius-md);
+    }
+    .step-content .loading {
+      padding: 36px var(--studio-spacing-lg);
+      font-size: 12px;
+      color: var(--text3);
+    }
+
+    /* ── PASO 1 — Resumen (cartridge cards .item-card / .ic-*) ───────────── */
+    .step-content .item-grid {
+      gap: var(--studio-spacing-lg);
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    }
+    .step-content .item-card {
+      border-radius: var(--studio-radius-lg);
+      padding: var(--studio-spacing-lg);
+      box-shadow: var(--studio-shadow-sm);
+      transition: var(--studio-transition);
+      cursor: pointer;
+    }
+    .step-content .item-card:hover {
+      border-color: var(--primary);
+      box-shadow: var(--studio-shadow-md);
+      transform: translateY(-2px);
+    }
+    .step-content .item-card.ok {
+      border-left-width: 4px;
+      border-left-color: var(--green);
+    }
+    .step-content .ic-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .step-content .ic-id {
+      font-size: 11px;
+      color: var(--text3);
+      margin-top: 2px;
+    }
+    .step-content .ic-desc {
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.6;
+      margin: 10px 0 12px;
+    }
+    .step-content .ic-meta { gap: var(--studio-spacing-sm); }
+    .step-content .ic-meta span {
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--text2);
+      font-size: 10px;
+      border: 1px solid var(--border);
+    }
+    .step-content .ic-status-ok,
+    .step-content .ic-status-err {
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+    .step-content .ic-status-ok  { background: rgba(17, 122, 61, 0.10); border: 1px solid rgba(17, 122, 61, 0.3); }
+    .step-content .ic-status-err { background: rgba(179, 38, 30, 0.10); border: 1px solid rgba(179, 38, 30, 0.3); }
+
+    /* ── PASO 3 — Entidades (.et-table / .et-hdr / .et-row) ──────────────── */
+    .step-content .et-table {
+      border: 1px solid var(--border);
+      border-radius: var(--studio-radius-lg);
+      overflow: hidden;
+      box-shadow: var(--studio-shadow-sm);
+      background: var(--bg2);
+    }
+    .step-content .et-hdr,
+    .step-content .et-row {
+      padding: 12px 14px;
+      font-size: 11px;
+      gap: 12px;
+    }
+    .step-content .et-hdr {
+      background: var(--surface-soft, var(--bg3));
+      color: var(--text2);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    .step-content .et-row {
+      transition: background-color 150ms ease;
+    }
+    .step-content .et-row:last-child { border-bottom: none; }
+    .step-content .et-row:hover { background: var(--surface-soft, var(--bg3)); }
+    .step-content .et-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .step-content .run-badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      font-size: 10px;
+      margin-top: 5px;
+      display: inline-flex;
+      width: fit-content;
+    }
+    .step-content .mode-chip {
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── PASO 4 — Refinar (.tab / .tab-bar) ──────────────────────────────── */
+    .step-content .tab-bar {
+      gap: 4px;
+      padding: 8px 16px 0;
+      margin: 0;
+      background: var(--bg);
+    }
+    .step-content .tab-bar .tab {
+      padding: 8px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      border-radius: var(--studio-radius-md) var(--studio-radius-md) 0 0;
+      background: transparent;
+      color: var(--text3);
+      transition: var(--studio-transition);
+      margin-right: 0;
+      letter-spacing: 0.04em;
+    }
+    .step-content .tab-bar .tab:hover {
+      color: var(--text);
+      background: var(--bg3);
+    }
+    .step-content .tab-bar .tab.active {
+      background: var(--bg2);
+      color: var(--primary);
+      border-color: var(--border);
+      border-bottom-color: var(--bg2);
+      box-shadow: 0 -1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    /* ── PASO 5 — Analytics (.ds-row inside .card) ───────────────────────── */
+    .step-content .card .ds-row {
+      padding: var(--studio-spacing-md) var(--studio-spacing-sm);
+      border-radius: var(--studio-radius-md);
+      transition: var(--studio-transition);
+    }
+    .step-content .card .ds-row:hover {
+      background: var(--surface-soft, var(--bg3));
+    }
+    .step-content .card .ds-row-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .step-content .card .ds-row-meta {
+      font-size: 11px;
+      color: var(--text3);
+    }
+
+    /* Apps Analíticas cards inside renderAnalytics — wrapper-class hook
+       (added by surgical edit in legacy.js). Layered on top of the inline
+       styles emitted by the renderer; only adds shadow + interaction. */
+    .step-content .studio-app-card {
+      border-radius: var(--studio-radius-lg) !important;
+      box-shadow: var(--studio-shadow-sm);
+      transition: var(--studio-transition);
+    }
+    .step-content .studio-app-card:hover {
+      box-shadow: var(--studio-shadow-md);
+      transform: translateY(-2px);
+    }
+
+    /* ── PASO 6 — IA Semántica (.btn-tab / .cat-inp) ─────────────────────── */
+    .step-content .btn-tab {
+      padding: 7px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      background: transparent;
+      color: var(--text3);
+      border: none;
+      border-right: 1px solid var(--border);
+      cursor: pointer;
+      transition: var(--studio-transition);
+    }
+    .step-content .btn-tab:last-child { border-right: none; }
+    .step-content .btn-tab:hover { background: var(--bg3); color: var(--text); }
+    .step-content .btn-tab.active {
+      background: var(--primary);
+      color: #fff;
+    }
+    .step-content .cat-inp {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 7px 11px;
+      border-radius: var(--studio-radius-sm);
+      border: 1px solid var(--border);
+      background: var(--input-bg, var(--bg2));
+      color: var(--text);
+      font-size: 12px;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .step-content .cat-inp:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    /* Layer pills (silver / master / gold) used in semantic catalog. */
+    .step-content .layer-silver,
+    .step-content .layer-master,
+    .step-content .layer-gold {
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    /* ── PASO 7 — RAG: keep .card polish above; nothing step-specific ────── */
+
+    /* ── PASO 2 — DAGs (sidebar items, deploy bar) ───────────────────────── */
+    .dag-sidebar-item {
+      padding: 12px 14px;
+      transition: var(--studio-transition);
+    }
+    .dag-sidebar-item.selected {
+      box-shadow: inset 3px 0 0 var(--primary);
+    }
+    .dag-item-id {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .dag-badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .dag-deploy-bar {
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-soft, var(--bg3));
+    }
+    .dag-deploy-bar .btn,
+    .dag-deploy-bar .btn-sm {
+      transition: var(--studio-transition);
+    }
+    .dag-deploy-bar .btn:hover,
+    .dag-deploy-bar .btn-sm:hover {
+      box-shadow: var(--studio-shadow-sm);
+    }
+
