@@ -142,7 +142,13 @@ function renderUserBar() {
   logout.addEventListener('click', async (e) => {
     e.preventDefault();
     try {
-      await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      const csrf = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+      await fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+      });
     } catch (_) { /* ignore — we redirect regardless */ }
     location.href = '/login';
   });

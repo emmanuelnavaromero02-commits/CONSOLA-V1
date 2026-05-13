@@ -117,7 +117,17 @@ document.addEventListener('click', async (event) => {
 
   const logout = event.target.closest('[data-logout]');
   if (logout) {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => null);
+    // Sprint v1.9 CSRF: echo back the csrf_token cookie value on the
+    // logout POST. The cookie was set on /login and rotated after a
+    // successful authentication, so it's present whenever this code path
+    // runs (only logged-in users reach the home).
+    const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    const csrf = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+    await fetch('/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+    }).catch(() => null);
     window.location.href = '/login';
   }
 });
