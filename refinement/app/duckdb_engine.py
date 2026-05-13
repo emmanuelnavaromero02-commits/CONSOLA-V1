@@ -300,6 +300,14 @@ class DuckDBEngine:
             if not path.startswith("s3://"):
                 raise ValueError("read_parquet is only allowed for s3:// sources")
 
+    # Hard cap on preview/query result size — protects the server from a
+    # runaway query (cartesian product, missing WHERE, etc.) that asks for
+    # millions of rows in one shot. Single point of enforcement: any caller
+    # that delegates to preview_sql (query_dataset, the /preview endpoints)
+    # inherits the cap automatically and MUST NOT re-cap.
+    _MAX_PREVIEW_LIMIT = 10_000
+    _DEFAULT_PREVIEW_LIMIT = 20
+
     def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
         """Execute SQL with RLS applied and caller params merged.
 
@@ -310,7 +318,14 @@ class DuckDBEngine:
 
         Callers that already applied RLS (e.g. query_dataset) must NOT call
         get_rls_filters separately — delegate entirely to preview_sql instead.
+
+        `limit` is coerced into [1, _MAX_PREVIEW_LIMIT]; non-positive or None
+        values fall back to _DEFAULT_PREVIEW_LIMIT.
         """
+        if limit is None or limit <= 0:
+            limit = self._DEFAULT_PREVIEW_LIMIT
+        elif limit > self._MAX_PREVIEW_LIMIT:
+            limit = self._MAX_PREVIEW_LIMIT
         self._validate_safe_sql(sql)
         caller_params = list(params or [])
         try:

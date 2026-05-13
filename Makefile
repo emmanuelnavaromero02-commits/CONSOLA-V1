@@ -8,8 +8,8 @@ help:
 	@echo "  make logs         follow service logs"
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
-	@echo "  make smoke        end-to-end smoke (Fase 6)"
-	@echo "  make rotate-keys  rotate secrets (Fase 2 via UI)"
+	@echo "  make smoke        (NOT IMPLEMENTED — exits 1)"
+	@echo "  make rotate-keys  (NOT IMPLEMENTED — exits 1)"
 
 up:
 	bash infra/bootstrap.sh && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d
@@ -29,8 +29,12 @@ ps:
 test:
 	pytest -ra tests/ console/tests/ refinement/tests/ vault/tests/
 
+# Honest stubs (sprint v1.7): these used to print a misleading
+# "implemented in Fase X" message and exit 0, so an operator running
+# them would believe the action succeeded. Both now exit non-zero so CI
+# / orchestration can detect their absence.
 smoke:
-	@echo "smoke implemented in Fase 6"
+	@echo "ERROR: 'make smoke' is not implemented yet — pending in roadmap" && exit 1
 
 rotate-keys:
-	@echo "rotate-keys implemented in Fase 2 via UI"
+	@echo "ERROR: 'make rotate-keys' is not implemented — rotate manually via infra/bootstrap.sh" && exit 1
