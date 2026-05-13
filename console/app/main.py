@@ -2027,11 +2027,11 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
 async def studio_page():
     return FileResponse(STATIC / "studio.html")
 
-@app.get("/viewer/pipeline")
+@app.get("/viewer/pipeline", dependencies=[Depends(require_admin)])
 async def viewer_pipeline():
     return FileResponse(STATIC / "viewers" / "pipeline.html")
 
-@app.get("/viewer/vault")
+@app.get("/viewer/vault", dependencies=[Depends(require_admin)])
 async def viewer_vault():
     return FileResponse(STATIC / "viewers" / "vault.html")
 
@@ -2922,7 +2922,7 @@ def _dec_row_to_dict(row) -> dict:
     return d
 
 
-@app.get("/decisions")
+@app.get("/decisions", dependencies=[Depends(require_admin)])
 async def viewer_decisions():
     return FileResponse(STATIC / "decisions.html")
 
@@ -3105,7 +3105,7 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
 
 # ── Admin user management ───────────────────────────────────────────────────
 
-@app.get("/admin/users")
+@app.get("/admin/users", dependencies=[Depends(require_admin)])
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
     return FileResponse(STATIC / "admin_users.html")
 

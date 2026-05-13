@@ -683,6 +683,11 @@ def test_admin_reinvite_rejects_active_user(console_main):
 def test_viewer_pipeline_allows_same_origin_iframe_with_session(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("mod_session", "legacy-session-token")
+    # Sprint v1.5 locked /viewer/pipeline to admins. This test verifies the
+    # CSP/iframe headers, not the auth gate, so switch the fixture user's
+    # role to admin to satisfy require_admin while keeping the original
+    # intent.
+    console_main._auth.user["role"] = "admin"
 
     response = client.get("/viewer/pipeline")
 

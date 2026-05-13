@@ -26,6 +26,15 @@ function statusDot(status) {
   return el('span', `home-dot ${status === 'online' ? 'ok' : status === 'offline' ? 'off' : ''}`.trim());
 }
 
+function isAdminUser() {
+  // Sprint v1.5: the home is split into "Workspace-only" for non-admins
+  // and "everything" for admins. We deliberately key off the literal role
+  // here (binary admin gate) rather than a granular permission so analyst /
+  // workspace_admin / security_admin etc. all collapse to the non-admin
+  // experience the client requested in the demo.
+  return state.user?.role === 'admin';
+}
+
 function renderHero() {
   const hero = el('section', 'home-hero');
   const copy = el('div', 'home-hero-copy');
@@ -38,9 +47,13 @@ function renderHero() {
   const actions = el('div', 'home-hero-actions');
   actions.append(
     linkButton('Abrir Workspace', state.workspaceUrl, 'primary', hasPermission('workspace.access'), permissionText('workspace.access')),
-    linkButton('Abrir Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), permissionText('monitor.read')),
-    linkButton('Gestionar IAM', '/iam', 'secondary', hasPermission('iam.users.read'), permissionText('iam.users.read'))
   );
+  if (isAdminUser()) {
+    actions.append(
+      linkButton('Abrir Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), permissionText('monitor.read')),
+      linkButton('Gestionar IAM', '/iam', 'secondary', hasPermission('iam.users.read'), permissionText('iam.users.read'))
+    );
+  }
 
   const badges = el('div', 'home-badges');
   badges.append(
@@ -109,6 +122,8 @@ function renderQuickAccess() {
 
 function renderOperational() {
   const grid = el('div', 'home-operational-grid');
+  // Workspace card is the only one a non-admin sees here. For admins we
+  // keep the original full grid (Workspace + Studio + Monitor + Decisions).
   grid.append(
     card({
       title: 'Workspace',
@@ -121,36 +136,40 @@ function renderOperational() {
       meta: [{ text: 'Apps' }, { text: 'Asistente' }],
       secondary: [{ label: 'Abrir Apps', href: state.workspaceUrl, permission: 'workspace.access' }],
     }),
-    card({
-      title: 'Studio',
-      icon: 'S',
-      description: 'Configura fuentes de datos, tablas, transformaciones y conocimiento semántico.',
-      href: '/studio',
-      primary: 'Abrir Studio',
-      permission: 'studio.read',
-      size: 'primary-card',
-      meta: [{ text: 'Fuentes de datos' }, { text: 'Reportes' }],
-      secondary: [{ label: 'Nueva fuente', href: '/studio', permission: 'studio.write' }],
-    }),
-    card({
-      title: 'Monitor',
-      icon: 'M',
-      description: 'Revisa flujos automáticos, trabajos recientes, reportes y servicios internos.',
-      href: '/monitor',
-      primary: 'Abrir Monitor',
-      permission: 'monitor.read',
-      meta: [{ text: state.statuses.mcp?.label || 'Servicios internos no verificados' }],
-    }),
-    card({
-      title: 'Decisions',
-      icon: 'D',
-      description: 'Registra decisiones, KPIs, acciones y seguimiento operativo.',
-      href: '/decisions',
-      primary: 'Abrir Decisiones',
-      permission: 'workspace.access',
-      meta: [{ text: 'KPIs' }, { text: 'Acciones' }],
-    })
   );
+  if (isAdminUser()) {
+    grid.append(
+      card({
+        title: 'Studio',
+        icon: 'S',
+        description: 'Configura fuentes de datos, tablas, transformaciones y conocimiento semántico.',
+        href: '/studio',
+        primary: 'Abrir Studio',
+        permission: 'studio.read',
+        size: 'primary-card',
+        meta: [{ text: 'Fuentes de datos' }, { text: 'Reportes' }],
+        secondary: [{ label: 'Nueva fuente', href: '/studio', permission: 'studio.write' }],
+      }),
+      card({
+        title: 'Monitor',
+        icon: 'M',
+        description: 'Revisa flujos automáticos, trabajos recientes, reportes y servicios internos.',
+        href: '/monitor',
+        primary: 'Abrir Monitor',
+        permission: 'monitor.read',
+        meta: [{ text: state.statuses.mcp?.label || 'Servicios internos no verificados' }],
+      }),
+      card({
+        title: 'Decisions',
+        icon: 'D',
+        description: 'Registra decisiones, KPIs, acciones y seguimiento operativo.',
+        href: '/decisions',
+        primary: 'Abrir Decisiones',
+        permission: 'workspace.access',
+        meta: [{ text: 'KPIs' }, { text: 'Acciones' }],
+      }),
+    );
+  }
   return renderSection('Trabajo operativo', 'Lo que usas para trabajar con datos, fuentes y decisiones.', grid);
 }
 
@@ -325,7 +344,17 @@ export function renderHome(root) {
   root.replaceChildren();
   const shell = el('div', 'home-shell');
   const container = el('div', 'home-container');
-  container.append(renderHero(), renderQuickAccess(), renderOperational(), renderAdministration(), renderDataProcesses(), renderSystemOps());
+  // Non-admins only get the hero (with the Workspace CTA) and a single
+  // Workspace card in the operational grid — the administration,
+  // data-processes and system-ops blocks expose admin-only surface and
+  // are hidden entirely instead of being rendered with "Acceso limitado"
+  // chips. Admins keep the original layout.
+  container.append(renderHero());
+  if (isAdminUser()) container.append(renderQuickAccess());
+  container.append(renderOperational());
+  if (isAdminUser()) {
+    container.append(renderAdministration(), renderDataProcesses(), renderSystemOps());
+  }
   shell.append(renderTopbar(), container);
   root.appendChild(shell);
 }
