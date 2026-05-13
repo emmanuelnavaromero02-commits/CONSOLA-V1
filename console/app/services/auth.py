@@ -30,6 +30,12 @@ SESSION_SLIDE    = timedelta(days=1)   # extend if older than this
 MAX_SESSION_LIFETIME = timedelta(hours=12)
 REFRESH_TOKEN_LIFETIME = timedelta(days=7)
 
+# Minimum password length enforced on every server-side setter
+# (activate_user, change_own_password, reset_password). 12 chars matches
+# NIST SP 800-63B 2024 guidance and lines up with the entropy bar most
+# managed-password products use as default.
+MIN_PASSWORD_LENGTH = 12
+
 _POOL: asyncpg.Pool | None = None
 
 
@@ -165,7 +171,7 @@ async def create_invited_user(email: str, name: str | None = None, role: str = "
 
 async def activate_user(user_id: int, new_password: str) -> dict | None:
     """Mark user active and set their password (called from /auth/activate)."""
-    if not new_password or len(new_password) < 8:
+    if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
         return None
     p = await pool()
     row = await p.fetchrow(
@@ -182,7 +188,7 @@ async def activate_user(user_id: int, new_password: str) -> dict | None:
 async def reset_password_to(user_id: int, new_password: str) -> dict | None:
     """Token-based password reset — sets a new password and clears the
     must_change_password flag (the user just chose this one)."""
-    if not new_password or len(new_password) < 8:
+    if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
         return None
     p = await pool()
     row = await p.fetchrow(
@@ -256,8 +262,8 @@ async def update_user(user_id: int, *, name: str | None = None, role: str | None
 async def change_own_password(user_id: int, current_password: str,
                               new_password: str) -> tuple[bool, str | None]:
     """Self-service password change. Returns (success, error_msg)."""
-    if not new_password or len(new_password) < 8:
-        return False, "el password debe tener al menos 8 caracteres"
+    if not new_password or len(new_password) < MIN_PASSWORD_LENGTH:
+        return False, f"el password debe tener al menos {MIN_PASSWORD_LENGTH} caracteres"
     if current_password == new_password:
         return False, "el nuevo password debe ser distinto al actual"
     p = await pool()
@@ -479,7 +485,18 @@ def _user_to_dict(row) -> dict | None:
 
 
 def cookie_secure() -> bool:
-    return os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+    """Should the session cookie be marked Secure?
+
+    Explicit COOKIE_SECURE env var always wins. Without it, default to
+    True UNLESS APP_ENV is "development" (local dev over http://localhost
+    cannot accept Secure cookies). This makes the safe production default
+    automatic and leaves dev behaviour unchanged.
+    """
+    explicit = os.environ.get("COOKIE_SECURE")
+    if explicit is not None:
+        return explicit.lower() == "true"
+    app_env = os.environ.get("APP_ENV", "development").lower()
+    return app_env != "development"
 
 
 def verify_internal_api_key(
