@@ -81,15 +81,17 @@ def test_activate_returns_strict_csp():
 
 # ── Non-auth paths keep the relaxed CSP (sanity: we didn't break it) ─
 
-def test_home_keeps_relaxed_csp():
+def test_home_uses_strict_csp_phase3():
+    """Sprint v1.11 phase 3 promoted SECURITY_HEADERS to strict — the
+    home and every other non-auth, non-viewer path now drop
+    'unsafe-inline' from script-src too."""
     csp = _csp_for("/")
-    # Relaxed CSP still allows inline scripts on the home (Phase 2 work).
-    assert "script-src 'self' 'unsafe-inline'" in csp, csp
+    assert "'unsafe-inline'" not in csp.split("style-src", 1)[0], csp
 
 
-def test_studio_keeps_relaxed_csp():
+def test_studio_uses_strict_csp_phase3():
     csp = _csp_for("/studio")
-    assert "script-src 'self' 'unsafe-inline'" in csp, csp
+    assert "'unsafe-inline'" not in csp.split("style-src", 1)[0], csp
 
 
 # ── Frame-ancestors: strict pages must be DENY-equivalent ────────────

@@ -35,7 +35,7 @@
           <select class="ent-workspace-sel"><option>Default Workspace</option></select>
         </div>
         <div class="ent-topbar-right">
-          <button class="btn-theme" id="theme-btn" onclick="cycleTheme()" title="Cambiar tema">☾ DARK</button>
+          <button class="btn-theme" id="theme-btn" title="Cambiar tema">☾ DARK</button>
           <span class="status-dot blink"></span>
           <span class="status-text" id="sys-status">ONLINE</span>
           <div class="ent-user">
@@ -68,9 +68,8 @@
               <div class="input-bar">
                 <span class="prompt-symbol">•</span>
                 <textarea id="chat-input" class="chat-input" rows="1"
-                  placeholder="Consulta el estado del pipeline, jobs, datasets..."
-                  onkeydown="handleKey(event)"></textarea>
-                <button class="btn-exec" onclick="sendMessage()" title="Send [Enter]">
+                  placeholder="Consulta el estado del pipeline, jobs, datasets..."></textarea>
+                <button class="btn-exec" id="btn-exec" title="Send [Enter]">
                   EXEC
                 </button>
               </div>
@@ -83,7 +82,7 @@
                 <div class="panel-title">
                   <span class="panel-icon">⚙</span> JOBS
                   <span class="panel-badge" id="jobs-running">—</span>
-                  <button class="btn-sm" onclick="loadJobs()">↺</button>
+                  <button class="btn-sm" id="btn-jobs-reload">↺</button>
                 </div>
                 <div id="jobs-list" class="jobs-list">
                   <div class="dim" style="padding:8px;font-size:10px">No jobs yet.</div>
@@ -94,7 +93,7 @@
               <div class="panel panel-side">
                 <div class="panel-title">
                   <span class="panel-icon">◈</span> MCP SERVERS
-                  <button class="btn-sm" onclick="loadServers(true)">↺</button>
+                  <button class="btn-sm" id="btn-servers-reload">↺</button>
                 </div>
                 <div id="servers-list" class="servers-list">
                   <div class="loading-dots">SCANNING<span class="dots"></span></div>
@@ -110,14 +109,14 @@
                 <div class="panel-title">
                   <span class="panel-icon">◆</span> QUICK OPS
                 </div>
-                <div class="quick-ops">
-                  <button class="qbtn" onclick="openViewer('/viewer/pipeline','Pipeline Monitor')" style="border-color:var(--amber);color:var(--amber)">◈ Pipeline DAG</button>
-                  <button class="qbtn" onclick="openViewer('/viewer/jobs','Jobs History')">⚙ Historial de jobs</button>
-                  <button class="qbtn" onclick="quickCmd('Lista todos los datasets disponibles')">📦 Listar datasets</button>
-                  <button class="qbtn" onclick="quickCmd('Lista las fuentes de datos bronze disponibles')">🗄 Bronze sources</button>
-                  <button class="qbtn" onclick="quickCmd('¿Qué MCP servers están registrados y qué herramientas tienen?')">◈ MCP status</button>
-                  <button class="qbtn" onclick="openDatasets()">📊 Datasets panel</button>
-                  <button class="qbtn" onclick="window.location='/studio'" style="border-color:var(--cyan);color:var(--cyan)">⚙ Ir a Studio →</button>
+                <div class="quick-ops" id="quick-ops">
+                  <button class="qbtn" data-action="open-viewer" data-url="/viewer/pipeline" data-label="Pipeline Monitor" style="border-color:var(--amber);color:var(--amber)">◈ Pipeline DAG</button>
+                  <button class="qbtn" data-action="open-viewer" data-url="/viewer/jobs" data-label="Jobs History">⚙ Historial de jobs</button>
+                  <button class="qbtn" data-action="quick-cmd" data-cmd="Lista todos los datasets disponibles">📦 Listar datasets</button>
+                  <button class="qbtn" data-action="quick-cmd" data-cmd="Lista las fuentes de datos bronze disponibles">🗄 Bronze sources</button>
+                  <button class="qbtn" data-action="quick-cmd" data-cmd="¿Qué MCP servers están registrados y qué herramientas tienen?">◈ MCP status</button>
+                  <button class="qbtn" data-action="open-datasets">📊 Datasets panel</button>
+                  <button class="qbtn" data-action="go-studio" style="border-color:var(--cyan);color:var(--cyan)">⚙ Ir a Studio →</button>
                 </div>
               </div>
 
@@ -163,15 +162,15 @@
               <span class="panel-icon" style="padding:0 8px;font-size:9px;color:var(--green)">◈</span>
               <div class="viewer-tabs" id="viewer-tabs"></div>
               <div class="viewer-panel-actions">
-                <button class="btn-sm" onclick="popoutViewer()" title="Abrir en nueva pestaña">⬡</button>
-                <button class="btn-sm" onclick="closeViewerPanel()" title="Cerrar panel">✕</button>
+                <button class="btn-sm" id="btn-popout" title="Abrir en nueva pestaña">⬡</button>
+                <button class="btn-sm" id="btn-close-viewer" title="Cerrar panel">✕</button>
               </div>
             </div>
             <iframe id="viewer-frame" src="about:blank" frameborder="0" class="viewer-iframe"></iframe>
             <div id="viewer-fallback" class="viewer-fallback" style="display:none">
               <div class="viewer-fallback-title">Viewer unavailable</div>
               <div class="viewer-fallback-copy">Open it in a new tab or refresh after signing in.</div>
-              <button class="btn-sm" onclick="popoutViewer()">Open tab</button>
+              <button class="btn-sm" id="btn-popout-fallback">Open tab</button>
             </div>
           </div>
         </div><!-- end app-body -->
@@ -180,12 +179,12 @@
   </div><!-- end ent-shell -->
 
   <!-- Datasets modal -->
-  <div class="modal-overlay" id="datasets-modal" style="display:none" onclick="closeModal(event)">
+  <div class="modal-overlay" id="datasets-modal" style="display:none">
     <div class="modal">
       <div class="modal-title">
         <span class="panel-icon">📊</span> DATASETS REGISTRY
-        <button class="btn-sm" onclick="loadDatasets()">↺</button>
-        <button class="modal-close" onclick="document.getElementById('datasets-modal').style.display='none'">✕</button>
+        <button class="btn-sm" id="btn-datasets-reload">↺</button>
+        <button class="modal-close" id="btn-modal-close">✕</button>
       </div>
       <div id="datasets-body" class="datasets-body">
         <div class="loading-dots">LOADING<span class="dots"></span></div>
@@ -194,38 +193,6 @@
   </div>
 
   <script src="/static/js/app.js?v=2"></script>
-  <script>
-    // Auto-open Pipeline Monitor after boot sequence completes (~2s)
-    document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(() => {
-        if (typeof openViewer === 'function') {
-          openViewer('/viewer/pipeline', 'Pipeline Monitor');
-        }
-      }, 2200);
-    });
-
-    // Receive messages from viewer iframes
-    window.addEventListener('message', (ev) => {
-      if (!ev.data) return;
-
-      // DAG-to-assistant: pipeline viewer sends DAG code to chat
-      if (ev.data.type === 'dag_to_assistant') {
-        const input = document.getElementById('chat-input');
-        if (!input) return;
-        input.value = ev.data.message || '';
-        input.style.borderColor = 'var(--cyan)';
-        input.focus();
-        input.dispatchEvent(new Event('input'));
-        setTimeout(() => { input.style.borderColor = ''; }, 2000);
-        return;
-      }
-
-      // open_viewer: studio entity row "✏ DAG" button — navigate viewer to pipeline DAGs tab
-      if (ev.data.type === 'open_viewer' && ev.data.url) {
-        openViewer(ev.data.url, ev.data.label || 'DAG Editor');
-        return;
-      }
-    });
-  </script>
+  <script src="/static/js/monitor.js"></script>
 </body>
 </html>
