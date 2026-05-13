@@ -2,7 +2,7 @@
 
 Uso:
     from app.core.settings_proxy import get_setting
-    token = get_setting("replicon_token", default="", env_fallback="REPLICON_TOKEN")
+    token = get_setting("sap_hcm_token", default="", env_fallback="SAP_HCM_TOKEN")
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def get_setting(key: str, default: str = "", env_fallback: str | None = None) ->
     """Lee setting desde console (cacheado 30s). Fallback a env si console falla.
 
     Args:
-        key: nombre del setting en system_settings (ej. 'replicon_token').
+        key: nombre del setting en system_settings (ej. 'sap_hcm_token').
         default: valor si nada está configurado.
         env_fallback: nombre de variable de entorno a usar como fallback.
     """
