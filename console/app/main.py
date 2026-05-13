@@ -32,7 +32,7 @@ from app.services import cartridge_service
 from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
-from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
+from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token, verify_access_token_async
 from app.services.csrf import require_csrf, set_csrf_cookie, clear_csrf_cookie
 from app.security import get_internal_api_key, required_secret
 from app.dependencies import (
@@ -559,7 +559,9 @@ async def auth_middleware(request: Request, call_next):
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             try:
-                claims = decode_access_token(auth_header[7:])
+                # Sprint v1.10: async variant runs the Redis blacklist
+                # check; legacy decode kept for unit tests.
+                claims = await verify_access_token_async(auth_header[7:])
                 jwt_user = await _auth.get_user_by_id(int(claims["sub"]))
                 if jwt_user and jwt_user.get("is_active"):
                     workspaces = await _workspace_memberships(jwt_user["id"])
@@ -704,6 +706,25 @@ async def auth_logout(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
     if refresh_token:
         await _auth.revoke_refresh_token(refresh_token)
+
+    # Sprint v1.10 — blacklist the bearer access token's jti so a stolen
+    # JWT can't keep authenticating up to its exp. Silent if the caller
+    # is cookie-only (most of our UI) or the token is already invalid.
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        bearer = auth_header.split(" ", 1)[1].strip()
+        try:
+            claims = decode_access_token(bearer)
+            jti = claims.get("jti")
+            exp = claims.get("exp")
+            if jti and exp is not None:
+                from app.services.jwt_blacklist import get_blacklist
+                await get_blacklist().revoke(jti, int(exp))
+        except Exception:
+            # JWT already expired / malformed / signature mismatch —
+            # nothing to revoke, nothing to do.
+            pass
+
     resp = JSONResponse({"logged_out": True})
     resp.delete_cookie(_auth.COOKIE_NAME, path="/")
     resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
@@ -724,7 +745,8 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="invalid authorization header")
     try:
-        claims = decode_access_token(token)
+        # Sprint v1.10: blacklist-aware verification.
+        claims = await verify_access_token_async(token)
     except JWTAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return {"claims": {
