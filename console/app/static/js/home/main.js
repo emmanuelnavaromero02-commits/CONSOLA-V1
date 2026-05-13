@@ -70,7 +70,7 @@ async function loadHomeData() {
     state.statuses.replicon = status('Replicon', 'No verificado', 'unknown');
   }
 
-  state.statuses.console = status('Consola', 'En línea', 'online');
+  state.statuses.console = status('OMEGA', 'En línea', 'online');
   state.statuses.workspace = status('Workspace', state.workspaceUrl ? 'Configurado' : 'No verificado', state.workspaceUrl ? 'online' : 'unknown');
   state.statuses.airflow = status('Airflow', 'No verificado', 'unknown');
   state.statuses.minio = status('MinIO', 'No verificado', 'unknown');
