@@ -1,0 +1,185 @@
+"""Sprint v1.11 phase 3 — strict CSP globally + 6 root HTMLs externalised.
+
+Verifies:
+  * Every root HTML in console/app/static/ has 0 inline event handlers
+    and 0 inline <script> blocks with code.
+  * Each of the six refactored HTMLs references its extracted .js
+    (apps_gallery / decisions / iam / monitor / rag / security).
+  * Each extracted .js file exists and calls addEventListener.
+  * The global SECURITY_HEADERS now drops 'unsafe-inline' from
+    script-src for every non-auth, non-viewer path.
+
+Lazy-imports app.main so this module's collection doesn't pollute
+sys.modules for neighbouring tests.
+"""
+from __future__ import annotations
+
+import importlib
+import os
+import re
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from fastapi.responses import JSONResponse
+
+os.environ.setdefault("INTERNAL_API_KEY", "x" * 64)
+os.environ.setdefault("JWT_SECRET_KEY",   "y" * 64)
+os.environ.setdefault("POSTGRES_PASSWORD", "test")
+os.environ.setdefault("MINIO_SECRET_KEY",  "test")
+
+
+def _main():
+    for _k in ("app.dependencies", "app.services.auth"):
+        if isinstance(sys.modules.get(_k), MagicMock):
+            sys.modules.pop(_k, None)
+    return importlib.import_module("app.main")
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+STATIC = REPO_ROOT / "console" / "app" / "static"
+JS_DIR = STATIC / "js"
+
+
+def _csp_for(path: str) -> str:
+    main_module = _main()
+    resp = JSONResponse({})
+    main_module._apply_security_headers(resp, path)
+    return resp.headers.get("content-security-policy", "")
+
+
+# ── Refactored HTMLs ──────────────────────────────────────────────────
+
+REFACTORED_PAGES = {
+    "apps_gallery.html": "apps_gallery.js",
+    "decisions.html":    "decisions.js",
+    "iam.html":          "iam.js",
+    "monitor.html":      "monitor.js",
+    "rag.html":          "rag.js",
+    "security.html":     "security.js",
+}
+
+
+def test_each_refactored_page_references_extracted_js():
+    for page, js in REFACTORED_PAGES.items():
+        html = (STATIC / page).read_text(encoding="utf-8")
+        expected = f"/static/js/{js}"
+        assert expected in html, f"{page} should reference {expected}"
+
+
+def test_each_extracted_js_exists_and_wires_listeners():
+    for page, js in REFACTORED_PAGES.items():
+        js_path = JS_DIR / js
+        assert js_path.is_file(), f"missing {js_path}"
+        src = js_path.read_text(encoding="utf-8")
+        assert "addEventListener" in src, (
+            f"{js} should call addEventListener — the inline on* handlers were removed."
+        )
+
+
+# ── No inline handlers / no inline <script> with code in ANY root HTML ────
+
+_INLINE_HANDLER_RE = re.compile(
+    r'\bon(?:click|change|submit|input|keydown|mousedown|load|error|scroll|mouseover|mouseout|mouseenter|mouseleave)\s*=\s*"',
+    re.IGNORECASE,
+)
+_INLINE_SCRIPT_WITH_CODE = re.compile(
+    r"<script(?![^>]*\bsrc=)[^>]*>([^<]+?)</script>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def test_no_inline_handlers_in_any_root_html():
+    for html_path in sorted(STATIC.glob("*.html")):
+        html = html_path.read_text(encoding="utf-8")
+        matches = _INLINE_HANDLER_RE.findall(html)
+        assert not matches, (
+            f"{html_path.name} has inline on*= handlers: {matches!r}"
+        )
+
+
+def test_no_inline_script_with_code_in_any_root_html():
+    for html_path in sorted(STATIC.glob("*.html")):
+        html = html_path.read_text(encoding="utf-8")
+        non_whitespace = [m.strip() for m in _INLINE_SCRIPT_WITH_CODE.findall(html) if m.strip()]
+        assert not non_whitespace, (
+            f"{html_path.name} still has an inline <script> with code "
+            f"(first 200 chars): {non_whitespace[0][:200]!r}"
+        )
+
+
+# ── Global SECURITY_HEADERS — strict everywhere ───────────────────────
+
+GLOBAL_STRICT_PATHS = [
+    "/",
+    "/decisions",
+    "/monitor",
+    "/iam",
+    "/studio",
+    "/security",
+    "/apps-gallery",
+    "/rag",
+    "/admin/users",
+    "/settings",
+    "/operations",
+]
+
+
+def test_every_non_viewer_path_has_strict_csp():
+    for path in GLOBAL_STRICT_PATHS:
+        csp = _csp_for(path)
+        # Only script-src segment matters — style-src still has 'unsafe-inline'.
+        script_seg = csp.split("style-src", 1)[0]
+        assert "'unsafe-inline'" not in script_seg, (
+            f"{path}: script-src still allows 'unsafe-inline' — {script_seg!r}"
+        )
+        assert "script-src 'self'" in script_seg, (
+            f"{path}: missing script-src 'self' — {script_seg!r}"
+        )
+
+
+def test_global_csp_keeps_style_unsafe_inline():
+    csp = _csp_for("/")
+    # style-src 'unsafe-inline' stays — the page <style> blocks aren't in
+    # scope for this phase.
+    assert "style-src 'self' 'unsafe-inline'" in csp, csp
+
+
+def test_global_csp_keeps_frame_ancestors_none_for_non_viewers():
+    """The root pages aren't iframe-embedded; X-Frame-Options DENY +
+    frame-ancestors 'none' must stay. (Viewer pages override this with
+    frame-ancestors 'self' so Monitor can iframe them.)"""
+    csp = _csp_for("/")
+    assert "frame-ancestors 'none'" in csp, csp
+
+
+def test_viewer_path_still_keeps_frame_ancestors_self():
+    """Sanity check we didn't accidentally tighten viewers."""
+    csp = _csp_for("/viewer/pipeline")
+    assert "frame-ancestors 'self'" in csp, csp
+
+
+# ── Per-page sanity for the 6 refactored ones ─────────────────────────
+
+def test_decisions_csp_is_strict():
+    assert "'unsafe-inline'" not in _csp_for("/decisions").split("style-src", 1)[0]
+
+
+def test_monitor_csp_is_strict():
+    assert "'unsafe-inline'" not in _csp_for("/monitor").split("style-src", 1)[0]
+
+
+def test_iam_csp_is_strict():
+    assert "'unsafe-inline'" not in _csp_for("/iam").split("style-src", 1)[0]
+
+
+def test_security_csp_is_strict():
+    assert "'unsafe-inline'" not in _csp_for("/security").split("style-src", 1)[0]
+
+
+def test_apps_gallery_csp_is_strict():
+    assert "'unsafe-inline'" not in _csp_for("/apps-gallery").split("style-src", 1)[0]
+
+
+def test_rag_csp_is_strict():
+    assert "'unsafe-inline'" not in _csp_for("/rag").split("style-src", 1)[0]

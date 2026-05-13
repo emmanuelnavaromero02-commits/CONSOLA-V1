@@ -380,9 +380,16 @@ SECURITY_HEADERS = {
         "camera=(), microphone=(), geolocation=(), payment=(), "
         "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
     ),
+    # Sprint v1.11 phase 3: every root HTML now ships its JS as an
+    # external file (login.js, me.js, monitor.js, decisions.js, rag.js,
+    # iam.js, security.js, apps_gallery.js, etc.). Phase 1 and phase 2
+    # already cleaned the auth forms and the viewers. With all three
+    # phases shipped, the global CSP can drop 'unsafe-inline' from
+    # script-src. style-src keeps 'unsafe-inline' for the per-page
+    # <style> blocks (separate refactor, not in scope).
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "connect-src 'self' http://localhost:* ws://localhost:*; "

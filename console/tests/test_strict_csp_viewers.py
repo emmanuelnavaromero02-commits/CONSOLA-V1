@@ -89,10 +89,13 @@ def test_viewer_csp_allows_same_origin_iframe():
     assert "frame-ancestors 'self'" in csp, csp
 
 
-def test_non_viewer_path_keeps_relaxed_csp():
+def test_non_viewer_path_also_strict_after_phase3():
+    """After phase 3, the global SECURITY_HEADERS also drops
+    'unsafe-inline' — every root HTML had its JS externalised. The
+    viewer-specific CSP just stays distinct because it keeps
+    frame-ancestors 'self' (viewers are embedded in iframes)."""
     csp = _csp_for("/")
-    # The relaxed CSP at the site root still allows inline scripts (Phase 3 work).
-    assert "script-src 'self' 'unsafe-inline'" in csp, csp
+    assert "'unsafe-inline'" not in csp.split("style-src", 1)[0], csp
 
 
 # ── HTML wiring per viewer ───────────────────────────────────────────
