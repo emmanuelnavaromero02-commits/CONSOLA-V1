@@ -1,11 +1,11 @@
-    /* Studio overrides viewer.css: full-page layout with scroll only inside panels */
-    html, body { overflow: hidden; height: 100%; }
+    /* Studio overrides viewer.css: allow page-level scroll, panels manage their own overflow */
+    html, body { overflow-x: hidden; overflow-y: auto; min-height: 100vh; }
 
     /* ── Studio layout ── */
     .studio-layout {
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      min-height: 100vh;
     }
 
     /* ── Header ── */
@@ -561,3 +561,42 @@
     .tpl-tags       { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
     .tpl-tag        { font-size: 8px; font-family: var(--font-mono); padding: 1px 4px;
                       border: 1px solid var(--border); border-radius: 2px; color: var(--text3); }
+
+    /* ── Studio mini-header (visible only in steps 2-7) ───────────────────── */
+    .studio-mini-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      margin: 0 0 16px;
+      background: var(--bg2, #f8fafc);
+      border: 1px solid var(--color-border-soft, rgba(15,23,42,.08));
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--color-text-soft, #475569);
+    }
+    .studio-mini-name {
+      font-weight: 600;
+      color: var(--color-text-strong, #0f172a);
+    }
+    .studio-mini-meta {
+      color: var(--color-text-muted, #64748b);
+    }
+
+    /* Steps 2-7: hide the big summary block, show the mini-header. */
+    body[data-studio-step="2"] .studio-summary-block,
+    body[data-studio-step="3"] .studio-summary-block,
+    body[data-studio-step="4"] .studio-summary-block,
+    body[data-studio-step="5"] .studio-summary-block,
+    body[data-studio-step="6"] .studio-summary-block,
+    body[data-studio-step="7"] .studio-summary-block {
+      display: none !important;
+    }
+    body[data-studio-step="2"] #studio-mini-header,
+    body[data-studio-step="3"] #studio-mini-header,
+    body[data-studio-step="4"] #studio-mini-header,
+    body[data-studio-step="5"] #studio-mini-header,
+    body[data-studio-step="6"] #studio-mini-header,
+    body[data-studio-step="7"] #studio-mini-header {
+      display: flex !important;
+    }

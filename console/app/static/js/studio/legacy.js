@@ -29,11 +29,12 @@ import { state } from './legacy-state.js';
     }
 
     export async function selectCartridge(id) {
-      if (!id) { state._currentCartridge = null; _updateCartridgeInfo(); return; }
+      if (!id) { state._currentCartridge = null; _updateCartridgeInfo(); _refreshStudioMiniHeader(); return; }
       try {
         const r = await fetch(`/studio/cartridges/${encodeURIComponent(id)}`);
         state._currentCartridge = await r.json();
         _updateCartridgeInfo();
+        _refreshStudioMiniHeader();
         const sel = document.getElementById('cartridge-sel');
         if (sel) sel.value = id;
         // Reset per-cartridge state
@@ -43,6 +44,7 @@ import { state } from './legacy-state.js';
         if (state.currentStep > 0) goStep(state.currentStep);
       } catch(e) {
         state._currentCartridge = null;
+        _refreshStudioMiniHeader();
       }
     }
 
@@ -172,10 +174,44 @@ import { state } from './legacy-state.js';
 
     // ── Navigation ─────────────────────────────────────────────────────────────
 
+    // Maps cartridge.status to the same Spanish label used by the modern summary
+    // chip, so the mini-header stays consistent with the big block.
+    function _miniStatusLabel(c) {
+      if (!c) return '';
+      if (c.healthy === false) return 'Revisar';
+      switch (c.status) {
+        case 'operational': return 'Operativo';
+        case 'degraded':    return 'Configuración pendiente';
+        case 'offline':     return 'Offline';
+        case 'unknown':     return 'Sin diagnóstico';
+        default:            return c.connector?.type || '';
+      }
+    }
+
+    export function _refreshStudioMiniHeader() {
+      const mini = document.getElementById('studio-mini-header');
+      if (!mini) return;
+      const nameEl = mini.querySelector('.studio-mini-name');
+      const metaEl = mini.querySelector('.studio-mini-meta');
+      const c = state._currentCartridge;
+      if (!c) {
+        if (nameEl) nameEl.textContent = '—';
+        if (metaEl) metaEl.textContent = 'sin cartucho';
+        return;
+      }
+      const name   = c.name || c.id || 'Cartucho';
+      const tablas = `${(c.entities || []).length} tablas`;
+      const estado = _miniStatusLabel(c);
+      if (nameEl) nameEl.textContent = name;
+      if (metaEl) metaEl.textContent = [tablas, estado].filter(Boolean).join(' · ');
+    }
+
     export async function goStep(n) {
       state.currentStep = n;
       state.aiHistory = [];
       document.body.classList.toggle('studio-modern-summary-active', n === 1);
+      document.body.dataset.studioStep = String(n);
+      _refreshStudioMiniHeader();
 
       // Update step nav UI
       for (let i = 1; i <= 6; i++) {

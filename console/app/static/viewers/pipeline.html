@@ -616,8 +616,9 @@ async function extractEntity(cartridge, entity) {
 }
 
 async function extractAll() {
-  const r = await fetch('/mcp/servers/infra/invoke', {
+  const r = await fetch('/api/mcp/servers/infra/invoke', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({tool: 'cartridge_extract_all', args: {cartridge_id: _cartridge, mode: 'incremental'}}),
   });
@@ -747,8 +748,9 @@ async function loadDags() {
   const list = document.getElementById('dag-list');
   list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>';
   try {
-    const r = await fetch('/mcp/invoke', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+    const r = await fetch('/api/mcp/invoke', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
     });
     const d = await r.json();
@@ -813,8 +815,9 @@ async function selectDag(dagId, reloadList = true) {
 
   // Try to load source from DB (falls back to disk automatically in dag_get_source)
   try {
-    const r = await fetch('/mcp/invoke', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+    const r = await fetch('/api/mcp/invoke', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         server: 'infra', tool: 'dag_get_source',
         args: { cartridge_id: _cartridge, dag_id: dagId },
@@ -873,8 +876,9 @@ async function deployDag() {
   setDeployMsg('Desplegando…', '');
 
   try {
-    const r = await fetch('/mcp/invoke', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+    const r = await fetch('/api/mcp/invoke', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         server: 'infra', tool: 'airflow_create_dag',
         args: { dag_id: dagId, code, cartridge_id: _cartridge,

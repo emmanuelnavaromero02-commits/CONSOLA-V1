@@ -379,6 +379,8 @@ function openEditModal(u) {
   $('f-role').disabled   = isMe;
   $('f-active').disabled = isMe;
   $('edit-self-hint').hidden = !isMe;
+  const iamLink = $('btn-edit-iam');
+  if (iamLink) iamLink.href = `/iam?user_id=${encodeURIComponent(u.id)}`;
   clearModalError($('edit-err'));
   openModal('edit-modal');
   setTimeout(() => $('f-name').focus(), 30);

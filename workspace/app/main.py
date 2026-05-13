@@ -309,6 +309,13 @@ async def api_apps(request: Request):
 @app.get("/apps/{name}")
 async def serve_app(request: Request, name: str):
     user = require_user(request)
+    # Built-in static apps (shipped with the workspace image) take precedence
+    # over DB-stored ones. They live in workspace/app/static/apps/<name>.html
+    # and are visible to all authenticated users.
+    if DATASET_NAME_RE.fullmatch(name or ""):
+        static_app = STATIC / "apps" / f"{name}.html"
+        if static_app.is_file():
+            return FileResponse(static_app, media_type="text/html")
     p = await pg()
     row = await p.fetchrow(
         """SELECT html, created_by_id, visibility
