@@ -212,6 +212,11 @@ services:
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:-}
       INTERNAL_API_KEY_MCP_INFRA_TO_VAULT: ${INTERNAL_API_KEY_MCP_INFRA_TO_VAULT:-}
+      # Sprint v1.15: Fernet master key for encryption at rest. `:?` makes
+      # docker compose fail fast at `up` time if the operator forgot to
+      # regenerate .env after pulling — better than booting and silently
+      # 500'ing every secret read.
+      VAULT_ENCRYPTION_KEY: ${VAULT_ENCRYPTION_KEY:?VAULT_ENCRYPTION_KEY is required}
     # Internal callers reach the service over the Docker network as
     # http://vault:8300 (uvicorn already listens on 8300 — see
     # ../vault/Dockerfile CMD). Exposing the same port to the host makes
