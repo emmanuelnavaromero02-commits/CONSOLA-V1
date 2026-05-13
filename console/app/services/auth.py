@@ -82,16 +82,64 @@ def verify_password(plain: str, hashed: str | None) -> bool:
 
 # ── User CRUD ───────────────────────────────────────────────────────────────
 
+# Map non-canonical / legacy users.role values to one of the four workspace
+# roles that exist in the `roles` table (admin / workspace_admin / analyst /
+# viewer). Without this fallback a user created with role "user" or "owner"
+# could not be granted membership: the SELECT against `roles` would miss and
+# /api/me would 403 the user on first login.
+_WORKSPACE_ROLE_FALLBACK = {
+    "owner": "admin",
+    "super_admin": "admin",
+    "security_admin": "admin",
+    "auditor": "analyst",
+    "workspace_user": "viewer",
+    "user": "viewer",
+}
+
+
+async def _resolve_workspace_role_id(conn, role: str) -> int | None:
+    row = await conn.fetchrow("SELECT id FROM roles WHERE name = $1", role)
+    if row:
+        return row["id"]
+    fallback = _WORKSPACE_ROLE_FALLBACK.get(role, "viewer")
+    row = await conn.fetchrow("SELECT id FROM roles WHERE name = $1", fallback)
+    return row["id"] if row else None
+
+
+async def _assign_default_workspace_role(conn, user_id: int, role: str) -> None:
+    """Grant a freshly-created user membership in the default workspace.
+    The dependency chain in dependencies._with_workspace_context refuses
+    requests without at least one row in user_workspace_roles, so this must
+    run in the same transaction as the INSERT into users."""
+    workspace = await conn.fetchrow(
+        "SELECT id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1"
+    )
+    if not workspace:
+        raise RuntimeError("no workspaces configured; cannot assign user membership")
+    role_id = await _resolve_workspace_role_id(conn, role)
+    if not role_id:
+        raise RuntimeError(f"role not present in `roles` table and no fallback available: {role!r}")
+    await conn.execute(
+        """INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING""",
+        user_id, workspace["id"], role_id,
+    )
+
+
 async def create_user(email: str, password: str, name: str | None = None,
                       role: str = "user") -> dict:
     """Direct create with password — used by bootstrap_admin and admin override."""
     p = await pool()
-    row = await p.fetchrow(
-        """INSERT INTO users (email, name, password_hash, role, is_active)
-           VALUES ($1, $2, $3, $4, TRUE)
-           RETURNING id, email, name, role, is_active, must_change_password, created_at""",
-        email.lower().strip(), name, hash_password(password), role,
-    )
+    async with p.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """INSERT INTO users (email, name, password_hash, role, is_active)
+                   VALUES ($1, $2, $3, $4, TRUE)
+                   RETURNING id, email, name, role, is_active, must_change_password, created_at""",
+                email.lower().strip(), name, hash_password(password), role,
+            )
+            await _assign_default_workspace_role(conn, row["id"], role)
     return _user_to_dict(row)
 
 
