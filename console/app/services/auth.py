@@ -22,6 +22,12 @@ COOKIE_NAME      = "mod_session"
 REFRESH_COOKIE_NAME = "refresh_token"
 SESSION_LIFETIME = timedelta(days=7)
 SESSION_SLIDE    = timedelta(days=1)   # extend if older than this
+# Absolute cap on a session's age — overrides the sliding window so an
+# attacker holding a stolen cookie cannot keep extending the session
+# forever, and so password/role revocation eventually takes effect for
+# users with long-running sessions. 12h matches the typical workday
+# boundary the security team uses for similar caps elsewhere.
+MAX_SESSION_LIFETIME = timedelta(hours=12)
 REFRESH_TOKEN_LIFETIME = timedelta(days=7)
 
 _POOL: asyncpg.Pool | None = None
@@ -340,12 +346,20 @@ async def create_session(user_id: int, ip: str | None = None) -> tuple[str, date
 
 
 async def get_session_user(token: str) -> dict | None:
-    """Return user dict if session is valid; slides expiration if close to expiring."""
+    """Return user dict if session is valid; slides expiration if close to expiring.
+
+    Two independent windows apply:
+      * SESSION_LIFETIME (sliding) — extended on each request via SESSION_SLIDE.
+      * MAX_SESSION_LIFETIME (absolute) — measured from created_at; once
+        exceeded the session is deleted server-side and the caller is forced
+        to log in again. This guarantees password/role revocations propagate
+        within the cap and prevents indefinite session extension.
+    """
     if not token:
         return None
     p = await pool()
     row = await p.fetchrow(
-        """SELECT s.token, s.user_id, s.expires_at,
+        """SELECT s.token, s.user_id, s.expires_at, s.created_at,
                   u.id, u.email, u.name, u.role, u.is_active, u.must_change_password
              FROM user_sessions s
              JOIN users u ON u.id = s.user_id
@@ -354,9 +368,17 @@ async def get_session_user(token: str) -> dict | None:
     )
     if not row:
         return None
+    # Absolute lifetime cap: if the session is older than MAX_SESSION_LIFETIME,
+    # destroy it server-side and refuse the request. Doing this BEFORE the
+    # sliding extension prevents the same request from both invalidating and
+    # extending the session.
+    now = datetime.now(timezone.utc)
+    if row["created_at"] is not None and (now - row["created_at"]) > MAX_SESSION_LIFETIME:
+        await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+        return None
     # Sliding window: if older than SESSION_SLIDE remaining, push expiry forward
-    new_exp = datetime.now(timezone.utc) + SESSION_LIFETIME
-    if (row["expires_at"] - datetime.now(timezone.utc)) < (SESSION_LIFETIME - SESSION_SLIDE):
+    new_exp = now + SESSION_LIFETIME
+    if (row["expires_at"] - now) < (SESSION_LIFETIME - SESSION_SLIDE):
         await p.execute("UPDATE user_sessions SET expires_at = $1 WHERE token = $2",
                         new_exp, token)
     return {
