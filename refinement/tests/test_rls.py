@@ -28,7 +28,9 @@ def test_rls_default_deny(engine):
     ctx = {"email": "test@example.com"}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
-    assert "WHERE 1=0" in rls_sql
+    # sqlglot emits canonical SQL with spaces around operators ("1 = 0");
+    # strip whitespace before checking to stay assertion-stable.
+    assert "WHERE1=0" in rls_sql.replace(" ", "")
     assert len(params) == 0
 
 def test_rls_tenant_isolation(engine):
@@ -328,4 +330,6 @@ def test_preview_sql_no_user_context_with_caller_params_defaults_to_deny(engine)
     e.preview_sql(sql, params=["value"], user_context=None)
 
     final_sql = mock_conn.execute.call_args_list[-1][0][0]
-    assert "1=0" in final_sql, "No user_context with unrecognised table must default to deny (WHERE 1=0)"
+    # sqlglot emits "1 = 0" with spaces; check after whitespace normalisation.
+    assert "1=0" in final_sql.replace(" ", ""), \
+        f"No user_context with unrecognised table must default to deny (got: {final_sql!r})"
