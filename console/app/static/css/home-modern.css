@@ -349,7 +349,7 @@ body {
 
 .home-operational-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -370,6 +370,16 @@ body {
 
 .home-card.secondary-card {
   grid-column: span 2;
+}
+
+/* sprint v1.2-pr1: the 4 operational cards (Workspace/Studio/Monitor/Decisions)
+   render in a 2×2 grid with identical dimensions, regardless of their
+   primary/secondary class. */
+.home-operational-grid .home-card.primary-card,
+.home-operational-grid .home-card.secondary-card,
+.home-operational-grid .home-card {
+  grid-column: auto;
+  min-height: 218px;
 }
 
 .home-card::before {

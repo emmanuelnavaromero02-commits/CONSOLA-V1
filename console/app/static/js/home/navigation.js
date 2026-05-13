@@ -1,4 +1,3 @@
-import { actionGroups } from './actions.js';
 import { humanizeTerm } from '../i18n/labels.js';
 import { state } from './state.js';
 
@@ -42,7 +41,7 @@ export function renderTopbar() {
   const top = el('header', 'home-topbar');
   const brand = el('a', 'home-brand');
   brand.href = '/';
-  brand.append(el('span', 'home-mark', 'M'), el('span', null, 'MODecissions'), el('small', null, 'PaaS'));
+  brand.append(el('span', 'home-mark', 'Ω'), el('span', null, 'OMEGA'), el('small', null, 'by EPI USE'));
 
   const nav = el('nav', 'home-nav');
   nav.setAttribute('aria-label', 'Navegación principal');
@@ -56,14 +55,9 @@ export function renderTopbar() {
     navLink('Administración', '/iam')
   );
 
-  const groups = actionGroups();
-  const menus = el('div', 'home-action-groups');
-  menus.append(
-    actionMenu('Crear', groups.crear),
-    actionMenu('Ejecutar', groups.ejecutar),
-    actionMenu('Revisar', groups.revisar),
-    actionMenu('Configurar', groups.configurar)
-  );
+  // Action menus block (Crear / Ejecutar / Revisar / Configurar) removed in
+  // sprint v1.2-pr1: the four home cards already expose those flows and the
+  // dropdown menus were covering the assistant + service chips at 100% zoom.
 
   const user = el('div', 'home-user');
   const system = el('span', 'home-status-pill');
@@ -81,6 +75,6 @@ export function renderTopbar() {
   logout.dataset.logout = 'true';
   user.append(profile, logout);
 
-  top.append(brand, nav, menus, user);
+  top.append(brand, nav, user);
   return top;
 }

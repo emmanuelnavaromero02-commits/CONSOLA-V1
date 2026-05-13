@@ -57,7 +57,7 @@ function renderHeader() {
   const top = el('div', 'studio-modern-top');
   const copy = el('div');
   copy.append(
-    el('div', 'studio-modern-eyebrow', 'MODecissions Console'),
+    el('div', 'studio-modern-eyebrow', 'OMEGA Console'),
     el('h1', 'studio-modern-title', 'Studio'),
     el('p', 'studio-modern-desc', 'Configura fuentes de datos, tablas, transformaciones y conocimiento semántico desde una consola operativa clara.')
   );
