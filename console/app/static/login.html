@@ -97,6 +97,15 @@
       return '/';
     }
 
+    // Sprint v1.9 — CSRF double-submit cookie. The server seeds
+    // `csrf_token` on GET /login; we echo it back as a header on every
+    // sensitive POST. The cookie is NOT HttpOnly so document.cookie
+    // can read it.
+    function getCsrfToken() {
+      const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+
     async function doLogin(ev) {
       ev.preventDefault();
       const btn = document.getElementById('btn-login');
@@ -106,7 +115,10 @@
       try {
         const r = await fetch('/auth/login', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCsrfToken(),
+          },
           body: JSON.stringify({
             email: document.getElementById('email').value,
             password: document.getElementById('password').value,

@@ -262,7 +262,14 @@
       <a href="#" onclick="event.preventDefault();doLogout()">SALIR</a>`;
   }
   window.doLogout = async function(){
-    await fetch('/auth/logout', {method:'POST'});
+    // Sprint v1.9 CSRF: POST /auth/logout requires the token; read it
+    // from the csrf_token cookie (not HttpOnly).
+    const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+    const csrf = m ? decodeURIComponent(m[1]) : '';
+    await fetch('/auth/logout', {
+      method: 'POST',
+      headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+    });
     location.href = '/login';
   };
 

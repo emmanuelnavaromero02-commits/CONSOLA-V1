@@ -170,7 +170,11 @@
       btn.disabled = true;
       try {
         const r = await fetch('/api/me/change-password', {
-          method: 'POST', headers: {'Content-Type':'application/json'},
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCsrfToken(),
+          },
           body: JSON.stringify({ current_password: cur, new_password: nw }),
         });
         if (!r.ok) {
@@ -188,8 +192,19 @@
       return false;
     }
 
+    // Sprint v1.9 — CSRF token reader. Server seeds csrf_token cookie on
+    // GET /me; we echo it back on POST /api/me/change-password and
+    // POST /auth/logout.
+    function getCsrfToken() {
+      const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+
     async function doLogout(){
-      await fetch('/auth/logout', {method:'POST'});
+      await fetch('/auth/logout', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': getCsrfToken() },
+      });
       location.href = '/login';
     }
 

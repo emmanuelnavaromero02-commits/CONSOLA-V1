@@ -214,8 +214,14 @@ def console_main(monkeypatch):
 
 def test_login_success_returns_access_token(console_main):
     client = TestClient(console_main.app)
+    # Sprint v1.9 — /auth/login now enforces double-submit CSRF.
+    client.cookies.set("csrf_token", "test-csrf")
 
-    response = client.post("/auth/login", json={"email": "analyst@example.com", "password": "correct-password"})
+    response = client.post(
+        "/auth/login",
+        json={"email": "analyst@example.com", "password": "correct-password"},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -230,7 +236,13 @@ def test_login_success_returns_access_token(console_main):
 
 def test_login_issued_token_decodes(console_main):
     client = TestClient(console_main.app)
-    response = client.post("/auth/login", json={"email": "analyst@example.com", "password": "correct-password"})
+    # Sprint v1.9 — CSRF gate on /auth/login.
+    client.cookies.set("csrf_token", "test-csrf")
+    response = client.post(
+        "/auth/login",
+        json={"email": "analyst@example.com", "password": "correct-password"},
+        headers={"X-CSRF-Token": "test-csrf"},
+    )
 
     decoded = decode_access_token(response.json()["access_token"])
 
@@ -740,8 +752,10 @@ def test_logout_revokes_refresh_token(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("mod_session", "legacy-session-token")
     client.cookies.set("refresh_token", "valid-refresh-token")
+    # Sprint v1.9 — CSRF gate on /auth/logout.
+    client.cookies.set("csrf_token", "test-csrf")
 
-    response = client.post("/auth/logout")
+    response = client.post("/auth/logout", headers={"X-CSRF-Token": "test-csrf"})
 
     assert response.status_code == 200
     assert "valid-refresh-token" in console_main._auth.revoked_refresh_tokens

@@ -33,6 +33,7 @@ from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token
+from app.services.csrf import require_csrf, set_csrf_cookie, clear_csrf_cookie
 from app.security import get_internal_api_key, required_secret
 from app.dependencies import (
     ROLE_ADMIN,
@@ -635,10 +636,16 @@ def _set_refresh_cookie(resp: JSONResponse, token: str, expires) -> None:
 
 @app.get("/login")
 async def login_page():
-    return FileResponse(STATIC / "login.html")
+    # Seed the CSRF cookie so the page's POST /auth/login fetch can echo
+    # it back without an extra round-trip. The cookie is re-issued on
+    # every GET /login (cheap, and avoids a stale-token edge case when
+    # the user keeps the tab open across logout/login).
+    response = FileResponse(STATIC / "login.html")
+    set_csrf_cookie(response)
+    return response
 
 
-@app.post("/auth/login")
+@app.post("/auth/login", dependencies=[Depends(require_csrf)])
 async def auth_login(request: Request, body: dict):
     email = (body.get("email") or "").strip()
     pw    = body.get("password") or ""
@@ -661,6 +668,10 @@ async def auth_login(request: Request, body: dict):
         path="/",
     )
     _set_refresh_cookie(resp, refresh_token, refresh_expires)
+    # Rotate the CSRF token after a successful login: the old value may
+    # have been exposed to whatever script is on the login page; the
+    # post-login surface should not accept it again.
+    set_csrf_cookie(resp)
     return resp
 
 
@@ -685,7 +696,7 @@ async def auth_refresh(request: Request):
     return resp
 
 
-@app.post("/auth/logout")
+@app.post("/auth/logout", dependencies=[Depends(require_csrf)])
 async def auth_logout(request: Request):
     token = request.cookies.get(_auth.COOKIE_NAME)
     if token:
@@ -696,6 +707,7 @@ async def auth_logout(request: Request):
     resp = JSONResponse({"logged_out": True})
     resp.delete_cookie(_auth.COOKIE_NAME, path="/")
     resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
+    clear_csrf_cookie(resp)
     return resp
 
 
@@ -791,10 +803,14 @@ async def auth_activate_info(token: str = ""):
 
 @app.get("/forgot-password")
 async def viewer_forgot():
-    return FileResponse(STATIC / "forgot_password.html")
+    # Seed CSRF cookie so the form's POST /auth/forgot-password fetch can
+    # echo it back without a prior visit to /login.
+    response = FileResponse(STATIC / "forgot_password.html")
+    set_csrf_cookie(response)
+    return response
 
 
-@app.post("/auth/forgot-password")
+@app.post("/auth/forgot-password", dependencies=[Depends(require_csrf)])
 async def auth_forgot(request: Request, body: dict):
     """Generic OK regardless of whether the email exists (avoids enum oracle)."""
     email = (body.get("email") or "").strip().lower()
@@ -810,7 +826,9 @@ async def auth_forgot(request: Request, body: dict):
 
 @app.get("/reset-password")
 async def viewer_reset():
-    return FileResponse(STATIC / "reset_password.html")
+    response = FileResponse(STATIC / "reset_password.html")
+    set_csrf_cookie(response)
+    return response
 
 
 @app.get("/auth/reset/info")
@@ -821,7 +839,7 @@ async def auth_reset_info(token: str = ""):
     return {"valid": True, "email": info["email"]}
 
 
-@app.post("/auth/reset-password")
+@app.post("/auth/reset-password", dependencies=[Depends(require_csrf)])
 async def auth_reset(request: Request, body: dict):
     token = (body.get("token") or "").strip()
     pw    = body.get("new_password") or ""
@@ -839,6 +857,9 @@ async def auth_reset(request: Request, body: dict):
     sess_token, expires = await _auth.create_session(user["id"], ip=ip)
     resp = JSONResponse({"reset": True, "user": user})
     _set_session_cookie(resp, sess_token, expires)
+    # Rotate CSRF after the password reset so any leaked pre-reset token
+    # cannot replay.
+    set_csrf_cookie(resp)
     return resp
 
 
@@ -876,7 +897,12 @@ async def system_info(user: dict = Depends(require_authenticated)):
 @app.get("/me")
 async def viewer_me(request: Request):
     require_user(request)
-    return FileResponse(STATIC / "me.html")
+    # Ensure the page has a CSRF cookie before it tries to call
+    # POST /api/me/change-password — covers users who arrived via JWT
+    # or whose login-issued cookie expired between sessions.
+    response = FileResponse(STATIC / "me.html")
+    set_csrf_cookie(response)
+    return response
 
 
 @app.get("/api/me")
@@ -884,7 +910,7 @@ async def api_me(user: dict = Depends(require_authenticated)):
     return user
 
 
-@app.post("/api/me/change-password")
+@app.post("/api/me/change-password", dependencies=[Depends(require_csrf)])
 async def api_me_change_password(body: dict, user: dict = Depends(require_authenticated)):
     current = body.get("current_password") or ""
     new     = body.get("new_password") or ""
@@ -893,7 +919,10 @@ async def api_me_change_password(body: dict, user: dict = Depends(require_authen
     ok, err = await _auth.change_own_password(user["id"], current, new)
     if not ok:
         raise HTTPException(400, err or "password change failed")
-    return {"changed": True}
+    resp = JSONResponse({"changed": True})
+    # Rotate CSRF after a successful self-service password change.
+    set_csrf_cookie(resp)
+    return resp
 
 
 # ── Jobs ──────────────────────────────────────────────────────────────────────
