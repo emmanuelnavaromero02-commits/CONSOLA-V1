@@ -12,7 +12,7 @@ help:
 	@echo "  make rotate-keys  (NOT IMPLEMENTED — exits 1)"
 
 up:
-	bash infra/bootstrap.sh && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d
+	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d
 
 down:
 	docker compose -f infra/docker-compose.yml down

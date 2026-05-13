@@ -120,7 +120,7 @@ def _get_connection(conn_id: str) -> tuple[str, str]:
 
 def _internal_headers() -> dict:
     return {
-        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-api-key": (os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA") or os.environ.get("INTERNAL_API_KEY", "")),
         "x-internal-service": "airflow",
     }
 

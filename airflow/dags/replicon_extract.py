@@ -123,8 +123,15 @@ def _get_connection(conn_id: str) -> tuple[str, str]:
 
 
 def _internal_headers() -> dict:
+    # Sprint v1.12: this helper is used for the MCP-infra calls below
+    # (watermark_get / watermark_set / pipeline_run_save). The REFINEMENT
+    # call at the bottom of the file builds its own headers with a
+    # different per-pair key.
     return {
-        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-api-key": (
+            os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
+            or os.environ.get("INTERNAL_API_KEY", "")
+        ),
         "x-internal-service": "airflow",
     }
 
@@ -469,7 +476,10 @@ def replicon_extract():
             r = requests.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
                 headers={
-                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+                    "x-api-key": (
+                        os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT")
+                        or os.environ.get("INTERNAL_API_KEY", "")
+                    ),
                     "x-internal-service": "airflow",
                 },
                 json={"source": source},

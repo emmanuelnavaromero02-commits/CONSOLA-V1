@@ -72,12 +72,48 @@ async def lifespan(app: FastAPI):
     _seed_relationships()
     yield
 
-INTERNAL_API_KEY = get_internal_api_key()
+INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
+
+# Sprint v1.12: refinement is called by console, workspace, airflow and the
+# four cartridges. Each pair now has its own INTERNAL_API_KEY_*_TO_REFINEMENT
+# (the 4 cartridges share INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT). The
+# legacy shared INTERNAL_API_KEY keeps working during the migration window —
+# it gets dropped in a follow-up sprint once every client is verified.
+_ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
+    "console":   "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",
+    "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
+    "airflow":   "INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT",
+    # All 4 cartridges (replicon, sap_hcm, sap_s4hana, sap_successfactors)
+    # share one key — they play the same role from refinement's side.
+    "replicon":             "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-replicon":   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-sap_hcm":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-sap_s4hana": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    # refinement and mcp-infra don't call refinement today, but the old
+    # whitelist allowed them so we keep them accepted via legacy key only.
+    "refinement": None,
+    "mcp-infra":  None,
+}
+
+
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
-    # Validate the key and that the caller explicitly declares itself
-    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow", "replicon"]:
+    if not x_internal_service or x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
+    if not x_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    accepted: list[str] = []
+    pair_key_env = _ALLOWED_SERVICES_TO_KEY_ENV.get(x_internal_service)
+    if pair_key_env:
+        pair_key = os.environ.get(pair_key_env)
+        if pair_key:
+            accepted.append(pair_key)
+    # Legacy shared key, still honored during migration.
+    if INTERNAL_API_KEY:
+        accepted.append(INTERNAL_API_KEY)
+
+    if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)

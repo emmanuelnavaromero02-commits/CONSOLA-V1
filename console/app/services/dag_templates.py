@@ -25,8 +25,17 @@ MCP_INFRA_URL  = "http://mcp-infra:8010"
 REFINEMENT_URL = "http://refinement:8500"
 import os
 
-from app.security import get_internal_api_key
-INTERNAL_API_KEY = get_internal_api_key()
+# Sprint v1.12: prefer the per-pair INTERNAL_API_KEY_AIRFLOW_TO_* keys,
+# falling back to the shared legacy INTERNAL_API_KEY during the migration
+# window. The trigger_silver task below picks the refinement key instead.
+INTERNAL_API_KEY_MCP_INFRA = (
+    os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
+    or os.environ.get("INTERNAL_API_KEY", "")
+)
+INTERNAL_API_KEY_REFINEMENT = (
+    os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT")
+    or os.environ.get("INTERNAL_API_KEY", "")
+)
 
 
 def _get_connection(conn_id: str, cartridge_id: str = "{cartridge}") -> tuple[str, str]:
@@ -69,11 +78,14 @@ def _get_db_url(conn_id: str, cartridge_id: str = "{cartridge}") -> str:
     return f"{{dialect}}://{{conn.login}}:{{conn.password}}@{{conn.host}}{{port}}/{{conn.schema}}"
 
 
+_MCP_HDR = {{"x-api-key": INTERNAL_API_KEY_MCP_INFRA, "x-internal-service": "airflow"}}
+
+
 def _watermark_get(entity: str, cartridge_id: str = "{cartridge}") -> str | None:
     import requests
     try:
         r = requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
-                          headers={{"x-api-key": INTERNAL_API_KEY}},
+                          headers=_MCP_HDR,
                           json={{"tool": "watermark_get",
                                 "args": {{"cartridge_id": cartridge_id, "entity": entity}}}},
                           timeout=10)
@@ -87,7 +99,7 @@ def _watermark_set(entity: str, field: str, value: str, run_id: str,
     import requests
     try:
         requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
-                      headers={{"x-api-key": INTERNAL_API_KEY}},
+                      headers=_MCP_HDR,
                       json={{"tool": "watermark_set",
                             "args": {{"cartridge_id": cartridge_id, "entity": entity,
                                      "watermark_field": field, "value": value,
@@ -102,7 +114,7 @@ def _pipeline_run_save(dag_id: str, entity: str, cartridge_id: str = "{cartridge
     import requests
     try:
         requests.post(f"{{MCP_INFRA_URL}}/mcp/invoke",
-                      headers={{"x-api-key": INTERNAL_API_KEY}},
+                      headers=_MCP_HDR,
                       json={{"tool": "pipeline_run_save",
                             "args": {{"dag_id": dag_id, "cartridge_id": cartridge_id,
                                      "entity": entity, **kwargs}}}},
@@ -157,7 +169,7 @@ _TRIGGER_SILVER_TASK = '''\
             return {{"refreshed": 0}}
         source = f"raw/{{CARTRIDGE_ID}}/{{result.get(\'entity\', ENTITY)}}"
         resp   = requests.post(f"{{REFINEMENT_URL}}/refresh-by-source",
-                               headers={{"x-api-key": INTERNAL_API_KEY,
+                               headers={{"x-api-key": INTERNAL_API_KEY_REFINEMENT,
                                          "x-internal-service": "airflow"}},
                                json={{"source": source}}, timeout=300)
         resp.raise_for_status()

@@ -17,17 +17,21 @@ logger = logging.getLogger(__name__)
 _CACHE: dict[str, tuple[float, str]] = {}
 _CACHE_TTL_SECONDS = 30
 _CONSOLE_URL = os.environ.get("CONSOLE_URL", "http://console:8000")
-_INTERNAL_KEY = os.environ.get("INTERNAL_API_KEY", "")
+# Sprint v1.12: dedicated cartridge→console key, with legacy fallback.
+_INTERNAL_KEY = (
+    os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE")
+    or os.environ.get("INTERNAL_API_KEY", "")
+)
 
 
 def _fetch_from_console(key: str) -> str | None:
     if not _INTERNAL_KEY:
         return None
     try:
-        # x-internal-service must be one of the whitelisted values in
-        # console/app/services/auth.py verify_internal_api_key. Use "airflow"
-        # as a safe default; future work: whitelist "cartridge".
-        headers = {"x-api-key": _INTERNAL_KEY, "x-internal-service": "airflow"}
+        # Sprint v1.12: console now whitelists "cartridge-<name>" with its
+        # own pair key. Send the cartridge-specific service identifier
+        # instead of impersonating airflow.
+        headers = {"x-api-key": _INTERNAL_KEY, "x-internal-service": "cartridge-sap_hcm"}
         with httpx.Client(timeout=2.0) as c:
             r = c.get(f"{_CONSOLE_URL}/internal/settings/{key}/reveal", headers=headers)
             if r.status_code == 200:

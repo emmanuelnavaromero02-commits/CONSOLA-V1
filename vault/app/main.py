@@ -161,12 +161,38 @@ def _mask(d: dict) -> dict:
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
-INTERNAL_API_KEY = get_internal_api_key()
+INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
+
+# Sprint v1.12: vault is called by console and mcp-infra. Each pair has its
+# own INTERNAL_API_KEY_*_TO_VAULT secret. The legacy shared key still works
+# during the migration window — it gets dropped in a follow-up sprint.
+_ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
+    "console":   "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
+    "mcp-infra": "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
+    # The old whitelist allowed these too; we keep them accepted via legacy
+    # key only — they have no dedicated pair key because they don't call vault.
+    "workspace":  None,
+    "refinement": None,
+    "airflow":    None,
+}
+
+
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
-    # Validate the key and that the caller explicitly declares itself
-    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+    if not x_internal_service or x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
+    if not x_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    accepted: list[str] = []
+    pair_key_env = _ALLOWED_SERVICES_TO_KEY_ENV.get(x_internal_service)
+    if pair_key_env:
+        pair_key = os.environ.get(pair_key_env)
+        if pair_key:
+            accepted.append(pair_key)
+    if INTERNAL_API_KEY:
+        accepted.append(INTERNAL_API_KEY)
+
+    if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 @asynccontextmanager
