@@ -1877,7 +1877,7 @@ FROM silver_${entity || 'entity'}`;
         }
         el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
           ${apps.map(app => `
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s"
+          <div class="studio-app-card" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s"
                onmouseover="this.style.borderColor='#7c9fff'" onmouseout="this.style.borderColor='var(--border)'">
             <div style="font-size:18px;color:#7c9fff">▦</div>
             <div style="font-family:var(--font-mono);font-size:11px;color:var(--text1)">${esc(app.title)}</div>
