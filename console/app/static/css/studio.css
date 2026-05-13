@@ -600,3 +600,14 @@
     body[data-studio-step="7"] #studio-mini-header {
       display: flex !important;
     }
+
+    /* sprint v1.2-pr1: in step 1 the big summary block already covers the
+       cartridge overview, so the mini-header and the EPI IA assistant panel
+       are redundant. Hide them on step 1; keep them on steps 2-7. */
+    body[data-studio-step="1"] #studio-mini-header {
+      display: none !important;
+    }
+    body[data-studio-step="1"] #ai-panel,
+    body[data-studio-step="1"] #ai-resize-handle {
+      display: none !important;
+    }
