@@ -220,12 +220,20 @@ async def _trigger_silver_refresh(entity: str) -> None:
     """
     source = f"raw/replicon/{entity}"
     try:
+        # Sprint v1.12: cartridge→refinement uses its own pair key, with
+        # legacy fallback. Service identifier switched from bare "replicon"
+        # to the canonical "cartridge-replicon" form refinement's verify
+        # whitelists explicitly (the bare form is also still accepted).
+        api_key = (
+            os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
+            or os.environ.get("INTERNAL_API_KEY", "")
+        )
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
                 headers={
-                    "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
-                    "x-internal-service": "replicon",
+                    "x-api-key": api_key,
+                    "x-internal-service": "cartridge-replicon",
                 },
                 json={"source": source},
             )

@@ -25,9 +25,18 @@ _VAULT = settings.vault_url.rstrip("/")
 
 
 def _auth_headers() -> dict:
-    """Headers required by the Vault internal API (Fase 1 dual-auth)."""
+    """Headers required by the Vault internal API (Fase 1 dual-auth).
+
+    Sprint v1.12: prefer the dedicated pair key INTERNAL_API_KEY_MCP_INFRA_TO_VAULT,
+    falling back to the legacy shared INTERNAL_API_KEY so a half-migrated
+    stack keeps working.
+    """
+    api_key = (
+        os.environ.get("INTERNAL_API_KEY_MCP_INFRA_TO_VAULT")
+        or os.environ.get("INTERNAL_API_KEY", "")
+    )
     return {
-        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-api-key": api_key,
         "x-internal-service": "mcp-infra",
     }
 

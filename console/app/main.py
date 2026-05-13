@@ -126,6 +126,24 @@ INTERNAL_API_KEY = get_internal_api_key()
 # INTERNAL_API_KEY is cached at service startup. Rotating it requires restarting
 # Console and peer services so all in-process values are refreshed together.
 
+
+def _key_for(server: str) -> str:
+    """Sprint v1.12: pick the per-pair INTERNAL_API_KEY_CONSOLE_TO_<SERVER>
+    secret if present, falling back to the shared legacy INTERNAL_API_KEY so
+    that a half-migrated stack keeps working. ``server`` must be one of
+    ``REFINEMENT`` / ``VAULT`` / ``MCP_INFRA``."""
+    pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
+    if pair:
+        return pair
+    if INTERNAL_API_KEY:
+        return INTERNAL_API_KEY
+    raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server} (no legacy fallback either)")
+
+
+def _hdr_for(server: str) -> dict[str, str]:
+    """Headers for an outbound internal call from console to ``server``."""
+    return {"x-api-key": _key_for(server), "x-internal-service": "console"}
+
 app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
 
 
@@ -215,7 +233,7 @@ async def _count_bronze_parquet_rows(source: str, latest_date: str) -> int | Non
         f"FROM read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"
     )
     async with httpx.AsyncClient(
-        headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"},
+        headers=_hdr_for("REFINEMENT"),
         timeout=60,
     ) as c:
         r = await c.post(
@@ -1025,13 +1043,13 @@ async def chat(body: dict, user: dict = Depends(require_authenticated)):
 
 @app.get("/datasets", dependencies=[Depends(require_authenticated)])
 async def list_datasets():
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets")
         return r.json()
 
 @app.get("/datasets/{name}/schema", dependencies=[Depends(require_authenticated)])
 async def dataset_schema(name: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/schema")
         return r.json()
 
@@ -1041,7 +1059,7 @@ async def dataset_data(name: str, request: Request, limit: int = 100):
     # tables fall through to the empty-tenant filter (or the revenue_manager
     # 'N/D' fallback) and any authenticated user could read cross-tenant rows.
     user = getattr(request.state, "user", None) or {}
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
             json={
@@ -1053,7 +1071,7 @@ async def dataset_data(name: str, request: Request, limit: int = 100):
 
 @app.post("/datasets/{name}/refresh", dependencies=[Depends(require_permission("datasets.write"))])
 async def refresh_dataset(name: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
         return r.json()
 
@@ -1096,7 +1114,7 @@ async def api_job_logs(job_id: str, limit: int = 200):
 
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "get_source_partitions", "args": {"source": source}})
         partitions = r.json()
@@ -1107,7 +1125,7 @@ async def api_schema(source: str):
 
 @app.get("/api/sources", dependencies=[Depends(require_authenticated)])
 async def api_sources():
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "list_sources", "args": {}})
     data = r.json()
@@ -1119,7 +1137,7 @@ async def api_sources():
 
 @app.post("/api/datasets/save", dependencies=[Depends(require_permission("datasets.write"))])
 async def api_dataset_save(body: dict):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "save_dataset", "args": body})
         r.raise_for_status()
@@ -1128,7 +1146,7 @@ async def api_dataset_save(body: dict):
 
 @app.get("/api/datasets/{name}/detail", dependencies=[Depends(require_authenticated)])
 async def api_dataset_detail(name: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/definition")
     if r.status_code == 404:
         raise HTTPException(404, f"Dataset '{name}' not found")
@@ -1145,7 +1163,7 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
     sources = body.get("sources") or []
     if not sql:
         raise HTTPException(400, "sql is required")
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=120) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {
@@ -1159,7 +1177,7 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
 
 @app.delete("/api/datasets", dependencies=[Depends(require_permission("datasets.delete"))])
 async def api_delete_dataset(name: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "delete_dataset", "args": {"name": name}})
     if r.status_code == 404:
@@ -1169,7 +1187,7 @@ async def api_delete_dataset(name: str):
 
 @app.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_authenticated)])
 async def api_dataset_lineage(name: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "get_lineage", "args": {"name": name, "limit": 20}})
     return r.json()
@@ -1193,7 +1211,7 @@ async def serve_app(name: str):
 @app.get("/api/apps", dependencies=[Depends(require_authenticated)])
 async def api_apps():
     """List all published analytic apps."""
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "list_apps", "args": {}})
     return r.json()
@@ -1202,7 +1220,7 @@ async def api_apps():
 @app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_apps_delete(name: str):
     """Delete a published analytic app by name."""
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "delete_app", "args": {"name": name}})
     payload = r.json()
@@ -1217,7 +1235,7 @@ async def api_data(dataset: str, request: Request, limit: int = 5000):
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
     user = getattr(request.state, "user", None) or {}
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
                                "args": {"name": dataset, "limit": limit,
@@ -1246,7 +1264,7 @@ async def api_data_options(dataset: str, columns: str = "", user: dict = Depends
             for col in cols]
     union_sql = " UNION ALL ".join(sqls) + f" ORDER BY col, val"
 
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {
@@ -1345,7 +1363,7 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
 
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {"sql": sql, "params": params, "limit": limit,
@@ -1364,7 +1382,7 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 async def studio_cartridge_connections(cartridge_id: str):
     """Proxy to Vault — returns masked connection config for the cartridge."""
     vault_url = os.environ.get("VAULT_URL", "http://vault:8300")
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         try:
             r = await c.get(f"{vault_url}/connections/{cartridge_id}")
             if r.status_code in (404, 204):
@@ -1446,7 +1464,7 @@ async def api_pipeline(cartridge: str = "replicon"):
         jobs_by_entity[entity] = j
 
     # 3. Silver/Master datasets from refinement
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=15) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
         try:
             r = await c.get(f"{REFINEMENT_URL}/datasets")
             all_datasets: list[dict] = r.json().get("datasets", [])
@@ -1935,6 +1953,10 @@ _MICROSERVICE_CARTRIDGES = {
 
 
 def _internal_headers() -> dict:
+    # Sprint v1.12: legacy helper kept for tests/back-compat. New code should
+    # use _hdr_for("REFINEMENT"|"VAULT"|"MCP_INFRA") directly. This helper
+    # falls back to the legacy shared INTERNAL_API_KEY which every server
+    # still accepts during the migration window.
     return {"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}
 
 
@@ -2144,7 +2166,7 @@ _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 @app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
 async def api_vault_list_connections(cartridge: str):
     try:
-        async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
             r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
         if r.status_code in (404, 204):
             return {"connections": []}
@@ -2163,7 +2185,7 @@ async def api_vault_list_connections(cartridge: str):
 @app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 async def api_vault_reveal_connection(cartridge: str, conn_id: str):
     """Returns full credentials including token (not masked)."""
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
@@ -2172,14 +2194,14 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str):
 
 @app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
         r.raise_for_status()
         return r.json()
 
 @app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_connection(cartridge: str, conn_id: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
@@ -2188,14 +2210,14 @@ async def api_vault_delete_connection(cartridge: str, conn_id: str):
 
 @app.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_permission("vault.secrets.read_masked"))])
 async def api_vault_list_secrets(scope: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}")
         r.raise_for_status()
         return r.json()
 
 @app.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 async def api_vault_reveal_secret(scope: str, key: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}/{key}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
@@ -2204,14 +2226,14 @@ async def api_vault_reveal_secret(scope: str, key: str):
 
 @app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_secret(scope: str, key: str, body: dict):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
         r.raise_for_status()
         return r.json()
 
 @app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_secret(scope: str, key: str):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=5) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
@@ -2223,14 +2245,14 @@ async def api_vault_delete_secret(scope: str, key: str):
 
 @app.get("/api/rag/sources", dependencies=[Depends(require_authenticated)])
 async def api_rag_sources():
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as c:
         r = await c.get(f"{_RAG_URL}/rag/sources")
         r.raise_for_status()
         return r.json()
 
 @app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_delete_source(source_id: int):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=10) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
         if r.status_code == 404:
             raise HTTPException(404, "Source not found")
@@ -2239,14 +2261,14 @@ async def api_rag_delete_source(source_id: int):
 
 @app.post("/api/rag/search", dependencies=[Depends(require_authenticated)])
 async def api_rag_search(body: dict):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(f"{_RAG_URL}/rag/search", json=body)
         r.raise_for_status()
         return r.json()
 
 @app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_ingest(body: dict):
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=300) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
         r.raise_for_status()
         return r.json()
@@ -2264,7 +2286,7 @@ async def api_rag_ask(body: dict):
     top_k       = int(body.get("top_k") or 5)
     source_ids  = body.get("source_ids") or None
 
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(
             f"{_RAG_URL}/rag/search",
             json={"query": query, "top_k": top_k, "source_ids": source_ids},
@@ -2358,7 +2380,7 @@ async def api_catalog_relationship(body: dict):
 async def _refinement_invoke(tool: str, args: dict):
     import httpx
     refinement_url = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}, timeout=30) as client:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as client:
         r = await client.post(f"{refinement_url}/mcp/invoke",
                               json={"tool": tool, "args": args})
         r.raise_for_status()

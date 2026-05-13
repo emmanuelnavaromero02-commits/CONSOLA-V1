@@ -37,7 +37,7 @@ MCP_INFRA_URL = "http://mcp-infra:8010"
 def _internal_headers() -> dict:
     import os
     return {
-        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-api-key": (os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA") or os.environ.get("INTERNAL_API_KEY", "")),
         "x-internal-service": "airflow",
     }
 

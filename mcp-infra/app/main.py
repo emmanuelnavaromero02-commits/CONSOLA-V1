@@ -41,12 +41,37 @@ async def _lifespan(app: FastAPI):
         pass  # RAG is optional — server starts even if pgvector is not ready
     yield
 
-INTERNAL_API_KEY = get_internal_api_key()
+INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
+
+# Sprint v1.12: mcp-infra is called by console, workspace and airflow. Each
+# pair has its own INTERNAL_API_KEY_*_TO_MCP_INFRA secret. The legacy shared
+# key keeps working during the migration window and is dropped in a follow-up.
+_ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
+    "console":   "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA",
+    "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA",
+    "airflow":   "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
+    # The old whitelist allowed these; we keep them via legacy key only.
+    "refinement": None,
+    "mcp-infra":  None,
+}
+
+
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
-    # Validate the key and that the caller explicitly declares itself
-    if not x_internal_service or x_internal_service not in ["console", "workspace", "refinement", "mcp-infra", "airflow"]:
+    if not x_internal_service or x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if not x_api_key or not secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
+    if not x_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    accepted: list[str] = []
+    pair_key_env = _ALLOWED_SERVICES_TO_KEY_ENV.get(x_internal_service)
+    if pair_key_env:
+        pair_key = os.environ.get(pair_key_env)
+        if pair_key:
+            accepted.append(pair_key)
+    if INTERNAL_API_KEY:
+        accepted.append(INTERNAL_API_KEY)
+
+    if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 app = FastAPI(

@@ -503,7 +503,36 @@ def verify_internal_api_key(
     x_api_key: str | None = Header(None),
     x_internal_service: str | None = Header(None),
 ) -> None:
-    if not x_internal_service or x_internal_service not in {"console", "workspace", "refinement", "mcp-infra", "airflow"}:
+    # Sprint v1.12: console exposes /internal/* endpoints to workspace and
+    # to the four cartridges. Each pair has its own dedicated key. The
+    # legacy shared INTERNAL_API_KEY is still accepted during migration.
+    allowed_services_to_key_env: dict[str, str | None] = {
+        "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
+        # All 4 cartridges share one key — they play the same role.
+        "cartridge-replicon":           "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "cartridge-sap_hcm":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "cartridge-sap_s4hana":         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        # The old whitelist allowed these too; kept via legacy key only.
+        "console":    None,
+        "refinement": None,
+        "mcp-infra":  None,
+        "airflow":    None,
+    }
+    if not x_internal_service or x_internal_service not in allowed_services_to_key_env:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if not x_api_key or not secrets.compare_digest(x_api_key, get_internal_api_key()):
+    if not x_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    accepted: list[str] = []
+    pair_key_env = allowed_services_to_key_env.get(x_internal_service)
+    if pair_key_env:
+        pair_key = os.environ.get(pair_key_env)
+        if pair_key:
+            accepted.append(pair_key)
+    legacy = get_internal_api_key()
+    if legacy:
+        accepted.append(legacy)
+
+    if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
         raise HTTPException(status_code=403, detail="Forbidden")

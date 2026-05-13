@@ -38,6 +38,23 @@ DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 INTERNAL_API_KEY = get_internal_api_key()
 
+
+def _key_for(server: str) -> str:
+    """Sprint v1.12: pick the per-pair INTERNAL_API_KEY_WORKSPACE_TO_<SERVER>
+    secret if present, falling back to the shared legacy INTERNAL_API_KEY.
+    ``server`` is one of ``CONSOLE`` / ``REFINEMENT`` / ``MCP_INFRA``."""
+    pair = os.environ.get(f"INTERNAL_API_KEY_WORKSPACE_TO_{server}")
+    if pair:
+        return pair
+    if INTERNAL_API_KEY:
+        return INTERNAL_API_KEY
+    raise RuntimeError(f"Missing INTERNAL_API_KEY_WORKSPACE_TO_{server} (no legacy fallback either)")
+
+
+def _hdr_for(server: str) -> dict[str, str]:
+    return {"x-api-key": _key_for(server), "x-internal-service": "workspace"}
+
+
 app = FastAPI(title="MODecissionsPaaS Workspace")
 
 
@@ -354,7 +371,7 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
     )
     if not row:
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "query_dataset",
                                "args": {"name": dataset, "limit": limit,
@@ -387,7 +404,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     ]
     union_sql = " UNION ALL ".join(sqls) + " ORDER BY col, val"
 
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=30) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {"sql": union_sql, "limit": 5000,
@@ -461,7 +478,7 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = f"SELECT {select_clause} FROM pggold.gold_{dataset} {where} LIMIT {limit}"
 
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=60) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "preview_transform",
                                "args": {"sql": sql, "params": params, "limit": limit,
@@ -491,7 +508,7 @@ async def api_users_list(request: Request):
 @app.get("/api/datasets")
 async def api_datasets_list(request: Request):
     require_user(request)
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=20) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "list_datasets", "args": {}})
     if r.status_code != 200:
@@ -502,7 +519,7 @@ async def api_datasets_list(request: Request):
 @app.get("/api/datasets/{name}/schema")
 async def api_dataset_schema(request: Request, name: str):
     require_user(request)
-    async with httpx.AsyncClient(headers={"x-api-key": INTERNAL_API_KEY, "x-internal-service": "workspace"}, timeout=20) as c:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json={"tool": "get_schema", "args": {"name": name}})
     if r.status_code != 200:
