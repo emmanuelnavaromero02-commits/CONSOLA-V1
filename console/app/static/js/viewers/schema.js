@@ -1,0 +1,136 @@
+// Sprint v1.11 phase 2 — extracted from schema.html for strict CSP.
+
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+const params = new URLSearchParams(location.search);
+let currentSource = params.get('source') || '';
+
+async function loadSources() {
+  try {
+    const r = await fetch('/api/sources');
+    const d = await r.json();
+    const sources = d.sources || d.result || [];
+    const sel = document.getElementById('source-sel');
+    sel.innerHTML = '<option value="">— Selecciona una fuente —</option>' +
+      sources.map(s => `<option value="${esc(s)}" ${s === currentSource ? 'selected' : ''}>${esc(s)}</option>`).join('');
+    if (currentSource) loadSchema();
+  } catch (e) {
+    document.getElementById('source-sel').innerHTML = '<option value="">Error cargando fuentes</option>';
+  }
+}
+
+function typeColor(t) {
+  if (!t) return 'var(--text3)';
+  t = t.toUpperCase();
+  if (t.includes('INT') || t.includes('BIGINT') || t.includes('DOUBLE') || t.includes('FLOAT') || t.includes('DECIMAL')) return 'var(--amber)';
+  if (t.includes('TIMESTAMP') || t.includes('DATE')) return 'var(--cyan)';
+  if (t.includes('BOOL')) return 'var(--green)';
+  return 'var(--text2)';
+}
+
+async function loadSchema() {
+  const source = document.getElementById('source-sel').value;
+  if (!source) return;
+  currentSource = source;
+  history.replaceState(null, '', `?source=${encodeURIComponent(source)}`);
+
+  document.getElementById('schema-area').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+
+  try {
+    const r = await fetch(`/api/schema?source=${encodeURIComponent(source)}`);
+    const d = await r.json();
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('schema-area').style.display = 'block';
+
+    // Partitions
+    const parts = d.partitions || {};
+    const partitions = parts.partitions || [];
+    const latest = parts.latest || '';
+    const sqlLatest = parts.sql_latest || '';
+
+    let partHTML = '';
+    if (partitions.length) {
+      partHTML = `
+        <div>
+          <div class="stat-pill">Particiones: <span>${partitions.length}</span></div>
+          <div class="stat-pill">Última: <span>${esc(latest || '—')}</span></div>
+        </div>
+        <div class="partition-list" style="margin-top:10px">
+          ${partitions.slice(-20).reverse().map(p => `<span class="partition-tag ${p === latest ? 'latest' : ''}">${esc(p)}</span>`).join('')}
+          ${partitions.length > 20 ? `<span class="partition-tag">+${partitions.length - 20} más...</span>` : ''}
+        </div>`;
+    } else {
+      partHTML = '<div class="empty-state" style="padding:10px">Sin particiones encontradas</div>';
+    }
+    document.getElementById('partition-info').innerHTML = partHTML;
+    document.getElementById('sql-latest').textContent = sqlLatest || '-- No disponible';
+
+    // Columns from preview
+    const preview = d.preview || {};
+    const rows = preview.rows || preview.result || [];
+    const cols = preview.columns || (rows.length > 0 ? Object.keys(rows[0]) : []);
+
+    if (cols.length) {
+      document.getElementById('cols-wrap').innerHTML = `
+        <table>
+          <thead><tr><th>#</th><th>COLUMNA</th><th>TIPO</th><th>EJEMPLO</th></tr></thead>
+          <tbody>
+            ${cols.map((c, i) => {
+              const sample = rows.length > 0 ? rows[0][c] : null;
+              const typeGuess = guessType(sample);
+              return `<tr>
+                <td style="color:var(--text3);font-size:10px">${i + 1}</td>
+                <td style="font-family:var(--font-mono);color:var(--text)">${esc(c)}</td>
+                <td><span class="type-tag" style="color:${typeColor(typeGuess)}">${esc(typeGuess)}</span></td>
+                <td style="font-size:10px;color:var(--text2)">${sample !== null && sample !== undefined ? esc(String(sample).substring(0, 80)) : '<span class="null-val">NULL</span>'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    } else {
+      document.getElementById('cols-wrap').innerHTML = '<div class="empty-state">Sin columnas disponibles</div>';
+    }
+
+    // Preview table
+    if (rows.length && cols.length) {
+      document.getElementById('preview-wrap').innerHTML = `
+        <table>
+          <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${rows.slice(0, 5).map(row => `<tr>${cols.map(c => {
+              const v = row[c];
+              if (v === null || v === undefined) return `<td class="null-val">NULL</td>`;
+              const s = String(v);
+              return `<td style="font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s)}">${esc(s.substring(0, 60))}</td>`;
+            }).join('')}</tr>`).join('')}
+          </tbody>
+        </table>`;
+    } else {
+      document.getElementById('preview-wrap').innerHTML = '<div class="empty-state">Sin datos de preview</div>';
+    }
+
+  } catch (e) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('schema-area').style.display = 'block';
+    document.getElementById('partition-info').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+  }
+}
+
+function guessType(val) {
+  if (val === null || val === undefined) return 'UNKNOWN';
+  if (typeof val === 'boolean') return 'BOOLEAN';
+  if (typeof val === 'number') return Number.isInteger(val) ? 'INTEGER' : 'DOUBLE';
+  if (typeof val === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}T/.test(val)) return 'TIMESTAMP';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return 'DATE';
+    if (/^\d+$/.test(val)) return 'VARCHAR(NUM)';
+    return 'VARCHAR';
+  }
+  return 'OBJECT';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('btn-load-schema').addEventListener('click', loadSchema);
+  loadSources();
+});

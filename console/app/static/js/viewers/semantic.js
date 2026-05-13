@@ -1,0 +1,189 @@
+// Sprint v1.11 phase 2 — extracted from semantic.html for strict CSP.
+
+function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+const params = new URLSearchParams(location.search);
+let semanticData = null;
+
+async function loadCartridges() {
+  try {
+    const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
+    const d = await r.json();
+    const servers = d.servers || [];
+    const sel = document.getElementById('cartridge-sel');
+    const cartridge = params.get('cartridge') || 'replicon';
+    sel.innerHTML = servers.map(s => `<option value="${esc(s.id)}" ${s.id === cartridge ? 'selected' : ''}>${esc(s.id)}</option>`).join('');
+    loadSemantic();
+  } catch (e) {
+    loadSemantic();
+  }
+}
+
+async function loadSemantic() {
+  const cartridge = document.getElementById('cartridge-sel').value || 'replicon';
+  history.replaceState(null, '', `?cartridge=${encodeURIComponent(cartridge)}`);
+  document.getElementById('main-area').innerHTML = '<div class="empty-state">Cargando modelo semántico...</div>';
+  document.getElementById('server-info').innerHTML = '';
+
+  try {
+    const r = await fetch(`/api/semantic?cartridge=${encodeURIComponent(cartridge)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    semanticData = await r.json();
+
+    const srv = semanticData.server || {};
+    const healthy = srv.healthy;
+    document.getElementById('server-info').innerHTML = `
+      <div><div class="meta-lbl">ID</div><div class="meta-val">${esc(srv.id || cartridge)}</div></div>
+      <div><div class="meta-lbl">URL</div><div class="meta-val" style="font-size:10px">${esc(srv.url || '—')}</div></div>
+      <div><div class="meta-lbl">ESTADO</div><div class="meta-val ${healthy ? 'health-ok' : 'health-err'}">${healthy ? '● HEALTHY' : '● OFFLINE'}</div></div>
+      <div><div class="meta-lbl">TOOLS</div><div class="meta-val">${(srv.tools || []).length}</div></div>
+    `;
+
+    renderMain(semanticData.entities || {});
+  } catch (e) {
+    document.getElementById('main-area').innerHTML = `<div class="empty-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function modeTags(modes) {
+  if (!modes || !modes.length) return '<span class="mode-tag mode-full">full</span>';
+  return modes.map(m => `<span class="mode-tag mode-${esc(m)}">${esc(m)}</span>`).join('');
+}
+
+function renderMain(entities) {
+  const list = Array.isArray(entities) ? entities : (entities.entities || []);
+  if (!list.length) {
+    document.getElementById('main-area').innerHTML = '<div class="empty-state">Sin entidades en el modelo</div>';
+    return;
+  }
+
+  const total_fields = list.reduce((a, e) => a + (e.fields || e.columns || []).length, 0);
+  const has_watermark = list.filter(e => e.watermark_field || e.watermark).length;
+
+  // Collect watermarks
+  const watermarks = list
+    .filter(e => e.watermark_field || e.watermark)
+    .map(e => ({ entity: e.name || e.entity, field: e.watermark_field || e.watermark, value: e.last_watermark || '—' }));
+
+  document.getElementById('main-area').innerHTML = `
+    <div class="stat-row">
+      <div class="stat"><div class="stat-val">${esc(list.length)}</div><div class="stat-lbl">ENTIDADES</div></div>
+      <div class="stat"><div class="stat-val">${total_fields}</div><div class="stat-lbl">CAMPOS TOTAL</div></div>
+      <div class="stat"><div class="stat-val" style="color:var(--amber)">${has_watermark}</div><div class="stat-lbl">CON WATERMARK</div></div>
+    </div>
+
+    <div class="card">
+      <div class="tab-bar">
+        <div class="tab active" id="tab-entities-btn" data-view="entities">ENTIDADES</div>
+        <div class="tab" id="tab-watermarks-btn" data-view="watermarks">WATERMARKS</div>
+      </div>
+
+      <div id="view-entities">
+        <div class="filter-row">
+          <input type="text" id="search" placeholder="Buscar entidad...">
+          <select id="mode-filter">
+            <option value="">Todos los modos</option>
+            <option value="full">full</option>
+            <option value="delta">delta</option>
+            <option value="patch">patch</option>
+          </select>
+        </div>
+        <div class="entity-grid" id="entity-grid">
+          ${renderEntityCards(list)}
+        </div>
+      </div>
+
+      <div id="view-watermarks" style="display:none">
+        ${watermarks.length ? `
+          <div style="font-size:10px;color:var(--text3);display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px">
+            <span style="min-width:140px">ENTIDAD</span>
+            <span style="min-width:120px">CAMPO WATERMARK</span>
+            <span>ULTIMO VALOR</span>
+          </div>
+          ${watermarks.map(w => `
+          <div class="watermark-row">
+            <span class="wm-entity">${esc(w.entity)}</span>
+            <span class="wm-field">${esc(w.field)}</span>
+            <span class="wm-value">${esc(w.value)}</span>
+          </div>`).join('')}
+        ` : '<div class="empty-state">Sin watermarks registrados</div>'}
+      </div>
+    </div>`;
+
+  window._entityList = list;
+}
+
+function renderEntityCards(list) {
+  if (!list.length) return '<div class="empty-state" style="grid-column:1/-1">Sin entidades</div>';
+  return list.map(e => {
+    const name = e.name || e.entity || '?';
+    const modes = e.modes || e.extraction_modes || ['full'];
+    const fields = e.fields || e.columns || [];
+    const pk = e.primary_key || e.pk || '';
+    return `
+    <div class="entity-card">
+      <div class="entity-header">
+        <div class="entity-name">${esc(name)}</div>
+        <div class="entity-modes">${modeTags(modes)}</div>
+      </div>
+      ${e.watermark_field || e.watermark ? `<div style="font-size:10px;color:var(--text3);margin-bottom:6px">⏱ watermark: <span style="color:var(--cyan)">${esc(e.watermark_field || e.watermark)}</span></div>` : ''}
+      ${pk ? `<div style="font-size:10px;color:var(--text3);margin-bottom:6px">🔑 pk: <span style="color:var(--amber)">${esc(Array.isArray(pk) ? pk.join(', ') : pk)}</span></div>` : ''}
+      ${fields.length ? `
+        <div style="font-size:9px;color:var(--text3);display:flex;gap:6px;padding:2px 0;border-bottom:1px solid var(--border);margin-bottom:2px">
+          <span style="min-width:140px">CAMPO</span><span style="min-width:80px">TIPO</span>
+        </div>
+        <div class="field-list">
+          ${fields.map(f => {
+            const fname = typeof f === 'string' ? f : (f.name || f.field || f.column || JSON.stringify(f));
+            const ftype = typeof f === 'string' ? '' : (f.type || f.dtype || '');
+            const fkey  = typeof f === 'string' ? '' : (f.key || f.pk ? 'KEY' : '');
+            return `<div class="field-row">
+              <span class="field-name">${esc(fname)}</span>
+              <span class="field-type">${esc(ftype)}</span>
+              <span class="field-key">${esc(fkey)}</span>
+            </div>`;
+          }).join('')}
+        </div>` : '<div style="font-size:10px;color:var(--text3)">Sin detalle de campos</div>'}
+    </div>`;
+  }).join('');
+}
+
+function filterEntities() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const mf = document.getElementById('mode-filter').value;
+  const list = (window._entityList || []).filter(e => {
+    const name = (e.name || e.entity || '').toLowerCase();
+    const modes = e.modes || e.extraction_modes || ['full'];
+    return (!q || name.includes(q)) && (!mf || modes.includes(mf));
+  });
+  document.getElementById('entity-grid').innerHTML = renderEntityCards(list);
+}
+
+function switchView(view) {
+  document.getElementById('view-entities').style.display = view === 'entities' ? 'block' : 'none';
+  document.getElementById('view-watermarks').style.display = view === 'watermarks' ? 'block' : 'none';
+  document.getElementById('tab-entities-btn').classList.toggle('active', view === 'entities');
+  document.getElementById('tab-watermarks-btn').classList.toggle('active', view === 'watermarks');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('cartridge-sel').addEventListener('change', loadSemantic);
+  document.getElementById('btn-reload').addEventListener('click', loadSemantic);
+
+  // Delegated handlers for dynamic content rendered into #main-area:
+  //   * .tab[data-view]  → switchView
+  //   * #search          → filterEntities (input)
+  //   * #mode-filter     → filterEntities (change)
+  const main = document.getElementById('main-area');
+  main.addEventListener('click', (ev) => {
+    const tab = ev.target.closest('.tab[data-view]');
+    if (tab) switchView(tab.dataset.view);
+  });
+  main.addEventListener('input', (ev) => {
+    if (ev.target.id === 'search') filterEntities();
+  });
+  main.addEventListener('change', (ev) => {
+    if (ev.target.id === 'mode-filter') filterEntities();
+  });
+
+  loadCartridges();
+});

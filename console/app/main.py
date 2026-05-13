@@ -399,9 +399,14 @@ VIEWER_SECURITY_HEADERS = {
         "camera=(), microphone=(), geolocation=(), payment=(), "
         "usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
     ),
+    # Sprint v1.11 phase 2: viewers no longer carry inline <script> blocks
+    # or inline on* handlers (every one was extracted into
+    # /static/js/viewers/<name>.js). Drop 'unsafe-inline' from script-src;
+    # style-src keeps it because the per-page <style> blocks aren't a
+    # practical XSS vector and removing them is a separate refactor.
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "connect-src 'self' http://localhost:* ws://localhost:*; "
