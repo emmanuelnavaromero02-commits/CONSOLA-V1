@@ -410,6 +410,31 @@ VIEWER_SECURITY_HEADERS = {
         "form-action 'self'"
     ),
 }
+# Sprint v1.11 — strict CSP for the auth-form pages. Their HTML no longer
+# has inline <script> blocks or inline event handlers, so we can drop
+# 'unsafe-inline' from script-src on these paths. style-src keeps
+# 'unsafe-inline' because the <style> blocks inside those HTMLs aren't a
+# practical XSS vector and removing them is a separate refactor.
+STRICT_AUTH_SECURITY_HEADERS = {
+    **SECURITY_HEADERS,
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+}
+_STRICT_CSP_PATHS = frozenset({
+    "/login",
+    "/me",
+    "/forgot-password",
+    "/reset-password",
+    "/activate",
+})
 
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMITS = {
@@ -470,7 +495,18 @@ def _is_viewer_path(path: str) -> bool:
 
 
 def _apply_security_headers(response: Response, path: str = "") -> Response:
-    headers = VIEWER_SECURITY_HEADERS if _is_viewer_path(path) else SECURITY_HEADERS
+    # Sprint v1.11: prefer the strict-auth headers for the five auth-form
+    # pages; viewers keep their iframe-friendly headers; everything else
+    # gets the default SECURITY_HEADERS. The dispatch is path-based — the
+    # auth POST endpoints (/auth/login etc.) live under /auth/ and fall
+    # through to the default set, which is fine because their responses
+    # are JSON, not HTML.
+    if path in _STRICT_CSP_PATHS:
+        headers = STRICT_AUTH_SECURITY_HEADERS
+    elif _is_viewer_path(path):
+        headers = VIEWER_SECURITY_HEADERS
+    else:
+        headers = SECURITY_HEADERS
     if _is_viewer_path(path):
         if "X-Frame-Options" in response.headers:
             del response.headers["X-Frame-Options"]
