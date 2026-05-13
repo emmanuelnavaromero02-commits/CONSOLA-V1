@@ -1,11 +1,11 @@
-    /* Studio overrides viewer.css: full-page layout with scroll only inside panels */
-    html, body { overflow: hidden; height: 100%; }
+    /* Studio overrides viewer.css: allow page-level scroll, panels manage their own overflow */
+    html, body { overflow-x: hidden; overflow-y: auto; min-height: 100vh; }
 
     /* ── Studio layout ── */
     .studio-layout {
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      min-height: 100vh;
     }
 
     /* ── Header ── */

@@ -4,6 +4,7 @@ USER airflow
 
 RUN pip install --no-cache-dir \
     requests \
+    httpx \
     pandas \
     pyarrow \
     minio \

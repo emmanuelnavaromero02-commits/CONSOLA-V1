@@ -62,7 +62,7 @@ let semanticData = null;
 
 async function loadCartridges(){
   try {
-    const r = await fetch('/mcp/servers');
+    const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
     const d = await r.json();
     const servers = d.servers || [];
     const sel = document.getElementById('cartridge-sel');

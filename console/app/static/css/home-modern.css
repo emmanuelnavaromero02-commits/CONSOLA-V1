@@ -213,9 +213,9 @@ body {
 .home-container {
   width: min(1240px, calc(100% - 44px));
   margin: 0 auto;
-  padding: 44px 0 52px;
+  padding: 28px 0 36px;
   display: grid;
-  gap: 28px;
+  gap: 22px;
 }
 
 .home-hero {
@@ -232,8 +232,8 @@ body {
 .home-hero h1 {
   margin: 8px 0 14px;
   color: var(--home-navy);
-  font-size: clamp(44px, 6vw, 76px);
-  line-height: 0.98;
+  font-size: 36px;
+  line-height: 1.05;
   letter-spacing: 0;
 }
 
@@ -241,8 +241,8 @@ body {
   max-width: 680px;
   margin: 0;
   color: var(--home-text-2);
-  font-size: 18px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.55;
 }
 
 .home-eyebrow {
@@ -311,7 +311,7 @@ body {
 .home-panel-title {
   margin: 0;
   color: var(--home-navy);
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 850;
 }
 
@@ -337,7 +337,7 @@ body {
 .home-section-title {
   margin: 0;
   color: var(--home-navy);
-  font-size: 25px;
+  font-size: 20px;
   font-weight: 850;
 }
 
@@ -423,7 +423,7 @@ body {
 .home-card h3 {
   margin: 0;
   color: var(--home-navy);
-  font-size: 20px;
+  font-size: 16px;
   letter-spacing: 0;
 }
 
@@ -564,4 +564,89 @@ body {
   .home-activity {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Action menus (Crear / Ejecutar / Revisar / Configurar) ───────────────── */
+.home-action-groups {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.home-action-menu {
+  position: relative;
+}
+
+.home-action-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--home-text-2);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.home-action-menu > summary::-webkit-details-marker { display: none; }
+.home-action-menu > summary::marker { content: ''; }
+
+.home-action-menu > summary:hover {
+  background: #eef4ff;
+  color: var(--home-blue);
+}
+
+.home-action-menu[open] > summary {
+  background: #eef4ff;
+  color: var(--home-blue);
+  border-color: rgba(56, 168, 232, 0.4);
+}
+
+.home-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 240px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid var(--home-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(7, 27, 77, 0.12);
+}
+
+.home-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--home-navy);
+  font-size: 12px;
+}
+
+.home-menu-item strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.home-menu-item small {
+  font-size: 10px;
+  color: var(--home-muted);
+}
+
+.home-menu-item:hover {
+  background: #eef4ff;
+}
+
+.home-menu-item.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }

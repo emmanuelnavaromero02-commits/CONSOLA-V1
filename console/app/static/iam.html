@@ -150,7 +150,7 @@
           <button type="button" data-tab="policies">Reglas de acceso</button>
           <button type="button" data-tab="vault">Caja fuerte</button>
           <a href="/security">Centro de seguridad</a>
-          <a href="/admin/users">Usuarios admin</a>
+          <a href="/admin/users">← Volver a admin de usuarios</a>
           <a href="/monitor">Monitor</a>
         </nav>
       </aside>
@@ -847,6 +847,15 @@
         document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`));
       });
     });
+
+    // Cross-link from /admin/users: open Users tab and remember preselected user.
+    const _qs = new URLSearchParams(location.search);
+    const _preUserId = _qs.get('user_id');
+    if (_preUserId) {
+      window.__iamPreselectUserId = _preUserId;
+      const usersBtn = document.querySelector('.nav button[data-tab="users"]');
+      if (usersBtn) usersBtn.click();
+    }
     $('refresh-btn').addEventListener('click', refreshAll);
     $('create-user').addEventListener('click', openCreateUser);
     $('invite-user').addEventListener('click', openInviteUser);

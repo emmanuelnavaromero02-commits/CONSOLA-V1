@@ -14,6 +14,8 @@ Tools exposed:
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 
 from app.config import settings
@@ -22,20 +24,28 @@ from app.registry import tool
 _VAULT = settings.vault_url.rstrip("/")
 
 
+def _auth_headers() -> dict:
+    """Headers required by the Vault internal API (Fase 1 dual-auth)."""
+    return {
+        "x-api-key": os.environ.get("INTERNAL_API_KEY", ""),
+        "x-internal-service": "mcp-infra",
+    }
+
+
 def _vault_get(path: str) -> dict:
-    r = httpx.get(f"{_VAULT}{path}", timeout=10)
+    r = httpx.get(f"{_VAULT}{path}", headers=_auth_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 def _vault_put(path: str, body: dict) -> dict:
-    r = httpx.put(f"{_VAULT}{path}", json=body, timeout=10)
+    r = httpx.put(f"{_VAULT}{path}", json=body, headers=_auth_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 def _vault_delete(path: str) -> dict:
-    r = httpx.delete(f"{_VAULT}{path}", timeout=10)
+    r = httpx.delete(f"{_VAULT}{path}", headers=_auth_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 
