@@ -73,6 +73,26 @@ def decode_access_token(token: str) -> dict:
     return claims
 
 
+async def verify_access_token_async(token: str) -> dict:
+    """Sync decode + async blacklist check.
+
+    Use this from async request handlers / dependencies. The sync
+    decode_access_token stays for legacy callers and unit tests that
+    don't care about revocation (they construct their own tokens).
+    The blacklist check fails open if Redis is unavailable — see
+    jwt_blacklist.is_revoked for the rationale.
+    """
+    claims = decode_access_token(token)
+    jti = claims.get("jti")
+    if jti:
+        # Lazy import: keeps jwt_auth import-light, and avoids a hard
+        # dependency on redis-py for code paths that don't touch JWTs.
+        from app.services.jwt_blacklist import get_blacklist
+        if await get_blacklist().is_revoked(jti):
+            raise JWTAuthError("access token revoked")
+    return claims
+
+
 def _is_insecure_secret(secret_key: str) -> bool:
     if not secret_key or len(secret_key.strip()) < 32:
         return True

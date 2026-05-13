@@ -7,6 +7,7 @@
 
 pytest>=7.4
 httpx>=0.27          # required by fastapi.testclient
+fakeredis>=2.20      # in-process Redis for jwt_blacklist tests (sprint v1.10)
 
 # Cartridge runtime imports pulled in transitively when TestClient boots an app
 fastapi>=0.110

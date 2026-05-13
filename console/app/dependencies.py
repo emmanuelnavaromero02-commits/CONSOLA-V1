@@ -3,7 +3,7 @@ from collections.abc import Callable
 from fastapi import Depends, HTTPException, Request
 
 from app.services import auth as _auth
-from app.services.jwt_auth import JWTAuthError, decode_access_token
+from app.services.jwt_auth import JWTAuthError, verify_access_token_async
 
 
 ROLE_ADMIN = "admin"
@@ -25,7 +25,10 @@ def _bearer_token(request: Request) -> str | None:
 
 async def _user_from_jwt(token: str) -> dict:
     try:
-        claims = decode_access_token(token)
+        # Sprint v1.10: switched from sync decode_access_token to the
+        # async variant so the Redis blacklist check runs on every
+        # JWT-authenticated request. Same exception type.
+        claims = await verify_access_token_async(token)
     except JWTAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
