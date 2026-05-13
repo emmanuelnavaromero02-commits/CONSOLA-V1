@@ -6,7 +6,7 @@ via the standard MCP contract:
 
   GET  /mcp/tools          → { tools: [{name, description, input_schema}] }
   POST /mcp/invoke         → { tool, args } → { result } | { error }
-  GET  /health             → { status, tools }
+  GET  /health             → { status }   (public; tool count intentionally redacted)
 """
 from __future__ import annotations
 import os
@@ -85,8 +85,11 @@ async def invoke_tool(req: InvokeRequest):
 
 @app.get("/health")
 def health():
-    tools = registry.list_tools()
-    return {"status": "ok", "tools": len(tools)}
+    # Public endpoint used by Docker healthchecks and load balancers — keep
+    # the response minimal so unauthenticated callers can't fingerprint how
+    # many tools / integrations this instance has loaded. Internal callers
+    # that need that detail use GET /mcp/tools behind x-api-key.
+    return {"status": "ok"}
 
 
 # ── RAG REST endpoints (used by Studio UI) ─────────────────────────────────────

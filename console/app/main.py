@@ -597,12 +597,10 @@ async def auth_middleware(request: Request, call_next):
 
 
 def current_user(request: Request) -> dict | None:
-    # TODO(phase-3): legacy cookie-middleware compatibility shim. Prefer dependencies.py.
     return getattr(request.state, "user", None)
 
 
 def require_user(request: Request) -> dict:
-    # TODO(phase-3): legacy cookie-middleware compatibility shim. Prefer require_authenticated.
     u = current_user(request)
     if not u:
         raise HTTPException(401, "authentication required")
@@ -610,7 +608,6 @@ def require_user(request: Request) -> dict:
 
 
 def require_admin(request: Request) -> dict:
-    # TODO(phase-3): legacy cookie-middleware compatibility shim. Prefer require_role(ROLE_ADMIN).
     u = require_user(request)
     if u.get("role") != "admin":
         raise HTTPException(403, "admin role required")
