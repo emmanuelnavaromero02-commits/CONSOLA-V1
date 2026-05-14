@@ -154,6 +154,15 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+    healthcheck:
+      # Sprint v1.21 (F2): liveness probe so dependent services can
+      # wait on `condition: service_healthy`. The image is
+      # python:3.12-slim (no wget/curl), hence python3 -c.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   workspace:
@@ -188,6 +197,15 @@ services:
         condition: service_started
       mcp-infra:
         condition: service_started
+    healthcheck:
+      # Sprint v1.21 (F2): liveness probe so dependent services can
+      # wait on `condition: service_healthy`. The image is
+      # python:3.12-slim (no wget/curl), hence python3 -c.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   refinement:
@@ -224,6 +242,15 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    healthcheck:
+      # Sprint v1.21 (F2): liveness probe so dependent services can
+      # wait on `condition: service_healthy`. The image is
+      # python:3.12-slim (no wget/curl), hence python3 -c.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8500/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 
   vault:
@@ -257,6 +284,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      # Sprint v1.21 (F2): liveness probe so dependent services can
+      # wait on `condition: service_healthy`. The image is
+      # python:3.12-slim (no wget/curl), hence python3 -c.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8300/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   mailhog:
@@ -268,6 +304,13 @@ services:
     restart: unless-stopped
 
   replicon-mock:
+    # Sprint v1.21 (F3): opt-in via `--profile dev`. The mock serves
+    # synthetic Replicon data for local development; in production a
+    # rogue or misconfigured REPLICON_BASE_URL pointing at this service
+    # would feed real ETL pipelines with fake records. Gating it behind
+    # a profile means `make up` in production never starts the mock,
+    # and a deliberate `docker compose --profile dev up` does.
+    profiles: ["dev"]
     build:
       context: ./replicon-mock
       dockerfile: Dockerfile
@@ -427,6 +470,15 @@ services:
         condition: service_healthy
       airflow:
         condition: service_started
+    healthcheck:
+      # Sprint v1.21 (F2): liveness probe so dependent services can
+      # wait on `condition: service_healthy`. The image is
+      # python:3.12-slim (no wget/curl), hence python3 -c.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8010/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   # ── Superset ──────────────────────────────────────────────────────────────────
@@ -511,8 +563,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      replicon-mock:
-        condition: service_started
+      # Sprint v1.21 (F3): no `replicon-mock: service_started` here.
+      # airflow only needs the connection POINTING at the mock URL,
+      # not the mock running. The mock is now under `--profile dev`,
+      # so making it a hard dependency would prevent prod boot.
     restart: "no"
 
   airflow:
@@ -561,8 +615,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      replicon-mock:
-        condition: service_started
+      # Sprint v1.21 (F3): no `replicon-mock: service_started` here.
+      # airflow only needs the connection POINTING at the mock URL,
+      # not the mock running. The mock is now under `--profile dev`,
+      # so making it a hard dependency would prevent prod boot.
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -612,8 +668,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      replicon-mock:
-        condition: service_started
+      # Sprint v1.21 (F3): no `replicon-mock: service_started` here.
+      # airflow only needs the connection POINTING at the mock URL,
+      # not the mock running. The mock is now under `--profile dev`,
+      # so making it a hard dependency would prevent prod boot.
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped

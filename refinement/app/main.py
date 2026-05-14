@@ -128,6 +128,15 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
 
+@app.get("/healthz")
+async def healthz():
+    """Sprint v1.21 (F2): liveness probe for the compose healthcheck.
+    No auth, no DB call. The full DB / DuckDB readiness check happens
+    in lifespan; this endpoint just answers as long as the FastAPI
+    event loop is running."""
+    return {"ok": True, "service": "refinement"}
+
+
 # ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
 
 @app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import psycopg2
 import yaml
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from app.security import get_internal_api_key
 from app.crypto import (
     VaultEncryptionError,
@@ -286,7 +286,25 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
 }
 
 
-def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
+_PUBLIC_PATHS = {"/healthz"}
+
+
+def verify_api_key(
+    request: Request = None,  # FastAPI injects; tests can call without
+    x_api_key: str = Header(None),
+    x_internal_service: str = Header(None),
+):
+    # Sprint v1.21 (F2): /healthz is the compose-probe liveness endpoint
+    # and must answer 200 without credentials. The app-level
+    # `dependencies=[Depends(verify_api_key)]` cascades to every route,
+    # so the only way to make /healthz public is to short-circuit here.
+    # The legacy /health endpoint stays behind auth — that one returns
+    # {store: postgresql} which is mild fingerprinting and was already
+    # gated. Request defaults to None so the v1.12 unit tests can call
+    # verify_api_key directly without spinning up a FastAPI scope.
+    if request is not None and request.url.path in _PUBLIC_PATHS:
+        return
+
     if not x_internal_service or x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if not x_api_key:
@@ -319,6 +337,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MODecissions Vault", dependencies=[Depends(verify_api_key)], lifespan=lifespan)
+
+
+@app.get("/healthz")
+def healthz():
+    """Sprint v1.21 (F2): unauthenticated liveness probe for the compose
+    healthcheck. The app-level verify_api_key dependency short-circuits
+    on this exact path (see _PUBLIC_PATHS) so this endpoint returns 200
+    without credentials. The legacy /health below stays behind auth."""
+    return {"ok": True, "service": "vault"}
 
 
 @app.get("/health")
