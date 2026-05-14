@@ -25,3 +25,5 @@ fastmcp>=0.1
 cryptography>=42.0
 requests>=2.31
 python-dotenv>=1.0
+fakeredis>=2.35
+sqlglot>=25.16

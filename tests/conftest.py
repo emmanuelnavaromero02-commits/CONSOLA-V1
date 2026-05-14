@@ -46,7 +46,16 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     sys.path.insert(0, str(cart_dir))
 
     os.environ["INTERNAL_API_KEY"] = "test-secret-key-not-default"
-    return import_module("app.main")
+    main = import_module("app.main")
+
+    # Most cartridge route tests exercise auth/routing in-process, not the
+    # live catalog seed. Sprint v1.31 intentionally made seed failures fatal
+    # in production startup, so the test harness disables only the startup
+    # side effect while dedicated seed tests still call catalog_service
+    # directly against the live Postgres stack.
+    if hasattr(main, "catalog_service"):
+        main.catalog_service._seed_if_empty = lambda: None
+    return main
 
 
 @pytest.fixture

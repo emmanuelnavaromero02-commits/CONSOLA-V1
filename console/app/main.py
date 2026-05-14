@@ -2198,8 +2198,8 @@ async def viewer_pipeline():
 async def viewer_vault():
     return FileResponse(STATIC / "viewers" / "vault.html")
 
-@app.get("/rag")
-async def rag_page(user: dict = Depends(require_authenticated)):
+@app.get("/rag", dependencies=[Depends(require_admin)])
+async def rag_page():
     # Sprint v1.22: RAG console is admin tooling. Anonymous access
     # served the page (the API calls behind it WERE gated, so this is
     # mostly UX hygiene, but a logged-out user shouldn't see the surface).
@@ -2437,7 +2437,7 @@ async def _refinement_invoke(tool: str, args: dict):
 
 # ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────
 
-@app.get("/monitoring/mcp/tools")
+@app.get("/monitoring/mcp/tools", dependencies=[Depends(require_authenticated)])
 async def monitoring_mcp_tools(user: dict = Depends(require_authenticated)):
     """MCP-compatible tools endpoint so the registry can discover monitoring tools.
 
@@ -2729,7 +2729,7 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
 
 CONSOLE_URL = os.environ.get("CONSOLE_URL", "http://localhost:8000")
 
-@app.get("/monitoring/tools")
+@app.get("/monitoring/tools", dependencies=[Depends(require_authenticated)])
 async def monitoring_tools(user: dict = Depends(require_authenticated)):
     # Sprint v1.22: same rationale as /monitoring/mcp/tools — tool
     # discovery should be authenticated.

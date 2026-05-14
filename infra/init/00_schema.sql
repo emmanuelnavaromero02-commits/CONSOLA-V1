@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS entity_config (
     cron_expression     TEXT,                  -- cron string when trigger_type='scheduled'
     -- legacy columns kept for backwards compat, no longer used by Studio:
     watermark_field     TEXT,
+    watermark_format    TEXT,
+    page_size           INTEGER,
+    select_fields       JSONB,
+    protection          JSONB,
+    effective_dated     BOOLEAN DEFAULT FALSE,
+    date_field          TEXT,
+    future_window_days  INTEGER,
     connection_id       TEXT,
     PRIMARY KEY (cartridge_id, entity)
 );
@@ -71,6 +78,13 @@ ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS trigger_type     TEXT DEFAULT
 ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS cron_expression  TEXT;
 ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS connection_id    TEXT;
 ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS watermark_field  TEXT;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS watermark_format TEXT;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS page_size        INTEGER;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS select_fields    JSONB;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS protection       JSONB;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS effective_dated  BOOLEAN DEFAULT FALSE;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS date_field       TEXT;
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS future_window_days INTEGER;
 
 -- Replicon cartridge: watermarks per entity
 CREATE TABLE IF NOT EXISTS entity_watermarks (
