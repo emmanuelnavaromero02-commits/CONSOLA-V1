@@ -24,6 +24,10 @@ from app.registry import tool
 _VAULT = settings.vault_url.rstrip("/")
 
 
+def _is_development() -> bool:
+    return os.environ.get("APP_ENV", "development").lower() in {"development", "dev", "local", "test"}
+
+
 def _auth_headers() -> dict:
     """Headers required by the Vault internal API (Fase 1 dual-auth).
 
@@ -147,6 +151,8 @@ async def vault_set_connection(
     api_key: str = "",
     api_key_header: str = "",
 ) -> dict:
+    if not _is_development():
+        raise PermissionError("vault_set_connection is disabled outside development.")
     body: dict = {"base_url": base_url, "auth_method": auth_method}
     if token:
         body["token"] = token
@@ -200,6 +206,8 @@ async def vault_get_connection(cartridge_id: str, conn_id: str) -> dict:
     },
 )
 async def vault_delete_connection(cartridge_id: str, conn_id: str) -> dict:
+    if not _is_development():
+        raise PermissionError("vault_delete_connection is disabled outside development.")
     return _vault_delete(f"/connections/{cartridge_id}/{conn_id}")
 
 
@@ -240,4 +248,6 @@ async def vault_list_secrets(scope: str) -> dict:
     },
 )
 async def vault_set_secret(scope: str, key: str, value: str) -> dict:
+    if not _is_development():
+        raise PermissionError("vault_set_secret is disabled outside development.")
     return _vault_put(f"/secrets/{scope}/{key}", {"value": value})

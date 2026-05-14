@@ -36,6 +36,10 @@ KEYS=(
   "INTERNAL_API_KEY_REFINEMENT_TO_VAULT"
 )
 
+DB_KEYS=(
+  "OMEGA_REFINEMENT_GOLD_PASSWORD"
+)
+
 if ! command -v openssl >/dev/null 2>&1; then
   echo "ERROR: openssl is required to generate secrets" >&2
   exit 1
@@ -57,4 +61,15 @@ for key in "${KEYS[@]}"; do
   fi
 done
 
-echo "[bootstrap-keys] Done. 13 keys ensured in ${ENV_FILE} (${added} new)"
+for key in "${DB_KEYS[@]}"; do
+  if grep -q "^${key}=" "${ENV_FILE}"; then
+    echo "[bootstrap-keys] ${key} already exists, skipping"
+  else
+    value="$(openssl rand -hex 16)"
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+    echo "[bootstrap-keys] Generated ${key}"
+    added=$((added + 1))
+  fi
+done
+
+echo "[bootstrap-keys] Done. 14 keys ensured in ${ENV_FILE} (${added} new)"

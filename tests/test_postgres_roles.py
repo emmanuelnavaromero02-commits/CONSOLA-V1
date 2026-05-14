@@ -213,17 +213,14 @@ def test_mcp_infra_uses_omega_mcp_infra_via_pg_user():
     )
 
 
-def test_refinement_gold_database_url_stays_on_postgres_superuser():
-    """The analytical GOLD DB doesn't have auth-state tables to lock
-    down. Per the spec, refinement keeps using the postgres superuser
-    there. This test makes the deliberate-out-of-scope decision visible
-    so a future cleanup PR has to actively change it."""
+def test_refinement_gold_database_url_uses_omega_gold_role():
+    """Sprint v1.32.1: refinement must not use the postgres superuser
+    against the analytical GOLD DB either."""
     doc = _compose_doc()
     gold = doc["services"]["refinement"]["environment"]["GOLD_DATABASE_URL"]
-    assert "://postgres:" in gold, (
-        f"GOLD_DATABASE_URL changed unexpectedly: {gold!r}. "
-        f"If this was intentional, update the test and the spec."
-    )
+    assert "://omega_refinement_gold:" in gold
+    assert "OMEGA_REFINEMENT_GOLD_PASSWORD" in gold
+    assert "://postgres:" not in gold
 
 
 def test_no_in_scope_service_still_uses_postgres_superuser_for_main_db():
