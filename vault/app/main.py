@@ -276,14 +276,25 @@ INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
 # own INTERNAL_API_KEY_*_TO_VAULT secret. The legacy shared key still works
 # during the migration window — it gets dropped in a follow-up sprint.
 _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
-    "console":   "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
-    "mcp-infra": "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
-    # The old whitelist allowed these too; we keep them accepted via legacy
-    # key only — they have no dedicated pair key because they don't call vault.
-    "workspace":  None,
-    "refinement": None,
-    "airflow":    None,
+    "console":    "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
+    "mcp-infra":  "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
+    # Sprint v1.26 (audit F11): provisioned dedicated keys for workspace
+    # and refinement. NEITHER service calls vault as of v1.26, but vault
+    # accepted them via the legacy shared key — making any future
+    # misrouted call invisible until something failed. With dedicated
+    # keys in place, vault still accepts the legacy key (compat window)
+    # but logs a WARNING the first time it falls back, so an operator
+    # can spot the dependency.
+    "workspace":  "INTERNAL_API_KEY_WORKSPACE_TO_VAULT",
+    "refinement": "INTERNAL_API_KEY_REFINEMENT_TO_VAULT",
+    "airflow":    None,  # airflow doesn't call vault directly — legacy-only
 }
+
+
+# Per-process throttle for the v1.26 "legacy key used by <svc>" warning.
+# We want operator-visible signal without flooding the log if a tight
+# loop hits the legacy path many times in one process.
+_LEGACY_WARN_SEEN: set[str] = set()
 
 
 _PUBLIC_PATHS = {"/healthz"}
@@ -310,17 +321,29 @@ def verify_api_key(
     if not x_api_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    accepted: list[str] = []
     pair_key_env = _ALLOWED_SERVICES_TO_KEY_ENV.get(x_internal_service)
-    if pair_key_env:
-        pair_key = os.environ.get(pair_key_env)
-        if pair_key:
-            accepted.append(pair_key)
-    if INTERNAL_API_KEY:
-        accepted.append(INTERNAL_API_KEY)
+    pair_key = os.environ.get(pair_key_env) if pair_key_env else None
 
-    if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # Match in priority order so we can tell WHICH credential the caller
+    # used. Order: dedicated pair key first, legacy shared key second.
+    if pair_key and secrets.compare_digest(x_api_key, pair_key):
+        return
+    if INTERNAL_API_KEY and secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
+        # Sprint v1.26 (audit F11): warn when a service that HAS a
+        # dedicated key is still using the legacy shared one. This is
+        # the migration trail — operators grep for this line to find
+        # callers that need to be rolled forward. Throttled per-process
+        # so a tight loop doesn't flood the log.
+        if pair_key_env and x_internal_service not in _LEGACY_WARN_SEEN:
+            _LEGACY_WARN_SEEN.add(x_internal_service)
+            logger.warning(
+                "vault accepted legacy INTERNAL_API_KEY from service %r — "
+                "dedicated %s exists and should be used instead",
+                x_internal_service, pair_key_env,
+            )
+        return
+
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

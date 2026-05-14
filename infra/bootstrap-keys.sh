@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# infra/bootstrap-keys.sh — generate the 11 per-pair INTERNAL_API_KEY_* secrets.
+# infra/bootstrap-keys.sh — generate the 13 per-pair INTERNAL_API_KEY_* secrets.
 #
 # Sprint v1.12: the platform used to share one INTERNAL_API_KEY across 11
 # services; a compromise in any one of them meant every internal call could
@@ -26,6 +26,14 @@ KEYS=(
   "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT"
   "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE"
   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT"
+  # Sprint v1.26 (audit F11): provisioned for future use. Workspace and
+  # refinement don't call vault TODAY, but vault still accepts them via
+  # the legacy shared INTERNAL_API_KEY — so a misrouted call wouldn't
+  # be visible until something failed. With these keys in place, when
+  # either service starts calling vault it can switch to the dedicated
+  # key and the legacy fallback drops a WARNING that's easy to grep.
+  "INTERNAL_API_KEY_WORKSPACE_TO_VAULT"
+  "INTERNAL_API_KEY_REFINEMENT_TO_VAULT"
 )
 
 if ! command -v openssl >/dev/null 2>&1; then
@@ -49,4 +57,4 @@ for key in "${KEYS[@]}"; do
   fi
 done
 
-echo "[bootstrap-keys] Done. 11 keys ensured in ${ENV_FILE} (${added} new)"
+echo "[bootstrap-keys] Done. 13 keys ensured in ${ENV_FILE} (${added} new)"

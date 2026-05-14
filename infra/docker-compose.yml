@@ -175,6 +175,10 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:-}
+      # Sprint v1.26 (audit F11): provisioned for the day workspace
+      # starts calling vault. Until then it's an unused env var here;
+      # vault recognizes the value via its own _ALLOWED_SERVICES map.
+      INTERNAL_API_KEY_WORKSPACE_TO_VAULT: ${INTERNAL_API_KEY_WORKSPACE_TO_VAULT:-}
       # Sprint v1.19: per-service Postgres role (least-privilege).
       # omega_workspace reads most operational tables and writes only
       # decisions / decision_actions; cannot touch vault_entries.
@@ -219,6 +223,10 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      # Sprint v1.26 (audit F11): provisioned for the day refinement
+      # starts calling vault. Until then it's an unused env var here;
+      # vault recognizes the value via its own _ALLOWED_SERVICES map.
+      INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:-}
       # Sprint v1.19: per-service Postgres role on the operational DB
       # (least-privilege). omega_refinement reads dataset/cartridge
       # metadata and writes datasets/run_logs/pipeline_runs/silver_lineage.
@@ -267,6 +275,14 @@ services:
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:-}
       INTERNAL_API_KEY_MCP_INFRA_TO_VAULT: ${INTERNAL_API_KEY_MCP_INFRA_TO_VAULT:-}
+      # Sprint v1.26 (audit F11): dedicated keys for workspace +
+      # refinement → vault. Vault reads these to authenticate callers
+      # that announce x-internal-service: workspace / refinement.
+      # Until those services actually start calling vault, the values
+      # exist but are unused; once they do, vault's WARNING log will
+      # flag any caller still using the legacy shared INTERNAL_API_KEY.
+      INTERNAL_API_KEY_WORKSPACE_TO_VAULT: ${INTERNAL_API_KEY_WORKSPACE_TO_VAULT:-}
+      INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:-}
       # Sprint v1.15: Fernet master key for encryption at rest. The vault
       # service validates the key at startup in vault/app/crypto.py
       # (_get_fernet raises VaultEncryptionError if missing/invalid), so
