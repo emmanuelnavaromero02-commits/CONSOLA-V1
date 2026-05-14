@@ -1,6 +1,7 @@
 """
 DAG Templates — starting points for common extraction patterns.
-Each template is a complete, runnable DAG with clear TODO markers.
+Each template is a complete, runnable DAG with clear EDIT_HERE markers
+for the operator who copies it and adapts it to a real API or DB.
 All templates follow the 4-task pattern:
   extract → [update_watermark ‖ save_stats] → trigger_silver
 """
@@ -212,7 +213,7 @@ from airflow.operators.python import get_current_context
 CARTRIDGE_ID = "{cartridge}"
 ENTITY       = "{entity}"
 DAG_ID       = f"{{CARTRIDGE_ID}}_{{ENTITY}}_full"
-CONN_ID      = "default"   # TODO: Airflow conn_id = {cartridge}_default
+CONN_ID      = "default"   # short name; full Airflow conn_id = {cartridge}_default
 
 ''' + _CONN_BLOCK + _MINIO_BLOCK + '''\
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
@@ -245,12 +246,12 @@ def dag_func():
 
         rows, page = [], 1
         while True:
-            # TODO: ajustar URL y parámetros de paginación
+            # EDIT_HERE: ajustar URL y parámetros de paginación
             r = requests.get(f"{{base_url}}/{{entity}}", headers=headers,
                              params={{"page": page, "pageSize": 500}}, timeout=60)
             r.raise_for_status()
             data  = r.json()
-            # TODO: ajustar la key según estructura de respuesta del API
+            # EDIT_HERE: ajustar la key según estructura de respuesta del API
             batch = data.get("items") or data.get("data") or data.get("results") or []
             if not batch:
                 break
@@ -334,9 +335,9 @@ from airflow.operators.python import get_current_context
 CARTRIDGE_ID    = "{cartridge}"
 ENTITY          = "{entity}"
 DAG_ID          = f"{{CARTRIDGE_ID}}_{{ENTITY}}_incremental"
-CONN_ID         = "default"        # TODO: Airflow conn_id = {cartridge}_default
-WATERMARK_FIELD = "last_modified"  # TODO: campo de fecha en la respuesta del API
-WATERMARK_PARAM = "modifiedSince"  # TODO: query-param que acepta el API para filtrar
+CONN_ID         = "default"        # short name; full Airflow conn_id = {cartridge}_default
+WATERMARK_FIELD = "last_modified"  # EDIT_HERE: campo de fecha en la respuesta del API
+WATERMARK_PARAM = "modifiedSince"  # EDIT_HERE: query-param que acepta el API para filtrar
 
 ''' + _CONN_BLOCK + _MINIO_BLOCK + '''\
 default_args = {{"owner": "modecissions", "retries": 1, "retry_delay": timedelta(minutes=5)}}
@@ -374,7 +375,7 @@ def dag_func():
 
         rows, page = [], 1
         while True:
-            # TODO: ajustar URL y parámetros de paginación
+            # EDIT_HERE: ajustar URL y parámetros de paginación
             req_params = {{"page": page, "pageSize": 500}}
             if last_wm:
                 req_params[WATERMARK_PARAM] = last_wm
@@ -488,12 +489,12 @@ CARTRIDGE_ID    = "{cartridge}"
 ENTITY          = "{entity}"
 DAG_ID          = f"{{CARTRIDGE_ID}}_{{ENTITY}}_sql"
 CONN_ID         = "database"       # Airflow conn_id = {cartridge}_database
-WATERMARK_FIELD = "updated_at"     # TODO: columna de fecha (None si no aplica)
+WATERMARK_FIELD = "updated_at"     # EDIT_HERE: columna de fecha (None si no aplica)
 
-# TODO: ajustar la query. Usa :watermark como placeholder para extracción incremental
+# EDIT_HERE: ajustar la query. Usa :watermark como placeholder para extracción incremental
 SQL_QUERY = """
     SELECT *
-    FROM schema_name.table_name        -- TODO: cambiar
+    FROM schema_name.table_name        -- EDIT_HERE: cambiar
     WHERE 1=1
     -- AND updated_at > :watermark     -- descomentar para incremental
     ORDER BY updated_at
