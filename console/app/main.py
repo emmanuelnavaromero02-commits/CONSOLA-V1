@@ -18,6 +18,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Sprint v1.18: structured JSON logs to stdout, with secret redaction
+# applied to every record. Imported and called here (rather than at the
+# bottom of imports) so the logger configured below is the JSON one
+# from the very first record.
+from app.logging_config import setup_logging  # noqa: E402
+
+setup_logging(service_name="console")
+
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
