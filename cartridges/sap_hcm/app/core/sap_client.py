@@ -17,11 +17,50 @@ import logging
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from requests.auth import HTTPBasicAuth
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+# urllib3 retry logger is noisy by default; INFO surfaces retries
+# without flooding DEBUG output during normal operation.
+logging.getLogger("urllib3.util.retry").setLevel(logging.INFO)
+
+
+
+# Sprint v1.17: shared by the 3 SAP cartridges (no shared lib between
+# cartridges → copied textually into each). Exponential backoff for
+# transient errors so a 429 from a busy SAP mandant or a 503 during
+# maintenance no longer kills the whole extraction DAG.
+#
+# Backoff schedule with the defaults: sleep before retry N is
+#   backoff_factor * (2 ** (N - 1)) seconds
+# i.e. 2s, 4s, 8s between attempts. urllib3 honors any `Retry-After`
+# header the upstream returns and overrides the exponential schedule
+# when one is present (respect_retry_after_header=True).
+def _make_retry_session(max_retries: int = 3, backoff_factor: float = 2.0) -> requests.Session:
+    """Return a requests.Session with exponential backoff for transient errors.
+
+    Retries on 429 (rate limit), 500/502/503/504 (gateway). Sleeps are
+    backoff_factor * (2 ** (n-1)) seconds between attempts: 2s, 4s, 8s
+    with the defaults. Respects Retry-After header automatically.
+    """
+    retry = Retry(
+        total=max_retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
 
 
 class SAPClientError(RuntimeError):
@@ -34,7 +73,13 @@ class SapHcmClient:
     CARTRIDGE_ID = "sap_hcm"
     REQUIRED_ENV = ("sap_hcm_base_url", "sap_hcm_user", "sap_hcm_pass")
 
+    # Sprint v1.17: exponential-retry session config (see _make_retry_session).
+    _RETRY_MAX = 3
+    _RETRY_BACKOFF_FACTOR = 2.0
+
+
     def __init__(self) -> None:
+        self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
         self.base_url = (settings.sap_hcm_base_url or "").rstrip("/")
         self.user = settings.sap_hcm_user
         self.password = settings.sap_hcm_pass
@@ -105,7 +150,7 @@ class SapHcmClient:
             else f"{self.base_url}/$metadata"
 
         try:
-            resp = requests.get(
+            resp = self._session.get(
                 probe_url,
                 auth=self._auth(),
                 headers=self._headers(),
@@ -178,7 +223,7 @@ class SapHcmClient:
 
         url = f"{self.base_url}/{entity}"
         try:
-            resp = requests.get(
+            resp = self._session.get(
                 url,
                 params=params,
                 auth=self._auth(),
