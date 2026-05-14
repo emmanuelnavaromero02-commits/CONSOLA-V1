@@ -54,9 +54,9 @@ jobs:
             echo "::warning::workspace/tests/ no existe — pendiente de crear suite"
           fi
 
-      # Root tests/ exercises cartridge contracts (replicon + SAP). They were
-      # added in #82 / #84 but never wired to CI, so a regression in any
-      # cartridge passed CI silently. Install every cartridge's deps then run.
+      # Root tests/ exercises cartridge contracts and Airflow DAG wiring. They
+      # were added in #82 / #84 but never wired to CI, so a regression in any
+      # cartridge passed CI silently. Install every live cartridge's deps then run.
       - name: Install cartridge requirements for root tests/
         run: |
           for cart in cartridges/*/requirements.txt; do
@@ -93,7 +93,7 @@ jobs:
       # Build every service image so a Dockerfile regression in any of them
       # fails CI instead of being discovered at deploy time. The previous
       # workflow only built `console`, which let workspace/refinement/vault/
-      # mcp-infra/replicon images break silently for entire commits.
+      # mcp-infra/SAP cartridge images break silently for entire commits.
       fail-fast: false
       matrix:
         include:
@@ -107,8 +107,6 @@ jobs:
             context: ./vault
           - service: mcp-infra
             context: ./mcp-infra
-          - service: replicon
-            context: ./cartridges/replicon
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana
