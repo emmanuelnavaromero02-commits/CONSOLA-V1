@@ -325,6 +325,9 @@ services:
       - airflow_logs:/opt/airflow/logs
       - airflow_plugins:/opt/airflow/plugins
       - /opt/modecissions/cartridges:/registry/cartridges:ro
+      - /opt/modecissions/cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
+      - /opt/modecissions/cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     networks:
       - modecissions_net
     depends_on:
@@ -358,6 +361,9 @@ services:
       - airflow_logs:/opt/airflow/logs
       - airflow_plugins:/opt/airflow/plugins
       - /opt/modecissions/cartridges:/registry/cartridges:ro
+      - /opt/modecissions/cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
+      - /opt/modecissions/cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     networks:
       - modecissions_net
     depends_on:
