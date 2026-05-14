@@ -24,6 +24,7 @@ API:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -33,6 +34,14 @@ import psycopg2
 import yaml
 from fastapi import FastAPI, Header, HTTPException, Depends
 from app.security import get_internal_api_key
+from app.crypto import (
+    VaultEncryptionError,
+    _get_fernet,
+    decrypt_value,
+    encrypt_value,
+)
+
+logger = logging.getLogger("vault")
 
 _SECRETS_FILE = Path("/vault/secrets.yaml")
 _DATABASE_URL = os.getenv(
@@ -57,32 +66,59 @@ def _pg():
     return psycopg2.connect(_normalize_postgres_dsn(_DATABASE_URL))
 
 
+# Sprint v1.15: secrets are encrypted at rest in vault_entries.value_encrypted
+# (BYTEA). The legacy `value` JSONB column is kept as nullable so reads can
+# fall back to it for rows that haven't been re-encrypted yet by the runtime
+# migration. Writes ALWAYS go to value_encrypted with value = NULL.
+
+def _row_value(row_encrypted: bytes | memoryview | None, row_value_json) -> dict | None:
+    """Return the decoded dict from whichever column has data.
+
+    Prefers ``value_encrypted`` (the post-v1.15 path). Falls back to the
+    legacy ``value`` JSONB column for rows that pre-existed the rollout
+    and haven't been migrated yet. Returns ``None`` if both are NULL.
+    """
+    if row_encrypted is not None:
+        return decrypt_value(row_encrypted)
+    if row_value_json is None:
+        return None
+    if isinstance(row_value_json, (dict, list)):
+        return row_value_json  # psycopg2 already decoded the JSONB
+    return json.loads(row_value_json)
+
+
 def _db_upsert(scope: str, cartridge: str, key: str, value: dict) -> None:
+    encrypted = encrypt_value(value)
     conn = _pg()
     with conn.cursor() as cur:
+        # Write only to value_encrypted; clear the legacy value so a future
+        # rollback can't read stale plaintext that no longer matches.
         cur.execute(
             """
-            INSERT INTO vault_entries (scope, cartridge, key, value, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, NOW(), NOW())
+            INSERT INTO vault_entries (scope, cartridge, key, value, value_encrypted, created_at, updated_at)
+            VALUES (%s, %s, %s, NULL, %s, NOW(), NOW())
             ON CONFLICT (scope, cartridge, key) DO UPDATE
-            SET value = EXCLUDED.value, updated_at = NOW()
+            SET value_encrypted = EXCLUDED.value_encrypted,
+                value = NULL,
+                updated_at = NOW()
             """,
-            (scope, cartridge, key, json.dumps(value)),
+            (scope, cartridge, key, psycopg2.Binary(encrypted)),
         )
     conn.commit()
     conn.close()
 
 
 def _db_upsert_if_absent(scope: str, cartridge: str, key: str, value: dict) -> None:
+    encrypted = encrypt_value(value)
     conn = _pg()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO vault_entries (scope, cartridge, key, value, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, NOW(), NOW())
+            INSERT INTO vault_entries (scope, cartridge, key, value, value_encrypted, created_at, updated_at)
+            VALUES (%s, %s, %s, NULL, %s, NOW(), NOW())
             ON CONFLICT (scope, cartridge, key) DO NOTHING
             """,
-            (scope, cartridge, key, json.dumps(value)),
+            (scope, cartridge, key, psycopg2.Binary(encrypted)),
         )
     conn.commit()
     conn.close()
@@ -92,12 +128,15 @@ def _db_get(scope: str, cartridge: str, key: str) -> dict | None:
     conn = _pg()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT value FROM vault_entries WHERE scope=%s AND cartridge=%s AND key=%s",
+            "SELECT value_encrypted, value FROM vault_entries "
+            "WHERE scope=%s AND cartridge=%s AND key=%s",
             (scope, cartridge, key),
         )
         row = cur.fetchone()
     conn.close()
-    return row[0] if row else None
+    if not row:
+        return None
+    return _row_value(row[0], row[1])
 
 
 def _db_delete(scope: str, cartridge: str, key: str) -> bool:
@@ -117,13 +156,78 @@ def _db_list(scope: str, cartridge: str) -> list[dict]:
     conn = _pg()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT key, value FROM vault_entries "
+            "SELECT key, value_encrypted, value FROM vault_entries "
             "WHERE scope=%s AND cartridge=%s ORDER BY key",
             (scope, cartridge),
         )
         rows = cur.fetchall()
     conn.close()
-    return [{"key": r[0], "value": r[1]} for r in rows]
+    out: list[dict] = []
+    for r in rows:
+        decoded = _row_value(r[1], r[2])
+        if decoded is None:
+            continue  # row with both columns NULL — shouldn't happen post-migration
+        out.append({"key": r[0], "value": decoded})
+    return out
+
+
+def _migrate_legacy_plaintext_secrets() -> None:
+    """One-time runtime migration: encrypt rows that still have plaintext
+    ``value`` and no ``value_encrypted``. Idempotent — re-running after a
+    successful migration is a no-op because the query returns nothing.
+
+    Partial failures are isolated per row: a failure encrypting row A
+    does not prevent row B from being encrypted. The legacy ``value`` is
+    only cleared once the encrypted write has committed for that row, so
+    a mid-migration crash leaves successful rows on the new path and
+    failed rows on the old path — both still readable via _db_get's
+    fallback. We never delete the legacy column data without a successful
+    encrypted write.
+    """
+    conn = _pg()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT scope, cartridge, key, value FROM vault_entries "
+                "WHERE value_encrypted IS NULL AND value IS NOT NULL"
+            )
+            rows = cur.fetchall()
+
+        if not rows:
+            return
+
+        logger.info(
+            "[v1.15] migrating %d legacy plaintext secrets to encrypted at rest",
+            len(rows),
+        )
+
+        ok = fail = 0
+        for scope, cartridge, key, value in rows:
+            try:
+                payload = value if isinstance(value, (dict, list)) else json.loads(value)
+                encrypted = encrypt_value(payload if isinstance(payload, dict) else {"value": payload})
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE vault_entries "
+                        "SET value_encrypted = %s, value = NULL, updated_at = NOW() "
+                        "WHERE scope=%s AND cartridge=%s AND key=%s",
+                        (psycopg2.Binary(encrypted), scope, cartridge, key),
+                    )
+                conn.commit()
+                ok += 1
+            except Exception as e:
+                logger.error(
+                    "[v1.15] failed migrating %s/%s/%s: %s", scope, cartridge, key, e,
+                )
+                conn.rollback()
+                fail += 1
+
+        logger.info(
+            "[v1.15] migration complete: %d encrypted, %d failed (left on legacy column)",
+            ok, fail,
+        )
+    finally:
+        conn.close()
 
 
 # ── Seed from secrets.yaml ────────────────────────────────────────────────────
@@ -197,7 +301,15 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Sprint v1.15: fail fast at startup if VAULT_ENCRYPTION_KEY is missing
+    # or unparseable. The alternative — booting and silently 500'ing every
+    # request — is much worse for the on-call.
+    try:
+        _get_fernet()
+    except VaultEncryptionError as e:
+        raise RuntimeError(str(e)) from e
     _seed()
+    _migrate_legacy_plaintext_secrets()
     yield
 
 
