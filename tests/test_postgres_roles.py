@@ -241,3 +241,88 @@ def test_no_in_scope_service_still_uses_postgres_superuser_for_main_db():
         f"in-scope service(s) still use the postgres superuser:\n  "
         + "\n  ".join(bad)
     )
+
+
+# ── v1.20 GRANT-coverage audit pins ─────────────────────────────────
+# Three audits in v1.20 found that the original v1.19 GRANTs were
+# tighter than the services' actual queries. These tests pin the new,
+# correct coverage. Each test inspects only the SQL block "owned by" its
+# role — extracted with a defensive bracket-matching helper — so a
+# future GRANT on the same table to a DIFFERENT role doesn't falsely
+# satisfy the assertion for THIS role.
+
+
+def _role_section(sql: str, role: str) -> str:
+    """Return the substring of the migration that belongs to ``role``:
+    everything between the ``CREATE ROLE <role>`` and the next role's
+    ``CREATE ROLE`` (or end of file). Comments inside the section count.
+    """
+    # Use the GRANT-CONNECT line as the start anchor (it sits right
+    # below the DO $$ block and is unique per role) and the next
+    # role's GRANT-CONNECT as the end anchor.
+    starts = [
+        (m.start(), m.group(1))
+        for m in re.finditer(
+            r"GRANT\s+CONNECT\s+ON\s+DATABASE\s+\w+\s+TO\s+(omega_[a-z_]+)",
+            sql,
+        )
+    ]
+    starts.sort()
+    for i, (pos, found_role) in enumerate(starts):
+        if found_role == role:
+            end = starts[i + 1][0] if i + 1 < len(starts) else len(sql)
+            return sql[pos:end]
+    raise AssertionError(f"No section found for role {role!r}")
+
+
+def test_omega_refinement_has_data_catalog():
+    """v1.20 audit: refinement reads + writes data_catalog when
+    materializing silver layers. v1.19 missed this GRANT entirely."""
+    section = _role_section(MIGRATION.read_text(encoding="utf-8"), "omega_refinement")
+    assert "data_catalog" in section, (
+        "omega_refinement section is missing data_catalog. Refinement "
+        "writes silver-layer catalog metadata to this table."
+    )
+
+
+def test_omega_workspace_has_user_sessions():
+    """v1.20 audit: workspace identifies the caller from the session
+    cookie (user_sessions) and slides the session on each authenticated
+    request. v1.19 didn't grant it."""
+    section = _role_section(MIGRATION.read_text(encoding="utf-8"), "omega_workspace")
+    assert "user_sessions" in section, (
+        "omega_workspace section is missing user_sessions. Workspace "
+        "reads + slides this table on every authenticated request."
+    )
+
+
+def test_omega_mcp_infra_has_cartridge_dags():
+    """v1.20 audit: pipeline.dag_get_source tool reads cartridge_dags.
+    Without this grant, Studio paso 2 shows 'Fuente no encontrada' —
+    the exact bug v1.20 was supposed to fix."""
+    section = _role_section(MIGRATION.read_text(encoding="utf-8"), "omega_mcp_infra")
+    assert "cartridge_dags" in section, (
+        "omega_mcp_infra section is missing cartridge_dags. The "
+        "pipeline.dag_get_source MCP tool reads this table to render "
+        "the DAG graph in Studio."
+    )
+
+
+def test_vault_entries_still_only_in_omega_vault():
+    """Regression guard with stricter intent than
+    test_no_other_role_has_grants_on_vault_entries: enforces that the
+    ONLY grant on vault_entries in the entire migration is one targeting
+    omega_vault. A future expansion-of-grants PR that touches
+    vault_entries — even with a typo — fails this test immediately."""
+    sql = MIGRATION.read_text(encoding="utf-8")
+    grants = re.findall(
+        r"GRANT\s+[^;]*?\s+ON\s+vault_entries\s+TO\s+(\w+)\s*;",
+        sql, flags=re.IGNORECASE,
+    )
+    assert grants, "migration must GRANT vault_entries to omega_vault"
+    distinct = sorted(set(grants))
+    assert distinct == ["omega_vault"], (
+        f"vault_entries grants leaked beyond omega_vault: {distinct!r}. "
+        f"Banca-grade defense-in-depth: only omega_vault may touch "
+        f"vault_entries — see SECURITY.md."
+    )

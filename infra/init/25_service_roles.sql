@@ -61,13 +61,21 @@ END $$;
 GRANT CONNECT ON DATABASE modecissions TO omega_refinement;
 GRANT USAGE ON SCHEMA public TO omega_refinement;
 -- Read needed for queries (semantic + dataset metadata).
+-- v1.20 audit: added data_catalog, data_relationships, kb_config — the
+-- refinement engine reads these for semantic linking / dataset graphs
+-- and (for catalog tables) writes them back when materializing silver.
 GRANT SELECT ON datasets, entity_config, semantic_terms, pipeline_runs, run_logs,
        cartridges, cartridge_connections, cartridge_dags,
        analytic_apps, silver_lineage, system_settings,
-       tenants, workspaces, mcp_servers, mcp_custom_tools
+       tenants, workspaces, mcp_servers, mcp_custom_tools,
+       data_catalog, data_relationships, kb_config
        TO omega_refinement;
 -- Write where refinement actually writes.
-GRANT INSERT, UPDATE ON datasets, run_logs, pipeline_runs, silver_lineage TO omega_refinement;
+-- v1.20 audit: added data_catalog, data_relationships (re-seeded on
+-- refresh) and analytic_apps (datasets_used column auto-extracted).
+GRANT INSERT, UPDATE ON datasets, run_logs, pipeline_runs, silver_lineage,
+       data_catalog, data_relationships, analytic_apps
+       TO omega_refinement;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_refinement;
 -- Refinement NUNCA debe tocar:
 --   vault_entries          (secretos)
@@ -115,10 +123,16 @@ END $$;
 
 GRANT CONNECT ON DATABASE modecissions TO omega_workspace;
 GRANT USAGE ON SCHEMA public TO omega_workspace;
+-- v1.20 audit: added user_sessions + token_usage. Workspace reads the
+-- session cookie to identify the caller (user_sessions) and emits per-
+-- request token usage rows (token_usage) for the LLM cost dashboard.
 GRANT SELECT ON datasets, decisions, analytic_apps, semantic_terms,
-       users, workspaces, tenants, roles, rag_sources, rag_chunks
+       users, workspaces, tenants, roles, rag_sources, rag_chunks,
+       user_sessions, token_usage
        TO omega_workspace;
-GRANT INSERT, UPDATE ON decisions, decision_actions TO omega_workspace;
+GRANT INSERT, UPDATE ON decisions, decision_actions,
+       user_sessions, token_usage
+       TO omega_workspace;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_workspace;
 REVOKE ALL ON vault_entries FROM omega_workspace;
 
@@ -159,19 +173,23 @@ END $$;
 GRANT CONNECT ON DATABASE modecissions TO omega_mcp_infra;
 GRANT USAGE ON SCHEMA public TO omega_mcp_infra;
 -- Read surface: tablas que las tools de mcp-infra consultan.
+-- v1.20 audit: added data_catalog + kb_config — cartridges.* tools
+-- read them for the catalog/KB graph rendered in Studio.
 GRANT SELECT ON
     cartridges, cartridge_dags, cartridge_connections,
     semantic_terms, mcp_servers, mcp_custom_tools,
     rag_sources, rag_chunks, entity_config, entity_watermarks,
     pipeline_runs, run_logs, datasets, decisions,
     workspaces, tenants, users, roles, system_settings,
-    analytic_apps
+    analytic_apps, data_catalog, kb_config
     TO omega_mcp_infra;
 -- Write surface: solo tablas que las tools de mcp-infra escriben hoy.
--- (cartridge_dags y mcp_* via airflow.* tools; rag_* via rag.store.)
+-- (cartridge_dags y mcp_* via airflow.* tools; rag_* via rag.store.
+-- v1.20 audit: added entity_watermarks + pipeline_runs — the airflow
+-- tools advance watermarks and write pipeline run rows from DAG callbacks.)
 GRANT INSERT, UPDATE, DELETE ON
     cartridge_dags, mcp_servers, mcp_custom_tools,
-    rag_sources, rag_chunks
+    rag_sources, rag_chunks, entity_watermarks, pipeline_runs
     TO omega_mcp_infra;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_mcp_infra;
 -- Hard line: NUNCA vault_entries (esa sigue siendo SOLO de omega_vault).
