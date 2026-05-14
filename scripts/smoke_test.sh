@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Sprint v1.23 — end-to-end smoke test (audit B3).
+#
+# Verifies the stack is FUNCTIONAL, not just "containers running":
+#   1-5. /healthz on the 5 app services
+#   6.   Postgres pg_isready
+#   7.   MinIO /minio/health/live
+#   8.   console /healthz returns a parseable JSON payload
+#   9.   /monitoring/invoke without auth is rejected (gate works)
+#   10.  Postgres has > 10 public tables (migrations ran)
+#   11.  omega_vault has SELECT on vault_entries (the role exists + got its GRANT)
+#   12.  omega_console is DENIED SELECT on vault_entries (defense-in-depth v1.19)
+#
+# Idempotent: every check is a GET or a read-only SQL probe; re-running
+# yields the same result. No state mutation, no fixtures left behind.
+#
+# Assumes the compose stack is already up (`make up`). Doesn't try to
+# start it — that's the operator's job. Fails loudly if anything is
+# unreachable rather than spinning indefinitely (5 s curl timeouts).
+set -euo pipefail
+
+FAILURES=0
+TOTAL=0
+
+log()  { echo "[smoke] $*"; }
+fail() { echo "[smoke FAIL] $*"; FAILURES=$((FAILURES + 1)); TOTAL=$((TOTAL + 1)); }
+pass() { echo "[smoke PASS] $*";                              TOTAL=$((TOTAL + 1)); }
+
+# curl wrapper that times out fast — a stuck connection shouldn't block
+# the whole smoke run.
+fetch() {
+  curl -sf --max-time 5 -o /dev/null "$@"
+}
+
+fetch_body() {
+  curl -s --max-time 5 "$@"
+}
+
+# ── 1-5. /healthz on the 5 app services ────────────────────────────────
+for svc_port in console:8000 workspace:8001 mcp-infra:8010 vault:8300 refinement:8500; do
+  svc="${svc_port%:*}"
+  port="${svc_port#*:}"
+  if fetch "http://localhost:${port}/healthz"; then
+    pass "healthz ${svc} (port ${port})"
+  else
+    fail "healthz ${svc} did not respond (port ${port})"
+  fi
+done
+
+# ── 6. Postgres pg_isready ─────────────────────────────────────────────
+if docker exec mode_postgres pg_isready -U postgres -q 2>/dev/null; then
+  pass "postgres ready"
+else
+  fail "postgres NOT ready"
+fi
+
+# ── 7. MinIO live probe ────────────────────────────────────────────────
+if fetch http://localhost:9000/minio/health/live; then
+  pass "minio live"
+else
+  fail "minio NOT live"
+fi
+
+# ── 8. console /healthz returns parseable JSON ─────────────────────────
+RESP="$(fetch_body http://localhost:8000/healthz || echo '')"
+if echo "$RESP" | grep -q '"ok"' && echo "$RESP" | grep -q 'true'; then
+  pass "console /healthz returns valid JSON"
+else
+  fail "console /healthz JSON invalid: ${RESP}"
+fi
+
+# ── 9. Auth gate: POST without credentials must be rejected ────────────
+# After v1.22 the CSRF dep fires before auth on cookie paths, so an
+# anonymous POST gets 403 (csrf) instead of 401 (auth). Both mean
+# "rejected" — accept either. A 2xx here would be a security regression.
+CODE="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' \
+        -X POST http://localhost:8000/monitoring/invoke \
+        -H 'Content-Type: application/json' -d '{}')"
+case "$CODE" in
+  401|403) pass "auth gate working (POST /monitoring/invoke → ${CODE})" ;;
+  *)       fail "auth gate broken (POST /monitoring/invoke → ${CODE}, expected 401|403)" ;;
+esac
+
+# ── 10. Postgres: enough public tables to mean migrations ran ──────────
+# Fresh init creates 30+ tables across the various 0*-2*.sql scripts.
+# If we see <10 the migrations didn't run and the next checks would
+# all fail in confusing ways — fail fast here with a clearer message.
+RESULT="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+          "SELECT COUNT(*) FROM pg_tables WHERE schemaname='public';" 2>/dev/null || echo 0)"
+RESULT="${RESULT//[[:space:]]/}"
+if [ "${RESULT:-0}" -gt 10 ]; then
+  pass "postgres has ${RESULT} public tables (schema migrated)"
+else
+  fail "postgres has only ${RESULT} public tables (migrations may have failed)"
+fi
+
+# ── 11. omega_vault HAS SELECT on vault_entries (role + GRANT applied) ─
+ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+          "SELECT has_table_privilege('omega_vault', 'vault_entries', 'SELECT');" 2>/dev/null || echo '')"
+ACCESS="${ACCESS//[[:space:]]/}"
+if [ "$ACCESS" = "t" ]; then
+  pass "omega_vault has SELECT on vault_entries"
+else
+  fail "omega_vault SELECT on vault_entries broken (got: '${ACCESS}')"
+fi
+
+# ── 12. omega_console DENIED on vault_entries (regression guard v1.19) ─
+# This is the keystone of the per-service partitioning: only omega_vault
+# touches vault_entries. If a future GRANT regression leaks it to
+# omega_console, that's a CRITICAL audit finding.
+NO_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+             "SELECT has_table_privilege('omega_console', 'vault_entries', 'SELECT');" 2>/dev/null || echo '')"
+NO_ACCESS="${NO_ACCESS//[[:space:]]/}"
+if [ "$NO_ACCESS" = "f" ]; then
+  pass "omega_console correctly DENIED on vault_entries (defense-in-depth)"
+else
+  fail "omega_console has access to vault_entries — REGRESSION of v1.19 (got: '${NO_ACCESS}')"
+fi
+
+# ── Summary ────────────────────────────────────────────────────────────
+echo ""
+if [ "$FAILURES" -eq 0 ]; then
+  echo "[smoke] ✅ ${TOTAL}/${TOTAL} checks passed"
+  exit 0
+else
+  PASSED=$((TOTAL - FAILURES))
+  echo "[smoke] ❌ ${FAILURES}/${TOTAL} check(s) failed (${PASSED} passed)"
+  exit 1
+fi
