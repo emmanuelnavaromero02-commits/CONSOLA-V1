@@ -307,6 +307,15 @@ class DuckDBEngine:
     # inherits the cap automatically and MUST NOT re-cap.
     _MAX_PREVIEW_LIMIT = 10_000
     _DEFAULT_PREVIEW_LIMIT = 20
+    # Sprint v1.16: wall-clock cap on a single preview_sql execution.
+    # Limits the blast radius of an LLM-generated query that misses a
+    # WHERE clause, builds a cartesian product, or otherwise asks DuckDB
+    # to scan a dataset that takes longer than this to read. DuckDB 1.2.x
+    # has no native `statement_timeout` configuration knob, so this is
+    # enforced via a threading.Timer that calls con.interrupt() on the
+    # shared connection — DuckDB raises InterruptException which we
+    # translate into a friendly error message below.
+    _STATEMENT_TIMEOUT_SECONDS = 30
 
     def preview_sql(self, sql: str, limit: int = 20, sources: list[str] | None = None, user_context: dict = None, params: list = None) -> dict:
         """Execute SQL with RLS applied and caller params merged.
@@ -321,6 +330,9 @@ class DuckDBEngine:
 
         `limit` is coerced into [1, _MAX_PREVIEW_LIMIT]; non-positive or None
         values fall back to _DEFAULT_PREVIEW_LIMIT.
+
+        Execution is bounded by ``_STATEMENT_TIMEOUT_SECONDS`` — see the
+        class-level comment for the mechanism.
         """
         if limit is None or limit <= 0:
             limit = self._DEFAULT_PREVIEW_LIMIT
@@ -338,9 +350,20 @@ class DuckDBEngine:
                 effective_sql = self._inject_bucket(self._inject_latest_date(rls_sql, sources or []))
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
-                cursor = con.execute(limited, combined_params)
-                desc = cursor.description
-                data = cursor.fetchall()
+                # Watchdog: fires con.interrupt() if the query runs past
+                # the cap. The Timer is cancelled immediately after a
+                # successful fetch so the connection is free for the
+                # next caller. daemon=True keeps the process exitable
+                # even if the timer is somehow still pending at shutdown.
+                timer = threading.Timer(self._STATEMENT_TIMEOUT_SECONDS, con.interrupt)
+                timer.daemon = True
+                timer.start()
+                try:
+                    cursor = con.execute(limited, combined_params)
+                    desc = cursor.description
+                    data = cursor.fetchall()
+                finally:
+                    timer.cancel()
 
             schema_rows = [
                 {"name": c[0], "type": c[1] if len(c) > 1 and isinstance(c[1], str) else "VARCHAR"}
@@ -353,7 +376,26 @@ class DuckDBEngine:
                 "row_count": len(data),
             }
         except Exception as exc:
-            return {"error": str(exc)}
+            msg = str(exc)
+            # DuckDB raises InterruptException ("INTERRUPT Error: Interrupted!")
+            # when the watchdog calls con.interrupt(). Normalize the message
+            # so the LLM/caller gets something actionable instead of a stack
+            # trace fragment.
+            lower = msg.lower()
+            if (
+                "interrupt" in lower
+                or "timeout" in lower
+                or exc.__class__.__name__ == "InterruptException"
+            ):
+                return {
+                    "error": (
+                        f"Query exceeded timeout of "
+                        f"{self._STATEMENT_TIMEOUT_SECONDS}s. Try a more "
+                        f"restrictive WHERE clause or reduce the scope of "
+                        f"the scan."
+                    )
+                }
+            return {"error": msg}
 
     # ── Dataset query ─────────────────────────────────────────────────────────
 
