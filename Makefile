@@ -1,3 +1,5 @@
+PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
+
 .PHONY: help up down nuke logs ps test smoke rotate-keys
 
 help:
@@ -27,7 +29,11 @@ ps:
 	docker compose -f infra/docker-compose.yml ps
 
 test:
-	pytest -ra tests/ console/tests/ refinement/tests/ vault/tests/
+	$(PYTEST) -ra tests/
+	PYTHONPATH=console $(PYTEST) -ra console/tests/
+	PYTHONPATH=. $(PYTEST) -ra refinement/tests/
+	PYTHONPATH=vault $(PYTEST) -ra vault/tests/
+	PYTHONPATH=workspace $(PYTEST) -ra workspace/tests/
 
 # Sprint v1.23 (audit B3): real end-to-end smoke. Verifies the stack is
 # functional — not just "containers running" — by hitting /healthz on

@@ -33,12 +33,9 @@ async def lifespan(app: FastAPI):
     except Exception:
         # DB unavailable — cartridge still serves /health, /skills/entities (yaml fallback)
         pass
-    try:
-        # Register cartridge header + entities so Studio's dropdown lists this
-        # source even if no client has hit /entities yet.
-        catalog_service._seed_if_empty()
-    except Exception:
-        pass
+    # Register cartridge header + entities so Studio's dropdown lists this
+    # source even if no client has hit /entities yet.
+    catalog_service._seed_if_empty()
     async with _mcp_app.router.lifespan_context(app):
         yield
 

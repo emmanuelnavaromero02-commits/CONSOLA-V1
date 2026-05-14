@@ -428,9 +428,32 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             """
-            SELECT entity, mode, watermark_field, watermark_format, page_size,
-                   select_fields, effective_dated, date_field, primary_key,
-                   dag_id, description
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'entity_config'
+            """
+        )
+        columns = {r[0] for r in cur.fetchall()}
+
+        def col(name: str, fallback: str) -> str:
+            return name if name in columns else f"{fallback} AS {name}"
+
+        select_sql = ", ".join([
+            "entity",
+            "mode",
+            "watermark_field",
+            col("watermark_format", "NULL::text"),
+            col("page_size", "NULL::integer"),
+            col("select_fields", "NULL::jsonb"),
+            col("effective_dated", "FALSE"),
+            col("date_field", "NULL::text"),
+            "primary_key",
+            "dag_id",
+            "description",
+        ])
+        cur.execute(
+            f"""
+            SELECT {select_sql}
             FROM entity_config
             WHERE cartridge_id = %s AND entity = %s
             """,

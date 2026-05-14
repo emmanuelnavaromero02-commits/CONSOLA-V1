@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ ENTITIES_PATH = BASE_DIR / "config" / "entities.yaml"
 KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 
 CARTRIDGE_ID = "sap_successfactors"
+logger = logging.getLogger(__name__)
 
 # Cartridge header metadata — used to UPSERT the `cartridges` row on startup so
 # Studio's "Fuente de datos" dropdown lists this cartridge alongside Replicon.
@@ -57,12 +59,33 @@ def _yaml_kbs() -> list[dict[str, Any]]:
 
 # ── Seed on startup ───────────────────────────────────────────────────────────
 
+_ENTITY_CONFIG_SCHEMA_SQL = (
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS watermark_format TEXT",
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS page_size INTEGER",
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS select_fields JSONB",
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS protection JSONB",
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS effective_dated BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS date_field TEXT",
+    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS future_window_days INTEGER",
+)
+
+
+def _ensure_entity_config_schema(conn) -> None:
+    for sql in _ENTITY_CONFIG_SCHEMA_SQL:
+        conn.execute(text(sql))
+
+
+def _dag_id_for_entity(entity: dict[str, Any]) -> str:
+    return entity.get("dag_id") or f"{CARTRIDGE_ID}_extract"
+
+
 def _seed_if_empty() -> None:
     """If entity_config has no rows for this cartridge, import from YAML.
     Also upserts the cartridge header so Studio's dropdown picks it up."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
+            _ensure_entity_config_schema(conn)
             # Ensure the cartridge header exists (Studio dropdown reads this).
             conn.execute(text("""
                 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
@@ -85,27 +108,33 @@ def _seed_if_empty() -> None:
                 for e in _yaml_entities():
                     conn.execute(text("""
                         INSERT INTO entity_config (
-                            cartridge_id, entity, mode, watermark_field, watermark_format,
+                            cartridge_id, entity, display_name, mode, watermark_field, watermark_format,
                             page_size, select_fields, protection,
-                            effective_dated, date_field, future_window_days, description, enabled
+                            effective_dated, date_field, future_window_days, primary_key,
+                            dag_id, trigger_type, connection_id, description, enabled
                         ) VALUES (
-                            :cid, :entity, :mode, :wf, :wfmt,
-                            :ps, :sel, CAST(:prot AS JSONB),
-                            :ed, :df, :fwd, :desc, TRUE
+                            :cid, :entity, :display, :mode, :wf, :wfmt,
+                            :ps, CAST(:sel AS JSONB), CAST(:prot AS JSONB),
+                            :ed, :df, :fwd, :pk,
+                            :dag, 'manual', :conn, :desc, TRUE
                         )
                         ON CONFLICT (cartridge_id, entity) DO NOTHING
                     """), {
                         "cid": CARTRIDGE_ID,
                         "entity": e.get("entity"),
+                        "display": e.get("display_name") or e.get("entity"),
                         "mode": e.get("mode", "full"),
                         "wf": e.get("watermark_field"),
                         "wfmt": e.get("watermark_format"),
                         "ps": e.get("page_size", 1000),
-                        "sel": e.get("select"),
+                        "sel": json.dumps(e.get("select_fields") or []),
                         "prot": json.dumps(e.get("protection", {})),
                         "ed": bool(e.get("effective_dated", False)),
                         "df": e.get("date_field"),
                         "fwd": e.get("future_window_days"),
+                        "pk": e.get("primary_key"),
+                        "dag": _dag_id_for_entity(e),
+                        "conn": CARTRIDGE_ID,
                         "desc": e.get("description", ""),
                     })
 
@@ -132,7 +161,8 @@ def _seed_if_empty() -> None:
                         "out": kb.get("output_path", ""),
                     })
     except Exception:
-        pass  # DB unavailable — callers fall back to YAML
+        logger.exception("Failed to seed SAP SuccessFactors catalog from YAML")
+        raise
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
