@@ -363,6 +363,7 @@ services:
       SF_CLIENT_ID:     ${SF_CLIENT_ID:-}
       SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
       SF_TOKEN_URL:     ${SF_TOKEN_URL:-}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
     ports:
       - "8203:8203"
     depends_on:
@@ -393,6 +394,7 @@ services:
       SAP_HCM_USER:            ${SAP_HCM_USER:-}
       SAP_HCM_PASS:            ${SAP_HCM_PASS:-}
       SAP_HCM_CLIENT_MANDANT:  ${SAP_HCM_CLIENT_MANDANT:-100}
+      FIELD_ENCRYPTION_KEY:    ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
     ports:
       - "8202:8202"
     depends_on:
@@ -424,6 +426,7 @@ services:
       SAP_S4_PASS:            ${SAP_S4_PASS:-}
       SAP_S4_CLIENT_MANDANT:  ${SAP_S4_CLIENT_MANDANT:-100}
       SAP_S4_API_KEY:         ${SAP_S4_API_KEY:-}
+      FIELD_ENCRYPTION_KEY:   ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
     ports:
       - "8204:8204"
     depends_on:
