@@ -13,6 +13,7 @@ from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.mcp_server import load_custom_tools, mcp
+from app.security import InternalApiKeyASGIGuard
 from app.services import catalog_service
 
 
@@ -46,7 +47,7 @@ app = FastAPI(title="SAP SuccessFactors Cartridge", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(skills_router)
 app.include_router(console_router)
-app.mount("/mcp/rpc", _mcp_app)
+app.mount("/mcp/rpc", InternalApiKeyASGIGuard(_mcp_app))
 
 
 # ── REST adapter — contract for the console MCP registry ─────────────────────
