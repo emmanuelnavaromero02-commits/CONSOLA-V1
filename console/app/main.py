@@ -110,6 +110,18 @@ async def _close_main_pool() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await mcp_registry.startup()
+    # Sprint v1.20: idempotent backfill of cartridge_dags.source_code from
+    # on-disk .py files. Non-fatal — a seeding failure logs a warning but
+    # never blocks startup (Studio just keeps showing "Fuente no encontrada"
+    # for the affected cartridge until the next boot).
+    try:
+        from app.services.seed_dag_sources import seed_missing_dag_sources
+        pool = await _get_db_pool()
+        await seed_missing_dag_sources(pool)
+    except Exception as e:
+        logger.warning(
+            "[startup] dag source seeding failed (non-fatal): %s", e, exc_info=True,
+        )
     task = asyncio.create_task(_periodic_health_check())
     try:
         yield
