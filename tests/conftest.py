@@ -46,6 +46,13 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     sys.path.insert(0, str(cart_dir))
 
     os.environ["INTERNAL_API_KEY"] = "test-secret-key-not-default"
+    # Sprint v1.33 (audit B1): SAP cartridge protection_service refuses
+    # to import without a valid Fernet FIELD_ENCRYPTION_KEY. The test
+    # harness provides one so existing route/import tests keep working;
+    # tests that exercise the missing/invalid branches use monkeypatch.
+    if not os.environ.get("FIELD_ENCRYPTION_KEY"):
+        from cryptography.fernet import Fernet as _Fernet
+        os.environ["FIELD_ENCRYPTION_KEY"] = _Fernet.generate_key().decode()
     main = import_module("app.main")
 
     # Most cartridge route tests exercise auth/routing in-process, not the
