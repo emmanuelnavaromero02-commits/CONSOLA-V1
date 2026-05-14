@@ -86,7 +86,26 @@ async def require_csrf(request: Request) -> None:
 
     Reads the body lazily (only when the header is absent) so consumers
     that already declare `body: dict` keep working unchanged.
+
+    Sprint v1.22: skip CSRF entirely when the caller authenticates with
+    a Bearer token (Authorization: Bearer …). CSRF only defends against
+    requests where the browser AUTO-attaches credentials — i.e. cookie
+    sessions. Bearer tokens require explicit JS to set the header, so
+    a cross-origin form post can't impersonate the user. OWASP CSRF
+    cheat sheet, "Mitigations for stateful session tokens (cookies)".
+
+    Cookie-bearing requests (including anonymous POSTs to /auth/login)
+    still go through the full CSRF check — that's intentional: login is
+    one of the routes that NEEDS CSRF to stop a malicious site from
+    silently logging the victim in as the attacker.
     """
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        # Bearer-authed request — CSRF doesn't apply. The bearer token
+        # itself is the auth credential; downstream `require_authenticated`
+        # validates it (and the per-user JWT blacklist).
+        return
+
     if request.headers.get(CSRF_HEADER_NAME):
         # Fast path: header is present, no need to peek at the body.
         if verify_csrf(request, None):
