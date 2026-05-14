@@ -523,12 +523,20 @@ def test_rbac_dependency_prefix_route_without_auth_does_not_return_200(console_m
     assert response.status_code == 401
 
 
-def test_assistant_chat_without_auth_returns_401(console_main):
+def test_assistant_chat_without_auth_is_rejected(console_main):
+    """Sprint v1.22: /assistant/chat is now CSRF-protected. An anonymous
+    POST with neither bearer token nor CSRF cookie/header is rejected.
+    The status code is 403 (CSRF fails first as a decorator-level dep,
+    short-circuiting before the parameter-level require_authenticated).
+    Either rejection is correct from the security side; the test asserts
+    the route is NOT 2xx — that's the property worth pinning."""
     client = TestClient(console_main.app)
 
     response = client.post("/assistant/chat", json={"message": "hello", "history": []})
 
-    assert response.status_code == 401
+    assert response.status_code in (401, 403), (
+        f"unauthenticated POST /assistant/chat must be rejected, got {response.status_code}"
+    )
 
 
 def test_assistant_chat_with_valid_jwt_returns_200(console_main):

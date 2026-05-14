@@ -1065,7 +1065,7 @@ async def tokens_summary():
 
 # ── Assistant ─────────────────────────────────────────────────────────────────
 
-@app.post("/assistant/chat")
+@app.post("/assistant/chat", dependencies=[Depends(require_csrf)])
 async def chat(body: dict, user: dict = Depends(require_authenticated)):
     return await assistant.chat(body.get("message", ""), body.get("history", []))
 
@@ -1184,7 +1184,7 @@ async def api_dataset_detail(name: str):
     return r.json()
 
 
-@app.post("/api/bronze/query")
+@app.post("/api/bronze/query", dependencies=[Depends(require_csrf)])
 async def api_bronze_query(body: dict, user: dict = Depends(require_permission("datasets.write"))):
     # Restricted to datasets.write because this endpoint accepts arbitrary SQL.
     # Read-only roles (viewer) must use the dataset-scoped endpoints below,
@@ -1227,8 +1227,13 @@ async def api_dataset_lineage(name: str):
 # ── Analytic Apps ─────────────────────────────────────────────────────────────
 
 @app.get("/apps/{name}")
-async def serve_app(name: str):
-    """Serve a published analytic app HTML page."""
+async def serve_app(name: str, user: dict = Depends(require_authenticated)):
+    """Serve a published analytic app HTML page.
+
+    Sprint v1.22: added auth — published apps embed dataset queries that
+    rely on the user's session for RLS; serving them anonymously would
+    let unauthenticated callers indirectly fetch protected data through
+    the rendered iframe."""
     try:
         pool = await _get_db_pool()
         row  = await pool.fetchrow("SELECT html FROM analytic_apps WHERE name=$1", name)
@@ -2108,7 +2113,7 @@ async def studio_import_cartridge(file: UploadFile = File(...)):
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat")
+@app.post("/studio/chat", dependencies=[Depends(require_csrf)])
 async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
@@ -2121,7 +2126,7 @@ async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     )
 
 
-@app.post("/studio/chat/stream")
+@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf)])
 async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
@@ -2185,7 +2190,10 @@ async def viewer_vault():
     return FileResponse(STATIC / "viewers" / "vault.html")
 
 @app.get("/rag")
-async def rag_page():
+async def rag_page(user: dict = Depends(require_authenticated)):
+    # Sprint v1.22: RAG console is admin tooling. Anonymous access
+    # served the page (the API calls behind it WERE gated, so this is
+    # mostly UX hygiene, but a logged-out user shouldn't see the surface).
     return FileResponse(STATIC / "rag.html")
 
 
@@ -2421,8 +2429,12 @@ async def _refinement_invoke(tool: str, args: dict):
 # ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────
 
 @app.get("/monitoring/mcp/tools")
-async def monitoring_mcp_tools():
-    """MCP-compatible tools endpoint so the registry can discover monitoring tools."""
+async def monitoring_mcp_tools(user: dict = Depends(require_authenticated)):
+    """MCP-compatible tools endpoint so the registry can discover monitoring tools.
+
+    Sprint v1.22: added auth. Tool descriptors include parameter
+    schemas — an anonymous reader could enumerate the platform's MCP
+    surface and target downstream attack research at it."""
     t = await monitoring_tools()
     return t  # already returns {"tools": [...]}
 
@@ -2551,7 +2563,7 @@ async def studio_ops_tools(user: dict = Depends(require_authenticated)):
     return {"tools": tools}
 
 
-@app.post("/studio_ops/mcp/invoke")
+@app.post("/studio_ops/mcp/invoke", dependencies=[Depends(require_csrf)])
 async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticated)):
     tool = body.get("tool")
     args = body.get("args", {})
@@ -2709,7 +2721,9 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticat
 CONSOLE_URL = os.environ.get("CONSOLE_URL", "http://localhost:8000")
 
 @app.get("/monitoring/tools")
-async def monitoring_tools():
+async def monitoring_tools(user: dict = Depends(require_authenticated)):
+    # Sprint v1.22: same rationale as /monitoring/mcp/tools — tool
+    # discovery should be authenticated.
     return {"tools": [
         {
             "name": "view_job",
@@ -2791,8 +2805,12 @@ async def monitoring_tools():
     ]}
 
 
-@app.post("/monitoring/invoke")
-async def monitoring_invoke(body: dict):
+@app.post("/monitoring/invoke", dependencies=[Depends(require_csrf)])
+async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticated)):
+    # Sprint v1.22: was reachable without any auth. monitoring tools
+    # read job state and DAG metadata, which a session-less caller has
+    # no business seeing. CSRF added because this is a state-shaped
+    # POST and could be called from a cross-origin form otherwise.
     tool = body.get("tool")
     args = body.get("args", {})
 
@@ -2851,8 +2869,10 @@ async def monitoring_invoke(body: dict):
 
 # ── DAG graph parser ──────────────────────────────────────────────────────────
 
-@app.post("/api/dags/parse")
-async def api_dag_parse(body: dict):
+@app.post("/api/dags/parse", dependencies=[Depends(require_csrf)])
+async def api_dag_parse(body: dict, user: dict = Depends(require_authenticated)):
+    # Sprint v1.22: parsing arbitrary Python source is non-trivial work
+    # and an anonymous caller could DOS the parser. Auth + CSRF required.
     source = body.get("source", "")
     if not source:
         raise HTTPException(400, "source is required")
@@ -3133,7 +3153,7 @@ async def api_decisions_list(status: str = "", overdue: str = "", user: dict = D
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 
-@app.post("/api/decisions")
+@app.post("/api/decisions", dependencies=[Depends(require_csrf)])
 async def api_decisions_create(body: dict, user: dict = Depends(require_authenticated)):
     title = (body.get("title") or "").strip()
     if not title:
@@ -3172,7 +3192,7 @@ async def api_decisions_get(decision_id: int, user: dict = Depends(require_authe
     return out
 
 
-@app.patch("/api/decisions/{decision_id}")
+@app.patch("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
 async def api_decisions_update(decision_id: int, body: dict, user: dict = Depends(require_authenticated)):
     """Patch any subset of: title, description, commitment_date, kpis, status, outcome,
     closed_at, follow_up_decision_id, assignee_id, visibility."""
@@ -3214,7 +3234,7 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
     return _dec_row_to_dict(row)
 
 
-@app.delete("/api/decisions/{decision_id}")
+@app.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
 async def api_decisions_delete(decision_id: int, user: dict = Depends(require_authenticated)):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
@@ -3226,7 +3246,7 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_au
     return {"deleted": True, "id": decision_id}
 
 
-@app.post("/api/decisions/{decision_id}/actions")
+@app.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf)])
 async def api_decisions_add_action(decision_id: int, body: dict, user: dict = Depends(require_authenticated)):
     existing = await _dec_load_with_visibility(decision_id, user)
     if not existing:
@@ -3272,7 +3292,7 @@ async def api_admin_users_list(admin_user: dict = Depends(require_permission("ia
     return {"users": await _auth.list_users(active_only=False)}
 
 
-@app.post("/api/admin/users")
+@app.post("/api/admin/users", dependencies=[Depends(require_csrf)])
 async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
     email = (body.get("email") or "").strip().lower()
     pw    = body.get("password") or ""
@@ -3291,7 +3311,7 @@ async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_
     return target_user
 
 
-@app.patch("/api/admin/users/{user_id}")
+@app.patch("/api/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
 async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
     # Don't let an admin demote / disable themselves accidentally
     if user_id == admin_user["id"] and (body.get("role") not in (None, admin_user.get("role")) or body.get("is_active") is False):
@@ -3341,7 +3361,7 @@ async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = De
     return target_user
 
 
-@app.delete("/api/admin/users/{user_id}")
+@app.delete("/api/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
 async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(require_permission("iam.users.write"))):
     if user_id == admin_user["id"]:
         raise HTTPException(400, "you cannot delete your own account")
@@ -3351,7 +3371,7 @@ async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(requir
     return {"deleted": True, "id": user_id}
 
 
-@app.post("/api/admin/users/invite")
+@app.post("/api/admin/users/invite", dependencies=[Depends(require_csrf)])
 async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
@@ -3370,7 +3390,7 @@ async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_
     return {"invited": True, "user": target_user, "email_sent": sent}
 
 
-@app.post("/api/admin/users/{user_id}/reinvite")
+@app.post("/api/admin/users/{user_id}/reinvite", dependencies=[Depends(require_csrf)])
 async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Re-issue an invitation email (only for users that have not activated yet)."""
     target_user = await _auth.get_user_by_id(user_id)
@@ -3386,7 +3406,7 @@ async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(requ
     return {"reinvited": True, "email_sent": sent}
 
 
-@app.post("/api/admin/users/{user_id}/send-reset")
+@app.post("/api/admin/users/{user_id}/send-reset", dependencies=[Depends(require_csrf)])
 async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require_permission("iam.users.write"))):
     """Email a password reset link to an existing active user."""
     target_user = await _auth.get_user_by_id(user_id)
