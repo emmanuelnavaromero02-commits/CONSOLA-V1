@@ -35,6 +35,7 @@ services:
       POSTGRES_DB: modecissions_gold
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:-}"
     ports:
       - "15433:5433"
     command: -p 5433
@@ -227,13 +228,11 @@ services:
       # starts calling vault. Until then it's an unused env var here;
       # vault recognizes the value via its own _ALLOWED_SERVICES map.
       INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:-}
-      # Sprint v1.19: per-service Postgres role on the operational DB
-      # (least-privilege). omega_refinement reads dataset/cartridge
-      # metadata and writes datasets/run_logs/pipeline_runs/silver_lineage.
-      # The analytical GOLD DB connection (next line) stays on `postgres`
-      # — that DB has no auth-state tables to lock down.
+      # Sprint v1.19/v1.32.1: per-service Postgres roles on the
+      # operational DB and analytical GOLD DB. Refinement writes gold_*
+      # and master_* tables but must not use the postgres superuser.
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:-}@postgres:5432/modecissions"
-      GOLD_DATABASE_URL:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
+      GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
       MINIO_ENDPOINT:    minio:9000
       MINIO_ACCESS_KEY:  minio
       MINIO_SECRET_KEY:  ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}

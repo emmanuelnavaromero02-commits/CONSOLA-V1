@@ -244,6 +244,11 @@ async def airflow_create_dag(dag_id: str, code: str,
     },
 )
 async def airflow_delete_dag(dag_id: str) -> dict:
+    if not _is_development():
+        raise PermissionError(
+            "airflow_delete_dag is disabled outside development because "
+            "deleting DAGs is a destructive operation."
+        )
     dag_id = _validate_dag_id(dag_id)
     path = _dag_file_path(dag_id)
     deleted_file = False
@@ -287,6 +292,11 @@ async def airflow_delete_dag(dag_id: str) -> dict:
     },
 )
 async def airflow_set_variable(key: str, value: str) -> dict:
+    if not _is_development():
+        raise PermissionError(
+            "airflow_set_variable is disabled outside development because "
+            "Airflow Variables are persistent runtime configuration."
+        )
     async with _client() as c:
         r = await c.post(
             f"{_BASE}/api/v1/variables",

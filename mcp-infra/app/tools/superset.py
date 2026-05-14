@@ -5,6 +5,7 @@ Handles database connections, datasets, charts and dashboards.
 from __future__ import annotations
 
 import json
+import os
 
 import httpx
 
@@ -12,6 +13,10 @@ from app.config import settings
 from app.registry import tool
 
 _BASE = settings.superset_url.rstrip("/")
+
+
+def _is_development() -> bool:
+    return os.environ.get("APP_ENV", "development").lower() in {"development", "dev", "local", "test"}
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
@@ -73,6 +78,8 @@ async def superset_list_databases() -> dict:
     },
 )
 async def superset_create_database(name: str, sqlalchemy_uri: str) -> dict:
+    if not _is_development():
+        raise PermissionError("superset_create_database is disabled outside development.")
     h = await _hdrs()
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(
@@ -122,6 +129,8 @@ async def superset_list_datasets() -> dict:
 async def superset_create_dataset(
     database_id: int, table_name: str, schema: str = "public"
 ) -> dict:
+    if not _is_development():
+        raise PermissionError("superset_create_dataset is disabled outside development.")
     h = await _hdrs()
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(
@@ -181,6 +190,8 @@ async def superset_create_chart(
     datasource_type: str = "table",
     params: dict | None = None,
 ) -> dict:
+    if not _is_development():
+        raise PermissionError("superset_create_chart is disabled outside development.")
     h = await _hdrs()
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(
@@ -241,6 +252,8 @@ async def superset_list_dashboards() -> dict:
     },
 )
 async def superset_create_dashboard(title: str, slug: str | None = None) -> dict:
+    if not _is_development():
+        raise PermissionError("superset_create_dashboard is disabled outside development.")
     h       = await _hdrs()
     payload: dict = {"dashboard_title": title, "published": True}
     if slug:
@@ -307,6 +320,8 @@ async def superset_export_dashboard(dashboard_id: int) -> dict:
 async def superset_import_dashboard(
     files: dict, passwords: dict | None = None
 ) -> dict:
+    if not _is_development():
+        raise PermissionError("superset_import_dashboard is disabled outside development.")
     import io as _io
     import zipfile
 

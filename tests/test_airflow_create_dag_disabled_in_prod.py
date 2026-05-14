@@ -59,6 +59,24 @@ async def test_airflow_create_dag_disabled_in_production(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_airflow_delete_dag_disabled_in_production(monkeypatch):
+    airflow = _load_airflow_tools(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(PermissionError, match="deleting DAGs is a destructive operation"):
+        await airflow.airflow_delete_dag(dag_id="test_rce_blocked")
+
+
+@pytest.mark.asyncio
+async def test_airflow_set_variable_disabled_in_production(monkeypatch):
+    airflow = _load_airflow_tools(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(PermissionError, match="Airflow Variables are persistent runtime configuration"):
+        await airflow.airflow_set_variable(key="danger", value="blocked")
+
+
+@pytest.mark.asyncio
 async def test_airflow_create_dag_still_available_in_development(monkeypatch, tmp_path):
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")

@@ -16,10 +16,13 @@ def test_aws_compose_app_database_urls_use_omega_roles():
     assert "omega_console:" in env["console"]["DATABASE_URL"]
     assert "omega_workspace:" in env["workspace"]["DATABASE_URL"]
     assert "omega_refinement:" in env["refinement"]["DATABASE_URL"]
+    assert "omega_refinement_gold:" in env["refinement"]["GOLD_DATABASE_URL"]
     assert "omega_vault:" in env["vault"]["DATABASE_URL"]
 
     for service in ("console", "workspace", "refinement", "vault"):
         assert "://postgres:" not in env[service]["DATABASE_URL"], service
+    assert "://postgres:" not in env["refinement"]["GOLD_DATABASE_URL"]
+    assert "OMEGA_REFINEMENT_GOLD_PASSWORD" in env["refinement"]["GOLD_DATABASE_URL"]
 
 
 def test_aws_compose_mcp_infra_uses_omega_role():
@@ -33,6 +36,7 @@ def test_aws_compose_mcp_infra_uses_omega_role():
 def test_aws_postgres_bootstrap_receives_omega_passwords():
     doc = yaml.safe_load(COMPOSE.read_text())
     pgoptions = doc["services"]["postgres"]["environment"]["PGOPTIONS"]
+    gold_pgoptions = doc["services"]["postgres_gold"]["environment"]["PGOPTIONS"]
 
     for setting in (
         "app.omega_console_password",
@@ -42,3 +46,4 @@ def test_aws_postgres_bootstrap_receives_omega_passwords():
         "app.omega_mcp_infra_password",
     ):
         assert setting in pgoptions
+    assert "app.omega_refinement_gold_password" in gold_pgoptions

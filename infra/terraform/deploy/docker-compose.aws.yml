@@ -43,6 +43,7 @@ services:
       POSTGRES_DB:       modecissions_gold
       POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGOPTIONS: "-c app.omega_refinement_gold_password=${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}"
     command: -p 5433
     volumes:
       - postgres_gold_data:/var/lib/postgresql/data
@@ -140,7 +141,7 @@ services:
     environment:
       APP_ENV:            ${APP_ENV:-production}
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required}@postgres:5432/modecissions"
-      GOLD_DATABASE_URL:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
+      GOLD_DATABASE_URL:  "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       MINIO_BUCKET:       ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:     "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY:   ${AWS_ACCESS_KEY_ID:-}
