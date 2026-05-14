@@ -75,7 +75,16 @@ def _migrate_yaml_datasets():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine.setup()
-    _ensure_semantic_catalog_tables()
+    # Sprint v1.21.1 hotfix: the previous `_ensure_semantic_catalog_tables()`
+    # call ran CREATE TABLE IF NOT EXISTS for data_catalog / data_relationships
+    # at startup. After v1.19 the refinement service connects as
+    # `omega_refinement`, which has SELECT/INSERT/UPDATE on those tables but
+    # NOT `CREATE ON SCHEMA public` — Postgres checks the CREATE privilege
+    # BEFORE evaluating IF NOT EXISTS, so the call fails with
+    # InsufficientPrivilege and crashes refinement at boot. Removed: the
+    # tables are provisioned by infra/init/19_operational_stability_hotfix.sql
+    # (data_catalog, data_relationships) and infra/init/08_workspace_ownership.sql
+    # (analytic_apps), with the v1.20 GRANTs in 25_service_roles.sql.
     _migrate_yaml_datasets()
     _seed_catalog_from_existing()
     _seed_relationships()
@@ -793,40 +802,25 @@ def _pg_exec(query: str, params=None, fetch=False):
 
 
 def _ensure_semantic_catalog_tables() -> None:
-    _pg_exec("""
-        CREATE TABLE IF NOT EXISTS data_catalog (
-            dataset        TEXT NOT NULL,
-            layer          TEXT NOT NULL DEFAULT 'silver',
-            cartridge      TEXT NOT NULL DEFAULT '',
-            column_name    TEXT NOT NULL,
-            data_type      TEXT NOT NULL DEFAULT '',
-            description    TEXT NOT NULL DEFAULT '',
-            example_values JSONB,
-            tags           TEXT[] NOT NULL DEFAULT '{}',
-            is_key         BOOLEAN,
-            is_metric      BOOLEAN,
-            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (dataset, column_name)
-        )
-    """)
-    _pg_exec("CREATE INDEX IF NOT EXISTS idx_data_catalog_layer ON data_catalog (layer)")
-    _pg_exec("CREATE INDEX IF NOT EXISTS idx_data_catalog_cartridge ON data_catalog (cartridge)")
-    _pg_exec("CREATE INDEX IF NOT EXISTS idx_data_catalog_tags ON data_catalog USING GIN (tags)")
-    _pg_exec("""
-        CREATE TABLE IF NOT EXISTS data_relationships (
-            from_dataset TEXT NOT NULL,
-            from_column  TEXT NOT NULL,
-            to_dataset   TEXT NOT NULL,
-            to_column    TEXT NOT NULL,
-            join_hint    TEXT NOT NULL DEFAULT 'LEFT',
-            description  TEXT NOT NULL DEFAULT '',
-            transform    TEXT,
-            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (from_dataset, from_column, to_dataset, to_column)
-        )
-    """)
+    """Sprint v1.21.1 hotfix: this helper used to run CREATE TABLE
+    IF NOT EXISTS for data_catalog and data_relationships. After v1.19,
+    refinement connects as ``omega_refinement`` which has SELECT/INSERT/
+    UPDATE on those tables but no CREATE on schema ``public``. Postgres
+    evaluates privileges BEFORE the IF NOT EXISTS branch, so the call
+    fails with InsufficientPrivilege and crashes refinement at boot.
+
+    The tables are now exclusively provisioned by:
+      - infra/init/19_operational_stability_hotfix.sql (data_catalog,
+        data_relationships — column-identical to the old DDL here)
+      - infra/init/08_workspace_ownership.sql (analytic_apps; the
+        _ensure_apps_table() helper below is also a no-op)
+
+    This function is kept as a no-op for callers that still reference it
+    (currently just the lifespan, which we've also cleaned up). The
+    callers can be deleted in a follow-up sprint once the seed scripts
+    catch up. Keeping a no-op preserves the API surface while removing
+    the unsafe DDL."""
+    return None
 
 
 def _get_data_catalog(
@@ -968,18 +962,15 @@ def _register_relationship(args: dict) -> dict:
 
 
 def _ensure_apps_table():
-    _pg_exec("""
-        CREATE TABLE IF NOT EXISTS analytic_apps (
-            name         TEXT PRIMARY KEY,
-            title        TEXT NOT NULL,
-            html         TEXT NOT NULL,
-            description  TEXT,
-            cartridge_id TEXT,
-            created_at   TIMESTAMPTZ DEFAULT NOW(),
-            updated_at   TIMESTAMPTZ DEFAULT NOW()
-        )
-    """)
-    _pg_exec("ALTER TABLE analytic_apps ADD COLUMN IF NOT EXISTS cartridge_id TEXT")
+    """Sprint v1.21.1 hotfix: same story as _ensure_semantic_catalog_tables()
+    above — ``analytic_apps`` is fully provisioned by:
+      - infra/init/08_workspace_ownership.sql (the table itself, with
+        cartridge_id / created_by_id / visibility columns)
+      - infra/init/11_app_datasets_used.sql (datasets_used TEXT[])
+    The runtime CREATE TABLE + ALTER TABLE here failed with
+    InsufficientPrivilege under the v1.19 omega_refinement role.
+    Kept as a no-op so existing callers don't need to be touched."""
+    return None
 
 
 def _publish_app(args: dict) -> dict:
@@ -1001,9 +992,10 @@ def _publish_app(args: dict) -> dict:
     # Auto-extract dataset names referenced via /api/data/<name>
     import re as _re
     datasets_used = sorted(set(_re.findall(r"/api/data/([a-zA-Z_][a-zA-Z0-9_]*)", html)))
-    _ensure_apps_table()
-    # Make sure column exists (older deploys may not have it)
-    _pg_exec("ALTER TABLE analytic_apps ADD COLUMN IF NOT EXISTS datasets_used TEXT[]")
+    # Sprint v1.21.1 hotfix: dropped the inline `ALTER TABLE … ADD COLUMN
+    # IF NOT EXISTS datasets_used` — omega_refinement has no ALTER on the
+    # schema and the call would 500 here. The column is added by
+    # infra/init/11_app_datasets_used.sql at DB init time.
     _pg_exec("""
         INSERT INTO analytic_apps (name, title, html, description, cartridge_id,
                                    created_by_id, visibility, datasets_used, updated_at)
