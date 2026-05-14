@@ -108,6 +108,15 @@ async def invoke_tool(req: InvokeRequest):
 
 # ── Health ─────────────────────────────────────────────────────────────────────
 
+@app.get("/healthz")
+def healthz():
+    """Sprint v1.21 (F2): liveness probe for the compose healthcheck.
+    Same contract as the legacy /health below — minimal payload, no
+    auth — but uses the /healthz path the rest of the platform pins
+    its healthchecks on."""
+    return {"ok": True, "service": "mcp-infra"}
+
+
 @app.get("/health")
 def health():
     # Public endpoint used by Docker healthchecks and load balancers — keep

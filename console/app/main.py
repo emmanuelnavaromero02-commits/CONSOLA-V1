@@ -971,6 +971,17 @@ async def auth_reset(request: Request, body: dict):
     return resp
 
 
+@app.get("/healthz")
+async def healthz():
+    """Sprint v1.21 (F2): liveness probe for the compose healthcheck.
+    No auth, no DB call — answers as long as the FastAPI event loop is
+    running. Used by infra/docker-compose.yml so dependent services
+    wait on service_healthy instead of service_started, avoiding the
+    boot race where console answers before its lifespan has wired the
+    DB pool."""
+    return {"ok": True, "service": "console"}
+
+
 @app.get("/api/config")
 async def api_config(request: Request):
     """Runtime config (URLs only, no secrets)."""
@@ -2416,9 +2427,17 @@ async def monitoring_mcp_tools():
     return t  # already returns {"tools": [...]}
 
 
-@app.post("/monitoring/mcp/invoke")
+@app.post("/monitoring/mcp/invoke", dependencies=[Depends(require_authenticated)])
 async def monitoring_mcp_invoke(body: dict):
-    """MCP-compatible invoke endpoint so the assistant can call monitoring tools."""
+    """MCP-compatible invoke endpoint so the assistant can call monitoring tools.
+
+    Sprint v1.21 (F1): added require_authenticated. This route is the
+    MCP entry point for the monitoring toolset (view_job, view_schema,
+    etc.) and was previously reachable without a session — an
+    unauthenticated caller could enumerate jobs and read schema metadata.
+    The underlying monitoring_invoke() handler did not check the cookie
+    on its own, so the dependency is the single chokepoint.
+    """
     return await monitoring_invoke(body)
 
 
