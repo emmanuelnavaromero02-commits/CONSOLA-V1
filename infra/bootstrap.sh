@@ -25,6 +25,17 @@ MINIO_SECRET_KEY="$(openssl rand -hex 16)"
 SUPERSET_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 AIRFLOW_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 
+# Sprint v1.19: per-service Postgres roles (least-privilege). Each
+# service gets its own login role and its own password so a compromise
+# of one service can't reach the other tables — most importantly,
+# vault_entries is locked to the omega_vault role. See
+# infra/init/25_service_roles.sql for the GRANTs.
+OMEGA_CONSOLE_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_REFINEMENT_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_VAULT_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_WORKSPACE_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_MCP_INFRA_PASSWORD="$(openssl rand -hex 16)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Generated via the `cryptography` package because Fernet keys are
 # URL-safe base64 of 32 random bytes — `openssl rand -base64 32` is
@@ -49,6 +60,16 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD}
 AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
+
+# === Service-specific Postgres roles (v1.19) ===
+# Each service connects with its own login role / password instead of
+# the shared \`postgres\` superuser, so a compromise of one service can't
+# read/write the others' tables. See infra/init/25_service_roles.sql.
+OMEGA_CONSOLE_PASSWORD=${OMEGA_CONSOLE_PASSWORD}
+OMEGA_REFINEMENT_PASSWORD=${OMEGA_REFINEMENT_PASSWORD}
+OMEGA_VAULT_PASSWORD=${OMEGA_VAULT_PASSWORD}
+OMEGA_WORKSPACE_PASSWORD=${OMEGA_WORKSPACE_PASSWORD}
+OMEGA_MCP_INFRA_PASSWORD=${OMEGA_MCP_INFRA_PASSWORD}
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows
