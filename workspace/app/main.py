@@ -108,9 +108,15 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    # Sprint v1.24 (audit B6): script-src dropped 'unsafe-inline'. Every
+    # script in the workspace shell now ships as an external .js file
+    # (see workspace/app/static/js/) and inline event handlers are
+    # bound via addEventListener — same pattern console adopted in
+    # v1.18+. style-src KEEPS 'unsafe-inline' on purpose (separate
+    # refactor; the audit blocker was script-src).
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "connect-src 'self' http://localhost:* ws://localhost:*; "
@@ -121,8 +127,33 @@ SECURITY_HEADERS = {
 }
 
 
-def _apply_security_headers(response: Response) -> Response:
-    for name, value in SECURITY_HEADERS.items():
+# Sprint v1.24: published analytic apps under /apps/* are USER CONTENT
+# — analysts upload self-contained HTML pages with inline <script>,
+# inline <style>, and CDN libraries (chart.js etc.). Locking those to
+# script-src 'self' would brick every published app instantly.
+# Path-based dispatch: shell paths get strict CSP; /apps/* keeps the
+# relaxed pre-v1.24 CSP. Same pattern console used in v1.11.
+_APPS_RELAXED_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+    "https://cdnjs.cloudflare.com https://unpkg.com; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+    "https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+    "img-src 'self' data: blob: https:; "
+    "font-src 'self' data: https://fonts.gstatic.com; "
+    "connect-src 'self' http://localhost:* ws://localhost:*; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
+def _apply_security_headers(response: Response, path: str = "") -> Response:
+    # Path-based CSP dispatch. The non-CSP headers are uniform.
+    headers = dict(SECURITY_HEADERS)
+    if path.startswith("/apps/"):
+        headers["Content-Security-Policy"] = _APPS_RELAXED_CSP
+    for name, value in headers.items():
         response.headers.setdefault(name, value)
     return response
 
@@ -130,7 +161,7 @@ def _apply_security_headers(response: Response) -> Response:
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
-    return _apply_security_headers(response)
+    return _apply_security_headers(response, request.url.path)
 
 
 # ── Postgres pool (apps + sessions) ────────────────────────────────────────
