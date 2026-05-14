@@ -137,7 +137,12 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ../cartridges:/registry/cartridges
+      # Sprint v1.20: read-only — console reads cartridge .py sources to
+      # seed cartridge_dags.source_code at startup, but must NEVER modify
+      # the host's cartridge code from inside the container. Existing
+      # callers (cartridge_service.export_cartridge fallback) are also
+      # read-only, so the tightening is safe.
+      - ../cartridges:/registry/cartridges:ro
       - ../console/app/static:/app/app/static:ro
       - ../VERSION:/app/VERSION:ro
     depends_on:
