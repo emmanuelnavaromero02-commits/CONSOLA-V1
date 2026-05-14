@@ -209,6 +209,35 @@ def test_makefile_help_describes_smoke_as_real():
 # ── Idempotency contract (documented by inspection) ─────────────────
 
 
+def test_console_healthz_is_in_public_paths():
+    """Sprint v1.23.1 hotfix regression guard.
+
+    console/app/main.py has an `auth_middleware` that redirects every
+    non-public path to /login. If /healthz isn't in _AUTH_PUBLIC_EXACT,
+    the compose healthcheck probe gets a 307 to /login (never 200), and
+    the container hangs in `(unhealthy)` forever — even though the
+    service is fine. Workspace and vault already handle this via their
+    own public-path mechanisms; console is the one that needs the
+    explicit entry.
+
+    This test verifies the entry survives. A future refactor of the
+    public-path set that drops /healthz silently fails the test.
+    """
+    src = (REPO_ROOT / "console" / "app" / "main.py").read_text(encoding="utf-8")
+    # Find the _AUTH_PUBLIC_EXACT block as text and check the literal
+    # appears inside the braces. AST is overkill here; the set literal
+    # is one-line-per-cluster of strings and grep-friendly.
+    m = re.search(r"_AUTH_PUBLIC_EXACT\s*=\s*\{([^}]*)\}", src, re.DOTALL)
+    assert m, "_AUTH_PUBLIC_EXACT set not found in console/app/main.py"
+    block = m.group(1)
+    assert '"/healthz"' in block or "'/healthz'" in block, (
+        '"/healthz" must be in _AUTH_PUBLIC_EXACT — otherwise '
+        "auth_middleware redirects the compose healthcheck probe to "
+        "/login and the service stays (unhealthy) forever. See v1.23.1 "
+        "hotfix commit message for the failure mode."
+    )
+
+
 def test_smoke_script_has_no_side_effects():
     """Every check in the script is read-only (GET / SELECT / has_table_privilege).
     A POST or INSERT in the smoke script would mean state mutation, which
