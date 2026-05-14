@@ -8,7 +8,7 @@ help:
 	@echo "  make logs         follow service logs"
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
-	@echo "  make smoke        (NOT IMPLEMENTED — exits 1)"
+	@echo "  make smoke        run end-to-end smoke checks against a running stack"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
 up:
@@ -29,12 +29,13 @@ ps:
 test:
 	pytest -ra tests/ console/tests/ refinement/tests/ vault/tests/
 
-# Honest stubs (sprint v1.7): these used to print a misleading
-# "implemented in Fase X" message and exit 0, so an operator running
-# them would believe the action succeeded. Both now exit non-zero so CI
-# / orchestration can detect their absence.
+# Sprint v1.23 (audit B3): real end-to-end smoke. Verifies the stack is
+# functional — not just "containers running" — by hitting /healthz on
+# every app service, probing Postgres + MinIO, checking the auth gate,
+# and asserting the v1.19 vault_entries partitioning is intact.
+# Assumes `make up` has been run; doesn't try to start the stack.
 smoke:
-	@echo "ERROR: 'make smoke' is not implemented yet — pending in roadmap" && exit 1
+	@bash scripts/smoke_test.sh
 
 # Sprint v1.14: real implementation. Backs up the current infra/.env to
 # infra/.env.save (gitignored), then regenerates ALL secrets via

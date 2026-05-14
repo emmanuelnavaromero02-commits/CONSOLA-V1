@@ -578,6 +578,15 @@ _AUTH_PUBLIC_EXACT = {
     "/activate", "/auth/activate", "/auth/activate/info",
     "/forgot-password", "/auth/forgot-password",
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
+    # Sprint v1.23.1 hotfix: /healthz must be reachable WITHOUT auth so
+    # the v1.21 compose probe + the v1.23 smoke script can hit it from
+    # inside the container / from `make smoke` on the host. Without
+    # this entry, auth_middleware redirects /healthz to /login (307)
+    # and the probe never sees a 200 — leaving the service stuck on
+    # `(unhealthy)` even when it's fine. Workspace and vault already
+    # handle /healthz via their own public-path sets; console was the
+    # outlier.
+    "/healthz",
 }
 _AUTH_PUBLIC_PREFIX = ("/static/",)
 _AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/internal/", "/datasets", "/jobs", "/tokens",
