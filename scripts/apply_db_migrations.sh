@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Apply pending infra/init/*.sql migrations to an existing local Postgres volume.
+#
+# Docker entrypoint init scripts only run on a fresh data directory. This target
+# covers the upgrade path for already-created local stacks by replaying
+# idempotent SQL files not yet present in schema_migrations.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
+ENV_FILE="${ROOT_DIR}/infra/.env"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
+
+PGOPTIONS_VALUE="-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-}"
+PSQL=(docker compose -f "${COMPOSE_FILE}" exec -T -e "PGOPTIONS=${PGOPTIONS_VALUE}" postgres psql -v ON_ERROR_STOP=1 -U postgres -d modecissions)
+
+"${PSQL[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
+
+for sql in "${ROOT_DIR}"/infra/init/[0-9][0-9]_*.sql; do
+  filename="$(basename "${sql}")"
+  if [[ "$("${PSQL[@]}" -At -c "SELECT 1 FROM schema_migrations WHERE filename = '${filename}' LIMIT 1;")" == "1" ]]; then
+    echo "[migrate] skip ${filename}"
+    continue
+  fi
+
+  echo "[migrate] apply ${filename}"
+  "${PSQL[@]}" -v filename="${filename}" <<SQL
+BEGIN;
+\\i /docker-entrypoint-initdb.d/${filename}
+INSERT INTO schema_migrations (filename, applied_at)
+VALUES (:'filename', NOW())
+ON CONFLICT (filename) DO NOTHING;
+COMMIT;
+SQL
+done
+
+echo "[migrate] done"

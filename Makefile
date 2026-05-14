@@ -1,6 +1,6 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
 
-.PHONY: help up down nuke logs ps test smoke rotate-keys
+.PHONY: help up down nuke logs ps test smoke migrate rotate-keys
 
 help:
 	@echo "MODecissionsPaaS — targets:"
@@ -11,6 +11,7 @@ help:
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
+	@echo "  make migrate      apply pending infra/init SQL migrations to running Postgres"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
 up:
@@ -42,6 +43,9 @@ test:
 # Assumes `make up` has been run; doesn't try to start the stack.
 smoke:
 	@bash scripts/smoke_test.sh
+
+migrate:
+	@bash scripts/apply_db_migrations.sh
 
 # Sprint v1.14: real implementation. Backs up the current infra/.env to
 # infra/.env.save (gitignored), then regenerates ALL secrets via

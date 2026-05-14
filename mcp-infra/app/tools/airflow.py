@@ -5,6 +5,7 @@ Handles DAG management, triggers, status, logs, variables and dynamic DAG creati
 from __future__ import annotations
 
 import re
+import os
 from pathlib import Path
 
 import httpx
@@ -36,6 +37,10 @@ def _dag_file_path(dag_id: str) -> Path:
     if path.parent != base:
         raise ValueError("Invalid dag_id path")
     return path
+
+
+def _is_development() -> bool:
+    return os.environ.get("APP_ENV", "development").lower() in {"development", "dev", "local", "test"}
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
@@ -171,6 +176,11 @@ async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> d
 async def airflow_create_dag(dag_id: str, code: str,
                               cartridge_id: str | None = None,
                               description: str | None = None) -> dict:
+    if not _is_development():
+        raise PermissionError(
+            "airflow_create_dag is disabled outside development because writing "
+            "Python into the Airflow DAG directory is remote code execution."
+        )
     dag_id = _validate_dag_id(dag_id)
     path = _dag_file_path(dag_id)
     path.parent.mkdir(parents=True, exist_ok=True)

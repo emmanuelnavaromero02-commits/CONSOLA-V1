@@ -69,7 +69,7 @@ def _migrate_yaml_datasets():
                 "description": data.get("description", ""),
             })
         except Exception:
-            pass
+            logger.exception("failed migrating YAML dataset %s", f)
 
 
 @asynccontextmanager
@@ -139,11 +139,20 @@ app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz():
-    """Sprint v1.21 (F2): liveness probe for the compose healthcheck.
-    No auth, no DB call. The full DB / DuckDB readiness check happens
-    in lifespan; this endpoint just answers as long as the FastAPI
-    event loop is running."""
-    return {"ok": True, "service": "refinement"}
+    """Liveness/readiness probe: verify both Postgres and DuckDB respond."""
+    try:
+        import psycopg2
+
+        with psycopg2.connect(_postgres_dsn()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        with engine._duckdb_lock:
+            engine._conn().execute("SELECT 1").fetchone()
+    except Exception as exc:
+        logger.exception("refinement healthz dependency check failed")
+        raise HTTPException(status_code=503, detail="refinement dependencies unavailable") from exc
+    return {"ok": True, "service": "refinement", "postgres": "ok", "duckdb": "ok"}
 
 
 # ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
@@ -593,7 +602,7 @@ async def mcp_invoke(body: dict):
                     "blocking_apps": [b["name"] for b in blockers],
                 }
         except Exception:
-            pass
+            logger.exception("failed checking analytic app blockers before deleting dataset %s", ds_name)
         info = store.delete_dataset(ds_name)
         if not info.get("deleted"):
             raise HTTPException(404, info.get("error", "not found"))
@@ -1063,6 +1072,7 @@ def _list_apps() -> dict:
             r["url"] = f"/apps/{r['name']}"
         return {"apps": rows}
     except Exception:
+        logger.exception("failed listing analytic apps")
         return {"apps": []}
 
 
@@ -1112,6 +1122,7 @@ def _seed_catalog_from_existing() -> int:
                         ).fetchall()
                     fields = [{"name": r[0], "type": r[1]} for r in rows]
                 except Exception:
+                    logger.exception("failed inferring schema for %s/%s", layer, name)
                     continue
             elif layer == "gold":
                 try:
@@ -1130,6 +1141,7 @@ def _seed_catalog_from_existing() -> int:
                         fields = [{"name": r[0], "type": r[1]} for r in cur.fetchall()]
                     conn.close()
                 except Exception:
+                    logger.exception("failed inferring gold schema for %s", name)
                     continue
             else:
                 continue
@@ -1137,7 +1149,7 @@ def _seed_catalog_from_existing() -> int:
             engine._update_catalog(name, layer, cartridge, fields, col_map)
             seeded += len(fields)
     except Exception:
-        pass
+        logger.exception("failed seeding data_catalog from existing datasets")
     return seeded
 
 
@@ -1199,7 +1211,10 @@ def _seed_relationships() -> int:
             """, rel)
             seeded += 1
         except Exception:
-            pass
+            logger.exception(
+                "failed seeding relationship %s.%s -> %s.%s",
+                rel[0], rel[1], rel[2], rel[3],
+            )
     return seeded
 
 

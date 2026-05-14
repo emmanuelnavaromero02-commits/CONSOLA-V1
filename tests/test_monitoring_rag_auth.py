@@ -10,6 +10,14 @@ from fastapi.testclient import TestClient
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SERVICE_PATH_MARKERS = (
+    "/cartridges/",
+    "/console",
+    "/mcp-infra",
+    "/refinement",
+    "/vault",
+    "/workspace",
+)
 
 
 def _load_console_main():
@@ -18,7 +26,7 @@ def _load_console_main():
             del sys.modules[name]
     sys.path[:] = [
         p for p in sys.path
-        if "/cartridges/" not in p and "/workspace" not in p
+        if not any(marker in p for marker in SERVICE_PATH_MARKERS)
     ]
     sys.path.insert(0, str(REPO_ROOT / "console"))
     os.environ["INTERNAL_API_KEY"] = "test-internal-key-aaaaaaaaaaaaaaaaaaaaaaaa"

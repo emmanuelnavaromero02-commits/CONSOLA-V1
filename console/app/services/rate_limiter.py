@@ -10,9 +10,10 @@ Two implementations are provided:
     per-key, accurate across replicas. Selected automatically when REDIS_URL
     is set in the environment.
 
-`get_rate_limiter()` performs the selection. It silently falls back to the
-in-memory implementation if redis-py is not installed or the connection cannot
-be established at first use.
+`get_rate_limiter()` performs the selection. In development, it falls back to
+the in-memory implementation if Redis is not configured. In production,
+REDIS_URL is mandatory because in-memory buckets are per-process and bypassable
+behind multiple replicas.
 
 Failure policy: `check(..., sensitive=True)` fails CLOSED — if Redis is
 unreachable for a sensitive endpoint (login / password reset / token refresh),
@@ -29,6 +30,10 @@ from typing import Protocol
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
 
 
 class RateLimiter(Protocol):
@@ -118,6 +123,8 @@ def get_rate_limiter() -> RateLimiter:
         return _LIMITER
 
     redis_url = os.environ.get("REDIS_URL", "").strip()
+    if _is_production() and not redis_url:
+        raise RuntimeError("REDIS_URL is required in production for shared rate limiting")
     if redis_url:
         try:
             from redis import asyncio as redis_async  # type: ignore
@@ -127,8 +134,12 @@ def get_rate_limiter() -> RateLimiter:
             logger.info("rate limiter: using Redis backend")
             return _LIMITER
         except ImportError:
+            if _is_production():
+                raise RuntimeError("redis-py is required in production when REDIS_URL is set")
             logger.warning("REDIS_URL set but redis-py not installed; using in-memory limiter")
         except Exception:
+            if _is_production():
+                raise
             logger.warning("REDIS_URL set but client init failed; using in-memory limiter", exc_info=True)
 
     _LIMITER = InMemoryRateLimiter()

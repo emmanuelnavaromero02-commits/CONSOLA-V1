@@ -109,6 +109,7 @@ async def _close_main_pool() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_rate_limiter()
     await mcp_registry.startup()
     # Sprint v1.20: idempotent backfill of cartridge_dags.source_code from
     # on-disk .py files. Non-fatal — a seeding failure logs a warning but

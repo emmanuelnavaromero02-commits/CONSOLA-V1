@@ -586,13 +586,14 @@ class DuckDBEngine:
         """
         validate_safe_identifier(ds["name"], "dataset")
         validate_safe_identifier(ds.get("cartridge", "unknown"), "cartridge")
+        name        = ds["name"]
+        layer       = ds.get("layer", "silver")
+        sql         = ds["sql_def"]
+        self._validate_safe_sql(sql)
+        cartridge   = ds.get("cartridge", "unknown")
+        sources     = ds.get("sources") or []
         with self._duckdb_lock:
             con = self._conn()
-            name        = ds["name"]
-            layer       = ds.get("layer", "silver")
-            sql         = ds["sql_def"]
-            cartridge   = ds.get("cartridge", "unknown")
-            sources     = ds.get("sources") or []
             storage_uri = ""
             row_count   = 0
 
