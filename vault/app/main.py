@@ -157,6 +157,20 @@ def _db_delete(scope: str, cartridge: str, key: str) -> bool:
     return deleted > 0
 
 
+def _db_audit_access(caller_service: str | None, scope: str, key: str, op: str) -> None:
+    conn = _pg()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO vault_access_log (caller_service, scope, key, op, timestamp)
+            VALUES (%s, %s, %s, %s, NOW())
+            """,
+            (caller_service or "unknown", scope, key, op),
+        )
+    conn.commit()
+    conn.close()
+
+
 def _db_list(scope: str, cartridge: str) -> list[dict]:
     conn = _pg()
     with conn.cursor() as cur:
@@ -300,6 +314,25 @@ _LEGACY_WARN_SEEN: set[str] = set()
 _PUBLIC_PATHS = {"/healthz"}
 
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+
+
+def _require_pair_keys_in_production() -> None:
+    if not _is_production():
+        return
+    required = sorted({env for env in _ALLOWED_SERVICES_TO_KEY_ENV.values() if env})
+    missing = [env for env in required if not os.environ.get(env)]
+    if missing:
+        raise RuntimeError(
+            "Vault production startup refused: missing per-pair internal API key(s): "
+            + ", ".join(missing)
+        )
+
+
+_require_pair_keys_in_production()
+
+
 def verify_api_key(
     request: Request = None,  # FastAPI injects; tests can call without
     x_api_key: str = Header(None),
@@ -395,11 +428,16 @@ def list_connections(cartridge: str):
 
 
 @app.get("/connections/{cartridge}/{conn_id}")
-def get_connection(cartridge: str, conn_id: str):
+def get_connection(
+    cartridge: str,
+    conn_id: str,
+    x_internal_service: str | None = Header(None),
+):
     """Returns full credentials — called by DAGs internally, not exposed to users."""
     value = _db_get("connections", cartridge, conn_id)
     if value is None:
         raise HTTPException(404, f"Connection '{cartridge}/{conn_id}' not found")
+    _db_audit_access(x_internal_service, "connections", f"{cartridge}/{conn_id}", "read")
     return {"conn_id": conn_id, **value}
 
 
@@ -425,10 +463,11 @@ def list_secret_keys(scope: str):
 
 
 @app.get("/secrets/{scope}/{key}")
-def get_secret(scope: str, key: str):
+def get_secret(scope: str, key: str, x_internal_service: str | None = Header(None)):
     row = _db_get("secrets", scope, key)
     if row is None:
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
+    _db_audit_access(x_internal_service, scope, key, "read")
     return {"value": row.get("value", row)}
 
 

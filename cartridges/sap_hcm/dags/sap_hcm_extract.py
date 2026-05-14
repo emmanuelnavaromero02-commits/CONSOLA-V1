@@ -35,4 +35,4 @@ def sap_hcm_extract():
 
     trigger_extract()
 
-sap_hcm_extract()
+dag = sap_hcm_extract()

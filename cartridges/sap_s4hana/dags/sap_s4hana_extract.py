@@ -35,4 +35,4 @@ def sap_s4hana_extract():
 
     trigger_extract()
 
-sap_s4hana_extract()
+dag = sap_s4hana_extract()

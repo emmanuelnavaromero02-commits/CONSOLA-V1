@@ -597,10 +597,17 @@ def _dec_visible_clause(uid: int, is_admin: bool, params: list) -> str:
     return f"(visibility = 'shared' OR created_by_id = {p} OR assignee_id = {p})"
 
 
+def _current_workspace_id(user: dict) -> str | None:
+    return user.get("active_workspace_id") or user.get("workspace_id")
+
+
 async def _dec_load(decision_id: int, user: dict) -> dict | None:
     is_admin = user.get("role") == "admin"
-    params: list = [decision_id]
-    sql = "SELECT * FROM decisions WHERE id = $1"
+    ws_id = _current_workspace_id(user)
+    if not ws_id:
+        return None
+    params: list = [decision_id, ws_id]
+    sql = "SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2"
     if not is_admin:
         params.append(user["id"])
         sql += (f" AND (visibility = 'shared' OR created_by_id = ${len(params)} "
@@ -627,7 +634,11 @@ async def api_decisions_list(request: Request, status: str = "", overdue: str = 
                              scope: str = ""):
     """List visible decisions. scope=mine restricts to created_by_id=user (excludes shared)."""
     user = require_user(request)
-    where, params = [], []
+    ws_id = _current_workspace_id(user)
+    if not ws_id:
+        return {"decisions": []}
+    where, params = [], [ws_id]
+    where.append("workspace_id = $1")
     is_admin = user.get("role") == "admin"
     if scope == "mine":
         params.append(user["id"])
@@ -653,11 +664,14 @@ async def api_decisions_create(request: Request, body: dict):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
+    ws_id = _current_workspace_id(user)
+    if not ws_id:
+        raise HTTPException(400, "workspace_id is required")
     p = await pg()
     row = await p.fetchrow(
         """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
            RETURNING *""",
         title,
         body.get("description") or "",
@@ -666,6 +680,7 @@ async def api_decisions_create(request: Request, body: dict):
         user["id"],
         body.get("assignee_id"),
         body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
+        ws_id,
     )
     return _dec_row_to_dict(row)
 
@@ -722,7 +737,13 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
     if body.get("status") == "closed" and "closed_at" not in body:
         sets.append("closed_at = COALESCE(closed_at, NOW())")
     params.append(decision_id)
-    sql = f"UPDATE decisions SET {', '.join(sets)} WHERE id = ${len(params)} RETURNING *"
+    decision_ref = f"${len(params)}"
+    params.append(existing["workspace_id"])
+    workspace_ref = f"${len(params)}"
+    sql = (
+        f"UPDATE decisions SET {', '.join(sets)} "
+        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
+    )
     p = await pg()
     row = await p.fetchrow(sql, *params)
     return _dec_row_to_dict(row)
@@ -737,7 +758,11 @@ async def api_decisions_delete(request: Request, decision_id: int):
     if not _dec_can_delete(existing, user):
         raise HTTPException(403, "only the creator or an admin can delete a decision")
     p = await pg()
-    await p.execute("DELETE FROM decisions WHERE id = $1", decision_id)
+    await p.execute(
+        "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+        decision_id,
+        existing["workspace_id"],
+    )
     return {"deleted": True, "id": decision_id}
 
 

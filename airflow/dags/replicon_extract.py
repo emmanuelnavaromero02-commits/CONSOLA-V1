@@ -153,17 +153,15 @@ def _watermark_get(entity: str) -> str | None:
 
 def _watermark_set(entity: str, field: str, value: str, run_id: str) -> None:
     import requests
-    try:
-        requests.post(
-            f"{MCP_INFRA_URL}/mcp/invoke",
-            headers=_internal_headers(),
-            json={"tool": "watermark_set",
-                  "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity,
-                           "watermark_field": field, "value": value, "run_id": run_id}},
-            timeout=10,
-        )
-    except Exception:
-        pass
+    response = requests.post(
+        f"{MCP_INFRA_URL}/mcp/invoke",
+        headers=_internal_headers(),
+        json={"tool": "watermark_set",
+              "args": {"cartridge_id": CARTRIDGE_ID, "entity": entity,
+                       "watermark_field": field, "value": value, "run_id": run_id}},
+        timeout=10,
+    )
+    response.raise_for_status()
 
 
 def _pipeline_run_save(dag_id: str, entity: str, **kwargs) -> None:

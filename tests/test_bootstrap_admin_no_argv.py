@@ -11,6 +11,14 @@ from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SERVICE_PATH_MARKERS = (
+    "/cartridges/",
+    "/console",
+    "/mcp-infra",
+    "/refinement",
+    "/vault",
+    "/workspace",
+)
 
 
 def test_bootstrap_admin_rejects_password_in_argv():
@@ -42,7 +50,7 @@ def _load_bootstrap_module():
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
-    sys.path[:] = [p for p in sys.path if "/cartridges/" not in p and "/workspace" not in p]
+    sys.path[:] = [p for p in sys.path if not any(marker in p for marker in SERVICE_PATH_MARKERS)]
     sys.path.insert(0, str(REPO_ROOT / "console"))
     return importlib.import_module("app.bootstrap_admin")
 

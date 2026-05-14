@@ -39,6 +39,40 @@ MIN_PASSWORD_LENGTH = 12
 _POOL: asyncpg.Pool | None = None
 
 
+_ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
+    "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
+    # All 4 cartridges share one key — they play the same role.
+    "cartridge-replicon":           "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    "cartridge-sap_hcm":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    "cartridge-sap_s4hana":         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    # The old whitelist allowed these too; kept via legacy key only.
+    "console":    None,
+    "refinement": None,
+    "mcp-infra":  None,
+    "airflow":    None,
+}
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+
+
+def _require_pair_keys_in_production() -> None:
+    if not _is_production():
+        return
+    required = sorted({env for env in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV.values() if env})
+    missing = [env for env in required if not os.environ.get(env)]
+    if missing:
+        raise RuntimeError(
+            "Console production startup refused: missing per-pair internal API key(s): "
+            + ", ".join(missing)
+        )
+
+
+_require_pair_keys_in_production()
+
+
 async def pool() -> asyncpg.Pool:
     global _POOL
     if _POOL is None:
@@ -506,26 +540,13 @@ def verify_internal_api_key(
     # Sprint v1.12: console exposes /internal/* endpoints to workspace and
     # to the four cartridges. Each pair has its own dedicated key. The
     # legacy shared INTERNAL_API_KEY is still accepted during migration.
-    allowed_services_to_key_env: dict[str, str | None] = {
-        "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
-        # All 4 cartridges share one key — they play the same role.
-        "cartridge-replicon":           "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-        "cartridge-sap_hcm":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-        "cartridge-sap_s4hana":         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-        "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-        # The old whitelist allowed these too; kept via legacy key only.
-        "console":    None,
-        "refinement": None,
-        "mcp-infra":  None,
-        "airflow":    None,
-    }
-    if not x_internal_service or x_internal_service not in allowed_services_to_key_env:
+    if not x_internal_service or x_internal_service not in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")
     if not x_api_key:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     accepted: list[str] = []
-    pair_key_env = allowed_services_to_key_env.get(x_internal_service)
+    pair_key_env = _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV.get(x_internal_service)
     if pair_key_env:
         pair_key = os.environ.get(pair_key_env)
         if pair_key:

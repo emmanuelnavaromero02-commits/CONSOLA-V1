@@ -35,4 +35,4 @@ def sap_successfactors_extract():
 
     trigger_extract()
 
-sap_successfactors_extract()
+dag = sap_successfactors_extract()
