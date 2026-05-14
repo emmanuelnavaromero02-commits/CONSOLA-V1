@@ -3,9 +3,8 @@ Internal API key resolver.
 
 The key is read on every call so that:
   * test suites can set the env var before importing the app;
-  * a missing or insecure-default key still hard-fails any request,
-    because ``verify_api_key`` will compare the supplied header against
-    the result of this function.
+  * a missing or insecure-default key hard-fails instead of returning a
+    sentinel string that could be submitted back as an API key.
 """
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ from collections.abc import Mapping
 from fastapi.responses import JSONResponse
 
 INSECURE_DEFAULTS = frozenset({"dev-secret-key", "changeme", "secret", ""})
-UNCONFIGURED_INTERNAL_API_KEY = "__internal_api_key_not_configured__"
 ALLOWED_INTERNAL_SERVICES = {
     "console",
     "workspace",
@@ -28,10 +26,11 @@ ALLOWED_INTERNAL_SERVICES = {
 
 def get_internal_api_key() -> str:
     key = os.environ.get("INTERNAL_API_KEY", "")
-    # Reject the well-known insecure defaults but never raise at import time —
-    # callers raise an HTTP 401 themselves so the process can still serve /health.
     if not key or any(secrets.compare_digest(key, bad) for bad in INSECURE_DEFAULTS):
-        return UNCONFIGURED_INTERNAL_API_KEY
+        raise RuntimeError(
+            "INTERNAL_API_KEY is not configured or uses insecure default. "
+            "Refusing to start. Set INTERNAL_API_KEY to a strong secret."
+        )
     return key
 
 
@@ -39,8 +38,6 @@ def _is_valid_internal_request(x_api_key: str | None, x_internal_service: str | 
     if not x_internal_service or x_internal_service not in ALLOWED_INTERNAL_SERVICES:
         return False
     expected = get_internal_api_key()
-    if secrets.compare_digest(expected, UNCONFIGURED_INTERNAL_API_KEY):
-        return False
     return bool(x_api_key and secrets.compare_digest(x_api_key, expected))
 
 

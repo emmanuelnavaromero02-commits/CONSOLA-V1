@@ -13,7 +13,7 @@ from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.mcp_server import load_custom_tools, mcp
-from app.security import InternalApiKeyASGIGuard
+from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 from app.services import catalog_service
 
 
@@ -26,6 +26,7 @@ _mcp_app = mcp.http_app(path="/")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_internal_api_key()
     try:
         await job_runner.ensure_schema()
         await job_runner.cleanup_stale()
