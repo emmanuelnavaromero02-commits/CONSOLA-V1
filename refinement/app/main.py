@@ -5,6 +5,7 @@ transforma a Silver/Gold con términos de negocio y trazabilidad de lineage.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -12,6 +13,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Depends
+
+# Sprint v1.18: structured JSON logs to stdout, with secret redaction.
+# Wired up before any other module-level import that might log so the
+# first record this service emits is already in JSON format.
+from app.logging_config import setup_logging
+
+setup_logging(service_name="refinement")
+logger = logging.getLogger(__name__)
 
 from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore

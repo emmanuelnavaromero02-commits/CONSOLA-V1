@@ -40,7 +40,12 @@ from app.crypto import (
     decrypt_value,
     encrypt_value,
 )
+# Sprint v1.18: structured JSON logs to stdout, with secret redaction.
+# This MUST run before any logger.* call below so the first record this
+# service emits is already in JSON format.
+from app.logging_config import setup_logging
 
+setup_logging(service_name="vault")
 logger = logging.getLogger("vault")
 
 _SECRETS_FILE = Path("/vault/secrets.yaml")
