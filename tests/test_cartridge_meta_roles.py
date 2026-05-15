@@ -287,3 +287,77 @@ def test_smoke_test_includes_lockdown_checks_for_new_roles():
     assert "entity_config" in src, (
         "smoke must also verify SAP cartridges keep operational access"
     )
+
+
+# ── Hotfix v1.38.1: live deployment evidence ────────────────────────────────
+#
+# Background: the original v1.38 commit got merged with a green test
+# suite but failed in real life: `make migrate && make smoke` reported
+# every v1.38 role as "got: ''" — the role didn't exist at all. The
+# root cause was scripts/apply_db_migrations.sh: it forwards GUC
+# passwords to psql via the PGOPTIONS env var, but the v1.38 commit
+# only updated infra/docker-compose.yml's PGOPTIONS, not the
+# migrate-script's separate PGOPTIONS_VALUE. The migration then
+# raised "password not set", the script aborted the transaction for
+# that file, the next migration ran successfully, and `make smoke`
+# saw a partly-migrated DB.
+#
+# These two tests pin the contract so the hotfix can't silently
+# regress.
+
+def test_migration_36_fails_loud_when_password_missing():
+    """Every CREATE-ROLE DO block in migration 36 must RAISE EXCEPTION
+    (not RETURN) when its GUC password is empty.
+
+    A silent RETURN would skip the role and let the migration record
+    itself as successful in schema_migrations even though the role
+    was never created — then the smoke test would later report
+    has_table_privilege(<missing role>, …) = '' (NULL) and fail in
+    confusing ways. The loud RAISE aborts the transaction so
+    apply_db_migrations.sh stops at the failing file and the
+    operator gets a clear error pointing at the missing env var.
+    """
+    src = MIGRATION_36.read_text(encoding="utf-8")
+    # The migration has six "IF pw IS NULL OR pw = '' THEN" guards,
+    # one per role. Each must be followed by RAISE EXCEPTION before
+    # any other statement.
+    pattern = re.compile(
+        r"IF pw IS NULL OR pw = ''\s+THEN\s+(\S+)",
+        re.IGNORECASE,
+    )
+    matches = pattern.findall(src)
+    assert len(matches) == 6, (
+        f"expected 6 password-missing guards (one per role), found "
+        f"{len(matches)}"
+    )
+    for first_keyword in matches:
+        assert first_keyword.upper() == "RAISE", (
+            f"password-missing guard uses {first_keyword!r}, expected "
+            f"RAISE EXCEPTION; a silent RETURN here would let "
+            f"apply_db_migrations.sh report success while the role "
+            f"was never created"
+        )
+
+
+def test_apply_db_migrations_script_passes_six_new_passwords():
+    """scripts/apply_db_migrations.sh must forward the six new
+    v1.38 GUC passwords to psql via PGOPTIONS so migration 36 can
+    read them via current_setting()."""
+    src = (REPO_ROOT / "scripts" / "apply_db_migrations.sh").read_text(
+        encoding="utf-8"
+    )
+    must_forward = (
+        ("OMEGA_CARTRIDGE_SAP_HCM_PASSWORD", "app.omega_cartridge_sap_hcm_password"),
+        ("OMEGA_CARTRIDGE_SAP_S4_PASSWORD",  "app.omega_cartridge_sap_s4_password"),
+        ("OMEGA_CARTRIDGE_SAP_SF_PASSWORD",  "app.omega_cartridge_sap_sf_password"),
+        ("OMEGA_AIRFLOW_DAG_PASSWORD",       "app.omega_airflow_dag_password"),
+        ("OMEGA_AIRFLOW_META_PASSWORD",      "app.omega_airflow_meta_password"),
+        ("OMEGA_SUPERSET_META_PASSWORD",     "app.omega_superset_meta_password"),
+    )
+    for env_var, guc in must_forward:
+        assert env_var in src, (
+            f"apply_db_migrations.sh must read {env_var} from the env"
+        )
+        assert guc in src, (
+            f"apply_db_migrations.sh must forward {guc} via PGOPTIONS"
+        )
