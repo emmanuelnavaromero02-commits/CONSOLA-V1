@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +45,19 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        # Sprint v1.40.2: respect the DATABASE_URL env var first. The
+        # OMEGA compose passes
+        # ``postgresql+psycopg2://omega_cartridge_replicon:<pwd>@postgres:5432/modecissions``
+        # there, and pre-v1.40.2 this getter ignored it and rebuilt
+        # the URL from ``pg_user=postgres`` / ``pg_password=postgres``
+        # defaults, which made the cartridge try to log in as the
+        # postgres superuser and fail asyncpg auth in a restart loop.
+        # The override stays opt-in: dev runs without DATABASE_URL
+        # still hit the legacy field-based path so the original ZIP
+        # contract is intact.
+        env_url = os.environ.get("DATABASE_URL", "").strip()
+        if env_url:
+            return env_url
         return (
             f"postgresql+psycopg2://{self.pg_user}:{self.pg_password}"
             f"@{self.pg_host}:{self.pg_port}/{self.pg_db}"
@@ -50,9 +65,20 @@ class Settings(BaseSettings):
 
     @property
     def gold_database_url(self) -> str:
+        env_url = os.environ.get("GOLD_DATABASE_URL", "").strip()
+        if env_url:
+            return env_url
         return (
             f"postgresql+psycopg2://{self.pg_user}:{self.pg_password}"
             f"@postgres_gold:5433/{self.pg_db}_gold"
+        )
+
+    @property
+    def asyncpg_dsn(self) -> str:
+        """asyncpg-compatible DSN — drops the SQLAlchemy ``+psycopg2``
+        driver hint that asyncpg refuses to parse."""
+        return self.database_url.replace(
+            "postgresql+psycopg2://", "postgresql://"
         )
 
     @property
