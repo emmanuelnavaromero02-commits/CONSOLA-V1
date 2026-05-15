@@ -20,6 +20,21 @@ router = APIRouter(
 
 
 # ------------------------------------------------------------------
+# Connection test (v1.41.0 — auditor P1 operativa)
+# ------------------------------------------------------------------
+
+@router.post("/test_connection")
+def test_connection() -> dict:
+    """Verify credentials without triggering extraction. Lightweight probe
+    so the admin can validate vault config from the console UI."""
+    try:
+        from app.core.replicon_client import RepliconClient
+        return {"status": "ok", **RepliconClient().test_connection()}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
+# ------------------------------------------------------------------
 # Entity catalogue
 # ------------------------------------------------------------------
 

@@ -1162,6 +1162,37 @@ async def api_tools_manifest():
     return await build_manifest()
 
 
+# Sprint v1.41.0 — auditor P1: admins must validate cartridge credentials
+# from the console UI. We proxy to the cartridge's /skills/test_connection
+# with the internal API key — the browser never sees that key.
+_CARTRIDGE_PORTS = {
+    "replicon": 8201,
+    "sap_hcm": 8202,
+    "sap_successfactors": 8203,
+    "sap_s4hana": 8204,
+}
+
+
+@app.post(
+    "/api/cartridges/{cartridge}/test_connection",
+    dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.write"))],
+)
+async def api_cartridge_test_connection(cartridge: str):
+    if cartridge not in _CARTRIDGE_PORTS:
+        raise HTTPException(404, "Unknown cartridge")
+    host = cartridge.replace("_", "-")
+    url = f"http://{host}:{_CARTRIDGE_PORTS[cartridge]}/skills/test_connection"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(url, headers={
+                "X-Api-Key": os.environ.get("INTERNAL_API_KEY", ""),
+                "X-Internal-Service": "console",
+            })
+        return r.json()
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:

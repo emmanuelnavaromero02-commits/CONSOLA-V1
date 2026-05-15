@@ -39,6 +39,12 @@ PERMISSIONS = [
     {"key": "settings.write", "label": "Write settings", "category": "Settings", "description": "Edit/reveal/rotate system settings."},
     {"key": "operations.read", "label": "Read operations", "category": "Operations", "description": "View system migrations and service health."},
     {"key": "operations.write", "label": "Write operations", "category": "Operations", "description": "Trigger operational actions."},
+    # Sprint v1.41.0 — auditor P1 operativa: admins configure cartridge
+    # connections + trigger extractions from the console. Modelled after
+    # the pipelines.{run,write} split.
+    {"key": "cartridges.read", "label": "Read cartridges", "category": "Cartridges", "description": "List cartridges, view entities and watermarks."},
+    {"key": "cartridges.write", "label": "Configure cartridges", "category": "Cartridges", "description": "Edit connection metadata and run test_connection probes."},
+    {"key": "cartridges.execute", "label": "Run cartridge extractions", "category": "Cartridges", "description": "Trigger entity extractions and knowledge-bit runs."},
 ]
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSIONS}
@@ -136,16 +142,17 @@ ROLE_PERMISSIONS = {
         "studio.read", "studio.write", "monitor.read", "workspace.access",
         "vault.connections.read", "vault.connections.write",
         "vault.secrets.read_masked", "apps.read", "apps.write",
+        "cartridges.read", "cartridges.write", "cartridges.execute",
     },
     "analyst": {
         "datasets.read", "pipelines.read", "studio.read", "monitor.read",
-        "workspace.access", "apps.read",
+        "workspace.access", "apps.read", "cartridges.read",
     },
     "auditor": {
         "iam.roles.read", "iam.policies.read", "security.audit.read",
         "security.sessions.read", "security.login_attempts.read", "monitor.read",
     },
-    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read"},
+    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read"},
     "workspace_user": {"workspace.access", "apps.read"},
     "user": {"monitor.read", "workspace.access", "apps.read", "studio.read"},
 }
