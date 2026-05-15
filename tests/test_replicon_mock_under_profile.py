@@ -1,8 +1,14 @@
-"""Sprint v1.21 (F3) — replicon-mock is gated behind the `dev` profile.
+"""Sprint v1.40 — replicon-mock service was removed entirely.
 
-`make up` (no profile) must NOT start the mock. A misconfigured
-production REPLICON_BASE_URL pointing at this service would otherwise
-feed real ETL pipelines with fake records.
+The mock served synthetic Replicon data for local development. Sprint
+v1.21 (F3) had gated it behind ``profiles: [dev]`` to keep ``make up``
+from starting it accidentally in production. v1.40 went further:
+the mock is gone, the cartridge talks to real Replicon (sandbox or
+prod URL configured per-environment in OMEGA Vault), and Vault-backed
+credentials make per-tenant isolation explicit.
+
+These tests now lock the *absence* of the mock — they fail loudly if
+a future commit re-adds it under any profile.
 """
 from __future__ import annotations
 
@@ -13,54 +19,38 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = REPO_ROOT / "infra" / "docker-compose.yml"
+MOCK_DIR = REPO_ROOT / "infra" / "replicon-mock"
 
 
 def _compose_doc():
     return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
 
 
-def test_replicon_mock_service_exists():
+def test_replicon_mock_service_does_not_exist():
     doc = _compose_doc()
-    assert "replicon-mock" in doc["services"], (
-        "replicon-mock service was removed entirely. Dev workflow needs "
-        "it; gate it via `profiles: [dev]` instead of deleting."
+    assert "replicon-mock" not in doc["services"], (
+        "replicon-mock was removed in v1.40 (real Replicon credentials "
+        "live in OMEGA Vault). Re-adding the mock would risk a "
+        "misconfigured REPLICON_BASE_URL feeding synthetic data into "
+        "real ETL pipelines."
     )
 
 
-def test_replicon_mock_has_dev_profile():
-    """Without this gating, `make up` (no profile) starts the mock and
-    silently shadows the real Replicon URL if the prod operator misnames
-    REPLICON_BASE_URL."""
-    svc = _compose_doc()["services"]["replicon-mock"]
-    profiles = svc.get("profiles") or []
-    assert "dev" in profiles, (
-        f"replicon-mock must declare `profiles: [dev]` (got {profiles!r}). "
-        f"This service serves synthetic data and must not start in production."
+def test_replicon_mock_directory_does_not_exist():
+    assert not MOCK_DIR.exists(), (
+        f"{MOCK_DIR.relative_to(REPO_ROOT)} was deleted in v1.40 — "
+        f"do not bring it back."
     )
 
 
 def test_no_service_hard_depends_on_replicon_mock():
-    """A `depends_on: replicon-mock` would defeat the profile gate —
-    docker compose refuses to start the dependent service when the
-    target is filtered out by profile.
-
-    Airflow had three such dependencies (airflow-init, airflow,
-    airflow-scheduler) that we deliberately removed in v1.21 F3.
-    """
+    """Even if a future commit re-adds the mock, no other service
+    should depend on it. v1.21 (F3) removed three Airflow
+    dependencies on the mock; v1.40 keeps that contract."""
     doc = _compose_doc()
-    offenders = []
     for name, svc in doc["services"].items():
-        if name == "replicon-mock":
-            continue
-        deps = svc.get("depends_on")
-        if not deps:
-            continue
-        # depends_on can be a list of names OR a dict of name → {condition: ...}
-        targets = deps if isinstance(deps, list) else list(deps.keys())
-        if "replicon-mock" in targets:
-            offenders.append(name)
-    assert not offenders, (
-        "Services still hard-depend on replicon-mock, which is now "
-        "behind `profiles: [dev]` and won't exist in prod boots:\n  "
-        + "\n  ".join(offenders)
-    )
+        deps = svc.get("depends_on") or {}
+        targets = deps if isinstance(deps, list) else list(deps.keys()) if isinstance(deps, dict) else []
+        assert "replicon-mock" not in targets, (
+            f"{name} depends_on replicon-mock — must not"
+        )

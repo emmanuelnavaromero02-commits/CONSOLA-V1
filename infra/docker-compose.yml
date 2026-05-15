@@ -19,7 +19,7 @@ services:
       # Sprint v1.38 (audit B5+B6): added six more roles for SAP
       # cartridges, Airflow and Superset (see
       # infra/init/36_cartridge_and_meta_roles.sql).
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -321,23 +321,55 @@ services:
       - "8025:8025"   # Web UI (open in browser to read sent emails)
     restart: unless-stopped
 
-  replicon-mock:
-    # Sprint v1.21 (F3): opt-in via `--profile dev`. The mock serves
-    # synthetic Replicon data for local development; in production a
-    # rogue or misconfigured REPLICON_BASE_URL pointing at this service
-    # would feed real ETL pipelines with fake records. Gating it behind
-    # a profile means `make up` in production never starts the mock,
-    # and a deliberate `docker compose --profile dev up` does.
-    profiles: ["dev"]
+  # ── Replicon cartridge (Sprint v1.40 — restored from original) ─────────────
+  # Standalone FastAPI service that exposes Replicon ETL tools via MCP.
+  # Credentials live in Vault (operators configure them in the OMEGA
+  # console at /apps-gallery), not in Airflow Connections. The mock
+  # service was removed in v1.40 — production never wants synthetic
+  # data feeding the pipeline, and dev hits Replicon's sandbox URL
+  # configured per-environment from Vault.
+  replicon:
     build:
-      context: ./replicon-mock
+      context: ../cartridges/replicon
       dockerfile: Dockerfile
-    container_name: mode_replicon_mock
-    environment:
-      REPLICON_MOCK_USER_COUNT: ${REPLICON_MOCK_USER_COUNT:-1000}
-    ports:
-      - "8100:8100"
+    container_name: omega_replicon
     restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:?INTERNAL_API_KEY_REPLICON_TO_CONSOLE is required}
+      INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA: ${INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA:?INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_REPLICON_TO_REFINEMENT: ${INTERNAL_API_KEY_REPLICON_TO_REFINEMENT:?INTERNAL_API_KEY_REPLICON_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for Replicon cartridge}
+      CONSOLE_URL: http://console:8000
+      MCP_INFRA_URL: http://mcp-infra:8010
+      REFINEMENT_URL: http://refinement:8500
+      # Sprint v1.40 (audit B6 pattern): least-privilege DB role.
+      # See infra/init/37_replicon_role_and_tables.sql.
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_replicon:${OMEGA_CARTRIDGE_REPLICON_PASSWORD:?OMEGA_CARTRIDGE_REPLICON_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET: lakehouse
+      MINIO_SECURE: "false"
+    ports:
+      - "8201:8201"
+    healthcheck:
+      # The cartridge exposes /health (not /healthz) — see
+      # cartridges/replicon/app/api/routes_health.py. We probe it as-is
+      # to keep the cartridge bit-identical to the original ZIP.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8201/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
 
   # ── SAP cartridges (opt-in via `--profile sap`) ─────────────────────────────
   # These cartridges are part of the registry mount and run as standalone
@@ -586,10 +618,6 @@ services:
         python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='modecissions', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute(\\\"SELECT 1 FROM pg_database WHERE datname = 'airflow'\\\"); exists = cur.fetchone(); cur.execute('CREATE DATABASE airflow') if exists is None else None; cur.close(); conn.close()\" &&
         airflow db migrate &&
         python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='airflow', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute('GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON SCHEMA public TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_airflow_meta'); print('omega_airflow_meta: grants applied to airflow DB'); cur.close(); conn.close()\" &&
-        (airflow connections delete replicon_analytics || true) &&
-        airflow connections add replicon_analytics --conn-type http --conn-host http://replicon-mock:8100/analytics --conn-password dummy-local-token &&
-        (airflow connections delete replicon_services || true) &&
-        airflow connections add replicon_services --conn-type http --conn-host http://replicon-mock:8100/services --conn-password dummy-local-token &&
         (airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true)
       "
     environment:
@@ -614,13 +642,15 @@ services:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
+      - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
     depends_on:
       postgres:
         condition: service_healthy
-      # Sprint v1.21 (F3): no `replicon-mock: service_started` here.
-      # airflow only needs the connection POINTING at the mock URL,
-      # not the mock running. The mock is now under `--profile dev`,
-      # so making it a hard dependency would prevent prod boot.
+      # Sprint v1.40: replicon-mock service was removed (cartridge restored,
+      # real Replicon credentials live in Vault).
+      
+      
     restart: "no"
 
   airflow:
@@ -675,13 +705,15 @@ services:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
+      - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
     depends_on:
       postgres:
         condition: service_healthy
-      # Sprint v1.21 (F3): no `replicon-mock: service_started` here.
-      # airflow only needs the connection POINTING at the mock URL,
-      # not the mock running. The mock is now under `--profile dev`,
-      # so making it a hard dependency would prevent prod boot.
+      # Sprint v1.40: replicon-mock service was removed (cartridge restored,
+      # real Replicon credentials live in Vault).
+      
+      
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -730,13 +762,15 @@ services:
       - ../cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - ../cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
+      - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
     depends_on:
       postgres:
         condition: service_healthy
-      # Sprint v1.21 (F3): no `replicon-mock: service_started` here.
-      # airflow only needs the connection POINTING at the mock URL,
-      # not the mock running. The mock is now under `--profile dev`,
-      # so making it a hard dependency would prevent prod boot.
+      # Sprint v1.40: replicon-mock service was removed (cartridge restored,
+      # real Replicon credentials live in Vault).
+      
+      
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped

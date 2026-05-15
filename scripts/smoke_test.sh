@@ -47,6 +47,15 @@ for svc_port in console:8000 workspace:8001 mcp-infra:8010 vault:8300 refinement
   fi
 done
 
+# Sprint v1.40: Replicon cartridge restored. Exposes /health (legacy
+# from the original ZIP, intentionally kept), not /healthz like the
+# rest of the platform.
+if fetch "http://localhost:8201/health"; then
+  pass "health replicon (port 8201)"
+else
+  fail "health replicon did not respond (port 8201)"
+fi
+
 # ── 6. Postgres pg_isready ─────────────────────────────────────────────
 if docker exec mode_postgres pg_isready -U postgres -q 2>/dev/null; then
   pass "postgres ready"

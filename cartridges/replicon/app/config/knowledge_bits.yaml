@@ -1,0 +1,386 @@
+knowledge_bits:
+- id: kb_project_financial_summary
+  name: Project Financial Summary
+  description: 'Budget, actuals, billed amount, burn rate and gross margin per project.
+
+    '
+  source_entities:
+  - Project
+  - TimeEntry
+  - ExpenseEntry
+  - BillingItem
+  - User
+  - Client
+  output_path: knowledge_bits/replicon/project_financial_summary
+  pg_table: replicon_project_financial_summary
+  sql: "WITH time_actuals AS (\n    SELECT\n        projectid,\n        SUM(durationhours)\
+    \                                       AS total_hours,\n        SUM(CASE WHEN\
+    \ isbillable THEN durationhours ELSE 0 END)  AS billable_hours\n    FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')\n\
+    \    GROUP BY projectid\n),\nexpense_actuals AS (\n    SELECT projectid, SUM(amountbasecurrency)\
+    \ AS total_expenses\n    FROM read_parquet('s3://{bucket}/raw/replicon/ExpenseEntry/load_date=*/batch_id=*/*.parquet')\n\
+    \    GROUP BY projectid\n),\nbilling AS (\n    SELECT projectid, SUM(billingitemamountbasecurrency)\
+    \ AS billed_amount\n    FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet')\n\
+    \    GROUP BY projectid\n),\nprojects AS (\n    SELECT DISTINCT ON (projectid)\n\
+    \        projectid, name AS project_name, clientid, clientname,\n        projectstatuslabelname\
+    \ AS status,\n        startdate, enddate,\n        budgeteddurationhours  AS budget_hours,\n\
+    \        budgetedcostbasecurrency AS budget_cost\n    FROM read_parquet('s3://{bucket}/raw/replicon/Project/load_date=*/batch_id=*/*.parquet')\n\
+    \    ORDER BY projectid, _extracted_at DESC\n)\nSELECT\n    p.projectid,\n   \
+    \ p.project_name,\n    p.clientname,\n    p.status,\n    p.startdate,\n    p.enddate,\n\
+    \    COALESCE(p.budget_hours, 0)                                  AS budget_hours,\n\
+    \    COALESCE(p.budget_cost, 0)                                   AS budget_cost,\n\
+    \    COALESCE(ta.total_hours, 0)                                  AS actual_hours,\n\
+    \    COALESCE(ta.billable_hours, 0)                               AS billable_hours,\n\
+    \    COALESCE(ea.total_expenses, 0)                               AS actual_expenses,\n\
+    \    COALESCE(b.billed_amount, 0)                                 AS billed_amount,\n\
+    \    ROUND(COALESCE(ta.total_hours, 0) /\n          NULLIF(p.budget_hours, 0)\
+    \ * 100, 2)                    AS hours_burn_pct,\n    ROUND((COALESCE(b.billed_amount,\
+    \ 0) - COALESCE(ea.total_expenses, 0)) /\n          NULLIF(COALESCE(b.billed_amount,\
+    \ 0), 0) * 100, 2)     AS gross_margin_pct,\n    COALESCE(p.budget_cost, 0) -\
+    \ COALESCE(ea.total_expenses, 0) AS budget_variance\nFROM projects p\nLEFT JOIN\
+    \ time_actuals ta ON p.projectid = ta.projectid\nLEFT JOIN expense_actuals ea\
+    \ ON p.projectid = ea.projectid\nLEFT JOIN billing b ON p.projectid = b.projectid\n"
+- id: kb_resource_utilization
+  name: Resource Utilization
+  description: >
+    Utilización mensual por usuario: horas trabajadas vs horas disponibles
+    (días hábiles del mes × 8). Incluye supervisor, % utilización y % billable.
+    Agrupable por supervisor_name para vista gerencial.
+  source_entities:
+  - TimeEntry
+  - User
+  output_path: knowledge_bits/replicon/resource_utilization
+  pg_table: replicon_resource_utilization
+  sql: |
+    WITH calendar AS (
+        -- Días hábiles (lun-vie) por mes — dayofweek: 0=Dom, 6=Sáb
+        SELECT
+            DATE_TRUNC('month', d::DATE)  AS month,
+            COUNT(*)                       AS business_days
+        FROM generate_series(
+            DATE '2020-01-01',
+            (CURRENT_DATE + INTERVAL '24 months')::DATE,
+            INTERVAL '1 day'
+        ) gs(d)
+        WHERE DAYOFWEEK(d::DATE) NOT IN (0, 6)
+        GROUP BY 1
+    ),
+    users AS (
+        SELECT DISTINCT ON (userid)
+            userid,
+            firstname || ' ' || lastname   AS full_name,
+            departmentname,
+            employeetypename,
+            currentsupervisorusername          AS supervisor_name,
+            currenthourlybillingamount     AS billing_rate,
+            currenthourlycostamount        AS cost_rate
+        FROM read_parquet('s3://{bucket}/raw/replicon/User/load_date=*/batch_id=*/*.parquet')
+        ORDER BY userid, _extracted_at DESC
+    ),
+    entries AS (
+        SELECT
+            userid,
+            username,
+            DATE_TRUNC('month', TRY_CAST(entrydate AS DATE))       AS month,
+            SUM(durationhours)                                       AS total_hours,
+            SUM(CASE WHEN isbillable THEN durationhours ELSE 0 END)  AS billable_hours
+        FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')
+        WHERE entrydate IS NOT NULL
+        GROUP BY userid, username, DATE_TRUNC('month', TRY_CAST(entrydate AS DATE))
+    )
+    SELECT
+        e.month,
+        e.userid,
+        COALESCE(u.full_name, e.username)                            AS user_name,
+        COALESCE(u.supervisor_name, 'Sin supervisor')                AS supervisor_name,
+        u.departmentname                                             AS department,
+        u.employeetypename                                           AS employee_type,
+        COALESCE(c.business_days, 22)                                AS business_days,
+        COALESCE(c.business_days, 22) * 8                           AS available_hours,
+        ROUND(e.total_hours, 2)                                      AS total_hours,
+        ROUND(e.billable_hours, 2)                                   AS billable_hours,
+        ROUND(
+            e.total_hours / NULLIF(COALESCE(c.business_days, 22) * 8.0, 0) * 100
+        , 2)                                                         AS utilization_pct,
+        ROUND(
+            e.billable_hours / NULLIF(e.total_hours, 0) * 100
+        , 2)                                                         AS billable_pct,
+        ROUND(e.billable_hours * COALESCE(u.billing_rate, 0), 2)    AS billable_revenue
+    FROM entries e
+    LEFT JOIN users    u ON e.userid = u.userid
+    LEFT JOIN calendar c ON e.month  = c.month
+    ORDER BY e.month DESC, supervisor_name, user_name
+- id: kb_time_entries_detail
+  name: Time Entries Detail
+  description: 'Enriched time entries for detailed billing and productivity analysis.
+
+    '
+  source_entities:
+  - TimeEntry
+  - User
+  - Project
+  output_path: knowledge_bits/replicon/time_entries_detail
+  pg_table: replicon_time_entries_detail
+  sql: "SELECT DISTINCT ON (timeentryid)\n    timeentryid,\n    TRY_CAST(entrydate\
+    \ AS DATE)   AS entry_date,\n    username                       AS user_name,\n\
+    \    clientname,\n    projectname,\n    taskname,\n    activityname,\n    durationhours\
+    \                  AS hours,\n    isbillable,\n    billabletype,\n    timesheetstartdate,\n\
+    \    timesheetenddate\nFROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')\n\
+    WHERE entrydate IS NOT NULL\nORDER BY timeentryid, _extracted_at DESC\n"
+- id: kb_resource_allocation
+  name: Resource Allocation
+  description: >
+    Asignacion mensual por usuario y proyecto vs horas disponibles (dias habiles x 8).
+    Incluye supervisor, % de asignacion sobre capacidad total y % de avance real.
+  source_entities:
+  - ResourceAllocation
+  - User
+  - Project
+  - TimeEntry
+  output_path: knowledge_bits/replicon/resource_allocation
+  pg_table: replicon_resource_allocation
+  sql: |
+    WITH calendar AS (
+        SELECT
+            DATE_TRUNC('month', d::DATE)  AS month,
+            COUNT(*)                       AS business_days
+        FROM generate_series(
+            DATE '2020-01-01',
+            (CURRENT_DATE + INTERVAL '24 months')::DATE,
+            INTERVAL '1 day'
+        ) gs(d)
+        WHERE DAYOFWEEK(d::DATE) NOT IN (0, 6)
+        GROUP BY 1
+    ),
+    users AS (
+        SELECT DISTINCT ON (userid)
+            userid,
+            firstname || ' ' || lastname  AS full_name,
+            departmentname,
+            currentsupervisorusername         AS supervisor_name
+        FROM read_parquet('s3://{bucket}/raw/replicon/User/load_date=*/batch_id=*/*.parquet')
+        ORDER BY userid, _extracted_at DESC
+    ),
+    alloc AS (
+        SELECT
+            userid, username, projectid, projectname,
+            DATE_TRUNC('month', TRY_CAST(date AS DATE))        AS month,
+            SUM(durationhours)                                  AS allocated_hours,
+            projectrolename                                     AS role,
+            projectrolebillingratebasecurrency                  AS billing_rate
+        FROM read_parquet('s3://{bucket}/raw/replicon/ResourceAllocation/load_date=*/batch_id=*/*.parquet')
+        WHERE date IS NOT NULL
+        GROUP BY userid, username, projectid, projectname,
+                 DATE_TRUNC('month', TRY_CAST(date AS DATE)),
+                 projectrolename, projectrolebillingratebasecurrency
+    ),
+    actuals AS (
+        SELECT userid, projectid,
+               DATE_TRUNC('month', TRY_CAST(entrydate AS DATE))  AS month,
+               SUM(durationhours)                                  AS actual_hours
+        FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')
+        WHERE entrydate IS NOT NULL
+        GROUP BY userid, projectid, DATE_TRUNC('month', TRY_CAST(entrydate AS DATE))
+    )
+    SELECT
+        a.month,
+        a.userid,
+        COALESCE(u.full_name, a.username)                           AS user_name,
+        COALESCE(u.supervisor_name, 'Sin supervisor')               AS supervisor_name,
+        u.departmentname                                            AS department,
+        a.projectname,
+        a.role,
+        COALESCE(c.business_days, 22)                               AS business_days,
+        COALESCE(c.business_days, 22) * 8                          AS available_hours,
+        ROUND(a.allocated_hours, 2)                                 AS allocated_hours,
+        ROUND(COALESCE(ac.actual_hours, 0), 2)                      AS actual_hours,
+        ROUND(a.allocated_hours - COALESCE(ac.actual_hours, 0), 2)  AS remaining_hours,
+        ROUND(a.allocated_hours / NULLIF(COALESCE(c.business_days, 22) * 8.0, 0) * 100, 2) AS allocation_pct,
+        ROUND(COALESCE(ac.actual_hours, 0) / NULLIF(a.allocated_hours, 0) * 100, 2)        AS completion_pct
+    FROM alloc a
+    LEFT JOIN users    u  ON a.userid    = u.userid
+    LEFT JOIN actuals  ac ON a.userid    = ac.userid
+                         AND a.projectid = ac.projectid
+                         AND a.month     = ac.month
+    LEFT JOIN calendar c  ON a.month     = c.month
+    ORDER BY a.month DESC, supervisor_name, user_name
+
+- id: kb_wip_mensual
+  name: WIP Mensual
+  description: 'Work in Progress mensual en USD por proyecto y usuario. Billable worked
+    = billable_hours (TimeEntry) × rate_usd (de BillingItem, ya convertido por Replicon).
+    Billed = billed_amount del Excel externo, convertido a USD si es MXN. Excluye
+    facturas Canceladas. WIP = billable_amount_usd - billed_amount_usd.
+
+    '
+  source_entities:
+  - TimeEntry
+  - BillingItem
+  - Project
+  - User
+  output_path: knowledge_bits/replicon/wip_mensual
+  pg_table: replicon_wip_mensual
+  sql: "-- -------------------------------------------------------\n-- FX: tasa promedio\
+    \ mensual MXN→USD\n-- Frankfurter API via excel_billing cartridge.\n-- avg_rate\
+    \ = USD por 1 MXN (e.g. 0.0513)\n-- -------------------------------------------------------\n\
+    WITH fx AS (\n    SELECT\n        DATE_TRUNC('month', TRY_CAST(year_month AS DATE))\
+    \ AS month,\n        avg_rate AS mxn_to_usd\n    FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')\n\
+    ),\n-- -------------------------------------------------------\n-- Rate efectivo\
+    \ en USD por hora, por proyecto/mes.\n-- Replicon ya convierte en billableamountbasecurrency\
+    \ (USD).\n-- rate_usd = billableamountbasecurrency / billabledurationhours\n--\
+    \ -------------------------------------------------------\nproject_rate_monthly\
+    \ AS (\n    SELECT\n        projectid,\n        DATE_TRUNC('month', TRY_CAST(entrydate\
+    \ AS DATE))            AS month,\n        SUM(billableamountbasecurrency) /\n\
+    \            NULLIF(SUM(billabledurationhours), 0)                    AS rate_usd\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet')\n\
+    \    WHERE billabledurationhours > 0\n    GROUP BY 1, 2\n),\nproject_rate_default\
+    \ AS (\n    SELECT\n        projectid,\n        SUM(billableamountbasecurrency)\
+    \ /\n            NULLIF(SUM(billabledurationhours), 0)                    AS rate_usd\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet')\n\
+    \    WHERE billabledurationhours > 0\n    GROUP BY 1\n),\n-- -------------------------------------------------------\n\
+    -- Horas trabajadas por mes / proyecto / usuario (TimeEntry)\n-- -------------------------------------------------------\n\
+    time_worked AS (\n    SELECT\n        DATE_TRUNC('month', TRY_CAST(entrydate AS\
+    \ DATE))             AS month,\n        projectid, projectname, clientname, userid,\
+    \ username,\n        SUM(durationhours)                                      \
+    \      AS worked_hours,\n        SUM(CASE WHEN isbillable THEN durationhours ELSE\
+    \ 0 END)      AS billable_hours\n    FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')\n\
+    \    WHERE entrydate IS NOT NULL\n    GROUP BY 1, 2, 3, 4, 5, 6\n),\n-- -------------------------------------------------------\n\
+    -- Monto facturable trabajado en USD por usuario/proyecto/mes\n-- billable_hours\
+    \ × rate_usd (del mes, o histórico del proyecto)\n-- -------------------------------------------------------\n\
+    billable AS (\n    SELECT\n        t.month, t.projectid, t.projectname, t.clientname,\n\
+    \        t.userid, t.username,\n        t.worked_hours,\n        t.billable_hours,\n\
+    \        COALESCE(rm.rate_usd, rd.rate_usd, 0)                       AS rate_usd,\n\
+    \        ROUND(t.billable_hours *\n              COALESCE(rm.rate_usd, rd.rate_usd,\
+    \ 0), 2)             AS billable_amount_usd\n    FROM time_worked t\n    LEFT\
+    \ JOIN project_rate_monthly rm\n           ON t.projectid = rm.projectid AND t.month\
+    \ = rm.month\n    LEFT JOIN project_rate_default rd ON t.projectid = rd.projectid\n\
+    ),\n-- -------------------------------------------------------\n-- Lo facturado\
+    \ al cliente (Excel externo, excluye Canceladas).\n-- MXN convertido a USD con\
+    \ tasa promedio del mes.\n-- Nivel proyecto/mes (el Excel no tiene desglose por\
+    \ usuario).\n-- -------------------------------------------------------\nbilled\
+    \ AS (\n    SELECT\n        DATE_TRUNC('month', TRY_CAST(invoice_date AS DATE))\
+    \          AS month,\n        project_id                                     \
+    \               AS projectid,\n        SUM(CASE\n            WHEN currency = 'USD'\
+    \ THEN billed_amount\n            WHEN currency = 'MXN' THEN\n               \
+    \ billed_amount * COALESCE(fx.mxn_to_usd, 0.05)\n            ELSE billed_amount\n\
+    \        END)                                                          AS billed_amount_usd\n\
+    \    FROM read_parquet('s3://{bucket}/raw/excel_billing/invoices/load_date=*/*.parquet')\
+    \ inv\n    LEFT JOIN fx\n           ON DATE_TRUNC('month', TRY_CAST(inv.invoice_date\
+    \ AS DATE)) = fx.month\n    WHERE invoice_date IS NOT NULL\n      AND invoice_status\
+    \ != 'Cancelada'\n      AND project_id IS NOT NULL AND project_id != '0'\n   \
+    \ GROUP BY 1, 2\n),\n-- -------------------------------------------------------\n\
+    -- Prorratear billed por usuario según su % de horas billables\n-- (el Excel no\
+    \ tiene desglose por usuario)\n-- -------------------------------------------------------\n\
+    project_billable_totals AS (\n    SELECT month, projectid, SUM(billable_hours)\
+    \ AS total_billable\n    FROM billable GROUP BY 1, 2\n),\nbilled_per_user AS (\n\
+    \    SELECT\n        b.month, b.projectid, bl.userid,\n        ROUND(b.billed_amount_usd\
+    \ *\n              bl.billable_hours / NULLIF(pt.total_billable, 0), 2)   AS user_billed_usd\n\
+    \    FROM billed b\n    JOIN billable bl    ON b.month = bl.month AND b.projectid\
+    \ = bl.projectid\n    JOIN project_billable_totals pt\n                      \
+    \  ON b.month = pt.month AND b.projectid = pt.projectid\n)\nSELECT\n    bl.month,\n\
+    \    bl.projectid,\n    bl.projectname,\n    bl.clientname,\n    bl.userid,\n\
+    \    bl.username,\n    bl.worked_hours,\n    bl.billable_hours,\n    bl.rate_usd\
+    \                                                       AS billing_rate_usd,\n\
+    \    bl.billable_amount_usd,\n    COALESCE(bu.user_billed_usd, 0)            \
+    \                      AS billed_amount_usd,\n    ROUND(bl.billable_amount_usd\
+    \ -\n          COALESCE(bu.user_billed_usd, 0), 2)                        AS wip_amount_usd,\n\
+    \    ROUND(COALESCE(bu.user_billed_usd, 0) /\n          NULLIF(bl.billable_amount_usd,\
+    \ 0) * 100, 1)                AS billing_completion_pct\nFROM billable bl\nLEFT\
+    \ JOIN billed_per_user bu\n       ON bl.month = bu.month AND bl.projectid = bu.projectid\
+    \ AND bl.userid = bu.userid\nWHERE bl.billable_hours > 0\nORDER BY bl.month DESC,\
+    \ wip_amount_usd DESC\n"
+- id: kb_wip_resumen
+  name: WIP Resumen por Proyecto
+  description: 'WIP mensual en USD por proyecto — vista para directivos. Billable
+    = horas billables × rate USD (Replicon). Billed = Excel externo en USD (MXN convertido
+    con tasa mensual). Excluye Canceladas. Semáforo: facturado/parcial/pendiente.
+
+    '
+  source_entities:
+  - TimeEntry
+  - BillingItem
+  output_path: knowledge_bits/replicon/wip_resumen
+  pg_table: replicon_wip_resumen
+  sql: "WITH fx AS (\n    SELECT\n        DATE_TRUNC('month', TRY_CAST(year_month\
+    \ AS DATE)) AS month,\n        avg_rate AS mxn_to_usd\n    FROM read_parquet('s3://{bucket}/raw/fx_rates/mxn_usd/fx_rates.parquet')\n\
+    ),\nproject_rate_monthly AS (\n    SELECT\n        projectid,\n        DATE_TRUNC('month',\
+    \ TRY_CAST(entrydate AS DATE))            AS month,\n        SUM(billableamountbasecurrency)\
+    \ /\n            NULLIF(SUM(billabledurationhours), 0)                    AS rate_usd\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet')\n\
+    \    WHERE billabledurationhours > 0\n    GROUP BY 1, 2\n),\nproject_rate_default\
+    \ AS (\n    SELECT\n        projectid,\n        SUM(billableamountbasecurrency)\
+    \ /\n            NULLIF(SUM(billabledurationhours), 0)                    AS rate_usd\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/BillingItem/load_date=*/batch_id=*/*.parquet')\n\
+    \    WHERE billabledurationhours > 0\n    GROUP BY 1\n),\ntime_worked AS (\n \
+    \   SELECT\n        DATE_TRUNC('month', TRY_CAST(entrydate AS DATE))         \
+    \   AS month,\n        projectid, projectname, clientname,\n        SUM(durationhours)\
+    \                                           AS worked_hours,\n        SUM(CASE\
+    \ WHEN isbillable THEN durationhours ELSE 0 END)     AS billable_hours,\n    \
+    \    COUNT(DISTINCT userid)                                       AS contributors\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')\n\
+    \    WHERE entrydate IS NOT NULL\n    GROUP BY 1, 2, 3, 4\n),\nbillable AS (\n\
+    \    SELECT\n        t.month, t.projectid, t.projectname, t.clientname,\n    \
+    \    t.worked_hours, t.billable_hours, t.contributors,\n        COALESCE(rm.rate_usd,\
+    \ rd.rate_usd, 0)                      AS rate_usd,\n        ROUND(t.billable_hours\
+    \ *\n              COALESCE(rm.rate_usd, rd.rate_usd, 0), 2)            AS billable_amount_usd\n\
+    \    FROM time_worked t\n    LEFT JOIN project_rate_monthly rm\n           ON\
+    \ t.projectid = rm.projectid AND t.month = rm.month\n    LEFT JOIN project_rate_default\
+    \ rd ON t.projectid = rd.projectid\n),\nbilled AS (\n    SELECT\n        DATE_TRUNC('month',\
+    \ TRY_CAST(invoice_date AS DATE))         AS month,\n        project_id      \
+    \                                             AS projectid,\n        SUM(CASE\n\
+    \            WHEN currency = 'USD' THEN billed_amount\n            WHEN currency\
+    \ = 'MXN' THEN\n                billed_amount * COALESCE(fx.mxn_to_usd, 0.05)\n\
+    \            ELSE billed_amount\n        END)                                \
+    \                         AS billed_amount_usd\n    FROM read_parquet('s3://{bucket}/raw/excel_billing/invoices/load_date=*/*.parquet')\
+    \ inv\n    LEFT JOIN fx\n           ON DATE_TRUNC('month', TRY_CAST(inv.invoice_date\
+    \ AS DATE)) = fx.month\n    WHERE invoice_date IS NOT NULL\n      AND invoice_status\
+    \ != 'Cancelada'\n      AND project_id IS NOT NULL AND project_id != '0'\n   \
+    \ GROUP BY 1, 2\n)\nSELECT\n    bl.month,\n    bl.projectid,\n    bl.projectname,\n\
+    \    bl.clientname,\n    bl.contributors,\n    bl.worked_hours,\n    bl.billable_hours,\n\
+    \    bl.rate_usd                                                      AS billing_rate_usd,\n\
+    \    bl.billable_amount_usd,\n    COALESCE(b.billed_amount_usd, 0)           \
+    \                     AS billed_amount_usd,\n    ROUND(bl.billable_amount_usd\
+    \ -\n          COALESCE(b.billed_amount_usd, 0), 2)                      AS wip_amount_usd,\n\
+    \    ROUND(COALESCE(b.billed_amount_usd, 0) /\n          NULLIF(bl.billable_amount_usd,\
+    \ 0) * 100, 1)               AS billing_completion_pct,\n    CASE\n        WHEN\
+    \ bl.billable_amount_usd = 0                             THEN 'sin_monto'\n  \
+    \      WHEN COALESCE(b.billed_amount_usd, 0) /\n             NULLIF(bl.billable_amount_usd,\
+    \ 0) >= 0.9               THEN 'facturado'\n        WHEN COALESCE(b.billed_amount_usd,\
+    \ 0) /\n             NULLIF(bl.billable_amount_usd, 0) >= 0.5               THEN\
+    \ 'parcial'\n        ELSE                                                    \
+    \          'pendiente'\n    END                                              \
+    \                AS wip_status\nFROM billable bl\nLEFT JOIN billed b ON bl.month\
+    \ = b.month AND bl.projectid = b.projectid\nWHERE bl.billable_hours > 0\nORDER\
+    \ BY bl.month DESC, wip_amount_usd DESC\n"
+- id: kb_project_status
+  name: Project Status Overview
+  description: 'All projects with team size, hours logged, and completion metrics.
+
+    '
+  source_entities:
+  - Project
+  - TimeEntry
+  - ProjectTeamMember
+  output_path: knowledge_bits/replicon/project_status
+  pg_table: replicon_project_status
+  sql: "WITH team AS (\n    SELECT projectid, COUNT(DISTINCT userid) AS team_size\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/ProjectTeamMember/load_date=*/batch_id=*/*.parquet')\n\
+    \    GROUP BY projectid\n),\nhours AS (\n    SELECT projectid,\n           SUM(durationhours)\
+    \                                       AS logged_hours,\n           SUM(CASE\
+    \ WHEN isbillable THEN durationhours ELSE 0 END) AS billable_hours,\n        \
+    \   COUNT(DISTINCT userid)                                   AS active_users\n\
+    \    FROM read_parquet('s3://{bucket}/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet')\n\
+    \    GROUP BY projectid\n),\nprojects AS (\n    SELECT DISTINCT ON (projectid)\n\
+    \        projectid, name AS project_name, clientname,\n        projectstatuslabelname\
+    \ AS status,\n        startdate, enddate,\n        budgeteddurationhours AS budget_hours,\n\
+    \        percentcomplete\n    FROM read_parquet('s3://{bucket}/raw/replicon/Project/load_date=*/batch_id=*/*.parquet')\n\
+    \    ORDER BY projectid, _extracted_at DESC\n)\nSELECT\n    p.projectid,\n   \
+    \ p.project_name,\n    p.clientname,\n    p.status,\n    p.startdate,\n    p.enddate,\n\
+    \    COALESCE(t.team_size, 0)    AS team_size,\n    COALESCE(h.active_users, 0)\
+    \ AS active_users,\n    COALESCE(p.budget_hours, 0) AS budget_hours,\n    COALESCE(h.logged_hours,\
+    \ 0) AS logged_hours,\n    COALESCE(h.billable_hours, 0) AS billable_hours,\n\
+    \    p.percentcomplete,\n    CASE\n        WHEN TRY_CAST(p.enddate AS DATE) <\
+    \ CURRENT_DATE\n         AND p.status NOT ILIKE '%closed%' THEN 'overdue'\n  \
+    \      WHEN TRY_CAST(p.enddate AS DATE) <= CURRENT_DATE + INTERVAL '30 days' THEN\
+    \ 'closing_soon'\n        ELSE 'on_track'\n    END AS health\nFROM projects p\n\
+    LEFT JOIN team t  ON p.projectid = t.projectid\nLEFT JOIN hours h ON p.projectid\
+    \ = h.projectid\nORDER BY p.status, p.enddate\n"

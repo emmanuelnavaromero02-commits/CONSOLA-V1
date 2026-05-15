@@ -88,8 +88,11 @@ def test_sap_dags_are_valid_python():
 def test_no_orphan_cartridge_dags():
     """Every cartridge DAG source must be readable by Airflow somehow.
 
-    SAP keeps DAGs self-contained and exposes them through compose bind
-    mounts. Replicon keeps runtime DAG copies directly in airflow/dags.
+    Sprint v1.40: every cartridge (SAP + Replicon) now keeps DAGs
+    self-contained inside ``cartridges/<id>/dags/`` and exposes them
+    through compose bind mounts. The pre-v1.40 fallback that tolerated
+    runtime copies in ``airflow/dags/`` is gone — those zombie copies
+    were deleted when the Replicon cartridge was restored.
     """
     cartridge_dags = sorted(CARTRIDGES.glob("*/dags/*.py"))
     assert cartridge_dags, "expected cartridge DAG sources"
@@ -99,6 +102,16 @@ def test_no_orphan_cartridge_dags():
         if cartridge in SAP_DAGS:
             _assert_local_sap_mount(cartridge)
             continue
-        assert (AIRFLOW_DAGS / path.name).is_file(), (
-            f"{path} is not mounted as SAP and has no airflow/dags copy"
+        if cartridge == "replicon":
+            # v1.40: replicon DAGs are bind-mounted just like SAP.
+            expected = "../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro"
+            for service in ("airflow", "airflow-scheduler"):
+                volumes = _service_volumes(LOCAL_COMPOSE, service)
+                assert expected in volumes, (
+                    f"{service} must bind-mount replicon DAGs; got {volumes!r}"
+                )
+            continue
+        raise AssertionError(
+            f"{path}: cartridge {cartridge!r} has DAGs but no compose mount "
+            f"and no airflow/dags fallback"
         )
