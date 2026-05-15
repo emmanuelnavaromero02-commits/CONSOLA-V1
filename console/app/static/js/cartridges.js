@@ -93,7 +93,9 @@ async function testConnection(cartridge) {
     if (status === 'ok' || status === 'degraded') {
       toast(`${cartridge}: ${status} — ${data.message || 'conexión verificada'}`, 'ok');
     } else {
-      toast(`${cartridge}: ${data.message || JSON.stringify(data)}`, 'error');
+      // Only surface `message`; the full payload may include base_url, hosts
+      // or other deployment detail we don't want pasted into the UI.
+      toast(`${cartridge}: ${data.message || 'error de conexión'}`, 'error');
     }
   } catch (e) {
     toast(`${cartridge}: ${e.message}`, 'error');

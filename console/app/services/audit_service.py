@@ -23,15 +23,23 @@ async def record_event(
     # called, with what args, and what risk class. NULL for non-copilot
     # events (login, user CRUD, vault reveal, etc.). The matching columns
     # land in audit_events via infra/init/39_audit_tool_columns.sql.
+    #
+    # SECURITY: tool_args is persisted indefinitely as JSONB and indexed.
+    # Callers MUST strip secrets (passwords, vault tokens, API keys, OAuth
+    # bearer values, anything from /api/vault/secrets/*) before passing the
+    # dict in. Replace sensitive values with "***" or drop the key.
     tool_name: str | None = None,
     tool_args: dict[str, Any] | None = None,
     tool_result_status: str | None = None,
     risk_level: str | None = None,
     conversation_id: str | None = None,
 ) -> None:
-    """
-    Asynchronously records an audit event without blocking the current request.
+    """Asynchronously record an audit event without blocking the current request.
+
     If the database operation fails, it logs the error without raising an exception.
+
+    ``tool_args`` must contain only non-sensitive parameters: scrub secrets,
+    vault values, and credentials before invoking this function.
     """
     async def _insert_event() -> None:
         try:
