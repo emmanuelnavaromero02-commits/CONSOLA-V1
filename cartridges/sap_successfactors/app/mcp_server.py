@@ -8,9 +8,39 @@ Mount path: /mcp  (configured in main.py)
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastmcp import FastMCP
+
+
+# Sprint v1.35 (audit B3 P0): local SQL-identifier validator. We can't
+# import from mcp-infra here because cartridges intentionally don't
+# share code (each runs in its own container with its own deps); the
+# regex matches refinement.app.duckdb_engine.SAFE_IDENTIFIER_RE and
+# mcp-infra/app/tools/_validators.py so the platform speaks one
+# language about what "a safe identifier" is.
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _validate_identifier(value: str, kind: str) -> str:
+    if not isinstance(value, str) or not _SAFE_IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(
+            f"Invalid {kind}: {value!r}. Must match ^[a-zA-Z_][a-zA-Z0-9_]*$"
+        )
+    return value
+
+
+def _validate_bounded_int(value, kind: str, lo: int, hi: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"Invalid {kind}: {value!r} (expected int)")
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {kind}: {value!r} (expected int)") from exc
+    if coerced < lo or coerced > hi:
+        raise ValueError(f"{kind} must be {lo}..{hi}, got {coerced}")
+    return coerced
 
 from app.core.config import settings
 from app.core import job_runner
@@ -92,7 +122,12 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
         entity: Entity name (e.g. "User", "TimeEntry")
         limit:  Maximum number of rows to return (default 20, max 200)
     """
-    limit = min(limit, 200)
+    # Sprint v1.35 (audit B3 P0): validate entity / limit before they
+    # land in the f-string. Without this an attacker could pass entity
+    # = "X/load_date=*/batch_id=*/*.parquet') UNION SELECT * FROM ..."
+    # and inject a second read_parquet() call.
+    entity = _validate_identifier(entity, "entity")
+    limit = _validate_bounded_int(limit, "limit", lo=1, hi=200)
     bucket = settings.minio_bucket
     path = f"s3://{bucket}/raw/sap_successfactors/{entity}/load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
