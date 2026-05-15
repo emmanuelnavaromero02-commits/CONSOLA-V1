@@ -281,12 +281,23 @@ services:
   #   docker compose -f docker-compose.aws.yml run --rm airflow-init
 
   airflow-init:
+    # One-shot bootstrap: connects as the postgres superuser BY
+    # DESIGN — `airflow db migrate` has to CREATE the metastore
+    # tables, then we transfer GRANTs to omega_airflow_meta so the
+    # runtime services (next two) can use the dedicated role.
     image: apache/airflow:2.9.2
     container_name: mode_airflow_init
     env_file: .env
     entrypoint: /bin/bash
-    command: -c "airflow db migrate && airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local"
+    command: >
+      -c "
+        airflow db migrate &&
+        pip install --quiet psycopg2-binary &&
+        python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='airflow', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute('GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON SCHEMA public TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_airflow_meta'); print('omega_airflow_meta: grants applied'); cur.close(); conn.close()\" &&
+        airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local
+      "
     environment:
+      POSTGRES_PASSWORD:                    ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       AIRFLOW_ADMIN_USER:                   ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
@@ -310,14 +321,17 @@ services:
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow"
+      # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
+      # omega_airflow_meta role; init keeps superuser by design.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       VAULT_URL:                            http://vault:8300
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
       _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
-      AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      # Sprint v1.38: scoped operational role; see local compose comment.
+      AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_ENDPOINT:           "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
@@ -349,13 +363,16 @@ services:
     command: scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow"
+      # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
+      # omega_airflow_meta role; init keeps superuser by design.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       VAULT_URL:                            http://vault:8300
       _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
-      AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      # Sprint v1.38: scoped operational role; see local compose comment.
+      AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_ENDPOINT:           "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
