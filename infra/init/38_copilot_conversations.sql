@@ -6,7 +6,8 @@
 
 CREATE TABLE IF NOT EXISTS conversations (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- users.id is BIGSERIAL (05_users.sql); FK must match the parent type.
+    user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     workspace_id    UUID REFERENCES workspaces(id) ON DELETE CASCADE,
     title           TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
