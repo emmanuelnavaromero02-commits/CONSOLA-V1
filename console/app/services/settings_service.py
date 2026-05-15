@@ -47,7 +47,15 @@ async def get_setting(key: str, include_secret: bool = False) -> dict | None:
     return item
 
 
-async def set_setting(key: str, value: Any, user_id: int, user_email: str | None = None) -> dict:
+async def set_setting(
+    key: str,
+    value: Any,
+    user_id: int,
+    user_email: str | None = None,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> dict:
     pool = await auth.pool()
     row = await pool.fetchrow(
         """
@@ -68,6 +76,8 @@ async def set_setting(key: str, value: Any, user_id: int, user_email: str | None
         action="settings.update",
         resource_type="system_setting",
         resource_id=key,
+        ip=ip,
+        user_agent=user_agent,
         status="success",
         metadata={"is_secret": row["is_secret"]},
     )
@@ -77,7 +87,14 @@ async def set_setting(key: str, value: Any, user_id: int, user_email: str | None
     return item
 
 
-async def reveal_setting(key: str, user_id: int, user_email: str | None = None) -> dict | None:
+async def reveal_setting(
+    key: str,
+    user_id: int,
+    user_email: str | None = None,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> dict | None:
     item = await get_setting(key, include_secret=True)
     if not item:
         return None
@@ -87,20 +104,34 @@ async def reveal_setting(key: str, user_id: int, user_email: str | None = None) 
         action="settings.reveal",
         resource_type="system_setting",
         resource_id=key,
+        ip=ip,
+        user_agent=user_agent,
         status="success",
     )
     return item
 
 
-async def rotate_secret(key: str, user_id: int, user_email: str | None = None, length_bytes: int = 32) -> dict:
+async def rotate_secret(
+    key: str,
+    user_id: int,
+    user_email: str | None = None,
+    length_bytes: int = 32,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> dict:
     new_value = py_secrets.token_hex(length_bytes)
-    result = await set_setting(key, new_value, user_id, user_email)
+    # set_setting() already records settings.update with ip+UA; this entry
+    # marks the rotate intent on top so an auditor can reconstruct both.
+    result = await set_setting(key, new_value, user_id, user_email, ip=ip, user_agent=user_agent)
     await audit_service.record_event(
         user_id=user_id,
         email=user_email,
         action="settings.rotate",
         resource_type="system_setting",
         resource_id=key,
+        ip=ip,
+        user_agent=user_agent,
         status="success",
         metadata={"length_bytes": length_bytes},
     )
