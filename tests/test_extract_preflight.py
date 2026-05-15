@@ -15,7 +15,7 @@ import pytest
 from tests.conftest import PRIORITY_CARTRIDGES, load_cartridge_app
 
 API_KEY = "test-secret-key-not-default"
-AUTH_HEADER = {"X-Internal-Api-Key": API_KEY}
+AUTH_HEADER = {"X-Internal-Api-Key": API_KEY, "X-Internal-Service": "console"}
 
 
 def _pick_known_entity(client) -> str:

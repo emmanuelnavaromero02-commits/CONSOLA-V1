@@ -4,21 +4,28 @@ import inspect
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 
+from app.api.deps import verify_api_key
 from app.api.routes_health import router as health_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.mcp_server import mcp, load_custom_tools
+from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 
 
 # ── Lifespan: schema migration + job runner init ──────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await job_runner.ensure_schema()   # idempotent: creates jobs table if missing
-    await job_runner.cleanup_stale()   # mark orphaned jobs as failed
+    get_internal_api_key()
+    try:
+        await job_runner.ensure_schema()   # idempotent: creates jobs table if missing
+        await job_runner.cleanup_stale()   # mark orphaned jobs as failed
+    except Exception:
+        # DB unavailable — cartridge still serves /health for the test harness.
+        pass
     async with _mcp_app.router.lifespan_context(app):
         yield
 
@@ -31,7 +38,7 @@ app = FastAPI(title="Replicon Cartridge", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(skills_router)
 
-app.mount("/mcp/rpc", _mcp_app)
+app.mount("/mcp/rpc", InternalApiKeyASGIGuard(_mcp_app))
 
 
 # ── REST adapter — contract for the MODecissions console registry ─────────────
@@ -62,7 +69,7 @@ def _tool_schema(tool_fn) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
 
-@app.get("/mcp/tools")
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
 async def mcp_tools():
     """Return all registered MCP tools in the console registry format."""
     tool_list = await mcp.list_tools()
@@ -82,7 +89,7 @@ async def mcp_tools():
     return {"tools": tools}
 
 
-@app.post("/mcp/invoke")
+@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
 async def mcp_invoke(body: dict):
     """Invoke a tool by name with args. Returns the tool result."""
     tool_name = body.get("tool", "")
@@ -124,7 +131,7 @@ async def mcp_invoke(body: dict):
 
 # ── Custom tools reload ───────────────────────────────────────────────────────
 
-@app.post("/mcp-reload")
+@app.post("/mcp-reload", dependencies=[Depends(verify_api_key)])
 def mcp_reload():
     count = load_custom_tools()
     return JSONResponse({"reloaded": count, "status": "ok"})

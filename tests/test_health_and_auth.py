@@ -41,10 +41,13 @@ def test_health_endpoints_and_auth(cartridge: str) -> None:
     resp = client.get("/mcp/tools")
     assert resp.status_code == 401
 
-    # 4) With the correct key /skills/entities returns the catalogue
+    # 4) With the correct key + service header /skills/entities returns the catalogue
     resp = client.get(
         "/skills/entities",
-        headers={"X-Internal-Api-Key": "test-secret-key-not-default"},
+        headers={
+            "X-Internal-Api-Key": "test-secret-key-not-default",
+            "X-Internal-Service": "console",
+        },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -55,7 +58,10 @@ def test_health_endpoints_and_auth(cartridge: str) -> None:
     # 5) Wrong key still rejected
     resp = client.get(
         "/skills/entities",
-        headers={"X-Internal-Api-Key": "wrong"},
+        headers={
+            "X-Internal-Api-Key": "wrong",
+            "X-Internal-Service": "console",
+        },
     )
     assert resp.status_code == 401
 
@@ -74,7 +80,10 @@ def test_cartridge_connection_check_degraded_without_creds(cartridge: str) -> No
 
     resp = client.get(
         f"/health/{cartridge}",
-        headers={"X-Internal-Api-Key": "test-secret-key-not-default"},
+        headers={
+            "X-Internal-Api-Key": "test-secret-key-not-default",
+            "X-Internal-Service": "console",
+        },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()

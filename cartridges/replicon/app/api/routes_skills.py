@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.deps import verify_api_key
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
 from app.services.runlog_service import get_last_run_status
@@ -11,7 +12,11 @@ from app.services.kb_service import (
     run_all_knowledge_bits, get_kb_runs,
 )
 
-router = APIRouter(prefix="/skills", tags=["skills"])
+router = APIRouter(
+    prefix="/skills",
+    tags=["skills"],
+    dependencies=[Depends(verify_api_key)],
+)
 
 
 # ------------------------------------------------------------------

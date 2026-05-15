@@ -41,8 +41,8 @@ def verify_api_key(
             detail="Missing or invalid X-Internal-Api-Key",
         )
 
-    if x_internal_service is not None and x_internal_service not in _ALLOWED_INTERNAL_SERVICES:
+    if not x_internal_service or x_internal_service not in _ALLOWED_INTERNAL_SERVICES:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unknown X-Internal-Service",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid X-Internal-Service",
         )

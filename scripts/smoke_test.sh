@@ -56,6 +56,43 @@ else
   fail "health replicon did not respond (port 8201)"
 fi
 
+# ── SAP cartridges (v1.40.3) ──
+for pair in "sap-hcm:8202" "sap-successfactors:8203" "sap-s4hana:8204"; do
+  name="${pair%:*}"
+  port="${pair#*:}"
+  if fetch "http://localhost:${port}/health"; then
+    pass "health ${name} (port ${port})"
+  else
+    fail "health ${name} did not respond (port ${port})"
+  fi
+done
+
+# ── Replicon /mcp/tools without auth MUST be rejected ──
+code="$(curl -sS -o /dev/null -w '%{http_code}' \
+        http://localhost:8201/mcp/tools 2>/dev/null || echo 000)"
+if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+  pass "replicon /mcp/tools rejects unauthenticated (got ${code})"
+else
+  fail "replicon /mcp/tools UNAUTHENTICATED — P0 security regression (got ${code})"
+fi
+
+# ── Replicon /skills/entities without auth MUST be rejected ──
+code="$(curl -sS -o /dev/null -w '%{http_code}' \
+        http://localhost:8201/skills/entities 2>/dev/null || echo 000)"
+if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+  pass "replicon /skills/* rejects unauthenticated (got ${code})"
+else
+  fail "replicon /skills/* UNAUTHENTICATED — P0 security regression (got ${code})"
+fi
+
+# ── Detect containers in restart loop ──
+restarting="$(docker ps --filter 'status=restarting' --format '{{.Names}}' 2>/dev/null)"
+if [ -z "$restarting" ]; then
+  pass "no containers in restart loop"
+else
+  fail "containers in restart loop: ${restarting}"
+fi
+
 # ── 6. Postgres pg_isready ─────────────────────────────────────────────
 if docker exec mode_postgres pg_isready -U postgres -q 2>/dev/null; then
   pass "postgres ready"

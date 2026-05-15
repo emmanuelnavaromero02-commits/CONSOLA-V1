@@ -41,8 +41,12 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     assert cart_dir.is_dir(), f"cartridge dir missing: {cart_dir}"
 
     _purge_app_modules()
-    # Remove any other cartridge dir from sys.path so we don't pick up the wrong one
-    sys.path[:] = [p for p in sys.path if "/cartridges/" not in p]
+    # Remove any other cartridge dir from sys.path so we don't pick up the wrong one.
+    # Also strip console/refinement/vault/workspace, which previous tests may have
+    # inserted to import their own ``app.*`` packages. Those regular packages
+    # (with __init__.py) otherwise mask the cartridge's namespace package.
+    _SIBLINGS = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace")
+    sys.path[:] = [p for p in sys.path if not any(s in p for s in _SIBLINGS)]
     sys.path.insert(0, str(cart_dir))
 
     os.environ["INTERNAL_API_KEY"] = "test-secret-key-not-default"

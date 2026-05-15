@@ -57,22 +57,6 @@ def _yaml_kbs() -> list[dict[str, Any]]:
 
 # ── Seed on startup ───────────────────────────────────────────────────────────
 
-_ENTITY_CONFIG_SCHEMA_SQL = (
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS watermark_format TEXT",
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS page_size INTEGER",
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS select_fields JSONB",
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS protection JSONB",
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS effective_dated BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS date_field TEXT",
-    "ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS future_window_days INTEGER",
-)
-
-
-def _ensure_entity_config_schema(conn) -> None:
-    for sql in _ENTITY_CONFIG_SCHEMA_SQL:
-        conn.execute(text(sql))
-
-
 def _dag_id_for_entity(entity: dict[str, Any]) -> str:
     return entity.get("dag_id") or f"{CARTRIDGE_ID}_extract"
 
@@ -83,7 +67,6 @@ def _seed_if_empty() -> None:
     try:
         engine = _get_engine()
         with engine.begin() as conn:
-            _ensure_entity_config_schema(conn)
             conn.execute(text("""
                 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
                 VALUES (:cid, :name, :version, :description, :pattern, :category, :bronze_path)
