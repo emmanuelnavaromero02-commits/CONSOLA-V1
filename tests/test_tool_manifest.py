@@ -16,11 +16,8 @@ def manifest_module(monkeypatch):
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
-    sys.path[:] = [
-        p for p in sys.path
-        if "/cartridges/" not in p and "/refinement" not in p
-        and "/vault" not in p and "/workspace" not in p
-    ]
+    _SIBLINGS = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
+    sys.path[:] = [p for p in sys.path if not any(s in p for s in _SIBLINGS)]
     sys.path.insert(0, str(REPO_ROOT / "console"))
     import importlib
     return importlib.import_module("app.services.tool_manifest")
@@ -76,7 +73,7 @@ def test_build_manifest_aggregates_servers(manifest_module, monkeypatch):
     monkeypatch.setattr(manifest_module.mcp_registry, "list_servers", fake_list_servers)
     monkeypatch.setattr(manifest_module.mcp_registry, "list_tools", fake_list_tools)
 
-    result = asyncio.get_event_loop().run_until_complete(manifest_module.build_manifest())
+    result = asyncio.new_event_loop().run_until_complete(manifest_module.build_manifest())
     assert result["version"] == "1.0"
     assert set(result["servers"].keys()) == {"infra", "replicon"}
     assert result["tool_count_total"] == 2
@@ -105,6 +102,6 @@ def test_build_manifest_tolerates_list_tools_failure(manifest_module, monkeypatc
     monkeypatch.setattr(manifest_module.mcp_registry, "list_servers", fake_list_servers)
     monkeypatch.setattr(manifest_module.mcp_registry, "list_tools", fake_list_tools)
 
-    result = asyncio.get_event_loop().run_until_complete(manifest_module.build_manifest())
+    result = asyncio.new_event_loop().run_until_complete(manifest_module.build_manifest())
     assert result["servers"]["broken"] == []
     assert result["servers"]["infra"][0]["risk_level"] == "read"

@@ -17,11 +17,11 @@ def audit_module():
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
-    sys.path[:] = [
-        p for p in sys.path
-        if "/cartridges/" not in p and "/refinement" not in p
-        and "/vault" not in p and "/workspace" not in p
-    ]
+    # Strip every sibling service path that another test fixture may have
+    # left behind; otherwise their ``app/__init__.py`` (regular package)
+    # would mask console's namespace ``app`` package.
+    _SIBLINGS = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
+    sys.path[:] = [p for p in sys.path if not any(s in p for s in _SIBLINGS)]
     sys.path.insert(0, str(REPO_ROOT / "console"))
     import importlib
     return importlib.import_module("app.services.audit_service")
