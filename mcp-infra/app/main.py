@@ -12,6 +12,46 @@ from __future__ import annotations
 import os
 import secrets
 
+# Sprint v1.39 (audit H1 P1): production fail-fast lives at the top of
+# the module — BEFORE the tool imports below pull in optional deps
+# like pgvector — so a missing per-pair key trips the loud
+# ``RuntimeError`` instead of being masked by an upstream
+# ``ModuleNotFoundError``. Mirrors the vault / console guard. Same
+# code, same intent, intentionally duplicated so the four service
+# surfaces remain decoupled (no cross-service Python import).
+_ALLOWED_SERVICES_TO_KEY_ENV_FOR_PROD_GUARD: dict[str, str | None] = {
+    "console":   "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA",
+    "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA",
+    "airflow":   "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA",
+}
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+
+
+def _require_pair_keys_in_production() -> None:
+    # Reviewer #1 ronda 2: ``.strip()`` rejects whitespace-only values
+    # at boot instead of letting them silently pass the guard.
+    if not _is_production():
+        return
+    required = sorted({
+        env for env in _ALLOWED_SERVICES_TO_KEY_ENV_FOR_PROD_GUARD.values() if env
+    })
+    missing = [
+        env for env in required
+        if not (os.environ.get(env, "") or "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "MCP-infra production startup refused: missing per-pair "
+            "internal API key(s): " + ", ".join(missing)
+        )
+
+
+_require_pair_keys_in_production()
+
+
 from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 

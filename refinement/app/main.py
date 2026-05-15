@@ -12,6 +12,45 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+
+# Sprint v1.39 (audit H1 P1): production fail-fast lives at the top of
+# the module — BEFORE we import anything that touches duckdb / asyncpg
+# / sqlglot — so a missing per-pair key trips a loud RuntimeError
+# instead of being masked by an upstream import error. Mirrors the
+# vault / console guard.
+_PAIR_KEY_ENVS_FOR_PROD_GUARD = (
+    "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",
+    "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
+    "INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT",
+    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+)
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+
+
+def _require_pair_keys_in_production() -> None:
+    # Reviewer #1 ronda 2: ``.strip()`` so a whitespace-only value
+    # (operator typo like ``INTERNAL_API_KEY_X=" "``) is rejected at
+    # boot instead of silently passing the guard and then failing
+    # every request with a confusing 403.
+    if not _is_production():
+        return
+    missing = [
+        env for env in _PAIR_KEY_ENVS_FOR_PROD_GUARD
+        if not (os.environ.get(env, "") or "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Refinement production startup refused: missing per-pair "
+            "internal API key(s): " + ", ".join(missing)
+        )
+
+
+_require_pair_keys_in_production()
+
+
 from fastapi import FastAPI, Header, HTTPException, Depends
 
 # Sprint v1.18: structured JSON logs to stdout, with secret redaction.
@@ -113,6 +152,12 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "refinement": None,
     "mcp-infra":  None,
 }
+
+# Sprint v1.39 (audit H1 P1): the production fail-fast already ran at
+# the top of this module (see _require_pair_keys_in_production above).
+# This dict is the per-caller mapping used by ``verify_api_key`` at
+# request time — the two sources of truth are kept in sync by
+# tests/test_pair_keys_required_in_production.py.
 
 
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):

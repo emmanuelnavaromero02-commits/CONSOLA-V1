@@ -39,6 +39,43 @@ DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 INTERNAL_API_KEY = get_internal_api_key()
 
 
+# Sprint v1.39 (audit H1 P1): workspace is the outbound side of these
+# pairs — it never receives internal calls, only makes them. The
+# guard below mirrors vault / console / refinement / mcp-infra in
+# spirit: refuse to boot in production if the per-pair outbound keys
+# are missing, otherwise ``_key_for`` would silently fall back to the
+# legacy shared INTERNAL_API_KEY and a leaked legacy key from logs
+# or an old backup could impersonate workspace forever.
+_OUTBOUND_PAIR_KEYS = (
+    "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
+    "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
+    "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA",
+)
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+
+
+def _require_pair_keys_in_production() -> None:
+    # Reviewer #1 ronda 2: ``.strip()`` rejects whitespace-only values
+    # at boot instead of letting them silently pass the guard.
+    if not _is_production():
+        return
+    missing = [
+        env for env in _OUTBOUND_PAIR_KEYS
+        if not (os.environ.get(env, "") or "").strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Workspace production startup refused: missing per-pair "
+            "internal API key(s): " + ", ".join(missing)
+        )
+
+
+_require_pair_keys_in_production()
+
+
 def _key_for(server: str) -> str:
     """Sprint v1.12: pick the per-pair INTERNAL_API_KEY_WORKSPACE_TO_<SERVER>
     secret if present, falling back to the shared legacy INTERNAL_API_KEY.
