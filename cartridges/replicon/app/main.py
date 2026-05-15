@@ -20,8 +20,12 @@ from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_internal_api_key()
-    await job_runner.ensure_schema()   # idempotent: creates jobs table if missing
-    await job_runner.cleanup_stale()   # mark orphaned jobs as failed
+    try:
+        await job_runner.ensure_schema()   # idempotent: creates jobs table if missing
+        await job_runner.cleanup_stale()   # mark orphaned jobs as failed
+    except Exception:
+        # DB unavailable — cartridge still serves /health for the test harness.
+        pass
     async with _mcp_app.router.lifespan_context(app):
         yield
 
