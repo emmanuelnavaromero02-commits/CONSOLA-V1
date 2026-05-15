@@ -1173,6 +1173,86 @@ _CARTRIDGE_PORTS = {
 }
 
 
+def _cartridge_url(cartridge: str, path: str) -> str:
+    host = cartridge.replace("_", "-")
+    return f"http://{host}:{_CARTRIDGE_PORTS[cartridge]}{path}"
+
+
+def _cartridge_internal_headers() -> dict:
+    return {
+        "X-Api-Key": os.environ.get("INTERNAL_API_KEY", ""),
+        "X-Internal-Service": "console",
+    }
+
+
+@app.get("/api/cartridges", dependencies=[Depends(require_permission("cartridges.read"))])
+async def api_cartridges_list():
+    """v1.41.0: enumerate cartridges the console can manage."""
+    return {"cartridges": sorted(_CARTRIDGE_PORTS.keys())}
+
+
+@app.get(
+    "/api/cartridges/{cartridge}/connector_schema",
+    dependencies=[Depends(require_permission("cartridges.read"))],
+)
+async def api_cartridge_connector_schema(cartridge: str):
+    """v1.41.0: return connector.yaml so the UI can render a dynamic form."""
+    if cartridge not in _CARTRIDGE_PORTS:
+        raise HTTPException(404, "Unknown cartridge")
+    import yaml
+    from pathlib import Path
+    # docker-compose mounts ../cartridges at /registry/cartridges (read-only).
+    # When running from a checkout outside the container, fall back to the
+    # repo-relative path.
+    candidates = [
+        Path(f"/registry/cartridges/{cartridge}/app/config/connector.yaml"),
+        Path(__file__).resolve().parents[2] / "cartridges" / cartridge / "app" / "config" / "connector.yaml",
+    ]
+    for path in candidates:
+        if path.exists():
+            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raise HTTPException(404, "Schema not found")
+
+
+@app.get(
+    "/api/cartridges/{cartridge}/entities",
+    dependencies=[Depends(require_permission("cartridges.read"))],
+)
+async def api_cartridge_entities(cartridge: str):
+    """v1.41.0: list entities + last watermark per entity, merged for the UI."""
+    if cartridge not in _CARTRIDGE_PORTS:
+        raise HTTPException(404, "Unknown cartridge")
+    async with httpx.AsyncClient(timeout=15.0, headers=_cartridge_internal_headers()) as c:
+        ents = await c.get(_cartridge_url(cartridge, "/skills/entities"))
+        wms = await c.get(_cartridge_url(cartridge, "/skills/get_watermarks"))
+    entities = ents.json().get("entities", []) if ents.is_success else []
+    watermarks = wms.json().get("watermarks", []) if wms.is_success else []
+    wm_by_entity = {w.get("entity"): w for w in watermarks if isinstance(w, dict)}
+    for ent in entities:
+        ent["watermark"] = wm_by_entity.get(ent.get("entity"))
+    return {"entities": entities}
+
+
+@app.post(
+    "/api/cartridges/{cartridge}/entities/{entity}/run",
+    dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.execute"))],
+)
+async def api_cartridge_run(cartridge: str, entity: str, mode: str = "incremental"):
+    """v1.41.0: trigger entity extraction via the cartridge /skills router.
+    The cartridge then enqueues an Airflow DAG run; we return whatever the
+    cartridge replied so the UI can surface the run id."""
+    if cartridge not in _CARTRIDGE_PORTS:
+        raise HTTPException(404, "Unknown cartridge")
+    if mode not in {"full", "incremental"}:
+        raise HTTPException(400, "mode must be 'full' or 'incremental'")
+    skill = "run_full_load" if mode == "full" else "run_incremental"
+    async with httpx.AsyncClient(timeout=30.0, headers=_cartridge_internal_headers()) as c:
+        r = await c.post(_cartridge_url(cartridge, f"/skills/{skill}/{entity}"))
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, r.text[:500])
+    return r.json()
+
+
 @app.post(
     "/api/cartridges/{cartridge}/test_connection",
     dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.write"))],
@@ -1180,14 +1260,9 @@ _CARTRIDGE_PORTS = {
 async def api_cartridge_test_connection(cartridge: str):
     if cartridge not in _CARTRIDGE_PORTS:
         raise HTTPException(404, "Unknown cartridge")
-    host = cartridge.replace("_", "-")
-    url = f"http://{host}:{_CARTRIDGE_PORTS[cartridge]}/skills/test_connection"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
-            r = await c.post(url, headers={
-                "X-Api-Key": os.environ.get("INTERNAL_API_KEY", ""),
-                "X-Internal-Service": "console",
-            })
+        async with httpx.AsyncClient(timeout=10.0, headers=_cartridge_internal_headers()) as c:
+            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"))
         return r.json()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}

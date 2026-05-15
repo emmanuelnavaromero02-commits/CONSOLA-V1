@@ -1,0 +1,169 @@
+/* Sprint v1.41.0 — cartridge wizard page styles.
+   Kept in a dedicated stylesheet to comply with the strict CSP that
+   forbids inline <style> blocks. */
+
+.cartridges-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+.cartridges-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 36px;
+}
+
+.cartridges-header a {
+  font-size: 10px;
+  color: var(--text3);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  letter-spacing: 1px;
+}
+
+.cartridges-header a:hover { color: var(--green); }
+
+.cartridges-title {
+  font-family: var(--font-pixel);
+  font-size: 13px;
+  color: #7c9fff;
+  letter-spacing: 3px;
+}
+
+.cartridges-subtitle {
+  font-size: 10px;
+  color: var(--text3);
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+.cartridges-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.cart-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cart-card-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text1);
+}
+
+.cart-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cart-btn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid #7c9fff;
+  border-radius: 4px;
+  color: #7c9fff;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  letter-spacing: 1px;
+}
+
+.cart-btn:hover { background: rgba(124,159,255,.1); }
+.cart-btn:disabled { opacity: .5; cursor: progress; }
+
+.loading-line {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
+.toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  padding: 10px 16px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  z-index: 1000;
+  max-width: 340px;
+}
+
+.toast.toast-ok    { border-color: var(--green); color: var(--green); }
+.toast.toast-error { border-color: #c44;        color: #c44; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal[hidden] { display: none; }
+
+.modal-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px;
+  width: 600px;
+  max-width: 92vw;
+  max-height: 80vh;
+  overflow: auto;
+  position: relative;
+}
+
+.modal-box-wide { width: 900px; }
+
+.modal-close {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.schema-body {
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--bg);
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.entities-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.entities-table th,
+.entities-table td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
