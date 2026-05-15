@@ -1153,6 +1153,15 @@ async def api_job_logs(job_id: str, limit: int = 200):
         })
     return {"logs": result}
 
+@app.get("/api/tools/manifest", dependencies=[Depends(require_authenticated)])
+async def api_tools_manifest():
+    """Sprint v1.41.0 (tornillo copilot): unified tool catalog with risk_level
+    + requires_approval, sourced from every registered MCP server. The copilot
+    router (v1.42+) consumes this to decide auto-execution vs approval prompts."""
+    from app.services.tool_manifest import build_manifest
+    return await build_manifest()
+
+
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
