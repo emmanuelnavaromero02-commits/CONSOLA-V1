@@ -129,6 +129,8 @@ jobs:
             context: ./vault
           - service: mcp-infra
             context: ./mcp-infra
+          - service: replicon
+            context: ./cartridges/replicon
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana
