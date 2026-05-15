@@ -16,7 +16,10 @@ services:
       # entrypoint runs the init scripts via psql. `:-` keeps the value
       # empty if .env wasn't regenerated; the migration aborts loudly
       # in that case rather than creating roles with NULL passwords.
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-}"
+      # Sprint v1.38 (audit B5+B6): added six more roles for SAP
+      # cartridges, Airflow and Superset (see
+      # infra/init/36_cartridge_and_meta_roles.sql).
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -351,7 +354,14 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      DATABASE_URL:     "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      # Sprint v1.38 (audit B6 P0.5): least-privilege DB role. Pre-v1.38
+      # the SAP cartridges connected as the postgres superuser; a
+      # compromise of the cartridge handed the attacker every table
+      # in the DB. omega_cartridge_sap_sf is scoped to the operational
+      # tables (cartridges, entity_config, kb_config, watermarks,
+      # extraction_runs, jobs, run_logs) and is explicitly REVOKED on
+      # users / decisions / vault_entries via 36_cartridge_and_meta_roles.sql.
+      DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_sf:${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:?OMEGA_CARTRIDGE_SAP_SF_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -383,7 +393,9 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      DATABASE_URL:     "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      # Sprint v1.38 (audit B6 P0.5): least-privilege DB role; see
+      # comment on sap-successfactors above.
+      DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_hcm:${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:?OMEGA_CARTRIDGE_SAP_HCM_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -414,7 +426,9 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
-      DATABASE_URL:     "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      # Sprint v1.38 (audit B6 P0.5): least-privilege DB role; see
+      # comment on sap-successfactors above.
+      DATABASE_URL:     "postgresql+psycopg2://omega_cartridge_sap_s4:${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:?OMEGA_CARTRIDGE_SAP_S4_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_ENDPOINT:   minio:9000
       MINIO_ACCESS_KEY: minio
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
@@ -502,11 +516,21 @@ services:
   # ── Superset ──────────────────────────────────────────────────────────────────
 
   superset-init:
+    # One-shot bootstrap: creates the ``superset`` DB on first boot
+    # and runs ``superset db upgrade`` to populate it. Connects as
+    # the postgres superuser BY DESIGN — at this point the metastore
+    # role (omega_superset_meta) doesn't yet own any tables, and we
+    # need privilege to CREATE DATABASE. After the upgrade we run a
+    # second connection as postgres to transfer ownership of the
+    # newly-created tables to omega_superset_meta so the runtime
+    # container (next service) can use the dedicated role.
     image: apache/superset:3.1.3
     container_name: mode_superset_init
     environment:
       SUPERSET_SECRET_KEY:   ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      OMEGA_SUPERSET_META_PASSWORD: ${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}
     entrypoint: /bin/bash
     command: >
       -c "
@@ -517,7 +541,8 @@ services:
           --lastname User
           --email admin@modecissions.local
           --password ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required} &&
-        superset init
+        superset init &&
+        python3 -c \"import os, psycopg2; c = psycopg2.connect(host='postgres', port=5432, dbname='superset', user='postgres', password=os.environ['POSTGRES_PASSWORD']); c.autocommit = True; cur = c.cursor(); [cur.execute(s) for s in ['GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON SCHEMA public TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_superset_meta']]; print('omega_superset_meta: grants applied to superset DB'); cur.close(); c.close()\"
       "
     depends_on:
       postgres:
@@ -529,7 +554,11 @@ services:
     container_name: mode_superset
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
-      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset
+      # Sprint v1.38 (audit B6 P0.5): runtime uses the dedicated
+      # omega_superset_meta role created by 36_cartridge_and_meta_roles.sql.
+      # superset-init grants ALL on the public schema of the
+      # superset DB to this role after `superset db upgrade`.
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://omega_superset_meta:${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}@postgres:5432/superset
       SUPERSET_WEBSERVER_PORT: 8088
       TALISMAN_ENABLED:        "false"
       WTF_CSRF_ENABLED:        "false"
@@ -556,6 +585,7 @@ services:
       -c "
         python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='modecissions', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute(\\\"SELECT 1 FROM pg_database WHERE datname = 'airflow'\\\"); exists = cur.fetchone(); cur.execute('CREATE DATABASE airflow') if exists is None else None; cur.close(); conn.close()\" &&
         airflow db migrate &&
+        python -c \"import os, psycopg2; conn = psycopg2.connect(host='postgres', port=5432, dbname='airflow', user='postgres', password=os.environ['POSTGRES_PASSWORD']); conn.autocommit = True; cur = conn.cursor(); cur.execute('GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_airflow_meta'); cur.execute('GRANT ALL ON SCHEMA public TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_airflow_meta'); cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_airflow_meta'); print('omega_airflow_meta: grants applied to airflow DB'); cur.close(); conn.close()\" &&
         (airflow connections delete replicon_analytics || true) &&
         airflow connections add replicon_analytics --conn-type http --conn-host http://replicon-mock:8100/analytics --conn-password dummy-local-token &&
         (airflow connections delete replicon_services || true) &&
@@ -563,6 +593,12 @@ services:
         (airflow users create --username \"$$AIRFLOW_ADMIN_USER\" --password \"$$AIRFLOW_ADMIN_PASSWORD\" --firstname Admin --lastname User --role Admin --email admin@modecissions.local || true)
       "
     environment:
+      # Sprint v1.38 (audit B6 P0.5): the init container intentionally
+      # keeps the postgres superuser — it creates the `airflow` DB
+      # and runs `airflow db migrate` which has to CREATE the
+      # metastore tables. After that, it transfers ownership /
+      # grants to omega_airflow_meta so the runtime webserver /
+      # scheduler (next two services) can use the dedicated role.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
@@ -600,12 +636,21 @@ services:
       INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:-}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow
+      # Sprint v1.38 (audit B6 P0.5): the webserver runtime uses the
+      # dedicated omega_airflow_meta role. airflow-init grants ALL
+      # on the public schema of the `airflow` DB to this role after
+      # `airflow db migrate`.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
-      # Variables disponibles en los DAGs via Variable.get()
-      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      # Variables disponibles en los DAGs via Variable.get(). Sprint
+      # v1.38: scoped to the operational omega_airflow_dag role
+      # (REVOKEs on users / decisions / vault_entries enforced by
+      # 36_cartridge_and_meta_roles.sql) so if a DAG ever starts
+      # consuming this variable, the blast radius is the operational
+      # tables, not superuser.
+      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
@@ -658,10 +703,12 @@ services:
 
       VAULT_URL:                            http://vault:8300
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow
+      # Sprint v1.38 (audit B6 P0.5): see comment on the airflow
+      # webserver service above.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
-      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/modecissions"
+      AIRFLOW_VAR_POSTGRES_CONN: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"

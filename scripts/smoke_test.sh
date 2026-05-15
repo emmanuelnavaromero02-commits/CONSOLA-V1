@@ -146,6 +146,36 @@ else
   fail "omega_mcp_infra lost SELECT on cartridge_dags — v1.36 over-revoked (got: '${HAS_ACCESS}')"
 fi
 
+# ── 19-22. SAP cartridge + airflow_dag roles DENIED on users (v1.38) ────
+# Sprint v1.38 (audit B5+B6 P0.5): SAP cartridges and the Airflow DAG
+# role must never read identity tables. Pre-v1.38 they connected as
+# the postgres superuser, so a compromise of any one of them was
+# game over. The cartridge_and_meta_roles migration applies an
+# explicit REVOKE on users (and 13 sibling tables); verify the
+# REVOKE held on users for all four operational roles.
+for v138_role in omega_cartridge_sap_hcm omega_cartridge_sap_s4 omega_cartridge_sap_sf omega_airflow_dag; do
+  NO_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+               "SELECT has_table_privilege('${v138_role}', 'users', 'SELECT');" 2>/dev/null || echo '')"
+  NO_ACCESS="${NO_ACCESS//[[:space:]]/}"
+  if [ "$NO_ACCESS" = "f" ]; then
+    pass "${v138_role} correctly DENIED on users (v1.38)"
+  else
+    fail "${v138_role} has access to users — REGRESSION of v1.38 (got: '${NO_ACCESS}')"
+  fi
+done
+
+# ── 23. omega_cartridge_sap_hcm HAS SELECT on entity_config (positive check) ──
+# Make sure the lockdown didn't over-revoke: SAP cartridges still
+# need to read their own config.
+HAS_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+              "SELECT has_table_privilege('omega_cartridge_sap_hcm', 'entity_config', 'SELECT');" 2>/dev/null || echo '')"
+HAS_ACCESS="${HAS_ACCESS//[[:space:]]/}"
+if [ "$HAS_ACCESS" = "t" ]; then
+  pass "omega_cartridge_sap_hcm still has SELECT on entity_config (operational reads OK)"
+else
+  fail "omega_cartridge_sap_hcm lost SELECT on entity_config — v1.38 over-revoked (got: '${HAS_ACCESS}')"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────
 echo ""
 if [ "$FAILURES" -eq 0 ]; then

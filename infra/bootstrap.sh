@@ -37,6 +37,17 @@ OMEGA_VAULT_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_WORKSPACE_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_MCP_INFRA_PASSWORD="$(openssl rand -hex 16)"
 
+# Sprint v1.38 (audit B5+B6 P0.5): least-privilege roles for the
+# SAP cartridges, the two Airflow surfaces (metastore + DAG runtime),
+# and the Superset metastore. Created by
+# infra/init/36_cartridge_and_meta_roles.sql.
+OMEGA_CARTRIDGE_SAP_HCM_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_CARTRIDGE_SAP_S4_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_CARTRIDGE_SAP_SF_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_AIRFLOW_DAG_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_AIRFLOW_META_PASSWORD="$(openssl rand -hex 16)"
+OMEGA_SUPERSET_META_PASSWORD="$(openssl rand -hex 16)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Generated via the `cryptography` package because Fernet keys are
 # URL-safe base64 of 32 random bytes — `openssl rand -base64 32` is
@@ -78,6 +89,14 @@ OMEGA_REFINEMENT_GOLD_PASSWORD=${OMEGA_REFINEMENT_GOLD_PASSWORD}
 OMEGA_VAULT_PASSWORD=${OMEGA_VAULT_PASSWORD}
 OMEGA_WORKSPACE_PASSWORD=${OMEGA_WORKSPACE_PASSWORD}
 OMEGA_MCP_INFRA_PASSWORD=${OMEGA_MCP_INFRA_PASSWORD}
+
+# === SAP cartridge + Airflow/Superset roles (v1.38) ===
+OMEGA_CARTRIDGE_SAP_HCM_PASSWORD=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD}
+OMEGA_CARTRIDGE_SAP_S4_PASSWORD=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD}
+OMEGA_CARTRIDGE_SAP_SF_PASSWORD=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD}
+OMEGA_AIRFLOW_DAG_PASSWORD=${OMEGA_AIRFLOW_DAG_PASSWORD}
+OMEGA_AIRFLOW_META_PASSWORD=${OMEGA_AIRFLOW_META_PASSWORD}
+OMEGA_SUPERSET_META_PASSWORD=${OMEGA_SUPERSET_META_PASSWORD}
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows
