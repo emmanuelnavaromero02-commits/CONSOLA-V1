@@ -99,6 +99,13 @@ jobs:
           OMEGA_AIRFLOW_DAG_PASSWORD: dummy_airflow_dag_password_for_ci_only
           OMEGA_AIRFLOW_META_PASSWORD: dummy_airflow_meta_password_for_ci_only
           OMEGA_SUPERSET_META_PASSWORD: dummy_superset_meta_password_for_ci_only
+          # Sprint v1.40: Replicon cartridge restored. The new service
+          # in compose marks its DB role + 3 pair keys as required, so
+          # ``docker compose config`` interpolates them on validate.
+          OMEGA_CARTRIDGE_REPLICON_PASSWORD: dummy_cartridge_replicon_password_for_ci_only
+          INTERNAL_API_KEY_REPLICON_TO_CONSOLE: dummy_replicon_to_console_key_for_ci_only_32chars_xxxxxxx
+          INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA: dummy_replicon_to_mcp_key_for_ci_only_32chars_xxxxxxxxxx
+          INTERNAL_API_KEY_REPLICON_TO_REFINEMENT: dummy_replicon_to_refinement_key_for_ci_only_32chars_xx
         run: docker compose config --quiet
 
   build:
