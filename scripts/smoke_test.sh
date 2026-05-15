@@ -117,6 +117,35 @@ else
   fail "omega_console has access to vault_entries — REGRESSION of v1.19 (got: '${NO_ACCESS}')"
 fi
 
+# ── 13-17. omega_mcp_infra DENIED on identity/auth/decisions tables ────
+# Sprint v1.36 (audit B4 P0): omega_mcp_infra must not be able to read
+# users / tenants / decisions / roles / workspaces. The MCP-infra
+# tools never query these — the previous GRANT was the path to a
+# password-hash exfil if combined with postgres_execute_query.
+for sensitive in users tenants decisions roles workspaces; do
+  NO_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+               "SELECT has_table_privilege('omega_mcp_infra', '${sensitive}', 'SELECT');" 2>/dev/null || echo '')"
+  NO_ACCESS="${NO_ACCESS//[[:space:]]/}"
+  if [ "$NO_ACCESS" = "f" ]; then
+    pass "omega_mcp_infra correctly DENIED on ${sensitive} (v1.36)"
+  else
+    fail "omega_mcp_infra has access to ${sensitive} — REGRESSION of v1.36 (got: '${NO_ACCESS}')"
+  fi
+done
+
+# ── 18. omega_mcp_infra still HAS SELECT on cartridge_dags (no regression) ─
+# Sprint v1.36 lockdown must not break legitimate operational reads.
+# cartridge_dags / entity_config / pipeline_runs are what Studio actually
+# uses; verify one of them still grants SELECT.
+HAS_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+              "SELECT has_table_privilege('omega_mcp_infra', 'cartridge_dags', 'SELECT');" 2>/dev/null || echo '')"
+HAS_ACCESS="${HAS_ACCESS//[[:space:]]/}"
+if [ "$HAS_ACCESS" = "t" ]; then
+  pass "omega_mcp_infra still has SELECT on cartridge_dags (operational reads OK)"
+else
+  fail "omega_mcp_infra lost SELECT on cartridge_dags — v1.36 over-revoked (got: '${HAS_ACCESS}')"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────
 echo ""
 if [ "$FAILURES" -eq 0 ]; then

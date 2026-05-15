@@ -152,7 +152,7 @@ BEGIN
 END $$;
 
 -- ─────────────────────────────────────────────────────────────
--- omega_mcp_infra — actualizado en v1.20.
+-- omega_mcp_infra — actualizado en v1.20, endurecido en v1.36.
 --
 -- mcp-infra es deliberadamente un "router" que expone tools MCP
 -- que tocan muchas tablas operacionales: pipeline.dag_get_source
@@ -163,24 +163,31 @@ END $$;
 -- a 2 tablas (como hacía v1.19) rompe Studio paso 2 — "Fuente no
 -- encontrada en BD" — porque mcp-infra no puede SELECT cartridge_dags.
 --
--- La política se relaja a "acceso amplio sobre operativa", PERO
--- vault_entries sigue siendo la línea roja (REVOKE explícito al final).
--- Para credenciales (users.password_hash, user_tokens, refresh_tokens),
--- las tools de mcp-infra no las leen — no hay tool MCP que devuelva
--- password hashes; si en el futuro se agregara, hay que volver a
--- ajustar este bloque.
+-- Sprint v1.36 (audit B4 P0): identity / auth / decisions / RBAC
+-- tablas NO están en el GRANT. mcp-infra no las consulta hoy (grep
+-- "FROM users|tenants|decisions|roles|workspaces" en mcp-infra/app
+-- retorna 0 hits) y nunca debería: aunque cada tool individual no
+-- las devuelva, ``postgres_execute_query`` permite SELECT arbitrario
+-- y el GRANT le daría a un caller no-admin (en una versión futura
+-- con bug de auth) un camino a ``users.password_hash``. La línea
+-- roja sigue siendo ``vault_entries`` (REVOKE al final); v1.36 añade
+-- el mismo trato defense-in-depth para las tablas de identity en la
+-- migración ``infra/init/35_omega_mcp_infra_lockdown.sql``.
 -- ─────────────────────────────────────────────────────────────
 GRANT CONNECT ON DATABASE modecissions TO omega_mcp_infra;
 GRANT USAGE ON SCHEMA public TO omega_mcp_infra;
--- Read surface: tablas que las tools de mcp-infra consultan.
--- v1.20 audit: added data_catalog + kb_config — cartridges.* tools
--- read them for the catalog/KB graph rendered in Studio.
+-- Read surface: tablas OPERATIVAS que las tools de mcp-infra
+-- consultan. v1.20 audit: added data_catalog + kb_config —
+-- cartridges.* tools read them for the catalog/KB graph rendered
+-- in Studio. v1.36 audit: removed decisions / workspaces / tenants
+-- / users / roles — no tool reads them and they were the path to
+-- password hash exfiltration if combined with a SELECT-arbitrary
+-- bug.
 GRANT SELECT ON
     cartridges, cartridge_dags, cartridge_connections,
     semantic_terms, mcp_servers, mcp_custom_tools,
     rag_sources, rag_chunks, entity_config, entity_watermarks,
-    pipeline_runs, run_logs, datasets, decisions,
-    workspaces, tenants, users, roles, system_settings,
+    pipeline_runs, run_logs, datasets, system_settings,
     analytic_apps, data_catalog, kb_config
     TO omega_mcp_infra;
 -- Write surface: solo tablas que las tools de mcp-infra escriben hoy.
@@ -192,7 +199,13 @@ GRANT INSERT, UPDATE, DELETE ON
     rag_sources, rag_chunks, entity_watermarks, pipeline_runs
     TO omega_mcp_infra;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_mcp_infra;
--- Hard line: NUNCA vault_entries (esa sigue siendo SOLO de omega_vault).
+-- Hard lines (defense-in-depth):
+--   * vault_entries siempre fue SOLO de omega_vault (regla v1.19).
+--   * v1.36 (audit B4): identity / auth / decisions / RBAC tablas
+--     también son hard line para mcp-infra. La migración
+--     ``35_omega_mcp_infra_lockdown.sql`` agrega los REVOKE
+--     explícitos para deployments preexistentes donde el GRANT
+--     anterior ya quedó en pg_catalog.
 REVOKE ALL ON vault_entries FROM omega_mcp_infra;
 
 -- ─────────────────────────────────────────────────────────────
