@@ -1,0 +1,78 @@
+connector:
+  id: replicon
+  name: Replicon Time & Attendance
+  version: "1.0"
+  description: >
+    Connector for Replicon workforce management platform.
+    Extracts timesheets, projects, users, and related entities
+    via Replicon's async export API (POST /extracts → poll → CSV download).
+
+  # ── Authentication ─────────────────────────────────────────────────────────
+  auth:
+    type: bearer_token
+    env_var: REPLICON_API_KEY
+    header: Authorization
+    prefix: "Bearer "
+
+  # ── API configuration ───────────────────────────────────────────────────────
+  api:
+    base_url_env: REPLICON_BASE_URL
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    extract_poll_interval_seconds: 5
+    extract_poll_max_attempts: 60
+
+  # ── Storage ─────────────────────────────────────────────────────────────────
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/replicon/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+
+  # ── Extraction modes ────────────────────────────────────────────────────────
+  modes:
+    - id: full
+      description: Full snapshot — replaces all data for the entity
+    - id: incremental
+      description: Client-side watermark filter on watermark_field > last value
+    - id: historical
+      description: Date-range filter on date_field between from_date and to_date
+
+  # ── Watermark ───────────────────────────────────────────────────────────────
+  watermark:
+    storage: postgres          # table: watermarks
+    buffer_minutes: 5          # safety overlap before persisting high watermark
+    field_format: iso8601      # e.g. 2024-01-15T10:30:00Z
+
+  # ── MCP interface ───────────────────────────────────────────────────────────
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+    tools:
+      - name: list_entities
+        description: List all entities with their watermarks and last run status
+      - name: get_schema
+        description: Return the column schema for a Replicon entity
+      - name: preview
+        description: Preview rows from a Replicon entity stored in MinIO
+      - name: extract
+        description: Trigger extraction of a Replicon entity (full or incremental)
+      - name: get_run_status
+        description: Get the status of an extraction run by run_id
+      - name: list_kbs
+        description: List all Knowledge Bits configured for the Replicon cartridge
+      - name: run_kb
+        description: Execute a Knowledge Bit and write results to Parquet and PostgreSQL
+      - name: query_kb
+        description: Run arbitrary DuckDB SQL against Replicon Bronze/Silver data
+
+  # ── Entities catalogue (summary — full config in entities.yaml) ─────────────
+  entities:
+    count: 21
+    primary_key_patterns:
+      - "{Entity}Uri"
+    watermark_field_default: LastModifiedTimestamp
+    watermark_format: "%Y-%m-%dT%H:%M:%SZ"
+    page_size_default: 1000

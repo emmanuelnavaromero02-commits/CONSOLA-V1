@@ -27,7 +27,12 @@ services:
       POSTGRES_DB:       modecissions
       POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:?OMEGA_MCP_INFRA_PASSWORD is required}"
+      # Sprint v1.38 + v1.40: forward every per-role password GUC the
+      # init scripts read so AWS prod creates the same role set as
+      # local dev. ``:-`` keeps the value empty if the operator hasn't
+      # rotated .env to match — the migration aborts loudly via
+      # ``RAISE EXCEPTION`` instead of creating a NULL-password role.
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:?OMEGA_MCP_INFRA_PASSWORD is required} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - /opt/modecissions/infra/init:/docker-entrypoint-initdb.d
@@ -348,6 +353,8 @@ services:
       - /opt/modecissions/cartridges:/registry/cartridges:ro
       - /opt/modecissions/cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - /opt/modecissions/cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
+      - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     networks:
       - modecissions_net
@@ -387,6 +394,8 @@ services:
       - /opt/modecissions/cartridges:/registry/cartridges:ro
       - /opt/modecissions/cartridges/sap_successfactors/dags:/opt/airflow/dags/sap_successfactors:ro
       - /opt/modecissions/cartridges/sap_hcm/dags:/opt/airflow/dags/sap_hcm:ro
+      # Sprint v1.40: Replicon DAGs ship inside the cartridge.
+      - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
     networks:
       - modecissions_net

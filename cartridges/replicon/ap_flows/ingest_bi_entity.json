@@ -1,0 +1,146 @@
+{
+  "displayName": "replicon_ingest_bi_entity",
+  "trigger": {
+    "name": "trigger",
+    "displayName": "Webhook — recibe entity + mode + run_id",
+    "type": "PIECE_TRIGGER",
+    "settings": {
+      "pieceName": "@activepieces/piece-webhook",
+      "triggerName": "catch_webhook",
+      "input": { "authType": "none" },
+      "inputUiInfo": {}
+    },
+    "nextAction": {
+      "name": "log_start",
+      "displayName": "Log inicio",
+      "type": "PIECE",
+      "settings": {
+        "pieceName": "@activepieces/piece-http",
+        "actionName": "send_request",
+        "input": {
+          "method": "POST",
+          "url": "http://console:8000/n8n/log",
+          "headers": {},
+          "queryParams": {},
+          "body": {
+            "type": "json",
+            "data": {
+              "run_id":       "{{ trigger.body.run_id }}",
+              "workflow":     "replicon_ingest_bi_entity",
+              "cartridge_id": "replicon",
+              "entity":       "{{ trigger.body.entity }}",
+              "level":        "INFO",
+              "status":       "started",
+              "message":      "{{ 'Iniciando ' + trigger.body.mode + ' para ' + trigger.body.entity }}"
+            }
+          },
+          "failsafe": true,
+          "timeout": 10
+        }
+      },
+      "nextAction": {
+        "name": "cleanup_raw",
+        "displayName": "Limpiar raw",
+        "type": "PIECE",
+        "settings": {
+          "pieceName": "@activepieces/piece-http",
+          "actionName": "send_request",
+          "input": {
+            "method": "POST",
+            "url": "http://console:8000/raw/cleanup",
+            "headers": {},
+            "queryParams": {},
+            "body": {
+              "type": "json",
+              "data": {
+                "cartridge_id":  "replicon",
+                "entity":        "{{ trigger.body.entity }}",
+                "mode":          "{{ trigger.body.mode }}",
+                "retention_days": 30
+              }
+            },
+            "failsafe": true,
+            "timeout": 30
+          }
+        },
+        "nextAction": {
+          "name": "log_cleanup",
+          "displayName": "Log cleanup",
+          "type": "PIECE",
+          "settings": {
+            "pieceName": "@activepieces/piece-http",
+            "actionName": "send_request",
+            "input": {
+              "method": "POST",
+              "url": "http://console:8000/n8n/log",
+              "headers": {},
+              "queryParams": {},
+              "body": {
+                "type": "json",
+                "data": {
+                  "run_id":       "{{ trigger.body.run_id }}",
+                  "workflow":     "replicon_ingest_bi_entity",
+                  "cartridge_id": "replicon",
+                  "entity":       "{{ trigger.body.entity }}",
+                  "level":        "INFO",
+                  "status":       "cleanup_done",
+                  "message":      "{{ 'Raw limpiado: ' + (cleanup_raw.body.deleted ?? 0) + ' objetos' }}"
+                }
+              },
+              "failsafe": true,
+              "timeout": 10
+            }
+          },
+          "nextAction": {
+            "name": "extract",
+            "displayName": "Extraer desde BI",
+            "type": "PIECE",
+            "settings": {
+              "pieceName": "@activepieces/piece-http",
+              "actionName": "send_request",
+              "input": {
+                "method": "POST",
+                "url": "{{ 'http://replicon:8201/skills/run_' + trigger.body.mode + '/' + trigger.body.entity }}",
+                "headers": {},
+                "queryParams": {},
+                "body": { "type": "none" },
+                "failsafe": true,
+                "timeout": 600
+              }
+            },
+            "nextAction": {
+              "name": "log_done",
+              "displayName": "Log completado",
+              "type": "PIECE",
+              "settings": {
+                "pieceName": "@activepieces/piece-http",
+                "actionName": "send_request",
+                "input": {
+                  "method": "POST",
+                  "url": "http://console:8000/n8n/log",
+                  "headers": {},
+                  "queryParams": {},
+                  "body": {
+                    "type": "json",
+                    "data": {
+                      "run_id":       "{{ trigger.body.run_id }}",
+                      "workflow":     "replicon_ingest_bi_entity",
+                      "cartridge_id": "replicon",
+                      "entity":       "{{ trigger.body.entity }}",
+                      "level":        "{{ extract.body.error ? 'ERROR' : 'INFO' }}",
+                      "status":       "{{ extract.body.error ? 'failed' : 'completed' }}",
+                      "message":      "{{ extract.body.error ? ('Error: ' + extract.body.error) : (trigger.body.entity + ' completado: ' + (extract.body.record_count ?? 0) + ' registros') }}",
+                      "detail":       "{{ extract.body }}"
+                    }
+                  },
+                  "failsafe": true,
+                  "timeout": 10
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

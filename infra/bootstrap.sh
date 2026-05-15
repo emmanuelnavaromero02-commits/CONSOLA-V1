@@ -48,6 +48,14 @@ OMEGA_AIRFLOW_DAG_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_AIRFLOW_META_PASSWORD="$(openssl rand -hex 16)"
 OMEGA_SUPERSET_META_PASSWORD="$(openssl rand -hex 16)"
 
+# Sprint v1.40 (replicon cartridge restored): DB role + 3 pair keys
+# (replicon -> console / mcp-infra / refinement). Created by
+# infra/init/37_replicon_role_and_tables.sql.
+OMEGA_CARTRIDGE_REPLICON_PASSWORD="$(openssl rand -hex 16)"
+INTERNAL_API_KEY_REPLICON_TO_CONSOLE="$(openssl rand -hex 32)"
+INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA="$(openssl rand -hex 32)"
+INTERNAL_API_KEY_REPLICON_TO_REFINEMENT="$(openssl rand -hex 32)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Generated via the `cryptography` package because Fernet keys are
 # URL-safe base64 of 32 random bytes — `openssl rand -base64 32` is
@@ -97,6 +105,12 @@ OMEGA_CARTRIDGE_SAP_SF_PASSWORD=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD}
 OMEGA_AIRFLOW_DAG_PASSWORD=${OMEGA_AIRFLOW_DAG_PASSWORD}
 OMEGA_AIRFLOW_META_PASSWORD=${OMEGA_AIRFLOW_META_PASSWORD}
 OMEGA_SUPERSET_META_PASSWORD=${OMEGA_SUPERSET_META_PASSWORD}
+
+# === Replicon cartridge (v1.40) ===
+OMEGA_CARTRIDGE_REPLICON_PASSWORD=${OMEGA_CARTRIDGE_REPLICON_PASSWORD}
+INTERNAL_API_KEY_REPLICON_TO_CONSOLE=${INTERNAL_API_KEY_REPLICON_TO_CONSOLE}
+INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA=${INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA}
+INTERNAL_API_KEY_REPLICON_TO_REFINEMENT=${INTERNAL_API_KEY_REPLICON_TO_REFINEMENT}
 
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows
