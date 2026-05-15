@@ -24,6 +24,7 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.registry import tool
+from app.tools._validators import validate_bounded_int, validate_identifier
 from app.tools.postgres import _conn
 
 
@@ -44,6 +45,14 @@ def _duckdb() -> duckdb.DuckDBPyConnection:
 
 
 def _bronze_path(cartridge_id: str, entity: str) -> str:
+    # Sprint v1.35 (audit B3 P0): validate cartridge_id / entity as SQL
+    # identifiers before they go into the f-string. The returned path is
+    # consumed by DuckDB's read_parquet() inside another f-string in
+    # cartridge_preview, so an unvalidated value like
+    # ``../") UNION SELECT * FROM 's3://other/secrets.parquet')--`` would
+    # close the read_parquet() argument and inject a different query.
+    cartridge_id = validate_identifier(cartridge_id, "cartridge_id")
+    entity = validate_identifier(entity, "entity")
     return f"s3://{settings.minio_bucket}/raw/{cartridge_id}/{entity}/load_date=*/batch_id=*/*.parquet"
 
 
@@ -496,7 +505,9 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
     },
 )
 def cartridge_preview(cartridge_id: str, entity: str, limit: int = 20) -> dict[str, Any]:
-    limit = min(limit, 200)
+    # Sprint v1.35 (audit B3 P0): force limit to a bounded int. cartridge_id
+    # and entity are validated transitively by _bronze_path().
+    limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
     path  = _bronze_path(cartridge_id, entity)
     sql   = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
@@ -913,7 +924,9 @@ def cartridge_run_kb(cartridge_id: str, kb_id: str) -> dict[str, Any]:
     },
 )
 def cartridge_query_kb(cartridge_id: str, sql: str, limit: int = 100) -> dict[str, Any]:
-    limit = min(limit, 5000)
+    # Sprint v1.35 (audit B3 P0): force ``limit`` to a bounded int so a
+    # string payload can't ride the LIMIT clause into the f-string.
+    limit = validate_bounded_int(limit, "limit", lo=1, hi=5000)
     resolved = sql.replace("{bucket}", settings.minio_bucket)
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"

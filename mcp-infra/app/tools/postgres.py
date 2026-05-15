@@ -11,6 +11,7 @@ import psycopg2.extras
 
 from app.config import settings
 from app.registry import tool
+from app.tools._validators import validate_bounded_int, validate_identifier
 
 
 _IDENT = r'(?:[A-Za-z_][A-Za-z0-9_]*|"[^"\x00]+")'
@@ -212,12 +213,42 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
     clean = sql.strip().upper()
     if not clean.startswith("SELECT") and not clean.startswith("WITH"):
         return {"error": "Only SELECT / WITH queries allowed via this tool"}
-    limit = min(limit, 200)
+    # Sprint v1.35 (audit B3 P0): reject multi-statement payloads. The
+    # original ``startswith("SELECT")`` guard accepted strings like
+    # ``"SELECT 1; DROP TABLE users"`` — psycopg2 happily executes both
+    # statements, so a SELECT-only contract was actually a DML/DDL
+    # primitive. We trim a single trailing ``;`` (callers commonly add
+    # one) and then reject any remaining semicolon, mirroring the rule
+    # in ``_validate_non_destructive_sql`` above. ``--`` and ``/*``
+    # comments are also rejected so a hidden ``\n; DROP`` can't slip
+    # through inside a line comment.
+    # Sprint v1.35 rondas 2-3 (reviewers): reject NUL and other control
+    # characters (everything below 0x20 except the printable whitespace
+    # ``\t \n \r``). Even though the semicolon and comment checks below
+    # already block the documented bypass payloads, this is cheap
+    # defense-in-depth: Postgres may treat some control bytes as
+    # whitespace, and a future addition could rely on the input being
+    # plain printable SQL. Matches the NUL rule already in
+    # ``_validate_non_destructive_sql``.
+    if any(c != "\t" and c != "\n" and c != "\r" and ord(c) < 0x20 for c in sql):
+        return {"error": "Invalid SQL"}
+    trimmed = sql.strip()
+    if trimmed.endswith(";"):
+        trimmed = trimmed[:-1].rstrip()
+    if ";" in trimmed:
+        return {"error": "Only one SQL statement is allowed"}
+    if "--" in trimmed or "/*" in trimmed or "*/" in trimmed:
+        return {"error": "SQL comments are not allowed in postgres_execute_query"}
+    # Sprint v1.35: force ``limit`` to an int in [1, 200] before
+    # interpolating it into the wrapper. The original ``min(limit,
+    # 200)`` silently let strings like "50; DROP TABLE x; --" through
+    # if the caller bypassed the JSON-schema validator.
+    limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
     # Wrap the caller's query so the cap is always enforced — checking for a
     # "LIMIT" keyword in the raw SQL was bypassable by hiding it inside `--`
     # or /* */ comments (the comment eats the rest of the line, the check
     # sees no "limit", and we append one that gets eaten too).
-    wrapped_sql = f"SELECT * FROM ({sql.rstrip(';')}) _capped LIMIT {limit}"
+    wrapped_sql = f"SELECT * FROM ({trimmed}) _capped LIMIT {limit}"
     conn = _conn(gold)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(wrapped_sql)
@@ -269,7 +300,13 @@ def postgres_execute_ddl(sql: str, gold: bool = False) -> dict:
     },
 )
 def postgres_get_sample(table: str, schema: str = "public", n: int = 10, gold: bool = False) -> dict:
-    n    = min(n, 100)
+    # Sprint v1.35 (audit B3 P0): validate schema/table as SQL identifiers
+    # and coerce n to a bounded int before f-stringing them into the
+    # query. The pre-v1.35 version closed the surrounding ``"..."`` with
+    # a payload like ``users"; DROP TABLE users; --`` and executed it.
+    schema = validate_identifier(schema, "schema")
+    table = validate_identifier(table, "table")
+    n = validate_bounded_int(n, "n", lo=1, hi=100)
     sql  = f'SELECT * FROM "{schema}"."{table}" LIMIT {n}'
     conn = _conn(gold)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
