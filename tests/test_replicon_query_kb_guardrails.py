@@ -9,20 +9,13 @@ from __future__ import annotations
 from tests.conftest import load_cartridge_app
 
 
-def _query_kb():
-    main = load_cartridge_app("replicon")
-    # ``mcp.tool()`` wraps the function; the original is at .fn on the
-    # registered tool. Skip the wrapper to call the function directly
-    # without exercising the MCP transport / auth layer.
-    return main.mcp
-
-
 def _call(sql: str, limit: int = 1):
-    import asyncio
-    mcp = _query_kb()
-    tool = asyncio.get_event_loop().run_until_complete(mcp.get_tool("query_kb")) \
-        if hasattr(mcp, "get_tool") else None
-    # Fall back: import the function directly from the module
+    # Make sure replicon's ``app`` package is importable: load_cartridge_app
+    # is the same helper test_replicon_mcp_auth uses, and it isolates sys.path
+    # from any sibling service (mcp-infra/console/etc.) a previous test left
+    # behind. We hit the bare ``query_kb`` function — the guard rails sit in
+    # that function, before any DuckDB / MCP transport layer.
+    load_cartridge_app("replicon")
     from app.mcp_server import query_kb as fn
     return fn(sql, limit)
 
