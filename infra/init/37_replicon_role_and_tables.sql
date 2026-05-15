@@ -70,3 +70,34 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- ─────────────────────────────────────────────────────────────
+-- v1.40.3: cartridge owns its operational tables.
+--
+-- Previously these were applied manually in dev. Codifying so
+-- a fresh `docker compose up -v` produces an identical environment
+-- without manual GRANT/ALTER steps.
+-- ─────────────────────────────────────────────────────────────
+
+GRANT CREATE ON SCHEMA public TO omega_cartridge_replicon;
+
+DO $$
+DECLARE
+  operational_tables CONSTANT text[] := ARRAY[
+    'jobs', 'run_logs', 'entity_watermarks',
+    'extraction_runs', 'kb_runs'
+  ];
+  tbl text;
+BEGIN
+  FOREACH tbl IN ARRAY operational_tables LOOP
+    IF EXISTS (
+      SELECT 1 FROM pg_tables
+      WHERE schemaname = 'public' AND tablename = tbl
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE public.%I OWNER TO omega_cartridge_replicon',
+        tbl
+      );
+    END IF;
+  END LOOP;
+END $$;
