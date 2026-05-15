@@ -125,7 +125,7 @@ async def get_sessions(user: dict = Depends(require_permission("security.session
     return res
 
 @router.delete("/sessions/{token}")
-async def revoke_session(token: str, user: dict = Depends(require_permission("security.sessions.revoke"))):
+async def revoke_session(token: str, request: Request, user: dict = Depends(require_permission("security.sessions.revoke"))):
     p = await _auth.pool()
     res = await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
     if res == "DELETE 0" and len(token) == 64:
@@ -142,7 +142,11 @@ async def revoke_session(token: str, user: dict = Depends(require_permission("se
             res = await p.execute("DELETE FROM user_sessions WHERE token = $1", matched)
     if res == "DELETE 0":
         raise HTTPException(status_code=404, detail="Session not found")
-    await _audit.record_event(user.get("id"), user.get("email"), "session.revoked", "session", token[-8:] if token else None)
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "session.revoked", "session", token[-8:] if token else None,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"status": "ok"}
 
 @router.get("/audit")
@@ -259,11 +263,17 @@ async def get_login_attempts(user: dict = Depends(require_permission("security.l
 
 @router.get("/access-check")
 async def get_access_check(
+    request: Request,
     role: str = Query(...),
     resource: str = Query(...),
     action: str = Query("read"),
     user: dict = Depends(require_permission("iam.roles.read")),
 ):
     result = access_check(role, resource, action)
-    await _audit.record_event(user.get("id"), user.get("email"), "iam.access_check", "permission", result.get("permission"), metadata={"role": role, "resource": resource, "action": action, "allowed": result["allowed"]})
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "iam.access_check", "permission", result.get("permission"),
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={"role": role, "resource": resource, "action": action, "allowed": result["allowed"]},
+    )
     return result
