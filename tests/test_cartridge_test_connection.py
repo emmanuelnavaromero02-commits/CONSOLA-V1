@@ -14,23 +14,24 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-CONSOLE_MAIN = Path(__file__).resolve().parents[1] / "console" / "app" / "main.py"
+CARTRIDGES_ROUTER = Path(__file__).resolve().parents[1] / "console" / "app" / "routers" / "cartridges.py"
 
 
-def _main_source() -> str:
-    return CONSOLE_MAIN.read_text(encoding="utf-8")
+def _router_source() -> str:
+    return CARTRIDGES_ROUTER.read_text(encoding="utf-8")
 
 
 def test_endpoint_registered():
-    src = _main_source()
-    assert '"/api/cartridges/{cartridge}/test_connection"' in src
+    src = _router_source()
+    # router declares prefix="/api/cartridges" + a /{cartridge}/test_connection path.
+    assert 'prefix="/api/cartridges"' in src
+    assert '"/{cartridge}/test_connection"' in src
 
 
 def test_endpoint_requires_csrf_and_permission():
-    src = _main_source()
-    # Locate the route declaration and assert both deps are listed.
+    src = _router_source()
     match = re.search(
-        r'@app\.post\(\s*"/api/cartridges/\{cartridge\}/test_connection"[\s\S]+?\)\s*\n',
+        r'@router\.post\(\s*"/\{cartridge\}/test_connection"[\s\S]+?\)\s*\n',
         src,
     )
     assert match, "test_connection route not found"
@@ -41,7 +42,7 @@ def test_endpoint_requires_csrf_and_permission():
 
 def test_cartridge_port_map_complete():
     """All 4 cartridges must be mapped to their exposed ports."""
-    src = _main_source()
+    src = _router_source()
     expected = {
         "replicon": 8201,
         "sap_hcm": 8202,
@@ -50,6 +51,13 @@ def test_cartridge_port_map_complete():
     }
     for cart, port in expected.items():
         assert f'"{cart}": {port}' in src, f"port map missing {cart} -> {port}"
+
+
+def test_router_registered_in_main():
+    """main.py must include the new cartridges router."""
+    main_src = (Path(__file__).resolve().parents[1] / "console" / "app" / "main.py").read_text(encoding="utf-8")
+    assert "cartridges_router" in main_src
+    assert "app.include_router(cartridges_router.router)" in main_src
 
 
 def test_cartridge_permissions_registered():
