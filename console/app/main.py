@@ -3114,23 +3114,62 @@ async def viewer_decisions():
     return FileResponse(STATIC / "decisions.html")
 
 
-def _dec_visible_clause(uid: int, is_admin: bool, params: list) -> str:
-    """Returns a SQL clause that filters decisions visible to this user."""
+def _current_workspace_id(user: dict) -> str | None:
+    """Return the active workspace UUID for ``user``, or ``None`` if the
+    middleware never assigned one. Matches the workspace service's
+    helper so console and workspace agree on which workspace owns a
+    decision row.
+    """
+    return user.get("active_workspace_id") or user.get("workspace_id")
+
+
+def _dec_visible_clause(uid: int, is_admin: bool, params: list, workspace_id: str | None = None) -> str:
+    """Returns a SQL clause that filters decisions visible to this user.
+
+    Sprint v1.37 (audit B7 P0): now also scopes to ``workspace_id``.
+    Pre-v1.37 the clause filtered only by ``visibility`` /
+    ``created_by_id`` / ``assignee_id``, so a user with membership in
+    multiple workspaces saw every ``visibility='shared'`` decision in
+    every workspace they had ever joined (even when their active
+    session was scoped to a single one). Combined with the v1.32
+    migration adding ``workspace_id`` to ``decisions``, the column
+    exists; this is the code path catching up.
+
+    Admins are still global by design, but only inside the active
+    workspace — they don't get to read tenant A's decisions while their
+    active session is on tenant B. If ``workspace_id`` is ``None``
+    (user has no active workspace), the clause is ``FALSE`` so the
+    query returns nothing rather than every row.
+    """
+    if not workspace_id:
+        return "FALSE"
+    params.append(workspace_id)
+    ws_param = f"${len(params)}"
+    workspace_clause = f"workspace_id = {ws_param}"
     if is_admin:
-        return "TRUE"
+        return workspace_clause
     params.append(uid)
     p = f"${len(params)}"
-    return f"(visibility = 'shared' OR created_by_id = {p} OR assignee_id = {p})"
+    return f"({workspace_clause} AND (visibility = 'shared' OR created_by_id = {p} OR assignee_id = {p}))"
 
 
 async def _dec_load_with_visibility(decision_id: int, user: dict) -> dict | None:
-    pool = await _dec_pool()
+    # Sprint v1.37: no active workspace -> no decisions are visible.
+    # Short-circuit BEFORE opening the pool so an unauthorized caller
+    # never touches the DB. Pre-v1.37 the lookup proceeded with only
+    # the visibility/owner filters, so a logged-in user with zero
+    # memberships could still see ``visibility='shared'`` rows from
+    # any tenant.
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        return None
     is_admin = user.get("role") == "admin"
-    params: list = [decision_id]
-    sql = "SELECT * FROM decisions WHERE id = $1"
+    params: list = [decision_id, workspace_id]
+    sql = "SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2"
     if not is_admin:
         params.append(user["id"])
         sql += f" AND (visibility = 'shared' OR created_by_id = ${len(params)} OR assignee_id = ${len(params)})"
+    pool = await _dec_pool()
     row = await pool.fetchrow(sql, *params)
     return dict(row) if row else None
 
@@ -3150,7 +3189,8 @@ def _dec_can_delete(row: dict, user: dict) -> bool:
 @app.get("/api/decisions")
 async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_authenticated)):
     where, params = [], []
-    where.append(_dec_visible_clause(user["id"], user.get("role") == "admin", params))
+    workspace_id = _current_workspace_id(user)
+    where.append(_dec_visible_clause(user["id"], user.get("role") == "admin", params, workspace_id))
     if status in ("open", "closed"):
         params.append(status)
         where.append(f"status = ${len(params)}")
@@ -3168,11 +3208,19 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_authenti
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "title is required")
+    # Sprint v1.37 (audit B7 P0): every decision belongs to the user's
+    # active workspace. Without this, console.POST /api/decisions
+    # silently created rows with workspace_id=NULL and the list
+    # endpoint then leaked them as "shared" across tenants on the
+    # legacy fallback in 33_decisions_workspace_id.sql.
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        raise HTTPException(400, "active workspace is required to create a decision")
     pool = await _dec_pool()
     row = await pool.fetchrow(
         """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
            RETURNING *""",
         title,
         body.get("description") or "",
@@ -3181,6 +3229,7 @@ async def api_decisions_create(body: dict, user: dict = Depends(require_authenti
         user["id"],
         body.get("assignee_id"),
         body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
+        workspace_id,
     )
     return _dec_row_to_dict(row)
 
@@ -3237,10 +3286,28 @@ async def api_decisions_update(decision_id: int, body: dict, user: dict = Depend
         raise HTTPException(400, "no updatable fields supplied")
     if body.get("status") == "closed" and "closed_at" not in body:
         sets.append("closed_at = COALESCE(closed_at, NOW())")
+    # Sprint v1.37: pin UPDATE to (id, workspace_id) — defense-in-depth
+    # against a future code path that loads ``existing`` from a
+    # different source. ``existing`` already came from
+    # ``_dec_load_with_visibility`` which itself filters by workspace,
+    # so ``existing["workspace_id"]`` is the active workspace by
+    # construction.
     params.append(decision_id)
-    sql = f"UPDATE decisions SET {', '.join(sets)} WHERE id = ${len(params)} RETURNING *"
+    decision_ref = f"${len(params)}"
+    params.append(existing["workspace_id"])
+    workspace_ref = f"${len(params)}"
+    sql = (
+        f"UPDATE decisions SET {', '.join(sets)} "
+        f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
+    )
     pool = await _dec_pool()
     row = await pool.fetchrow(sql, *params)
+    if not row:
+        # The visibility check passed but the row vanished between
+        # SELECT and UPDATE (e.g. a concurrent delete, or the row was
+        # moved to a different workspace). Treat as not-found rather
+        # than 500.
+        raise HTTPException(404, f"Decision {decision_id} not found")
     return _dec_row_to_dict(row)
 
 
@@ -3252,7 +3319,14 @@ async def api_decisions_delete(decision_id: int, user: dict = Depends(require_au
     if not _dec_can_delete(existing, user):
         raise HTTPException(403, "only the creator or an admin can delete a decision")
     pool = await _dec_pool()
-    await pool.execute("DELETE FROM decisions WHERE id = $1", decision_id)
+    # Sprint v1.37: pin DELETE to (id, workspace_id) — same rationale
+    # as the UPDATE above. ``existing["workspace_id"]`` came from
+    # ``_dec_load_with_visibility`` which is already workspace-scoped.
+    await pool.execute(
+        "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+        decision_id,
+        existing["workspace_id"],
+    )
     return {"deleted": True, "id": decision_id}
 
 
