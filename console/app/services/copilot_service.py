@@ -42,6 +42,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.services import audit_service, auth, llm_client, mcp_registry, permissions
+from app.services import memory_service  # v1.44.3 Tarea D — memory injection
 from app.services import tool_manifest
 
 
@@ -941,9 +942,31 @@ async def _run_loop(
         history = await _load_history(conn, conversation_id)
     initial_len = len(history)
 
+    # v1.44.3 (Tarea D): append the user's memory block to the system
+    # prompt so the LLM sees recorded facts + preferences + recent
+    # summaries on every turn. Identity transform when the user has
+    # no memory rows — keeps the immutable rules cache-friendly.
+    user_id_for_memory = user.get("id")
+    if user_id_for_memory is not None:
+        try:
+            system_prompt_for_call = await memory_service.build_system_prompt_with_memory(
+                int(user_id_for_memory), SYSTEM_PROMPT,
+            )
+        except Exception:                          # noqa: BLE001
+            # Memory is a personalisation layer — never block a turn
+            # because facts won't load. Fall back to the base prompt.
+            import logging
+            logging.getLogger(__name__).exception(
+                "memory_service.build_system_prompt_with_memory failed; "
+                "falling back to base SYSTEM_PROMPT",
+            )
+            system_prompt_for_call = SYSTEM_PROMPT
+    else:
+        system_prompt_for_call = SYSTEM_PROMPT
+
     try:
         reply_text, _viewer_urls, final_msgs = await llm_client.chat(
-            system=SYSTEM_PROMPT,
+            system=system_prompt_for_call,
             messages=history,
             tools=tools,
             invoke_tool=invoke_tool,
@@ -1124,6 +1147,23 @@ async def _run_loop(
     if warning:
         reply_text = f"{warning}\n\n{reply_text or ''}".rstrip()
 
+    # v1.44.3 (Tarea D): after the turn closes, run a best-effort
+    # LLM extraction pass to detect durable facts worth remembering.
+    # Failure is logged and ignored — memory enrichment must never
+    # block a successful turn.
+    if user.get("id") is not None and reply_text:
+        try:
+            await _maybe_extract_facts(
+                user_id=int(user["id"]),
+                history=history,
+                reply_text=reply_text,
+            )
+        except Exception:                          # noqa: BLE001
+            import logging as _lg
+            _lg.getLogger(__name__).exception(
+                "fact extraction failed; turn already returned",
+            )
+
     return {
         "message_id": message_id,
         "reply": reply_text,
@@ -1133,6 +1173,36 @@ async def _run_loop(
         "pending_actions": pending_actions,
         "requires_approval": bool(pending_actions),
     }
+
+
+async def _maybe_extract_facts(
+    *, user_id: int, history: list[dict], reply_text: str
+) -> None:
+    """Append the assistant's reply to ``history`` and ask the memory
+    service to extract any durable facts. Cheap-and-bounded: only
+    the last ~3 turns are passed in to keep the extraction prompt
+    short. Returns nothing — facts persist via memory_service.
+
+    Wrapped here (rather than inline) so a test can monkeypatch the
+    function name without having to replumb the long run_turn body.
+    """
+    tail = list(history)[-6:] + [{"role": "assistant", "content": reply_text}]
+    async def _llm_text(system: str, messages: list[dict]) -> str:
+        reply, _v, _m = await llm_client.chat(
+            system=system,
+            messages=messages,
+            tools=[],
+            invoke_tool=lambda *_args, **_kw: {},
+            tool_server_map={},
+            on_event=None,
+        )
+        return reply or ""
+    await memory_service.extract_facts_from_turn(
+        user_id=user_id,
+        conversation_history=tail,
+        llm_call=_llm_text,
+        max_new_facts=3,
+    )
 
 
 async def run_turn(
