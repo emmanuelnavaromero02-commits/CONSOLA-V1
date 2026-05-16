@@ -1,0 +1,158 @@
+"""Sprint v1.43.2 (Codex P1-5) — cartridge /health mirrors startup state.
+
+Pre-v1.43.2, every cartridge's lifespan swallowed schema/migration
+exceptions and /health unconditionally returned ``{"ok": True}``.
+Result: a cartridge that failed to migrate its jobs table would still
+be marked healthy by Kubernetes and accept traffic — but every
+schedule attempt would crash at the DB layer.
+
+The fix tracks per-step startup results in ``app.state`` and the
+/health endpoint returns 503 with the captured errors if any step
+failed.
+
+These tests run each cartridge's ASGI app via TestClient with the
+lifespan executed end-to-end and assert the contract.
+"""
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+
+REPO = Path(__file__).resolve().parents[1]
+CARTRIDGES = [
+    ("replicon",           "replicon"),
+    ("sap_hcm",            "sap_hcm"),
+    ("sap_s4hana",         "sap_s4hana"),
+    ("sap_successfactors", "sap_successfactors"),
+]
+
+
+def _isolated_cartridge(name: str):
+    """Import ``cartridges/<name>/app/main.py`` with a clean sys.path."""
+    sys.path[:] = [
+        p for p in sys.path
+        if not any(s in p for s in ("/cartridges/", "/console", "/vault",
+                                     "/workspace", "/mcp-infra",
+                                     "/refinement"))
+    ]
+    sys.path.insert(0, str(REPO / "cartridges" / name))
+    for mod in list(sys.modules):
+        if mod == "app" or mod.startswith("app."):
+            del sys.modules[mod]
+    return importlib.import_module("app.main")
+
+
+@pytest.fixture
+def env_for_cartridges(monkeypatch):
+    """Cartridges crash at import without these. Provide stubs that
+    let the module load — we're testing /health behaviour, not the
+    SAP/Replicon network layer."""
+    monkeypatch.setenv("INTERNAL_API_KEY", "x" * 64)
+    monkeypatch.setenv("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "x" * 64)
+    monkeypatch.setenv("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "x" * 64)
+    monkeypatch.setenv("APP_ENV", "test")
+    # SAP cartridges read field encryption + DB credentials at import.
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://x:y@nohost:5432/x")
+
+
+# ── Structural test: every cartridge declares the contract ────────────────
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_cartridge_lifespan_sets_startup_state_keys(
+    env_for_cartridges, cartridge, service_label,
+):
+    """Static check that ``app.state.startup_ok`` and
+    ``startup_errors`` are written by lifespan. We grep the source —
+    the alternative (actually running lifespan + DB) is brittle in CI."""
+    main_py = (REPO / "cartridges" / cartridge / "app" / "main.py").read_text()
+    assert "app.state.startup_ok" in main_py, (
+        f"{cartridge}/app/main.py must set app.state.startup_ok in lifespan"
+    )
+    assert "app.state.startup_errors" in main_py, (
+        f"{cartridge}/app/main.py must set app.state.startup_errors in lifespan"
+    )
+
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_cartridge_health_route_reads_startup_state(cartridge, service_label):
+    """The /health endpoint must consult app.state.startup_ok and
+    return 503 when it's False. Grep is sufficient — keeps the test
+    deterministic in CI without a live DB."""
+    health_py = (
+        REPO / "cartridges" / cartridge / "app" / "api" / "routes_health.py"
+    ).read_text()
+    assert "startup_ok" in health_py, (
+        f"{cartridge} /health must consult startup_ok"
+    )
+    assert "503" in health_py, (
+        f"{cartridge} /health must return 503 when startup failed"
+    )
+    assert f'"{service_label}"' in health_py or f"'{service_label}'" in health_py
+
+
+# ── Behavioural test: run lifespan + hit /health ──────────────────────────
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_cartridge_health_returns_503_when_startup_failed(
+    env_for_cartridges, cartridge, service_label, monkeypatch,
+):
+    """Drive lifespan with a broken job_runner. /health must return
+    503 and list the failure in startup_errors."""
+    from fastapi.testclient import TestClient
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    # Sabotage job_runner.ensure_schema so the lifespan records a
+    # failure but still completes.
+    async def _boom():
+        raise RuntimeError("simulated DB outage")
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _boom)
+
+    with TestClient(main_mod.app) as client:
+        r = client.get("/health")
+
+    assert r.status_code == 503, (
+        f"{cartridge} /health must return 503 when startup_ok=False, got {r.status_code}"
+    )
+    body = r.json()
+    assert body["ok"] is False
+    assert body["service"] == service_label
+    assert any("job_runner" in e for e in body["startup_errors"]), body
+
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_cartridge_health_returns_200_when_startup_clean(
+    env_for_cartridges, cartridge, service_label, monkeypatch,
+):
+    """The healthy path: every lifespan step succeeds → /health = 200."""
+    from fastapi.testclient import TestClient
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    async def _ok():
+        return None
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
+    monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
+    # SAP cartridges also call catalog_service._seed_if_empty().
+    if cartridge != "replicon":
+        monkeypatch.setattr(
+            main_mod.catalog_service, "_seed_if_empty", lambda: None,
+        )
+
+    with TestClient(main_mod.app) as client:
+        r = client.get("/health")
+
+    assert r.status_code == 200, (
+        f"{cartridge} /health must return 200 when every step is clean, "
+        f"got {r.status_code} body={r.text!r}"
+    )
+    body = r.json()
+    assert body["ok"] is True
+    assert body["startup_errors"] == []

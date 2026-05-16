@@ -19,13 +19,26 @@ from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # v1.43.2 (Codex P1-5): record per-step startup results so /health
+    # can report a real readiness signal. Pre-v1.43.2, schema-migration
+    # failures were silently swallowed and /health stayed ``ok: true``
+    # — Kubernetes would route traffic at a broken cartridge.
+    app.state.startup_ok = False
+    app.state.startup_errors = []
+
+    # get_internal_api_key() is intentionally NOT caught: a missing
+    # INTERNAL_API_KEY is unrecoverable and must fail the process.
     get_internal_api_key()
+
     try:
-        await job_runner.ensure_schema()   # idempotent: creates jobs table if missing
-        await job_runner.cleanup_stale()   # mark orphaned jobs as failed
-    except Exception:
-        # DB unavailable — cartridge still serves /health for the test harness.
-        pass
+        await job_runner.ensure_schema()
+        await job_runner.cleanup_stale()
+    except Exception as e:
+        app.state.startup_errors.append(f"job_runner: {type(e).__name__}: {e}")
+
+    if not app.state.startup_errors:
+        app.state.startup_ok = True
+
     async with _mcp_app.router.lifespan_context(app):
         yield
 

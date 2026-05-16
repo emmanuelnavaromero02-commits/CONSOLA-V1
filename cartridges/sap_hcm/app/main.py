@@ -26,14 +26,27 @@ _mcp_app = mcp.http_app(path="/")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # v1.43.2 (Codex P1-5): track per-step startup state — see
+    # cartridges/replicon/app/main.py for the rationale.
+    app.state.startup_ok = False
+    app.state.startup_errors = []
+
     get_internal_api_key()
+
     try:
         await job_runner.ensure_schema()
         await job_runner.cleanup_stale()
-    except Exception:
-        # DB unavailable — cartridge still serves /health, /skills/entities (yaml fallback)
-        pass
-    catalog_service._seed_if_empty()
+    except Exception as e:
+        app.state.startup_errors.append(f"job_runner: {type(e).__name__}: {e}")
+
+    try:
+        catalog_service._seed_if_empty()
+    except Exception as e:
+        app.state.startup_errors.append(f"catalog_seed: {type(e).__name__}: {e}")
+
+    if not app.state.startup_errors:
+        app.state.startup_ok = True
+
     async with _mcp_app.router.lifespan_context(app):
         yield
 
