@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -194,6 +195,39 @@ def test_pipeline_js_hides_deploy_button_outside_dev_mode():
     assert "/api/system/info" in js
     assert "dev_mode" in js
     assert "btn-deploy" in js
+
+
+def test_legacy_js_gates_every_dev_only_action():
+    """v1.43.2 (Frontend R3 hardening): every JS function in legacy.js
+    that ultimately calls a mcp-infra dev-only tool
+    (airflow_create_dag, airflow_delete_dag, airflow_set_variable)
+    must short-circuit via _isDevMode()/_gateDevOnlyAction in
+    production. Pre-R3, only deployDag was guarded — renameDag,
+    deleteDag and _setEntitySchedule would surface raw
+    PermissionErrors when the operator clicked them in prod."""
+    js = (REPO / "console" / "app" / "static" / "js" / "studio"
+          / "legacy.js").read_text(encoding="utf-8")
+    # The cache helper exists.
+    assert "_devModeCache" in js
+    assert "/api/system/info" in js
+    # Every dev-only action body must reference _isDevMode or
+    # _gateDevOnlyAction. Locate each function and assert.
+    for func_name in ("deployDag", "renameDag", "deleteDag",
+                      "_setEntitySchedule"):
+        # Match the function source up to the next ``export async``
+        # or end of file. Ensure the gate appears within that span.
+        m = re.search(
+            rf"export async function {func_name}\([^)]*\)\s*\{{(.*?)"
+            r"(?=\n    export async function |\Z)",
+            js, re.DOTALL,
+        )
+        assert m, f"function {func_name} not found in legacy.js"
+        body = m.group(1)
+        assert ("_gateDevOnlyAction" in body or "_isDevMode" in body), (
+            f"{func_name} must short-circuit on _isDevMode / "
+            "_gateDevOnlyAction — otherwise it surfaces a raw "
+            "PermissionError in production."
+        )
 
 
 def test_aws_compose_app_env_defaults_production():

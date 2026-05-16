@@ -575,6 +575,11 @@ import { state } from './legacy-state.js';
           body: JSON.stringify({ trigger_type: triggerType, cron_expression: cronExpression }),
         }
       );
+      // v1.43.2 (Frontend R3): airflow_set_variable is dev-only in
+      // mcp-infra. Skip the Airflow side-call in production — the
+      // entity_config is the source of truth and a separate prod
+      // pipeline syncs Variables out-of-band.
+      if (!(await _isDevMode())) return;
       // 2. Update Airflow DAG schedule via MCP infra
       const dagId = ((state._currentCartridge?.entities || [])
         .find(e => (e.entity || e.id) === entity) || {}).dag_id || '';
@@ -3040,16 +3045,31 @@ FROM silver_${entity || 'entity'}`;
     // same dev-mode answer. Pre-R2 the button was unconditionally
     // active and clicking it in production surfaced the raw
     // PermissionError from infra__airflow_create_dag.
+    //
+    // v1.43.2 (Frontend R3 hardening): cache the failure path too.
+    // Pre-R3, an HTTP-level error (401, 5xx) returned False without
+    // setting _devModeCache, so every subsequent click would refetch.
+    // Functionally fail-closed but defeated the cache contract.
     let _devModeCache = null;
     async function _isDevMode() {
       if (_devModeCache !== null) return _devModeCache;
       try {
         const r = await fetch('/api/system/info', {credentials: 'same-origin'});
-        if (!r.ok) return false;
+        if (!r.ok) { _devModeCache = false; return false; }
         const info = await r.json();
         _devModeCache = !!info.dev_mode;
       } catch { _devModeCache = false; }
       return _devModeCache;
+    }
+
+    // v1.43.2 (Frontend R3 hardening): factored gate. Every action that
+    // ultimately calls a mcp-infra dev-only tool (airflow_create_dag,
+    // airflow_delete_dag, etc) must short-circuit with this in
+    // production. Returns true when the call should proceed.
+    async function _gateDevOnlyAction(messageEs) {
+      if (await _isDevMode()) return true;
+      setDeployMsg(messageEs, 'err');
+      return false;
     }
 
     export async function deployDag() {
@@ -3124,6 +3144,11 @@ FROM silver_${entity || 'entity'}`;
     }
 
     export async function renameDag() {
+      // v1.43.2 (Frontend R3): rename writes a new DAG file via
+      // airflow_create_dag — same dev-only restriction as deploy.
+      if (!(await _gateDevOnlyAction(
+        'Renombrar DAG está deshabilitado fuera de desarrollo.',
+      ))) return;
       if (!state._selectedDag || state._selectedDag === '__new__') {
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
@@ -3205,6 +3230,11 @@ FROM silver_${entity || 'entity'}`;
     }
 
     export async function deleteDag() {
+      // v1.43.2 (Frontend R3): airflow_delete_dag is gated by
+      // _is_development() in mcp-infra — same dev-only contract.
+      if (!(await _gateDevOnlyAction(
+        'Eliminar DAG está deshabilitado fuera de desarrollo.',
+      ))) return;
       if (!state._selectedDag || state._selectedDag === '__new__') {
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
