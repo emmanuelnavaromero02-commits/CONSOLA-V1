@@ -177,6 +177,37 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # v1.44.2 — Next.js 14 frontend. Consumes the FastAPI /api/* surface
+  # via two URLs:
+  #   - server-side (RSC / route handlers): API_INTERNAL_URL → http://console:8000
+  #   - browser:                            NEXT_PUBLIC_API_BASE → ${CONSOLE_PUBLIC_URL}
+  # Container does NOT receive INTERNAL_API_KEY — it talks to the
+  # console with the user's session cookie (JWT httpOnly) only. The
+  # legacy admin pages still live under /static/* of the Python
+  # console; this container is additive.
+  console_next:
+    build:
+      context: ../console-next
+      dockerfile: Dockerfile
+    container_name: omega_console_next
+    environment:
+      NODE_ENV: production
+      API_INTERNAL_URL: http://console:8000
+      NEXT_PUBLIC_API_BASE: ${CONSOLE_PUBLIC_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      console:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+
   workspace:
     build:
       context: ../workspace

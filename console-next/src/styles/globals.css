@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* v1.44.2 — design tokens mirroring console/app/static/css/tokens.css.
+   Values are HSL channels (without the hsl() wrapper) so Tailwind can
+   compose them with arbitrary alpha. */
+@layer base {
+  :root {
+    --background:           210 24% 96%;   /* #f5f7fa */
+    --foreground:           215 28% 17%;   /* #0f172a */
+
+    --card:                 0 0% 100%;
+    --card-foreground:      215 28% 17%;
+
+    --popover:              0 0% 100%;
+    --popover-foreground:   215 28% 17%;
+
+    --primary:              208 92% 43%;   /* SAP blue #0a6ed1 */
+    --primary-foreground:   0 0% 100%;
+
+    --secondary:            215 17% 92%;
+    --secondary-foreground: 215 28% 17%;
+
+    --muted:                215 17% 95%;
+    --muted-foreground:     215 12% 45%;
+
+    --accent:               208 92% 43%;
+    --accent-foreground:    0 0% 100%;
+
+    --destructive:          0 65% 41%;     /* #b3261e */
+    --destructive-foreground: 0 0% 100%;
+
+    --success:              140 76% 27%;   /* #117a3d */
+    --success-foreground:   0 0% 100%;
+
+    --warning:              37 100% 35%;   /* #b06d00 */
+    --warning-foreground:   0 0% 100%;
+
+    --border:               216 16% 88%;
+    --input:                216 16% 88%;
+    --ring:                 208 92% 43%;
+
+    --radius-sm: 0.25rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+
+    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .dark {
+    --background:           213 30% 10%;   /* #0f1822 */
+    --foreground:           214 36% 93%;   /* #e6edf6 */
+
+    --card:                 215 30% 14%;
+    --card-foreground:      214 36% 93%;
+
+    --popover:              215 30% 14%;
+    --popover-foreground:   214 36% 93%;
+
+    --primary:              207 71% 60%;   /* #4ea3e0 */
+    --primary-foreground:   215 28% 17%;
+
+    --secondary:            215 25% 22%;
+    --secondary-foreground: 214 36% 93%;
+
+    --muted:                215 25% 18%;
+    --muted-foreground:     215 12% 65%;
+
+    --accent:               207 71% 60%;
+    --accent-foreground:    215 28% 17%;
+
+    --destructive:          5 71% 65%;     /* #e0716b */
+    --destructive-foreground: 215 28% 17%;
+
+    --success:              140 41% 50%;   /* #4cb27b */
+    --success-foreground:   215 28% 17%;
+
+    --warning:              37 60% 55%;    /* #d4a042 */
+    --warning-foreground:   215 28% 17%;
+
+    --border:               215 20% 28%;
+    --input:                215 20% 28%;
+    --ring:                 207 71% 60%;
+  }
+
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
