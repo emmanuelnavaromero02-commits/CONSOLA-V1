@@ -33,10 +33,14 @@ def test_production_defaults_true():
         assert auth.cookie_secure() is True
 
 
-def test_no_app_env_defaults_to_dev_false():
-    # APP_ENV absent → development semantics → False (preserves local dev).
+def test_no_app_env_defaults_to_production_secure():
+    # v1.43.2 (Codex P1-2): unset APP_ENV used to default to dev
+    # semantics — which meant a forgotten env var silently shipped
+    # insecure cookies to production. The default is now flipped:
+    # APP_ENV unset → production → Secure=True. Local dev opts in
+    # explicitly via APP_ENV=development in infra/docker-compose.yml.
     with _with_env():
-        assert auth.cookie_secure() is False
+        assert auth.cookie_secure() is True
 
 
 def test_staging_treated_as_secure():

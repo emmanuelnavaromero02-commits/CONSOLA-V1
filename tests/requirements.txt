@@ -9,7 +9,10 @@ pytest>=7.4
 httpx>=0.27          # required by fastapi.testclient
 
 # Cartridge runtime imports pulled in transitively when TestClient boots an app
-fastapi>=0.110
+# v1.43.2 (DevOps R1 follow-up): fastapi >= 0.121.0 is the first
+# version that allows starlette >= 0.49.0 transitively.
+fastapi>=0.121.0
+starlette>=0.49.1
 uvicorn[standard]>=0.27
 pydantic>=2.6
 pydantic-settings>=2.2

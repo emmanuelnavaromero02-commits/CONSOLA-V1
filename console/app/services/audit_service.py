@@ -51,6 +51,12 @@ async def record_event(
             tool_args_json = json.dumps(tool_args) if tool_args is not None else None
 
             await pool.execute(
+                # v1.43.2 Claude B5: ON CONFLICT DO NOTHING swallows
+                # exact-duplicate inserts (same user/action/resource at
+                # the same created_at timestamp) so a retry of the same
+                # admin action no longer inflates the forensic trail.
+                # The constraint audit_events_dedup_uniq is added by
+                # migration 44.
                 """
                 INSERT INTO audit_events
                 (user_id, email, action, resource_type, resource_id,
@@ -59,6 +65,8 @@ async def record_event(
                 VALUES ($1, $2, $3, $4, $5,
                         $6, $7, $8, $9::jsonb,
                         $10, $11::jsonb, $12, $13, $14)
+                ON CONFLICT (user_id, action, resource_id, created_at)
+                  DO NOTHING
                 """,
                 user_id,
                 email,

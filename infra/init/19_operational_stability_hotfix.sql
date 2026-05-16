@@ -1,20 +1,12 @@
 -- MODecissionsPaaS — operational stability hotfix
 -- Idempotent fixes for existing local/staging volumes.
-
--- Security tables may be absent in already-created Docker volumes.
-CREATE TABLE IF NOT EXISTS audit_events (
-    id            BIGSERIAL PRIMARY KEY,
-    user_id       BIGINT,
-    email         TEXT,
-    action        TEXT NOT NULL,
-    resource_type TEXT,
-    resource_id   TEXT,
-    ip            TEXT,
-    user_agent    TEXT,
-    status        TEXT,
-    metadata      JSONB,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+--
+-- v1.43.2 (Claude B5): the audit_events CREATE TABLE block previously
+-- here was a verbatim duplicate of infra/init/16_audit_events.sql.
+-- Both are CREATE TABLE IF NOT EXISTS so the duplication was harmless
+-- at runtime, but a future PR could modify one and forget the other.
+-- The block was removed; 16_audit_events.sql remains the single source
+-- of truth and migration 44 adds the new UNIQUE constraint.
 
 CREATE TABLE IF NOT EXISTS login_attempts (
     id          BIGSERIAL PRIMARY KEY,

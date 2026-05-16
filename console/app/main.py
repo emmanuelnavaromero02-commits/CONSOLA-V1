@@ -1026,10 +1026,19 @@ async def system_info(user: dict = Depends(require_authenticated)):
                 break
         except Exception:
             continue
+    # v1.43.2 (Frontend R1 hardening): expose ``dev_mode`` so the UI
+    # can hide CTAs that gate on dev-only mcp-infra tools (Studio
+    # Deploy DAG, etc). Pre-v1.43.2 the console rendered those
+    # buttons unconditionally; clicking them in production now surfaces
+    # a PermissionError from airflow_create_dag — which is correct but
+    # confusing. The button is hidden by checking this flag.
+    app_env = os.environ.get("APP_ENV", "production").lower()
     return {
         "version": version,
         "env": os.environ.get("MODE", "local"),
         "service": "console",
+        "app_env": app_env,
+        "dev_mode": app_env in {"development", "dev", "local", "test"},
     }
 
 

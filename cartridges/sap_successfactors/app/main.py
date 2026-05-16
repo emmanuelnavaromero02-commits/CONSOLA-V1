@@ -26,16 +26,29 @@ _mcp_app = mcp.http_app(path="/")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # v1.43.2 (Codex P1-5): track per-step startup state — see
+    # cartridges/replicon/app/main.py for the rationale.
+    app.state.startup_ok = False
+    app.state.startup_errors = []
+
     get_internal_api_key()
+
     try:
         await job_runner.ensure_schema()
         await job_runner.cleanup_stale()
-    except Exception:
-        # DB unavailable — cartridge still serves /health, /skills/entities (yaml fallback)
-        pass
-    # Register cartridge header + entities so Studio's dropdown lists this
-    # source even if no client has hit /entities yet.
-    catalog_service._seed_if_empty()
+    except Exception as e:
+        app.state.startup_errors.append(f"job_runner: {type(e).__name__}: {e}")
+
+    try:
+        # Register cartridge header + entities so Studio's dropdown lists
+        # this source even if no client has hit /entities yet.
+        catalog_service._seed_if_empty()
+    except Exception as e:
+        app.state.startup_errors.append(f"catalog_seed: {type(e).__name__}: {e}")
+
+    if not app.state.startup_errors:
+        app.state.startup_ok = True
+
     async with _mcp_app.router.lifespan_context(app):
         yield
 
@@ -50,7 +63,55 @@ app.add_middleware(RequestIDMiddleware)
 app.include_router(health_router)
 app.include_router(skills_router)
 app.include_router(console_router)
-app.mount("/mcp/rpc", InternalApiKeyASGIGuard(_mcp_app))
+
+
+# v1.43.2 (LLM R1 hardening): /mcp/* must respect startup state. See
+# cartridges/replicon/app/main.py for the rationale.
+
+class _MCPStartupGuard:
+    """ASGI wrapper that 503s when startup_ok=False for /mcp/* paths."""
+
+    def __init__(self, inner, fastapi_app: FastAPI):
+        self._inner = inner
+        self._app = fastapi_app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and not getattr(
+            self._app.state, "startup_ok", False,
+        ):
+            import json as _json
+            errors = list(getattr(self._app.state, "startup_errors", []) or [])
+            body = _json.dumps({
+                "error": "cartridge_not_ready",
+                "startup_errors": errors,
+            }).encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self._inner(scope, receive, send)
+
+
+app.mount("/mcp/rpc", _MCPStartupGuard(InternalApiKeyASGIGuard(_mcp_app), app))
+
+
+def _require_startup_ok(request: "Request") -> None:
+    from fastapi import HTTPException
+    if not getattr(request.app.state, "startup_ok", False):
+        errors = list(getattr(request.app.state, "startup_errors", []) or [])
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "cartridge_not_ready", "startup_errors": errors},
+        )
+
+
+from fastapi import Request  # noqa: E402
 
 
 # ── REST adapter — contract for the console MCP registry ─────────────────────
@@ -78,7 +139,7 @@ def _tool_schema(tool_fn) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
 
-@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 async def mcp_tools():
     tool_list = await mcp.list_tools()
     tools = []
@@ -97,7 +158,7 @@ async def mcp_tools():
     return {"tools": tools}
 
 
-@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
+@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 async def mcp_invoke(body: dict):
     import json as _json
     tool_name = body.get("tool", "")
@@ -135,7 +196,7 @@ async def mcp_invoke(body: dict):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.post("/mcp-reload", dependencies=[Depends(verify_api_key)])
+@app.post("/mcp-reload", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 def mcp_reload():
     count = load_custom_tools()
     return JSONResponse({"reloaded": count, "status": "ok"})

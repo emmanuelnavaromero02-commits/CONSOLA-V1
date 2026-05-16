@@ -767,9 +767,38 @@ function _wireDelegation() {
   });
 }
 
+// v1.43.2 (Frontend R1 hardening): the Deploy DAG button calls
+// infra__airflow_create_dag, which is gated by _is_development() in
+// mcp-infra. With APP_ENV=production (the new safe default), the
+// tool refuses to run and the user sees a confusing "disabled outside
+// development" error after clicking. Hide the CTA in production
+// instead — surface a clear hint pointing to the runbook.
+async function _gateDevModeUI() {
+  try {
+    const r = await fetch('/api/system/info', {credentials: 'same-origin'});
+    if (!r.ok) return;
+    const info = await r.json();
+    if (!info.dev_mode) {
+      const btn = document.getElementById('btn-deploy');
+      if (btn) {
+        btn.disabled = true;
+        btn.title = 'Deploy is disabled outside development. ' +
+                    'Use the Airflow UI or the deploy pipeline instead.';
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+      }
+    }
+  } catch (e) {
+    // /api/system/info unauthenticated path returns 401; in that case
+    // we leave the button as-is (login gate is upstream).
+  }
+}
+
+
 document.addEventListener('DOMContentLoaded', () => {
   _wireStaticListeners();
   _wireDelegation();
+  _gateDevModeUI();
 
   // Support ?tab=dags[&dag=dag_id] URL params
   const p   = new URLSearchParams(location.search);

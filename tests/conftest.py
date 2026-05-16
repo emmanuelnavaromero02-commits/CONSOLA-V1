@@ -20,6 +20,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CARTRIDGES_ROOT = REPO_ROOT / "cartridges"
 
+# v1.43.2 (Codex P1-2): the production code now defaults APP_ENV to
+# ``production`` so unset envs fail closed. The test harness explicitly
+# opts in to dev/test mode — mirroring the compose file pattern — so
+# importing console/app/services/auth.py + vault/app/main.py at
+# collection time doesn't trip the production pair-key check.
+os.environ.setdefault("APP_ENV", "test")
+
+
 PRIORITY_CARTRIDGES = ("sap_successfactors", "sap_hcm", "sap_s4hana")
 ALL_SAP_CARTRIDGES = tuple(
     sorted(
@@ -66,6 +74,26 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     # directly against the live Postgres stack.
     if hasattr(main, "catalog_service"):
         main.catalog_service._seed_if_empty = lambda: None
+
+    # v1.43.2 (Codex P1-5): /health now requires app.state.startup_ok=True
+    # for a 200. Pre-seed a clean state for tests that build a TestClient
+    # WITHOUT a ``with`` block (so lifespan never runs).
+    main.app.state.startup_ok = True
+    main.app.state.startup_errors = []
+
+    # v1.43.2 (LLM R1 hardening): tests that DO enter the TestClient
+    # ``with`` block run the lifespan end-to-end, which calls
+    # job_runner.ensure_schema + cleanup_stale against a real Postgres.
+    # Without a DB, the lifespan records errors and flips startup_ok
+    # back to False — and /mcp/* now refuses traffic with 503. Stub
+    # job_runner so the lifespan completes cleanly. The dedicated
+    # fail-fast tests (tests/test_cartridge_startup_fail_fast.py) own
+    # the failure-path coverage and apply their own monkeypatch.
+    if hasattr(main, "job_runner"):
+        async def _ok():
+            return None
+        main.job_runner.ensure_schema = _ok
+        main.job_runner.cleanup_stale = _ok
     return main
 
 

@@ -180,6 +180,11 @@ Step DAGS — gestión de DAGs de Airflow del cartucho.
 - Lista DAGs: airflow_list_dags() (filtra por nombre/tag del cartucho).
 - Código fuente existente: dag_get_source(cartridge_id, dag_id).
 - Crear/actualizar: airflow_create_dag(dag_id, code, cartridge_id) + dag_save_source.
+  v1.43.2 (Frontend R2): airflow_create_dag está deshabilitado fuera
+  de modo desarrollo — fallará con PermissionError en producción.
+  Si el entorno NO es development, NO sugieras esta tool: indica al
+  operador que use el pipeline de despliegue (CI/CD) o la UI de
+  Airflow directamente. Puedes consultar el modo via /api/system/info.
 - Disparar: airflow_trigger_dag(dag_id).
 - Estado y logs: airflow_get_run_status, airflow_list_dag_runs, airflow_get_task_logs.
 - Si el usuario subió un spec (OpenAPI/WSDL/OData), léelo con minio_read_spec y genera DAG.
