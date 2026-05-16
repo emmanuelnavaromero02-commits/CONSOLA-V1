@@ -75,6 +75,14 @@ SYSTEM_PROMPT = (
     "obtenerlo, NUNCA des un número aproximado. Responde literalmente "
     "'No tengo ese dato concreto. ¿Quieres que consulte X tool para "
     "verificarlo?'\n"
+    "- MULTI-FUENTE: si la pregunta requiere datos de más de un cartucho "
+    "(p.ej. 'compara horas Replicon contra presupuesto SAP', 'estado de "
+    "extracciones hoy'), llama las tools necesarias EN SECUENCIA y "
+    "combina los resultados en una respuesta única y coherente. Incluye "
+    "una tarjeta de cita por cada cartucho consultado. Límite duro: "
+    "máximo 3 cartuchos distintos por turno — si necesitas más, "
+    "responde con los 3 más relevantes y ofrece consultar los otros "
+    "en un turno siguiente.\n"
     "- Lenguaje claro y conciso; sin jerga técnica innecesaria. Castellano "
     "por defecto, salvo que el usuario te escriba en otro idioma."
 )
@@ -119,6 +127,12 @@ MAX_TOOL_ARGS_BYTES = 16_000
 # bloat conversation_messages.citations (JSONB). 20 is more than enough
 # for the UI — the LLM cites top-N sources, not every row.
 MAX_CITATIONS_PER_MESSAGE = 20
+
+# Sprint v1.43 (multi-source): bound how many distinct cartridge servers
+# a single turn can fan out to. Keeps cost + latency predictable and
+# the citation grid readable. If the LLM keeps reaching for more, we
+# log a warning and trim the citations exposed to the UI.
+MAX_DISTINCT_SOURCES_PER_TURN = 3
 
 # Pattern for sanitising upstream error strings (from MCP tool results
 # or invocation exceptions) before they reach ``audit_events.metadata.error``.
@@ -896,6 +910,37 @@ async def _run_loop(
         if inv.get("status") == "success":
             for c in inv.get("citations") or []:
                 citations_summary.append(c)
+
+    # v1.43 multi-source guardrail: count distinct sources actually
+    # consulted (not just cited — an invocation with no citations still
+    # consumed a server). Trim citations to keep only the top
+    # MAX_DISTINCT_SOURCES_PER_TURN sources by appearance order; the
+    # LLM was told the cap in the system prompt and is expected to
+    # behave, but we enforce it server-side so a misbehaving model
+    # can't flood the UI.
+    distinct_sources = []
+    for inv in invocations:
+        if inv.get("status") == "success":
+            src = inv.get("server")
+            if src and src not in distinct_sources:
+                distinct_sources.append(src)
+    if len(distinct_sources) > MAX_DISTINCT_SOURCES_PER_TURN:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(
+            "copilot.multi_source_limit_exceeded",
+            extra={
+                "request_id": None,   # request_id_var still set via middleware
+                "conversation_id": conversation_id,
+                "user_id": user.get("id"),
+                "sources_seen": distinct_sources,
+                "cap": MAX_DISTINCT_SOURCES_PER_TURN,
+            },
+        )
+        allowed = set(distinct_sources[:MAX_DISTINCT_SOURCES_PER_TURN])
+        citations_summary = [
+            c for c in citations_summary if c.get("source") in allowed
+        ]
+
     if len(citations_summary) > MAX_CITATIONS_PER_MESSAGE:
         citations_summary = citations_summary[:MAX_CITATIONS_PER_MESSAGE]
 
