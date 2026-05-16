@@ -680,3 +680,48 @@ Laptop ──WG tunnel──► EC2 VPN ──VPC route──► EC2 App :8000 �
 - [ ] §8  `docker compose ps` muestra todos los servicios `Up` (init en `Exited 0`)
 - [ ] §9  `smoke-test.ps1` reporta 6/6
 - [ ] §11 Backup `pg_dumpall` programado en cron — recurrente
+
+---
+
+## v1.43.1 — Cartridges deployed separately (Codex P0-4)
+
+This compose file (**`docker-compose.aws.yml`**) **does NOT include
+the 4 cartridges** (`replicon`, `sap_hcm`, `sap_s4hana`,
+`sap_successfactors`). Reason: cartridges have independent scaling +
+release cadence from the core platform and typically live in a
+separate compute pool (their own EC2, ECS service, or Kubernetes
+namespace).
+
+What the AWS compose **does** ship:
+
+1. **DAG mounts** — `cartridges/<c>/dags/` is mounted into the
+   Airflow workers, so the DAGs still parse and schedule.
+2. **Cartridge URL env vars** — `SAP_HCM_URL`, `SAP_S4HANA_URL`,
+   `SAP_SUCCESSFACTORS_URL`, `REPLICON_URL` are threaded into both
+   `airflow` and `airflow-scheduler`. The DAGs read these env vars
+   (v1.43.1 Claude B2 hardening) so the operator points them at
+   wherever the cartridges actually run.
+
+### Deploy options
+
+| Pattern | When to use |
+|---|---|
+| **A. Same host (escape hatch)** | Staging / dev clusters where compute pressure is low. Run `docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml up -d` with a sibling compose file that adds the 4 services. Defaults of `http://sap-hcm:8202` etc. already match. |
+| **B. Separate cluster (production)** | Production. Cartridges run on their own EC2 / ECS / K8s with their own scaling rules. Set `SAP_HCM_URL=https://cart-sap-hcm.internal.example.com` etc. in the parent `.env`. Make sure security-group / NACL rules allow `airflow → cartridges:820X`. |
+
+### Verification after deploy
+
+```bash
+# 1. DAGs parse — fail-fast on missing INTERNAL_API_KEY surfaces here.
+docker exec mode_airflow_scheduler airflow dags list-import-errors
+
+# 2. URLs resolve.
+docker exec mode_airflow_scheduler sh -lc 'curl -sS -o /dev/null -w "%{http_code}\n" "$SAP_HCM_URL/health"'
+
+# 3. Trigger a smoke run.
+docker exec mode_airflow airflow dags trigger sap_hcm_extract \
+  --conf '{"entity":"pa0001"}'
+```
+
+If §B is chosen, **DO NOT** add the cartridge service blocks back
+into this file — they belong in their own deployment artifact.

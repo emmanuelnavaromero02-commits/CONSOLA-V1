@@ -49,6 +49,15 @@ def _sql_quote(value: str) -> str:
     return "'" + (value or "").replace("'", "''") + "'"
 
 
+def _escape_sql_literal_inner(value: str) -> str:
+    """v1.43.1 (Claude B4): same single-quote-doubling escape as
+    ``_sql_quote`` but WITHOUT the wrapping quotes. Use when the template
+    already provides the outer ``'…'`` (e.g. ``WHERE x = '{placeholder}'``)
+    and we just need to neutralise any quote characters embedded in the
+    value so an attacker can't break out of the literal."""
+    return (value or "").replace("'", "''")
+
+
 def validate_safe_identifier(value: str, label: str = "identifier") -> None:
     if not SAFE_IDENTIFIER_RE.fullmatch(value or ""):
         raise ValueError(f"Invalid {label} name")
@@ -453,7 +462,12 @@ class DuckDBEngine:
         """
         try:
             tree = sqlglot.parse_one(sql, read='duckdb')
-        except sqlglot.errors.ParseError as exc:
+        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
+            # v1.43.1 (Claude B9): TokenError fires on lexer failures
+            # (e.g. unbalanced quotes, raw garbage) before sqlglot even
+            # reaches the parse step. The audit's default-deny posture
+            # treats those the same as ParseError — the caller MUST NOT
+            # see the query execute.
             raise ValueError(
                 f"SQL failed AST parse — default-deny applied: {exc}"
             ) from exc
@@ -551,14 +565,28 @@ class DuckDBEngine:
         Sustituye el placeholder {latest_date} en el SQL por el load_date más
         reciente de la primera fuente Bronze. Si el SQL ya NO usa el placeholder,
         lo devuelve sin modificar.
+
+        v1.43.1 (Claude B4): el load_date viene de MAX(load_date) sobre
+        Parquet en MinIO. Un cartucho comprometido podría escribir un valor
+        como ``2024-01-01' UNION SELECT secrets FROM x WHERE '1'='1`` y
+        romper la consulta cuando se concatena dentro del literal de la
+        plantilla (``llm_sql.py:20`` enseña al modelo a usar
+        ``WHERE load_date = '{latest_date}'`` — el LLM provee las comillas
+        externas). Doblamos cualquier comilla simple embebida en el valor
+        para que quede atrapado dentro de su literal — mismo escape que
+        ``_sql_quote`` aplica internamente pero SIN añadir las comillas
+        externas (la plantilla ya las trae). El fallback ``1970-01-01`` no
+        contiene comillas pero pasa por el mismo escape por simetría.
         """
         if "{latest_date}" not in sql:
             return sql
         primary_source = sources[0] if sources else None
         if not primary_source:
-            return sql.replace("{latest_date}", "1970-01-01")
+            return sql.replace("{latest_date}", _escape_sql_literal_inner("1970-01-01"))
         latest = self._resolve_latest_date(primary_source)
-        return sql.replace("{latest_date}", latest or "1970-01-01")
+        return sql.replace(
+            "{latest_date}", _escape_sql_literal_inner(latest or "1970-01-01")
+        )
 
     def _inject_bucket(self, sql: str) -> str:
         """Sustituye el placeholder {bucket} en el SQL por el bucket configurado.

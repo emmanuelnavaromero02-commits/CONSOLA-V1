@@ -35,6 +35,17 @@ _mcp_app = mcp.http_app(path="/")
 
 app = FastAPI(title="Replicon Cartridge", lifespan=lifespan)
 
+# v1.43.1 (Codex P0-1): every response — including 401/403/404 from
+# the InternalApiKeyASGIGuard and the FastAPI exception handlers —
+# must carry an ``X-Request-ID`` header so operators can correlate a
+# failed request with its server-side trace. Pure-ASGI middleware
+# intercepts at the send() level so it survives every short-circuit
+# auth path. Byte-identical to console/workspace/vault/refinement/mcp-infra
+# (md5 7fe9a9120bfac6f028a9c7662afcccae).
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 app.include_router(health_router)
 app.include_router(skills_router)
 

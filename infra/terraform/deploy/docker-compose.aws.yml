@@ -344,6 +344,18 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY:         ${AWS_SECRET_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE:             "true"
       AIRFLOW_VAR_AWS_REGION:               ${AWS_REGION:?AWS_REGION is required}
+      # v1.43.1 (Codex P0-4): cartridges are deployed OUT OF THIS COMPOSE
+      # — see DEPLOY-RUNBOOK.md §"Cartridges deployed separately". The
+      # DAGs need to know where each cartridge lives; the operator sets
+      # these env vars to the cluster-local hostnames (Kubernetes service
+      # DNS, MWAA secret, etc.). The defaults here MATCH the local
+      # docker-compose service names so that pinning the cartridges on
+      # the same host with `--profile sap` (escape hatch for staging)
+      # works without further env tweaks.
+      SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
+      SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
+      SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
+      REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
     ports:
       - "8082:8080"
     volumes:
@@ -387,6 +399,11 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY:         ${AWS_SECRET_ACCESS_KEY:-}
       AIRFLOW_VAR_MINIO_SECURE:             "true"
       AIRFLOW_VAR_AWS_REGION:               ${AWS_REGION:?AWS_REGION is required}
+      # v1.43.1 (Codex P0-4): mirror the webserver's cartridge URL vars.
+      SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
+      SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
+      SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
+      REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs

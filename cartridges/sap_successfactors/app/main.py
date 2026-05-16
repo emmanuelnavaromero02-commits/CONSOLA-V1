@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SAP SuccessFactors Cartridge", lifespan=lifespan)
 
+# v1.43.1 (Codex P0-1): X-Request-ID middleware.
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 app.include_router(health_router)
 app.include_router(skills_router)
 app.include_router(console_router)
