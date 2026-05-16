@@ -3035,7 +3035,42 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('', '');
     }
 
+    // v1.43.2 (Frontend R2 hardening): cache /api/system/info once so
+    // every deploy attempt + every render of the deploy bar share the
+    // same dev-mode answer. Pre-R2 the button was unconditionally
+    // active and clicking it in production surfaced the raw
+    // PermissionError from infra__airflow_create_dag.
+    let _devModeCache = null;
+    async function _isDevMode() {
+      if (_devModeCache !== null) return _devModeCache;
+      try {
+        const r = await fetch('/api/system/info', {credentials: 'same-origin'});
+        if (!r.ok) return false;
+        const info = await r.json();
+        _devModeCache = !!info.dev_mode;
+      } catch { _devModeCache = false; }
+      return _devModeCache;
+    }
+
     export async function deployDag() {
+      // R2 gate: refuse early with a clear, actionable message in
+      // production so the user never sees a raw mcp-infra error.
+      if (!(await _isDevMode())) {
+        const btn = document.getElementById('btn-deploy');
+        if (btn) {
+          btn.disabled = true;
+          btn.title = 'Deploy disabled outside development';
+          btn.style.opacity = '0.5';
+          btn.style.cursor = 'not-allowed';
+        }
+        setDeployMsg(
+          'Deploy a Airflow está deshabilitado fuera de desarrollo. ' +
+          'Usa el pipeline de despliegue o la UI de Airflow.',
+          'err',
+        );
+        return;
+      }
+
       const code = document.getElementById('dag-code-textarea')?.value?.trim();
       if (!code) { setDeployMsg('Sin código', 'err'); return; }
 

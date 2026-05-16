@@ -82,12 +82,15 @@ class _MCPStartupGuard:
         if scope.get("type") == "http" and not getattr(
             self._app.state, "startup_ok", False,
         ):
+            import json as _json
             errors = list(getattr(self._app.state, "startup_errors", []) or [])
-            body = (
-                b'{"error":"cartridge_not_ready","startup_errors":'
-                + str(errors).replace("'", '"').encode("utf-8")
-                + b"}"
-            )
+            # v1.43.2 (LLM R2 hardening): use json.dumps so error
+            # strings containing apostrophes / backslashes / non-ASCII
+            # produce a syntactically valid body. Python repr was wrong.
+            body = _json.dumps({
+                "error": "cartridge_not_ready",
+                "startup_errors": errors,
+            }).encode("utf-8")
             await send({
                 "type": "http.response.start",
                 "status": 503,

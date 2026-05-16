@@ -192,6 +192,24 @@ def test_migration_45_audit_deletes_revoked_from_public():
     assert "REVOKE ALL ON audit_deletes FROM PUBLIC" in src
 
 
+def test_migration_45_audit_deletes_append_only_from_console():
+    """v1.43.2 (Security R2 hardening): infra/init/25_service_roles.sql
+    grants omega_console INSERT/UPDATE/DELETE on every new public
+    table via ALTER DEFAULT PRIVILEGES. Audit_deletes inherits that
+    too — meaning the role that performs user/workspace deletions
+    can also tamper with its own tombstone. Revoke UPDATE + DELETE +
+    TRUNCATE explicitly to enforce append-only."""
+    src = _src()
+    assert "REVOKE UPDATE, DELETE, TRUNCATE ON audit_deletes FROM omega_console" in src, (
+        "audit_deletes must be append-only for omega_console: REVOKE "
+        "UPDATE/DELETE/TRUNCATE explicitly to neutralise the default "
+        "ALTER DEFAULT PRIVILEGES from migration 25."
+    )
+    # And INSERT + SELECT must still be granted (trigger write +
+    # forensic queries).
+    assert "GRANT INSERT, SELECT ON audit_deletes TO omega_console" in src
+
+
 def test_migration_45_self_registers_in_schema_migrations():
     """v1.43.2 (DevOps R1 hardening): fresh installs run init scripts
     via docker-entrypoint and never call apply_db_migrations.sh, so

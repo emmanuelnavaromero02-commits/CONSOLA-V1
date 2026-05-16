@@ -42,6 +42,15 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_console') THEN
     -- console owns the user-deletion flow and needs to write tombstones.
+    -- v1.43.2 (Security R2 hardening): infra/init/25_service_roles.sql
+    -- declares ALTER DEFAULT PRIVILEGES … GRANT INSERT, UPDATE, DELETE
+    -- TO omega_console for every new public table — which would let
+    -- the SAME role that performs user/workspace deletions tamper
+    -- with its own forensic trail. Revoke UPDATE + DELETE explicitly
+    -- so audit_deletes is append-only from the console role's
+    -- perspective. SELECT + INSERT are sufficient for the trigger
+    -- write path + forensic queries.
+    EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON audit_deletes FROM omega_console';
     EXECUTE 'GRANT INSERT, SELECT ON audit_deletes TO omega_console';
     EXECUTE 'GRANT USAGE, SELECT ON SEQUENCE audit_deletes_id_seq TO omega_console';
   END IF;

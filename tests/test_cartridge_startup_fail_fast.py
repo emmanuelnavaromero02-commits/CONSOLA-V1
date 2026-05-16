@@ -195,3 +195,39 @@ def test_mcp_endpoints_return_503_when_startup_failed(
         f"{cartridge} {method} {path} must return 503 when startup_ok=False, "
         f"got {r.status_code} body={r.text!r}"
     )
+
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
+    env_for_cartridges, cartridge, service_label, monkeypatch,
+):
+    """v1.43.2 (LLM R2 hardening): the ASGI guard's 503 body must be
+    well-formed JSON even when the error message contains an
+    apostrophe / non-ASCII / backslash. Pre-R2 the body was built by
+    Python repr (``str(list).replace("'", '"')``) which broke JSON
+    parsing for any payload containing ``'`` inside a string."""
+    from fastapi.testclient import TestClient
+    import json as _json
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    async def _boom():
+        # Apostrophe + backslash + non-ASCII to stress the JSON encoder.
+        raise RuntimeError("can't connect: path C:\\db; tëst")
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _boom)
+
+    headers = {
+        "X-Internal-Api-Key": "x" * 64,
+        "X-Internal-Service": "console",
+    }
+    with TestClient(main_mod.app) as client:
+        r = client.post("/mcp/rpc", headers=headers, json={})
+
+    assert r.status_code == 503
+    # Must round-trip as valid JSON; the apostrophe + backslash + non-ASCII
+    # must survive.
+    body = _json.loads(r.text)
+    assert body["error"] == "cartridge_not_ready"
+    assert any("can't connect" in e for e in body["startup_errors"]), body
+    assert any("C:\\db" in e for e in body["startup_errors"]), body
+    assert any("tëst" in e for e in body["startup_errors"]), body
