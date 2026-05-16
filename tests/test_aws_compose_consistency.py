@@ -239,3 +239,102 @@ def test_aws_healthcheck_test_command_is_well_formed():
         "AWS compose healthchecks with bad test form:\n  "
         + "\n  ".join(bad)
     )
+
+
+# ── v1.44.2 R-Mac-3: healthchecks must address 127.0.0.1, not localhost ──
+#
+# Codex's Mac re-validation caught the console_next healthcheck reporting
+# the container unhealthy even though the Next.js server was responding
+# correctly. Root cause:
+#   * Alpine's musl resolver returns ``::1`` (IPv6 loopback) first for
+#     the literal ``localhost``.
+#   * busybox wget on Alpine does NOT fall back to a second AF on
+#     connection refused.
+#   * Next.js standalone with HOSTNAME="0.0.0.0" binds IPv4 only.
+#   * The wget at the IPv6 address fails → container marked unhealthy.
+# Switching the URL to ``http://127.0.0.1:…`` sidesteps the resolver
+# entirely. The fix is identical across every healthcheck so a future
+# image switch (alpine ↔ slim ↔ distroless) doesn't reintroduce the
+# regression silently.
+
+
+def _services_from(compose_path: Path) -> dict:
+    import yaml
+    with compose_path.open(encoding="utf-8") as f:
+        return (yaml.safe_load(f) or {}).get("services", {})
+
+
+def _healthcheck_test_strings(services: dict) -> list[tuple[str, str]]:
+    """Return [(service_name, joined_test_string)] for every service
+    that declares a healthcheck. The joined string covers both the
+    ``["CMD", "wget", "url"]`` form (test[0]=='CMD') and the
+    ``["CMD-SHELL", "curl url"]`` form (the URL lives in test[1])."""
+    out: list[tuple[str, str]] = []
+    for name, body in services.items():
+        hc = body.get("healthcheck") or {}
+        test = hc.get("test")
+        if isinstance(test, list):
+            out.append((name, " ".join(str(t) for t in test)))
+        elif isinstance(test, str):
+            out.append((name, test))
+    return out
+
+
+def test_console_next_healthcheck_uses_ipv4():
+    """The reported bug: omega_console_next stayed unhealthy because
+    its wget hit ``localhost``. Lock the IPv4 literal."""
+    svcs = _services_from(REPO / "infra/docker-compose.yml")
+    cn = svcs.get("console_next")
+    assert cn, "console_next service missing from infra/docker-compose.yml"
+    test = cn.get("healthcheck", {}).get("test", [])
+    joined = " ".join(test) if isinstance(test, list) else str(test)
+    assert "localhost" not in joined, (
+        "console_next healthcheck must not address ``localhost`` — "
+        "Alpine resolves it to ::1 first, Next.js listens IPv4-only. "
+        f"Got: {joined!r}"
+    )
+    assert "127.0.0.1:3000" in joined, (
+        f"console_next healthcheck must address 127.0.0.1:3000; got: {joined!r}"
+    )
+
+
+def test_no_healthcheck_uses_localhost_string():
+    """The bug Codex found applies to every wget/curl-based healthcheck
+    that addresses ``localhost``. Defensively assert ZERO usage across
+    both compose files so a future copy-paste can't reintroduce the
+    regression for a different service.
+
+    Note: this guard explicitly only audits the healthcheck ``test``
+    string. ``CONSOLE_URL=http://localhost:8000`` env defaults stay
+    untouched — those drive BROWSER-side URLs where the user's machine
+    has full dual-stack resolution.
+    """
+    bad: list[str] = []
+    for path in (
+        REPO / "infra/docker-compose.yml",
+        REPO / "infra/terraform/deploy/docker-compose.aws.yml",
+    ):
+        svcs = _services_from(path)
+        for name, joined in _healthcheck_test_strings(svcs):
+            if "localhost" in joined:
+                bad.append(f"{path.name} → {name}: {joined}")
+    assert not bad, (
+        "Healthchecks must address 127.0.0.1 (or service DNS name), "
+        "never ``localhost`` — IPv6-preferring resolvers + IPv4-only "
+        "listeners produce silent unhealthy states. Offenders:\n  "
+        + "\n  ".join(bad)
+    )
+
+
+def test_console_next_dockerfile_healthcheck_uses_ipv4():
+    """The Dockerfile's own HEALTHCHECK (when the image runs outside
+    compose, e.g. ``docker run``) must follow the same convention."""
+    src = (REPO / "console-next/Dockerfile").read_text(encoding="utf-8")
+    # Extract just the HEALTHCHECK CMD line.
+    m = re.search(r"HEALTHCHECK[^\n]*\n\s*CMD\s+([^\n]+)", src)
+    assert m, "console-next/Dockerfile missing HEALTHCHECK ... CMD"
+    cmd = m.group(1)
+    assert "localhost" not in cmd, (
+        f"Dockerfile HEALTHCHECK must use 127.0.0.1; got: {cmd!r}"
+    )
+    assert "127.0.0.1:3000" in cmd
