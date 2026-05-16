@@ -102,3 +102,98 @@ realmente funciona.
 - **MinIO `mc mirror` con `access denied`**: `MINIO_SECRET_KEY` en
   `.env` no es la que se usó al backup. Imposible de recuperar sin la
   clave original.
+
+## Actualización a v1.43.2+ — MinIO data migration
+
+A partir de v1.43.2, MinIO está pinned a
+`RELEASE.2024-12-18T13-15-44Z` (`infra/docker-compose.yml`). Si tu
+data local en `data/lakehouse/` fue creada con una versión más
+reciente (por ejemplo `minio:latest` descargada antes de que el pin
+entrara en main), al levantar el stack verás este error:
+
+```
+FATAL Unable to initialize backend: decodeXLHeaders:
+      Unknown xl meta version 3
+```
+
+El backend de MinIO escribe metadatos (`xl.meta` v1, v2, v3, …) que
+versiones anteriores no saben leer. Esto NO es un bug del pin — es
+la semántica documentada de MinIO al hacer downgrade.
+
+### Solución (recomendada para entornos de desarrollo locales)
+
+1. Apaga el stack y borra los volúmenes:
+
+   ```bash
+   docker compose -f infra/docker-compose.yml down -v
+   ```
+
+2. Mueve la data vieja a un backup (NO la borres por si necesitas
+   leerla más adelante):
+
+   ```bash
+   mv data/lakehouse data/lakehouse.pre-v1432-backup-$(date +%Y%m%d-%H%M%S)
+   ```
+
+3. Levanta el stack normalmente:
+
+   ```bash
+   docker compose -f infra/docker-compose.yml --profile sap up -d --build
+   ```
+
+4. Re-extrae los datos que necesites desde los cartridges. La data
+   *raw* sigue en los sistemas origen (SAP, Replicon); el lakehouse
+   es la copia derivada, no la verdad.
+
+### Si necesitas recuperar el lakehouse viejo
+
+Si tienes contenido en `data/lakehouse.pre-v1432-backup-*` que vale
+la pena rescatar, levanta MinIO temporalmente con una versión más
+nueva, exporta los buckets con `mc mirror`, y vuelve al pin oficial.
+**No** dejes el pin "fuera de banda" — la versión pinned es la única
+combinación verificada por el smoke test.
+
+```yaml
+# infra/docker-compose.yml — TEMPORAL, revertir después de exportar
+image: minio/minio:RELEASE.2025-XX-XX...
+```
+
+Después de exportar:
+
+```bash
+docker compose -f infra/docker-compose.yml down -v
+git checkout infra/docker-compose.yml    # vuelve al pin oficial
+docker compose -f infra/docker-compose.yml --profile sap up -d --build
+mc mirror /tmp/lakehouse-export local/lakehouse/
+```
+
+## v1.43.3 — Fix automático de permisos SAP (migración 46)
+
+A partir de v1.43.3, la migración `46_sap_jobs_permissions.sql`
+corrige automáticamente la regresión que requería parchear permisos
+SAP a mano en v1.43.2:
+
+  * `GRANT CREATE ON SCHEMA public` a los 4 roles cartridge
+    (`sap_hcm`, `sap_s4`, `sap_sf`, `replicon`).
+  * Crea el rol compartido `omega_cartridge_jobs_owner` (NOLOGIN) y
+    transfiere ownership de `jobs` + `idx_jobs_status`.
+  * Otorga membresía de `omega_cartridge_jobs_owner` a los 4 roles.
+
+Si tu DB ya tiene los permisos parcheados manualmente (por ejemplo
+desde un `docker compose up` previo donde corriste los GRANT a
+mano), **la migración es idempotente** y detecta los estados ya
+correctos sin volver a aplicar los `ALTER`. No hay que hacer nada
+especial; los SAP cartridges arrancan healthy sin intervención
+manual tras un `docker compose down -v && up` limpio.
+
+Para validar a posteriori:
+
+```bash
+docker exec mode_postgres psql -U postgres -d modecissions \
+  -c "SELECT filename FROM schema_migrations WHERE filename LIKE '46_%';"
+# → debe devolver 1 fila
+
+docker exec mode_postgres psql -U postgres -d modecissions \
+  -c "\\d jobs" | head -5
+# → Owner: omega_cartridge_jobs_owner
+```
