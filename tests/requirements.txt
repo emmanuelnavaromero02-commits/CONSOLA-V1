@@ -10,6 +10,10 @@ httpx>=0.27          # required by fastapi.testclient
 
 # Cartridge runtime imports pulled in transitively when TestClient boots an app
 fastapi>=0.110
+# v1.43.2 (DevOps R1 follow-up): starlette >= 0.40 escapes
+# CVE-2024-47874 (multipart DoS) + path-traversal vuln in starlette
+# 0.37/0.38. The tests directory is now scanned by pip-audit too.
+starlette>=0.40.0
 uvicorn[standard]>=0.27
 pydantic>=2.6
 pydantic-settings>=2.2

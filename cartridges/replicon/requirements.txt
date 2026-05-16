@@ -1,4 +1,6 @@
 fastapi
+# v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
+starlette>=0.40.0,<0.42.0
 uvicorn[standard]
 requests
 pydantic

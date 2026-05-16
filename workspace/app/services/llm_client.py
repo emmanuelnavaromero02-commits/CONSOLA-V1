@@ -405,7 +405,9 @@ _gemini_cache_by_sig: dict[str, str] = {}  # hash(system+tools) → cache resour
 def _gemini_cache_signature(system: str, tools: list[dict]) -> str:
     import hashlib
     blob = system + "|" + "|".join(sorted(t["name"] for t in tools))
-    return hashlib.md5(blob.encode()).hexdigest()
+    # v1.43.2 (DevOps R1 follow-up): MD5 used only as a cache-key
+    # fingerprint, not crypto. See console/app/services/llm_client.py.
+    return hashlib.md5(blob.encode(), usedforsecurity=False).hexdigest()
 
 
 async def _get_or_create_gemini_cache(
