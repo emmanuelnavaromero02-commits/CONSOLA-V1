@@ -34,3 +34,21 @@ def test_gold_role_migration_exists_for_fresh_gold_volumes():
     assert "CREATE ROLE omega_refinement_gold" in sql
     assert "GRANT USAGE, CREATE ON SCHEMA public TO omega_refinement_gold" in sql
     assert "app.omega_refinement_gold_password" in sql
+
+
+def test_migration_46_picked_up_by_runner_glob():
+    """v1.43.3: the runner uses ``infra/init/[0-9][0-9]_*.sql`` and
+    bash globs lexicographically. Migration 46 must be the strictly
+    largest filename under that pattern after this hotfix lands, so
+    fresh boots apply 45's CASCADE→RESTRICT swap BEFORE 46 fixes the
+    jobs ownership that 45 doesn't touch. If anyone later adds a 47+
+    that re-touches jobs, this test still passes — we only assert
+    "46 follows 45".
+    """
+    init = REPO_ROOT / "infra/init"
+    matched = sorted(p.name for p in init.glob("[0-9][0-9]_*.sql"))
+    assert "45_cascade_to_restrict.sql" in matched
+    assert "46_sap_jobs_permissions.sql" in matched
+    assert matched.index("45_cascade_to_restrict.sql") < matched.index(
+        "46_sap_jobs_permissions.sql"
+    )
