@@ -15,12 +15,24 @@ Each step in workflow_steps:
 from __future__ import annotations
 
 import json
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
+
+
+def _validate_uuid(value: str, *, label: str) -> str:
+    """v1.44.2 (R1 Security P2): malformed path UUIDs would surface
+    as 500 (asyncpg InvalidTextRepresentation) without an early
+    validation step. Convert to a clean 400 so the client gets a
+    deterministic response shape."""
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(400, f"Invalid {label}")
 
 
 router = APIRouter(
@@ -110,6 +122,7 @@ async def get_workflow(
 ):
     """Return one workflow + its current step list. Returns 404 if
     the workflow isn't this user's (no enumeration leak)."""
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
     pool = await auth.pool()
     run = await pool.fetchrow(
         """
@@ -167,6 +180,7 @@ async def cancel_workflow(
     workflow returns 404 (no row updated) rather than 409 — the
     user-visible outcome is "it's not running anymore" either way.
     """
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
     pool = await auth.pool()
     row = await pool.fetchrow(
         """
@@ -179,7 +193,13 @@ async def cancel_workflow(
         workflow_id, user["id"],
     )
     if row is None:
-        raise HTTPException(404, "Workflow not found or already finished")
+        # v1.44.2 (R1 Security P2): IDENTICAL error string to the
+        # get_workflow 404 branch above. The pre-fix message
+        # ("…or already finished") leaked terminal-status info to a
+        # probe — comparing the two strings let a caller distinguish
+        # "this UUID is yours and terminal" from "this UUID isn't
+        # yours". Collapse to one string.
+        raise HTTPException(404, "Workflow not found")
     await audit_service.record_event(
         user_id=user["id"],
         email=user.get("email"),

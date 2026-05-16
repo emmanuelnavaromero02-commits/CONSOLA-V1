@@ -343,3 +343,67 @@ def test_migrations_51_52_53_lexicographic_order():
         assert names.index(earlier) < names.index(later), (
             f"{earlier} must come before {later}"
         )
+
+
+# ── v1.44.2 R1 follow-ups ──────────────────────────────────────────────
+
+
+def test_migration_54_adds_failed_and_success_partial_indexes():
+    """R1 DB P1: analyze_extraction_failures would seq-scan
+    extraction_runs without a partial index on status='failed'.
+    Migration 54 also adds a finished_at-leading partial for the
+    volume-anomaly 8-day range scan."""
+    src = _read(MIG_DIR / "54_proactive_indexes.sql")
+    assert "idx_extraction_runs_failed_finished" in src
+    assert "WHERE status = 'failed'" in src
+    assert "idx_extraction_runs_success_finished" in src
+    assert "WHERE status = 'success'" in src
+    assert "ON CONFLICT (filename) DO NOTHING" in src
+
+
+def test_workflows_router_validates_uuid_path_params():
+    """R1 Security P2: a malformed path UUID would surface as a 500
+    from asyncpg's InvalidTextRepresentation. _validate_uuid()
+    converts it to a deterministic 400."""
+    src = _read(SRC / "routers/copilot_workflows.py")
+    assert "import uuid" in src
+    assert "def _validate_uuid" in src
+    # Both UUID-bearing handlers must call the validator.
+    for handler in ("get_workflow", "cancel_workflow"):
+        body = re.search(
+            rf"async def {handler}.*?(?=^async def|\Z)",
+            src, re.DOTALL | re.MULTILINE,
+        )
+        body_text = body.group(0) if body else ""
+        assert "_validate_uuid" in body_text, (
+            f"{handler} must validate the workflow_id path param"
+        )
+
+
+def test_drafts_router_validates_uuid_path_params():
+    src = _read(SRC / "routers/copilot_drafts.py")
+    assert "def _validate_uuid" in src
+    send_body = re.search(
+        r"async def send_draft.*?(?=^async def|\Z)",
+        src, re.DOTALL | re.MULTILINE,
+    )
+    assert send_body and "_validate_uuid" in send_body.group(0)
+
+
+def test_workflows_404_strings_identical_across_branches():
+    """R1 Security P2: the cancel handler's 404 string used to read
+    'Workflow not found or already finished'. Compared against
+    get_workflow's 'Workflow not found' a probe could infer that a
+    given UUID is terminal-state. Collapse to a single string."""
+    src = _read(SRC / "routers/copilot_workflows.py")
+    # Both handlers must raise HTTPException(404, "Workflow not found")
+    # — no other 404 string in the file.
+    not_found_strings = re.findall(
+        r'HTTPException\(\s*404,\s*"([^"]+)"', src,
+    )
+    assert not_found_strings, "no 404 raises in copilot_workflows.py"
+    distinct = set(not_found_strings)
+    assert distinct == {"Workflow not found"}, (
+        f"All 404 strings in copilot_workflows.py must read "
+        f"'Workflow not found' identically. Found: {distinct}"
+    )

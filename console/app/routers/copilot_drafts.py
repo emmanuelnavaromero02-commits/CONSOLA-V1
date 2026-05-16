@@ -12,12 +12,23 @@ deliver email/Slack/etc.
 from __future__ import annotations
 
 import json
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
+
+
+def _validate_uuid(value: str, *, label: str) -> str:
+    """v1.44.2 (R1 Security P2): early UUID validation so a malformed
+    path param surfaces as a clean 400 instead of a 500 from
+    asyncpg's InvalidTextRepresentation."""
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(400, f"Invalid {label}")
 
 
 router = APIRouter(
@@ -155,6 +166,7 @@ async def send_draft(
     ``delivery_pending=true`` so an analytics query can spot drafts
     in the "sent but not delivered" interim state.
     """
+    draft_id = _validate_uuid(draft_id, label="draft_id")
     pool = await auth.pool()
     row = await pool.fetchrow(
         """
