@@ -3541,6 +3541,7 @@ async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict
 
 
 from app.routers import cartridges as cartridges_router
+from app.routers import copilot as copilot_router
 from app.routers import freshness as freshness_router
 from app.routers import metrics as metrics_router
 from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
@@ -3555,3 +3556,4 @@ app.include_router(security.router)
 app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)
 app.include_router(metrics_router.router)
+app.include_router(copilot_router.router)
