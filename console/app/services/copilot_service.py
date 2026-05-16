@@ -64,7 +64,9 @@ SYSTEM_PROMPT = (
     "- Si el usuario no tiene permisos para una tool, la plataforma te lo "
     "dirá con 'permission_denied'. En ese caso explícale qué permiso necesita "
     "y para qué.\n"
-    "- Cita siempre la fuente: cartucho, entidad, run_id o timestamp.\n"
+    "- Cuando un tool_result incluya identificadores de fuente (cartucho, "
+    "entidad, run_id, timestamp), cítalos. Si no los incluye, di que el "
+    "resultado no traía ese identificador — NUNCA inventes uno.\n"
     "- Lenguaje claro y conciso; sin jerga técnica innecesaria. Castellano "
     "por defecto, salvo que el usuario te escriba en otro idioma."
 )
@@ -234,8 +236,11 @@ async def _build_tools_for_llm() -> tuple[list[dict], dict[str, str], dict[str, 
     """Return (tools_for_llm, tool_server_map, classifications_by_full_name).
 
     Tool name format follows the llm_client convention
-    ``{server}___{bare_name}`` so the server can be recovered on the
-    tool_use callback without a second registry lookup.
+    ``{server}__{bare_name}`` so the server can be recovered on the
+    tool_use callback without a second registry lookup. llm_client
+    splits on the FIRST ``"__"`` so two underscores is the right
+    separator — three would leave a stray underscore on the bare name
+    and the registry lookup would miss.
     """
     manifest = await tool_manifest.build_manifest()
     tools: list[dict] = []
@@ -244,7 +249,7 @@ async def _build_tools_for_llm() -> tuple[list[dict], dict[str, str], dict[str, 
     for srv_id, srv_tools in (manifest.get("servers") or {}).items():
         for t in srv_tools:
             bare = t["name"]
-            full = f"{srv_id}___{bare}"
+            full = f"{srv_id}__{bare}"
             tools.append({
                 "name": full,
                 "description": t.get("description", ""),
@@ -393,32 +398,56 @@ async def _run_loop(
     user_agent: str | None,
     approved_keys: set[str] | None = None,
 ) -> dict:
-    """Shared core used by ``run_turn`` and ``approve_pending_action``."""
+    """Shared core used by ``run_turn`` and ``approve_pending_action``.
+
+    Approach: the LLM SDK loop inside ``llm_client.chat`` runs the
+    multi-step exchange and returns the *full* final message list. We
+    extract every message it added beyond the history we passed in,
+    persist them with the Anthropic ``tool_use.id`` / ``tool_result.tool_use_id``
+    pairs preserved (otherwise the next turn would 400 on history
+    reload — Anthropic API rejects mismatched ids).
+
+    Our ``invoke_tool`` closure records audit, RBAC and approval gate
+    metadata in ``invocations`` in the same order the LLM emits
+    ``tool_use`` blocks, so we can pair them by index when persisting.
+    """
+    import uuid as _uuid
+
     approved_keys = approved_keys or set()
+    invocations: list[dict] = []   # one entry per invoke_tool call, in order
     pending_actions: list[dict] = []
-    tool_calls_log: list[dict] = []
-    tool_results_log: list[dict] = []
+    seen_pending_keys: set[str] = set()  # dedupe pending by approval_key
 
     tools, server_map, classifications = await _build_tools_for_llm()
 
     async def invoke_tool(server_id: str, bare_name: str, args: dict) -> dict:
-        full = f"{server_id}___{bare_name}"
+        # Same separator as _build_tools_for_llm and as llm_client's
+        # split("__", 1)[-1]. If the classification lookup misses
+        # (manifest drift, typo in risk_level) we treat it as
+        # ``destructive`` — defensive default, never falls through to
+        # auto-execute as plain "write".
+        full = f"{server_id}__{bare_name}"
         meta = classifications.get(full) or {
-            "risk_level": "write", "requires_approval": True,
+            "risk_level": "destructive", "requires_approval": True,
         }
         risk = meta["risk_level"]
+        if risk not in _PERMISSION_BY_RISK:   # unknown literal → escalate
+            risk = "destructive"
         needed = _required_permission(risk)
+        scrubbed = _scrub_args(args)
+        inv_base = {
+            "server": server_id, "tool": bare_name, "bare_name": bare_name,
+            "args": scrubbed, "risk_level": risk,
+        }
 
-        # 1. RBAC. Denied tool calls become an error envelope to the LLM,
-        #    never an exception — that would let one user spend the LLM
-        #    on tools they can't run.
+        # 1. RBAC.
         if not permissions.has_permission(user, needed):
-            _audit(
-                user=user, server=server_id, bare_name=bare_name, args=args,
-                risk_level=risk, conversation_id=conversation_id,
-                ip=ip, user_agent=user_agent, status="denied",
-                error=f"missing permission {needed}",
-            )
+            invocations.append({**inv_base, "status": "denied",
+                                "required_permission": needed})
+            _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                   risk_level=risk, conversation_id=conversation_id,
+                   ip=ip, user_agent=user_agent, status="denied",
+                   error=f"missing permission {needed}")
             return {
                 "error": "permission_denied",
                 "required_permission": needed,
@@ -429,21 +458,17 @@ async def _run_loop(
                 ),
             }
 
-        # 2. Destructive → approval gate. Never auto-execute.
+        # 2. Destructive → approval gate.
         key = _approval_key(bare_name, args)
         if risk == "destructive" and key not in approved_keys:
-            pending_actions.append({
-                "server": server_id,
-                "tool": bare_name,
-                "args": args,
-                "risk_level": risk,
-                "approval_key": key,
-            })
-            _audit(
-                user=user, server=server_id, bare_name=bare_name, args=args,
-                risk_level=risk, conversation_id=conversation_id,
-                ip=ip, user_agent=user_agent, status="pending_approval",
-            )
+            if key not in seen_pending_keys:
+                seen_pending_keys.add(key)
+                pending_actions.append({**inv_base, "approval_key": key})
+            invocations.append({**inv_base, "status": "pending_approval",
+                                "approval_key": key})
+            _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                   risk_level=risk, conversation_id=conversation_id,
+                   ip=ip, user_agent=user_agent, status="pending_approval")
             return {
                 "error": "approval_required",
                 "message": (
@@ -452,42 +477,36 @@ async def _run_loop(
                     f"explica al usuario qué hará y espera su confirmación."
                 ),
                 "tool": bare_name,
-                "args": _scrub_args(args),
+                "args": scrubbed,
             }
 
-        # 3. Actually execute via mcp_registry.
+        # 3. Actually execute.
         try:
             result = await mcp_registry.invoke(server_id, bare_name, args)
         except Exception as exc:                    # noqa: BLE001
-            _audit(
-                user=user, server=server_id, bare_name=bare_name, args=args,
-                risk_level=risk, conversation_id=conversation_id,
-                ip=ip, user_agent=user_agent, status="error",
-                error=str(exc),
-            )
-            return {"error": f"invocation failed: {exc}"}
-
+            invocations.append({**inv_base, "status": "error"})
+            _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                   risk_level=risk, conversation_id=conversation_id,
+                   ip=ip, user_agent=user_agent, status="error",
+                   error=str(exc))
+            return {"error": "invocation failed",
+                    "tool": bare_name, "server": server_id}
         is_error = isinstance(result, dict) and bool(result.get("error"))
-        _audit(
-            user=user, server=server_id, bare_name=bare_name, args=args,
-            risk_level=risk, conversation_id=conversation_id,
-            ip=ip, user_agent=user_agent,
-            status="error" if is_error else "success",
-            error=str(result.get("error")) if is_error else None,
-        )
-        tool_calls_log.append({
-            "server": server_id, "tool": bare_name, "args": _scrub_args(args),
-            "risk_level": risk,
-        })
-        tool_results_log.append({"tool": bare_name, "result": result})
+        invocations.append({**inv_base, "status": "error" if is_error else "success"})
+        _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+               risk_level=risk, conversation_id=conversation_id,
+               ip=ip, user_agent=user_agent,
+               status="error" if is_error else "success",
+               error=str(result.get("error")) if is_error else None)
         return result
 
     pool = await auth.pool()
     async with pool.acquire() as conn:
         history = await _load_history(conn, conversation_id)
+    initial_len = len(history)
 
     try:
-        reply_text, _viewer_urls, _final_msgs = await llm_client.chat(
+        reply_text, _viewer_urls, final_msgs = await llm_client.chat(
             system=SYSTEM_PROMPT,
             messages=history,
             tools=tools,
@@ -496,30 +515,104 @@ async def _run_loop(
             on_event=None,
         )
     except Exception as exc:                    # noqa: BLE001
+        # Log the full exception server-side; surface a sanitised
+        # message to the client so SDK error strings (which sometimes
+        # echo Authorization headers / API keys) can't leak.
+        import logging
+        logging.getLogger(__name__).exception(
+            "copilot LLM provider error", extra={
+                "conversation_id": conversation_id,
+                "user_id": user.get("id"),
+            },
+        )
         pool = await auth.pool()
         async with pool.acquire() as conn:
             await _persist_message(
                 conn, conversation_id=conversation_id,
                 role="assistant",
-                content=f"⚠️ El proveedor LLM devolvió un error: {str(exc)[:200]}",
+                content="⚠️ El proveedor de LLM devolvió un error. "
+                        "Reintenta o contacta al operador con tu X-Request-ID.",
             )
-        raise HTTPException(502, f"llm provider error: {exc}")
+        raise HTTPException(502, "llm provider error")
+
+    # Walk the new chunk and persist messages preserving the Anthropic
+    # tool_use.id / tool_result.tool_use_id pairing so the next turn's
+    # history reload reconstructs valid blocks.
+    new_chunk = final_msgs[initial_len:]
+    inv_idx = 0
+    last_assistant_message_id: str | None = None
+    pending_message_id: str | None = None
 
     pool = await auth.pool()
     async with pool.acquire() as conn:
-        message_id = await _persist_message(
-            conn, conversation_id=conversation_id,
-            role="assistant",
-            content=reply_text,
-            tool_calls=(tool_calls_log + pending_actions) or None,
-            tool_results=tool_results_log or None,
-        )
+        for m in new_chunk:
+            role = m.get("role")
+            content = m.get("content")
+            if role == "assistant":
+                if isinstance(content, list):
+                    text_parts: list[str] = []
+                    tool_calls: list[dict] = []
+                    msg_has_pending = False
+                    for block in content:
+                        btype = block.get("type")
+                        if btype == "text":
+                            text_parts.append(block.get("text") or "")
+                        elif btype == "tool_use":
+                            inv = invocations[inv_idx] if inv_idx < len(invocations) else {}
+                            inv_idx += 1
+                            if inv.get("status") == "pending_approval":
+                                msg_has_pending = True
+                            tool_calls.append({
+                                "id": block.get("id") or str(_uuid.uuid4()),
+                                "name": block.get("name"),
+                                "input": _scrub_args(block.get("input") or {}),
+                                **{k: v for k, v in inv.items() if k not in {"args"}},
+                            })
+                    msg_text = "".join(text_parts)
+                    new_mid = await _persist_message(
+                        conn, conversation_id=conversation_id,
+                        role="assistant", content=msg_text or None,
+                        tool_calls=tool_calls or None,
+                    )
+                    last_assistant_message_id = new_mid
+                    if msg_has_pending:
+                        # The approval card must target the message
+                        # whose tool_calls JSONB carries the pending
+                        # block — not the final text-only assistant.
+                        pending_message_id = new_mid
+                else:
+                    last_assistant_message_id = await _persist_message(
+                        conn, conversation_id=conversation_id,
+                        role="assistant", content=str(content or ""),
+                    )
+            elif role == "user" and isinstance(content, list):
+                tool_results = [
+                    {"tool_use_id": tr.get("tool_use_id"),
+                     "content": tr.get("content")}
+                    for tr in content if tr.get("type") == "tool_result"
+                ]
+                if tool_results:
+                    await _persist_message(
+                        conn, conversation_id=conversation_id,
+                        role="tool", tool_results=tool_results,
+                    )
+
+    # Use the pending-bearing assistant message when approval is needed,
+    # otherwise the last assistant message (so the UI has a stable id
+    # to reference, e.g. for thumbs-up feedback).
+    message_id = pending_message_id or last_assistant_message_id or ""
+
+    tool_calls_summary = [
+        {k: v for k, v in inv.items() if k not in {"bare_name"}}
+        for inv in invocations if inv.get("status") in {"success", "error"}
+    ]
+    tool_results_summary: list[dict] = []   # kept for API-shape stability
 
     return {
         "message_id": message_id,
         "reply": reply_text,
-        "tool_calls": tool_calls_log,
-        "tool_results": tool_results_log,
+        "tool_calls": tool_calls_summary,
+        "tool_results": tool_results_summary,
         "pending_actions": pending_actions,
         "requires_approval": bool(pending_actions),
     }
@@ -581,21 +674,37 @@ async def approve_pending_action(
             raise HTTPException(404, "conversation not found")
         if conv["user_id"] != user.get("id"):
             raise HTTPException(403, "not your conversation")
-        msg = await conn.fetchrow(
-            "SELECT tool_calls FROM conversation_messages "
-            "WHERE id = $1::uuid AND conversation_id = $2::uuid",
-            message_id, conversation_id,
+        # Atomic claim: marks the message as "consumed" so a concurrent
+        # POST /approve cannot execute the destructive action twice. We
+        # encode the claim in tool_results (previously NULL meant pending)
+        # — any non-NULL value flips the row out of the pending state.
+        # The follow-up _run_loop persists new rows for the real result,
+        # so the marker here is harmless.
+        claim_id = str(uuid.uuid4())
+        row = await conn.fetchrow(
+            """
+            UPDATE conversation_messages
+            SET tool_results = jsonb_build_array(
+                jsonb_build_object('approval_claim_id', $3::text)
+            )
+            WHERE id = $1::uuid
+              AND conversation_id = $2::uuid
+              AND tool_calls IS NOT NULL
+              AND tool_results IS NULL
+            RETURNING tool_calls
+            """,
+            message_id, conversation_id, claim_id,
         )
-    if not msg:
-        raise HTTPException(404, "message not found")
-    raw_calls = msg["tool_calls"]
+    if not row:
+        raise HTTPException(
+            409, "this approval was already processed or no pending action found"
+        )
+    raw_calls = row["tool_calls"]
     if isinstance(raw_calls, str):
         try: raw_calls = json.loads(raw_calls)
         except Exception: raw_calls = None
-    if not raw_calls:
-        raise HTTPException(400, "message has no pending actions")
     approved_keys = {
-        c["approval_key"] for c in raw_calls
+        c["approval_key"] for c in (raw_calls or [])
         if isinstance(c, dict) and c.get("approval_key")
         and c.get("risk_level") == "destructive"
     }

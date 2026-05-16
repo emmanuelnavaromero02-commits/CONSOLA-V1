@@ -75,6 +75,19 @@ class FakeDB:
                 if m["id"] == args[0] and m["conversation_id"] == args[1]:
                     return {"tool_calls": m["tool_calls"]}
             return None
+        if q.startswith("UPDATE conversation_messages SET tool_results = jsonb_build_array"):
+            # The atomic claim used by approve_pending_action: returns
+            # tool_calls only if the row is still pending (tool_results
+            # IS NULL). A second call returns None, which the service
+            # turns into a 409.
+            for m in self.messages:
+                if (m["id"] == args[0]
+                        and m["conversation_id"] == args[1]
+                        and m["tool_calls"] is not None
+                        and m["tool_results"] is None):
+                    m["tool_results"] = '[{"approval_claim_id":"' + args[2] + '"}]'
+                    return {"tool_calls": m["tool_calls"]}
+            return None
         raise AssertionError(f"unmocked fetchrow: {q[:120]}")
 
     async def fetch(self, query: str, *args):
@@ -256,6 +269,11 @@ def test_copilot_destructive_tool_blocks_without_approval(
 def test_copilot_destructive_tool_executes_with_approval(
     copilot_module, db, admin_user,
 ):
+    """End-to-end approval flow. The fake LLM speaks the structured
+    Anthropic message shape (assistant turn with a tool_use block,
+    followed by the final reply) so the v1.42 refactor — which now
+    persists from ``final_msgs`` instead of a side-log — gets a
+    realistic chunk to work with."""
     _patch_pool(copilot_module, db)
     _patch_manifest(copilot_module, [
         {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
@@ -268,9 +286,26 @@ def test_copilot_destructive_tool_executes_with_approval(
         invoke_count.append((server_id, tool, args))
         return {"deleted": True}
 
-    async def fake_chat_first(*, invoke_tool, **_kw):
-        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
-        return ("Espero aprobación.", [], [])
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        r = await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
+        # Build a realistic final_msgs: the history we received +
+        # one assistant turn with a tool_use block + one user turn
+        # with the tool_result + the final assistant text.
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1",
+                 "name": "infra__airflow_delete_dag",
+                 "input": {"dag_id": "x"}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1",
+                 "content": str(r)},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
 
     _patch_invoke(copilot_module, fake_invoke)
     _patch_llm(copilot_module, fake_chat_first)
@@ -283,10 +318,24 @@ def test_copilot_destructive_tool_executes_with_approval(
     assert out["requires_approval"] is True
     pending_msg_id = out["message_id"]
 
-    async def fake_chat_second(*, invoke_tool, **_kw):
+    async def fake_chat_second(*, messages, invoke_tool, **_kw):
         r = await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
         assert r == {"deleted": True}
-        return ("Listo, eliminado.", [], [])
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_2",
+                 "name": "infra__airflow_delete_dag",
+                 "input": {"dag_id": "x"}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_2",
+                 "content": str(r)},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Listo, eliminado."},
+            ]},
+        ]
+        return ("Listo, eliminado.", [], final)
 
     _patch_llm(copilot_module, fake_chat_second)
     out2 = _run(copilot_module.approve_pending_action(
@@ -365,8 +414,13 @@ def test_copilot_persists_messages_in_conversation_messages(
     _patch_manifest(copilot_module, [])
     _patch_audit(copilot_module, db)
 
-    async def fake_chat(**_kw):
-        return ("Hola, ¿en qué te ayudo?", [], [])
+    async def fake_chat(*, messages, **_kw):
+        text = "Hola, ¿en qué te ayudo?"
+        final = list(messages) + [
+            {"role": "assistant",
+             "content": [{"type": "text", "text": text}]},
+        ]
+        return (text, [], final)
 
     _patch_llm(copilot_module, fake_chat)
     conv = _run(copilot_module.create_conversation(user_id=1))
@@ -451,6 +505,260 @@ def test_copilot_ownership_check_blocks_cross_user_access(
             conversation_id=conv["id"], user_message="hola", user=analyst_user,
         ))
     assert "403" in str(exc_info.value) or "not your conversation" in str(exc_info.value).lower()
+
+
+# ── R1 review fixes ────────────────────────────────────────────────────────
+
+def test_copilot_tool_use_id_preserved_through_history(
+    copilot_module, db, admin_user,
+):
+    """v1.42 R1 LLM-F1: the persisted tool_calls must keep the original
+    Anthropic block id and tool_results must keep the matching
+    tool_use_id. Without this, a follow-up turn's history reload
+    generates fresh UUIDs and Anthropic API rejects with 400."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___airflow_list_dags", "risk_level": "read"},
+    ])
+    _patch_audit(copilot_module, db)
+    _patch_invoke(copilot_module, AsyncMock(return_value={"dags": []}))
+
+    async def fake_chat(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "airflow_list_dags", {})
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_known_id",
+                 "name": "infra__airflow_list_dags", "input": {}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_known_id",
+                 "content": "[]"},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Sin DAGs."},
+            ]},
+        ]
+        return ("Sin DAGs.", [], final)
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=1))
+    _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="dags?", user=admin_user,
+    ))
+    # Find the assistant message with tool_calls — its first call MUST
+    # have id="toolu_known_id". Find the tool message — its first result
+    # MUST have tool_use_id="toolu_known_id".
+    assistant_msg = next(m for m in db.messages
+                         if m["role"] == "assistant" and m["tool_calls"])
+    tool_msg = next(m for m in db.messages
+                    if m["role"] == "tool" and m["tool_results"])
+    calls = json.loads(assistant_msg["tool_calls"])
+    results = json.loads(tool_msg["tool_results"])
+    assert calls[0]["id"] == "toolu_known_id"
+    assert results[0]["tool_use_id"] == "toolu_known_id"
+
+
+def test_copilot_unknown_risk_level_defaults_to_destructive(
+    copilot_module, db, admin_user,
+):
+    """v1.42 R1 SEC-F2: a tool returning an unrecognised risk_level
+    (typo, manifest drift) must be treated as destructive — never
+    auto-execute as plain write."""
+    _patch_pool(copilot_module, db)
+    # Tool with a bogus risk_level.
+    _patch_manifest(copilot_module, [
+        {"name": "infra___mystery_tool", "risk_level": "mystery_value"},
+    ])
+    _patch_audit(copilot_module, db)
+    invoked = []
+
+    async def fake_invoke(*a, **_kw):
+        invoked.append(a)
+        return {}
+
+    async def fake_chat(*, messages, invoke_tool, **_kw):
+        r = await invoke_tool("infra", "mystery_tool", {"k": "v"})
+        return ("blocked", [], list(messages))
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat)
+
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="run",
+        user=admin_user,
+    ))
+    # mcp_registry NOT called → blocked by approval gate.
+    assert invoked == []
+    assert out["requires_approval"] is True
+
+
+def test_copilot_502_does_not_leak_provider_exception(
+    copilot_module, db, admin_user,
+):
+    """v1.42 R1 SEC-F4: the 502 raised when llm_client.chat() fails
+    must NOT echo the SDK's str(exc) into the HTTP body. SDK errors
+    sometimes include Authorization headers / API keys verbatim."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    leaky_secret = "Bearer sk-DO-NOT-LEAK-12345"
+
+    async def fake_chat(**_kw):
+        raise RuntimeError(
+            "anthropic 401: Unauthorized — sent Authorization: " + leaky_secret
+        )
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.run_turn(
+            conversation_id=conv["id"], user_message="hola",
+            user=admin_user,
+        ))
+    detail = str(exc_info.value)
+    assert leaky_secret not in detail, (
+        "502 leaked the raw provider exception into the HTTP body"
+    )
+    assert "502" in detail
+
+
+def test_copilot_workspace_id_in_body_is_ignored_by_router():
+    """v1.42 R1 SEC-F6: the router must NOT trust body.workspace_id —
+    that would let a user attach a conversation to a workspace they
+    don't belong to. The active workspace comes from the session."""
+    src = (Path(__file__).resolve().parents[1] / "console" / "app"
+           / "routers" / "copilot.py").read_text(encoding="utf-8")
+    # Confirm by reading source: workspace_id is sourced from `user`,
+    # not from body.
+    assert "workspace_id = user.get(\"active_workspace_id\")" in src
+    assert "body.get(\"workspace_id\")" not in src
+    assert "(body or {}).get(\"workspace_id\")" not in src
+
+
+def test_copilot_pending_actions_deduped(copilot_module, db, admin_user):
+    """v1.42 R1 LLM-F4: if the LLM emits the same destructive call
+    twice in one turn (it may, ignoring the prompt rule), we render
+    one approval card, not two."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
+    ])
+    _patch_audit(copilot_module, db)
+    _patch_invoke(copilot_module, AsyncMock(return_value={}))
+
+    async def fake_chat(*, messages, invoke_tool, **_kw):
+        # Same destructive call attempted twice.
+        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "X"})
+        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "X"})
+        return ("aprobá", [], list(messages))
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="borra X dos veces",
+        user=admin_user,
+    ))
+    # One approval entry, not two.
+    assert len(out["pending_actions"]) == 1
+
+
+def test_copilot_approval_race_returns_409_on_second_call(
+    copilot_module, db, admin_user,
+):
+    """v1.42 R1 SEC-F1: a concurrent second POST /approve must NOT
+    execute the destructive action a second time. The atomic claim
+    UPDATE returns 0 rows on the second call → 409."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
+    ])
+    _patch_audit(copilot_module, db)
+
+    invoke_log = []
+
+    async def fake_invoke(*a, **_kw):
+        invoke_log.append(a)
+        return {"deleted": True}
+
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1",
+                 "name": "infra__airflow_delete_dag", "input": {"dag_id": "x"}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1",
+                 "content": "approval_required"},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat_first)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="delete x", user=admin_user,
+    ))
+    pending_id = out["message_id"]
+
+    # First approve wins, executes once.
+    async def fake_chat_second(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
+        final = list(messages) + [
+            {"role": "assistant",
+             "content": [{"type": "text", "text": "Eliminado."}]},
+        ]
+        return ("Eliminado.", [], final)
+
+    _patch_llm(copilot_module, fake_chat_second)
+    out2 = _run(copilot_module.approve_pending_action(
+        conversation_id=conv["id"], message_id=pending_id, user=admin_user,
+    ))
+    assert out2["reply"] == "Eliminado."
+    assert len(invoke_log) == 1
+
+    # Second concurrent approve must be rejected with 409.
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.approve_pending_action(
+            conversation_id=conv["id"], message_id=pending_id, user=admin_user,
+        ))
+    assert "409" in str(exc_info.value)
+    # And no extra invocation happened.
+    assert len(invoke_log) == 1
+
+
+def test_copilot_pending_action_args_are_scrubbed(
+    copilot_module, db, admin_user,
+):
+    """v1.42 R1 SEC-F3: secrets in destructive args must be scrubbed
+    before they hit the durable JSONB column."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___airflow_set_variable", "risk_level": "destructive"},
+    ])
+    _patch_audit(copilot_module, db)
+    _patch_invoke(copilot_module, AsyncMock(return_value={}))
+
+    async def fake_chat(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "airflow_set_variable",
+                          {"key": "k", "password": "PWN", "value": "v"})
+        return ("aprobá", [], list(messages))
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="set k",
+        user=admin_user,
+    ))
+    pa = out["pending_actions"][0]
+    assert pa["args"]["password"] == "***"
+    assert pa["args"]["key"] == "k"
 
 
 def test_copilot_approval_key_is_args_specific(copilot_module):

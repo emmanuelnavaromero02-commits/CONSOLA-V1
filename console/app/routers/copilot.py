@@ -42,8 +42,12 @@ async def create_conversation(
     body: dict,
     user: dict = Depends(require_authenticated),
 ):
+    # Sprint v1.42 R1 security finding: never trust ``workspace_id`` from
+    # the body — that would let a caller attach the conversation to a
+    # workspace they don't belong to. The active workspace comes from
+    # the authenticated session (already vetted by the auth layer).
     title = (body or {}).get("title")
-    workspace_id = (body or {}).get("workspace_id") or user.get("active_workspace_id")
+    workspace_id = user.get("active_workspace_id")
     return await copilot_service.create_conversation(
         user_id=user["id"], workspace_id=workspace_id, title=title,
     )
