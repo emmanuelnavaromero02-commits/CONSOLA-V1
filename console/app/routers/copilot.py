@@ -16,7 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
-from app.services import copilot_service
+from app.services import audit_service, copilot_service, proactive_service
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -110,3 +110,54 @@ async def approve_action(
         user=user,
         ip=ip, user_agent=ua,
     )
+
+
+# ── v1.44.2 (Tarea F): proactive briefing ────────────────────────────────
+
+
+@router.get("/briefing")
+async def get_briefing(
+    user: dict = Depends(require_authenticated),
+):
+    """Return the user-scoped briefing.
+
+    The 4 analyzers in proactive_service produce up to a few dozen
+    candidate highlights; this endpoint aggregates them, drops the
+    user's dismissed entries, sorts by severity, and returns at most
+    6 (the brief's documented cap). Frontend renders one card per
+    highlight on the dashboard.
+    """
+    highlights = await proactive_service.briefing_for_user(user["id"])
+    return {"highlights": highlights}
+
+
+@router.post(
+    "/briefing/{highlight_id}/dismiss",
+    dependencies=[Depends(require_csrf)],
+)
+async def dismiss_briefing(
+    highlight_id: str,
+    request: Request,
+    user: dict = Depends(require_authenticated),
+):
+    """Record a per-user dismissal. Idempotent — calling twice flips
+    the bit once and audits two events so we can spot suspicious
+    repeated dismissals.
+
+    The highlight_id is forensic: it has the shape
+    ``<category>:<cartridge_or_job>`` (e.g. ``freshness:sap_hcm``).
+    Reject empty IDs at the boundary so a malformed POST can't
+    insert a row that mass-dismisses everything later.
+    """
+    if not highlight_id or len(highlight_id) > 200:
+        raise HTTPException(400, "Invalid highlight_id")
+    await proactive_service.dismiss_highlight(user["id"], highlight_id)
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.briefing.dismiss",
+        resource_type="briefing_highlight",
+        resource_id=highlight_id,
+        status="success",
+    )
+    return {"ok": True, "dismissed": highlight_id}
