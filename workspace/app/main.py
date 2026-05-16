@@ -28,6 +28,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.services import session as _session, consumer_assistant as _ca
 from app.security import get_internal_api_key
+# Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
+from app.logging_config import setup_logging  # noqa: E402
+
+setup_logging(service_name="workspace")
 
 REFINEMENT_URL       = os.environ.get("REFINEMENT_URL",       "http://refinement:8500")
 MCP_INFRA_URL        = os.environ.get("MCP_INFRA_URL",        "http://mcp-infra:8010")

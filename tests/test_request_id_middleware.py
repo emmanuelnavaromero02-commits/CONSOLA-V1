@@ -98,11 +98,57 @@ def test_request_id_is_unique_per_request(app_with_middleware):
 
 
 def test_middleware_module_present_in_all_services():
-    """All 5 services ship the identical middleware module."""
+    """All 5 services ship the identical middleware module (byte-equal)."""
+    import hashlib
     repo = Path(__file__).resolve().parents[1]
+    digests = {}
     for svc in ("console", "workspace", "vault", "refinement", "mcp-infra"):
         path = repo / svc / "app" / "middleware" / "request_id.py"
         assert path.exists(), f"{svc} missing middleware/request_id.py"
-        src = path.read_text(encoding="utf-8")
-        assert "class RequestIDMiddleware" in src
-        assert "X-Request-ID" in src
+        digests[svc] = hashlib.md5(path.read_bytes()).hexdigest()
+    distinct = set(digests.values())
+    assert len(distinct) == 1, (
+        f"middleware/request_id.py drifted across services: {digests!r}"
+    )
+
+
+def test_exception_response_still_carries_request_id(app_with_middleware):
+    """Sprint v1.41.1 hardening (observability R1 finding): if the
+    downstream handler raises, the middleware must still emit a 500
+    response with the X-Request-ID header. Without this guard the
+    earlier draft hit UnboundLocalError on `response` after the
+    try/finally, losing the correlation header precisely when the
+    operator needs it most."""
+    from app.middleware.request_id import RequestIDMiddleware
+
+    api = FastAPI()
+    api.add_middleware(RequestIDMiddleware)
+
+    @api.get("/boom")
+    def boom():
+        raise RuntimeError("downstream blew up")
+
+    # TestClient raises by default when the app raises; tell it to
+    # surface the response instead.
+    client = TestClient(api, raise_server_exceptions=False)
+    r = client.get("/boom")
+    assert r.status_code == 500
+    rid = r.headers.get("x-request-id")
+    assert rid, "X-Request-ID must be present even on 5xx"
+    assert len(rid) == 36, "should be a UUID4 when no client header was sent"
+
+
+def test_exception_response_echoes_client_request_id(app_with_middleware):
+    from app.middleware.request_id import RequestIDMiddleware
+
+    api = FastAPI()
+    api.add_middleware(RequestIDMiddleware)
+
+    @api.get("/boom")
+    def boom():
+        raise RuntimeError("downstream blew up")
+
+    client = TestClient(api, raise_server_exceptions=False)
+    r = client.get("/boom", headers={"X-Request-ID": "incident-42"})
+    assert r.status_code == 500
+    assert r.headers.get("x-request-id") == "incident-42"
