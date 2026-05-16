@@ -231,3 +231,131 @@ def test_mcp_rpc_503_body_is_valid_json_with_apostrophe_error(
     assert any("can't connect" in e for e in body["startup_errors"]), body
     assert any("C:\\db" in e for e in body["startup_errors"]), body
     assert any("tëst" in e for e in body["startup_errors"]), body
+
+
+# ── v1.43.4 (Codex C2): /health reflects MCP contract state ───────────────
+
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_health_returns_200_with_tool_count_when_healthy(
+    env_for_cartridges, cartridge, service_label, monkeypatch,
+):
+    """v1.43.4 (Codex C2): /health success body must include a
+    positive ``tool_count`` derived from the MCP server's
+    ``list_tools()`` call. Before this hotfix /health only checked
+    startup_ok, so a cartridge with a broken /mcp/tools surface
+    could still report healthy.
+    """
+    from fastapi.testclient import TestClient
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    async def _ok():
+        return None
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
+    monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
+    if cartridge != "replicon":
+        monkeypatch.setattr(
+            main_mod.catalog_service, "_seed_if_empty", lambda: None,
+        )
+
+    with TestClient(main_mod.app) as client:
+        r = client.get("/health")
+
+    assert r.status_code == 200, (
+        f"{cartridge} /health must be 200 with tools registered, "
+        f"got {r.status_code} body={r.text!r}"
+    )
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == service_label
+    assert "tool_count" in body, (
+        f"{cartridge} /health success body must include tool_count "
+        f"(v1.43.4 Codex C2). got keys={list(body)}"
+    )
+    assert isinstance(body["tool_count"], int) and body["tool_count"] > 0, (
+        f"{cartridge} /health tool_count must be a positive int — "
+        f"the MCP server must have tools registered to count as healthy"
+    )
+
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_health_returns_503_when_mcp_has_no_tools(
+    env_for_cartridges, cartridge, service_label, monkeypatch,
+):
+    """If the MCP server somehow ends up with zero tools registered
+    (regression in tool decorators, bad import order, etc.), /health
+    must return 503 with reason=mcp_no_tools_registered. This catches
+    a quiet failure mode that v1.43.4 (Codex C2) explicitly targets.
+    """
+    from fastapi.testclient import TestClient
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    async def _ok():
+        return None
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
+    monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
+    if cartridge != "replicon":
+        monkeypatch.setattr(
+            main_mod.catalog_service, "_seed_if_empty", lambda: None,
+        )
+
+    # Replace mcp.list_tools to return [].
+    async def _no_tools():
+        return []
+    # Import the cartridge's routes_health module and patch its `mcp`.
+    rh = importlib.import_module("app.api.routes_health")
+    monkeypatch.setattr(rh.mcp, "list_tools", _no_tools)
+
+    with TestClient(main_mod.app) as client:
+        r = client.get("/health")
+
+    assert r.status_code == 503, (
+        f"{cartridge} /health must be 503 when no tools registered, "
+        f"got {r.status_code} body={r.text!r}"
+    )
+    body = r.json()
+    assert body["ok"] is False
+    assert body["reason"] == "mcp_no_tools_registered", body
+    assert body["tool_count"] == 0, body
+
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+def test_health_returns_503_when_mcp_list_tools_raises(
+    env_for_cartridges, cartridge, service_label, monkeypatch,
+):
+    """If mcp.list_tools() raises (e.g. AttributeError because of a
+    fastmcp major-version mismatch — the exact Codex C1 failure
+    mode), /health must surface that as 503 with
+    reason=mcp_unreachable instead of pretending healthy.
+    """
+    from fastapi.testclient import TestClient
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    async def _ok():
+        return None
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
+    monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
+    if cartridge != "replicon":
+        monkeypatch.setattr(
+            main_mod.catalog_service, "_seed_if_empty", lambda: None,
+        )
+
+    async def _boom():
+        raise AttributeError(
+            "'FastMCP' object has no attribute 'list_tools'"
+        )
+    rh = importlib.import_module("app.api.routes_health")
+    monkeypatch.setattr(rh.mcp, "list_tools", _boom)
+
+    with TestClient(main_mod.app) as client:
+        r = client.get("/health")
+
+    assert r.status_code == 503, (
+        f"{cartridge} /health must be 503 when list_tools raises"
+    )
+    body = r.json()
+    assert body["reason"] == "mcp_unreachable", body
+    assert "list_tools" in body["error"], body

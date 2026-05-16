@@ -127,6 +127,50 @@ case "$CODE" in
   *)       fail "auth gate broken (POST /monitoring/invoke → ${CODE}, expected 401|403)" ;;
 esac
 
+# ── v1.43.4 (Codex C2): authenticated /mcp/tools must return tools ────
+# v1.43.3 shipped with SAP cartridges' /mcp/tools returning HTTP 500
+# (fastmcp 2.5.0 pin vs 3.x API in main.py). The auth-rejection check
+# above only verified the gate; it can't tell whether the endpoint
+# behind the gate actually works. These 4 checks land an authenticated
+# probe at each cartridge and assert the response shape ``{"tools":
+# [...]}`` has at least one entry. If INTERNAL_API_KEY is unavailable
+# (running from a workstation without infra/.env), the block warns and
+# skips — smoke stays useful in that environment without giving false
+# greens in the developer Mac where the keys are present.
+INTERNAL_KEY=""
+if [ -f "infra/.env" ]; then
+  INTERNAL_KEY="$(grep -E '^INTERNAL_API_KEY=' infra/.env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+fi
+if [ -z "$INTERNAL_KEY" ]; then
+  echo "[smoke] WARN  INTERNAL_API_KEY not found in infra/.env — skipping 4 MCP tool probes"
+else
+  for pair in "replicon:8201" "sap_hcm:8202" "sap_successfactors:8203" "sap_s4hana:8204"; do
+    name="${pair%:*}"
+    port="${pair#*:}"
+    BODY="$(curl -sS --max-time 5 \
+            -H "X-Internal-Api-Key: ${INTERNAL_KEY}" \
+            -H "X-Internal-Service: console" \
+            "http://localhost:${port}/mcp/tools" 2>/dev/null || echo '')"
+    # Count tool entries without jq (smoke must work without extra deps):
+    # the body is JSON like {"tools":[{...},{...}]} — count the
+    # closing braces preceded by "input_schema" markers. Fall back to a
+    # tools-array length match if jq is available.
+    if command -v jq >/dev/null 2>&1; then
+      TOOL_COUNT="$(echo "$BODY" | jq '.tools | length' 2>/dev/null || echo 0)"
+    else
+      # Defensive: count occurrences of '"name":' inside the body —
+      # one per tool. Works for both the cartridge response shape and
+      # an error shape (errors don't contain "name":).
+      TOOL_COUNT="$(echo "$BODY" | grep -o '"name":' | wc -l | tr -d '[:space:]')"
+    fi
+    if [ "${TOOL_COUNT:-0}" -gt 0 ]; then
+      pass "${name} /mcp/tools returns ${TOOL_COUNT} tools (port ${port})"
+    else
+      fail "${name} /mcp/tools returned 0 tools — Codex C1 regression (port ${port}, body: ${BODY:0:200})"
+    fi
+  done
+fi
+
 # ── 10. Postgres: enough public tables to mean migrations ran ──────────
 # Fresh init creates 30+ tables across the various 0*-2*.sql scripts.
 # If we see <10 the migrations didn't run and the next checks would
