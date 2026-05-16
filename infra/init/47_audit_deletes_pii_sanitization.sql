@@ -17,9 +17,14 @@
 --      we can't fix this retroactively without a DBA-level intervention.
 --
 -- Migration 47 replaces the trigger function so future deletes strip
--- PII per table. A salted MD5 of the email is stored as ``email_hash``
--- so forensics (fraud investigations, "did this email ever own an
--- account?") still works without retaining the cleartext email itself.
+-- PII per table. An MD5 of the lowercased email is stored as
+-- ``email_hash`` so forensics (fraud investigations, "did this email
+-- ever own an account?") still works without retaining the cleartext
+-- email itself. The hash is deliberately unsalted — its purpose is
+-- correlation across audit rows, not credential protection (the
+-- secret-key strip a few lines below is what guards credentials).
+-- A salted hash would correlate within a single audit_deletes row
+-- but not across rows, defeating the whole point.
 --
 -- The migration is idempotent: CREATE OR REPLACE FUNCTION rewrites the
 -- body, the existing trigger bindings (attached in migration 45) keep
