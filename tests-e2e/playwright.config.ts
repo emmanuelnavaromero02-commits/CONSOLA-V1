@@ -23,7 +23,14 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
   retries: 0,
-  workers: 1,
+  // v1.44.3.2.1 R1 DevOps P1: 2 workers safe because storage state
+  // is read-only (cookies persist on the BrowserContext but the
+  // session itself isn't mutated by any spec). Cuts a ~10 min serial
+  // run to ~6 min on a developer Mac. Specs that genuinely need
+  // serial execution (rate-limited login probes) live in their own
+  // file and Playwright keeps tests-within-a-file in declaration
+  // order at any worker count.
+  workers: process.env.CI ? 1 : 2,
   forbidOnly: !!process.env.CI,
   reporter: [
     ["html", { outputFolder: "playwright-report", open: "never" }],

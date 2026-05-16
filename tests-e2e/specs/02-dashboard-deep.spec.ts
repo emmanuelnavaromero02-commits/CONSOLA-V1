@@ -27,12 +27,14 @@ test.describe("Dashboard layout", () => {
 
   test("page does NOT have stale skeleton placeholders after 15 s",
     async ({ page }) => {
+      // v1.44.3.2.1 R1 Testing F1: was a bare waitForTimeout(15s)
+      // + count. expect(...).toHaveCount(0, {timeout}) auto-resolves
+      // as soon as the skeletons disappear — short-circuits on a
+      // fast backend and still bounds the wait at 15 s.
       await page.goto("/dashboard");
-      await page.waitForTimeout(15_000);
-      const pulsing = await page.locator(".animate-pulse").count();
-      expect(pulsing,
-        "no animate-pulse skeleton should remain after 15 s",
-      ).toBe(0);
+      await expect(page.locator(".animate-pulse")).toHaveCount(0, {
+        timeout: 15_000,
+      });
     },
   );
 

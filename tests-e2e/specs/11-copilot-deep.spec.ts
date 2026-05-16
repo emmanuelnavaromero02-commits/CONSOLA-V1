@@ -74,16 +74,27 @@ test.describe("Copilot memory CRUD", () => {
       headers: { "X-CSRF-Token": csrf },
       data: { fact: `e2e-test fact ${Date.now()}` },
     });
-    expect(r.status()).toBe(200);
-    const body = await r.json();
-    expect(body).toHaveProperty("fact");
-    expect(body.fact).toHaveProperty("id");
-    // Cleanup.
-    await ctx.delete(
-      `${BACKEND}/api/copilot/memory/fact/${body.fact.id}`,
-      { headers: { "X-CSRF-Token": csrf } },
-    );
-    await ctx.dispose();
+    let factId: number | null = null;
+    // v1.44.3.2.1 R1 Security P2: wrap the cleanup in try/finally
+    // so an assertion failure above doesn't leave the throwaway
+    // fact in the user_facts table.
+    try {
+      expect(r.status()).toBe(200);
+      const body = await r.json();
+      expect(body).toHaveProperty("fact");
+      expect(body.fact).toHaveProperty("id");
+      factId = body.fact.id;
+    } finally {
+      if (factId !== null) {
+        await ctx.delete(
+          `${BACKEND}/api/copilot/memory/fact/${factId}`,
+          { headers: { "X-CSRF-Token": csrf } },
+        ).catch(() => null);
+      }
+      await ctx.dispose();
+    }
+    // Early return below — the dispose already happened in finally.
+    return;
   });
 
   test("GET memory returns facts + preferences shape", async () => {

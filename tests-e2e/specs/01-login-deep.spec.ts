@@ -36,13 +36,19 @@ test.describe("Login form — validation surface", () => {
 
   test("submitting empty form does NOT call the API", async ({ page }) => {
     await page.goto("/login");
+    // v1.44.3.2.1 R1 Testing F1: was a bare waitForTimeout(500) +
+    // boolean snapshot. expect.poll is the deterministic shape:
+    // it re-evaluates the predicate until the timeout elapses, so
+    // we get the same negative-assertion semantics ("no request
+    // fired") without picking an arbitrary sleep duration.
     let apiCalled = false;
     page.on("request", (req) => {
       if (req.url().includes("/auth/login")) apiCalled = true;
     });
     await page.getByRole("button", { name: /iniciar sesión|sign in/i }).click();
-    await page.waitForTimeout(500);
-    expect(apiCalled).toBe(false);
+    await expect
+      .poll(() => apiCalled, { timeout: 2_000, intervals: [100, 250, 500] })
+      .toBe(false);
   });
 
   test("invalid email format keeps the form on /login", async ({ page }) => {

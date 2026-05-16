@@ -234,18 +234,28 @@ test.describe("Cartridge detail — backend round-trip with fake creds", () => {
       }
     }
     await page.getByRole("button", { name: /guardar credenciales/i }).click();
-    const toast = page.locator("[data-sonner-toast]").first();
-    await expect(toast).toBeVisible({ timeout: 10_000 });
-    const text = (await toast.innerText()).toLowerCase();
-    // Either success (200 round-trip) or a USEFUL error (4xx/5xx
-    // with a real message) is acceptable. A SILENT failure is not.
-    expect(text.length).toBeGreaterThan(3);
-
-    // Cleanup: try to delete what we just wrote.
-    await page.getByRole("button", { name: /borrar credenciales/i }).click();
-    const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
-    if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await page.getByRole("button", { name: /^borrar$/i }).click();
+    // v1.44.3.2.1 R1 Security P2: wrap the cleanup in try/finally so
+    // a failed assertion above doesn't leave throwaway credentials in
+    // the Vault. The cleanup runs even on cancellation/assertion-fail.
+    try {
+      const toast = page.locator("[data-sonner-toast]").first();
+      await expect(toast).toBeVisible({ timeout: 10_000 });
+      const text = (await toast.innerText()).toLowerCase();
+      // Either success (200 round-trip) or a USEFUL error (4xx/5xx
+      // with a real message) is acceptable. A SILENT failure is not.
+      expect(text.length).toBeGreaterThan(3);
+    } finally {
+      await page
+        .getByRole("button", { name: /borrar credenciales/i })
+        .click()
+        .catch(() => null);
+      const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
+      if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await page
+          .getByRole("button", { name: /^borrar$/i })
+          .click()
+          .catch(() => null);
+      }
     }
   });
 });
