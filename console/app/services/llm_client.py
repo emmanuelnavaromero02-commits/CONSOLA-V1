@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import re
+import uuid
 from typing import Any, Callable
 
 import anthropic
@@ -459,6 +460,13 @@ async def _gemini_chat(
             contents.append(gtypes.Content(role=role, parts=[gtypes.Part.from_text(text=content)]))
 
     viewer_urls: list[dict] = []
+    # v1.43.1 (Codex P0-2): accumulate Anthropic-shape blocks for the
+    # caller. ``contents`` is Gemini's internal format; copilot_service
+    # expects ``role/content`` dicts with ``tool_use``/``tool_result``
+    # blocks (same shape llm_client._anthropic_chat returns). We build
+    # them here per turn so the approval gate, persistence and
+    # history-reload paths work identically with both providers.
+    synthetic: list[dict] = list(messages)
 
     for _i in range(20):
         response = await _gemini_generate_with_retry(
@@ -484,23 +492,53 @@ async def _gemini_chat(
         finish    = getattr(candidate, "finish_reason", None)
         parts     = list(candidate.content.parts) if (candidate.content and candidate.content.parts) else []
         fn_calls  = [p for p in parts if p.function_call]
+        text_parts = [p.text for p in parts if getattr(p, "text", None)]
 
         if not fn_calls:
             try:
                 text = response.text or ""
             except Exception:
-                text = " ".join(p.text for p in parts if getattr(p, "text", None))
+                text = " ".join(text_parts)
             if not text:
                 reason = str(finish) if finish else "unknown"
                 text = f"(Gemini no devolvió contenido — razón: {reason})"
             contents.append(gtypes.Content(role="model", parts=parts))
             await _emit(on_event, {"type": "text", "text": text})
-            return text, viewer_urls, messages + [{"role": "assistant", "content": text}]
+            # Anthropic-shape final block so copilot_service persists
+            # the text + any preceding tool_use/tool_result pairs.
+            synthetic.append({
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+            })
+            return text, viewer_urls, synthetic
 
         contents.append(gtypes.Content(role="model", parts=parts))
 
-        fn_resp_parts = []
+        # Build Anthropic-shape assistant turn: text first (if any),
+        # then one tool_use block per function_call with a stable id
+        # the matching tool_result block will reference.
+        assistant_blocks: list[dict] = []
+        for t in text_parts:
+            assistant_blocks.append({"type": "text", "text": t})
+        # Map each Gemini function_call to a stable tool_use_id. Hex of
+        # uuid4 is fine — it lives only within this turn's history and
+        # never crosses provider boundaries.
+        per_call_ids: list[str] = []
         for p in fn_calls:
+            fc = p.function_call
+            tool_use_id = f"gem_{uuid.uuid4().hex[:16]}"
+            per_call_ids.append(tool_use_id)
+            assistant_blocks.append({
+                "type":  "tool_use",
+                "id":    tool_use_id,
+                "name":  fc.name,
+                "input": dict(fc.args),
+            })
+        synthetic.append({"role": "assistant", "content": assistant_blocks})
+
+        fn_resp_parts = []
+        tool_result_blocks: list[dict] = []
+        for idx, p in enumerate(fn_calls):
             fc = p.function_call
             args = dict(fc.args)
             server_id = tool_server_map.get(fc.name, "")
@@ -511,22 +549,32 @@ async def _gemini_chat(
                 "server": server_id,
                 "args":   args,
             })
-            result = await invoke_tool(server_id, bare_name, args)
+            try:
+                result = await invoke_tool(server_id, bare_name, args)
+            except Exception as exc:                  # noqa: BLE001
+                result = {"error": f"tool invocation failed: {exc}"}
             viewer_urls.extend(_extract_viewer_urls(result))
             await _emit(on_event, {
                 "type":    "tool_result",
                 "tool":    bare_name,
                 "summary": _summarize_tool_result(result, bare_name),
             })
+            clipped = _clip_tool_result_for_model(result)
             fn_resp_parts.append(
                 gtypes.Part.from_function_response(
                     name=fc.name,
-                    response={"result": _clip_tool_result_for_model(result)},
+                    response={"result": clipped},
                 )
             )
+            tool_result_blocks.append({
+                "type":         "tool_result",
+                "tool_use_id":  per_call_ids[idx],
+                "content":      clipped,
+            })
         contents.append(gtypes.Content(role="user", parts=fn_resp_parts))
+        synthetic.append({"role": "user", "content": tool_result_blocks})
 
-    return "(máximo de iteraciones alcanzado)", viewer_urls, messages
+    return "(máximo de iteraciones alcanzado)", viewer_urls, synthetic
 
 
 # ── OpenAI-compatible (Ollama) ────────────────────────────────────────────────
