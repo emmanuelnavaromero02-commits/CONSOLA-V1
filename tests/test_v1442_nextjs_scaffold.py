@@ -254,6 +254,31 @@ def test_dockerfile_disables_telemetry():
     assert "NEXT_TELEMETRY_DISABLED=1" in src
 
 
+# ── R-Mac-1: public/ directory must exist for the Dockerfile COPY ────────
+
+
+def test_public_directory_exists_for_dockerfile_copy():
+    """Codex's Mac validation caught the Dockerfile's
+    ``COPY --from=build /app/public ./public`` failing because
+    console-next/public/ didn't exist on disk. Without the
+    directory the docker build aborts → omega_console_next never
+    starts → smoke 0/34. Lock the directory presence via a
+    .gitkeep so a future tree-prune can't reintroduce the
+    regression."""
+    pub = NEXT_ROOT / "public"
+    assert pub.is_dir(), (
+        f"console-next/public/ must exist on disk for the "
+        f"Dockerfile multi-stage COPY at line ~36 to succeed"
+    )
+    # The COPY targets the directory itself — even a single
+    # placeholder file (.gitkeep) is enough to make git track it.
+    contents = list(pub.iterdir())
+    assert contents, (
+        "console-next/public/ must contain at least one file "
+        "(e.g. .gitkeep) so git tracks the directory"
+    )
+
+
 # ── docker-compose entry ─────────────────────────────────────────────────
 
 
