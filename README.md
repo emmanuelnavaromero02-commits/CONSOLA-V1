@@ -82,3 +82,4 @@ Para administrar OMEGA en producción consulta `docs/runbook/`:
 - [05 Rotar secretos](docs/runbook/05_rotar_secretos.md) — `FIELD_ENCRYPTION_KEY` (Fernet), `INTERNAL_API_KEY`, passwords admin, roles `omega_*` de DB.
 - [06 Backup / restore](docs/runbook/06_backup_restore.md) — `pg_dumpall`, `mc mirror` para MinIO, recuperación end-to-end.
 - [07 Debug de fallos](docs/runbook/07_debug_fallos.md) — uso de `X-Request-ID` + `audit_events` (ip + user_agent) + `extraction_runs` para reconstruir incidentes.
+- [08 Usar el copiloto](docs/runbook/08_usar_copiloto.md) — chat IA con approval gate, RBAC por `risk_level`, auditoría forense de cada tool call.

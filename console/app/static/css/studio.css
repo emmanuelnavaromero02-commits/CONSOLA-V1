@@ -527,7 +527,7 @@
     }
     .dag-line-numbers span { display: block; }
     .dag-code-textarea {
-      flex: 1; background: var(--bg); color: var(--text1);
+      flex: 1; background: var(--bg); color: var(--text); /* v1.42: --text1 was never declared in tokens.css */
       font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
       border: none; outline: none; resize: none; padding: 14px 16px;
       tab-size: 4; white-space: pre; overflow-wrap: normal; overflow-x: auto; overflow-y: auto;

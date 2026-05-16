@@ -45,11 +45,18 @@
   --primary-hover: #085caf;
   --primary-dark: #064079;
   --primary-soft: rgba(10, 110, 209, 0.10);
+  /* v1.42: text color for content sitting ON the primary background
+     (buttons, badges). Light theme keeps white; dark theme overrides. */
+  --on-primary: #ffffff;
 
   --cyan: #0a6ed1;                /* legacy alias → primary */
   --amber: #b06d00;               /* sober amber for warnings */
   --red:   #b3261e;
   --green: #117a3d;
+  /* v1.42: soft fill for danger callouts (toast / banner backgrounds).
+     Same hue as --danger but at 8% alpha so light/dark themes
+     produce consistent contrast without hardcoded rgba(). */
+  --danger-soft: rgba(179, 38, 30, 0.08);
 
   --accent-red: #b3261e;
   --success:  #117a3d;
@@ -101,6 +108,9 @@
   --primary-hover: #74b8e8;
   --primary-dark:  #1d6fb0;
   --primary-soft:  rgba(78, 163, 224, 0.16);
+  /* v1.42 dark mode: a bit brighter so text on the primary buttons
+     keeps contrast above 4.5:1 against the darker primary. */
+  --on-primary:    #0f172a;
 
   --cyan:   #4ea3e0;
   --amber:  #d4a042;               /* low-sat amber, not neon */
@@ -111,6 +121,8 @@
   --success:    #4cb27b;
   --warning:    #d4a042;
   --danger:     #e0716b;
+  /* v1.42 dark mode: matching soft danger fill. */
+  --danger-soft: rgba(224, 113, 107, 0.14);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40);

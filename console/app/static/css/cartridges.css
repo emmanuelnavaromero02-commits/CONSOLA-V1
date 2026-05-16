@@ -26,7 +26,10 @@
 .cartridges-header a:hover { color: var(--green); }
 
 .cartridges-title {
-  font-family: var(--font-pixel);
+  /* v1.42 fix: --font-pixel was never declared in tokens.css. Fall
+     back to the monospace token so the title doesn't collapse to the
+     UA serif default. */
+  font-family: var(--font-mono);
   font-size: 13px;
   color: #7c9fff;
   letter-spacing: 3px;
@@ -59,7 +62,8 @@
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 1px;
-  color: var(--text1);
+  /* v1.42 fix: --text1 doesn't exist; use the primary text token. */
+  color: var(--text);
 }
 
 .cart-card-actions {

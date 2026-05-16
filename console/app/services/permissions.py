@@ -45,6 +45,13 @@ PERMISSIONS = [
     {"key": "cartridges.read", "label": "Read cartridges", "category": "Cartridges", "description": "List cartridges, view entities and watermarks."},
     {"key": "cartridges.write", "label": "Configure cartridges", "category": "Cartridges", "description": "Edit connection metadata and run test_connection probes."},
     {"key": "cartridges.execute", "label": "Run cartridge extractions", "category": "Cartridges", "description": "Trigger entity extractions and knowledge-bit runs."},
+    # Sprint v1.42 — copilot RBAC. The brain in copilot_service.py maps
+    # every tool's risk_level → required permission before invocation
+    # (read tools → copilot.use, write tools → copilot.write, destructive
+    # tools → copilot.execute plus an explicit user-approval card).
+    {"key": "copilot.use",     "label": "Use the copilot", "category": "Copilot", "description": "Open the chat and invoke read-only tools."},
+    {"key": "copilot.write",   "label": "Copilot writes", "category": "Copilot", "description": "Allow the copilot to invoke write-level tools on the user's behalf."},
+    {"key": "copilot.execute", "label": "Copilot destructive actions", "category": "Copilot", "description": "Allow destructive tool calls — always behind a user-approval card."},
 ]
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSIONS}
@@ -143,16 +150,22 @@ ROLE_PERMISSIONS = {
         "vault.connections.read", "vault.connections.write",
         "vault.secrets.read_masked", "apps.read", "apps.write",
         "cartridges.read", "cartridges.write", "cartridges.execute",
+        # v1.42: workspace admins drive the copilot end-to-end.
+        "copilot.use", "copilot.write", "copilot.execute",
     },
     "analyst": {
         "datasets.read", "pipelines.read", "studio.read", "monitor.read",
         "workspace.access", "apps.read", "cartridges.read",
+        # v1.42: analysts query data via the copilot — read-only.
+        "copilot.use",
     },
     "auditor": {
         "iam.roles.read", "iam.policies.read", "security.audit.read",
         "security.sessions.read", "security.login_attempts.read", "monitor.read",
+        # v1.42: auditors read via the copilot to investigate incidents.
+        "copilot.use",
     },
-    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read"},
+    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read", "copilot.use"},
     "workspace_user": {"workspace.access", "apps.read"},
     "user": {"monitor.read", "workspace.access", "apps.read", "studio.read"},
 }

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Copiloto — OMEGA</title>
+  <!-- v1.42: tokens.css FIRST so every later stylesheet sees the design vars. -->
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/copilot.css">
+</head>
+<body>
+  <div class="copilot-container">
+    <aside class="copilot-sidebar">
+      <div class="copilot-sidebar-header">
+        <a href="/" class="copilot-back">← OMEGA</a>
+        <button id="copilot-new" type="button" class="copilot-btn-primary">
+          + Nueva conversación
+        </button>
+      </div>
+      <ul id="copilot-conv-list" class="copilot-conv-list" aria-label="Historial">
+        <li class="copilot-empty">Cargando…</li>
+      </ul>
+    </aside>
+
+    <main class="copilot-chat">
+      <header class="copilot-header">
+        <h1>Copiloto OMEGA</h1>
+        <span id="copilot-title" class="copilot-title-sub"></span>
+      </header>
+
+      <div id="copilot-messages" class="copilot-messages" aria-live="polite">
+        <div class="copilot-welcome">
+          <h2>Hola 👋</h2>
+          <p>
+            Soy el copiloto de OMEGA. Puedo consultar tus cartuchos
+            (Replicon, SAP HCM / S4 / SuccessFactors), revisar el estado
+            de los DAGs en Airflow, y ejecutar acciones cuando me lo pidas.
+          </p>
+          <ul>
+            <li>· "¿Cuántos empleados se extrajeron de SAP HCM hoy?"</li>
+            <li>· "Muéstrame los DAGs que fallaron en las últimas 24h"</li>
+            <li>· "Lanza extracción incremental de Replicon TimeEntry"</li>
+          </ul>
+          <p class="copilot-welcome-note">
+            Las acciones destructivas se piden con un botón
+            <strong>Aprobar</strong>; nada se ejecuta sin tu OK.
+          </p>
+        </div>
+      </div>
+
+      <div id="copilot-toast" class="copilot-toast" hidden role="status"></div>
+
+      <form id="copilot-form" class="copilot-input">
+        <textarea
+          id="copilot-prompt"
+          rows="2"
+          placeholder="Escribe tu pregunta o instrucción…"
+          aria-label="Mensaje al copiloto"
+          required
+        ></textarea>
+        <button id="copilot-send" type="submit" class="copilot-btn-primary">
+          Enviar
+        </button>
+      </form>
+    </main>
+  </div>
+
+  <script src="/static/js/theme.js" defer></script>
+  <script src="/static/js/copilot.js" defer></script>
+</body>
+</html>
