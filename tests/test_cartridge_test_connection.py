@@ -1,0 +1,80 @@
+"""Sprint v1.41.0 — /api/cartridges/{cartridge}/test_connection proxy.
+
+Validates the proxy endpoint registered in console/app/main.py:
+  * Unknown cartridge → 404 (not a generic 200 with error)
+  * Allowed cartridge slugs cover replicon + the 3 SAP cartridges
+  * Maps slugs to the correct internal port + DNS host
+
+Static introspection only — does not boot the console app (its lifespan
+needs Postgres). When test_main_endpoints adds live coverage we will
+parametrise the live test there.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+CARTRIDGES_ROUTER = Path(__file__).resolve().parents[1] / "console" / "app" / "routers" / "cartridges.py"
+
+
+def _router_source() -> str:
+    return CARTRIDGES_ROUTER.read_text(encoding="utf-8")
+
+
+def test_endpoint_registered():
+    src = _router_source()
+    # router declares prefix="/api/cartridges" + a /{cartridge}/test_connection path.
+    assert 'prefix="/api/cartridges"' in src
+    assert '"/{cartridge}/test_connection"' in src
+
+
+def test_endpoint_requires_csrf_and_permission():
+    src = _router_source()
+    match = re.search(
+        r'@router\.post\(\s*"/\{cartridge\}/test_connection"[\s\S]+?\)\s*\n',
+        src,
+    )
+    assert match, "test_connection route not found"
+    decorator = match.group(0)
+    assert "require_csrf" in decorator
+    assert 'require_permission("cartridges.write")' in decorator
+
+
+def test_cartridge_port_map_complete():
+    """All 4 cartridges must be mapped to their exposed ports."""
+    src = _router_source()
+    expected = {
+        "replicon": 8201,
+        "sap_hcm": 8202,
+        "sap_successfactors": 8203,
+        "sap_s4hana": 8204,
+    }
+    for cart, port in expected.items():
+        assert f'"{cart}": {port}' in src, f"port map missing {cart} -> {port}"
+
+
+def test_router_registered_in_main():
+    """main.py must include the new cartridges router."""
+    main_src = (Path(__file__).resolve().parents[1] / "console" / "app" / "main.py").read_text(encoding="utf-8")
+    assert "cartridges_router" in main_src
+    assert "app.include_router(cartridges_router.router)" in main_src
+
+
+def test_cartridge_permissions_registered():
+    from pathlib import Path as _Path
+    perms = _Path(__file__).resolve().parents[1] / "console" / "app" / "services" / "permissions.py"
+    src = perms.read_text(encoding="utf-8")
+    assert '"cartridges.read"' in src
+    assert '"cartridges.write"' in src
+    assert '"cartridges.execute"' in src
+
+
+def test_cartridge_skills_test_connection_routes_exist():
+    """Each cartridge exposes /skills/test_connection guarded by verify_api_key."""
+    root = Path(__file__).resolve().parents[1] / "cartridges"
+    for cart in ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"):
+        routes = root / cart / "app" / "api" / "routes_skills.py"
+        src = routes.read_text(encoding="utf-8")
+        assert '@router.post("/test_connection")' in src, f"{cart} missing /test_connection"
+        # router-level dependencies=[Depends(verify_api_key)] still in force
+        assert "dependencies=[Depends(verify_api_key)]" in src

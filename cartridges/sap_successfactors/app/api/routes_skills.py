@@ -22,6 +22,17 @@ router = APIRouter(
 )
 
 
+# v1.41.0 — auditor P1: validate credentials from the console without
+# triggering an extraction. SapSfClient.test_connection() is degraded-aware.
+@router.post("/test_connection")
+def test_connection() -> dict:
+    try:
+        from app.core.sap_client import SapSfClient
+        return SapSfClient().test_connection()
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)[:200]}
+
+
 # ── Catalogue ─────────────────────────────────────────────────────────────────
 
 @router.get("/entities")

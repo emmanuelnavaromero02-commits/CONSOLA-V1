@@ -114,7 +114,15 @@ def test_reveal_setting_admin_returns_real_value():
         response = client.post("/api/settings/replicon_token/reveal")
     assert response.status_code == 200
     assert response.json()["value"] == "real-bearer"
-    mock.assert_awaited_once_with("replicon_token", user_id=1, user_email="admin@example.com")
+    # v1.41.0: settings router forwards ip + user_agent to settings_service
+    # so the audit row records where the secret was revealed from.
+    mock.assert_awaited_once_with(
+        "replicon_token",
+        user_id=1,
+        user_email="admin@example.com",
+        ip="testclient",
+        user_agent="testclient",
+    )
 
 
 def test_reveal_setting_unknown_returns_404():
@@ -137,7 +145,12 @@ def test_update_setting_admin_persists():
     assert response.status_code == 200
     assert response.json()["value"] == "real"
     mock.assert_awaited_once_with(
-        "airflow_connection_mode", "real", user_id=1, user_email="admin@example.com",
+        "airflow_connection_mode",
+        "real",
+        user_id=1,
+        user_email="admin@example.com",
+        ip="testclient",
+        user_agent="testclient",
     )
 
 
@@ -163,7 +176,11 @@ def test_rotate_secret_admin_returns_updated_row():
         response = client.post("/api/settings/internal_api_key/rotate")
     assert response.status_code == 200
     mock.assert_awaited_once_with(
-        "internal_api_key", user_id=1, user_email="admin@example.com",
+        "internal_api_key",
+        user_id=1,
+        user_email="admin@example.com",
+        ip="testclient",
+        user_agent="testclient",
     )
 
 

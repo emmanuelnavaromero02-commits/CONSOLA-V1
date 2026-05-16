@@ -1153,6 +1153,19 @@ async def api_job_logs(job_id: str, limit: int = 200):
         })
     return {"logs": result}
 
+@app.get("/api/tools/manifest", dependencies=[Depends(require_authenticated)])
+async def api_tools_manifest():
+    """Sprint v1.41.0 (tornillo copilot): unified tool catalog with risk_level
+    + requires_approval, sourced from every registered MCP server. The copilot
+    router (v1.42+) consumes this to decide auto-execution vs approval prompts."""
+    from app.services.tool_manifest import build_manifest
+    return await build_manifest()
+
+
+# Sprint v1.41.0 — cartridge management endpoints live in
+# console/app/routers/cartridges.py (registered with include_router below).
+
+
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
@@ -3377,7 +3390,7 @@ async def api_admin_users_list(admin_user: dict = Depends(require_permission("ia
 
 
 @app.post("/api/admin/users", dependencies=[Depends(require_csrf)])
-async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
+async def api_admin_users_create(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     email = (body.get("email") or "").strip().lower()
     pw    = body.get("password") or ""
     if not email or not pw:
@@ -3391,12 +3404,16 @@ async def api_admin_users_create(body: dict, admin_user: dict = Depends(require_
         # create_user assigns workspace membership in the same transaction;
         # surface a clear 500 when the RBAC seed (workspaces/roles) is missing.
         raise HTTPException(500, str(exc)) from exc
-    await _audit.record_event(admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]), metadata={"role": role})
+    await _audit.record_event(
+        admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]),
+        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+        metadata={"role": role},
+    )
     return target_user
 
 
 @app.patch("/api/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
-async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
+async def api_admin_users_update(user_id: int, body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     # Don't let an admin demote / disable themselves accidentally
     if user_id == admin_user["id"] and (body.get("role") not in (None, admin_user.get("role")) or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
@@ -3424,6 +3441,8 @@ async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = De
         action,
         "user",
         str(user_id),
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
         metadata={
             "role": target_user.get("role"),
             "is_active": target_user.get("is_active"),
@@ -3440,6 +3459,8 @@ async def api_admin_users_update(user_id: int, body: dict, admin_user: dict = De
             "user.password_changed",
             "user",
             str(user_id),
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
             metadata={"target_email": target_user.get("email")},
         )
     return target_user
@@ -3456,7 +3477,7 @@ async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(requir
 
 
 @app.post("/api/admin/users/invite", dependencies=[Depends(require_csrf)])
-async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_permission("iam.users.write"))):
+async def api_admin_users_invite(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
     email = (body.get("email") or "").strip().lower()
@@ -3470,7 +3491,11 @@ async def api_admin_users_invite(body: dict, admin_user: dict = Depends(require_
     tok, _ = await _tokens.create(target_user["id"], "invite")
     subject, html = _email.render_invitation(target_user.get("name"), email, _activation_link(tok), INVITE_TTL_HOURS)
     sent = await _email.send_email(email, subject, html)
-    await _audit.record_event(admin_user.get("id"), admin_user.get("email"), "user.invited", "user", str(target_user["id"]), metadata={"role": role, "email_sent": sent})
+    await _audit.record_event(
+        admin_user.get("id"), admin_user.get("email"), "user.invited", "user", str(target_user["id"]),
+        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+        metadata={"role": role, "email_sent": sent},
+    )
     return {"invited": True, "user": target_user, "email_sent": sent}
 
 
@@ -3491,7 +3516,7 @@ async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(requ
 
 
 @app.post("/api/admin/users/{user_id}/send-reset", dependencies=[Depends(require_csrf)])
-async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require_permission("iam.users.write"))):
+async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict = Depends(require_permission("iam.users.write"))):
     """Email a password reset link to an existing active user."""
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user or not target_user.get("is_active"):
@@ -3499,10 +3524,15 @@ async def api_admin_users_send_reset(user_id: int, admin: dict = Depends(require
     tok, _ = await _tokens.create(user_id, "reset")
     subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
     sent = await _email.send_email(target_user["email"], subject, html)
-    await _audit.record_event(admin.get("id"), admin.get("email"), "password_reset.sent", "user", str(user_id), metadata={"email_sent": sent})
+    await _audit.record_event(
+        admin.get("id"), admin.get("email"), "password_reset.sent", "user", str(user_id),
+        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+        metadata={"email_sent": sent},
+    )
     return {"sent": sent}
 
 
+from app.routers import cartridges as cartridges_router
 from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
@@ -3512,3 +3542,4 @@ app.include_router(settings.router)
 app.include_router(settings_internal.router)
 app.include_router(operations.router)
 app.include_router(security.router)
+app.include_router(cartridges_router.router)

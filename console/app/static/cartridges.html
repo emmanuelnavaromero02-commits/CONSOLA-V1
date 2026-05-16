@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cartuchos — OMEGA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/cartridges.css">
+</head>
+<body>
+  <div class="crt-overlay"></div>
+  <div class="scanlines"></div>
+
+  <div class="cartridges-shell">
+    <div class="cartridges-header">
+      <a href="/">← INICIO</a>
+      <div>
+        <div class="cartridges-title">▦ CARTUCHOS</div>
+        <div class="cartridges-subtitle">CONFIGURACIÓN · CONEXIÓN · EXTRACCIÓN</div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <div id="cartridges-list" class="cartridges-grid">
+      <div class="loading-line">Cargando cartuchos...</div>
+    </div>
+
+    <!-- Connector schema modal -->
+    <div id="schema-modal" class="modal" hidden>
+      <div class="modal-box">
+        <button class="modal-close" data-action="close-modal" aria-label="Cerrar">×</button>
+        <h2 id="schema-title">Configurar cartucho</h2>
+        <pre id="schema-body" class="schema-body"></pre>
+      </div>
+    </div>
+
+    <!-- Entities modal -->
+    <div id="entities-modal" class="modal" hidden>
+      <div class="modal-box modal-box-wide">
+        <button class="modal-close" data-action="close-modal" aria-label="Cerrar">×</button>
+        <h2 id="entities-title">Entidades</h2>
+        <table class="entities-table">
+          <thead>
+            <tr><th>Entidad</th><th>Modo</th><th>Última corrida</th><th>Acciones</th></tr>
+          </thead>
+          <tbody id="entities-tbody"><tr><td colspan="4">Cargando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/cartridges.js"></script>
+</body>
+</html>

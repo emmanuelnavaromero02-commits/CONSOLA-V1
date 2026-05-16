@@ -94,3 +94,12 @@ async def viewer_semantic():
 @router.get("/apps-gallery")
 async def apps_gallery():
     return FileResponse(STATIC / "apps_gallery.html")
+
+
+# Sprint v1.41.0 — auditor P1 operativa: cartridge wizard page.
+@router.get(
+    "/cartridges",
+    dependencies=[Depends(require_permission("cartridges.read")), Depends(require_admin)],
+)
+async def cartridges_page():
+    return FileResponse(STATIC / "cartridges.html")
