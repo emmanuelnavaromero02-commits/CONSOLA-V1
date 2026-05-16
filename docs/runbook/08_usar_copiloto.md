@@ -95,10 +95,73 @@ Cada turno del copiloto puede contener tres componentes:
 - **Sin streaming todavía**: la respuesta aparece completa cuando
   termina el turno. Streaming token-por-token llega en v1.43.
 
-## Limitaciones (v1.42)
+## Citation cards (v1.43)
 
-- Sin streaming (respuesta completa al final del turno).
-- Sin charts inline — solo texto + tool cards (v1.44).
+Cada respuesta del copiloto que viene de datos reales muestra
+**tarjetas de fuente** debajo del texto. Una tarjeta luce así:
+
+```
+📊 sap_hcm · Employee
+Run 9f3a1b2c… · hace 6h ⚠
+1,247 filas
+```
+
+Los iconos a la derecha indican qué tan fresco está el dato:
+
+| Icono | Edad | Significado |
+|-------|------|-------------|
+| ✅    | < 5 min        | recién extraído |
+| 🟢    | < 1 h          | fresco |
+| ⚠️    | < 24 h         | stale — considera refrescar |
+| 🔴    | ≥ 24 h         | muy stale — refresca antes de decidir |
+| ❓    | desconocido    | la tool no expuso la fecha |
+
+Los colores que adornan el borde izquierdo de cada tarjeta heredan de
+la misma escala (verde / amarillo / rojo). Funcionan en light + dark.
+
+### Si la respuesta NO trae citation cards
+
+Significa que el copiloto **no consultó tools** en este turno. Es OK
+para preguntas conversacionales ("explícame qué es un DAG") pero NO
+para preguntas que requieren datos reales ("¿cuántos empleados?").
+Si pediste un número y no ves cards, pídele que verifique con una
+tool específica.
+
+Además, si el copiloto da una cifra con frases como "aproximadamente
+1500" o "around 200" SIN haber consultado tools, la plataforma
+**prepende un warning** a la respuesta:
+
+> ⚠️ Esta respuesta contiene cifras pero el copiloto no consultó
+> ninguna tool en este turno. Trata los números con escepticismo…
+
+## Multi-fuente
+
+Para preguntas que cruzan cartuchos ("compara horas Replicon contra
+presupuesto SAP HCM"), el copiloto llama las tools de cada cartucho
+en secuencia y combina los resultados en una sola respuesta. Verás
+una tarjeta de cita por cada cartucho consultado.
+
+**Tope duro: 3 cartuchos por turno.** Si la pregunta requiere más,
+el copiloto te da los 3 más relevantes y ofrece consultar el resto
+en un turno siguiente.
+
+## Errores transitorios
+
+Si una tool falla por red intermitente o un cartucho que se reinicia,
+el copiloto **reintenta hasta 3 veces** con backoff exponencial (1s,
+luego 2s). Si tras los 3 intentos sigue fallando, te explica el
+error en lenguaje claro — por ejemplo:
+
+> No pude conectar con sap_hcm después de 3 intentos. Verifica que
+> el servicio esté disponible y reintenta en unos minutos.
+
+Cada reintento queda registrado en `audit_events` para que puedas
+diagnosticar después (ver [runbook 07](07_debug_fallos.md)).
+
+## Limitaciones (v1.43)
+
+- Sin streaming (respuesta completa al final del turno) — llega en v1.44.
+- Sin charts inline — solo texto + citation cards (v1.44).
 - Sin proactividad (alertas que el copiloto te lanza sin que preguntes,
   v1.44).
 - Sin form interactivo para configurar cartuchos via prompt — sigue

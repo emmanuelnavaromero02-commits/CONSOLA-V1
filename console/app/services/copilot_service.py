@@ -64,9 +64,25 @@ SYSTEM_PROMPT = (
     "- Si el usuario no tiene permisos para una tool, la plataforma te lo "
     "dirá con 'permission_denied'. En ese caso explícale qué permiso necesita "
     "y para qué.\n"
-    "- Cuando un tool_result incluya identificadores de fuente (cartucho, "
-    "entidad, run_id, timestamp), cítalos. Si no los incluye, di que el "
-    "resultado no traía ese identificador — NUNCA inventes uno.\n"
+    "- REGLA CRÍTICA DE EVIDENCIA: cuando uses datos de una tool, "
+    "SIEMPRE incluye al final de tu respuesta la frase "
+    "'📊 fuente: <cartucho> · <entidad> · <timestamp o run_id>'. La "
+    "plataforma además rendereará tarjetas de cita automáticamente a "
+    "partir del _meta del tool_result. Si un tool_result no incluye esos "
+    "identificadores, di explícitamente que no los traía — NUNCA inventes "
+    "uno.\n"
+    "- Si el usuario pide un número y NO consultaste una tool para "
+    "obtenerlo, NUNCA des un número aproximado. Responde literalmente "
+    "'No tengo ese dato concreto. ¿Quieres que consulte X tool para "
+    "verificarlo?'\n"
+    "- MULTI-FUENTE: si la pregunta requiere datos de más de un cartucho "
+    "(p.ej. 'compara horas Replicon contra presupuesto SAP', 'estado de "
+    "extracciones hoy'), llama las tools necesarias EN SECUENCIA y "
+    "combina los resultados en una respuesta única y coherente. Incluye "
+    "una tarjeta de cita por cada cartucho consultado. Límite duro: "
+    "máximo 3 cartuchos distintos por turno — si necesitas más, "
+    "responde con los 3 más relevantes y ofrece consultar los otros "
+    "en un turno siguiente.\n"
     "- Lenguaje claro y conciso; sin jerga técnica innecesaria. Castellano "
     "por defecto, salvo que el usuario te escriba en otro idioma."
 )
@@ -105,6 +121,65 @@ MAX_USER_MESSAGE_CHARS = 16_000
 # Cap the JSON size before persistence + audit so a single bad turn can't
 # bloat the durable storage layer.
 MAX_TOOL_ARGS_BYTES = 16_000
+
+# Sprint v1.43 (citations): cap the number of citation entries persisted
+# per assistant message so a tool returning thousands of rows can't
+# bloat conversation_messages.citations (JSONB). 20 is more than enough
+# for the UI — the LLM cites top-N sources, not every row.
+MAX_CITATIONS_PER_MESSAGE = 20
+
+# Sprint v1.43 (hallucination guard): regex patterns that flag an LLM
+# reply as suspiciously "I'm making this up" when no tool was consulted.
+# Conservative — only triggers on hedging phrases adjacent to a number.
+# Each pattern is anchored to Spanish (and a few common English forms,
+# since the LLM may slip if the user prompted in English).
+import re as _re_module
+_HALLUCINATION_PATTERNS = [
+    _re_module.compile(r"\baproximadamente\s+\d+", _re_module.IGNORECASE),
+    _re_module.compile(r"\baprox\.\s+\d+",          _re_module.IGNORECASE),
+    _re_module.compile(r"\bcerca de\s+\d+",         _re_module.IGNORECASE),
+    _re_module.compile(r"\baround\s+\d+",           _re_module.IGNORECASE),
+    _re_module.compile(r"\btípicamente\s+\d+",      _re_module.IGNORECASE),
+    _re_module.compile(r"\btipicamente\s+\d+",      _re_module.IGNORECASE),
+    _re_module.compile(r"\btypically\s+\d+",        _re_module.IGNORECASE),
+    _re_module.compile(r"\bdebería\s+ser\s+\d+",    _re_module.IGNORECASE),
+    _re_module.compile(r"\bdebería\s+haber\s+\d+",  _re_module.IGNORECASE),
+    _re_module.compile(r"\bestima(?:do|mos)\s+en\s+\d+", _re_module.IGNORECASE),
+    _re_module.compile(r"\bunos\s+\d+",             _re_module.IGNORECASE),
+    _re_module.compile(r"\brondan?\s+los?\s+\d+",   _re_module.IGNORECASE),
+]
+
+
+def _check_for_hallucination(text: str, has_citations: bool) -> str | None:
+    """Return a warning string when the reply contains hedged numbers
+    AND no tool was consulted (i.e. no citations support them).
+
+    None when:
+      * citations is non-empty (the numbers have evidence), or
+      * the reply doesn't hedge numbers.
+
+    The warning is prepended (not replacing) the reply so the user
+    still sees what the model said, just framed with a caveat.
+    """
+    if has_citations:
+        return None
+    if not text:
+        return None
+    for pat in _HALLUCINATION_PATTERNS:
+        if pat.search(text):
+            return (
+                "⚠️ Esta respuesta contiene cifras pero el copiloto no "
+                "consultó ninguna tool en este turno. Trata los números "
+                "con escepticismo y pídele que verifique con una fuente."
+            )
+    return None
+
+
+# Sprint v1.43 (multi-source): bound how many distinct cartridge servers
+# a single turn can fan out to. Keeps cost + latency predictable and
+# the citation grid readable. If the LLM keeps reaching for more, we
+# log a warning and trim the citations exposed to the UI.
+MAX_DISTINCT_SOURCES_PER_TURN = 3
 
 # Pattern for sanitising upstream error strings (from MCP tool results
 # or invocation exceptions) before they reach ``audit_events.metadata.error``.
@@ -146,6 +221,257 @@ def _clip_tool_args(args: Any) -> Any:
         "_original_bytes": len(encoded),
         "_max_bytes": MAX_TOOL_ARGS_BYTES,
         "_preview": encoded[: max(0, MAX_TOOL_ARGS_BYTES - 200)],
+    }
+
+
+# ── v1.43: citation extraction ─────────────────────────────────────────────
+#
+# Each successful tool result may carry a ``_meta`` envelope with
+# source-of-truth identifiers (run_id, entity, timestamp, row_count) that
+# the cartridges set in v1.41+. The copilot harvests those into structured
+# citation rows so the UI can render evidence cards and the audit log can
+# point an investigator back to the originating extraction run.
+#
+# Multi-source results (``airflow_list_dag_runs`` → runs[]) also yield one
+# citation per recent run, capped to the top-5 inside a single tool result
+# to keep JSONB payload bounded.
+
+_MAX_CITATION_FIELD_CHARS = 256
+
+
+def _trim_citation_field(value):
+    """Cap a string-shaped citation field at MAX_CITATION_FIELD_CHARS so a
+    misbehaving cartridge can't write a 1MB run_id straight into JSONB.
+
+    Non-strings pass through unchanged (int row_count, status enums, etc.).
+    """
+    if isinstance(value, str) and len(value) > _MAX_CITATION_FIELD_CHARS:
+        return value[: _MAX_CITATION_FIELD_CHARS - 1] + "…"
+    return value
+
+
+def _extract_citations(tool_name: str, tool_result: Any, server_id: str) -> list[dict]:
+    """Return a list of citation dicts harvested from a single tool result.
+
+    Each entry has at minimum ``source`` (server id) and ``tool``; other
+    fields (``run_id``, ``entity``, ``timestamp``, ``row_count``,
+    ``status``) appear when the underlying tool surfaces them. Failures
+    are non-blocking: any unexpected shape just yields an empty list.
+    """
+    if not isinstance(tool_result, dict):
+        return []
+    if tool_result.get("error") or tool_result.get("_error"):
+        # Don't cite an error envelope — the UI surfaces those separately.
+        return []
+
+    citations: list[dict] = []
+    meta = tool_result.get("_meta") or {}
+    if isinstance(meta, dict) and (
+        meta.get("run_id") or meta.get("entity") or meta.get("timestamp")
+    ):
+        # v1.43 R1-DBA: trim string fields so a hostile or buggy cartridge
+        # returning a 1MB run_id doesn't bloat conversation_messages.citations.
+        citations.append({
+            "source":    server_id,
+            "tool":      tool_name,
+            "run_id":    _trim_citation_field(meta.get("run_id")),
+            "entity":    _trim_citation_field(meta.get("entity")),
+            "timestamp": _trim_citation_field(
+                meta.get("timestamp") or meta.get("extracted_at")
+            ),
+            "age_seconds": meta.get("age_seconds"),
+            "row_count":   meta.get("row_count"),
+        })
+
+    # Multi-source results: list of runs / records each with its own
+    # identifiers. Cap to the first 5 to keep the JSONB bounded; the LLM
+    # gets the full payload, only the persisted citation list is trimmed.
+    runs = tool_result.get("runs")
+    if isinstance(runs, list):
+        for run in runs[:5]:
+            if not isinstance(run, dict):
+                continue
+            citations.append({
+                "source": server_id,
+                "tool":   tool_name,
+                "run_id": _trim_citation_field(
+                    run.get("dag_run_id") or run.get("run_id")
+                ),
+                "entity": _trim_citation_field(
+                    run.get("dag_id") or run.get("entity")
+                ),
+                "timestamp": _trim_citation_field(
+                    run.get("end_date") or run.get("execution_date")
+                    or run.get("finished_at")
+                ),
+                "status": _trim_citation_field(
+                    run.get("state") or run.get("status")
+                ),
+            })
+
+    return citations
+
+
+# ── v1.43: freshness annotation ────────────────────────────────────────────
+
+# Threshold buckets for ``age_seconds``. The UI maps these to icons.
+_FRESHNESS_FRESH_S       = 5 * 60          # < 5 min
+_FRESHNESS_RECENT_S      = 60 * 60         # < 1 h
+_FRESHNESS_STALE_S       = 24 * 60 * 60    # < 24 h
+
+
+def _classify_freshness(age_seconds: int | float | None) -> str:
+    """Map ``age_seconds`` to a UI-friendly bucket.
+
+    Returns ``"unknown"`` when we don't have a measurement (the
+    cartridge never ran, or the freshness service is unavailable).
+    """
+    if age_seconds is None:
+        return "unknown"
+    try:
+        n = float(age_seconds)
+    except (TypeError, ValueError):
+        return "unknown"
+    if n < 0:
+        # Clock skew between cartridge and console — treat as fresh.
+        return "fresh"
+    if n < _FRESHNESS_FRESH_S:
+        return "fresh"
+    if n < _FRESHNESS_RECENT_S:
+        return "recent"
+    if n < _FRESHNESS_STALE_S:
+        return "stale"
+    return "very_stale"
+
+
+async def _annotate_citation_freshness(
+    citation: dict,
+    cache: dict | None = None,
+) -> dict:
+    """Mutate ``citation`` in place with ``age_seconds`` (if missing)
+    and ``freshness_level``. Looks up the watermark via
+    :func:`freshness_for_cartridge_internal` so we don't hit our own
+    HTTP layer. All exceptions are swallowed — freshness is purely
+    informative, the citation card still renders without it.
+
+    ``cache`` is an optional dict the caller can pass to amortise the
+    cost across multiple citations in the same turn. Without it, a turn
+    with 20 citations from 3 cartridges issues 20 freshness queries
+    (N+1). With it, it issues at most one per distinct cartridge.
+    """
+    cartridge = citation.get("source")
+    entity = citation.get("entity")
+
+    # Cheap exit: if the citation already carries an age, just classify.
+    if citation.get("age_seconds") is not None:
+        citation["freshness_level"] = _classify_freshness(citation["age_seconds"])
+        return citation
+
+    if not cartridge or not entity:
+        citation["freshness_level"] = "unknown"
+        return citation
+
+    data = None
+    if cache is not None and cartridge in cache:
+        data = cache[cartridge]
+    if data is None:
+        try:
+            # Local import to avoid circular: routers/freshness.py
+            # imports from app.services.auth.
+            from app.routers.freshness import freshness_for_cartridge_internal
+            data = await freshness_for_cartridge_internal(cartridge)
+        except Exception:
+            citation["freshness_level"] = "unknown"
+            if cache is not None:
+                # Negative-cache so the rest of the turn doesn't re-issue
+                # the same failing call.
+                cache[cartridge] = {"entities": []}
+            return citation
+        if cache is not None:
+            cache[cartridge] = data
+
+    for ent in data.get("entities") or []:
+        if ent.get("entity") == entity:
+            age = ent.get("age_seconds")
+            citation["age_seconds"] = age
+            citation["freshness_level"] = _classify_freshness(age)
+            break
+    else:
+        citation["freshness_level"] = "unknown"
+    return citation
+
+
+# ── v1.43: retry with exponential backoff ──────────────────────────────────
+
+# A tool call may transiently fail (cartridge restart, network hiccup,
+# downstream service hot-deploy). Retrying twice with backoff catches
+# the typical recoverable failures without flooding the upstream — by
+# the third attempt either the service is back or it's genuinely down.
+
+_TOOL_RETRY_MAX_ATTEMPTS = 3
+_TOOL_RETRY_BASE_DELAY_S = 1.0
+
+
+async def _invoke_tool_with_retry(server_id: str, tool: str, args: dict) -> dict:
+    """Wrap ``mcp_registry.invoke`` with exponential backoff retry.
+
+    Returns either the tool's real result OR an error envelope shaped
+    so the LLM can read it on the next turn:
+
+        {"_error": True,
+         "error_type": "<exception class>",
+         "error_message": "<sanitised>",
+         "tool": "<bare>",
+         "server": "<server_id>",
+         "_meta": {"user_facing": "..."}}
+
+    The LLM gets the envelope as a regular tool_result and explains
+    the failure to the user. We never raise here — that would crash
+    the whole turn instead of degrading gracefully.
+    """
+    import asyncio
+    import logging as _lg
+    log = _lg.getLogger(__name__)
+
+    last_exc: Exception | None = None
+    for attempt in range(_TOOL_RETRY_MAX_ATTEMPTS):
+        try:
+            return await mcp_registry.invoke(server_id, tool, args)
+        except Exception as exc:                     # noqa: BLE001
+            last_exc = exc
+            if attempt < _TOOL_RETRY_MAX_ATTEMPTS - 1:
+                delay = _TOOL_RETRY_BASE_DELAY_S * (2 ** attempt)
+                log.warning(
+                    "copilot.tool_retry",
+                    extra={
+                        "attempt": attempt + 1,
+                        "delay_s": delay,
+                        "server": server_id,
+                        "tool":   tool,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                await asyncio.sleep(delay)
+                continue
+            break
+
+    # Exhausted. Build a user-friendly envelope. The exception message
+    # is sanitised via _sanitise_error so SDK error strings (which
+    # sometimes echo Authorization headers) can't leak.
+    raw_msg = str(last_exc) if last_exc is not None else "unknown error"
+    return {
+        "_error":         True,
+        "error_type":     type(last_exc).__name__ if last_exc else "Unknown",
+        "error_message":  (_sanitise_error(raw_msg) or "")[:200],
+        "tool":           tool,
+        "server":         server_id,
+        "_meta": {
+            "user_facing": (
+                f"No pude conectar con {server_id} después de "
+                f"{_TOOL_RETRY_MAX_ATTEMPTS} intentos. Verifica que el "
+                f"servicio esté disponible y reintenta en unos minutos."
+            ),
+        },
     }
 
 
@@ -276,15 +602,24 @@ async def _persist_message(
     content: str | None = None,
     tool_calls: list[dict] | None = None,
     tool_results: list[dict] | None = None,
+    citations: list[dict] | None = None,
     model: str | None = None,
 ) -> str:
     """Insert one row in conversation_messages, bump the parent
-    conversation's updated_at, return the new message's UUID."""
+    conversation's updated_at, return the new message's UUID.
+
+    ``citations`` (v1.43): the evidence-card payload extracted from the
+    tool results that led to this assistant message. Capped to
+    ``MAX_CITATIONS_PER_MESSAGE`` so a chatty tool can't bloat JSONB.
+    """
+    if citations and len(citations) > MAX_CITATIONS_PER_MESSAGE:
+        citations = citations[:MAX_CITATIONS_PER_MESSAGE]
     row = await conn.fetchrow(
         """
         INSERT INTO conversation_messages
-            (conversation_id, role, content, tool_calls, tool_results, model)
-        VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6)
+            (conversation_id, role, content, tool_calls, tool_results,
+             citations, model)
+        VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7)
         RETURNING id
         """,
         conversation_id,
@@ -292,6 +627,7 @@ async def _persist_message(
         content,
         json.dumps(tool_calls) if tool_calls is not None else None,
         json.dumps(tool_results) if tool_results is not None else None,
+        json.dumps(citations) if citations else None,
         model,
     )
     await conn.execute(
@@ -439,13 +775,21 @@ async def get_conversation_messages(*, conversation_id: str, user: dict) -> dict
             raise HTTPException(403, "not your conversation")
         rows = await conn.fetch(
             """
-            SELECT id, role, content, tool_calls, tool_results, created_at
+            SELECT id, role, content, tool_calls, tool_results,
+                   citations, created_at
             FROM conversation_messages
             WHERE conversation_id = $1::uuid
             ORDER BY created_at
             """,
             conversation_id,
         )
+
+    def _maybe_load(value):
+        if isinstance(value, str):
+            try: return json.loads(value)
+            except Exception: return value
+        return value
+
     return {
         "conversation": {**conv, "id": str(conv["id"])},
         "messages": [
@@ -453,8 +797,9 @@ async def get_conversation_messages(*, conversation_id: str, user: dict) -> dict
                 "id": str(r["id"]),
                 "role": r["role"],
                 "content": r["content"],
-                "tool_calls": json.loads(r["tool_calls"]) if isinstance(r["tool_calls"], str) else r["tool_calls"],
-                "tool_results": json.loads(r["tool_results"]) if isinstance(r["tool_results"], str) else r["tool_results"],
+                "tool_calls":   _maybe_load(r["tool_calls"]),
+                "tool_results": _maybe_load(r["tool_results"]),
+                "citations":    _maybe_load(r["citations"]),
                 "created_at": r["created_at"],
             }
             for r in rows
@@ -493,6 +838,10 @@ async def _run_loop(
     seen_pending_keys: set[str] = set()  # dedupe pending by approval_key
 
     tools, server_map, classifications = await _build_tools_for_llm()
+    # v1.43 R1-DBA: one freshness-lookup cache per turn, shared by
+    # _annotate_citation_freshness so N citations from K cartridges
+    # only issue K queries instead of N.
+    _freshness_cache: dict[str, dict] = {}
 
     async def invoke_tool(server_id: str, bare_name: str, args: dict) -> dict:
         # Same separator as _build_tools_for_llm and as llm_client's
@@ -554,19 +903,32 @@ async def _run_loop(
                 "args": scrubbed,
             }
 
-        # 3. Actually execute.
-        try:
-            result = await mcp_registry.invoke(server_id, bare_name, args)
-        except Exception as exc:                    # noqa: BLE001
+        # 3. Actually execute (v1.43: with retry + backoff so transient
+        # failures don't ruin the turn). _invoke_tool_with_retry never
+        # raises — on exhaustion it returns an error envelope shaped
+        # for the LLM to read on the next tool_result.
+        result = await _invoke_tool_with_retry(server_id, bare_name, args)
+        if result.get("_error"):
             invocations.append({**inv_base, "status": "error"})
             _audit(user=user, server=server_id, bare_name=bare_name, args=args,
                    risk_level=risk, conversation_id=conversation_id,
                    ip=ip, user_agent=user_agent, status="error",
-                   error=str(exc))
-            return {"error": "invocation failed",
-                    "tool": bare_name, "server": server_id}
+                   error=result.get("error_message"))
+            # Hand the envelope back to the LLM so it can explain the
+            # failure to the user in natural language.
+            return result
         is_error = isinstance(result, dict) and bool(result.get("error"))
-        invocations.append({**inv_base, "status": "error" if is_error else "success"})
+        # v1.43: harvest citation evidence from the result. Failures here
+        # are non-blocking — the conversation still works without them.
+        try:
+            extracted = _extract_citations(bare_name, result, server_id) if not is_error else []
+        except Exception:
+            extracted = []
+        invocations.append({
+            **inv_base,
+            "status": "error" if is_error else "success",
+            "citations": extracted,
+        })
         _audit(user=user, server=server_id, bare_name=bare_name, args=args,
                risk_level=risk, conversation_id=conversation_id,
                ip=ip, user_agent=user_agent,
@@ -631,6 +993,7 @@ async def _run_loop(
                 if isinstance(content, list):
                     text_parts: list[str] = []
                     tool_calls: list[dict] = []
+                    msg_citations: list[dict] = []
                     msg_has_pending = False
                     for block in content:
                         btype = block.get("type")
@@ -649,6 +1012,10 @@ async def _run_loop(
                             inv_idx += 1
                             if inv.get("status") == "pending_approval":
                                 msg_has_pending = True
+                            # v1.43: collect citations harvested by
+                            # invoke_tool into this message's bucket.
+                            for c in inv.get("citations") or []:
+                                msg_citations.append(c)
                             tool_calls.append({
                                 "id": block.get("id") or str(_uuid.uuid4()),
                                 "name": block.get("name"),
@@ -657,13 +1024,23 @@ async def _run_loop(
                                 "input": _clip_tool_args(
                                     _scrub_args(block.get("input") or {})
                                 ),
-                                **{k: v for k, v in inv.items() if k not in {"args"}},
+                                **{k: v for k, v in inv.items()
+                                   if k not in {"args", "citations"}},
                             })
+                    # v1.43: annotate freshness on each citation. Errors
+                    # are swallowed inside the helper so the persist still
+                    # succeeds; failures just leave freshness_level=unknown.
+                    # R1-DBA fix: share a per-turn cache so 20 citations
+                    # from 3 cartridges only issue 3 freshness queries
+                    # instead of 20 (N+1 avoidance).
+                    for c in msg_citations:
+                        await _annotate_citation_freshness(c, cache=_freshness_cache)
                     msg_text = "".join(text_parts)
                     new_mid = await _persist_message(
                         conn, conversation_id=conversation_id,
                         role="assistant", content=msg_text or None,
                         tool_calls=tool_calls or None,
+                        citations=msg_citations or None,
                     )
                     last_assistant_message_id = new_mid
                     if msg_has_pending:
@@ -699,11 +1076,60 @@ async def _run_loop(
     ]
     tool_results_summary: list[dict] = []   # kept for API-shape stability
 
+    # v1.43: aggregate citations from successful invocations so the UI
+    # can render evidence cards on the live turn without re-loading.
+    citations_summary: list[dict] = []
+    for inv in invocations:
+        if inv.get("status") == "success":
+            for c in inv.get("citations") or []:
+                citations_summary.append(c)
+
+    # v1.43 multi-source guardrail: count distinct sources actually
+    # consulted (not just cited — an invocation with no citations still
+    # consumed a server). Trim citations to keep only the top
+    # MAX_DISTINCT_SOURCES_PER_TURN sources by appearance order; the
+    # LLM was told the cap in the system prompt and is expected to
+    # behave, but we enforce it server-side so a misbehaving model
+    # can't flood the UI.
+    distinct_sources = []
+    for inv in invocations:
+        if inv.get("status") == "success":
+            src = inv.get("server")
+            if src and src not in distinct_sources:
+                distinct_sources.append(src)
+    if len(distinct_sources) > MAX_DISTINCT_SOURCES_PER_TURN:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(
+            "copilot.multi_source_limit_exceeded",
+            extra={
+                "request_id": None,   # request_id_var still set via middleware
+                "conversation_id": conversation_id,
+                "user_id": user.get("id"),
+                "sources_seen": distinct_sources,
+                "cap": MAX_DISTINCT_SOURCES_PER_TURN,
+            },
+        )
+        allowed = set(distinct_sources[:MAX_DISTINCT_SOURCES_PER_TURN])
+        citations_summary = [
+            c for c in citations_summary if c.get("source") in allowed
+        ]
+
+    if len(citations_summary) > MAX_CITATIONS_PER_MESSAGE:
+        citations_summary = citations_summary[:MAX_CITATIONS_PER_MESSAGE]
+
+    # v1.43 hallucination guardrail: if the model produced numbers
+    # with hedging language AND no tool was consulted this turn, frame
+    # the reply with a caveat so the user knows it's not grounded.
+    warning = _check_for_hallucination(reply_text or "", bool(citations_summary))
+    if warning:
+        reply_text = f"{warning}\n\n{reply_text or ''}".rstrip()
+
     return {
         "message_id": message_id,
         "reply": reply_text,
         "tool_calls": tool_calls_summary,
         "tool_results": tool_results_summary,
+        "citations": citations_summary,
         "pending_actions": pending_actions,
         "requires_approval": bool(pending_actions),
     }

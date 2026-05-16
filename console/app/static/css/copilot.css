@@ -302,3 +302,50 @@
   .copilot-container { grid-template-columns: 1fr; }
   .copilot-sidebar { display: none; }
 }
+
+/* ── v1.43: citation cards (evidence under each assistant reply) ───────── */
+.copilot-citations {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  margin: 8px 0 4px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.copilot-citation-card {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  /* Freshness-mapped accent on the left edge. Overridden by the
+     [data-freshness=...] rules below so dark mode picks the matching
+     accent token. */
+  border-left: 3px solid var(--text3);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.4;
+}
+
+.copilot-citation-card[data-freshness="fresh"]      { border-left-color: var(--success); }
+.copilot-citation-card[data-freshness="recent"]     { border-left-color: var(--success); }
+.copilot-citation-card[data-freshness="stale"]      { border-left-color: var(--warning); }
+.copilot-citation-card[data-freshness="very_stale"] { border-left-color: var(--danger); }
+.copilot-citation-card[data-freshness="unknown"]    { border-left-color: var(--text3); }
+
+.copilot-citation-card .citation-source {
+  color: var(--text);
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+.copilot-citation-card .citation-source strong { font-weight: 600; }
+.copilot-citation-card .citation-entity { color: var(--text2); font-weight: 500; }
+.copilot-citation-card .citation-icon   { opacity: .8; }
+.copilot-citation-card .citation-meta   { color: var(--text3); font-size: 11px; }
+.copilot-citation-card .citation-freshness { margin-left: 4px; }
+.copilot-citation-card .citation-rows {
+  margin-top: 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text2);
+}

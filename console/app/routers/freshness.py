@@ -1,17 +1,14 @@
 """Sprint v1.41.1 — Data freshness service (copilot scaffolding).
 
 Returns watermark timestamps + last extraction status per
-(cartridge, entity). The future copilot (v1.43) uses this to attach a
-freshness indicator to every answer it cites — e.g. "1,247 employees
-⏱ datos de hace 6h".
+(cartridge, entity). The copilot (v1.43) calls
+:func:`freshness_for_cartridge_internal` directly — same SQL, no auth
+dependency — to annotate citation cards with how stale the cited data
+is. Schema used:
 
-Schema used:
   entity_config(cartridge_id, entity, …)
   entity_watermarks(cartridge_id, entity_name, last_watermark_value, updated_at)
   extraction_runs(cartridge_id, entity_name, status, finished_at, started_at)
-
-(See infra/init/00_schema.sql — the SQL in the v1.41.1 plan referenced
-``entity_name``/``ended_at`` which don't exist; corrected here.)
 """
 from __future__ import annotations
 
@@ -33,15 +30,18 @@ router = APIRouter(
 )
 
 
-@router.get("/{cartridge}")
-async def freshness_for_cartridge(cartridge: str) -> dict:
-    """Per-entity freshness: watermark + last run status + age_seconds."""
+# ── Internal API (no auth dependency) ───────────────────────────────────────
+# v1.43: callable from copilot_service without an HTTP round-trip. Both
+# helpers raise HTTPException on bad input so router thin-wrappers can
+# just await them.
+
+async def freshness_for_cartridge_internal(cartridge: str) -> dict:
+    """Per-entity freshness for one cartridge. Identical SQL to the
+    HTTP endpoint below — the router just wraps this."""
     if cartridge not in _KNOWN_CARTRIDGES:
         raise HTTPException(404, "Unknown cartridge")
     pool = await auth.pool()
     async with pool.acquire() as conn:
-        # LATERAL pulls the latest run row per entity in one pass instead
-        # of a window function over the whole table.
         rows = await conn.fetch(
             """
             SELECT
@@ -61,7 +61,16 @@ async def freshness_for_cartridge(cartridge: str) -> dict:
                 FROM extraction_runs
                 WHERE cartridge_id = ec.cartridge_id
                   AND entity_name  = ec.entity
-                ORDER BY started_at DESC NULLS LAST
+                -- v1.43.x R1-DBA: removed NULLS LAST. The index
+                -- idx_extraction_runs_cartridge_entity_started is
+                -- created as (cartridge_id, entity_name, started_at
+                -- DESC) which defaults to NULLS FIRST. Using NULLS LAST
+                -- on the query prevented PG from doing the index-only
+                -- top-1 seek. extraction_runs.started_at is set to
+                -- NOW() on every insert (00_schema.sql does not allow
+                -- NULL via the upstream codepath), so the NULL-aware
+                -- ordering is unnecessary defence in depth.
+                ORDER BY started_at DESC
                 LIMIT 1
             ) er ON TRUE
             WHERE ec.cartridge_id = $1
@@ -69,19 +78,10 @@ async def freshness_for_cartridge(cartridge: str) -> dict:
             """,
             cartridge,
         )
-        return {
-            "cartridge": cartridge,
-            "entities": [dict(r) for r in rows],
-        }
+    return {"cartridge": cartridge, "entities": [dict(r) for r in rows]}
 
 
-@router.get("")
-async def freshness_all() -> dict:
-    """Summary across all cartridges (oldest + newest watermark per cartridge).
-
-    Used by the copilot's preamble to know whether it's safe to answer
-    without re-running an extraction first.
-    """
+async def freshness_all_internal() -> dict:
     pool = await auth.pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -99,4 +99,16 @@ async def freshness_all() -> dict:
             ORDER BY ec.cartridge_id
             """
         )
-        return {"cartridges": [dict(r) for r in rows]}
+    return {"cartridges": [dict(r) for r in rows]}
+
+
+# ── HTTP endpoints ──────────────────────────────────────────────────────────
+
+@router.get("/{cartridge}")
+async def freshness_for_cartridge(cartridge: str) -> dict:
+    return await freshness_for_cartridge_internal(cartridge)
+
+
+@router.get("")
+async def freshness_all() -> dict:
+    return await freshness_all_internal()
