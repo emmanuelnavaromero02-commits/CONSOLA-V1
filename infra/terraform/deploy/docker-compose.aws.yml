@@ -290,7 +290,7 @@ services:
     # DESIGN — `airflow db migrate` has to CREATE the metastore
     # tables, then we transfer GRANTs to omega_airflow_meta so the
     # runtime services (next two) can use the dedicated role.
-    image: apache/airflow:2.9.2
+    image: apache/airflow:2.10.5
     container_name: mode_airflow_init
     env_file: .env
     entrypoint: /bin/bash
@@ -319,7 +319,7 @@ services:
     logging: *default-logging
 
   airflow:
-    image: apache/airflow:2.9.2
+    image: apache/airflow:2.10.5
     container_name: mode_airflow
     env_file: .env
     entrypoint: /bin/bash
@@ -376,7 +376,7 @@ services:
     logging: *default-logging
 
   airflow-scheduler:
-    image: apache/airflow:2.9.2
+    image: apache/airflow:2.10.5
     container_name: mode_airflow_scheduler
     env_file: .env
     command: scheduler
