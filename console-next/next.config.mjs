@@ -4,17 +4,37 @@ const nextConfig = {
   // v1.44.2: standalone output so the Dockerfile can ship only the
   // runtime artefacts (no node_modules in the final image).
   output: "standalone",
-  // The Python FastAPI backend still hosts /api/*. When console-next
-  // runs in the same docker network it talks to the internal host
-  // (API_INTERNAL_URL); from the browser it goes through the public
-  // CONSOLE_URL (NEXT_PUBLIC_API_BASE). All API calls server-side go
-  // through src/lib/api.ts which picks the right base.
-  // No rewrites here — the Next.js process never serves /api/* directly
-  // beyond its own healthcheck.
+  // v1.44.3.2.2 R-Mac-4: the FastAPI backend still hosts /api/*
+  // and /auth/*, but the browser never talks to it directly
+  // anymore. The Next.js app serves those paths as itself via
+  // catch-all route handlers (app/api/[...path], app/auth/[...path],
+  // app/login-proxy) and proxies to FastAPI server-side over the
+  // docker network. See console-next/src/lib/proxy.ts.
   poweredByHeader: false,
-  // v1.44.2 (Security R1 pre-emption): CSP must not allow unsafe-eval.
-  // dev mode injects react-refresh which uses eval; CSP locks down only
-  // in production. Adjust via headers() once Sentry/etc. are wired.
+  // v1.44.3.2.2 (R-Mac CSP hotfix + R-Mac-4 proxy pivot):
+  //
+  // R-Mac: the v1.44.2 CSP set ``script-src 'self'`` which
+  // blocked Next.js 14's hydration inline bootstrap script + the
+  // App-Router runtime's eval() calls. Symptom Codex reproduced
+  // on the Mac:
+  //   - /login renders a skeleton forever
+  //   - DevTools console: "Executing inline script violates
+  //     Content Security Policy directive 'script-src 'self''"
+  //   - 0/319 E2E tests pass because the form never mounts
+  // Fix: allow 'unsafe-inline' + 'unsafe-eval' in script-src for
+  // v1.0. The v1.45 sprint introduces a nonce middleware so
+  // these can come back off without breaking hydration.
+  //
+  // R-Mac-4: connect-src used to list the public backend origin
+  // (NEXT_PUBLIC_API_BASE → http://localhost:8000) because the
+  // browser fired XHRs cross-origin. With the same-origin proxy
+  // pivot, every XHR resolves against the Next.js origin, so
+  // 'self' is the only source we need. WebSocket origins kept
+  // for Next.js HMR + dev tooling.
+  //
+  // The frame-ancestors / form-action / base-uri tighten
+  // clickjacking + form-hijacking — the bits the audit actually
+  // cared about.
   async headers() {
     if (process.env.NODE_ENV !== "production") return [];
     return [
@@ -26,18 +46,16 @@ const nextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
             key: "Content-Security-Policy",
-            // No unsafe-eval; unsafe-inline tolerated for styled-jsx
-            // until we wire a nonce middleware in v1.45.
             value:
               "default-src 'self'; " +
-              "script-src 'self'; " +
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
               "style-src 'self' 'unsafe-inline'; " +
-              "img-src 'self' data:; " +
-              "connect-src 'self' " +
-              (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000") +
-              "; " +
+              "img-src 'self' data: blob:; " +
               "font-src 'self' data:; " +
-              "frame-ancestors 'none';",
+              "connect-src 'self' ws://localhost:* wss://localhost:*; " +
+              "frame-ancestors 'none'; " +
+              "base-uri 'self'; " +
+              "form-action 'self';",
           },
         ],
       },

@@ -1,19 +1,27 @@
 /**
- * v1.44.3.2.1 — Shared auth helpers with the REAL CSRF flow that
- * Codex's diagnostic uncovered.
+ * v1.44.3.2.2 R-Mac-4 — same-origin auth helpers.
  *
- * Discovered flow:
- *   1. GET  /login           → backend sets cookie ``csrf_token``
- *   2. POST /auth/login      → headers: Content-Type + X-CSRF-Token
+ * R-Mac-4 dropped CORS from the picture entirely: the Next.js
+ * app at :3000 serves /login-proxy, /auth/login and /api/* as
+ * itself, then proxies each call to FastAPI server-to-server
+ * via the docker network (see console-next/src/lib/proxy.ts).
+ *
+ * Wire-level flow — unchanged from R-Mac, just same-origin now:
+ *
+ *   1. GET  /login-proxy     → Next proxy → FastAPI /login
+ *                              → Set-Cookie: csrf_token=…
+ *   2. POST /auth/login      → Next proxy → FastAPI /auth/login
+ *                              headers: Content-Type + X-CSRF-Token
  *                              cookies: csrf_token
  *                              body:    {email, password}
  *   3. Response 200          → cookies: mod_session + refresh_token
+ *                              scoped to the :3000 origin (no CORS
+ *                              credentialed-request negotiation).
  *   4. Subsequent requests carry mod_session via the BrowserContext.
  *
- * The endpoint is /auth/login (NOT the /api/auth/login some specs
- * previously targeted). The v1.44.3.2 fixture got this wrong;
- * fixing it is the prerequisite for every other deep test landing
- * in this sprint.
+ * BACKEND_URL is kept exported only for tests that still want to
+ * probe the FastAPI backend directly (debug helpers, health
+ * checks). The login flow itself goes through FRONTEND_URL.
  *
  * Credentials live in tests-e2e/.env (gitignored) — see
  * .env.example for the documented defaults. The brief confirms
@@ -51,23 +59,35 @@ function extractCsrfFromSetCookie(setCookie: string | string[] | undefined): str
 /**
  * Programmatic login via the discovered CSRF flow. Returns the
  * login HTTP response so callers can assert status / cookies.
+ *
+ * v1.44.3.2.2 R-Mac-4: both round-trips go through the Next.js
+ * same-origin proxy (FRONTEND_URL) so they exercise the exact
+ * code path the browser uses in production. The proxy forwards
+ * to FastAPI over the docker network; the cookies that come
+ * back are scoped to :3000 (matching what the browser actually
+ * stores when a real user logs in via the UI).
  */
 export async function loginViaApi(request: APIRequestContext) {
-  // Step 1: GET /login to seed the csrf_token cookie.
-  const csrfResponse = await request.get(`${BACKEND_URL}/login`);
+  // Step 1: GET /login-proxy to seed the csrf_token cookie.
+  // `/login-proxy` (not `/login`) because the Next.js app owns
+  // a client-rendered /login page; the proxy route lives under
+  // a non-colliding path.
+  const csrfResponse = await request.get(`${FRONTEND_URL}/login-proxy`);
   const csrfToken = extractCsrfFromSetCookie(
     csrfResponse.headers()["set-cookie"],
   );
   if (!csrfToken) {
     throw new Error(
-      `csrf_token cookie not set by GET ${BACKEND_URL}/login ` +
+      `csrf_token cookie not set by GET ${FRONTEND_URL}/login-proxy ` +
       `(status=${csrfResponse.status()}). The login flow has drifted; ` +
-      "verify the backend still seeds csrf_token on the login page render.",
+      "verify the backend still seeds csrf_token on the login page render " +
+      "AND that the Next.js /login-proxy route is forwarding Set-Cookie.",
     );
   }
 
-  // Step 2: POST /auth/login with the CSRF echo + Cookie header.
-  const loginResponse = await request.post(`${BACKEND_URL}/auth/login`, {
+  // Step 2: POST /auth/login (same origin) with the CSRF echo +
+  // Cookie header. Next.js forwards to FastAPI /auth/login.
+  const loginResponse = await request.post(`${FRONTEND_URL}/auth/login`, {
     headers: {
       "Content-Type": "application/json",
       "X-CSRF-Token":  csrfToken,
@@ -79,10 +99,11 @@ export async function loginViaApi(request: APIRequestContext) {
   if (loginResponse.status() !== 200) {
     const body = await loginResponse.text();
     throw new Error(
-      `POST /auth/login failed: HTTP ${loginResponse.status()}.\n` +
+      `POST ${FRONTEND_URL}/auth/login failed: HTTP ${loginResponse.status()}.\n` +
       `Body: ${body.slice(0, 300)}\n` +
       "Verify TEST_EMAIL + TEST_PASSWORD in tests-e2e/.env match a real " +
-      "user in the local DB.",
+      "user in the local DB AND that the Next.js /auth/[...path] proxy " +
+      "is forwarding to the FastAPI backend.",
     );
   }
   return loginResponse;

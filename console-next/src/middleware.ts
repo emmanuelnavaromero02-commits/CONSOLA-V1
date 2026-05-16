@@ -9,11 +9,36 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/health"];
+const PUBLIC_PATHS = ["/login", "/api/health", "/login-proxy"];
 
-const PUBLIC_PREFIXES = ["/_next/", "/static/", "/favicon"];
+const PUBLIC_PREFIXES = [
+  "/_next/",
+  "/static/",
+  "/favicon",
+  // v1.44.3.2.2 R-Mac-4: the /auth/* proxy must be reachable
+  // without a session cookie — that's literally how you GET a
+  // session cookie (POST /auth/login). The proxy itself simply
+  // forwards to FastAPI; the backend is the source of truth for
+  // auth, and it will reject unauthenticated requests on
+  // protected endpoints (e.g. /auth/refresh without a refresh
+  // cookie) the same as it always has.
+  "/auth/",
+];
 
-const AUTH_COOKIE_CANDIDATES = ["access_token", "session", "jwt", "auth_token"];
+// v1.44.3.2.2 R-Mac-4: the FastAPI backend (post-R-Mac CSRF
+// dance) sets ``mod_session`` and ``refresh_token`` on a
+// successful POST /auth/login. Without these names in the
+// candidate list, the middleware redirects an authenticated
+// user straight back to /login on the next navigation —
+// silent infinite-loop bug.
+const AUTH_COOKIE_CANDIDATES = [
+  "mod_session",
+  "refresh_token",
+  "access_token",
+  "session",
+  "jwt",
+  "auth_token",
+];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;

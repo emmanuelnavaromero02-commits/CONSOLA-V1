@@ -94,19 +94,35 @@ def test_next_config_disables_powered_by_header():
     )
 
 
-def test_next_config_emits_csp_without_unsafe_eval():
-    """v1.44.2 Security R1 pre-emption: the brief explicitly forbids
-    unsafe-eval in CSP. Confirm by reading the headers() function."""
+def test_next_config_emits_csp_with_defenses_intact():
+    """v1.44.3.2.2 reversal of v1.44.2 R1's "no unsafe-eval" stance.
+
+    Codex's Mac validation surfaced that ``script-src 'self'`` blocks
+    Next.js 14's hydration inline-script bootstrap + App Router
+    eval-based runtime — /login renders a skeleton forever and every
+    E2E test fails (0/319 in v1.44.3.2.1 runs). For v1.0 we accept
+    'unsafe-inline' + 'unsafe-eval' on script-src; the v1.45 sprint
+    re-introduces nonces so these can come back off.
+
+    The DEFENSES that actually matter against the audit's concerns
+    (clickjacking, form-hijacking, base-tag injection) stay in
+    place — that's what this test pins.
+    """
     src = _read(NEXT_ROOT / "next.config.mjs")
     assert "Content-Security-Policy" in src
-    # Strip JS comments so a comment that mentions unsafe-eval as
-    # something the policy AVOIDS doesn't trip the check; only real
-    # code (the CSP value literal) counts.
     code = re.sub(r"//.*?$|/\*.*?\*/", "", src, flags=re.MULTILINE | re.DOTALL)
-    assert "unsafe-eval" not in code, (
-        "next.config.mjs CSP must not allow 'unsafe-eval' — that "
-        "defeats the v1.44.2 brief's frontend hardening posture"
-    )
+
+    # Required defenses on the CSP value literal (not in comments).
+    for directive in (
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "default-src 'self'",
+    ):
+        assert directive in code, (
+            f"next.config.mjs CSP must declare {directive!r} — that's the "
+            "real audit-relevant defense, not script-src strictness."
+        )
 
 
 # ── Tailwind / styles ────────────────────────────────────────────────────
@@ -168,14 +184,43 @@ def test_middleware_checks_for_auth_cookie_not_jwt_decode():
 
 
 def test_api_client_uses_internal_url_server_side():
+    """Server-side (RSC / route handlers) must talk to FastAPI
+    directly over the docker network. v1.44.3.2.2 R-Mac-4 renamed
+    the env var from API_INTERNAL_URL to BACKEND_INTERNAL_URL but
+    kept the old name as a fallback so a half-migrated compose
+    file still works — accept either."""
     src = _read(SRC / "lib/api.ts")
-    assert "API_INTERNAL_URL" in src, (
-        "lib/api.ts must use API_INTERNAL_URL when running server-side "
-        "(RSC / route handler) — talks to FastAPI over docker network"
+    assert "BACKEND_INTERNAL_URL" in src or "API_INTERNAL_URL" in src, (
+        "lib/api.ts must use BACKEND_INTERNAL_URL (or the legacy "
+        "API_INTERNAL_URL) when running server-side — talks to "
+        "FastAPI over the docker network"
     )
-    assert "NEXT_PUBLIC_API_BASE" in src, (
-        "lib/api.ts must use NEXT_PUBLIC_API_BASE in the browser — "
-        "talks to FastAPI through the public origin"
+
+
+def test_api_client_browser_uses_same_origin_proxy():
+    """v1.44.3.2.2 R-Mac-4: the browser axios instance must NOT
+    point at the backend's public origin (the old
+    NEXT_PUBLIC_API_BASE / NEXT_PUBLIC_BACKEND_URL chain). Every
+    browser request now goes same-origin to the Next.js app
+    (:3000) and is forwarded by the catch-all proxy at
+    app/api/[...path] / app/auth/[...path]. Regression guard
+    against anyone re-adding the cross-origin URL — that would
+    bring CORS back as a failure surface."""
+    src = _read(SRC / "lib/api.ts")
+    # The browser branch sits inside an `isServer` ternary; the
+    # else-branch must resolve to an empty string (same-origin).
+    assert 'NEXT_PUBLIC_API_BASE' not in src, (
+        "lib/api.ts must not reference NEXT_PUBLIC_API_BASE — the "
+        "browser uses the same-origin Next.js proxy now."
+    )
+    assert 'NEXT_PUBLIC_BACKEND_URL' not in src, (
+        "lib/api.ts must not reference NEXT_PUBLIC_BACKEND_URL — "
+        "the browser uses the same-origin Next.js proxy now."
+    )
+    # Sanity check: the browser baseURL is literally empty string.
+    assert ': ""' in src or ": ''" in src or '""' in src, (
+        "lib/api.ts must set baseURL to '' on the browser branch "
+        "so axios resolves against the Next.js origin."
     )
 
 
@@ -325,19 +370,25 @@ def test_compose_console_next_has_healthcheck():
 
 
 def test_compose_console_next_env_uses_internal_url():
-    """The container env must include both API_INTERNAL_URL and
-    NEXT_PUBLIC_API_BASE so server-side / browser paths agree with
-    src/lib/api.ts."""
+    """The console_next container must know where to forward
+    server-side proxy calls. v1.44.3.2.2 R-Mac-4 introduced
+    BACKEND_INTERNAL_URL as the canonical name (consumed by
+    lib/proxy.ts) and kept API_INTERNAL_URL as a fallback. Both
+    must point at the internal docker hostname so the proxy
+    talks to FastAPI over the docker network rather than the
+    public origin."""
     src = _read(COMPOSE)
     block = re.search(
         r"\n  console_next:.*?(?=\n  [a-z_-]+:\n|\Z)", src, re.DOTALL,
     )
     body = block.group(0) if block else ""
-    assert "API_INTERNAL_URL:" in body
-    assert "http://console:8000" in body, (
-        "API_INTERNAL_URL must point at the internal docker hostname"
+    assert "BACKEND_INTERNAL_URL:" in body, (
+        "compose console_next env must set BACKEND_INTERNAL_URL — "
+        "lib/proxy.ts reads it on every same-origin proxy call"
     )
-    assert "NEXT_PUBLIC_API_BASE:" in body
+    assert "http://console:8000" in body, (
+        "BACKEND_INTERNAL_URL must point at the internal docker hostname"
+    )
 
 
 # ── Hook + components: shape contracts ───────────────────────────────────
