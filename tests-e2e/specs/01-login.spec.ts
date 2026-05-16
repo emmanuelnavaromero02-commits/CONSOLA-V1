@@ -4,10 +4,14 @@
  * The login page is the gate to everything else. If any of these
  * tests fails the rest of the Next.js suite is uninformative
  * (every spec downstream piggy-backs on a working login).
+ *
+ * v1.44.3.2.1: explicitly resets storageState because the global
+ * setup pre-authenticates every spec by default; this one needs
+ * to exercise the unauth surface.
  */
 import { test, expect } from "@playwright/test";
 
-const BASE = process.env.BASE_URL || "http://localhost:3000";
+test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe("Login page (Next.js, /login)", () => {
   test("renders email + password fields + submit button", async ({ page }) => {

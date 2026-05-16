@@ -1,13 +1,14 @@
-# E2E Findings — v1.44.3.2
+# E2E Findings — v1.44.3.2.1
 
-This document is the **post-run triage form** for the Playwright E2E
-suite shipped in v1.44.3.2. Fill it in after running `make e2e` on
-your Mac against a booted stack; the contents drive the v1.44.3.3
-bug-fix sprint.
+This document is the **post-run triage form** for the deep
+Playwright E2E suite shipped in v1.44.3.2.1 (200+ tests).
+Populate it after running `make e2e` on your Mac against a
+booted stack; the contents drive the v1.44.3.3 bug-fix sprint.
 
 The suite under `tests-e2e/specs/` is **detection-only** — every
 spec is meant to fail loudly when the corresponding surface is
-broken. The findings below capture the post-detection state.
+broken. The findings below capture the post-detection state with
+**severity buckets** that map to fix-card priority.
 
 ---
 
@@ -19,22 +20,38 @@ broken. The findings below capture the post-detection state.
    sleep 240
    ```
 
-2. Edit `tests-e2e/.env` with real credentials (see
-   `tests-e2e/README.md`).
+2. Make sure `tests-e2e/.env` carries the verified credentials
+   (`emmanuel@local.ai` / `omega2026`):
+   ```bash
+   cp tests-e2e/.env.example tests-e2e/.env
+   ```
 
 3. Run the suite:
    ```bash
    make e2e
    ```
 
-4. Open the HTML report:
-   ```
-   tests-e2e/playwright-report/index.html
+4. Parse the JSON report into a categorised digest:
+   ```bash
+   bash scripts/e2e-report-summary.sh >> docs/E2E_FINDINGS.md
    ```
 
-5. For each failing test, copy the description below into the
-   "Tests que FALLAN" section and attach the screenshot path
-   from the report.
+5. Triage each failure into a bucket below (`🔴 / 🟡 / 🟢 / 🔵`).
+
+---
+
+## Severity buckets
+
+| Icon | Bucket | Definition | Default heuristic |
+|---|---|---|---|
+| 🔴 | **Críticos** | Security regressions, auth gate bypass, MCP cartridge crashes, user-reported BUGS already pinned in `05-studio*.spec.ts` | API auth gate, MCP cartridges, studio user-reported bugs |
+| 🟡 | **Altos** | Primary user flows broken (login, dashboard, cartridges form, copilot chat) | Next.js dashboard, cartridges, login |
+| 🟢 | **Medios** | Legacy admin pages (users / audit / monitor / etc.) + API contract drifts | Legacy HTML, API endpoint drifts |
+| 🔵 | **Bajos** | UX polish, mobile responsive, dark mode, perf budget, deferred copilot UI | Mobile / a11y / perf, deferred copilot |
+
+`scripts/e2e-report-summary.sh` applies these defaults; rewrite
+the ranking as needed once the first real run surfaces what's
+actually critical for your demo.
 
 ---
 
@@ -42,30 +59,47 @@ broken. The findings below capture the post-detection state.
 
 _(Fill in after running the suite. Group by spec file.)_
 
-- [ ] `01-login.spec.ts` — all 4 tests
-- [ ] `02-dashboard.spec.ts` — all 8 tests
-- [ ] `03-cartridges.spec.ts` — all 7 tests
-- [ ] `06-html-pages.spec.ts` — 7 admin pages reachable
-- [ ] `07-api-endpoints.spec.ts` — auth gate green on 7 endpoints
-- [ ] `08-external-services.spec.ts` — Airflow / Superset / MinIO / Mailhog
+- [ ] `01-login.spec.ts` + `01-login-deep.spec.ts`
+- [ ] `02-dashboard.spec.ts` + `02-dashboard-deep.spec.ts`
+- [ ] `03-cartridges.spec.ts` + `03-cartridges-deep.spec.ts`
+- [ ] `06-html-pages.spec.ts`
+- [ ] `07-api-endpoints.spec.ts` + `07-apis-deep.spec.ts`
+- [ ] `08-external-services.spec.ts`
+- [ ] `09-ux-mobile.spec.ts` (mobile-chromium project)
+- [ ] `10-mcp-cartridges.spec.ts`
+- [ ] `11-copilot-deep.spec.ts` (non-deferred subset)
 
 ---
 
-## Tests que FALLAN ❌
+## 🔴 Críticos
 
-_(Per-failure entry. Triage column maps to expected next-sprint
-fix size: `xs` = config/typo, `s` = single function, `m` =
-component + tests, `l` = cross-stack.)_
+_(Filled by `scripts/e2e-report-summary.sh` OR manually.)_
 
-### Example entry (delete once real failures land)
-
-| Test | Page | Screenshot | Diagnosis | Triage |
+| Test | Page | Screenshot | Diagnosis | Fix card |
 |---|---|---|---|---|
-| `studio › 'Grafo' button responds to click` | `/studio` | `playwright-report/data/<hash>.png` | Click handler not wired or routed | s |
+|  |  |  |  |  |
 
-### Real entries (to be filled)
+---
 
-| Test | Page | Screenshot | Diagnosis | Triage |
+## 🟡 Altos
+
+| Test | Page | Screenshot | Diagnosis | Fix card |
+|---|---|---|---|---|
+|  |  |  |  |  |
+
+---
+
+## 🟢 Medios
+
+| Test | Page | Screenshot | Diagnosis | Fix card |
+|---|---|---|---|---|
+|  |  |  |  |  |
+
+---
+
+## 🔵 Bajos
+
+| Test | Page | Screenshot | Diagnosis | Fix card |
 |---|---|---|---|---|
 |  |  |  |  |  |
 
@@ -73,55 +107,57 @@ component + tests, `l` = cross-stack.)_
 
 ## Pre-flagged user-reported bugs
 
-The following failures are **expected** because the user already
-reported them. The corresponding test from `05-studio.spec.ts`
-should turn red on the first run; each one becomes a v1.44.3.3
-fix card.
+These failures are **expected on the first run** because the user
+already reported them. Each maps to a v1.44.3.3 fix card. Status
+column to be filled after the first run.
 
-| User report | Test name | Status after first run |
+| User report | Spec | Status after run |
 |---|---|---|
-| "Botón Grafo no responde" | `'Grafo' button responds to click` | TBD |
-| "Botón Deploy a Airflow no responde" | `'Deploy a Airflow' button fires …/dag-deploy` | TBD |
-| "Plantillas no abre" | _(no dedicated test — needs a `studio.html` audit; add in v1.44.3.3)_ | TBD |
-| "Subir spec de entidades no acepta archivos" | `'Subir spec' drop zone accepts files` | TBD |
-| "Silver/Gold/Master no interactivos" | `'Silver' subtab renders data, not blank` | TBD |
-| "Crear en Superset no funciona" | `'Crear en Superset' triggers …/superset` | TBD |
-| "Superset reporta healthy pero no responde" | `Superset /health probe` | TBD |
-| "Airflow en :8082 (no :8080)" | `Airflow UI responds at …` | TBD if `.env` sets the wrong port |
+| "Botón Grafo no responde" | `05-studio.spec.ts:41` | TBD |
+| "Botón Deploy a Airflow no responde" | `05-studio.spec.ts:73` | TBD |
+| "Plantillas no abre" | `05-studio.spec.ts:217` | TBD |
+| "Subir spec de entidades no acepta archivos" | `05-studio.spec.ts:106` | TBD |
+| "Silver/Gold/Master no interactivos" | `05-studio.spec.ts:142` + `05-studio-deep.spec.ts` | TBD |
+| "Crear en Superset no funciona" | `05-studio.spec.ts:165` | TBD |
+| "Superset reporta healthy pero no responde" | `08-external-services.spec.ts:62` | TBD |
+| "Airflow en :8082 (no :8080)" | `08-external-services.spec.ts:17` | TBD |
 
 ---
 
 ## Pending Copilot tests
 
-`04-copilot.spec.ts` is intentionally marked `test.fail(true, …)`
-because the Next.js `/copilot` chat page is deferred to v1.44.4.
-Those failures are expected and NOT blockers — they document the
-gap, and the moment v1.44.4 lands the suite automatically flips
-those tests to passing.
-
----
-
-## Próximos pasos (v1.44.3.3)
-
-Once this file has real entries:
-
-1. Group failures by `Triage` column (xs / s / m / l).
-2. Open a v1.44.3.3 sprint scoped to the xs + s items first
-   (low-risk, high-volume cleanup).
-3. m + l items go into v1.44.4 (Copilot chat sprint) or v1.45
-   (AWS hardening) as appropriate.
-4. Re-run `make e2e` after each fix batch; the HTML report
-   should show progressively fewer reds.
+`04-copilot.spec.ts` and the streaming subset of
+`11-copilot-deep.spec.ts` are intentionally marked
+`test.fail(true, …)` because the Next.js `/copilot` chat page +
+SSE stream are deferred to v1.44.4. Those failures are expected
+and NOT blockers — they document the gap, and the moment v1.44.4
+lands the suite automatically flips those tests to passing.
 
 ---
 
 ## Pre-existing context
 
-- v1.44.3 shipped `/cartridges` Next.js + LLM integration backend.
-- v1.44.2 R-Mac-3 fixed every healthcheck to use `127.0.0.1` so a
-  green `docker inspect Status=healthy` is now load-bearing.
-- v1.44.2 R-Mac-2 bumped Next.js to ≥ 14.2.21 — residual Next-15
-  CVEs were documented for v1.45 deploy sprint.
-- The user reports the local-dev admin is **`emmanuel@local.ai`**
-  (not `admin@omega.local` that some docs still reference); the
-  `tests-e2e/.env.example` reflects this.
+- v1.44.3.2 shipped the initial 71-test baseline.
+- v1.44.3.2.1 expanded to 200+ tests with:
+  - Fixed login flow (CSRF) per Codex's diagnostic
+  - Global-setup-mounted storageState (login once per run)
+  - Deep specs for login (20+), dashboard (20+), cartridges (28),
+    studio (50+), APIs (40+), UX/mobile/a11y (20+), MCP (36),
+    copilot (22)
+  - Categorised report digest via `scripts/e2e-report-summary.sh`
+- Real credentials: `emmanuel@local.ai` / `omega2026` (verified
+  by Codex's diagnostic — the user EXISTS in the bootstrap DB).
+- Login endpoint: `POST /auth/login` (NOT `/api/auth/login`).
+  CSRF flow: GET `/login` → echo `csrf_token` cookie value as
+  both `X-CSRF-Token` header and `Cookie:` header on the POST.
+
+---
+
+## Próximos pasos (v1.44.3.3)
+
+1. Run `make e2e` on the Mac with a booted stack.
+2. Run `bash scripts/e2e-report-summary.sh >> docs/E2E_FINDINGS.md`.
+3. Triage each failure into the right severity bucket.
+4. Open v1.44.3.3 scoped to the 🔴 + 🟡 buckets first.
+5. 🟢 + 🔵 follow in v1.45 (AWS hardening) or get folded into
+   the relevant capability sprint.
