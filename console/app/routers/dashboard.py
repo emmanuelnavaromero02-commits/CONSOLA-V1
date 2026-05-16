@@ -61,19 +61,27 @@ async def _cartridge_counts(pool) -> dict:
 
 
 async def _extraction_counts(pool) -> dict:
-    """Successful extraction_runs today + over the last 7 days."""
+    """Extraction runs started today + over the last 7 days.
+
+    Uses ``started_at`` (not finished_at) because migration 40 only
+    indexes ``idx_extraction_runs_started_at`` — querying finished_at
+    forces a seq-scan on every 30s dashboard poll, which compounds
+    fast with multiple operators open. The KPI semantics are
+    equivalent for a daily window (an extraction started 2 minutes
+    ago that hasn't finished still counts as "today's work").
+    """
     today = await pool.fetchval(
         """
         SELECT COUNT(*)
           FROM extraction_runs
-         WHERE finished_at >= date_trunc('day', NOW())
+         WHERE started_at >= date_trunc('day', NOW())
         """
     )
     week = await pool.fetchval(
         """
         SELECT COUNT(*)
           FROM extraction_runs
-         WHERE finished_at >= NOW() - INTERVAL '7 days'
+         WHERE started_at >= NOW() - INTERVAL '7 days'
         """
     )
     return {
@@ -109,18 +117,20 @@ async def _freshness_per_cartridge(pool) -> dict:
 
 
 async def _user_counts(pool) -> dict:
-    """Daily-active = users with a successful login today.
+    """Daily-active = distinct emails with a successful login today.
 
     The login_attempts table is authoritative for "did user X log in
     on date Y" (login_security migration v1.32) — querying users.last_login
-    would race the JWT-refresh path.
+    would race the JWT-refresh path. Column is ``created_at`` (see
+    infra/init/17_login_security.sql:8) and is covered by
+    ``idx_login_attempts_email_created_at``.
     """
     active_today = await pool.fetchval(
         """
         SELECT COUNT(DISTINCT email)
           FROM login_attempts
          WHERE success = TRUE
-           AND attempted_at >= date_trunc('day', NOW())
+           AND created_at >= date_trunc('day', NOW())
         """
     )
     total = await pool.fetchval("SELECT COUNT(*) FROM users")
@@ -132,15 +142,24 @@ async def _user_counts(pool) -> dict:
 
 async def _copilot_counts(pool) -> dict:
     """Copilot activity today — conversations started + tool
-    invocations + median response latency."""
-    conversations = await pool.fetchval(
-        """
-        SELECT COUNT(*) FROM copilot_conversations
-         WHERE created_at >= date_trunc('day', NOW())
-        """
-    ) if await pool.fetchval(
-        "SELECT to_regclass('public.copilot_conversations')"
-    ) else 0
+    invocations.
+
+    Table is ``conversations`` (created by migration 38) — NOT
+    ``copilot_conversations``. The to_regclass guard handles
+    pre-v1.42 DBs where the table doesn't exist yet (returns NULL
+    → counts default to 0).
+    """
+    conversations = 0
+    has_convs = await pool.fetchval(
+        "SELECT to_regclass('public.conversations')"
+    )
+    if has_convs:
+        conversations = await pool.fetchval(
+            """
+            SELECT COUNT(*) FROM conversations
+             WHERE created_at >= date_trunc('day', NOW())
+            """
+        ) or 0
 
     tools_today = await pool.fetchval(
         """

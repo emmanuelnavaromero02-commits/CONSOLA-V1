@@ -17,24 +17,35 @@ ALTER TABLE users
 -- Existing users (pre-v1.44.1) should NOT be force-walked through
 -- the wizard — they already know the product. Mark every existing
 -- row as completed so only genuinely new accounts trigger the tour.
--- The guard uses ``WHERE onboarding_completed IS FALSE`` so a
--- re-run after the column already exists is a no-op (the second
--- run finds nothing to update).
-UPDATE users
-   SET onboarding_completed = TRUE
- WHERE onboarding_completed = FALSE
-   AND created_at < NOW();
--- NOTE: this is the one-shot backfill. Strictly speaking, the
--- ``created_at < NOW()`` predicate is redundant for the first
--- application of this migration (every existing row satisfies it),
--- but it keeps the statement deterministic across replays AND
--- documents the intent: only rows that existed BEFORE this
--- migration's clock-reading get auto-completed. Anything created
--- after this migration ran is treated as a new user and walks the
--- wizard.
+--
+-- Replay-safety gate: this UPDATE only runs the FIRST time the
+-- migration is applied. The Round 1 DB review caught that the
+-- prior ``WHERE created_at < NOW()`` predicate was NOT replay-safe
+-- in the sense its comment claimed: a user who registered between
+-- two migration applications would silently get their wizard
+-- skipped on the second run (they're FALSE by default + their
+-- created_at < second-run NOW). Gating on the schema_migrations
+-- row makes the backfill genuinely one-shot — every subsequent
+-- run skips the UPDATE entirely.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM schema_migrations
+     WHERE filename = '48_users_onboarding_completed.sql'
+  ) THEN
+    UPDATE users
+       SET onboarding_completed = TRUE
+     WHERE onboarding_completed = FALSE;
+    RAISE NOTICE 'migration 48: backfilled existing users to onboarding_completed=TRUE';
+  ELSE
+    RAISE NOTICE 'migration 48: backfill skipped (already applied)';
+  END IF;
+END $$;
 
 -- Self-register in schema_migrations (matches the 43-47 pattern —
 -- docker-entrypoint-initdb.d never invokes the runner script).
+-- Order matters: the backfill above READS this table, so the
+-- INSERT MUST come AFTER the UPDATE block, not before.
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('48_users_onboarding_completed.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

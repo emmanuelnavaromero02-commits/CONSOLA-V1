@@ -57,11 +57,21 @@
      Same hue as --danger but at 8% alpha so light/dark themes
      produce consistent contrast without hardcoded rgba(). */
   --danger-soft: rgba(179, 38, 30, 0.08);
+  /* v1.44.1 (R1 frontend review): soft sibling fills for success +
+     warning so badges/alerts get a dark-mode-aware tinted background
+     instead of a hardcoded rgba pinned to the light-mode hue. */
+  --success-soft: rgba(17, 122, 61, 0.10);
+  --warning-soft: rgba(176, 109, 0, 0.12);
 
   --accent-red: #b3261e;
   --success:  #117a3d;
   --warning:  #b06d00;
   --danger:   #b3261e;
+  /* v1.44.1: ``on-danger`` is the text colour for content sitting ON
+     a --danger background (btn-danger, danger badges). Stays white
+     across both themes because the danger hue keeps enough contrast
+     against #ffffff. */
+  --on-danger: #ffffff;
 
   /* ── Typography ───────────────────────────────────────────────────── */
   --font-ui:   'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
@@ -173,7 +183,13 @@
   --warning:    #d4a042;
   --danger:     #e0716b;
   /* v1.42 dark mode: matching soft danger fill. */
-  --danger-soft: rgba(224, 113, 107, 0.14);
+  --danger-soft:  rgba(224, 113, 107, 0.14);
+  /* v1.44.1 dark mode: soft sibling fills for success + warning so
+     the dark-tone foreground keeps contrast against a dark-tone
+     tinted background. */
+  --success-soft: rgba(76, 178, 123, 0.16);
+  --warning-soft: rgba(212, 160, 66, 0.18);
+  --on-danger:    #ffffff;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40);

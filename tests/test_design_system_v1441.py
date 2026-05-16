@@ -203,18 +203,21 @@ def test_components_css_declares_nav_and_fab():
         assert cls in src
 
 
-def test_components_css_uses_only_tokens_no_inline_hex():
-    """components.css must consume tokens. A hex literal sneaking in
-    means we lose dark-mode support for that rule."""
+def test_components_css_uses_only_tokens_no_inline_color_literals():
+    """components.css must consume tokens — no hex AND no rgba()
+    literals. The R1 frontend review caught five rgba() values
+    pinned to light-mode hues that drifted in dark mode; the fix
+    introduced --success-soft / --warning-soft / --on-danger so
+    every colour reference goes through var(--…) again."""
     src = _comps()
-    # Allow plain #ffffff in btn-danger text and a couple of explicit
-    # whites that the brief calls out as deliberate. Reject any other
-    # hex colour.
     inline_hex = re.findall(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b", src)
-    allowed = {"#ffffff", "#FFFFFF"}
-    offenders = [h for h in inline_hex if h not in allowed]
-    assert not offenders, (
-        f"components.css must reference var(--…); inline hex found: {offenders}"
+    assert not inline_hex, (
+        f"components.css must reference var(--…); inline hex found: {inline_hex}"
+    )
+    inline_rgba = re.findall(r"rgba?\([^)]+\)", src)
+    assert not inline_rgba, (
+        f"components.css must reference var(--…); inline rgba/rgb found: "
+        f"{inline_rgba}. Add a --foo-soft token to tokens.css instead."
     )
 
 
