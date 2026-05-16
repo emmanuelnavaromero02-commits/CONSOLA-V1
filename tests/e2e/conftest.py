@@ -30,6 +30,11 @@ ADMIN_PASSWORD = os.environ.get("E2E_ADMIN_PASSWORD", "")
 
 # CI flips this to "1" so a misconfigured E2E job loudly fails.
 REQUIRE_STACK = os.environ.get("E2E_REQUIRE_STACK", "").strip() == "1"
+# Generic CI signal: GitHub Actions, GitLab CI, CircleCI, and most
+# every CI provider sets ``CI=true``. We use it to distinguish a
+# "running in CI without E2E creds" foot-gun from a "developer ran
+# pytest at the project root" silent skip.
+RUNNING_IN_CI = os.environ.get("CI", "").strip().lower() in {"true", "1", "yes"}
 
 
 def _bail(message: str) -> None:
@@ -38,6 +43,33 @@ def _bail(message: str) -> None:
     if REQUIRE_STACK:
         pytest.fail(message)
     pytest.skip(message)
+
+
+# v1.43.4 (Claude L1): if E2E tests are being collected inside CI
+# AND the admin password isn't set, fail the collection step
+# loudly. Pre-v1.43.4 the silent skip path made it impossible to
+# tell whether a green CI run had actually exercised the E2E
+# surface — a regression that erased every cartridge endpoint
+# would have shipped green.
+#
+# The fixture is autouse + session-scoped so it fires once per
+# pytest session, before any test function runs. We only require
+# the password when ``E2E_REQUIRE_STACK=1`` is ALSO set; CI runs
+# that haven't yet wired up the live-stack step (e.g. unit-only
+# matrix jobs) keep the old skip behaviour. The pair
+# ``CI=true`` + ``E2E_REQUIRE_STACK=1`` + missing password is the
+# misconfiguration we want to surface.
+@pytest.fixture(scope="session", autouse=True)
+def require_admin_password_in_ci():
+    if RUNNING_IN_CI and REQUIRE_STACK and not ADMIN_PASSWORD:
+        pytest.fail(
+            "E2E_ADMIN_PASSWORD is empty inside CI with "
+            "E2E_REQUIRE_STACK=1. Either provide the value as a "
+            "repository secret (recommended) or drop "
+            "E2E_REQUIRE_STACK=1 to silently skip E2E. See "
+            "docs/runbook/02_primer_tenant.md for how the password "
+            "relates to BOOTSTRAP_ADMIN_PASSWORD."
+        )
 
 
 @pytest.fixture(scope="session")
