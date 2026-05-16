@@ -1,15 +1,28 @@
 /**
- * v1.44.3.2.2 R-Mac — explicit login flow for the Next.js
- * console, mirroring the CSRF dance Codex's diagnostic
- * documented:
+ * v1.44.3.2.2 R-Mac-4 — same-origin login flow.
  *
- *   1. GET  /login     → backend sets the csrf_token cookie
- *   2. POST /auth/login with:
- *        - Content-Type: application/json
- *        - X-CSRF-Token: <csrf_token cookie value>
- *        - credentials: 'include'  (so the cookie round-trips)
- *        - body: { email, password }
- *   3. Response 200 + mod_session + refresh_token cookies.
+ * Earlier R-Mac iterations fired credentialed XHRs straight at
+ * the FastAPI backend on :8000, and Chrome's CORS preflight
+ * dance kept stripping Allow-Origin even after R-Mac-3 moved
+ * CORSMiddleware to OUTERMOST. The R-Mac-4 pivot drops CORS
+ * from the picture entirely: the Next.js app serves
+ * `/login-proxy`, `/auth/login`, `/api/*` AS ITSELF and
+ * forwards to FastAPI inside the docker network.
+ *
+ * Discovered CSRF dance — unchanged on the wire, just same-origin
+ * now:
+ *
+ *   1. GET  /login-proxy   → Next proxy → FastAPI /login → sets
+ *                             csrf_token cookie on this domain
+ *                             (browser stores it because the
+ *                             response came from :3000, not
+ *                             cross-origin from :8000).
+ *   2. POST /auth/login    → Next proxy → FastAPI /auth/login
+ *                             with X-CSRF-Token + JSON body.
+ *   3. Response 200        → mod_session + refresh_token cookies
+ *                             land on this domain, browser
+ *                             retains them without any CORS
+ *                             credentialed-request negotiation.
  *
  * NOT using the axios instance from lib/api.ts because:
  *   - the login flow is the ONLY non-mutation request that needs
@@ -20,13 +33,6 @@
  *     "include"` is the documented browser-side default.
  */
 import { readCookie } from "@/lib/api";
-
-const BACKEND_URL =
-  (typeof window !== "undefined"
-    ? process.env.NEXT_PUBLIC_API_BASE
-      || process.env.NEXT_PUBLIC_BACKEND_URL
-    : process.env.API_INTERNAL_URL)
-  || "http://localhost:8000";
 
 export interface LoginError extends Error {
   status?: number;
@@ -44,13 +50,19 @@ function makeError(message: string, status?: number, detail?: string): LoginErro
  * Run the 2-step CSRF login flow. Throws a LoginError with a
  * useful message on any failure path (no CSRF cookie, 401, 5xx,
  * network error). On success returns the parsed JSON body.
+ *
+ * Both URLs are RELATIVE — the browser resolves them against the
+ * Next.js origin (typically http://localhost:3000), and the
+ * Next.js server-side proxy forwards to FastAPI. No cross-origin
+ * request ever leaves the tab.
  */
 export async function loginUser(email: string, password: string): Promise<unknown> {
-  // Step 1: GET /login to seed the csrf_token cookie. The response
-  // body is the HTML page; we only care about the Set-Cookie side
-  // effect, but the browser handles that for us.
+  // Step 1: GET /login-proxy to seed the csrf_token cookie. We
+  // hit `/login-proxy` instead of `/login` because the Next.js
+  // app has its own client-rendered /login page; the proxy
+  // route lives under a different path so they don't collide.
   try {
-    await fetch(`${BACKEND_URL}/login`, {
+    await fetch("/login-proxy", {
       method: "GET",
       credentials: "include",
     });
@@ -67,10 +79,11 @@ export async function loginUser(email: string, password: string): Promise<unknow
     );
   }
 
-  // Step 2: POST /auth/login with the CSRF header.
+  // Step 2: POST /auth/login with the CSRF header. Goes through
+  // the /auth/[...path] catch-all proxy.
   let response: Response;
   try {
-    response = await fetch(`${BACKEND_URL}/auth/login`, {
+    response = await fetch("/auth/login", {
       method: "POST",
       credentials: "include",
       headers: {
