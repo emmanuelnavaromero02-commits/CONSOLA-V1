@@ -130,7 +130,13 @@ def test_extract_facts_inserts_with_extracted_source():
 
 def test_extract_facts_caps_per_turn():
     """Cap on how many facts persist per turn — a malicious or
-    rambling LLM response shouldn't pump 100 facts."""
+    rambling LLM response shouldn't pump 100 facts.
+
+    v1.44.3 R1 LLM-A2 follow-up: the cap is now applied to the
+    VALID candidate count via an early-break, not via a slice on
+    the raw parsed list. The previous slice-first order silently
+    under-counted when leading candidates failed validation.
+    """
     src = _read(SVC / "memory_service.py")
     block = re.search(
         r"async def extract_facts_from_turn.*?(?=^async def|\Z)",
@@ -138,7 +144,12 @@ def test_extract_facts_caps_per_turn():
     )
     body = block.group(0) if block else ""
     assert "max_new_facts: int = 5" in body
-    assert "[:max_new_facts]" in body
+    # The cap is enforced via len(valid_texts) >= max_new_facts AFTER
+    # per-candidate validation, not via a slice on the raw parsed list.
+    assert "len(valid_texts) >= max_new_facts" in body, (
+        "extraction cap must be applied AFTER validation so a mix of "
+        "valid + invalid candidates doesn't silently under-count"
+    )
 
 
 def test_summarise_conversation_uses_upsert():
@@ -426,3 +437,98 @@ def test_llm_call_errors_truncated_before_audit():
                 f"{path.name} audit_event includes raw str(exc); "
                 f"may leak SDK error contents — truncate first"
             )
+
+
+# ── R1 follow-ups ───────────────────────────────────────────────────────
+
+
+def test_workflow_parser_denylists_destructive_tools():
+    """R1 Security P2: prompt-only destructive guards relied on LLM
+    compliance. The parser now applies a deny-list regex regardless
+    of what the model emitted — defense-in-depth."""
+    src = _read(RTR / "copilot_workflows.py")
+    assert "_DESTRUCTIVE_TOOL_RE" in src
+    assert "_is_destructive_tool" in src
+    # Every documented destructive verb must be in the regex.
+    for kw in ("delete", "drop", "truncate", "set_variable", "create_dag"):
+        assert kw in src, f"deny-list regex missing {kw!r}"
+    # And the regex result must override the LLM-supplied tool in
+    # _parse_plan_json — the variable assignment is the load-bearing line.
+    parser = re.search(
+        r"def _parse_plan_json.*?(?=^def |^async def |\Z)",
+        src, re.DOTALL | re.MULTILINE,
+    )
+    body = parser.group(0) if parser else ""
+    assert "None if _is_destructive_tool" in body
+
+
+def test_fact_extraction_prompt_includes_no_inference_rule():
+    """R1 LLM P2: an over-eager LLM was inferring facts the user
+    never stated. Prompt now carries an explicit anti-fabrication
+    rule."""
+    src = _read(SVC / "memory_service.py")
+    assert "NO infieras" in src or "No infieras" in src
+    # And the rule is marked as REGLA INVIOLABLE so the model treats
+    # it with the same weight as the JSON-only output rule.
+    assert "REGLA INVIOLABLE" in src
+
+
+def test_extract_facts_validates_before_slicing():
+    """R1 LLM P2 follow-up: previous slice-first order silently
+    under-counted when leading candidates failed validation. The fix
+    iterates the FULL parsed list, validates each, collects valid
+    ones, and breaks at the cap."""
+    src = _read(SVC / "memory_service.py")
+    block = re.search(
+        r"async def extract_facts_from_turn.*?(?=^async def|\Z)",
+        src, re.DOTALL | re.MULTILINE,
+    )
+    body = block.group(0) if block else ""
+    # The iterator is over `parsed`, not `parsed[:max_new_facts]`.
+    assert "for candidate in parsed:" in body
+    # The break condition is len(valid_texts) >= max_new_facts.
+    assert "len(valid_texts) >= max_new_facts" in body
+    assert "break" in body
+
+
+def test_credentials_form_dialog_focus_traps_cancel_button():
+    """R1 Frontend P2: ConfirmDelete dialog now auto-focuses the
+    Cancel button on mount so keyboard users land on the safe
+    action."""
+    src = _read(REPO / "console-next/src/components/cartridges/CredentialsForm.tsx")
+    # The Cancel button must carry a ref AND the dialog must focus it
+    # in a useEffect.
+    assert "cancelRef" in src
+    assert "useRef" in src
+    assert "cancelRef.current?.focus()" in src
+
+
+def test_credentials_form_optional_number_uses_undefined_default():
+    """R1 Frontend P2: empty-string + z.coerce.number() produced NaN,
+    rejected by Zod with a cryptic message for OPTIONAL number fields.
+    Fix: undefined default when the field is not required."""
+    src = _read(REPO / "console-next/src/components/cartridges/CredentialsForm.tsx")
+    # The defaultsFor function now branches on f.required for numbers.
+    block = re.search(
+        r"function defaultsFor.*?(?=^function |\Z)",
+        src, re.DOTALL | re.MULTILINE,
+    )
+    body = block.group(0) if block else ""
+    assert 'f.required ? "" : undefined' in body, (
+        "defaultsFor must return undefined for optional numbers so "
+        "empty input isn't coerced to NaN by Zod"
+    )
+
+
+def test_cartridges_grid_drops_redundant_lg_breakpoint():
+    """R1 Frontend P2: lg:grid-cols-2 was identical to md:grid-cols-2
+    — dead code. Confirm it's removed from the className (a comment
+    referencing the old class is fine for code-history readability)."""
+    src = _read(REPO / "console-next/src/app/cartridges/page.tsx")
+    # Strip JSX comments so the rationale-line ("dropped the
+    # redundant lg:grid-cols-2 — it was identical…") doesn't trip
+    # the test; only real className occurrences count.
+    code_only = re.sub(r"//.*?$|/\*.*?\*/|\{/\*.*?\*/\}", "",
+                       src, flags=re.MULTILINE | re.DOTALL)
+    assert "lg:grid-cols-2" not in code_only
+    assert "md:grid-cols-2" in code_only

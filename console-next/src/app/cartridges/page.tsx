@@ -81,7 +81,11 @@ export default function CartridgesPage() {
 
       <section
         aria-label="Listado de cartuchos"
-        className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2"
+        // v1.44.3 R1 Frontend P2: dropped the redundant lg:grid-cols-2
+        // — it was identical to md:grid-cols-2. 2-column at md and up
+        // is the intentional layout; bump to 3 once the brief adds a
+        // 5th cartridge.
+        className="grid grid-cols-1 gap-4 md:grid-cols-2"
       >
         {list.isLoading
           ? Array.from({ length: 4 }).map((_, i) => (

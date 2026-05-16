@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -250,7 +250,13 @@ function ConfirmDeleteDialog({
   onConfirm: () => void;
   pending: boolean;
 }) {
+  // v1.44.3 R1 Frontend P2: keyboard focus previously stayed on the
+  // page underneath the modal, so Tab took the user back into the
+  // obscured content + Enter could trigger any focused button.
+  // Auto-focus the safe (Cancel) button on mount.
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
+    cancelRef.current?.focus();
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
     };
@@ -279,6 +285,7 @@ function ConfirmDeleteDialog({
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onCancel}
             className="inline-flex h-9 items-center justify-center rounded-md border bg-background px-4 text-sm font-medium hover:bg-accent/5"
@@ -342,10 +349,19 @@ function fieldToZod(f: ConnectorField): z.ZodTypeAny {
 function defaultsFor(fields: ConnectorField[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
-    if (f.default !== undefined) out[f.name] = f.default;
-    else if (f.type === "boolean") out[f.name] = false;
-    else if (f.type === "number")  out[f.name] = "";
-    else out[f.name] = "";
+    if (f.default !== undefined) {
+      out[f.name] = f.default;
+    } else if (f.type === "boolean") {
+      out[f.name] = false;
+    } else if (f.type === "number") {
+      // v1.44.3 R1 Frontend P2: empty string + z.coerce.number()
+      // produced NaN, which Zod then rejected with a cryptic
+      // "Expected number" message even for optional fields. Use
+      // undefined so the resolver treats the field as truly empty.
+      out[f.name] = f.required ? "" : undefined;
+    } else {
+      out[f.name] = "";
+    }
   }
   return out;
 }

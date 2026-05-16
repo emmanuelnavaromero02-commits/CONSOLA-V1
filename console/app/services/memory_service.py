@@ -156,11 +156,17 @@ _FACT_EXTRACTION_PROMPT = (
     "Eres un asistente que detecta hechos durables sobre el usuario y "
     "su empresa. Revisa la conversación reciente y devuelve únicamente "
     "los hechos que VALEN LA PENA RECORDAR para futuras conversaciones.\n\n"
+    "REGLA INVIOLABLE: NO infieras hechos que el usuario no haya afirmado "
+    "explícitamente. Si no lo dijo, no lo extraigas — preferimos perder "
+    "un fact que fabricar uno. Si un fact requiere extrapolación, NO lo "
+    "incluyas.\n\n"
     "NO incluyas: información sobre la consulta puntual, datos públicos "
-    "(nombres de cartuchos, tools), o frases sin contenido factual.\n\n"
+    "(nombres de cartuchos, tools), inferencias sobre el rol/sector/"
+    "comportamiento del usuario, o frases sin contenido factual.\n\n"
     "SÍ incluye: ciclos fiscales, equipos, zonas horarias, nombres de "
     "personas clave, sistemas en uso, preferencias de formato, "
-    "convenciones internas.\n\n"
+    "convenciones internas — SIEMPRE que el usuario las haya mencionado "
+    "explícitamente en la conversación.\n\n"
     "Devuelve UNICAMENTE un JSON array. Si no hay nada que recordar, "
     "devuelve []. Cada elemento tiene la forma:\n"
     '  {"fact": "texto del hecho en una sola frase", '
@@ -202,12 +208,27 @@ async def extract_facts_from_turn(
     if not parsed:
         return []
 
-    pool = await auth.pool()
-    inserted: list[dict] = []
-    for candidate in parsed[:max_new_facts]:
+    # v1.44.3 R1 LLM-A2 follow-up: validate BEFORE slicing. The
+    # previous slice-then-validate order silently under-counted when
+    # the LLM returned a mix of valid + invalid candidates: a list
+    # like [empty, empty, valid, valid, valid] with max_new_facts=3
+    # would yield zero inserts because the slice took the three
+    # leading empties first. Validate first, then slice.
+    valid_texts: list[str] = []
+    for candidate in parsed:
         fact_text = (candidate.get("fact") or "").strip()
         if not fact_text or len(fact_text) > 500:
             continue
+        valid_texts.append(fact_text)
+        if len(valid_texts) >= max_new_facts:
+            break
+
+    if not valid_texts:
+        return []
+
+    pool = await auth.pool()
+    inserted: list[dict] = []
+    for fact_text in valid_texts:
         row = await pool.fetchrow(
             """
             INSERT INTO user_facts (user_id, fact, source, confidence)

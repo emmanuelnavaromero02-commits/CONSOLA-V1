@@ -236,10 +236,34 @@ _PLANNING_SYSTEM_PROMPT = (
 )
 
 
+# v1.44.3 R1 Security P2 follow-up: deny-list defense-in-depth.
+# The planner prompt instructs the LLM to emit ``tool=null`` for
+# destructive operations so a human approves them, but a misbehaving
+# model could ignore the instruction and emit e.g. ``"tool":
+# "airflow_delete_dag"`` directly. _parse_plan_json normalises any
+# tool name matching this regex back to None so the (next-session)
+# executor loop can never reach the destructive surface without an
+# approval gate. Belt + suspenders: the prompt + the parser.
+_DESTRUCTIVE_TOOL_RE = __import__("re").compile(
+    r"(?:^|[._])(delete|drop|truncate|set_variable|create_dag|destroy|wipe|reset)\b",
+    __import__("re").IGNORECASE,
+)
+
+
+def _is_destructive_tool(name: str | None) -> bool:
+    if not name:
+        return False
+    return bool(_DESTRUCTIVE_TOOL_RE.search(name))
+
+
 def _parse_plan_json(raw: str) -> list[dict]:
     """Same defensive parser pattern as memory_service._parse_facts_json.
     The LLM is asked for strict JSON; we tolerate prose wrappers via
-    regex but bail if the array is truly malformed."""
+    regex but bail if the array is truly malformed.
+
+    Defense-in-depth: any tool name matching the destructive deny-list
+    is forced back to None regardless of what the LLM emitted.
+    """
     import re as _re
     s = (raw or "").strip()
     try:
@@ -261,10 +285,14 @@ def _parse_plan_json(raw: str) -> list[dict]:
         description = (item.get("description") or "").strip()
         if not description:
             continue
+        raw_tool = item.get("tool") or None
+        # v1.44.3 R1 Security P2: deny-list filter for destructive
+        # tool names regardless of LLM compliance with the prompt.
+        tool = None if _is_destructive_tool(raw_tool) else raw_tool
         out.append({
             "step":        item.get("step", i),
             "description": description[:500],
-            "tool":        item.get("tool") or None,
+            "tool":        tool,
             "args":        item.get("args") if isinstance(item.get("args"), dict) else {},
         })
     return out
