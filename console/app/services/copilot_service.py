@@ -99,6 +99,66 @@ _HISTORY_LIMIT = 40
 # Hard cap on user_message size at the service layer.
 MAX_USER_MESSAGE_CHARS = 16_000
 
+# Sprint v1.42 R2 (DBA F4): the LLM can synthesise arbitrarily-large
+# tool_use ``input`` blobs that would otherwise land verbatim in
+# ``conversation_messages.tool_calls`` (JSONB) and ``audit_events.tool_args``.
+# Cap the JSON size before persistence + audit so a single bad turn can't
+# bloat the durable storage layer.
+MAX_TOOL_ARGS_BYTES = 16_000
+
+# Pattern for sanitising upstream error strings (from MCP tool results
+# or invocation exceptions) before they reach ``audit_events.metadata.error``.
+# Conservative: drops anything that looks like a bearer token, hex blob,
+# or password=… / api_key=… pair.
+_SECRET_ERROR_PATTERNS = [
+    (r"(?i)\bbearer\s+[A-Za-z0-9._\-]+", "Bearer ***"),
+    (r"(?i)(password|token|api[_-]?key|secret|client[_-]?secret)\s*[=:]\s*[^\s,;}\"']+",
+     r"\1=***"),
+    (r"\b[a-f0-9]{32,}\b", "***hex***"),
+]
+
+
+def _sanitise_error(msg: str | None) -> str | None:
+    """Best-effort redaction of upstream error strings before persisting
+    them in audit metadata. Same pattern set used by ``logging_config``;
+    keeps audit forense without echoing secrets back."""
+    if not msg:
+        return msg
+    import re
+    out = str(msg)
+    for pat, repl in _SECRET_ERROR_PATTERNS:
+        out = re.sub(pat, repl, out)
+    return out[:500]
+
+
+def _clip_tool_args(args: Any) -> Any:
+    """Return ``args`` unchanged if json.dumps fits under
+    ``MAX_TOOL_ARGS_BYTES``, otherwise a compact stub describing the
+    overflow. Called after ``_scrub_args`` so secrets are gone first."""
+    try:
+        encoded = json.dumps(args, default=str)
+    except Exception:
+        return {"_clipped": True, "_reason": "non-json-serialisable"}
+    if len(encoded) <= MAX_TOOL_ARGS_BYTES:
+        return args
+    return {
+        "_clipped": True,
+        "_original_bytes": len(encoded),
+        "_max_bytes": MAX_TOOL_ARGS_BYTES,
+        "_preview": encoded[: max(0, MAX_TOOL_ARGS_BYTES - 200)],
+    }
+
+
+def _safe_uuid(value: str, *, what: str = "id") -> str:
+    """Validate a UUID-shaped path parameter early so asyncpg can't
+    bubble its InvalidTextRepresentationError up as a generic 500."""
+    import uuid as _uuid_mod
+    try:
+        _uuid_mod.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(400, f"invalid {what}: not a UUID")
+    return str(value)
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -281,7 +341,11 @@ def _audit(
     """Fire-and-forget audit. Failures here MUST NOT break the turn."""
     metadata: dict[str, Any] = {"server": server}
     if error:
-        metadata["error"] = error[:500]
+        # R2 security fix: upstream error strings (from MCP servers or
+        # invoke() exceptions) can echo submitted secrets / connection
+        # URIs verbatim. Run them through the same redaction patterns
+        # the JSON logger uses before they land in audit_events.
+        metadata["error"] = _sanitise_error(error)
     try:
         asyncio.create_task(audit_service.record_event(
             user_id=user.get("id"),
@@ -294,7 +358,7 @@ def _audit(
             status=status,
             metadata=metadata,
             tool_name=bare_name,
-            tool_args=_scrub_args(args),
+            tool_args=_clip_tool_args(_scrub_args(args)),
             tool_result_status=status,
             risk_level=risk_level,
             conversation_id=conversation_id,
@@ -356,6 +420,7 @@ async def list_conversations(
 
 
 async def get_conversation_messages(*, conversation_id: str, user: dict) -> dict:
+    conversation_id = _safe_uuid(conversation_id, what="conversation_id")
     pool = await auth.pool()
     async with pool.acquire() as conn:
         conv = await _load_conversation(conn, conversation_id)
@@ -565,7 +630,11 @@ async def _run_loop(
                             tool_calls.append({
                                 "id": block.get("id") or str(_uuid.uuid4()),
                                 "name": block.get("name"),
-                                "input": _scrub_args(block.get("input") or {}),
+                                # Scrub THEN cap so secrets are gone
+                                # before we even measure the size.
+                                "input": _clip_tool_args(
+                                    _scrub_args(block.get("input") or {})
+                                ),
                                 **{k: v for k, v in inv.items() if k not in {"args"}},
                             })
                     msg_text = "".join(text_parts)
@@ -633,6 +702,7 @@ async def run_turn(
         raise HTTPException(400, "empty message")
     if len(user_message) > MAX_USER_MESSAGE_CHARS:
         raise HTTPException(413, f"message too long (max {MAX_USER_MESSAGE_CHARS} chars)")
+    conversation_id = _safe_uuid(conversation_id, what="conversation_id")
 
     pool = await auth.pool()
     async with pool.acquire() as conn:
@@ -666,6 +736,8 @@ async def approve_pending_action(
     respond to the new tool results."""
     if not permissions.has_permission(user, "copilot.execute"):
         raise HTTPException(403, "permission required: copilot.execute")
+    conversation_id = _safe_uuid(conversation_id, what="conversation_id")
+    message_id = _safe_uuid(message_id, what="message_id")
 
     pool = await auth.pool()
     async with pool.acquire() as conn:

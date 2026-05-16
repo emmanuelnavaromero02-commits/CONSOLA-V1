@@ -761,6 +761,61 @@ def test_copilot_pending_action_args_are_scrubbed(
     assert pa["args"]["key"] == "k"
 
 
+# ── R2 review fixes ────────────────────────────────────────────────────────
+
+def test_copilot_sanitises_error_string_for_audit(copilot_module):
+    """v1.42 R2 SEC: upstream error strings (MCP server replies or
+    invocation exceptions) sometimes echo credentials. Audit metadata
+    must run them through the same redaction patterns logging_config
+    uses before persistence."""
+    out = copilot_module._sanitise_error(
+        "POST https://x/y failed: Authorization: Bearer abc123def_ghi-jkl. password=hunter2"
+    )
+    assert "abc123def" not in out
+    assert "hunter2" not in out
+    assert "Bearer ***" in out
+    assert "password=***" in out
+
+
+def test_copilot_clips_oversized_tool_args(copilot_module):
+    """v1.42 R2 DBA: the LLM can synthesise multi-MB tool_use input.
+    Cap at MAX_TOOL_ARGS_BYTES before durable persistence."""
+    huge = {"sql": "x" * (copilot_module.MAX_TOOL_ARGS_BYTES + 1000)}
+    clipped = copilot_module._clip_tool_args(huge)
+    assert clipped["_clipped"] is True
+    assert clipped["_max_bytes"] == copilot_module.MAX_TOOL_ARGS_BYTES
+    assert clipped["_original_bytes"] > copilot_module.MAX_TOOL_ARGS_BYTES
+    # Small args pass through.
+    small = {"k": "v"}
+    assert copilot_module._clip_tool_args(small) == small
+
+
+def test_copilot_rejects_invalid_uuid_with_400(copilot_module, db, admin_user):
+    """v1.42 R2 DBA: invalid UUID path params used to bubble asyncpg
+    InvalidTextRepresentationError as 500. Now caught at the boundary."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+    _patch_llm(copilot_module, AsyncMock(return_value=("ok", [], [])))
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.run_turn(
+            conversation_id="not-a-uuid",
+            user_message="hola", user=admin_user,
+        ))
+    assert "400" in str(exc_info.value)
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.get_conversation_messages(
+            conversation_id="also-not-a-uuid", user=admin_user,
+        ))
+    assert "400" in str(exc_info.value)
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.approve_pending_action(
+            conversation_id="not-a-uuid", message_id="also-not",
+            user=admin_user,
+        ))
+    assert "400" in str(exc_info.value)
+
+
 def test_copilot_approval_key_is_args_specific(copilot_module):
     """The approval key must include args so approving 'delete X' does
     NOT also approve 'delete Y' that happened to share the bare name."""

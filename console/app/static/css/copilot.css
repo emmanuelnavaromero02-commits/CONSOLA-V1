@@ -46,7 +46,9 @@
 
 .copilot-btn-primary {
   background: var(--primary);
-  color: #fff;
+  /* v1.42 R2 fix: use --on-primary token (declared in tokens.css)
+     instead of hardcoded #fff so dark mode picks the contrast token. */
+  color: var(--on-primary);
   border: 0;
   border-radius: 8px;
   padding: 10px 14px;
@@ -255,7 +257,9 @@
   font-size: 13px;
 }
 .copilot-toast-error {
-  background: rgba(179, 38, 30, 0.08);
+  /* v1.42 R2 fix: --danger-soft token (tokens.css) replaces the
+     hardcoded rgba so dark mode picks the matching soft fill. */
+  background: var(--danger-soft);
   color: var(--danger);
   border: 1px solid var(--danger);
 }
