@@ -64,9 +64,17 @@ SYSTEM_PROMPT = (
     "- Si el usuario no tiene permisos para una tool, la plataforma te lo "
     "dirá con 'permission_denied'. En ese caso explícale qué permiso necesita "
     "y para qué.\n"
-    "- Cuando un tool_result incluya identificadores de fuente (cartucho, "
-    "entidad, run_id, timestamp), cítalos. Si no los incluye, di que el "
-    "resultado no traía ese identificador — NUNCA inventes uno.\n"
+    "- REGLA CRÍTICA DE EVIDENCIA: cuando uses datos de una tool, "
+    "SIEMPRE incluye al final de tu respuesta la frase "
+    "'📊 fuente: <cartucho> · <entidad> · <timestamp o run_id>'. La "
+    "plataforma además rendereará tarjetas de cita automáticamente a "
+    "partir del _meta del tool_result. Si un tool_result no incluye esos "
+    "identificadores, di explícitamente que no los traía — NUNCA inventes "
+    "uno.\n"
+    "- Si el usuario pide un número y NO consultaste una tool para "
+    "obtenerlo, NUNCA des un número aproximado. Responde literalmente "
+    "'No tengo ese dato concreto. ¿Quieres que consulte X tool para "
+    "verificarlo?'\n"
     "- Lenguaje claro y conciso; sin jerga técnica innecesaria. Castellano "
     "por defecto, salvo que el usuario te escriba en otro idioma."
 )
@@ -105,6 +113,12 @@ MAX_USER_MESSAGE_CHARS = 16_000
 # Cap the JSON size before persistence + audit so a single bad turn can't
 # bloat the durable storage layer.
 MAX_TOOL_ARGS_BYTES = 16_000
+
+# Sprint v1.43 (citations): cap the number of citation entries persisted
+# per assistant message so a tool returning thousands of rows can't
+# bloat conversation_messages.citations (JSONB). 20 is more than enough
+# for the UI — the LLM cites top-N sources, not every row.
+MAX_CITATIONS_PER_MESSAGE = 20
 
 # Pattern for sanitising upstream error strings (from MCP tool results
 # or invocation exceptions) before they reach ``audit_events.metadata.error``.
@@ -147,6 +161,70 @@ def _clip_tool_args(args: Any) -> Any:
         "_max_bytes": MAX_TOOL_ARGS_BYTES,
         "_preview": encoded[: max(0, MAX_TOOL_ARGS_BYTES - 200)],
     }
+
+
+# ── v1.43: citation extraction ─────────────────────────────────────────────
+#
+# Each successful tool result may carry a ``_meta`` envelope with
+# source-of-truth identifiers (run_id, entity, timestamp, row_count) that
+# the cartridges set in v1.41+. The copilot harvests those into structured
+# citation rows so the UI can render evidence cards and the audit log can
+# point an investigator back to the originating extraction run.
+#
+# Multi-source results (``airflow_list_dag_runs`` → runs[]) also yield one
+# citation per recent run, capped to the top-5 inside a single tool result
+# to keep JSONB payload bounded.
+
+def _extract_citations(tool_name: str, tool_result: Any, server_id: str) -> list[dict]:
+    """Return a list of citation dicts harvested from a single tool result.
+
+    Each entry has at minimum ``source`` (server id) and ``tool``; other
+    fields (``run_id``, ``entity``, ``timestamp``, ``row_count``,
+    ``status``) appear when the underlying tool surfaces them. Failures
+    are non-blocking: any unexpected shape just yields an empty list.
+    """
+    if not isinstance(tool_result, dict):
+        return []
+    if tool_result.get("error") or tool_result.get("_error"):
+        # Don't cite an error envelope — the UI surfaces those separately.
+        return []
+
+    citations: list[dict] = []
+    meta = tool_result.get("_meta") or {}
+    if isinstance(meta, dict) and (
+        meta.get("run_id") or meta.get("entity") or meta.get("timestamp")
+    ):
+        citations.append({
+            "source":    server_id,
+            "tool":      tool_name,
+            "run_id":    meta.get("run_id"),
+            "entity":    meta.get("entity"),
+            "timestamp": meta.get("timestamp") or meta.get("extracted_at"),
+            "age_seconds": meta.get("age_seconds"),
+            "row_count": meta.get("row_count"),
+        })
+
+    # Multi-source results: list of runs / records each with its own
+    # identifiers. Cap to the first 5 to keep the JSONB bounded; the LLM
+    # gets the full payload, only the persisted citation list is trimmed.
+    runs = tool_result.get("runs")
+    if isinstance(runs, list):
+        for run in runs[:5]:
+            if not isinstance(run, dict):
+                continue
+            citations.append({
+                "source": server_id,
+                "tool":   tool_name,
+                "run_id": run.get("dag_run_id") or run.get("run_id"),
+                "entity": run.get("dag_id") or run.get("entity"),
+                "timestamp": (
+                    run.get("end_date") or run.get("execution_date")
+                    or run.get("finished_at")
+                ),
+                "status": run.get("state") or run.get("status"),
+            })
+
+    return citations
 
 
 def _safe_uuid(value: str, *, what: str = "id") -> str:
@@ -276,15 +354,24 @@ async def _persist_message(
     content: str | None = None,
     tool_calls: list[dict] | None = None,
     tool_results: list[dict] | None = None,
+    citations: list[dict] | None = None,
     model: str | None = None,
 ) -> str:
     """Insert one row in conversation_messages, bump the parent
-    conversation's updated_at, return the new message's UUID."""
+    conversation's updated_at, return the new message's UUID.
+
+    ``citations`` (v1.43): the evidence-card payload extracted from the
+    tool results that led to this assistant message. Capped to
+    ``MAX_CITATIONS_PER_MESSAGE`` so a chatty tool can't bloat JSONB.
+    """
+    if citations and len(citations) > MAX_CITATIONS_PER_MESSAGE:
+        citations = citations[:MAX_CITATIONS_PER_MESSAGE]
     row = await conn.fetchrow(
         """
         INSERT INTO conversation_messages
-            (conversation_id, role, content, tool_calls, tool_results, model)
-        VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6)
+            (conversation_id, role, content, tool_calls, tool_results,
+             citations, model)
+        VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7)
         RETURNING id
         """,
         conversation_id,
@@ -292,6 +379,7 @@ async def _persist_message(
         content,
         json.dumps(tool_calls) if tool_calls is not None else None,
         json.dumps(tool_results) if tool_results is not None else None,
+        json.dumps(citations) if citations else None,
         model,
     )
     await conn.execute(
@@ -439,13 +527,21 @@ async def get_conversation_messages(*, conversation_id: str, user: dict) -> dict
             raise HTTPException(403, "not your conversation")
         rows = await conn.fetch(
             """
-            SELECT id, role, content, tool_calls, tool_results, created_at
+            SELECT id, role, content, tool_calls, tool_results,
+                   citations, created_at
             FROM conversation_messages
             WHERE conversation_id = $1::uuid
             ORDER BY created_at
             """,
             conversation_id,
         )
+
+    def _maybe_load(value):
+        if isinstance(value, str):
+            try: return json.loads(value)
+            except Exception: return value
+        return value
+
     return {
         "conversation": {**conv, "id": str(conv["id"])},
         "messages": [
@@ -453,8 +549,9 @@ async def get_conversation_messages(*, conversation_id: str, user: dict) -> dict
                 "id": str(r["id"]),
                 "role": r["role"],
                 "content": r["content"],
-                "tool_calls": json.loads(r["tool_calls"]) if isinstance(r["tool_calls"], str) else r["tool_calls"],
-                "tool_results": json.loads(r["tool_results"]) if isinstance(r["tool_results"], str) else r["tool_results"],
+                "tool_calls":   _maybe_load(r["tool_calls"]),
+                "tool_results": _maybe_load(r["tool_results"]),
+                "citations":    _maybe_load(r["citations"]),
                 "created_at": r["created_at"],
             }
             for r in rows
@@ -566,7 +663,17 @@ async def _run_loop(
             return {"error": "invocation failed",
                     "tool": bare_name, "server": server_id}
         is_error = isinstance(result, dict) and bool(result.get("error"))
-        invocations.append({**inv_base, "status": "error" if is_error else "success"})
+        # v1.43: harvest citation evidence from the result. Failures here
+        # are non-blocking — the conversation still works without them.
+        try:
+            extracted = _extract_citations(bare_name, result, server_id) if not is_error else []
+        except Exception:
+            extracted = []
+        invocations.append({
+            **inv_base,
+            "status": "error" if is_error else "success",
+            "citations": extracted,
+        })
         _audit(user=user, server=server_id, bare_name=bare_name, args=args,
                risk_level=risk, conversation_id=conversation_id,
                ip=ip, user_agent=user_agent,
@@ -631,6 +738,7 @@ async def _run_loop(
                 if isinstance(content, list):
                     text_parts: list[str] = []
                     tool_calls: list[dict] = []
+                    msg_citations: list[dict] = []
                     msg_has_pending = False
                     for block in content:
                         btype = block.get("type")
@@ -649,6 +757,10 @@ async def _run_loop(
                             inv_idx += 1
                             if inv.get("status") == "pending_approval":
                                 msg_has_pending = True
+                            # v1.43: collect citations harvested by
+                            # invoke_tool into this message's bucket.
+                            for c in inv.get("citations") or []:
+                                msg_citations.append(c)
                             tool_calls.append({
                                 "id": block.get("id") or str(_uuid.uuid4()),
                                 "name": block.get("name"),
@@ -657,13 +769,15 @@ async def _run_loop(
                                 "input": _clip_tool_args(
                                     _scrub_args(block.get("input") or {})
                                 ),
-                                **{k: v for k, v in inv.items() if k not in {"args"}},
+                                **{k: v for k, v in inv.items()
+                                   if k not in {"args", "citations"}},
                             })
                     msg_text = "".join(text_parts)
                     new_mid = await _persist_message(
                         conn, conversation_id=conversation_id,
                         role="assistant", content=msg_text or None,
                         tool_calls=tool_calls or None,
+                        citations=msg_citations or None,
                     )
                     last_assistant_message_id = new_mid
                     if msg_has_pending:
@@ -699,11 +813,22 @@ async def _run_loop(
     ]
     tool_results_summary: list[dict] = []   # kept for API-shape stability
 
+    # v1.43: aggregate citations from successful invocations so the UI
+    # can render evidence cards on the live turn without re-loading.
+    citations_summary: list[dict] = []
+    for inv in invocations:
+        if inv.get("status") == "success":
+            for c in inv.get("citations") or []:
+                citations_summary.append(c)
+    if len(citations_summary) > MAX_CITATIONS_PER_MESSAGE:
+        citations_summary = citations_summary[:MAX_CITATIONS_PER_MESSAGE]
+
     return {
         "message_id": message_id,
         "reply": reply_text,
         "tool_calls": tool_calls_summary,
         "tool_results": tool_results_summary,
+        "citations": citations_summary,
         "pending_actions": pending_actions,
         "requires_approval": bool(pending_actions),
     }
