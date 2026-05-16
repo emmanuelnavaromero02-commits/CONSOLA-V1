@@ -282,8 +282,18 @@ services:
       SUPERSET_URL:      http://superset:8088
       SUPERSET_USER:     ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
-    ports:
-      - "8010:8010"
+    # v1.43.4 (Codex H1): mcp-infra port 8010 is no longer published
+    # on the host network in AWS — it's an internal service consumed
+    # only by console / workspace / airflow workers over the
+    # modecissions_net docker bridge. Publishing 8010:8010 exposed
+    # the entire MCP tool surface (including airflow_create_dag,
+    # which is gated by APP_ENV but still a write-destructive RCE
+    # tool) to whatever IPs the AWS security group allows on port
+    # 8010 — i.e. one mis-clicked SG rule away from public.
+    # Defence-in-depth: the SG already restricts the port, the
+    # APP_ENV gate already blocks airflow_create_dag in production,
+    # and removing the host-port binding makes external reach
+    # impossible regardless of either.
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
     networks:
