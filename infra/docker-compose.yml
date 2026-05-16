@@ -146,6 +146,12 @@ services:
       JWT_ALGORITHM:     ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REDIS_URL:         ${REDIS_URL:-redis://redis:6379/0}
+      # v1.44.3.2.2 R-Mac: explicit CORS allowlist so the Next.js
+      # console on :3000 can hit the FastAPI backend on :8000.
+      # Override in prod to the public origins. The Python default
+      # already includes :3000 + :8000 for local-dev parity if this
+      # var isn't set, but pin it here so every env is deterministic.
+      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
     ports:
       - "8000:8000"
     volumes:

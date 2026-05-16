@@ -3,14 +3,15 @@
 import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { api, isApiError } from "@/lib/api";
+import { loginUser, type LoginError } from "@/lib/auth-flow";
 
 /**
  * v1.44.2 — login screen.
  *
- * Posts to FastAPI's /api/auth/login. The JWT lands in an httpOnly
- * cookie via axios `withCredentials: true`; we never see the token
- * in JS — that's the point.
+ * v1.44.3.2.2 (R-Mac): used to POST /api/auth/login via the axios
+ * client; the real endpoint is /auth/login AND requires a CSRF
+ * round-trip Codex's diagnostic uncovered. Both fixes land in
+ * lib/auth-flow.ts:loginUser — this component just calls it.
  *
  * The inner form is wrapped in <Suspense> because useSearchParams()
  * forces dynamic prerendering on App Router. Without the boundary
@@ -58,19 +59,17 @@ function LoginCard() {
     }
     setSubmitting(true);
     try {
-      await api.post("/api/auth/login", { email, password });
+      // v1.44.3.2.2 R-Mac: loginUser handles the GET /login → read
+      // csrf cookie → POST /auth/login dance internally. Returns
+      // on 200 + cookies set; throws LoginError with a
+      // status-specific human-readable message on every failure.
+      await loginUser(email, password);
       toast.success("Sesión iniciada.");
       router.push(nextPath);
       router.refresh();
     } catch (err: unknown) {
-      const status = isApiError(err) ? err.response?.status : undefined;
-      if (status === 401) {
-        toast.error("Email o contraseña incorrectos.");
-      } else if (status === 429) {
-        toast.error("Demasiados intentos. Espera un momento.");
-      } else {
-        toast.error("No se pudo iniciar sesión. Intenta de nuevo.");
-      }
+      const e = err as LoginError;
+      toast.error(e?.message || "No se pudo iniciar sesión. Intenta de nuevo.");
     } finally {
       setSubmitting(false);
     }

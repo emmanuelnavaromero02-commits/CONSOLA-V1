@@ -169,7 +169,17 @@ app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000")
+    # v1.44.3.2.2 R-Mac: the Next.js console runs on :3000 and makes
+    # cross-origin POSTs to the FastAPI backend on :8000 (login,
+    # cartridges credentials, copilot mutations). The pre-Mac default
+    # only listed :8000 — Chrome blocked every Next.js → backend
+    # request with CORS preflight failures. Include :3000 in the
+    # default so a fresh local-dev box works without manual
+    # ALLOWED_ORIGINS export. Production overrides via the env var.
+    raw = os.environ.get(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:8000",
+    )
     return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
 
 
@@ -178,7 +188,17 @@ app.add_middleware(
     allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Internal-Api-Key", "x-api-key", "x-internal-service"],
+    # v1.44.3.2.2 R-Mac: added X-CSRF-Token. The Next.js login flow
+    # (lib/auth-flow.ts) sends the double-submit-cookie value as
+    # this header on POST /auth/login; without it the backend's CSRF
+    # middleware rejects the preflight + the actual request with a
+    # 403 the browser surfaces as a generic CORS failure.
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Internal-Api-Key", "x-api-key", "x-internal-service",
+        "X-CSRF-Token",
+    ],
 )
 
 # Sprint v1.41.1 / v1.42.1 — Request correlation IDs. The actual
