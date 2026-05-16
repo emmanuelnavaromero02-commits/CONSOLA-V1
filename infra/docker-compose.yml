@@ -65,7 +65,11 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # v1.43.2 (Claude B7): pin MinIO to a specific RELEASE tag.
+    # ``:latest`` silently shipped breaking changes between deploys;
+    # pinning here gives reproducible local + staging behaviour. Bump
+    # deliberately via a versioned migration when needed.
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: mode_minio
     command: server /data --console-address ":9001"
     environment:
