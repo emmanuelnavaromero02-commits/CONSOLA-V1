@@ -17,6 +17,10 @@ from pydantic import BaseModel
 
 from app import registry
 from app.security import get_internal_api_key
+# Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
+from app.logging_config import setup_logging  # noqa: E402
+
+setup_logging(service_name="mcp-infra")
 
 # ── Import tool modules so decorators register themselves ──────────────────────
 import app.tools.airflow     # noqa: F401
@@ -80,6 +84,11 @@ app = FastAPI(
     version="1.1.0",
     lifespan=_lifespan,
 )
+
+# Sprint v1.41.1 — correlation IDs.
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
 
 
 class InvokeRequest(BaseModel):

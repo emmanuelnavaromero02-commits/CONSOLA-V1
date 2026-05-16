@@ -88,3 +88,34 @@ def test_app_service_healthcheck_has_start_period(service):
         f"{service} healthcheck must declare start_period to absorb "
         f"the lifespan's startup latency"
     )
+
+
+# ── Sprint v1.41.1: blanket coverage for every long-running service ─────────
+
+# Init / one-shot containers exit with status 0 by design; docker compose
+# represents their terminal state as Exited (0), not a healthy/unhealthy
+# pair, so a healthcheck on these would only confuse compose ps.
+_INIT_SERVICES = {"airflow-init", "superset-init"}
+
+
+def _long_running_services():
+    doc = _compose_doc()
+    return [
+        name for name in doc.get("services", {})
+        if name not in _INIT_SERVICES
+    ]
+
+
+@pytest.mark.parametrize("service", sorted(_long_running_services()))
+def test_long_running_service_has_healthcheck(service):
+    """Every long-running service must declare a healthcheck so that
+    `docker compose ps` reflects real health (healthy / unhealthy /
+    starting) instead of falling back to plain `Up`. Init/one-shot
+    services are excluded — they exit by design."""
+    svc = _compose_doc()["services"][service]
+    hc = svc.get("healthcheck")
+    assert hc, (
+        f"{service} is a long-running service but has no healthcheck — "
+        f"docker compose ps will hide its real state"
+    )
+    assert hc.get("test"), f"{service} healthcheck has no test field"

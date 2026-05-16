@@ -9,3 +9,5 @@ async function _json(r) {
 
 export const fetchHealth     = () => fetch(`${BASE}/health`,     { credentials: 'same-origin' }).then(_json);
 export const fetchMigrations = () => fetch(`${BASE}/migrations`, { credentials: 'same-origin' }).then(_json);
+// Sprint v1.41.1 — operational counters served from a different prefix.
+export const fetchMetrics    = () => fetch('/api/metrics/operational', { credentials: 'same-origin' }).then(_json);

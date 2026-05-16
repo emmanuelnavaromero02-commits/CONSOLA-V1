@@ -181,6 +181,14 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Internal-Api-Key", "x-api-key", "x-internal-service"],
 )
 
+# Sprint v1.41.1 — Request correlation IDs. Registered AFTER CORS so it
+# wraps the chain as the outermost layer (Starlette builds the stack from
+# user_middleware in reverse: last registered = outermost). Every response
+# carries X-Request-ID; structured logs pull it from a contextvar.
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -3533,6 +3541,8 @@ async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict
 
 
 from app.routers import cartridges as cartridges_router
+from app.routers import freshness as freshness_router
+from app.routers import metrics as metrics_router
 from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
@@ -3543,3 +3553,5 @@ app.include_router(settings_internal.router)
 app.include_router(operations.router)
 app.include_router(security.router)
 app.include_router(cartridges_router.router)
+app.include_router(freshness_router.router)
+app.include_router(metrics_router.router)

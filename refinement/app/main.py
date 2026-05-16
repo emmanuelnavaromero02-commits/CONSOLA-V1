@@ -136,6 +136,11 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
 
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
+# Sprint v1.41.1 — correlation IDs.
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 
 @app.get("/healthz")
 async def healthz():

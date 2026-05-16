@@ -70,3 +70,15 @@ for the proposed approach.
 Do not consider this resolved until both services serve responses with no
 `'unsafe-inline'` directive and the inline-script discipline is enforced
 by a lint rule in CI.
+
+## Operación
+
+Para administrar OMEGA en producción consulta `docs/runbook/`:
+
+- [01 Arrancar desde cero](docs/runbook/01_arrancar_desde_cero.md) — pre-requisitos, `.env`, smoke 30/30, sanity HTTP.
+- [02 Primer tenant](docs/runbook/02_primer_tenant.md) — login bootstrap admin, crear workspace, invitar primer usuario.
+- [03 Configurar Replicon](docs/runbook/03_configurar_replicon.md) — credenciales en Vault, test_connection, primera carga.
+- [04 Configurar SAP (HCM / S/4 / SuccessFactors)](docs/runbook/04_configurar_sap.md) — mismo flujo, variables por sistema.
+- [05 Rotar secretos](docs/runbook/05_rotar_secretos.md) — `FIELD_ENCRYPTION_KEY` (Fernet), `INTERNAL_API_KEY`, passwords admin, roles `omega_*` de DB.
+- [06 Backup / restore](docs/runbook/06_backup_restore.md) — `pg_dumpall`, `mc mirror` para MinIO, recuperación end-to-end.
+- [07 Debug de fallos](docs/runbook/07_debug_fallos.md) — uso de `X-Request-ID` + `audit_events` (ip + user_agent) + `extraction_runs` para reconstruir incidentes.
