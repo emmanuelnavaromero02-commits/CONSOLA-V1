@@ -59,8 +59,10 @@ def test_security_workflow_has_pip_audit_pinned():
         "security.yml must pin pip-audit to a specific version"
     )
     assert "pip-audit -r" in raw
-    # OSV is the documented vulnerability service in the plan.
-    assert "--vulnerability-service=osv" in raw
+    # v1.43.2 (DevOps R1 follow-up): switched osv → pypi after the
+    # OSV API became unreachable from the v1.43.2 review sandbox.
+    # Both feeds import GHSA; pypi was reproducible.
+    assert "--vulnerability-service=pypi" in raw
 
 
 @pytest.mark.parametrize("path", [LINT_WF, SECURITY_WF],

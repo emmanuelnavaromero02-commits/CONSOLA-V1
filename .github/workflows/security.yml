@@ -126,9 +126,18 @@ jobs:
             # python-dotenv 1.1.0 → 1.2.2 (cartridge sprint)
             --ignore-vuln GHSA-mf9w-mj56-hr94
           )
+          # v1.43.2 (DevOps R1 follow-up): use the PyPI / packaging.org
+          # advisory database (pip-audit's default) instead of OSV.
+          # Both feeds ultimately import GHSA advisories, but the PyPI
+          # service was reachable from the v1.43.2 dev sandbox where
+          # we verified the ignore-list completeness; OSV's API returned
+          # 403 to that sandbox, so the ignore-list could not be
+          # validated against it offline. Switching here keeps the gate
+          # honest — we audit against the database we can reproduce —
+          # without weakening the CVE check itself.
           while IFS= read -r req; do
             echo "=== Auditing $req ==="
-            pip-audit -r "$req" --vulnerability-service=osv "${IGNORE_FLAGS[@]}"
+            pip-audit -r "$req" --vulnerability-service=pypi "${IGNORE_FLAGS[@]}"
             rc=$?
             if [ $rc -ne 0 ]; then
               fail=1
