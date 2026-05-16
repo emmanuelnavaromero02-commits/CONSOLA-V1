@@ -198,8 +198,18 @@ services:
     container_name: omega_console_next
     environment:
       NODE_ENV: production
+      # v1.44.3.2.2 R-Mac-4: the Next.js app proxies every browser
+      # call to the FastAPI backend server-side via the docker
+      # network (see console-next/src/app/api/[...path]/route.ts).
+      # BACKEND_INTERNAL_URL is the canonical name consumed by
+      # lib/proxy.ts; API_INTERNAL_URL stays as a fallback so older
+      # imports in lib/api.ts keep working through the transition.
+      # NEXT_PUBLIC_API_BASE is no longer needed — the browser
+      # never sees the backend's public origin — but we leave the
+      # var unset rather than removing the key to avoid surprising
+      # any one-off scripts that may grep for it in the meantime.
+      BACKEND_INTERNAL_URL: http://console:8000
       API_INTERNAL_URL: http://console:8000
-      NEXT_PUBLIC_API_BASE: ${CONSOLE_PUBLIC_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:

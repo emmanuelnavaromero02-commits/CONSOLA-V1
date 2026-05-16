@@ -370,19 +370,25 @@ def test_compose_console_next_has_healthcheck():
 
 
 def test_compose_console_next_env_uses_internal_url():
-    """The container env must include both API_INTERNAL_URL and
-    NEXT_PUBLIC_API_BASE so server-side / browser paths agree with
-    src/lib/api.ts."""
+    """The console_next container must know where to forward
+    server-side proxy calls. v1.44.3.2.2 R-Mac-4 introduced
+    BACKEND_INTERNAL_URL as the canonical name (consumed by
+    lib/proxy.ts) and kept API_INTERNAL_URL as a fallback. Both
+    must point at the internal docker hostname so the proxy
+    talks to FastAPI over the docker network rather than the
+    public origin."""
     src = _read(COMPOSE)
     block = re.search(
         r"\n  console_next:.*?(?=\n  [a-z_-]+:\n|\Z)", src, re.DOTALL,
     )
     body = block.group(0) if block else ""
-    assert "API_INTERNAL_URL:" in body
-    assert "http://console:8000" in body, (
-        "API_INTERNAL_URL must point at the internal docker hostname"
+    assert "BACKEND_INTERNAL_URL:" in body, (
+        "compose console_next env must set BACKEND_INTERNAL_URL — "
+        "lib/proxy.ts reads it on every same-origin proxy call"
     )
-    assert "NEXT_PUBLIC_API_BASE:" in body
+    assert "http://console:8000" in body, (
+        "BACKEND_INTERNAL_URL must point at the internal docker hostname"
+    )
 
 
 # ── Hook + components: shape contracts ───────────────────────────────────
