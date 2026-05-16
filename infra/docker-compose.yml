@@ -742,6 +742,11 @@ services:
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
+      # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml — even
+      # though the Replicon DAG posts back through the console today,
+      # keep the var here so a future cartridge-direct DAG works
+      # without operators having to touch compose first.
+      REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
@@ -816,6 +821,8 @@ services:
       SAP_HCM_URL:            "${SAP_HCM_URL:-http://sap-hcm:8202}"
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
+      # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
+      REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
     volumes:
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs

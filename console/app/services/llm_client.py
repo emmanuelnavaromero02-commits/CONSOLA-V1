@@ -421,6 +421,39 @@ async def _get_or_create_gemini_cache(
         return None  # too few tokens, model unsupported, or quota — fall back
 
 
+def _proto_args_to_plain_dict(args) -> dict:
+    """v1.43.1 R1 LLM-F3: ``fc.args`` from the google-genai SDK is a
+    ``proto.marshal.collections.maps.MapComposite``. ``dict(args)``
+    only does the TOP-LEVEL conversion — nested objects / arrays
+    remain proto types and crash ``json.dumps`` later when
+    copilot_service tries to persist them into
+    ``conversation_messages.tool_calls`` JSONB.
+
+    Walk the structure recursively: anything that quacks like a mapping
+    becomes a ``dict``, sequences become ``list`` and primitives flow
+    through. Unknown types collapse to ``str(value)`` as a last resort
+    so we never raise from this conversion.
+    """
+    def _walk(v):
+        if isinstance(v, dict):
+            return {str(k): _walk(vv) for k, vv in v.items()}
+        if hasattr(v, "items") and not isinstance(v, (str, bytes)):
+            # MapComposite, OrderedDict subclasses, any mapping-like.
+            return {str(k): _walk(vv) for k, vv in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [_walk(x) for x in v]
+        if isinstance(v, (str, int, float, bool)) or v is None:
+            return v
+        return str(v)
+
+    if args is None:
+        return {}
+    out = _walk(args)
+    # The top level must be a dict — proto MapComposite always is, but
+    # a misbehaving caller could pass a list; coerce defensively.
+    return out if isinstance(out, dict) else {"_args": out}
+
+
 async def _gemini_chat(
     system: str,
     messages: list[dict],
@@ -452,12 +485,58 @@ async def _gemini_chat(
             tools=gemini_tools,
         )
 
+    # v1.43.1 R1 LLM-F1: walk every message, NOT just string-content
+    # ones. _load_history rehydrates prior turns as Anthropic-shape
+    # blocks (assistant with tool_use, user with tool_result). Without
+    # converting those into Gemini's Part.from_function_call /
+    # from_function_response, multi-turn history is dropped before
+    # Gemini sees it and the approval-gate round-trip silently breaks.
+    #
+    # We also track ``tool_use_id → function name`` so a follow-up
+    # tool_result block (which only carries the id) can be reattached
+    # to the right function by name when building the Part.
     contents: list[gtypes.Content] = []
+    tool_name_by_id: dict[str, str] = {}
     for m in messages:
         content = m.get("content", "")
         role = "user" if m["role"] == "user" else "model"
         if isinstance(content, str):
-            contents.append(gtypes.Content(role=role, parts=[gtypes.Part.from_text(text=content)]))
+            contents.append(gtypes.Content(
+                role=role, parts=[gtypes.Part.from_text(text=content)],
+            ))
+            continue
+        if not isinstance(content, list):
+            continue
+
+        parts: list = []
+        for block in content:
+            btype = block.get("type") if isinstance(block, dict) else None
+            if btype == "text":
+                parts.append(gtypes.Part.from_text(text=block.get("text") or ""))
+            elif btype == "tool_use":
+                tu_id = block.get("id")
+                fn_name = block.get("name") or ""
+                fn_input = block.get("input") or {}
+                if tu_id:
+                    tool_name_by_id[tu_id] = fn_name
+                parts.append(gtypes.Part.from_function_call(
+                    name=fn_name, args=fn_input,
+                ))
+            elif btype == "tool_result":
+                tu_id = block.get("tool_use_id")
+                # Recover the function name via the lookup we built
+                # while walking the matching assistant turn earlier.
+                fn_name = tool_name_by_id.get(tu_id, "") or ""
+                body = block.get("content")
+                if isinstance(body, (dict, list)):
+                    response_payload = {"result": body}
+                else:
+                    response_payload = {"result": str(body) if body is not None else ""}
+                parts.append(gtypes.Part.from_function_response(
+                    name=fn_name, response=response_payload,
+                ))
+        if parts:
+            contents.append(gtypes.Content(role=role, parts=parts))
 
     viewer_urls: list[dict] = []
     # v1.43.1 (Codex P0-2): accumulate Anthropic-shape blocks for the
@@ -532,7 +611,8 @@ async def _gemini_chat(
                 "type":  "tool_use",
                 "id":    tool_use_id,
                 "name":  fc.name,
-                "input": dict(fc.args),
+                # v1.43.1 R1 LLM-F3: deep-convert before persistence.
+                "input": _proto_args_to_plain_dict(fc.args),
             })
         synthetic.append({"role": "assistant", "content": assistant_blocks})
 
@@ -540,7 +620,7 @@ async def _gemini_chat(
         tool_result_blocks: list[dict] = []
         for idx, p in enumerate(fn_calls):
             fc = p.function_call
-            args = dict(fc.args)
+            args = _proto_args_to_plain_dict(fc.args)
             server_id = tool_server_map.get(fc.name, "")
             bare_name = fc.name.split("__", 1)[-1]
             await _emit(on_event, {

@@ -23,11 +23,33 @@ import os
 import uuid
 
 import httpx
+import pytest
 
 
 # ── 0. The fixtures from conftest.py do the heavy lifting ─────────────────
 #
 # admin_session is a session-scoped httpx client already authenticated.
+#
+# v1.43.1 R1 Security-F1: when E2E_REQUIRE_STACK=1 (CI mode), partial
+# failures inside a test (LLM down, audit endpoint missing, cartridge
+# unreachable) must FAIL the test instead of returning silently.
+# Otherwise a misconfigured CI ships green when half the surface is
+# broken. The helper below mirrors conftest._bail.
+
+_REQUIRE_STACK = os.environ.get("E2E_REQUIRE_STACK", "").strip() == "1"
+
+
+def _bail_or_skip(message: str) -> None:
+    """Skip in dev, fail in CI — same contract as conftest._bail.
+
+    Use this for partial failures discovered AFTER the fixtures have
+    succeeded (e.g. an optional endpoint returns 404, an LLM is
+    misconfigured). A bare ``return`` here was the original bug:
+    CI silently ran 0 real assertions.
+    """
+    if _REQUIRE_STACK:
+        pytest.fail(message)
+    pytest.skip(message)
 
 
 def test_full_flow_01_admin_session_and_request_id(admin_session):
@@ -79,10 +101,13 @@ def test_full_flow_04_copilot_conversation_round_trip(admin_session):
         headers={"X-CSRF-Token": csrf} if csrf else {},
     )
     if r.status_code == 403:
-        # Some test envs ship without an LLM key configured; that
-        # surfaces as 403 on the gated endpoint. Don't block CI on
-        # missing optional dependencies.
-        return
+        # 403 here means the role doesn't have copilot.use or the
+        # LLM provider key is missing. In CI both are misconfigurations
+        # that should surface loudly; in dev we skip.
+        _bail_or_skip(
+            "POST /api/copilot/conversations returned 403 — "
+            "missing copilot.use permission or LLM key in env"
+        )
     assert r.status_code == 200, r.text
     conv_id = r.json()["id"]
 
@@ -92,8 +117,10 @@ def test_full_flow_04_copilot_conversation_round_trip(admin_session):
         headers={"X-CSRF-Token": csrf} if csrf else {},
     )
     if r.status_code in (502, 503):
-        # LLM provider down — not a regression in v1.43.1 surface.
-        return
+        _bail_or_skip(
+            f"LLM provider returned {r.status_code} — check "
+            f"ANTHROPIC_API_KEY / GEMINI_API_KEY in the worker env"
+        )
     assert r.status_code == 200, r.text
     body = r.json()
     assert "reply" in body
@@ -107,14 +134,24 @@ def test_full_flow_05_audit_event_carries_ip_user_agent(admin_session):
     in test 4 there's at least one new row."""
     r = admin_session.get("/api/admin/audit?limit=20")
     if r.status_code == 404:
-        # Some build profiles don't ship the audit list endpoint.
-        return
+        # The audit list endpoint isn't shipped in all build profiles.
+        # In CI this is a deploy-config issue worth surfacing.
+        _bail_or_skip(
+            "GET /api/admin/audit returned 404 — this build profile "
+            "does not expose the audit list endpoint"
+        )
     if r.status_code != 200:
-        return
+        _bail_or_skip(
+            f"GET /api/admin/audit returned {r.status_code} — "
+            "audit surface is degraded"
+        )
     body = r.json()
     rows = body.get("events") if isinstance(body, dict) else body
     if not rows:
-        return
+        _bail_or_skip(
+            "audit_events is empty after the conversation in test 04 — "
+            "the audit pipeline is degraded"
+        )
     with_ip = [e for e in rows if (e.get("ip") or e.get("client_ip"))]
     assert with_ip, (
         "post-v1.41.0 audit rows must populate ip — none of the "
@@ -129,8 +166,11 @@ def test_full_flow_06_unauth_endpoint_still_carries_request_id():
     base = os.environ.get("E2E_CONSOLE_URL", "http://localhost:8000")
     try:
         r = httpx.get(f"{base}/api/whatever-unauth", timeout=3.0)
-    except Exception:
-        # The conftest fixture already bails on connection issues.
+    except Exception as exc:
+        _bail_or_skip(
+            f"{base} not reachable for the unauth-header probe "
+            f"({type(exc).__name__})"
+        )
         return
     assert r.headers.get("x-request-id"), (
         "v1.42.1 invariant: every response — including 401 — must carry "
@@ -142,6 +182,11 @@ def test_full_flow_07_cartridge_unauth_returns_401_with_header():
     """v1.43.1 P0-1: each cartridge wraps the middleware and replies
     401 (not 403) when no auth headers are presented, with the
     X-Request-ID header attached."""
+    # v1.43.1 R1 Security-F1: don't silently `continue` on a dead
+    # cartridge — that masks a missing service from CI. Collect every
+    # cartridge that responded; if NONE answered in CI mode, bail
+    # loudly so the operator knows the SAP profile didn't come up.
+    seen_any = False
     for cart, port in [
         ("replicon",            8201),
         ("sap_hcm",             8202),
@@ -150,11 +195,22 @@ def test_full_flow_07_cartridge_unauth_returns_401_with_header():
     ]:
         try:
             r = httpx.post(f"http://localhost:{port}/mcp/invoke", json={}, timeout=3.0)
-        except Exception:
+        except Exception as exc:
+            if _REQUIRE_STACK:
+                pytest.fail(
+                    f"{cart} not reachable on port {port} ({type(exc).__name__}) "
+                    f"— SAP profile likely didn't come up"
+                )
             continue
+        seen_any = True
         assert r.status_code == 401, (
             f"{cart}/mcp/invoke without auth must return 401 (got {r.status_code})"
         )
         assert r.headers.get("x-request-id"), (
             f"{cart} dropped X-Request-ID on a 401 response"
+        )
+    if not seen_any:
+        _bail_or_skip(
+            "no cartridge answered on 8201-8204 — stack is up but the "
+            "SAP / Replicon profile isn't"
         )

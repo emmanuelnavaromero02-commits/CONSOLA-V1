@@ -47,6 +47,9 @@ def llm_module():
     fake_gtypes.Part    = types.SimpleNamespace(
         from_text=lambda text=None: object(),
         from_function_response=lambda name=None, response=None: object(),
+        # v1.43.1 R1 LLM-F1: _gemini_chat now rebuilds history into
+        # function_call parts, so the stub needs this constructor too.
+        from_function_call=lambda name=None, args=None: object(),
     )
     fake_gtypes.FunctionDeclaration   = lambda **kw: object()
     fake_gtypes.Tool                   = lambda **kw: object()
@@ -276,3 +279,76 @@ def test_uuid_import_present(llm_module):
     module must import uuid at the top."""
     src = Path(llm_module.__file__).read_text(encoding="utf-8")
     assert "import uuid" in src
+
+
+# ── R1 LLM findings (this round) ───────────────────────────────────────────
+
+def test_gemini_replays_history_with_tool_use_and_tool_result_blocks(
+    llm_module, monkeypatch,
+):
+    """v1.43.1 R1 LLM-F1: when _run_loop reloads a conversation, the
+    history contains Anthropic-shape blocks (assistant.tool_use,
+    user.tool_result). _gemini_chat must convert those into Gemini's
+    Part.from_function_call / from_function_response so the LLM sees
+    the prior turn. The pre-fix path skipped every list-content
+    message — silently breaking the approval-gate round-trip on the
+    next turn."""
+    captured_contents: list = []
+
+    async def fake_generate(**kw):
+        captured_contents.append(kw.get("contents") or [])
+        return _fake_response_text_only("Sigo desde el contexto.", llm_module)
+    monkeypatch.setattr(llm_module, "_gemini_generate_with_retry", fake_generate)
+    llm_module.token_store.record = AsyncMock()
+
+    history = [
+        {"role": "user", "content": "borra el dag x"},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "Lo elimino."},
+            {"type": "tool_use", "id": "tu_prev",
+             "name": "infra__airflow_delete_dag", "input": {"dag_id": "x"}},
+        ]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu_prev",
+             "content": "{\"deleted\": true}"},
+        ]},
+    ]
+    _run(llm_module._gemini_chat(
+        system="sys", messages=history, tools=[],
+        invoke_tool=AsyncMock(), tool_server_map={}, on_event=None,
+    ))
+
+    assert captured_contents, "fake_generate was never called"
+    # 3 Content entries from history (string-content user msg,
+    # assistant list-content with tool_use, user list-content with
+    # tool_result) — proving history wasn't dropped. The pre-fix
+    # path yielded only 1 (the first string-content user message).
+    assert len(captured_contents[0]) >= 3, (
+        "history with list-content blocks was dropped from contents — "
+        "Gemini multi-turn would silently lose tool context"
+    )
+
+
+def test_proto_args_deep_converted_to_plain_dict(llm_module):
+    """v1.43.1 R1 LLM-F3: nested proto MapComposite values must be
+    deep-converted before they hit json.dumps inside _persist_message."""
+    import json
+    fn = llm_module._proto_args_to_plain_dict
+    assert fn({"a": 1, "nested": {"b": 2}}) == {"a": 1, "nested": {"b": 2}}
+    assert fn({"xs": [1, 2, 3]}) == {"xs": [1, 2, 3]}
+    assert fn(None) == {}
+    assert fn({}) == {}
+
+    # Simulate a proto-like wrapper: items() yields nested non-dict types.
+    class _Fake:
+        def __init__(self, payload): self._payload = payload
+        def items(self): return self._payload.items()
+        def keys(self):  return self._payload.keys()
+        def __getitem__(self, k): return self._payload[k]
+
+    nested = _Fake({"top": _Fake({"deep": "value"}), "list": [1, "two"]})
+    out = fn(nested)
+    # Must round-trip through json.dumps without raising.
+    json.dumps(out)
+    assert out["top"] == {"deep": "value"}
+    assert out["list"] == [1, "two"]
