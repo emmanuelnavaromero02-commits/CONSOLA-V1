@@ -181,6 +181,10 @@
             }
           }
         }
+        // v1.43: re-render the citation cards from the JSONB column.
+        if (Array.isArray(m.citations) && m.citations.length > 0) {
+          appendCitations(m.citations);
+        }
       }
       // Refresh the sidebar to flip active state.
       loadConversations();
@@ -236,9 +240,109 @@
       for (const c of out.tool_calls) appendToolCard(c);
     }
     if (out.reply) appendMessage("assistant", out.reply);
+    // v1.43: evidence cards. Render under the assistant text so the
+    // user reads the answer first, then the supporting sources.
+    if (Array.isArray(out.citations) && out.citations.length > 0) {
+      appendCitations(out.citations);
+    }
     if (out.requires_approval && Array.isArray(out.pending_actions)) {
       appendApprovalCard(out.pending_actions, out.message_id, activeConversationId);
     }
+  }
+
+  // ── v1.43: citation cards ────────────────────────────────────────────
+  //
+  // Each card surfaces source (cartridge), entity, run_id (truncated),
+  // age (humanised) and a freshness-level icon. Every dynamic field
+  // goes through textContent — never innerHTML — so a malicious tool
+  // result can't smuggle HTML into the page.
+
+  function _formatAge(seconds) {
+    if (seconds == null) return "";
+    const n = Number(seconds);
+    if (!Number.isFinite(n)) return "";
+    if (n < 60)        return "hace " + Math.max(0, Math.floor(n)) + "s";
+    if (n < 3600)      return "hace " + Math.floor(n / 60) + " min";
+    if (n < 86400)     return "hace " + Math.floor(n / 3600) + "h";
+    return "hace " + Math.floor(n / 86400) + "d";
+  }
+
+  const _FRESHNESS_ICONS = {
+    fresh:      "✅",
+    recent:     "🟢",
+    stale:      "⚠️",
+    very_stale: "🔴",
+    unknown:    "❓",
+  };
+
+  function _appendCitationCard(c) {
+    const card = document.createElement("div");
+    card.className = "copilot-citation-card";
+    const level = c.freshness_level || "unknown";
+    card.dataset.freshness = level;
+
+    const sourceRow = document.createElement("div");
+    sourceRow.className = "citation-source";
+    const icon = document.createElement("span");
+    icon.className = "citation-icon";
+    icon.textContent = "📊";
+    icon.setAttribute("aria-hidden", "true");
+    const sourceStrong = document.createElement("strong");
+    sourceStrong.textContent = c.source || "?";
+    sourceRow.appendChild(icon);
+    sourceRow.appendChild(document.createTextNode(" "));
+    sourceRow.appendChild(sourceStrong);
+    if (c.entity) {
+      sourceRow.appendChild(document.createTextNode(" · "));
+      const ent = document.createElement("span");
+      ent.className = "citation-entity";
+      ent.textContent = c.entity;
+      sourceRow.appendChild(ent);
+    }
+    card.appendChild(sourceRow);
+
+    const metaRow = document.createElement("div");
+    metaRow.className = "citation-meta";
+    const parts = [];
+    if (c.run_id) {
+      const rid = String(c.run_id);
+      parts.push("Run " + (rid.length > 8 ? rid.slice(0, 8) + "…" : rid));
+    }
+    const ageText = _formatAge(c.age_seconds);
+    if (ageText) parts.push(ageText);
+    metaRow.textContent = parts.join(" · ");
+    // Append the freshness icon with an accessible label so a screen
+    // reader announces it instead of just reading the emoji.
+    const fIcon = document.createElement("span");
+    fIcon.className = "citation-freshness";
+    fIcon.textContent = " " + (_FRESHNESS_ICONS[level] || _FRESHNESS_ICONS.unknown);
+    fIcon.setAttribute("aria-label", "freshness: " + level);
+    fIcon.setAttribute("role", "img");
+    metaRow.appendChild(fIcon);
+    card.appendChild(metaRow);
+
+    if (c.row_count != null) {
+      const rows = document.createElement("div");
+      rows.className = "citation-rows";
+      const n = Number(c.row_count);
+      const fmt = Number.isFinite(n) ? n.toLocaleString() : String(c.row_count);
+      rows.textContent = fmt + " filas";
+      card.appendChild(rows);
+    }
+
+    return card;
+  }
+
+  function appendCitations(citations) {
+    if (!Array.isArray(citations) || citations.length === 0) return;
+    const container = document.createElement("div");
+    container.className = "copilot-citations";
+    container.setAttribute("aria-label", "Fuentes citadas");
+    for (const c of citations) {
+      container.appendChild(_appendCitationCard(c));
+    }
+    elMessages.appendChild(container);
+    scrollToBottom();
   }
 
   async function approveAction(conversationId, messageId, cardEl) {
