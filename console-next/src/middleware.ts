@@ -9,9 +9,21 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/health"];
+const PUBLIC_PATHS = ["/login", "/api/health", "/login-proxy"];
 
-const PUBLIC_PREFIXES = ["/_next/", "/static/", "/favicon"];
+const PUBLIC_PREFIXES = [
+  "/_next/",
+  "/static/",
+  "/favicon",
+  // v1.44.3.2.2 R-Mac-4: the /auth/* proxy must be reachable
+  // without a session cookie — that's literally how you GET a
+  // session cookie (POST /auth/login). The proxy itself simply
+  // forwards to FastAPI; the backend is the source of truth for
+  // auth, and it will reject unauthenticated requests on
+  // protected endpoints (e.g. /auth/refresh without a refresh
+  // cookie) the same as it always has.
+  "/auth/",
+];
 
 const AUTH_COOKIE_CANDIDATES = ["access_token", "session", "jwt", "auth_token"];
 
