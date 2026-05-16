@@ -1,0 +1,89 @@
+# Sprint v1.43.2 (Claude B8) — bandit + pip-audit security scans.
+#
+# bandit catches in-source security smells (hardcoded password literals,
+# shell=True, weak random, etc.). pip-audit cross-references each
+# requirements.txt against the OSV vulnerability database.
+#
+# Pinned tool versions so a new ruleset doesn't silently change what
+# the CI accepts. Scheduled weekly run picks up new CVEs against the
+# same code that passed PR time.
+
+name: Security Scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC — once a week.
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install bandit
+        run: pip install bandit==1.7.10
+
+      - name: Run bandit (JSON report + console output)
+        run: |
+          # First pass: dump the JSON report unconditionally so the
+          # artifact is always available, even on failure.
+          bandit -r \
+            console workspace vault refinement mcp-infra cartridges \
+            -ll -f json -o bandit-report.json || true
+          # Second pass: human-readable + fail the job on
+          # HIGH severity issues.
+          bandit -r \
+            console workspace vault refinement mcp-infra cartridges \
+            -ll
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.7.3
+
+      - name: Audit each service's requirements
+        run: |
+          set +e
+          fail=0
+          for req in console/requirements.txt \
+                     workspace/requirements.txt \
+                     vault/requirements.txt \
+                     refinement/requirements.txt \
+                     mcp-infra/requirements.txt; do
+            if [ ! -f "$req" ]; then
+              echo "= $req does not exist, skipping ="
+              continue
+            fi
+            echo "=== Auditing $req ==="
+            pip-audit -r "$req" --vulnerability-service=osv
+            rc=$?
+            if [ $rc -ne 0 ]; then
+              fail=1
+              echo "::warning::pip-audit found issues in $req"
+            fi
+          done
+          # Exit non-zero only when at least one requirements file
+          # surfaced a vulnerability. This keeps the signal loud
+          # without breaking on every transient network error from
+          # the OSV service.
+          exit $fail
