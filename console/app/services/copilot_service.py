@@ -227,6 +227,77 @@ def _extract_citations(tool_name: str, tool_result: Any, server_id: str) -> list
     return citations
 
 
+# ── v1.43: freshness annotation ────────────────────────────────────────────
+
+# Threshold buckets for ``age_seconds``. The UI maps these to icons.
+_FRESHNESS_FRESH_S       = 5 * 60          # < 5 min
+_FRESHNESS_RECENT_S      = 60 * 60         # < 1 h
+_FRESHNESS_STALE_S       = 24 * 60 * 60    # < 24 h
+
+
+def _classify_freshness(age_seconds: int | float | None) -> str:
+    """Map ``age_seconds`` to a UI-friendly bucket.
+
+    Returns ``"unknown"`` when we don't have a measurement (the
+    cartridge never ran, or the freshness service is unavailable).
+    """
+    if age_seconds is None:
+        return "unknown"
+    try:
+        n = float(age_seconds)
+    except (TypeError, ValueError):
+        return "unknown"
+    if n < 0:
+        # Clock skew between cartridge and console — treat as fresh.
+        return "fresh"
+    if n < _FRESHNESS_FRESH_S:
+        return "fresh"
+    if n < _FRESHNESS_RECENT_S:
+        return "recent"
+    if n < _FRESHNESS_STALE_S:
+        return "stale"
+    return "very_stale"
+
+
+async def _annotate_citation_freshness(citation: dict) -> dict:
+    """Mutate ``citation`` in place with ``age_seconds`` (if missing)
+    and ``freshness_level``. Looks up the watermark via
+    :func:`freshness_for_cartridge_internal` so we don't hit our own
+    HTTP layer. All exceptions are swallowed — freshness is purely
+    informative, the citation card still renders without it.
+    """
+    cartridge = citation.get("source")
+    entity = citation.get("entity")
+
+    # Cheap exit: if the citation already carries an age, just classify.
+    if citation.get("age_seconds") is not None:
+        citation["freshness_level"] = _classify_freshness(citation["age_seconds"])
+        return citation
+
+    if not cartridge or not entity:
+        citation["freshness_level"] = "unknown"
+        return citation
+
+    try:
+        # Local import to avoid circular: routers/freshness.py imports
+        # from app.services.auth, copilot_service is in app.services.
+        from app.routers.freshness import freshness_for_cartridge_internal
+        data = await freshness_for_cartridge_internal(cartridge)
+    except Exception:
+        citation["freshness_level"] = "unknown"
+        return citation
+
+    for ent in data.get("entities") or []:
+        if ent.get("entity") == entity:
+            age = ent.get("age_seconds")
+            citation["age_seconds"] = age
+            citation["freshness_level"] = _classify_freshness(age)
+            break
+    else:
+        citation["freshness_level"] = "unknown"
+    return citation
+
+
 def _safe_uuid(value: str, *, what: str = "id") -> str:
     """Validate a UUID-shaped path parameter early so asyncpg can't
     bubble its InvalidTextRepresentationError up as a generic 500."""
@@ -772,6 +843,11 @@ async def _run_loop(
                                 **{k: v for k, v in inv.items()
                                    if k not in {"args", "citations"}},
                             })
+                    # v1.43: annotate freshness on each citation. Errors
+                    # are swallowed inside the helper so the persist still
+                    # succeeds; failures just leave freshness_level=unknown.
+                    for c in msg_citations:
+                        await _annotate_citation_freshness(c)
                     msg_text = "".join(text_parts)
                     new_mid = await _persist_message(
                         conn, conversation_id=conversation_id,

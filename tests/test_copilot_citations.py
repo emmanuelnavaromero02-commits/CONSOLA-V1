@@ -292,6 +292,104 @@ def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
     assert any(c.get("run_id") == "run-xyz" for c in stored)
 
 
+# ── Tarea B: freshness annotation ──────────────────────────────────────────
+
+def test_freshness_classification_thresholds(copilot_module):
+    """The bucket boundaries: < 5 min fresh, < 1 h recent, < 24 h stale,
+    >= 24 h very_stale, None unknown."""
+    c = copilot_module._classify_freshness
+    assert c(None) == "unknown"
+    assert c("not a number") == "unknown"
+    assert c(0) == "fresh"
+    assert c(60) == "fresh"
+    assert c(4 * 60) == "fresh"
+    assert c(5 * 60) == "recent"        # boundary
+    assert c(30 * 60) == "recent"
+    assert c(59 * 60) == "recent"
+    assert c(60 * 60) == "stale"        # boundary
+    assert c(6 * 60 * 60) == "stale"
+    assert c(24 * 60 * 60) == "very_stale"   # boundary
+    assert c(48 * 60 * 60) == "very_stale"
+    # Negative (clock skew) → fresh, not crash.
+    assert c(-5) == "fresh"
+
+
+def test_freshness_uses_age_seconds_already_on_citation(copilot_module):
+    """If the citation already carries an age (set by the cartridge),
+    no extra DB roundtrip — just classify."""
+    citation = {"source": "sap_hcm", "entity": "Employee",
+                "age_seconds": 30 * 60}   # 30 min
+    out = _run(copilot_module._annotate_citation_freshness(citation))
+    assert out["freshness_level"] == "recent"
+    assert out["age_seconds"] == 30 * 60
+
+
+def test_freshness_unknown_when_no_source_or_entity(copilot_module):
+    out = _run(copilot_module._annotate_citation_freshness(
+        {"source": "sap_hcm"}   # no entity
+    ))
+    assert out["freshness_level"] == "unknown"
+    out = _run(copilot_module._annotate_citation_freshness({}))
+    assert out["freshness_level"] == "unknown"
+
+
+def test_freshness_unknown_when_freshness_lookup_raises(copilot_module, monkeypatch):
+    """Swallow exceptions from freshness_for_cartridge_internal so the
+    citation card still renders."""
+    async def _boom(_):
+        raise RuntimeError("DB down")
+    import app.routers.freshness as fr
+    monkeypatch.setattr(fr, "freshness_for_cartridge_internal", _boom)
+
+    out = _run(copilot_module._annotate_citation_freshness(
+        {"source": "sap_hcm", "entity": "Employee"}
+    ))
+    assert out["freshness_level"] == "unknown"
+
+
+def test_freshness_lookup_resolves_entity_in_response(copilot_module, monkeypatch):
+    """When the freshness service knows the entity, the citation
+    inherits age_seconds + classification."""
+    async def _ok(cartridge):
+        return {
+            "cartridge": cartridge,
+            "entities": [
+                {"entity": "Other",    "age_seconds": 9999},
+                {"entity": "Employee", "age_seconds": 200},   # 200s → fresh
+            ],
+        }
+    import app.routers.freshness as fr
+    monkeypatch.setattr(fr, "freshness_for_cartridge_internal", _ok)
+
+    out = _run(copilot_module._annotate_citation_freshness(
+        {"source": "sap_hcm", "entity": "Employee"}
+    ))
+    assert out["age_seconds"] == 200
+    assert out["freshness_level"] == "fresh"
+
+
+def test_freshness_unknown_when_entity_not_in_response(copilot_module, monkeypatch):
+    """The cartridge replied but the entity wasn't in the list."""
+    async def _ok(cartridge):
+        return {"cartridge": cartridge, "entities": []}
+    import app.routers.freshness as fr
+    monkeypatch.setattr(fr, "freshness_for_cartridge_internal", _ok)
+
+    out = _run(copilot_module._annotate_citation_freshness(
+        {"source": "replicon", "entity": "TimeEntry"}
+    ))
+    assert out["freshness_level"] == "unknown"
+
+
+def test_freshness_router_internal_api_present():
+    """v1.43 contract: the freshness router must export
+    freshness_for_cartridge_internal so the copilot can call it
+    without going through HTTP / auth."""
+    from app.routers import freshness as fr
+    assert hasattr(fr, "freshness_for_cartridge_internal")
+    assert hasattr(fr, "freshness_all_internal")
+
+
 def test_citations_capped_when_a_single_tool_returns_many_runs(copilot_module):
     """A tool emitting 8 runs yields at most 5 citations from
     _extract_citations; multiple such tools in a turn can stack, but
