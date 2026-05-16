@@ -183,23 +183,27 @@ def _allowed_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins(),
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    # v1.44.3.2.2 R-Mac: added X-CSRF-Token. The Next.js login flow
-    # (lib/auth-flow.ts) sends the double-submit-cookie value as
-    # this header on POST /auth/login; without it the backend's CSRF
-    # middleware rejects the preflight + the actual request with a
-    # 403 the browser surfaces as a generic CORS failure.
-    allow_headers=[
-        "Content-Type",
-        "Authorization",
-        "X-Internal-Api-Key", "x-api-key", "x-internal-service",
-        "X-CSRF-Token",
-    ],
-)
+# v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): the CORSMiddleware
+# registration USED to live here at module-load time, which made it
+# the FIRST middleware on user_middleware and therefore the
+# INNERMOST in Starlette's reversed stack. Symptom Codex curl'd on
+# the Mac:
+#   $ curl -i -H "Origin: http://localhost:3000" http://localhost:8000/auth/login
+#   → access-control-allow-credentials: true   ✓
+#   → access-control-allow-origin:    MISSING  ✗
+#
+# Root cause: with CORS innermost, the OUTER auth_middleware /
+# security_headers_middleware can short-circuit responses (401 /
+# redirect / preflight 405) before reaching CORS, so CORS never gets
+# to add Allow-Origin. Even on public paths, OPTIONS preflights
+# pass through auth first.
+#
+# The fix moves the registration to the END of the module (after
+# RequestIDMiddleware), so CORS ends up OUTERMOST in the final
+# ASGI stack. See the matching block near the bottom of this file.
+# This call site stays as a no-op so existing line-number references
+# in comments / commit messages don't drift; the real registration
+# is the only effective one.
 
 # Sprint v1.41.1 / v1.42.1 — Request correlation IDs. The actual
 # ``app.add_middleware(RequestIDMiddleware)`` call lives at the bottom
@@ -3604,6 +3608,56 @@ app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
 # wrapper so the ``X-Request-ID`` header lands on responses generated
 # by inner middlewares (auth 401, CSRF 403, etc.). Registering it
 # here — after every ``@app.middleware("http")`` decorator above has
-# run — guarantees it ends up at the front of ``user_middleware`` and
-# thus is wrapped LAST = outermost in the final ASGI stack.
+# run — guarantees it ends up near the front of ``user_middleware``.
+# v1.44.3.2.2 R-Mac-3 update: CORS is now registered AFTER this so
+# CORS ends up STRICTLY OUTERMOST, with RequestID one layer in.
+# Both invariants hold:
+#   - CORS sees every request (incl. OPTIONS preflight) before any
+#     inner middleware short-circuits
+#   - RequestID still wraps auth_middleware so X-Request-ID lands
+#     on auth 401s / CSRF 403s
 app.add_middleware(RequestIDMiddleware)
+
+# v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): CORSMiddleware MUST
+# be the OUTERMOST middleware in the ASGI stack so that:
+#   - OPTIONS preflight requests are intercepted + answered by
+#     CORS itself BEFORE auth_middleware can return 401/405,
+#   - Allow-Origin lands on EVERY response including auth 401s and
+#     security_headers redirects (which is what the browser needs
+#     to surface a proper CORS error vs a generic "fetch failed").
+#
+# Starlette builds the stack by REVERSING user_middleware, so the
+# LAST registered middleware ends up OUTERMOST. This is the LAST
+# add_middleware call in the module, so CORS is now outermost.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # v1.44.3.2.2 R-Mac: added X-CSRF-Token. The Next.js login flow
+    # (lib/auth-flow.ts) sends the double-submit-cookie value as
+    # this header on POST /auth/login; without it the browser
+    # preflight rejects the actual request before it leaves the
+    # tab.
+    # R-Mac-3 follow-up: added X-Requested-With (axios + fetch
+    # default), Accept (browser default), Cookie (some browsers
+    # send it on credentialed requests).
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Internal-Api-Key", "x-api-key", "x-internal-service",
+        "X-CSRF-Token",
+        "X-Requested-With",
+        "Accept",
+        "Cookie",
+    ],
+    # R-Mac-3: surface Set-Cookie + X-CSRF-Token through the CORS
+    # response so the browser's response.cookies / header reads
+    # work from the Next.js side. expose_headers is for ACTUAL
+    # responses (different from allow_headers, which is for the
+    # preflight Access-Control-Allow-Headers reply).
+    expose_headers=["Set-Cookie", "X-CSRF-Token", "X-Request-ID"],
+    # Cache preflight for 1 h so the browser doesn't re-OPTIONS
+    # every single XHR.
+    max_age=3600,
+)
