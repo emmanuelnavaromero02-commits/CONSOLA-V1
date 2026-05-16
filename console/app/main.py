@@ -3553,6 +3553,9 @@ async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict
 
 from app.routers import cartridges as cartridges_router
 from app.routers import copilot as copilot_router
+from app.routers import copilot_drafts as copilot_drafts_router       # v1.44.2 Tarea H
+from app.routers import copilot_memory as copilot_memory_router       # v1.44.2 Tarea G
+from app.routers import copilot_workflows as copilot_workflows_router # v1.44.2 Tarea I
 from app.routers import dashboard as dashboard_router      # v1.44.1 Tarea E
 from app.routers import freshness as freshness_router
 from app.routers import metrics as metrics_router
@@ -3572,6 +3575,9 @@ app.include_router(metrics_router.router)
 app.include_router(copilot_router.router)
 app.include_router(dashboard_router.router)               # v1.44.1 Tarea E
 app.include_router(onboarding_router.router)              # v1.44.1 Tarea F
+app.include_router(copilot_memory_router.router)          # v1.44.2 Tarea G
+app.include_router(copilot_drafts_router.router)          # v1.44.2 Tarea H
+app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
 
 
 # v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST
