@@ -61,10 +61,19 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
 
 
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
-    if not x_internal_service or x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
-        raise HTTPException(status_code=403, detail="Invalid internal service origin")
-    if not x_api_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # v1.42.1 auditor fix: distinguish "no auth presented" (401) from
+    # "auth presented but invalid" (403). Matches the cartridge pattern
+    # in app/api/deps.py and the wider HTTP convention.
+    if not x_internal_service or not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+    if x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid internal service origin",
+        )
 
     accepted: list[str] = []
     pair_key_env = _ALLOWED_SERVICES_TO_KEY_ENV.get(x_internal_service)

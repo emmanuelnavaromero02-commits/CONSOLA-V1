@@ -181,13 +181,15 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Internal-Api-Key", "x-api-key", "x-internal-service"],
 )
 
-# Sprint v1.41.1 — Request correlation IDs. Registered AFTER CORS so it
-# wraps the chain as the outermost layer (Starlette builds the stack from
-# user_middleware in reverse: last registered = outermost). Every response
-# carries X-Request-ID; structured logs pull it from a contextvar.
+# Sprint v1.41.1 / v1.42.1 — Request correlation IDs. The actual
+# ``app.add_middleware(RequestIDMiddleware)`` call lives at the bottom
+# of this module, AFTER the two ``@app.middleware("http")`` decorators
+# (security headers + auth). Starlette builds its middleware stack by
+# iterating ``user_middleware`` in reverse, so the LAST registered
+# middleware ends up outermost. The auditor's 401-vs-X-Request-ID
+# finding was caused by registering it here (which left it inside the
+# auth wrapper, so 401s never reached its send-wrapper).
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
-
-app.add_middleware(RequestIDMiddleware)
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -3557,3 +3559,12 @@ app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)
 app.include_router(metrics_router.router)
 app.include_router(copilot_router.router)
+
+
+# v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST
+# wrapper so the ``X-Request-ID`` header lands on responses generated
+# by inner middlewares (auth 401, CSRF 403, etc.). Registering it
+# here — after every ``@app.middleware("http")`` decorator above has
+# run — guarantees it ends up at the front of ``user_middleware`` and
+# thus is wrapped LAST = outermost in the final ASGI stack.
+app.add_middleware(RequestIDMiddleware)

@@ -118,19 +118,85 @@ def test_csrf_required_on_mutating_admin_route():
 # ── MCP Infra ───────────────────────────────────────────────────────────────
 
 def test_mcp_infra_invoke_unauth_returns_401():
+    """v1.42.1 auditor fix: missing headers → 401 (not 403). 403 is
+    reserved for 'auth presented but service name not in allow-list'."""
     _skip_if_unreachable(_MCP_INFRA)
     r = httpx.post(f"{_MCP_INFRA}/mcp/invoke", json={}, timeout=5.0)
-    assert r.status_code == 401
+    assert r.status_code == 401, (
+        f"mcp-infra /mcp/invoke without auth headers must return 401 "
+        f"(got {r.status_code})"
+    )
 
 
-# ── X-Request-ID propagation (v1.41.1) ──────────────────────────────────────
+# ── X-Request-ID propagation (v1.41.1 + v1.42.1) ────────────────────────────
+#
+# Every response from any of the 5 services MUST carry an X-Request-ID
+# header — successful responses, auth rejections (401), CSRF / forbidden
+# (403), even 404s. The middleware is registered as the outermost ASGI
+# wrapper and injects the header at the send() level so no inner
+# exception path can strip it.
 
-@pytest.mark.parametrize("base", [_CONSOLE, _MCP_INFRA])
-def test_unauth_responses_still_carry_request_id(base):
-    """Auth-rejection responses must still pass through the request_id
-    middleware so the rejection can be correlated in logs."""
-    _skip_if_unreachable(base)
-    r = httpx.get(f"{base}/api/whatever-unauth", timeout=5.0)
+_ALL_SERVICES = [
+    ("console",   _CONSOLE,                 "/api/whatever-unauth"),
+    ("mcp-infra", _MCP_INFRA,               "/api/whatever-unauth"),
+    ("replicon",  "http://localhost:8201",  "/mcp/tools"),
+    ("sap_hcm",   "http://localhost:8202",  "/mcp/tools"),
+    ("sap_sf",    "http://localhost:8203",  "/mcp/tools"),
+    ("sap_s4",    "http://localhost:8204",  "/mcp/tools"),
+]
+
+
+@pytest.mark.parametrize("name,base,path", _ALL_SERVICES,
+                         ids=lambda v: v if isinstance(v, str) else "")
+def test_unauth_responses_still_carry_request_id(name, base, path):
+    """401/403/404 responses must include X-Request-ID."""
+    probe = "/health" if name not in ("console", "mcp-infra") else "/healthz"
+    _skip_if_unreachable(base, probe)
+    r = httpx.get(f"{base}{path}", timeout=5.0)
     assert r.headers.get("x-request-id"), (
-        f"{base} dropped X-Request-ID on auth-rejected request"
+        f"{name} ({base}{path}) dropped X-Request-ID on a "
+        f"{r.status_code} response"
+    )
+
+
+@pytest.mark.parametrize("name,base,path", _ALL_SERVICES,
+                         ids=lambda v: v if isinstance(v, str) else "")
+def test_403_responses_still_carry_request_id(name, base, path):
+    """When auth headers ARE presented but with an invalid service
+    name, the response should be 403 (or 401 if the service rejects
+    earlier in the chain) — either way the X-Request-ID must travel
+    on the response so the rejection is correlatable."""
+    probe = "/health" if name not in ("console", "mcp-infra") else "/healthz"
+    _skip_if_unreachable(base, probe)
+    r = httpx.post(
+        f"{base}/mcp/invoke" if name != "console" else f"{base}/api/mcp/invoke",
+        json={},
+        headers={
+            "X-Api-Key": "not-the-real-one",
+            "X-Internal-Service": "not-on-the-allow-list",
+        },
+        timeout=5.0,
+    )
+    assert r.status_code in (401, 403)
+    assert r.headers.get("x-request-id"), (
+        f"{name} dropped X-Request-ID on a {r.status_code} reject"
+    )
+
+
+@pytest.mark.parametrize("base,port", [
+    ("http://localhost:8201", 8201),
+    ("http://localhost:8202", 8202),
+    ("http://localhost:8203", 8203),
+    ("http://localhost:8204", 8204),
+    (_MCP_INFRA, 8010),
+])
+def test_mcp_invoke_returns_401_when_auth_headers_missing(base, port):
+    """v1.42.1 — consistent 401 across the 5 services when no
+    X-Internal-Service / X-Api-Key headers are presented."""
+    probe = "/health" if port != 8010 else "/healthz"
+    _skip_if_unreachable(base, probe)
+    r = httpx.post(f"{base}/mcp/invoke", json={}, timeout=5.0)
+    assert r.status_code == 401, (
+        f"{base} /mcp/invoke without auth headers must return 401, "
+        f"got {r.status_code}"
     )
