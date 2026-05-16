@@ -19,6 +19,18 @@ build/
 *.env.save
 .env.save
 infra/.env.save
+# v1.43.4 (Codex H6): manual ad-hoc backups (e.g. `cp infra/.env
+# infra/.env.backup-$(date +%s)` after rotating a secret) shouldn't
+# stay tracked. Codex's update demonstrated two such files lingering
+# in `git status` — one stray `git add -A` and the secret rotation
+# trail leaks into the repo.
+infra/.env.backup
+infra/.env.backup-*
+infra/.env.bak
+infra/.env.*.bak
+**/.env.backup
+**/.env.backup-*
+**/.env.bak
 # Belt and suspenders for the audit — explicit per-service paths so a
 # stray `*.env` rule change can't accidentally re-expose any of them.
 infra/.env
