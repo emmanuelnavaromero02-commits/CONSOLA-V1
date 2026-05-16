@@ -40,6 +40,15 @@ services:
       - modecissions_net
     restart: unless-stopped
     logging: *default-logging
+    # v1.43.4 (Claude N3): mirror the local healthcheck so AWS
+    # depends_on can use ``condition: service_healthy`` instead of
+    # the implicit "container started" semantics that race-condition
+    # boot order.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   postgres_gold:
     image: postgres:15
@@ -57,6 +66,11 @@ services:
       - modecissions_net
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions_gold -p 5433"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   # ── Application services ──────────────────────────────────────────────────
 
@@ -105,12 +119,27 @@ services:
       - /opt/modecissions/console/app/static:/app/app/static:ro
     networks:
       - modecissions_net
+    # v1.43.4 (Claude N3): wait on the upstream healthchecks rather
+    # than the implicit "container started" race window — postgres
+    # accepting connections, mcp-infra serving /healthz, mailhog
+    # listening on its inbox port. Pre-v1.43.4 a slow Postgres init
+    # would let console boot, fail its DB pool warmup, and end up
+    # in a restart loop while the operator stared at "starting".
     depends_on:
-      - postgres
-      - mcp-infra
-      - mailhog
+      postgres:
+        condition: service_healthy
+      mcp-infra:
+        condition: service_healthy
+      mailhog:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   workspace:
     image: modecissions/workspace:latest
@@ -133,11 +162,20 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
-      - refinement
-      - mcp-infra
+      postgres:
+        condition: service_healthy
+      refinement:
+        condition: service_healthy
+      mcp-infra:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   refinement:
     image: modecissions/refinement:latest
@@ -161,10 +199,18 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
-      - postgres_gold
+      postgres:
+        condition: service_healthy
+      postgres_gold:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8500/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 
   vault:
@@ -178,9 +224,16 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8300/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
@@ -192,6 +245,12 @@ services:
       - modecissions_net
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8025/api/v1/messages || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ── MCP Infrastructure ────────────────────────────────────────────────────
 
@@ -230,11 +289,20 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
-      - postgres_gold
-      - airflow
+      postgres:
+        condition: service_healthy
+      postgres_gold:
+        condition: service_healthy
+      airflow:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8010/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ── Superset ──────────────────────────────────────────────────────────────
 
@@ -253,8 +321,11 @@ services:
     command: -c "superset db upgrade && superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required} --firstname Admin --lastname User --email admin@modecissions.local --password \"$$SUPERSET_ADMIN_PASSWORD\" && superset init"
     networks:
       - modecissions_net
+    # v1.43.4 (Claude N3): one-shot init waits on postgres healthy
+    # so ``superset db upgrade`` doesn't race the DB startup.
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: "no"
     logging: *default-logging
 
@@ -277,9 +348,18 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      superset-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   # ── Airflow ───────────────────────────────────────────────────────────────
   # Init (correr una vez):
@@ -313,8 +393,11 @@ services:
       VAULT_URL:                            http://vault:8300
     networks:
       - modecissions_net
+    # v1.43.4 (Claude N3): wait on postgres healthy so
+    # ``airflow db migrate`` doesn't race the DB startup.
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: "no"
     logging: *default-logging
 
@@ -371,9 +454,18 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   airflow-scheduler:
     image: apache/airflow:2.10.5
@@ -417,9 +509,18 @@ services:
     networks:
       - modecissions_net
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
 
 volumes:
   postgres_data:
