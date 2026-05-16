@@ -790,6 +790,34 @@ def test_copilot_clips_oversized_tool_args(copilot_module):
     assert copilot_module._clip_tool_args(small) == small
 
 
+def test_copilot_clipped_input_is_swapped_for_empty_on_history_reload(copilot_module):
+    """v1.42 R3 LLM-F1: a previously-clipped tool_use input must NOT
+    be re-emitted to the LLM as ``{"_clipped": True, ...}`` — the
+    model would either hallucinate those were real args or retry with
+    the marker. _load_history swaps the clipped stub for ``{}``."""
+    # We can drive _load_history through a tiny fake conn.
+    class _C:
+        async def fetch(self, *_a, **_kw):
+            return [
+                {
+                    "role": "assistant",
+                    "content": "I called the tool.",
+                    "tool_calls": json.dumps([{
+                        "id": "toolu_x", "name": "infra__do_thing",
+                        "input": {"_clipped": True, "_original_bytes": 99999,
+                                  "_preview": "huge..."},
+                    }]),
+                    "tool_results": None,
+                },
+            ]
+    blocks = _run(copilot_module._load_history(_C(), "00000000-0000-0000-0000-000000000000"))
+    assert blocks[0]["role"] == "assistant"
+    tool_use_block = next(b for b in blocks[0]["content"] if b.get("type") == "tool_use")
+    assert tool_use_block["input"] == {}, (
+        "clipped marker must be hidden from the LLM on history reload"
+    )
+
+
 def test_copilot_rejects_invalid_uuid_with_400(copilot_module, db, admin_user):
     """v1.42 R2 DBA: invalid UUID path params used to bubble asyncpg
     InvalidTextRepresentationError as 500. Now caught at the boundary."""

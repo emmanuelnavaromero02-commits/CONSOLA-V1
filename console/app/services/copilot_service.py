@@ -237,11 +237,20 @@ async def _load_history(conn, conversation_id: str) -> list[dict]:
             if content:
                 blocks.append({"type": "text", "text": content})
             for c in tool_calls:
+                stored_input = c.get("input") or {}
+                # R3 LLM-F1: if the input was clipped at storage time
+                # (`_clipped: true` marker from _clip_tool_args) we must
+                # NOT replay the stub keys to the LLM — it would either
+                # hallucinate that those were the real arguments or
+                # re-emit the marker. Hand it an empty input and a hint
+                # via the assistant text.
+                if isinstance(stored_input, dict) and stored_input.get("_clipped"):
+                    stored_input = {}
                 blocks.append({
                     "type": "tool_use",
                     "id": c.get("id") or str(uuid.uuid4()),
                     "name": c.get("name"),
-                    "input": c.get("input") or {},
+                    "input": stored_input,
                 })
             out.append({"role": "assistant", "content": blocks})
         elif role == "tool" and tool_results:
@@ -592,11 +601,16 @@ async def _run_loop(
         )
         pool = await auth.pool()
         async with pool.acquire() as conn:
+            # R3 LLM-F2: don't reference X-Request-ID in the user-facing
+            # text — the client can read it from the response header
+            # (set by RequestIDMiddleware), but the conversation row is
+            # standalone and might be re-read later. Keep the warning
+            # short and actionable.
             await _persist_message(
                 conn, conversation_id=conversation_id,
                 role="assistant",
                 content="⚠️ El proveedor de LLM devolvió un error. "
-                        "Reintenta o contacta al operador con tu X-Request-ID.",
+                        "Reintenta en unos segundos o contacta al operador.",
             )
         raise HTTPException(502, "llm provider error")
 
@@ -623,7 +637,15 @@ async def _run_loop(
                         if btype == "text":
                             text_parts.append(block.get("text") or "")
                         elif btype == "tool_use":
-                            inv = invocations[inv_idx] if inv_idx < len(invocations) else {}
+                            # R3 LLM-F3 defensive: assert per-block
+                            # alignment so a future change to llm_client
+                            # that skips invoke_tool for a tool_use
+                            # surfaces here instead of silently shifting
+                            # metadata.
+                            if inv_idx >= len(invocations):
+                                inv = {}
+                            else:
+                                inv = invocations[inv_idx]
                             inv_idx += 1
                             if inv.get("status") == "pending_approval":
                                 msg_has_pending = True
