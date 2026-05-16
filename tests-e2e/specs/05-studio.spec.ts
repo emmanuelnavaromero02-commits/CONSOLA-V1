@@ -47,27 +47,38 @@ test.describe("Legacy /studio page (port 8000)", () => {
     const dagsTab = page.getByText(/DAGs/i).first();
     if (await dagsTab.isVisible()) await dagsTab.click();
 
-    // The user reports the button does nothing. We trap network
-    // requests around the click — if zero requests fire AND the URL
-    // doesn't change AND no new DOM mutation happens, the button is
-    // dead. We assert SOMETHING measurable happens.
-    const beforeUrl = page.url();
-    let requestFired = false;
-    page.on("request", () => { requestFired = true; });
-
-    if (await grafoBtn.isVisible({ timeout: 10_000 }).catch(() => false)) {
-      await grafoBtn.click({ trial: false }).catch(() => {});
-      await page.waitForTimeout(2_000);
-      const afterUrl = page.url();
-      // Either the URL changed, or a request was made.
-      const didSomething = afterUrl !== beforeUrl || requestFired;
-      expect(didSomething,
-        "'Grafo' button must trigger navigation, network request, or DOM change. " +
-        "Current report: button is unresponsive.",
-      ).toBe(true);
-    } else {
+    if (!(await grafoBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
       test.fail(true, "'Grafo' button not present on /studio — surface gap");
+      return;
     }
+
+    // v1.44.3.2 R1 Testing F3 follow-up: use page.waitForRequest with
+    // a /studio/* predicate (mirrors the deploy + superset patterns
+    // below) instead of a leaky page.on("request") + waitForTimeout
+    // combo that picks up background telemetry as false-positives.
+    // The button MUST either navigate the page OR fire a request to
+    // a studio-scoped endpoint — both are observable signals; a no-op
+    // button trips neither.
+    const beforeUrl = page.url();
+    const requestPromise = page
+      .waitForRequest(
+        (req) => req.url().includes("/api/studio/") || req.url().includes("/studio/graph"),
+        { timeout: 4_000 },
+      )
+      .then(() => "request" as const)
+      .catch(() => null);
+    const navPromise = page
+      .waitForURL((url) => url.href !== beforeUrl, { timeout: 4_000 })
+      .then(() => "navigation" as const)
+      .catch(() => null);
+
+    await grafoBtn.click({ trial: false }).catch(() => {});
+    const signal = await Promise.race([requestPromise, navPromise]);
+
+    expect(signal,
+      "'Grafo' button must trigger navigation OR a /studio/* request " +
+      "within 4 s. User-reported bug: the button is unresponsive.",
+    ).not.toBeNull();
   });
 
   test("'Deploy a Airflow' button fires /api/studio/dag-deploy (USER-REPORTED BUG)",
@@ -194,12 +205,76 @@ test.describe("Legacy /studio page (port 8000)", () => {
       return;
     }
     await iaTab.click();
-    // Just verify the pane resolves to SOMETHING — error / empty /
-    // loaded content all count.
-    await page.waitForTimeout(2_000);
+    // The pane must resolve to SOMETHING — error / empty / loaded
+    // content all count. expect().toBeVisible auto-waits up to its
+    // timeout, so no bare waitForTimeout is needed.
     const main = page.locator(
       ".tab-content, [role='tabpanel'], main, .studio-layout",
     );
-    await expect(main.first()).toBeVisible();
+    await expect(main.first()).toBeVisible({ timeout: 10_000 });
   });
+
+  test("'Plantillas' tab loads template list (USER-REPORTED BUG)",
+    async ({ authedPage: page }) => {
+      // v1.44.3.2 R1 Testing F1 follow-up: the brief's user-report
+      // list included "Plantillas no abre" but the original spec
+      // missed coverage. The "Plantillas" affordance might be a
+      // tab, a button, or a dropdown trigger in the legacy studio
+      // — we look for whichever the page exposes.
+      await page.goto(`${LEGACY}/studio`);
+      const candidates = [
+        page.getByRole("tab", { name: /plantilla/i }),
+        page.getByRole("button", { name: /plantilla/i }),
+        page.getByText(/^plantillas$/i),
+      ];
+
+      let trigger = null;
+      for (const c of candidates) {
+        if (await c.first().isVisible({ timeout: 5_000 }).catch(() => false)) {
+          trigger = c.first();
+          break;
+        }
+      }
+
+      if (trigger === null) {
+        test.fail(true, "'Plantillas' affordance not present on /studio");
+        return;
+      }
+
+      // Click must surface a visible content region (list, modal,
+      // or panel) within 10 s. Anything is fine — empty state, full
+      // list, error — what's not fine is a no-op click that leaves
+      // the surface unchanged.
+      const beforeUrl = page.url();
+      const navOrPanel = Promise.race([
+        page
+          .waitForURL((url) => url.href !== beforeUrl, { timeout: 8_000 })
+          .then(() => "navigation" as const)
+          .catch(() => null),
+        page
+          .waitForRequest(
+            (req) => req.url().includes("/api/studio/templates"),
+            { timeout: 8_000 },
+          )
+          .then(() => "request" as const)
+          .catch(() => null),
+      ]);
+
+      await trigger.click().catch(() => {});
+      // Also accept "a new dialog or panel appeared" as a positive
+      // signal so a purely client-side modal counts.
+      const panelAppeared = page
+        .locator('[role="dialog"], [role="tabpanel"], .templates-list, .plantillas')
+        .first()
+        .isVisible({ timeout: 8_000 })
+        .catch(() => false);
+
+      const signal = await Promise.race([navOrPanel, panelAppeared.then((v) => v ? "panel" : null)]);
+      expect(signal,
+        "'Plantillas' click must surface navigation, a /api/studio/templates " +
+        "request, or a visible panel/dialog within 8 s. User-reported bug: " +
+        "click is a no-op.",
+      ).not.toBeNull();
+    },
+  );
 });

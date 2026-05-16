@@ -123,14 +123,25 @@ test.describe("Backend API — POST /api/auth/login round-trip", () => {
   });
 
   test("valid creds return 200 + set a cookie", async () => {
+    // v1.44.3.2 R1 Testing F4 follow-up: fail loud (not silent
+    // skip) when env vars are missing. The whole-suite contract
+    // (fixtures/auth.ts:readCreds) already throws on missing
+    // creds; the previous test.skip here contradicted that
+    // contract and let a misconfigured run silently green-pass.
     const email = process.env.TEST_EMAIL;
     const password = process.env.TEST_PASSWORD;
-    test.skip(!email || !password, "TEST_EMAIL + TEST_PASSWORD required");
+    if (!email || !password) {
+      throw new Error(
+        "TEST_EMAIL + TEST_PASSWORD must be set in tests-e2e/.env. " +
+        "The suite refuses to run a login round-trip without real " +
+        "credentials so a misconfigured CI can't silently green-pass.",
+      );
+    }
     const ctx = await pwRequest.newContext();
     const response = await ctx.fetch(`${LEGACY}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      data: { email: email!, password: password! },
+      data: { email, password },
     });
     expect(response.status()).toBe(200);
     // The Set-Cookie header must include httpOnly + at least one
