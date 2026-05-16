@@ -128,6 +128,53 @@ MAX_TOOL_ARGS_BYTES = 16_000
 # for the UI — the LLM cites top-N sources, not every row.
 MAX_CITATIONS_PER_MESSAGE = 20
 
+# Sprint v1.43 (hallucination guard): regex patterns that flag an LLM
+# reply as suspiciously "I'm making this up" when no tool was consulted.
+# Conservative — only triggers on hedging phrases adjacent to a number.
+# Each pattern is anchored to Spanish (and a few common English forms,
+# since the LLM may slip if the user prompted in English).
+import re as _re_module
+_HALLUCINATION_PATTERNS = [
+    _re_module.compile(r"\baproximadamente\s+\d+", _re_module.IGNORECASE),
+    _re_module.compile(r"\baprox\.\s+\d+",          _re_module.IGNORECASE),
+    _re_module.compile(r"\bcerca de\s+\d+",         _re_module.IGNORECASE),
+    _re_module.compile(r"\baround\s+\d+",           _re_module.IGNORECASE),
+    _re_module.compile(r"\btípicamente\s+\d+",      _re_module.IGNORECASE),
+    _re_module.compile(r"\btipicamente\s+\d+",      _re_module.IGNORECASE),
+    _re_module.compile(r"\btypically\s+\d+",        _re_module.IGNORECASE),
+    _re_module.compile(r"\bdebería\s+ser\s+\d+",    _re_module.IGNORECASE),
+    _re_module.compile(r"\bdebería\s+haber\s+\d+",  _re_module.IGNORECASE),
+    _re_module.compile(r"\bestima(?:do|mos)\s+en\s+\d+", _re_module.IGNORECASE),
+    _re_module.compile(r"\bunos\s+\d+",             _re_module.IGNORECASE),
+    _re_module.compile(r"\brondan?\s+los?\s+\d+",   _re_module.IGNORECASE),
+]
+
+
+def _check_for_hallucination(text: str, has_citations: bool) -> str | None:
+    """Return a warning string when the reply contains hedged numbers
+    AND no tool was consulted (i.e. no citations support them).
+
+    None when:
+      * citations is non-empty (the numbers have evidence), or
+      * the reply doesn't hedge numbers.
+
+    The warning is prepended (not replacing) the reply so the user
+    still sees what the model said, just framed with a caveat.
+    """
+    if has_citations:
+        return None
+    if not text:
+        return None
+    for pat in _HALLUCINATION_PATTERNS:
+        if pat.search(text):
+            return (
+                "⚠️ Esta respuesta contiene cifras pero el copiloto no "
+                "consultó ninguna tool en este turno. Trata los números "
+                "con escepticismo y pídele que verifique con una fuente."
+            )
+    return None
+
+
 # Sprint v1.43 (multi-source): bound how many distinct cartridge servers
 # a single turn can fan out to. Keeps cost + latency predictable and
 # the citation grid readable. If the LLM keeps reaching for more, we
@@ -943,6 +990,13 @@ async def _run_loop(
 
     if len(citations_summary) > MAX_CITATIONS_PER_MESSAGE:
         citations_summary = citations_summary[:MAX_CITATIONS_PER_MESSAGE]
+
+    # v1.43 hallucination guardrail: if the model produced numbers
+    # with hedging language AND no tool was consulted this turn, frame
+    # the reply with a caveat so the user knows it's not grounded.
+    warning = _check_for_hallucination(reply_text or "", bool(citations_summary))
+    if warning:
+        reply_text = f"{warning}\n\n{reply_text or ''}".rstrip()
 
     return {
         "message_id": message_id,

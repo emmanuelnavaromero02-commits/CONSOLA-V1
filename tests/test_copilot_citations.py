@@ -401,3 +401,69 @@ def test_citations_capped_when_a_single_tool_returns_many_runs(copilot_module):
     )
     assert len(cs) == 5
     assert copilot_module.MAX_CITATIONS_PER_MESSAGE == 20
+
+
+# ── Tarea E: hallucination guardrails ──────────────────────────────────────
+
+def test_response_with_numbers_no_citation_gets_warning(copilot_module):
+    """When the LLM hedges a number but cited nothing, attach a warning."""
+    f = copilot_module._check_for_hallucination
+    assert f("Hay aproximadamente 1500 empleados.", has_citations=False)
+    assert f("Around 200 records exist.",            has_citations=False)
+    assert f("Debería ser 50 más o menos.",          has_citations=False)
+    assert f("Estimamos en 80 usuarios activos.",    has_citations=False)
+    assert f("Unos 30 DAGs corrieron hoy.",          has_citations=False)
+    assert f("Rondan los 1500 empleados.",           has_citations=False)
+
+
+def test_response_with_citation_no_warning(copilot_module):
+    """If the LLM cited a tool, the numbers are grounded — no warning."""
+    f = copilot_module._check_for_hallucination
+    assert f("Hay aproximadamente 1500 empleados.", has_citations=True) is None
+
+
+def test_response_with_no_numbers_no_warning(copilot_module):
+    """Plain prose without hedged numbers → no warning."""
+    f = copilot_module._check_for_hallucination
+    assert f("No tengo ese dato. ¿Quieres que lo consulte?",
+             has_citations=False) is None
+    assert f("",     has_citations=False) is None
+    assert f(None,   has_citations=False) is None
+
+
+def test_concrete_number_without_hedging_is_not_flagged(copilot_module):
+    """A bare 'hay 1247 empleados' (no hedging word) does NOT trigger.
+    We only flag the hedging phrasing — bare assertions are the model's
+    word to defend through citations, not ours to police via regex."""
+    f = copilot_module._check_for_hallucination
+    assert f("Hay 1247 empleados activos.", has_citations=False) is None
+    assert f("Procesé 30 DAGs.",            has_citations=False) is None
+
+
+def test_warning_prepended_to_reply_in_turn_payload(copilot_module):
+    """End-to-end: when the LLM hedges without citations, the warning
+    appears at the top of the reply the UI receives."""
+    db = _FakeDB()
+    _patch_full(copilot_module, db, tools=[],
+                fake_chat=_make_chat_replying("Aproximadamente 1500 empleados."),
+                fake_invoke=AsyncMock(return_value={}))
+    admin = {"id": 99, "email": "x@example.com", "role": "admin"}
+    conv = _run(copilot_module.create_conversation(user_id=admin["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="¿cuántos empleados?",
+        user=admin,
+    ))
+    assert out["reply"].startswith("⚠️")
+    assert "Aproximadamente 1500 empleados." in out["reply"]
+
+
+def _make_chat_replying(text):
+    """Tiny helper: a fake llm_client.chat that emits one assistant
+    text block matching `text` and nothing else."""
+    async def _chat(*, messages, **_kw):
+        final = list(messages) + [
+            {"role": "assistant",
+             "content": [{"type": "text", "text": text}]},
+        ]
+        return (text, [], final)
+    return _chat
