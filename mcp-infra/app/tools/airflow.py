@@ -40,7 +40,10 @@ def _dag_file_path(dag_id: str) -> Path:
 
 
 def _is_development() -> bool:
-    return os.environ.get("APP_ENV", "development").lower() in {"development", "dev", "local", "test"}
+    # v1.43.2 (Codex P1-2): default ``production`` — a forgotten
+    # APP_ENV no longer enables airflow_create_dag (RCE-shaped tool)
+    # on a fresh deploy.
+    return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────────

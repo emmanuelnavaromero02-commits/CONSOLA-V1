@@ -315,7 +315,8 @@ _PUBLIC_PATHS = {"/healthz"}
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+    # v1.43.2 (Codex P1-2): default ``production`` — see console/security.py.
+    return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
 
 
 def _require_pair_keys_in_production() -> None:

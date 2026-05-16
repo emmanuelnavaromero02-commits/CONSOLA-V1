@@ -55,7 +55,8 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "").lower() in {"production", "prod"}
+    # v1.43.2 (Codex P1-2): default ``production`` — see security.py.
+    return os.environ.get("APP_ENV", "production").lower() in {"production", "prod"}
 
 
 def _require_pair_keys_in_production() -> None:
@@ -529,7 +530,10 @@ def cookie_secure() -> bool:
     explicit = os.environ.get("COOKIE_SECURE")
     if explicit is not None:
         return explicit.lower() == "true"
-    app_env = os.environ.get("APP_ENV", "development").lower()
+    # v1.43.2 (Codex P1-2): default flipped to ``production`` so a
+    # forgotten APP_ENV no longer ships insecure cookies to a real
+    # browser. Local dev opts in via APP_ENV=development in compose.
+    app_env = os.environ.get("APP_ENV", "production").lower()
     return app_env != "development"
 
 

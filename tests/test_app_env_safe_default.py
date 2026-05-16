@@ -1,0 +1,189 @@
+"""Sprint v1.43.2 (Codex P1-2) — APP_ENV defaults to ``production``.
+
+Pre-v1.43.2, an unset ``APP_ENV`` silently put the stack in
+development mode: cookies were Secure=False, vault production-only
+pair-key checks were skipped, and mcp-infra exposed dangerous
+write tools (airflow_create_dag, superset_create_*, vault_set).
+
+The fix flips every default to ``production`` so misconfiguration
+fails closed. Local dev opts in explicitly via
+``APP_ENV=development`` in the compose file.
+
+This test pins the invariant in both code and infrastructure.
+"""
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+
+REPO = Path(__file__).resolve().parents[1]
+COMPOSE_LOCAL = REPO / "infra" / "docker-compose.yml"
+COMPOSE_AWS   = REPO / "infra" / "terraform" / "deploy" / "docker-compose.aws.yml"
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def _isolated_import(subdir: str, module_path: str):
+    """Import ``module_path`` from ``subdir`` of the repo, with sys.path
+    scrubbed so app/ collisions across services don't bleed through."""
+    sys.path[:] = [
+        p for p in sys.path
+        if not any(s in p for s in ("/cartridges/", "/console", "/vault",
+                                     "/workspace", "/mcp-infra",
+                                     "/refinement"))
+    ]
+    sys.path.insert(0, str(REPO / subdir))
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
+    return importlib.import_module(module_path)
+
+
+def _services(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8")).get("services", {}) or {}
+
+
+# ── Code-level: every _is_production / _is_development defaults safe ──────
+
+def test_console_security_is_development_defaults_production(monkeypatch):
+    """Once APP_ENV is unset, the console must consider itself in
+    production — never dev. The pre-v1.43.2 bug was the opposite."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENV", raising=False)
+    monkeypatch.delenv("MODE", raising=False)
+    sec = _isolated_import("console", "app.security")
+    assert sec._runtime_env() == "production"
+
+
+def test_console_rate_limiter_is_production_defaults_true(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    rl = _isolated_import("console", "app.services.rate_limiter")
+    assert rl._is_production() is True
+
+
+def test_console_auth_is_production_defaults_true(monkeypatch):
+    # auth.py runs _require_pair_keys_in_production() at import time;
+    # under the new default it would block unless we satisfy the
+    # required pair keys first. That's the intended hardening — for
+    # this test we only care about the helper's polarity.
+    for env in (
+        "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
+        "INTERNAL_API_KEY_REFINEMENT_TO_CONSOLE",
+        "INTERNAL_API_KEY_VAULT_TO_CONSOLE",
+        "INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE",
+        "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
+    ):
+        monkeypatch.setenv(env, "x" * 32)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    auth = _isolated_import("console", "app.services.auth")
+    assert auth._is_production() is True
+
+
+def test_vault_is_production_defaults_true(monkeypatch):
+    # Same story as auth.py: vault/app/main.py invokes
+    # _require_pair_keys_in_production() at import. Satisfy keys first.
+    for env in (
+        "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
+        "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
+        "INTERNAL_API_KEY_WORKSPACE_TO_VAULT",
+        "INTERNAL_API_KEY_REFINEMENT_TO_VAULT",
+        "INTERNAL_API_KEY_AIRFLOW_TO_VAULT",
+        "INTERNAL_API_KEY_CARTRIDGE_TO_VAULT",
+    ):
+        monkeypatch.setenv(env, "x" * 32)
+    # Satisfy INTERNAL_API_KEY too — vault halts at import otherwise.
+    monkeypatch.setenv("INTERNAL_API_KEY", "x" * 64)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    vault_main = _isolated_import("vault", "app.main")
+    assert vault_main._is_production() is True
+
+
+def _seed_mcp_infra_settings(monkeypatch):
+    """mcp-infra's pydantic Settings demands airflow/superset/pg creds
+    at import time. Provide stubs so we can reach _is_development()."""
+    for env in (
+        "AIRFLOW_USER", "AIRFLOW_PASSWORD",
+        "SUPERSET_USER", "SUPERSET_PASSWORD",
+        "PG_PASSWORD",
+    ):
+        monkeypatch.setenv(env, "x")
+
+
+@pytest.mark.parametrize("module_path", [
+    "app.tools.airflow",
+    "app.tools.superset",
+    "app.tools.vault",
+])
+def test_mcp_infra_tools_is_development_defaults_false(monkeypatch, module_path):
+    """The dangerous-tool gate must DENY when APP_ENV is unset."""
+    _seed_mcp_infra_settings(monkeypatch)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    mod = _isolated_import("mcp-infra", module_path)
+    assert mod._is_development() is False
+
+
+# ── Behaviour: the dangerous tool actually refuses ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_airflow_create_dag_refuses_when_app_env_unset(monkeypatch):
+    """End-to-end: airflow_create_dag must raise PermissionError when
+    APP_ENV is unset (default-secure). Pre-fix this would have run."""
+    _seed_mcp_infra_settings(monkeypatch)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    airflow = _isolated_import("mcp-infra", "app.tools.airflow")
+    with pytest.raises(PermissionError):
+        await airflow.airflow_create_dag(dag_id="x", code="pass")
+
+
+# ── Infra: compose files set APP_ENV explicitly on every app service ──────
+
+# Services that run application code and therefore MUST set APP_ENV in
+# the local compose so the new ``production`` default doesn't accidentally
+# brick local dev. Pure-infra services (postgres, redis, minio,
+# airflow-init, mailhog, superset-init) don't read APP_ENV.
+_LOCAL_APP_SERVICES = [
+    "console", "workspace", "refinement", "vault", "mcp-infra",
+    "replicon", "sap-successfactors", "sap-hcm", "sap-s4hana",
+]
+
+
+@pytest.mark.parametrize("svc", _LOCAL_APP_SERVICES)
+def test_local_compose_app_services_set_app_env(svc):
+    services = _services(COMPOSE_LOCAL)
+    assert svc in services, f"{svc} missing from local compose"
+    env = (services[svc] or {}).get("environment") or {}
+    # Compose ``environment`` may be a dict or a list; we wrote dicts.
+    assert isinstance(env, dict), f"{svc} environment must be a mapping"
+    assert "APP_ENV" in env, (
+        f"{svc} must declare APP_ENV explicitly in local compose. "
+        "Without it, the post-v1.43.2 code defaults to ``production`` "
+        "and local dev breaks."
+    )
+    val = str(env["APP_ENV"])
+    assert "development" in val, (
+        f"{svc} APP_ENV should default to development locally, got {val!r}"
+    )
+
+
+def test_aws_compose_app_env_defaults_production():
+    """The AWS compose must keep APP_ENV pointing at production by
+    default. A drift here would silently flip a prod node into dev."""
+    services = _services(COMPOSE_AWS)
+    found = 0
+    for name, svc in services.items():
+        env = (svc or {}).get("environment") or {}
+        if isinstance(env, dict) and "APP_ENV" in env:
+            val = str(env["APP_ENV"])
+            assert "production" in val, (
+                f"AWS service {name} declares APP_ENV={val!r} — must "
+                "default to production in the AWS compose."
+            )
+            found += 1
+    assert found >= 1, "AWS compose declares APP_ENV on no service"

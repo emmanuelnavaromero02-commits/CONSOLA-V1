@@ -101,6 +101,10 @@ services:
       dockerfile: Dockerfile
     container_name: mode_console
     environment:
+      # v1.43.2 (Codex P1-2): APP_ENV default flipped to ``production`` in
+      # code so an unset env never silently disables guardrails. Local dev
+      # opts in explicitly here.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:-}
@@ -179,6 +183,8 @@ services:
       dockerfile: Dockerfile
     container_name: mode_workspace
     environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
@@ -226,6 +232,8 @@ services:
       dockerfile: Dockerfile
     container_name: mode_refinement
     environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
@@ -273,6 +281,8 @@ services:
       dockerfile: Dockerfile
     container_name: mode_vault
     environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-development}
       # Sprint v1.19: per-service Postgres role (least-privilege).
       # omega_vault is the ONLY role with access to vault_entries.
       # Every other service is REVOKE'd from this table — that's the
@@ -395,6 +405,8 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_successfactors
     environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
@@ -442,6 +454,8 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_hcm
     environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
@@ -483,6 +497,8 @@ services:
       dockerfile: Dockerfile
     container_name: mode_sap_s4hana
     environment:
+      # v1.43.2 (Codex P1-2): see console block above.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
@@ -526,6 +542,11 @@ services:
       dockerfile: Dockerfile
     container_name: mode_mcp_infra
     environment:
+      # v1.43.2 (Codex P1-2): see console block above. mcp-infra is the
+      # service most affected — airflow/superset/vault tools gate on
+      # _is_development() and would have run unrestricted if APP_ENV
+      # was simply unset. Default flipped, explicit opt-in here.
+      APP_ENV: ${APP_ENV:-development}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:-}
