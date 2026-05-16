@@ -99,3 +99,15 @@ def test_migration_44_lex_orders_after_16():
     when the constraint is added."""
     names = sorted(p.name for p in INIT_DIR.glob("*.sql"))
     assert names.index("16_audit_events.sql") < names.index("44_audit_events_dedup.sql")
+
+
+def test_migration_44_self_registers_in_schema_migrations():
+    """v1.43.2 (DevOps R1 hardening): fresh installs run init scripts
+    via docker-entrypoint and never call apply_db_migrations.sh, so
+    44 must INSERT its own row into schema_migrations. Migration 43
+    backfilled 00-42, so 44 is the first one that has to self-stamp
+    on a fresh install."""
+    src = MIGRATION_44.read_text(encoding="utf-8")
+    assert "INSERT INTO schema_migrations" in src
+    assert "'44_audit_events_dedup.sql'" in src
+    assert "ON CONFLICT (filename) DO NOTHING" in src

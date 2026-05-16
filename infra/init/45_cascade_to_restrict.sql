@@ -32,6 +32,21 @@ CREATE TABLE IF NOT EXISTS audit_deletes (
 CREATE INDEX IF NOT EXISTS idx_audit_deletes_table ON audit_deletes (table_name);
 CREATE INDEX IF NOT EXISTS idx_audit_deletes_at    ON audit_deletes (deleted_at DESC);
 
+-- v1.43.2 (Security R1 hardening): the deleted_row JSONB can contain
+-- PII (users.email, users.full_name) and — even after the secret-key
+-- sanitization below — must not be world-readable. Mirror the
+-- vault_entries posture from infra/init/25_service_roles.sql:
+-- least-privilege; only postgres / admin roles can SELECT.
+REVOKE ALL ON audit_deletes FROM PUBLIC;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_console') THEN
+    -- console owns the user-deletion flow and needs to write tombstones.
+    EXECUTE 'GRANT INSERT, SELECT ON audit_deletes TO omega_console';
+    EXECUTE 'GRANT USAGE, SELECT ON SEQUENCE audit_deletes_id_seq TO omega_console';
+  END IF;
+END $$;
+
 
 -- ── Step 2: convert CASCADE → RESTRICT on critical FKs ────────────────────
 --
@@ -58,13 +73,19 @@ BEGIN
     WHERE tc.constraint_type = 'FOREIGN KEY'
       AND rc.delete_rule     = 'CASCADE'
       AND tc.table_name      IN (
+        -- v1.43.2 (DB R1 hardening): refresh_tokens / user_sessions were
+        -- intentionally REMOVED. They are short-lived auth-lifecycle
+        -- records, not the tenant→workspace→conversation forensic
+        -- chain this migration protects. Flipping them to RESTRICT
+        -- would break console/app/services/auth.py::delete_user() —
+        -- which does a bare ``DELETE FROM users WHERE id = $1`` —
+        -- because every user with an active session would now fail
+        -- the FK check. CASCADE here is the correct semantic.
         'user_workspace_roles',
         'conversations',
         'conversation_messages',
         'workspaces',
-        'decisions',
-        'refresh_tokens',
-        'user_sessions'
+        'decisions'
       )
       AND ccu.table_name     IN (
         'tenants', 'users', 'workspaces', 'roles', 'conversations'
@@ -97,11 +118,34 @@ END $$;
 -- responsible for stamping that via a separate audit_events row when
 -- it intentionally deletes.
 
+-- v1.43.2 (Security R1 hardening): the BEFORE-DELETE trigger fires on
+-- ``users`` (among others), and ``users.password_hash`` is the bcrypt
+-- digest of the user's password. ``to_jsonb(OLD)`` would persist that
+-- hash into ``audit_deletes.deleted_row`` forever — and bcrypt is
+-- offline-crackable. Strip every known secret-shaped column from the
+-- JSONB before insert. The list is deliberately broad: missing keys
+-- are no-ops in ``jsonb - text``, so over-listing has zero cost and
+-- guards against future columns that match a sensitive name.
 CREATE OR REPLACE FUNCTION soft_delete_audit_trigger()
 RETURNS TRIGGER AS $$
+DECLARE
+  snapshot JSONB;
 BEGIN
+  snapshot := to_jsonb(OLD)
+              - 'password_hash'
+              - 'password'
+              - 'token'
+              - 'access_token'
+              - 'refresh_token'
+              - 'api_key'
+              - 'secret'
+              - 'private_key'
+              - 'session_token'
+              - 'csrf_secret'
+              - 'mfa_secret'
+              - 'totp_secret';
   INSERT INTO audit_deletes (table_name, deleted_pk, deleted_row, deleted_at)
-  VALUES (TG_TABLE_NAME, OLD.id::TEXT, to_jsonb(OLD), NOW());
+  VALUES (TG_TABLE_NAME, OLD.id::TEXT, snapshot, NOW());
   RETURN OLD;
 END;
 $$ LANGUAGE plpgsql;
@@ -141,3 +185,14 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+
+-- ── Step 5: register in schema_migrations ─────────────────────────────────
+-- v1.43.2 (DevOps R1 hardening): docker-entrypoint-initdb.d runs init
+-- scripts on a fresh data directory but never goes through
+-- scripts/apply_db_migrations.sh (which is what normally stamps the
+-- row). Migration 43 backfills 00-42; 44 and 45 must self-register or
+-- a fresh install will show them physically applied but untracked.
+INSERT INTO schema_migrations (filename, applied_at)
+VALUES ('45_cascade_to_restrict.sql', NOW())
+ON CONFLICT (filename) DO NOTHING;

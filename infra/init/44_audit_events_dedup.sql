@@ -59,3 +59,13 @@ BEGIN
     END;
   END IF;
 END $$;
+
+
+-- ── Register in schema_migrations ─────────────────────────────────────────
+-- v1.43.2 (DevOps R1 hardening): see 45_cascade_to_restrict.sql for the
+-- rationale — fresh installs run init scripts via docker-entrypoint
+-- and never go through apply_db_migrations.sh, so the migration must
+-- self-stamp here.
+INSERT INTO schema_migrations (filename, applied_at)
+VALUES ('44_audit_events_dedup.sql', NOW())
+ON CONFLICT (filename) DO NOTHING;

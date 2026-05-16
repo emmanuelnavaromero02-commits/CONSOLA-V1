@@ -54,14 +54,38 @@ def test_migration_45_walks_information_schema_for_cascade_fks():
 def test_migration_45_targets_critical_tables_only():
     """The conversion is opt-in to the chain that motivated the audit
     finding — accidental tenant/workspace/user mass-delete. We must
-    NOT touch unrelated CASCADE FKs (e.g. rag_chunks → rag_sources)."""
+    NOT touch unrelated CASCADE FKs (e.g. rag_chunks → rag_sources).
+
+    v1.43.2 (DB R1 hardening): refresh_tokens / user_sessions were
+    REMOVED from this list — see SQL comment for the regression
+    they would have caused in auth.delete_user."""
     src = _src()
     target_tables = (
         "user_workspace_roles", "conversations", "conversation_messages",
-        "workspaces", "decisions", "refresh_tokens", "user_sessions",
+        "workspaces", "decisions",
     )
+    # The IN-list segment of the FK-walk CTE; isolate it so we only check
+    # presence inside the WHERE tc.table_name IN (...) block, not
+    # incidental matches elsewhere in the file. The block ends at the
+    # first ``)`` that is on its own indentation level after at least
+    # one quoted identifier.
+    fk_in_clause = re.search(
+        r"AND tc\.table_name\s+IN\s*\(\s*\n(.*?)\n\s*\)",
+        src, re.DOTALL,
+    )
+    assert fk_in_clause, "FK IN-clause not found"
+    fk_body = fk_in_clause.group(1)
+
     for tbl in target_tables:
-        assert f"'{tbl}'" in src, f"missing target table {tbl}"
+        assert f"'{tbl}'" in fk_body, f"missing target table {tbl}"
+
+    # Auth-lifecycle data must NOT be flipped — would break
+    # auth.delete_user (bare DELETE FROM users WHERE id = $1).
+    for forbidden in ("refresh_tokens", "user_sessions"):
+        assert f"'{forbidden}'" not in fk_body, (
+            f"{forbidden} must not be in the FK-conversion IN-list — "
+            "see SQL comment and tests/test_cascade_to_restrict.py:test_migration_45_targets_critical_tables_only"
+        )
     # And explicitly NOT in the tables that should keep CASCADE
     # (rag_chunks parent_id → cleaning up RAG chunks is intentional).
     assert "'rag_chunks'" not in src
@@ -135,3 +159,44 @@ def test_migration_45_no_secret_columns_snapshotted_directly():
             f"trigger must NOT attach to {forbidden} — "
             f"would snapshot secret material into audit_deletes JSONB"
         )
+
+
+def test_migration_45_trigger_strips_password_hash_from_snapshot():
+    """v1.43.2 (Security R1 hardening): the trigger DOES attach to
+    ``users``, which carries ``password_hash`` (bcrypt). The JSONB
+    snapshot must strip every known secret-shaped column so a user
+    deletion never persists a crackable hash into audit_deletes."""
+    src = _src()
+    # The trigger function must reference a JSONB subtraction expression
+    # that strips at minimum password_hash.
+    assert "to_jsonb(OLD)" in src
+    assert "- 'password_hash'" in src, (
+        "soft_delete_audit_trigger must strip password_hash from the "
+        "JSONB snapshot — otherwise every users-row DELETE persists a "
+        "crackable bcrypt hash into audit_deletes."
+    )
+    # Defense-in-depth: also strip a broader set so a future column
+    # named ``token`` / ``api_key`` / ``secret`` doesn't leak.
+    for keyword in ("password", "token", "api_key", "secret"):
+        assert f"- '{keyword}'" in src, (
+            f"trigger should strip '{keyword}' — defense-in-depth for "
+            "future schema additions that match a sensitive name."
+        )
+
+
+def test_migration_45_audit_deletes_revoked_from_public():
+    """v1.43.2 (Security R1 hardening): audit_deletes carries PII
+    snapshots (email, full_name from users) and must not be readable
+    by arbitrary service roles. Mirror the vault_entries posture."""
+    src = _src()
+    assert "REVOKE ALL ON audit_deletes FROM PUBLIC" in src
+
+
+def test_migration_45_self_registers_in_schema_migrations():
+    """v1.43.2 (DevOps R1 hardening): fresh installs run init scripts
+    via docker-entrypoint and never call apply_db_migrations.sh, so
+    the migration must INSERT its own row into schema_migrations."""
+    src = _src()
+    assert "INSERT INTO schema_migrations" in src
+    assert "'45_cascade_to_restrict.sql'" in src
+    assert "ON CONFLICT (filename) DO NOTHING" in src
