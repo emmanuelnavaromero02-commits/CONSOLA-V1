@@ -172,6 +172,30 @@ def test_local_compose_app_services_set_app_env(svc):
     )
 
 
+def test_console_system_info_exposes_dev_mode_flag():
+    """v1.43.2 (Frontend R1 hardening): the UI gates dev-only CTAs
+    (Studio Deploy DAG button) on this flag. Pre-R1 the button was
+    rendered unconditionally and clicking it in production surfaced
+    a confusing PermissionError from airflow_create_dag."""
+    src = (REPO / "console" / "app" / "main.py").read_text(encoding="utf-8")
+    # The endpoint exists and returns dev_mode based on APP_ENV.
+    assert '"dev_mode"' in src
+    assert '"app_env"' in src
+    # The flag flips on the documented dev-mode env values.
+    assert "{\"development\", \"dev\", \"local\", \"test\"}" in src
+
+
+def test_pipeline_js_hides_deploy_button_outside_dev_mode():
+    """v1.43.2 (Frontend R1 hardening): pipeline.js must consult
+    /api/system/info and disable the Deploy DAG button when
+    dev_mode is false."""
+    js = (REPO / "console" / "app" / "static" / "js" / "viewers"
+          / "pipeline.js").read_text(encoding="utf-8")
+    assert "/api/system/info" in js
+    assert "dev_mode" in js
+    assert "btn-deploy" in js
+
+
 def test_aws_compose_app_env_defaults_production():
     """The AWS compose must keep APP_ENV pointing at production by
     default. A drift here would silently flip a prod node into dev."""

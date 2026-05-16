@@ -99,12 +99,30 @@ def test_bandit_scans_all_python_services():
     assert "cartridges" in raw, "security.yml missing cartridges scope"
 
 
-def test_pip_audit_iterates_each_requirements_file():
+def test_pip_audit_discovers_every_requirements_file():
+    """v1.43.2 (DevOps R1 hardening): the pip-audit job now uses
+    ``find`` to discover every requirements.txt in the tree —
+    previously it hand-listed 5 services and missed cartridge +
+    test requirements. A CVE there would have shipped undetected."""
     raw = SECURITY_WF.read_text(encoding="utf-8")
-    for svc in ("console", "workspace", "vault", "refinement", "mcp-infra"):
-        assert f"{svc}/requirements.txt" in raw, (
-            f"security.yml pip-audit step missing {svc}/requirements.txt"
-        )
+    assert "find . -name requirements.txt" in raw, (
+        "security.yml must discover requirements.txt at runtime, not "
+        "hand-list a static set of services"
+    )
+    # All real requirements.txt files in the repo must therefore be
+    # implicitly covered. Sanity-check that the discovery is broad
+    # enough to include cartridges + tests.
+    real_paths = sorted(
+        str(p.relative_to(REPO))
+        for p in REPO.rglob("requirements.txt")
+        if ".git" not in p.parts and "node_modules" not in p.parts
+        and "vendor" not in p.parts
+    )
+    # We expect to see at least the 5 services + 4 cartridges + tests.
+    assert any("cartridges/" in p for p in real_paths), (
+        "test sanity: no cartridge requirements.txt found in repo — "
+        "expected the find-loop to cover them"
+    )
 
 
 def test_lint_workflow_scans_all_python_services():
@@ -112,3 +130,21 @@ def test_lint_workflow_scans_all_python_services():
     for svc in ("console", "workspace", "vault", "refinement", "mcp-infra",
                 "cartridges"):
         assert svc in raw, f"lint.yml does not include {svc} in ruff scope"
+
+
+@pytest.mark.parametrize("path", [LINT_WF, SECURITY_WF],
+                         ids=lambda p: p.name)
+def test_workflows_declare_least_privilege_permissions(path):
+    """v1.43.2 (DevOps R1 hardening): default GITHUB_TOKEN scope is
+    overly permissive (write to most APIs). Both workflows must
+    explicitly downgrade to ``contents: read``."""
+    doc = _load(path)
+    perms = doc.get("permissions")
+    assert perms is not None, (
+        f"{path.name} must declare a top-level ``permissions:`` block "
+        "to scope GITHUB_TOKEN — default is over-privileged."
+    )
+    assert perms.get("contents") == "read", (
+        f"{path.name} permissions.contents must be ``read``, got "
+        f"{perms.get('contents')!r}"
+    )

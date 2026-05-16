@@ -62,7 +62,62 @@ app.add_middleware(RequestIDMiddleware)
 app.include_router(health_router)
 app.include_router(skills_router)
 
-app.mount("/mcp/rpc", InternalApiKeyASGIGuard(_mcp_app))
+
+# v1.43.2 (LLM R1 hardening): /mcp/* must respect startup state. If
+# lifespan recorded a failure (job_runner schema missing, etc.), the
+# cartridge is in rotation only to /health (which already returns
+# 503) — but a peer with the internal API key could still call
+# /mcp/rpc | /mcp/tools | /mcp/invoke and trigger the very schema gap
+# that flagged startup as broken. Fail-closed across the whole MCP
+# surface keeps behaviour consistent with /health.
+
+class _MCPStartupGuard:
+    """ASGI wrapper that 503s when startup_ok=False for /mcp/* paths."""
+
+    def __init__(self, inner, fastapi_app: FastAPI):
+        self._inner = inner
+        self._app = fastapi_app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and not getattr(
+            self._app.state, "startup_ok", False,
+        ):
+            errors = list(getattr(self._app.state, "startup_errors", []) or [])
+            body = (
+                b'{"error":"cartridge_not_ready","startup_errors":'
+                + str(errors).replace("'", '"').encode("utf-8")
+                + b"}"
+            )
+            await send({
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self._inner(scope, receive, send)
+
+
+app.mount("/mcp/rpc", _MCPStartupGuard(InternalApiKeyASGIGuard(_mcp_app), app))
+
+
+def _require_startup_ok(request: "Request") -> None:
+    """FastAPI dependency for the REST adapter endpoints (/mcp/tools,
+    /mcp/invoke, /mcp-reload). Mirrors _MCPStartupGuard for the
+    ASGI-mounted /mcp/rpc."""
+    from fastapi import HTTPException
+    if not getattr(request.app.state, "startup_ok", False):
+        errors = list(getattr(request.app.state, "startup_errors", []) or [])
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "cartridge_not_ready", "startup_errors": errors},
+        )
+
+
+from fastapi import Request  # noqa: E402 — used by _require_startup_ok
 
 
 # ── REST adapter — contract for the MODecissions console registry ─────────────
@@ -93,7 +148,7 @@ def _tool_schema(tool_fn) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
 
-@app.get("/mcp/tools", dependencies=[Depends(verify_api_key)])
+@app.get("/mcp/tools", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 async def mcp_tools():
     """Return all registered MCP tools in the console registry format."""
     tool_list = await mcp.list_tools()
@@ -113,7 +168,7 @@ async def mcp_tools():
     return {"tools": tools}
 
 
-@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
+@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 async def mcp_invoke(body: dict):
     """Invoke a tool by name with args. Returns the tool result."""
     tool_name = body.get("tool", "")
@@ -155,7 +210,7 @@ async def mcp_invoke(body: dict):
 
 # ── Custom tools reload ───────────────────────────────────────────────────────
 
-@app.post("/mcp-reload", dependencies=[Depends(verify_api_key)])
+@app.post("/mcp-reload", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
 def mcp_reload():
     count = load_custom_tools()
     return JSONResponse({"reloaded": count, "status": "ok"})

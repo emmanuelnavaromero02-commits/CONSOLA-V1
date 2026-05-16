@@ -156,3 +156,42 @@ def test_cartridge_health_returns_200_when_startup_clean(
     body = r.json()
     assert body["ok"] is True
     assert body["startup_errors"] == []
+
+
+# ── v1.43.2 (LLM R1 hardening): /mcp/* fail-closed when startup_ok=False ──
+
+@pytest.mark.parametrize("cartridge,service_label", CARTRIDGES)
+@pytest.mark.parametrize("path,method", [
+    ("/mcp/tools",  "GET"),
+    ("/mcp/invoke", "POST"),
+    ("/mcp/rpc",    "POST"),
+])
+def test_mcp_endpoints_return_503_when_startup_failed(
+    env_for_cartridges, cartridge, service_label, path, method, monkeypatch,
+):
+    """When the cartridge's startup recorded a failure, every /mcp/*
+    surface — REST adapters AND the mounted JSON-RPC app — must
+    refuse traffic with 503. Pre-R1 they'd serve normally and let a
+    peer trigger the very schema gap that flagged startup as broken."""
+    from fastapi.testclient import TestClient
+
+    main_mod = _isolated_cartridge(cartridge)
+
+    async def _boom():
+        raise RuntimeError("simulated DB outage")
+    monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _boom)
+
+    headers = {
+        "X-Internal-Api-Key": "x" * 64,
+        "X-Internal-Service": "console",
+    }
+    with TestClient(main_mod.app) as client:
+        if method == "GET":
+            r = client.get(path, headers=headers)
+        else:
+            r = client.post(path, headers=headers, json={})
+
+    assert r.status_code == 503, (
+        f"{cartridge} {method} {path} must return 503 when startup_ok=False, "
+        f"got {r.status_code} body={r.text!r}"
+    )

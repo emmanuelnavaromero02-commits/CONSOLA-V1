@@ -76,12 +76,24 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
         main.catalog_service._seed_if_empty = lambda: None
 
     # v1.43.2 (Codex P1-5): /health now requires app.state.startup_ok=True
-    # for a 200. Most route tests create a TestClient WITHOUT a ``with``
-    # block, so lifespan never runs. Pre-seed a clean state — dedicated
-    # fail-fast tests (tests/test_cartridge_startup_fail_fast.py) drive
-    # lifespan end-to-end to exercise the failure path.
+    # for a 200. Pre-seed a clean state for tests that build a TestClient
+    # WITHOUT a ``with`` block (so lifespan never runs).
     main.app.state.startup_ok = True
     main.app.state.startup_errors = []
+
+    # v1.43.2 (LLM R1 hardening): tests that DO enter the TestClient
+    # ``with`` block run the lifespan end-to-end, which calls
+    # job_runner.ensure_schema + cleanup_stale against a real Postgres.
+    # Without a DB, the lifespan records errors and flips startup_ok
+    # back to False — and /mcp/* now refuses traffic with 503. Stub
+    # job_runner so the lifespan completes cleanly. The dedicated
+    # fail-fast tests (tests/test_cartridge_startup_fail_fast.py) own
+    # the failure-path coverage and apply their own monkeypatch.
+    if hasattr(main, "job_runner"):
+        async def _ok():
+            return None
+        main.job_runner.ensure_schema = _ok
+        main.job_runner.cleanup_stale = _ok
     return main
 
 

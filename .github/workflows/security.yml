@@ -17,6 +17,13 @@ on:
   schedule:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC — once a week.
 
+# v1.43.2 (DevOps R1 hardening): least-privilege GITHUB_TOKEN. We only
+# need read access to the source + write to upload-artifact, which sits
+# under ``actions:write`` (granted by default at the job level for
+# ``upload-artifact`` regardless of top-level scope).
+permissions:
+  contents: read
+
 jobs:
   bandit:
     runs-on: ubuntu-latest
@@ -37,8 +44,12 @@ jobs:
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
             -ll -f json -o bandit-report.json || true
-          # Second pass: human-readable + fail the job on
-          # HIGH severity issues.
+          # Second pass: human-readable + fail the job. ``-ll`` filters
+          # to MEDIUM+ severity findings (bandit's two-level threshold —
+          # one ``-l`` is LOW+, two ``-l`` is MEDIUM+, ``-lll`` is
+          # HIGH+). We deliberately fail on MEDIUM+ so a regression
+          # like shell=True or weak random is caught at PR time, not
+          # quarterly review.
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
             -ll
@@ -65,15 +76,24 @@ jobs:
         run: |
           set +e
           fail=0
-          for req in console/requirements.txt \
-                     workspace/requirements.txt \
-                     vault/requirements.txt \
-                     refinement/requirements.txt \
-                     mcp-infra/requirements.txt; do
-            if [ ! -f "$req" ]; then
-              echo "= $req does not exist, skipping ="
-              continue
-            fi
+          # v1.43.2 (DevOps R1 hardening): discover every requirements.txt
+          # at runtime instead of hand-listing 5 services. The previous
+          # hand-list missed the 4 cartridge requirements + tests
+          # requirements — a CVE there would ship to prod undetected.
+          # Excludes .git/ and any nested vendor/ trees.
+          REQUIREMENTS=$(find . -name requirements.txt \
+            -not -path './.git/*' \
+            -not -path './*/vendor/*' \
+            -not -path './*/node_modules/*' \
+            | sort)
+          if [ -z "$REQUIREMENTS" ]; then
+            echo "::error::no requirements.txt files found"
+            exit 1
+          fi
+          echo "Discovered requirements files:"
+          echo "$REQUIREMENTS"
+          echo "---"
+          while IFS= read -r req; do
             echo "=== Auditing $req ==="
             pip-audit -r "$req" --vulnerability-service=osv
             rc=$?
@@ -81,7 +101,7 @@ jobs:
               fail=1
               echo "::warning::pip-audit found issues in $req"
             fi
-          done
+          done <<< "$REQUIREMENTS"
           # Exit non-zero only when at least one requirements file
           # surfaced a vulnerability. This keeps the signal loud
           # without breaking on every transient network error from
