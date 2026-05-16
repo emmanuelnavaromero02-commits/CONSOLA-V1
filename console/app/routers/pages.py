@@ -103,3 +103,15 @@ async def apps_gallery():
 )
 async def cartridges_page():
     return FileResponse(STATIC / "cartridges.html")
+
+
+# Sprint v1.42 — copilot chat page. The router-level dependency
+# (require_permission("copilot.use")) means a viewer/analyst/admin
+# can open the page; the JS then drives /api/copilot/* which apply
+# their own permission checks per tool risk level.
+@router.get(
+    "/copilot",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+async def copilot_page():
+    return FileResponse(STATIC / "copilot.html")
