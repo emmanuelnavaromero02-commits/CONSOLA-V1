@@ -15,6 +15,11 @@ import { loginViaApi } from "../fixtures/auth";
 
 const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
 
+// v1.44.3.2.1: this spec mixes unauth + authed checks. Force the
+// unauth surface for the WHOLE file by clearing storage state; the
+// authed tests inside re-mint a session via loginViaApi.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 interface ApiCheck {
   method:    "GET" | "POST" | "PUT" | "DELETE";
   path:      string;
@@ -90,7 +95,10 @@ test.describe("Backend API — authenticated", () => {
     test(`${check.method} ${check.path} returns expected shape`, async ({
       page,
     }) => {
-      await loginViaApi(page);
+      // v1.44.3.2.1: fixture signature changed — loginViaApi now
+      // takes an APIRequestContext (cookies persist on the context)
+      // and returns the response. Authed page.request follows.
+      await loginViaApi(page.request);
       const response = await page.request.fetch(`${LEGACY}${check.path}`, {
         method: check.method,
         data: check.body,
