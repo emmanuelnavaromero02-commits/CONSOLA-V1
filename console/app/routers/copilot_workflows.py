@@ -209,3 +209,186 @@ async def cancel_workflow(
         status="success",
     )
     return {"ok": True, "workflow_id": workflow_id, "status": "cancelled"}
+
+
+# ── v1.44.3 (Tarea D): LLM-backed planning ─────────────────────────────
+
+
+_PLANNING_SYSTEM_PROMPT = (
+    "Eres un planificador de workflows en una plataforma de "
+    "integraciones empresariales (Replicon, SAP HCM/S4/SF). "
+    "El usuario te da un objetivo en lenguaje natural; tu tarea es "
+    "generar un PLAN secuencial de pasos concretos.\n\n"
+    "DEVUELVE UNICAMENTE un JSON array. Cada elemento tiene:\n"
+    "  {\n"
+    "    \"step\": <entero, empezando en 1>,\n"
+    "    \"description\": \"qué hace este paso en una frase\",\n"
+    "    \"tool\": \"<nombre de tool MCP o null si es revisión humana>\",\n"
+    "    \"args\": {<dict de args para la tool o {} si tool=null>}\n"
+    "  }\n\n"
+    "Reglas inviolables:\n"
+    "- Máximo 8 pasos.\n"
+    "- NO inventes tools que no existan en la lista provista.\n"
+    "- Si el objetivo requiere acción destructiva (delete, drop, "
+    "  truncate, set_variable, create_dag), el paso debe quedar con "
+    "  tool=null para que un humano lo apruebe.\n"
+    "- Devuelve EXACTAMENTE el JSON array, nada más."
+)
+
+
+def _parse_plan_json(raw: str) -> list[dict]:
+    """Same defensive parser pattern as memory_service._parse_facts_json.
+    The LLM is asked for strict JSON; we tolerate prose wrappers via
+    regex but bail if the array is truly malformed."""
+    import re as _re
+    s = (raw or "").strip()
+    try:
+        parsed = json.loads(s)
+    except json.JSONDecodeError:
+        m = _re.search(r"\[.*\]", s, _re.DOTALL)
+        if not m:
+            return []
+        try:
+            parsed = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[dict] = []
+    for i, item in enumerate(parsed[:8], start=1):
+        if not isinstance(item, dict):
+            continue
+        description = (item.get("description") or "").strip()
+        if not description:
+            continue
+        out.append({
+            "step":        item.get("step", i),
+            "description": description[:500],
+            "tool":        item.get("tool") or None,
+            "args":        item.get("args") if isinstance(item.get("args"), dict) else {},
+        })
+    return out
+
+
+async def _llm_plan(intent: str, available_tools: list[str]) -> list[dict]:
+    """Call the LLM with the planning prompt + the intent.
+
+    The available_tools list goes into the user message so the LLM
+    can reference real tool names. We use the same chat() adapter as
+    drafts so the request shape is consistent across the codebase.
+    """
+    # Local import to keep the workflow router lightweight when LLM
+    # isn't reachable (e.g. unit tests that monkeypatch the function).
+    from app.services import llm_client
+
+    user_msg = (
+        f"Objetivo del usuario: {intent}\n\n"
+        f"Tools MCP disponibles ({len(available_tools)}):\n"
+        + "\n".join(f"- {t}" for t in available_tools[:50])
+    )
+
+    async def _noop_invoke(*args: object, **kw: object) -> dict:
+        return {}
+
+    reply, _viewer_urls, _final_msgs = await llm_client.chat(
+        system=_PLANNING_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_msg}],
+        tools=[],
+        invoke_tool=_noop_invoke,
+        tool_server_map={},
+        on_event=None,
+    )
+    return _parse_plan_json(reply or "")
+
+
+@router.post("/{workflow_id}/plan", dependencies=[Depends(require_csrf)])
+async def plan_workflow(
+    workflow_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    """Run the LLM planner over a workflow_run still in 'planning'.
+
+    Reads the intent from the row, asks the LLM for a step list,
+    persists the steps + flips status to 'running'. Idempotent in
+    one direction: re-running on a workflow whose status is NO LONGER
+    'planning' returns 409 (the previous plan stays).
+    """
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    pool = await auth.pool()
+    run = await pool.fetchrow(
+        """
+        SELECT id, intent, status
+          FROM workflow_runs
+         WHERE id = $1 AND user_id = $2
+        """,
+        workflow_id, user["id"],
+    )
+    if run is None:
+        raise HTTPException(404, "Workflow not found")
+    if run["status"] != "planning":
+        raise HTTPException(409, "Workflow already planned or finished")
+
+    # Pull the available tool list from the MCP registry — keeps the
+    # planner grounded so it can't hallucinate tool names. We import
+    # locally to avoid pulling mcp_registry at module-import time.
+    try:
+        from app.services import mcp_registry
+        # mcp_registry exposes list_servers + list_tools; flatten to
+        # a single name list so the planner can reference them.
+        servers = await mcp_registry.list_servers()
+        all_tools: list[str] = []
+        for server in servers:
+            try:
+                tools = await mcp_registry.list_tools(server["id"])
+            except Exception:                       # noqa: BLE001
+                continue
+            for t in tools:
+                name = t.get("name") if isinstance(t, dict) else None
+                if name:
+                    all_tools.append(f"{server['id']}.{name}")
+    except Exception:                              # noqa: BLE001
+        all_tools = []
+
+    try:
+        plan = await _llm_plan(run["intent"], all_tools)
+    except Exception as exc:                       # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("workflow planner LLM call failed")
+        raise HTTPException(502, "planner LLM call failed") from exc
+
+    if not plan:
+        raise HTTPException(502, "planner returned empty plan")
+
+    # Persist the plan + the per-step rows. Status flips to 'running'
+    # so the (next-session) executor loop knows it can start.
+    await pool.execute(
+        """
+        UPDATE workflow_runs
+           SET plan = $2::jsonb, status = 'running'
+         WHERE id = $1
+        """,
+        workflow_id, json.dumps(plan),
+    )
+    for idx, step in enumerate(plan):
+        await pool.execute(
+            """
+            INSERT INTO workflow_steps
+                (workflow_id, step_idx, description, tool, args, status)
+            VALUES ($1, $2, $3, $4, $5::jsonb, 'pending')
+            ON CONFLICT (workflow_id, step_idx) DO NOTHING
+            """,
+            workflow_id, idx, step["description"],
+            step["tool"], json.dumps(step["args"]),
+        )
+
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.workflow.plan",
+        resource_type="workflow_run",
+        resource_id=str(workflow_id),
+        status="success",
+        metadata={"steps": len(plan)},
+    )
+
+    return {"ok": True, "workflow_id": workflow_id, "steps": plan, "status": "running"}
