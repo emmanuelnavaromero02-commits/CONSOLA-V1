@@ -77,6 +77,57 @@
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
   --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.10);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.18);
+
+  /* ── v1.44.1: spacing scale (Tarea A) ────────────────────────────── */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* ── v1.44.1: extended radius scale ──────────────────────────────── */
+  --radius-xl:   16px;
+  --radius-pill: 9999px;
+
+  /* ── v1.44.1: extended shadow scale ──────────────────────────────── */
+  --shadow-xl: 0 24px 48px rgba(15, 23, 42, 0.22);
+
+  /* ── v1.44.1: font-size scale ────────────────────────────────────── */
+  --font-size-xs:  11px;
+  --font-size-sm:  12px;
+  --font-size-md:  14px;
+  --font-size-lg:  16px;
+  --font-size-xl:  20px;
+  --font-size-2xl: 24px;
+  --font-size-3xl: 32px;
+
+  /* ── v1.44.1: z-index scale (single source of truth) ─────────────── */
+  --z-base:     1;
+  --z-dropdown: 100;
+  --z-fab:      900;
+  --z-modal:    1000;
+  --z-toast:    2000;
+  --z-tooltip:  3000;
+
+  /* ── v1.44.1: transitions ────────────────────────────────────────── */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* ── v1.44.1: info colour (sibling of success/warning/danger) ────── */
+  --info:      #0a6ed1;
+  --info-soft: rgba(10, 110, 209, 0.10);
+
+  /* ── v1.44.1: semantic aliases used by components.css ────────────── */
+  --text-primary:   var(--text);
+  --text-secondary: var(--text2);
+  --text-inverse:   #ffffff;
+  --bg-primary:     var(--bg);
+  --bg-secondary:   var(--bg2);
+  --bg-card:        var(--surface);
+  --border-default: var(--border);
+  --border-subtle:  rgba(15, 23, 42, 0.06);
 }
 
 /* ── Dark mode ────────────────────────────────────────────────────────
@@ -127,6 +178,15 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.68);
+
+  /* v1.44.1 dark-mode overrides for the new semantic aliases. */
+  --text-inverse:   #0f172a;
+  --bg-card:        var(--surface);
+  --border-subtle:  rgba(226, 232, 240, 0.06);
+
+  --info:      #4ea3e0;
+  --info-soft: rgba(78, 163, 224, 0.16);
 }
 
 /* ── Legacy aliases ───────────────────────────────────────────────────
