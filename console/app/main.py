@@ -181,6 +181,14 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Internal-Api-Key", "x-api-key", "x-internal-service"],
 )
 
+# Sprint v1.41.1 — Request correlation IDs. Registered AFTER CORS so it
+# wraps the chain as the outermost layer (Starlette builds the stack from
+# user_middleware in reverse: last registered = outermost). Every response
+# carries X-Request-ID; structured logs pull it from a contextvar.
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 

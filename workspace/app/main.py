@@ -57,6 +57,12 @@ def _hdr_for(server: str) -> dict[str, str]:
 
 app = FastAPI(title="MODecissionsPaaS Workspace")
 
+# Sprint v1.41.1 — correlation IDs (X-Request-ID propagated to every
+# response + contextvar-exposed for structured logs).
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 
 def _allowed_origins() -> list[str]:
     raw = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000")

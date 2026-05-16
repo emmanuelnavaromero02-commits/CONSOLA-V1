@@ -85,6 +85,17 @@ class JSONFormatter(logging.Formatter):
         for key in ("request_id", "user_id", "workspace_id", "endpoint"):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)
+        # Sprint v1.41.1: fall back to the contextvar so any log emitted
+        # inside an HTTP handler gets correlated, even when the caller
+        # didn't pass extra={"request_id": ...} explicitly.
+        if "request_id" not in payload:
+            try:
+                from app.middleware.request_id import request_id_var
+                rid = request_id_var.get()
+                if rid:
+                    payload["request_id"] = rid
+            except Exception:
+                pass
         return json.dumps(payload, default=str)
 
 

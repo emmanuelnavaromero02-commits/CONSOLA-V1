@@ -81,6 +81,11 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+# Sprint v1.41.1 — correlation IDs.
+from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
+
+app.add_middleware(RequestIDMiddleware)
+
 
 class InvokeRequest(BaseModel):
     tool: str
