@@ -52,8 +52,20 @@ def test_package_json_present_and_parseable():
             f"v1.44.2 brief deps: missing {dep!r}"
         )
     # next must pin a 14.x release; the brief says Next 14+.
-    assert pkg["dependencies"]["next"].startswith("14."), (
-        f"next pin should be 14.x; got {pkg['dependencies']['next']}"
+    # v1.44.2 R-Mac-2: lower bound is 14.2.21 — earlier 14.2.x
+    # carries the moderate + critical advisories Codex's Mac audit
+    # flagged. Accept caret (^) or tilde (~) ranges as long as the
+    # floor is ≥ 14.2.21.
+    next_pin = pkg["dependencies"]["next"]
+    assert next_pin.lstrip("^~").startswith("14."), (
+        f"next pin should be 14.x; got {next_pin}"
+    )
+    m = re.match(r"[\^~]?14\.(\d+)\.(\d+)", next_pin)
+    assert m, f"unparseable next pin: {next_pin}"
+    minor, patch = int(m.group(1)), int(m.group(2))
+    assert (minor, patch) >= (2, 21), (
+        f"next pin must be >= 14.2.21 (Codex Mac audit R-Mac-2 — "
+        f"14.2.15 had moderate + critical CVEs). Got {next_pin}"
     )
 
 
