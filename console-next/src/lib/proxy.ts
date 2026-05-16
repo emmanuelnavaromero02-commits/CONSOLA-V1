@@ -39,10 +39,11 @@ const REQ_DROP = new Set([
   "proxy-authenticate",
 ]);
 
-// Response headers we strip from upstream. We re-encode the body
-// via `.text()`, so framing headers from upstream are no longer
-// truthful and would confuse browsers (Chrome aborts the response
-// when content-length doesn't match the bytes it actually received).
+// Response headers we strip from upstream. Node's fetch already
+// decoded `content-encoding`, so leaving the header in place
+// would tell the browser to decode again and corrupt the body.
+// `content-length` / `transfer-encoding` are similarly framing
+// claims that no longer match what we forward.
 const RES_DROP = new Set([
   "content-length",
   "content-encoding",
@@ -51,9 +52,29 @@ const RES_DROP = new Set([
   "keep-alive",
 ]);
 
+// Status codes that MUST NOT carry a body per RFC 7230. Streaming
+// any bytes for these into NextResponse triggers undici's
+// "Response with null body status cannot have body" abort.
+const NO_BODY_STATUS = new Set([204, 205, 304]);
+
 export interface ProxyOptions {
   /** Absolute upstream URL to forward to. */
   targetUrl: string;
+}
+
+/**
+ * Rewrite a `Location` header so the browser doesn't see the
+ * docker-internal hostname (e.g. `http://console:8000/dashboard`).
+ * Strategy: if the value starts with `${BACKEND_URL}`, strip that
+ * prefix and return the path only — same-origin from the
+ * browser's view. Anything else (path-relative, an external URL)
+ * is returned verbatim.
+ */
+function rewriteLocation(loc: string): string {
+  if (loc.startsWith(BACKEND_URL)) {
+    return loc.slice(BACKEND_URL.length) || "/";
+  }
+  return loc;
 }
 
 export async function proxyTo(
@@ -93,9 +114,14 @@ export async function proxyTo(
 
   const responseHeaders = new Headers();
   upstream.headers.forEach((value, key) => {
-    if (!RES_DROP.has(key.toLowerCase())) {
-      responseHeaders.set(key, value);
-    }
+    const lower = key.toLowerCase();
+    if (RES_DROP.has(lower)) return;
+    // Don't copy Set-Cookie here — we re-append each value below
+    // via getSetCookie() so multi-cookie responses don't get
+    // collapsed into one comma-joined header. Don't copy Location
+    // either — we rewrite it below to strip the docker hostname.
+    if (lower === "set-cookie" || lower === "location") return;
+    responseHeaders.set(key, value);
   });
 
   // Set-Cookie can appear multiple times in the upstream response
@@ -106,14 +132,31 @@ export async function proxyTo(
   // Next 14's runtime).
   const getSetCookie = (upstream.headers as { getSetCookie?: () => string[] }).getSetCookie;
   if (typeof getSetCookie === "function") {
-    responseHeaders.delete("set-cookie");
     for (const cookie of getSetCookie.call(upstream.headers)) {
       responseHeaders.append("set-cookie", cookie);
     }
   }
 
-  const responseBody = await upstream.text();
-  return new NextResponse(responseBody, {
+  // Rewrite the Location header to strip the docker-internal
+  // hostname. FastAPI's RedirectResponse emits an absolute URL
+  // built from the request's Host header (`Host: console:8000`
+  // inside the docker network) — without rewriting, the browser
+  // would chase a hostname it can't resolve.
+  const upstreamLocation = upstream.headers.get("location");
+  if (upstreamLocation !== null) {
+    responseHeaders.set("location", rewriteLocation(upstreamLocation));
+  }
+
+  // RFC 7230: 204 / 205 / 304 + HEAD requests carry no body.
+  // Streaming bytes for these into NextResponse trips undici's
+  // null-body-status assertion. For everything else we forward
+  // upstream.body as-is — keeps binary downloads intact (CSV /
+  // PDF / asset blobs) and avoids buffering the whole response
+  // in memory.
+  const noBody =
+    NO_BODY_STATUS.has(upstream.status) || request.method === "HEAD";
+
+  return new NextResponse(noBody ? null : upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
     headers: responseHeaders,

@@ -25,7 +25,20 @@ const PUBLIC_PREFIXES = [
   "/auth/",
 ];
 
-const AUTH_COOKIE_CANDIDATES = ["access_token", "session", "jwt", "auth_token"];
+// v1.44.3.2.2 R-Mac-4: the FastAPI backend (post-R-Mac CSRF
+// dance) sets ``mod_session`` and ``refresh_token`` on a
+// successful POST /auth/login. Without these names in the
+// candidate list, the middleware redirects an authenticated
+// user straight back to /login on the next navigation —
+// silent infinite-loop bug.
+const AUTH_COOKIE_CANDIDATES = [
+  "mod_session",
+  "refresh_token",
+  "access_token",
+  "session",
+  "jwt",
+  "auth_token",
+];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
