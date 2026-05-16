@@ -462,7 +462,12 @@ class DuckDBEngine:
         """
         try:
             tree = sqlglot.parse_one(sql, read='duckdb')
-        except sqlglot.errors.ParseError as exc:
+        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
+            # v1.43.1 (Claude B9): TokenError fires on lexer failures
+            # (e.g. unbalanced quotes, raw garbage) before sqlglot even
+            # reaches the parse step. The audit's default-deny posture
+            # treats those the same as ParseError — the caller MUST NOT
+            # see the query execute.
             raise ValueError(
                 f"SQL failed AST parse — default-deny applied: {exc}"
             ) from exc
