@@ -359,6 +359,80 @@ async def _annotate_citation_freshness(citation: dict) -> dict:
     return citation
 
 
+# ── v1.43: retry with exponential backoff ──────────────────────────────────
+
+# A tool call may transiently fail (cartridge restart, network hiccup,
+# downstream service hot-deploy). Retrying twice with backoff catches
+# the typical recoverable failures without flooding the upstream — by
+# the third attempt either the service is back or it's genuinely down.
+
+_TOOL_RETRY_MAX_ATTEMPTS = 3
+_TOOL_RETRY_BASE_DELAY_S = 1.0
+
+
+async def _invoke_tool_with_retry(server_id: str, tool: str, args: dict) -> dict:
+    """Wrap ``mcp_registry.invoke`` with exponential backoff retry.
+
+    Returns either the tool's real result OR an error envelope shaped
+    so the LLM can read it on the next turn:
+
+        {"_error": True,
+         "error_type": "<exception class>",
+         "error_message": "<sanitised>",
+         "tool": "<bare>",
+         "server": "<server_id>",
+         "_meta": {"user_facing": "..."}}
+
+    The LLM gets the envelope as a regular tool_result and explains
+    the failure to the user. We never raise here — that would crash
+    the whole turn instead of degrading gracefully.
+    """
+    import asyncio
+    import logging as _lg
+    log = _lg.getLogger(__name__)
+
+    last_exc: Exception | None = None
+    for attempt in range(_TOOL_RETRY_MAX_ATTEMPTS):
+        try:
+            return await mcp_registry.invoke(server_id, tool, args)
+        except Exception as exc:                     # noqa: BLE001
+            last_exc = exc
+            if attempt < _TOOL_RETRY_MAX_ATTEMPTS - 1:
+                delay = _TOOL_RETRY_BASE_DELAY_S * (2 ** attempt)
+                log.warning(
+                    "copilot.tool_retry",
+                    extra={
+                        "attempt": attempt + 1,
+                        "delay_s": delay,
+                        "server": server_id,
+                        "tool":   tool,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                await asyncio.sleep(delay)
+                continue
+            break
+
+    # Exhausted. Build a user-friendly envelope. The exception message
+    # is sanitised via _sanitise_error so SDK error strings (which
+    # sometimes echo Authorization headers) can't leak.
+    raw_msg = str(last_exc) if last_exc is not None else "unknown error"
+    return {
+        "_error":         True,
+        "error_type":     type(last_exc).__name__ if last_exc else "Unknown",
+        "error_message":  (_sanitise_error(raw_msg) or "")[:200],
+        "tool":           tool,
+        "server":         server_id,
+        "_meta": {
+            "user_facing": (
+                f"No pude conectar con {server_id} después de "
+                f"{_TOOL_RETRY_MAX_ATTEMPTS} intentos. Verifica que el "
+                f"servicio esté disponible y reintenta en unos minutos."
+            ),
+        },
+    }
+
+
 def _safe_uuid(value: str, *, what: str = "id") -> str:
     """Validate a UUID-shaped path parameter early so asyncpg can't
     bubble its InvalidTextRepresentationError up as a generic 500."""
@@ -783,17 +857,20 @@ async def _run_loop(
                 "args": scrubbed,
             }
 
-        # 3. Actually execute.
-        try:
-            result = await mcp_registry.invoke(server_id, bare_name, args)
-        except Exception as exc:                    # noqa: BLE001
+        # 3. Actually execute (v1.43: with retry + backoff so transient
+        # failures don't ruin the turn). _invoke_tool_with_retry never
+        # raises — on exhaustion it returns an error envelope shaped
+        # for the LLM to read on the next tool_result.
+        result = await _invoke_tool_with_retry(server_id, bare_name, args)
+        if result.get("_error"):
             invocations.append({**inv_base, "status": "error"})
             _audit(user=user, server=server_id, bare_name=bare_name, args=args,
                    risk_level=risk, conversation_id=conversation_id,
                    ip=ip, user_agent=user_agent, status="error",
-                   error=str(exc))
-            return {"error": "invocation failed",
-                    "tool": bare_name, "server": server_id}
+                   error=result.get("error_message"))
+            # Hand the envelope back to the LLM so it can explain the
+            # failure to the user in natural language.
+            return result
         is_error = isinstance(result, dict) and bool(result.get("error"))
         # v1.43: harvest citation evidence from the result. Failures here
         # are non-blocking — the conversation still works without them.
