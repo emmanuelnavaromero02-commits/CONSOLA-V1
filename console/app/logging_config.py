@@ -86,8 +86,7 @@ class JSONFormatter(logging.Formatter):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)
         # Sprint v1.41.1: fall back to the contextvar so any log emitted
-        # inside an HTTP handler gets correlated, even when the caller
-        # didn't pass extra={"request_id": ...} explicitly.
+        # inside an HTTP handler gets correlated.
         if "request_id" not in payload:
             try:
                 from app.middleware.request_id import request_id_var
