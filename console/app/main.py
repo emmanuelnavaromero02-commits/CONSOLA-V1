@@ -3553,8 +3553,10 @@ async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict
 
 from app.routers import cartridges as cartridges_router
 from app.routers import copilot as copilot_router
+from app.routers import dashboard as dashboard_router      # v1.44.1 Tarea E
 from app.routers import freshness as freshness_router
 from app.routers import metrics as metrics_router
+from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
 from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
@@ -3568,6 +3570,8 @@ app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)
 app.include_router(metrics_router.router)
 app.include_router(copilot_router.router)
+app.include_router(dashboard_router.router)               # v1.44.1 Tarea E
+app.include_router(onboarding_router.router)              # v1.44.1 Tarea F
 
 
 # v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST
