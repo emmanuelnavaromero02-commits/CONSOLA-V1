@@ -457,6 +457,83 @@ def test_warning_prepended_to_reply_in_turn_payload(copilot_module):
     assert "Aproximadamente 1500 empleados." in out["reply"]
 
 
+# ── R1 DBA fixes ───────────────────────────────────────────────────────────
+
+def test_oversize_citation_string_is_trimmed(copilot_module):
+    """v1.43 R1-DBA F1: a hostile cartridge returning a 1MB run_id must
+    not bloat conversation_messages.citations JSONB. Each string-shaped
+    field is capped at MAX_CITATION_FIELD_CHARS."""
+    cap = copilot_module._MAX_CITATION_FIELD_CHARS
+    huge_run = "x" * (cap + 5000)
+    cs = copilot_module._extract_citations(
+        "foo",
+        {"_meta": {"run_id": huge_run, "entity": "Y" * (cap + 1000),
+                   "timestamp": "Z" * (cap + 1000), "row_count": 1}},
+        "srv",
+    )
+    assert len(cs) == 1
+    # Length is capped (and the elision char is appended).
+    assert len(cs[0]["run_id"]) == cap
+    assert cs[0]["run_id"].endswith("…")
+    assert len(cs[0]["entity"]) == cap
+    assert len(cs[0]["timestamp"]) == cap
+    # Numeric field passes through.
+    assert cs[0]["row_count"] == 1
+
+
+def test_freshness_cache_avoids_n_plus_one(copilot_module, monkeypatch):
+    """v1.43 R1-DBA F2: when many citations share a cartridge, the
+    cache should reduce N lookups to one."""
+    calls = []
+
+    async def fake_lookup(cartridge):
+        calls.append(cartridge)
+        return {"cartridge": cartridge, "entities": [
+            {"entity": "Employee",  "age_seconds": 100},
+            {"entity": "TimeEntry", "age_seconds": 50},
+        ]}
+
+    import app.routers.freshness as fr
+    monkeypatch.setattr(fr, "freshness_for_cartridge_internal", fake_lookup)
+
+    cache: dict[str, dict] = {}
+    citations = [
+        {"source": "sap_hcm", "entity": "Employee"},
+        {"source": "sap_hcm", "entity": "TimeEntry"},
+        {"source": "sap_hcm", "entity": "Employee"},   # duplicate
+    ]
+    for c in citations:
+        _run(copilot_module._annotate_citation_freshness(c, cache=cache))
+
+    # All 3 citations share sap_hcm → only ONE backend call total.
+    assert calls == ["sap_hcm"]
+    # All got freshness assigned.
+    for c in citations:
+        assert c["freshness_level"] == "fresh"
+
+
+def test_freshness_cache_negative_caches_failures(copilot_module, monkeypatch):
+    """If the freshness lookup blows up, the cache stores an empty
+    entries list so subsequent citations don't re-hit the failing
+    backend within the same turn."""
+    calls = []
+
+    async def fake_lookup(cartridge):
+        calls.append(cartridge)
+        raise RuntimeError("DB down")
+
+    import app.routers.freshness as fr
+    monkeypatch.setattr(fr, "freshness_for_cartridge_internal", fake_lookup)
+
+    cache: dict[str, dict] = {}
+    for _ in range(5):
+        _run(copilot_module._annotate_citation_freshness(
+            {"source": "replicon", "entity": "Foo"}, cache=cache,
+        ))
+    # Only one call — the cache absorbed the rest.
+    assert calls == ["replicon"]
+
+
 def _make_chat_replying(text):
     """Tiny helper: a fake llm_client.chat that emits one assistant
     text block matching `text` and nothing else."""

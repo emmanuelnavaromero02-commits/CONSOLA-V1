@@ -61,7 +61,16 @@ async def freshness_for_cartridge_internal(cartridge: str) -> dict:
                 FROM extraction_runs
                 WHERE cartridge_id = ec.cartridge_id
                   AND entity_name  = ec.entity
-                ORDER BY started_at DESC NULLS LAST
+                -- v1.43.x R1-DBA: removed NULLS LAST. The index
+                -- idx_extraction_runs_cartridge_entity_started is
+                -- created as (cartridge_id, entity_name, started_at
+                -- DESC) which defaults to NULLS FIRST. Using NULLS LAST
+                -- on the query prevented PG from doing the index-only
+                -- top-1 seek. extraction_runs.started_at is set to
+                -- NOW() on every insert (00_schema.sql does not allow
+                -- NULL via the upstream codepath), so the NULL-aware
+                -- ordering is unnecessary defence in depth.
+                ORDER BY started_at DESC
                 LIMIT 1
             ) er ON TRUE
             WHERE ec.cartridge_id = $1

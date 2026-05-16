@@ -236,6 +236,20 @@ def _clip_tool_args(args: Any) -> Any:
 # citation per recent run, capped to the top-5 inside a single tool result
 # to keep JSONB payload bounded.
 
+_MAX_CITATION_FIELD_CHARS = 256
+
+
+def _trim_citation_field(value):
+    """Cap a string-shaped citation field at MAX_CITATION_FIELD_CHARS so a
+    misbehaving cartridge can't write a 1MB run_id straight into JSONB.
+
+    Non-strings pass through unchanged (int row_count, status enums, etc.).
+    """
+    if isinstance(value, str) and len(value) > _MAX_CITATION_FIELD_CHARS:
+        return value[: _MAX_CITATION_FIELD_CHARS - 1] + "…"
+    return value
+
+
 def _extract_citations(tool_name: str, tool_result: Any, server_id: str) -> list[dict]:
     """Return a list of citation dicts harvested from a single tool result.
 
@@ -255,14 +269,18 @@ def _extract_citations(tool_name: str, tool_result: Any, server_id: str) -> list
     if isinstance(meta, dict) and (
         meta.get("run_id") or meta.get("entity") or meta.get("timestamp")
     ):
+        # v1.43 R1-DBA: trim string fields so a hostile or buggy cartridge
+        # returning a 1MB run_id doesn't bloat conversation_messages.citations.
         citations.append({
             "source":    server_id,
             "tool":      tool_name,
-            "run_id":    meta.get("run_id"),
-            "entity":    meta.get("entity"),
-            "timestamp": meta.get("timestamp") or meta.get("extracted_at"),
+            "run_id":    _trim_citation_field(meta.get("run_id")),
+            "entity":    _trim_citation_field(meta.get("entity")),
+            "timestamp": _trim_citation_field(
+                meta.get("timestamp") or meta.get("extracted_at")
+            ),
             "age_seconds": meta.get("age_seconds"),
-            "row_count": meta.get("row_count"),
+            "row_count":   meta.get("row_count"),
         })
 
     # Multi-source results: list of runs / records each with its own
@@ -276,13 +294,19 @@ def _extract_citations(tool_name: str, tool_result: Any, server_id: str) -> list
             citations.append({
                 "source": server_id,
                 "tool":   tool_name,
-                "run_id": run.get("dag_run_id") or run.get("run_id"),
-                "entity": run.get("dag_id") or run.get("entity"),
-                "timestamp": (
+                "run_id": _trim_citation_field(
+                    run.get("dag_run_id") or run.get("run_id")
+                ),
+                "entity": _trim_citation_field(
+                    run.get("dag_id") or run.get("entity")
+                ),
+                "timestamp": _trim_citation_field(
                     run.get("end_date") or run.get("execution_date")
                     or run.get("finished_at")
                 ),
-                "status": run.get("state") or run.get("status"),
+                "status": _trim_citation_field(
+                    run.get("state") or run.get("status")
+                ),
             })
 
     return citations
@@ -320,12 +344,20 @@ def _classify_freshness(age_seconds: int | float | None) -> str:
     return "very_stale"
 
 
-async def _annotate_citation_freshness(citation: dict) -> dict:
+async def _annotate_citation_freshness(
+    citation: dict,
+    cache: dict | None = None,
+) -> dict:
     """Mutate ``citation`` in place with ``age_seconds`` (if missing)
     and ``freshness_level``. Looks up the watermark via
     :func:`freshness_for_cartridge_internal` so we don't hit our own
     HTTP layer. All exceptions are swallowed — freshness is purely
     informative, the citation card still renders without it.
+
+    ``cache`` is an optional dict the caller can pass to amortise the
+    cost across multiple citations in the same turn. Without it, a turn
+    with 20 citations from 3 cartridges issues 20 freshness queries
+    (N+1). With it, it issues at most one per distinct cartridge.
     """
     cartridge = citation.get("source")
     entity = citation.get("entity")
@@ -339,14 +371,24 @@ async def _annotate_citation_freshness(citation: dict) -> dict:
         citation["freshness_level"] = "unknown"
         return citation
 
-    try:
-        # Local import to avoid circular: routers/freshness.py imports
-        # from app.services.auth, copilot_service is in app.services.
-        from app.routers.freshness import freshness_for_cartridge_internal
-        data = await freshness_for_cartridge_internal(cartridge)
-    except Exception:
-        citation["freshness_level"] = "unknown"
-        return citation
+    data = None
+    if cache is not None and cartridge in cache:
+        data = cache[cartridge]
+    if data is None:
+        try:
+            # Local import to avoid circular: routers/freshness.py
+            # imports from app.services.auth.
+            from app.routers.freshness import freshness_for_cartridge_internal
+            data = await freshness_for_cartridge_internal(cartridge)
+        except Exception:
+            citation["freshness_level"] = "unknown"
+            if cache is not None:
+                # Negative-cache so the rest of the turn doesn't re-issue
+                # the same failing call.
+                cache[cartridge] = {"entities": []}
+            return citation
+        if cache is not None:
+            cache[cartridge] = data
 
     for ent in data.get("entities") or []:
         if ent.get("entity") == entity:
@@ -796,6 +838,10 @@ async def _run_loop(
     seen_pending_keys: set[str] = set()  # dedupe pending by approval_key
 
     tools, server_map, classifications = await _build_tools_for_llm()
+    # v1.43 R1-DBA: one freshness-lookup cache per turn, shared by
+    # _annotate_citation_freshness so N citations from K cartridges
+    # only issue K queries instead of N.
+    _freshness_cache: dict[str, dict] = {}
 
     async def invoke_tool(server_id: str, bare_name: str, args: dict) -> dict:
         # Same separator as _build_tools_for_llm and as llm_client's
@@ -984,8 +1030,11 @@ async def _run_loop(
                     # v1.43: annotate freshness on each citation. Errors
                     # are swallowed inside the helper so the persist still
                     # succeeds; failures just leave freshness_level=unknown.
+                    # R1-DBA fix: share a per-turn cache so 20 citations
+                    # from 3 cartridges only issue 3 freshness queries
+                    # instead of 20 (N+1 avoidance).
                     for c in msg_citations:
-                        await _annotate_citation_freshness(c)
+                        await _annotate_citation_freshness(c, cache=_freshness_cache)
                     msg_text = "".join(text_parts)
                     new_mid = await _persist_message(
                         conn, conversation_id=conversation_id,
