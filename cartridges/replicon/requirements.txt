@@ -1,6 +1,8 @@
-fastapi
 # v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
-starlette>=0.40.0,<0.42.0
+# Replicon was unpinned; pin fastapi explicitly so the starlette
+# floor stays satisfiable.
+fastapi>=0.116.0
+starlette>=0.40.0
 uvicorn[standard]
 requests
 pydantic

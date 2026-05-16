@@ -1,8 +1,11 @@
-fastapi==0.115.0
-# v1.43.2 (DevOps R1 follow-up): pin starlette >= 0.40.0 to escape
-# CVE-2024-47874 (multipart DoS) and the path-traversal vuln in
-# starlette 0.37/0.38. Within fastapi 0.115's allowed range.
-starlette>=0.40.0,<0.42.0
+# v1.43.2 (DevOps R1 follow-up): bumped fastapi 0.115.0 → 0.116.0
+# so the transitive starlette range moves to >=0.40.0,<0.47.0 —
+# escaping CVE-2024-47874 (multipart DoS) and the path-traversal
+# vuln in starlette 0.37/0.38. fastapi 0.115's range capped
+# starlette at <0.39 (= still vulnerable). starlette is explicitly
+# re-pinned below to defend against future fastapi range broadening.
+fastapi==0.116.0
+starlette>=0.40.0
 uvicorn[standard]==0.30.6
 httpx==0.27.2
 asyncpg==0.29.0
