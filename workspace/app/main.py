@@ -61,11 +61,11 @@ def _hdr_for(server: str) -> dict[str, str]:
 
 app = FastAPI(title="MODecissionsPaaS Workspace")
 
-# Sprint v1.41.1 — correlation IDs (X-Request-ID propagated to every
-# response + contextvar-exposed for structured logs).
+# Sprint v1.41.1 / v1.42.1 — correlation IDs. Import here but register
+# at the BOTTOM of this module (after every @app.middleware decorator
+# below) so the outer middleware order ends up correct — see the
+# matching note in console/app/main.py for the why.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
-
-app.add_middleware(RequestIDMiddleware)
 
 
 def _allowed_origins() -> list[str]:
@@ -795,3 +795,11 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
         decision_id, action_text, body.get("note"), user.get("email") or "user",
     )
     return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
+
+
+# v1.42.1 auditor finding: register RequestIDMiddleware AFTER every
+# @app.middleware decorator above so it ends up as the OUTERMOST
+# wrapper in the ASGI stack. Otherwise responses produced inside the
+# auth middleware never reach its send-wrapper and the X-Request-ID
+# header is lost.
+app.add_middleware(RequestIDMiddleware)
