@@ -1,17 +1,29 @@
 /**
- * v1.44.3.2.2 R-Mac follow-up — single axios client for both
- * server- and client-side Next.js code, with the REAL CSRF flow
- * Codex's diagnostic uncovered baked in.
+ * v1.44.3.2.2 R-Mac-4 — single axios client for both server-
+ * and client-side Next.js code.
  *
- * Two base URLs:
- *   - Server (RSC / route handlers): API_INTERNAL_URL → http://console:8000
- *   - Browser:                         NEXT_PUBLIC_API_BASE → http://localhost:8000
+ * Browser-side requests hit the SAME ORIGIN as the Next.js app
+ * (typically http://localhost:3000), and the Next.js catch-all
+ * proxy at /api/[...path] forwards each call to the FastAPI
+ * backend over the docker network. So baseURL is empty — every
+ * `api.get("/api/dashboard/kpis")` resolves to
+ * `http://localhost:3000/api/dashboard/kpis`, gets handled by
+ * the Next.js server-side route handler, and returns whatever
+ * FastAPI emitted. No cross-origin request ever leaves the tab.
+ *
+ * Server-side (RSC, route handlers, server actions) needs to
+ * talk to the backend directly — there's no browser to
+ * intercept the relative path, and routing through our own
+ * proxy would deadlock the Next.js runtime. So when window is
+ * undefined we use BACKEND_INTERNAL_URL (→ http://console:8000
+ * in docker).
  *
  * The browser axios instance auto-attaches the ``X-CSRF-Token``
  * header on every non-GET request by reading the ``csrf_token``
- * cookie that FastAPI seeds on GET /login. With ``withCredentials:
- * true`` the cookie itself round-trips automatically — the
- * interceptor just echoes the value as a header so the backend's
+ * cookie that FastAPI seeds on GET /login (proxied via
+ * /login-proxy). With ``withCredentials: true`` the cookie
+ * itself round-trips automatically — the interceptor just
+ * echoes the value as a header so the backend's
  * double-submit-cookie CSRF check passes.
  *
  * NEVER put API keys or secrets in NEXT_PUBLIC_* — those values
@@ -22,11 +34,14 @@ import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axio
 
 const isServer = typeof window === "undefined";
 
+// Server-side fetches go direct to FastAPI inside the docker
+// network. Browser fetches use the empty baseURL so they resolve
+// against the Next.js origin and hit the same-origin proxy.
 const baseURL = isServer
-  ? process.env.API_INTERNAL_URL || "http://console:8000"
-  : process.env.NEXT_PUBLIC_API_BASE
-    || process.env.NEXT_PUBLIC_BACKEND_URL
-    || "http://localhost:8000";
+  ? (process.env.BACKEND_INTERNAL_URL
+      || process.env.API_INTERNAL_URL
+      || "http://console:8000")
+  : "";
 
 export const api: AxiosInstance = axios.create({
   baseURL,
