@@ -158,13 +158,22 @@ combinación verificada por el smoke test.
 image: minio/minio:RELEASE.2025-XX-XX...
 ```
 
-Después de exportar:
+Mientras la versión temporal está corriendo, exporta los buckets a
+un directorio fuera del volumen Docker:
+
+```bash
+mc alias set src http://localhost:9000 minio "$MINIO_SECRET_KEY"
+mc mirror --overwrite src/lakehouse /tmp/lakehouse-export
+```
+
+Después de exportar, vuelve al pin oficial y restaura:
 
 ```bash
 docker compose -f infra/docker-compose.yml down -v
 git checkout infra/docker-compose.yml    # vuelve al pin oficial
 docker compose -f infra/docker-compose.yml --profile sap up -d --build
-mc mirror /tmp/lakehouse-export local/lakehouse/
+mc alias set tgt http://localhost:9000 minio "$MINIO_SECRET_KEY"
+mc mirror --overwrite /tmp/lakehouse-export tgt/lakehouse
 ```
 
 ## v1.43.3 — Fix automático de permisos SAP (migración 46)
