@@ -42,15 +42,41 @@ OMEGA_SUPERSET_META_PASSWORD=...
 
 ## Pasos
 
+> **Importante (v1.43.4 — Codex H3):** el arranque tiene que hacerse
+> en dos fases. Levantar TODO el stack a la vez con `up -d` puede
+> race-condition con la inicialización de Postgres en máquinas
+> lentas: los servicios de aplicación intentan conectar antes de
+> que las migraciones SQL en `infra/init/` hayan terminado, fallan,
+> entran en restart-loop, y el resto del stack arranca contra una
+> DB incompleta. v1.43.4 introdujo healthchecks + `service_healthy`
+> deps que evitan esta condición; el orden de abajo es la garantía
+> redundante.
+
+### Paso 1 — Postgres primero (60-90 s)
+
 ```bash
 cd /opt/omega                 # raíz del repo
 docker compose -f infra/docker-compose.yml down -v     # estado limpio
-docker compose -f infra/docker-compose.yml --profile sap up -d --build
+docker compose -f infra/docker-compose.yml up -d postgres postgres_gold
+
+# Polling hasta que Postgres reporte healthy (≈30-90 s en máquina lenta).
+# El `pg_isready` corre dentro del contenedor y refleja el healthcheck.
+for i in $(seq 1 18); do
+    status="$(docker inspect --format='{{.State.Health.Status}}' mode_postgres 2>/dev/null || echo unknown)"
+    if [ "$status" = "healthy" ]; then echo "Postgres listo"; break; fi
+    sleep 5
+done
+
+# Verificar también el gold:
+docker inspect --format='{{.State.Health.Status}}' mode_postgres_gold
+# → debe imprimir: healthy
 ```
 
-Espera 90 segundos. Luego:
+### Paso 2 — Resto del stack
 
 ```bash
+docker compose -f infra/docker-compose.yml --profile sap up -d --build
+sleep 180   # margen para arranque de cartridges + airflow + superset
 docker compose -f infra/docker-compose.yml ps
 ```
 

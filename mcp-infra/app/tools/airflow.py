@@ -46,6 +46,20 @@ def _is_development() -> bool:
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
+def _rce_tools_explicitly_enabled() -> bool:
+    """v1.43.4 (Codex H1): second gate. APP_ENV=development was used
+    to enable airflow_create_dag in dev environments — and Codex
+    proved that an operator who flips APP_ENV (e.g. to debug a
+    production-only path) implicitly unlocks the RCE tool. Require
+    an explicit second opt-in so APP_ENV alone is no longer enough.
+    Default off; only ``ALLOW_RCE_TOOLS=true`` (case-insensitive)
+    flips the gate.
+    """
+    return os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower() in {
+        "true", "1", "yes", "on",
+    }
+
+
 # ── Tools ──────────────────────────────────────────────────────────────────────
 
 @tool(
@@ -179,10 +193,22 @@ async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> d
 async def airflow_create_dag(dag_id: str, code: str,
                               cartridge_id: str | None = None,
                               description: str | None = None) -> dict:
+    # v1.43.4 (Codex H1): double-gate. APP_ENV must be a dev variant
+    # AND ALLOW_RCE_TOOLS must be explicitly set. Either gate alone
+    # was demonstrably bypassable: APP_ENV gets flipped to debug
+    # production-only paths, and a "default-on" RCE tool gated by
+    # ALLOW_RCE_TOOLS alone would fail open if the variable is
+    # forgotten. Require both.
     if not _is_development():
         raise PermissionError(
             "airflow_create_dag is disabled outside development because writing "
             "Python into the Airflow DAG directory is remote code execution."
+        )
+    if not _rce_tools_explicitly_enabled():
+        raise PermissionError(
+            "airflow_create_dag refuses to run without explicit "
+            "ALLOW_RCE_TOOLS=true. APP_ENV=development is not enough; the "
+            "second opt-in protects against debugging-time RCE."
         )
     dag_id = _validate_dag_id(dag_id)
     path = _dag_file_path(dag_id)

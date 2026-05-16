@@ -64,6 +64,17 @@ jobs:
           done
 
       - name: Run root tests/ (cartridge contracts)
+        env:
+          # v1.43.4 (Claude L1): when the team wires up a live-stack
+          # job (start docker-compose, sleep ≈180s, then pytest), set
+          # E2E_REQUIRE_STACK=1 here AND provide E2E_ADMIN_PASSWORD as
+          # a repo secret. The conftest's autouse fixture will then
+          # fail loudly if the secret is empty, so a misconfigured
+          # workflow can't silently skip the E2E surface and ship
+          # green. Until that sprint lands the variables stay unset
+          # and the unit-only path skips E2E cleanly.
+          E2E_REQUIRE_STACK: ""
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
         run: pytest tests/ -q
 
   compose-validate:
