@@ -175,12 +175,41 @@ def _allowed_origins() -> list[str]:
     # only listed :8000 — Chrome blocked every Next.js → backend
     # request with CORS preflight failures. Include :3000 in the
     # default so a fresh local-dev box works without manual
-    # ALLOWED_ORIGINS export. Production overrides via the env var.
-    raw = os.environ.get(
-        "ALLOWED_ORIGINS",
-        "http://localhost:3000,http://localhost:8000",
-    )
-    return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
+    # ALLOWED_ORIGINS export. Production MUST override via the env
+    # var (see prod fail-closed guard below).
+    raw_env = os.environ.get("ALLOWED_ORIGINS")
+    app_env = os.environ.get("APP_ENV", "production").lower()
+
+    # R-Mac-3 review (Security P1): a prod deployment that ships
+    # without ALLOWED_ORIGINS used to silently whitelist localhost
+    # for credentialed requests. Fail closed instead — mirror the
+    # INTERNAL_API_KEY prod guard pattern in console/app/security.py.
+    if raw_env is None and app_env in {"production", "prod"}:
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must be set in production (APP_ENV="
+            f"{app_env}). Refusing to fall back to the localhost "
+            "default with allow_credentials=True."
+        )
+
+    raw = raw_env if raw_env is not None else "http://localhost:3000,http://localhost:8000"
+    origins: list[str] = []
+    for chunk in raw.split(","):
+        origin = chunk.strip()
+        if not origin:
+            continue
+        if origin == "*":
+            # R-Mac-3 review (DevOps P2): wildcards are incompatible
+            # with allow_credentials=True (browsers reject the combo
+            # outright). Silently dropping the entry left operators
+            # debugging an empty allowlist with no clue why — log so
+            # the cause is visible in startup logs.
+            logger.warning(
+                "ALLOWED_ORIGINS=* is incompatible with "
+                "allow_credentials=True; ignoring wildcard entry"
+            )
+            continue
+        origins.append(origin)
+    return origins
 
 
 # v1.44.3.2.2 R-Mac-3 (CORS ordering hotfix): the CORSMiddleware

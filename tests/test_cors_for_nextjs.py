@@ -36,32 +36,31 @@ from pathlib import Path
 import pytest
 
 
-# The console app expects certain env vars at import time. Other
-# tests in this suite use ``monkeypatch`` to mutate INTERNAL_API_KEY
-# (e.g. test_internal_key_required_in_prod.py sets a LEGACY value),
-# and ``conftest._purge_app_modules`` evicts ``app.*`` from
-# sys.modules whenever a cartridge test loads — so by the time our
-# fixture runs, the env state can be anything. We pin the values
-# we need OUTRIGHT (not via setdefault) so re-importing app.main
-# always sees a sane configuration.
-os.environ["APP_ENV"] = "test"
-os.environ["INTERNAL_API_KEY"] = "x" * 64
-os.environ.setdefault(
-    "FIELD_ENCRYPTION_KEY",
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=",
-)
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "console"))
 
 
 @pytest.fixture(scope="module")
-def client():
-    """TestClient with the live middleware stack mounted."""
-    # Re-pin inside the fixture too — defensive against any leak that
-    # happens between collection time and fixture execution.
-    os.environ["INTERNAL_API_KEY"] = "x" * 64
-    os.environ["APP_ENV"] = "test"
+def client(monkeypatch_module):
+    """TestClient with the live middleware stack mounted.
+
+    R-Mac-3 review (Security/DevOps P2): all env mutations live in
+    this fixture (via monkeypatch_module) so they're auto-restored
+    after the module finishes. Earlier drafts mutated os.environ at
+    import time, which persisted for the entire pytest session and
+    could mask regressions in tests that assert on the un-set env
+    state (e.g. test_internal_key_required_in_prod.py).
+    """
+    monkeypatch_module.setenv("APP_ENV", "test")
+    monkeypatch_module.setenv("INTERNAL_API_KEY", "x" * 64)
+    # Other tests in the suite legitimately set FIELD_ENCRYPTION_KEY
+    # via monkeypatch; if it's already in the env we keep it, only
+    # planting a placeholder when there's no value at all.
+    if "FIELD_ENCRYPTION_KEY" not in os.environ:
+        monkeypatch_module.setenv(
+            "FIELD_ENCRYPTION_KEY",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=",
+        )
 
     # Evict any stale ``app.*`` modules so the import below re-runs
     # against the current env. Other tests (cartridge harness) may
@@ -74,6 +73,19 @@ def client():
 
     from app.main import app
     return TestClient(app)
+
+
+@pytest.fixture(scope="module")
+def monkeypatch_module():
+    """Module-scoped monkeypatch. pytest's built-in ``monkeypatch``
+    is function-scoped and can't be consumed by a module-scoped
+    fixture, but ``MonkeyPatch`` itself supports manual lifecycle
+    management."""
+    mp = pytest.MonkeyPatch()
+    try:
+        yield mp
+    finally:
+        mp.undo()
 
 
 # ── Preflight: OPTIONS must respond 200 with all three CORS headers ──
@@ -239,6 +251,32 @@ def test_cors_middleware_is_outermost(client):
         f"Current outermost middleware: {outermost.cls.__name__}. "
         f"Full registration order (outermost → innermost): "
         f"{[m.cls.__name__ for m in app.user_middleware]}"
+    )
+
+
+def test_middleware_stack_full_snapshot(client):
+    """R-Mac-3 review (DevOps P2): pinning only [0] and [1] lets a
+    future refactor slip a new middleware in at index 2 without
+    anyone noticing. Snapshot the full ordering so any reordering
+    forces a test update + reviewer awareness."""
+    from app.main import app
+
+    actual = [m.cls.__name__ for m in app.user_middleware]
+    expected = [
+        "CORSMiddleware",        # OUTERMOST — must see every request, incl. preflight
+        "RequestIDMiddleware",   # X-Request-ID on auth 401s (v1.42.1 invariant)
+        "BaseHTTPMiddleware",    # auth_middleware (@app.middleware decorator)
+        "BaseHTTPMiddleware",    # security_headers_middleware (@app.middleware decorator)
+    ]
+    assert actual == expected, (
+        f"Middleware ordering changed unexpectedly.\n"
+        f"  expected (outermost → innermost): {expected}\n"
+        f"  actual:                          {actual}\n"
+        f"If this change was intentional, update this test AND verify "
+        f"that:\n"
+        f"  - CORSMiddleware is still OUTERMOST (Allow-Origin on 401s)\n"
+        f"  - RequestIDMiddleware is still SECOND (X-Request-ID on 401s)\n"
+        f"  - auth_middleware still wraps the inner stack"
     )
 
 
