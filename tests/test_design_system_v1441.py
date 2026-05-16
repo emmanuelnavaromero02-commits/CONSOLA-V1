@@ -204,21 +204,43 @@ def test_components_css_declares_nav_and_fab():
 
 
 def test_components_css_uses_only_tokens_no_inline_color_literals():
-    """components.css must consume tokens — no hex AND no rgba()
-    literals. The R1 frontend review caught five rgba() values
-    pinned to light-mode hues that drifted in dark mode; the fix
-    introduced --success-soft / --warning-soft / --on-danger so
-    every colour reference goes through var(--…) again."""
+    """components.css must consume tokens — no hex, rgba(), hsl(),
+    or CSS named colours. R1 frontend review caught five rgba()
+    values pinned to light-mode hues that drifted in dark mode;
+    R2 review pointed out that a future ``color: white`` would
+    slip past a hex-only check. This test covers every literal
+    colour form so the contract is genuinely closed.
+    """
     src = _comps()
     inline_hex = re.findall(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b", src)
     assert not inline_hex, (
         f"components.css must reference var(--…); inline hex found: {inline_hex}"
     )
-    inline_rgba = re.findall(r"rgba?\([^)]+\)", src)
-    assert not inline_rgba, (
-        f"components.css must reference var(--…); inline rgba/rgb found: "
-        f"{inline_rgba}. Add a --foo-soft token to tokens.css instead."
+    inline_func = re.findall(r"(?:rgba?|hsla?)\([^)]+\)", src)
+    assert not inline_func, (
+        f"components.css must reference var(--…); inline rgb/rgba/hsl found: "
+        f"{inline_func}. Add a --foo-soft token to tokens.css instead."
     )
+    # Named CSS colours used as a colour value. Strip URLs and comments
+    # first so e.g. ``/* gray ramp */`` or ``url(...gray.svg)`` don't
+    # trigger. Then look for ``: <named-color>`` or ``: <named-color>;``.
+    code = re.sub(r"/\*.*?\*/", "", src, flags=re.DOTALL)
+    forbidden_names = (
+        "white", "black", "red", "green", "blue", "yellow",
+        "gray", "grey", "silver", "navy", "teal", "lime",
+        "maroon", "olive", "purple", "fuchsia", "aqua",
+        "orange", "pink", "brown",
+    )
+    for name in forbidden_names:
+        hits = re.findall(
+            rf":\s*{name}\s*[;\}}]",
+            code,
+            flags=re.IGNORECASE,
+        )
+        assert not hits, (
+            f"components.css uses named colour {name!r} ({len(hits)}× usage). "
+            f"Add a --foo token instead."
+        )
 
 
 # ── ui_components.js ──────────────────────────────────────────────────────
