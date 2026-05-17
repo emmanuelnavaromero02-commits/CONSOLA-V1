@@ -105,6 +105,17 @@ def list_skills() -> dict:
     return {"service": _SERVICE, "skills": skills}
 
 
+@router.get("")
+def skills_root() -> dict:
+    """Protected skill namespace root.
+
+    Anonymous callers should see the router exists through a 401 from
+    the dependency, while authenticated orchestrators get the same
+    discovery payload as /skills/list.
+    """
+    return list_skills()
+
+
 # ------------------------------------------------------------------
 # Connection test (v1.41.0 — auditor P1 operativa)
 # ------------------------------------------------------------------

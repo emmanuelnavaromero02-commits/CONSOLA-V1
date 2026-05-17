@@ -20,7 +20,11 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./specs",
-  timeout: 30_000,
+  // Several deep probes intentionally wait for the documented
+  // 30 s dashboard polling interval plus buffer. Keep the global
+  // timeout above those contracts or the runner, not the app,
+  // becomes the source of failure.
+  timeout: 45_000,
   expect: { timeout: 10_000 },
   retries: 0,
   // v1.44.3.2.1 R1 DevOps P1: 2 workers safe because storage state

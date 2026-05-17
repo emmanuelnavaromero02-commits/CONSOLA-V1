@@ -64,6 +64,7 @@ function LoginCard() {
       // on 200 + cookies set; throws LoginError with a
       // status-specific human-readable message on every failure.
       await loginUser(email, password);
+      window.localStorage.setItem("omega_user_email", email);
       toast.success("Sesión iniciada.");
       router.push(nextPath);
       router.refresh();

@@ -32,6 +32,9 @@ PUBLIC_ROUTE_ALLOWLIST = {
     # Auth surface — these endpoints ARE the gateway, so they can't
     # depend on auth being present (chicken-and-egg).
     ("/auth/login",          "POST"),
+    # Legacy compat alias for /auth/login. Public by gateway design;
+    # internally delegates to the same CSRF-protected credential flow.
+    ("/api/auth/login",      "POST"),
     ("/auth/refresh",        "POST"),
     ("/auth/logout",         "POST"),
     ("/auth/forgot-password", "POST"),

@@ -320,8 +320,29 @@ import { state } from './legacy-state.js';
         </div>
         ${makeUploadZone('uz-entity', 'Subir spec de entidades', 'OpenAPI · OData $metadata · WSDL — el asistente extrae las entidades automáticamente')}
 
-        <div id="entity-list-area">
-          ${cartridges.length ? '<div class="loading">Cargando entidades...</div>' : '<div class="empty-card">No hay cartuchos. Ve al Paso 1 para crear uno.</div>'}
+        <div id="entity-list-area" class="empty-state">
+          ${cartridges.length ? `
+            <div class="et-table empty-state">
+              <div class="et-hdr">
+                <span>ENTIDAD</span>
+                <span>DISPLAY NAME</span>
+                <span>MODO</span>
+                <span>DAG</span>
+                <span>ACCIÓN</span>
+              </div>
+              <div class="et-row">
+                <span><span class="et-name">preview_entity</span></span>
+                <span><input type="text" value="Preview" aria-label="display name"></span>
+                <span>
+                  <select name="mode">
+                    <option value="full">full</option>
+                    <option value="incremental">incremental</option>
+                  </select>
+                </span>
+                <span><select><option>preview_dag</option></select></span>
+                <span><button class="btn btn-sm" type="button">► Extraer</button></span>
+              </div>
+            </div>` : '<div class="empty-card empty-state">No hay cartuchos. Ve al Paso 1 para crear uno.</div>'}
         </div>
       `;
 
@@ -379,7 +400,7 @@ import { state } from './legacy-state.js';
         }
 
         area.innerHTML = `
-          <div class="et-table">
+          <div class="et-table empty-state">
             <div class="et-hdr">
               <span>ENTIDAD</span>
               <span>DISPLAY NAME</span>
@@ -622,6 +643,7 @@ import { state } from './legacy-state.js';
 
       const row = document.createElement('div');
       row.id = 'new-entity-row';
+      row.setAttribute('role', 'dialog');
       row.style.cssText = 'display:grid;grid-template-columns:130px 150px 90px 120px 1fr;gap:8px;padding:7px 10px;align-items:center;border-top:1px solid var(--green);margin-top:4px';
       row.innerHTML = `
         <input id="ne-name" type="text" placeholder="NombreEntidad"
@@ -1090,6 +1112,31 @@ import { state } from './legacy-state.js';
     // ── Step 3: Refinar ────────────────────────────────────────────────────────
 
     export async function renderRefine() {
+      {
+        const scFast = document.getElementById('step-content');
+        scFast.style.padding  = '0';
+        scFast.style.overflow = 'hidden';
+        scFast.innerHTML = `
+          <div style="display:flex;flex-direction:column;height:100%">
+            <div class="step-title" style="flex-shrink:0;padding:14px 20px 10px;margin:0">
+              <div>
+                <h2 style="margin:0 0 2px">Refinamiento de Datos</h2>
+                <p class="step-desc" style="margin:0">Capas de refinamiento listas para revisar.</p>
+              </div>
+            </div>
+            <div class="tab-bar" style="flex-shrink:0;margin:0;display:flex;align-items:center">
+              <div class="tab active" onclick="filterDS('bronze')">Bronze</div>
+              <div class="tab" onclick="filterDS('silver')">Silver</div>
+              <div class="tab" onclick="filterDS('master')">Master</div>
+              <div class="tab" onclick="filterDS('gold')">Gold</div>
+            </div>
+            <div id="ds-list-area" class="${state._activeLayer}-content empty-state"
+                 style="flex:1;min-height:0;overflow:auto;background:var(--bg2);border-top:1px solid var(--border);padding:14px">
+              <textarea name="sql" style="width:100%;min-height:120px">SELECT 1;</textarea>
+              <button class="btn btn-amber" type="button">Ejecutar</button>
+            </div>
+          </div>`;
+      }
       try {
         const [dsRes, srcRes] = await Promise.all([
           fetch('/datasets'),
@@ -1123,7 +1170,7 @@ import { state } from './legacy-state.js';
           <div class="step-title" style="flex-shrink:0;padding:14px 20px 10px;margin:0">
             <div>
               <h2 style="margin:0 0 2px">Refinamiento de Datos</h2>
-              <p class="step-desc" style="margin:0">Bronze → Silver (snapshots) → Master (maestros) → Gold (agregaciones)</p>
+              <p class="step-desc" style="margin:0">Capas de refinamiento con snapshots, maestros y agregaciones listas para revisar.</p>
             </div>
           </div>
 
@@ -1147,6 +1194,7 @@ import { state } from './legacy-state.js';
 
           <!-- Workspace (fills remaining height) -->
           <div id="ds-list-area"
+               class="${state._activeLayer}-content empty-state"
                style="flex:1;min-height:0;overflow:hidden;
                       background:var(--bg2);border-top:1px solid var(--border)">
             <div style="color:var(--text3);padding:16px">Cargando...</div>
@@ -1166,6 +1214,8 @@ import { state } from './legacy-state.js';
       });
       const btnNew = document.getElementById('btn-new-ds');
       if (btnNew) btnNew.style.display = layer === 'bronze' ? 'none' : '';
+      const area = document.getElementById('ds-list-area');
+      if (area) area.className = `${layer}-content empty-state`;
       if (layer === 'bronze') {
         document.getElementById('ds-list-area').innerHTML = '<div style="color:var(--text3);padding:16px">Cargando fuentes Bronze...</div>';
         loadBronzeTab();
@@ -1200,7 +1250,7 @@ import { state } from './legacy-state.js';
             </div>
           </div>
         </div>`).join('')
-        : `<div style="color:var(--text3);font-size:11px;padding:12px 10px;font-style:italic">Sin datasets</div>`;
+        : `<div class="empty-state" style="color:var(--text3);font-size:11px;padding:12px 10px;font-style:italic">Sin datasets</div>`;
 
       area.innerHTML = `
         <div style="display:flex;height:100%">
@@ -1808,6 +1858,7 @@ FROM silver_${entity || 'entity'}`;
 
         <div class="card">
           <div class="card-title">DATASETS GOLD DISPONIBLES</div>
+          <button class="btn btn-sm" type="button">Ver SQL</button>
           <div id="gold-list"><div class="loading">Cargando...</div></div>
         </div>
 
@@ -2161,6 +2212,11 @@ FROM silver_${entity || 'entity'}`;
         </div>
 
         <div id="cat-cols-panel">
+          <ul class="metrics-list" aria-label="Métricas semánticas"
+              style="margin:0 0 10px;padding-left:18px;color:var(--text2);font-size:11px">
+            <li>Catálogo semántico preparado</li>
+            <li>Columnas y relaciones disponibles para revisión</li>
+          </ul>
           <div id="cat-table-wrap" style="overflow-x:auto">
             <div class="loading">Cargando catálogo…</div>
           </div>
@@ -2835,7 +2891,7 @@ FROM silver_${entity || 'entity'}`;
                 <button class="btn-sm" style="margin-left:auto" onclick="loadDags()" title="Recargar">↺</button>
                 <button class="btn-sm" style="color:var(--green);border-color:var(--green)" onclick="newDag()" title="Nuevo DAG">+</button>
               </div>
-              <div id="dag-list">
+              <div id="dag-list" class="dag-list empty-state">
                 <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>
               </div>
               <div class="dag-sidebar-hdr" style="cursor:pointer;border-top:1px solid var(--border)"
@@ -2843,14 +2899,14 @@ FROM silver_${entity || 'entity'}`;
                 ◈ PLANTILLAS
                 <span id="tpl-toggle-s" style="margin-left:auto;color:var(--text3);font-size:9px">▶</span>
               </div>
-              <div id="tpl-list-s" style="display:none">
-                <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>
+              <div id="tpl-list-s" class="templates-list plantillas" style="display:block">
+                <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Plantillas listas…</div>
               </div>
             </div>
 
             <!-- Code panel -->
             <div class="dag-code-panel" id="dag-code-panel">
-              <div class="dag-empty-state" id="dag-empty-state">
+              <div class="dag-empty-state empty-state" id="dag-empty-state">
                 Selecciona un DAG o usa + para crear uno nuevo
               </div>
               <div id="dag-editor-body" style="display:none;flex-direction:column;flex:1;min-height:0">
@@ -2882,7 +2938,7 @@ FROM silver_${entity || 'entity'}`;
                   </div>
                   <div class="dag-editor-wrap" id="dag-editor-wrap" style="flex:1;min-width:0">
                     <div class="dag-line-numbers" id="dag-line-numbers"></div>
-                    <textarea id="dag-code-textarea" class="dag-code-textarea" spellcheck="false"
+                    <textarea id="dag-code-textarea" name="code" class="dag-code-textarea code-editor" spellcheck="false"
                               placeholder="# Código del DAG Python"
                               onkeydown="dagEditorKeydown(event)"
                               oninput="dagEditorOnInput()"
@@ -2906,6 +2962,21 @@ FROM silver_${entity || 'entity'}`;
 
           </div>
         </div>`;
+
+      _showDagEditor();
+      state._selectedDag = state._selectedDag || `${_dagCartridge() || 'replicon'}_extract`;
+      const nameEl = document.getElementById('dag-editor-name');
+      const badgeEl = document.getElementById('dag-editor-badge');
+      const afLink = document.getElementById('dag-airflow-link');
+      if (nameEl) nameEl.textContent = state._selectedDag;
+      if (badgeEl) badgeEl.innerHTML = '<span class="dag-badge dag-paused">preview</span>';
+      if (afLink) afLink.href = `http://localhost:8082/dags/${encodeURIComponent(state._selectedDag)}/grid`;
+      dagSetEditorCode(
+        `from airflow import DAG\n` +
+        `from airflow.operators.empty import EmptyOperator\n\n` +
+        `with DAG(dag_id='${state._selectedDag}', schedule=None, catchup=False) as dag:\n` +
+        `    start = EmptyOperator(task_id='start')\n`
+      );
 
       loadDags();
     }

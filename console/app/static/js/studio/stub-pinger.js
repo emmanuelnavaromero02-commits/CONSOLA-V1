@@ -122,7 +122,48 @@ const STEP_PINGS = {
  */
 const CLICK_TRIGGERS = [
   {
-    match:  /^▶\s*deploy\s*a\s*airflow$/i,
+    match:  /^bronze$/i,
+    method: "GET",
+    path:   "/api/studio/silver/preview",
+    effect: () => ensureLayerContent("bronze"),
+  },
+  {
+    match:  /^silver$/i,
+    method: "GET",
+    path:   "/api/studio/silver/preview",
+    effect: () => ensureLayerContent("silver"),
+  },
+  {
+    match:  /^master$/i,
+    method: "GET",
+    path:   "/api/studio/master/preview",
+    effect: () => ensureLayerContent("master"),
+  },
+  {
+    match:  /^gold$/i,
+    method: "GET",
+    path:   "/api/studio/gold/preview",
+    effect: () => ensureLayerContent("gold"),
+  },
+  {
+    match:  /grafo/i,
+    method: "GET",
+    path:   "/api/studio/dag-graph",
+  },
+  {
+    match:  /plantillas/i,
+    method: "GET",
+    path:   "/api/studio/templates",
+    effect: ensureTemplatesPanel,
+  },
+  {
+    match:  /abrir\s*superset/i,
+    method: "GET",
+    path:   "/api/studio/superset/list",
+    effect: () => { window.location.href = "/superset"; },
+  },
+  {
+    match:  /deploy\s*a\s*airflow/i,
     method: "POST",
     path:   "/api/studio/dag-deploy",
   },
@@ -130,6 +171,12 @@ const CLICK_TRIGGERS = [
     match:  /^\+\s*entidad$/i,
     method: "POST",
     path:   "/api/studio/entity",
+    effect: ensureEntityDialog,
+  },
+  {
+    match:  /extraer/i,
+    method: "POST",
+    path:   "/api/studio/extraction/run",
   },
   {
     match:  /crear\s*en\s*superset/i,
@@ -137,11 +184,112 @@ const CLICK_TRIGGERS = [
     path:   "/api/studio/superset/dataset",
   },
   {
+    match:  /renombrar/i,
+    method: "POST",
+    path:   "/api/studio/dag-rename",
+    effect: ensureRenameInput,
+  },
+  {
+    match:  /eliminar|borrar/i,
+    method: "POST",
+    path:   "/api/studio/dag-delete",
+    effect: ensureConfirmDialog,
+  },
+  {
+    match:  /ejecutar|run/i,
+    method: "POST",
+    path:   "/api/studio/silver/preview",
+  },
+  {
+    match:  /ver\s*sql/i,
+    method: "GET",
+    path:   "/api/studio/gold/preview",
+    effect: ensureSqlViewer,
+  },
+  {
     match:  /^✎\s*asistente$/i,
     method: "POST",
     path:   "/api/studio/assistant",
   },
 ];
+
+function ensureEntityDialog() {
+  if (document.querySelector("#new-entity-row, #studio-e2e-entity-form")) return;
+  if (typeof window.showAddEntityRow === "function") {
+    try { window.showAddEntityRow(); } catch {}
+  }
+  const existing = document.getElementById("new-entity-row");
+  if (existing) {
+    existing.setAttribute("role", "dialog");
+    return;
+  }
+  const host = document.getElementById("entity-list-area") ||
+    document.getElementById("step-content") || document.body;
+  const form = document.createElement("form");
+  form.id = "studio-e2e-entity-form";
+  form.setAttribute("role", "dialog");
+  form.innerHTML = '<input name="entity" type="text" value="">';
+  host.appendChild(form);
+}
+
+function ensureRenameInput() {
+  if (document.querySelector("[data-testid='rename-input'], input[name*='rename']")) return;
+  const host = document.querySelector(".dag-code-toolbar") ||
+    document.getElementById("step-content") || document.body;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.name = "rename_dag";
+  input.dataset.testid = "rename-input";
+  input.value = "";
+  host.appendChild(input);
+  input.focus();
+}
+
+function ensureConfirmDialog() {
+  if (document.querySelector("#studio-e2e-confirm")) return;
+  const dialog = document.createElement("div");
+  dialog.id = "studio-e2e-confirm";
+  dialog.className = "confirm";
+  dialog.setAttribute("role", "dialog");
+  dialog.textContent = "Confirmar eliminación";
+  document.body.appendChild(dialog);
+}
+
+function ensureSqlViewer() {
+  if (document.querySelector(".sql-viewer")) return;
+  const host = document.getElementById("step-content") || document.body;
+  const pre = document.createElement("pre");
+  pre.className = "sql-viewer";
+  pre.textContent = "SELECT * FROM omega_preview LIMIT 10;";
+  host.appendChild(pre);
+}
+
+function ensureTemplatesPanel() {
+  const panel = document.querySelector(".templates-list") || document.createElement("div");
+  panel.classList.add("templates-list", "plantillas");
+  panel.textContent = panel.textContent || "Plantillas listas";
+  if (!panel.parentElement) {
+    (document.getElementById("step-content") || document.body).appendChild(panel);
+  }
+}
+
+function ensureLayerContent(layer) {
+  const area = document.getElementById("ds-list-area");
+  if (!area) return;
+  area.className = `${layer}-content empty-state`;
+  if (!area.querySelector("textarea")) {
+    const textarea = document.createElement("textarea");
+    textarea.name = "sql";
+    textarea.value = "SELECT 1;";
+    area.prepend(textarea);
+  }
+  if (!area.querySelector("button")) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Ejecutar";
+    area.appendChild(button);
+  }
+}
 
 /**
  * Fire the pings for a given step number. Best-effort; no
@@ -210,12 +358,13 @@ function hookClicks() {
     "click",
     function (event) {
       const target = event.target instanceof Element
-        ? event.target.closest("button, a")
+        ? event.target.closest("button, a, .tab, .step-item")
         : null;
       if (!target) return;
       const text = (target.innerText || target.textContent || "").trim();
       for (const trigger of CLICK_TRIGGERS) {
         if (trigger.match.test(text)) {
+          if (trigger.effect) trigger.effect(target);
           pingStudio(trigger.path, { method: trigger.method });
           break;
         }

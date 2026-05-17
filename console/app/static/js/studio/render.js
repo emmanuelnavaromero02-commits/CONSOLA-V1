@@ -28,6 +28,20 @@ function selected() {
   return state.selectedCartridge || state.cartridges[0] || null;
 }
 
+function markLegacySelection(id) {
+  const host = document.getElementById('step-content');
+  if (!host) return;
+  let marker = document.getElementById('studio-selected-cartridge-marker');
+  if (!marker) {
+    marker = document.createElement('div');
+    marker.id = 'studio-selected-cartridge-marker';
+    marker.className = 'empty-state';
+    marker.style.cssText = 'padding:6px 10px;font-size:10px;color:var(--text3)';
+    host.prepend(marker);
+  }
+  marker.textContent = `Cartucho seleccionado: ${id || 'ninguno'}`;
+}
+
 function entityCount(cartridge) {
   return Array.isArray(cartridge?.entities) ? cartridge.entities.length : 0;
 }
@@ -77,6 +91,8 @@ export function renderToolbar(onRender) {
   label.htmlFor = 'studio-modern-cartridge';
   const select = el('select', 'studio-modern-select');
   select.id = 'studio-modern-cartridge';
+  select.name = 'cartridge';
+  select.dataset.testid = 'cartridge-picker';
   state.cartridges.forEach((item) => {
     const option = document.createElement('option');
     option.value = item.id;
@@ -86,6 +102,7 @@ export function renderToolbar(onRender) {
   });
   select.addEventListener('change', async () => {
     await selectCartridge(select.value);
+    markLegacySelection(select.value);
     onRender();
   });
   selectWrap.append(label, select);

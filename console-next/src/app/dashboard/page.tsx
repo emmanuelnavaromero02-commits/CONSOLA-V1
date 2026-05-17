@@ -102,7 +102,7 @@ export default function DashboardPage() {
               ? `${cartridgesConnected} / ${cartridgesTotal}`
               : "—"
           }
-          numericValue={data ? cartridgesConnected : undefined}
+          numericValue={data ? cartridgesConnected : 0}
           hint={
             data && cartridgesDisconnected > 0
               ? `${cartridgesDisconnected} sin conexión`
@@ -114,21 +114,21 @@ export default function DashboardPage() {
         <KpiCard
           label="Extracciones hoy"
           value={data ? extractionsToday : "—"}
-          numericValue={data ? extractionsToday : undefined}
+          numericValue={data ? extractionsToday : 0}
           hint={data ? `${extractionsWeek} esta semana` : ""}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Usuarios activos"
           value={data ? usersActiveToday : "—"}
-          numericValue={data ? usersActiveToday : undefined}
+          numericValue={data ? usersActiveToday : 0}
           hint={data ? `${usersTotal} en total` : ""}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Acciones copiloto"
           value={data ? copilotToolsToday : "—"}
-          numericValue={data ? copilotToolsToday : undefined}
+          numericValue={data ? copilotToolsToday : 0}
           hint={
             data
               ? `${copilotConvsToday} conversaciones`
@@ -149,13 +149,13 @@ export default function DashboardPage() {
         <KpiCard
           label="Eventos hoy"
           value={data ? auditEventsToday : "—"}
-          numericValue={data ? auditEventsToday : undefined}
+          numericValue={data ? auditEventsToday : 0}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Acciones destructivas"
           value={data ? auditDestructiveToday : "—"}
-          numericValue={data ? auditDestructiveToday : undefined}
+          numericValue={data ? auditDestructiveToday : 0}
           hint={
             data && auditDestructiveToday > 0
               ? "Revisar audit log"

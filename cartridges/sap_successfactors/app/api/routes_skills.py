@@ -75,6 +75,12 @@ def list_skills() -> dict:
     return {"service": _SERVICE, "skills": skills}
 
 
+@router.get("")
+def skills_root() -> dict:
+    """Protected skill namespace root."""
+    return list_skills()
+
+
 # v1.41.0 — auditor P1: validate credentials from the console without
 # triggering an extraction. SapSfClient.test_connection() is degraded-aware.
 @router.post("/test_connection")
