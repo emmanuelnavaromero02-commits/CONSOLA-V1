@@ -3,8 +3,16 @@
  *
  * Smoke checks: every admin page that's still served from the
  * FastAPI console must load with HTTP 200 and render its primary
- * content region. These pages live at /audit, /iam (users),
- * /operations, /monitor, /workspace, /me, /settings, /security.
+ * content region. These pages live at /iam (users), /operations,
+ * /monitor, /workspace, /me, /settings, /security, and the audit
+ * log is mounted under /security/audit (NOT a bare /audit).
+ *
+ * v1.44.3.3 Task F: the v1.44.3.2 spec asserted on /audit
+ * directly but console/app/routers/security.py mounts the audit
+ * page at /security/audit (router prefix=/security). The 404 in
+ * the E2E report was a spec drift, not a backend bug. Updated to
+ * use the canonical path so the assertion reflects shipping
+ * behaviour.
  *
  * Per the v1.44.2 brief these pages stay HTML for now (Next.js
  * migration is scoped to user-facing flows only).
@@ -20,13 +28,13 @@ interface LegacyPage {
 }
 
 const PAGES: LegacyPage[] = [
-  { path: "/audit",      needle: /eventos|audit/i,          label: "audit" },
-  { path: "/iam",        needle: /usuarios|users|iam/i,     label: "iam (users)" },
-  { path: "/operations", needle: /operations|operación/i,   label: "operations" },
-  { path: "/monitor",    needle: /monitor/i,                label: "monitor" },
-  { path: "/me",         needle: /perfil|profile|me/i,      label: "me" },
-  { path: "/settings",   needle: /settings|ajustes/i,       label: "settings" },
-  { path: "/security",   needle: /security|sesiones|security/i, label: "security" },
+  { path: "/security/audit", needle: /eventos|audit/i,          label: "audit" },
+  { path: "/iam",            needle: /usuarios|users|iam/i,     label: "iam (users)" },
+  { path: "/operations",     needle: /operations|operación/i,   label: "operations" },
+  { path: "/monitor",        needle: /monitor/i,                label: "monitor" },
+  { path: "/me",             needle: /perfil|profile|me/i,      label: "me" },
+  { path: "/settings",       needle: /settings|ajustes/i,       label: "settings" },
+  { path: "/security",       needle: /security|sesiones|security/i, label: "security" },
 ];
 
 for (const p of PAGES) {

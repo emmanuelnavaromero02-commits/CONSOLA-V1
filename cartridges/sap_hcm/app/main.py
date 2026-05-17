@@ -64,6 +64,15 @@ app.include_router(skills_router)
 app.include_router(console_router)
 
 
+# v1.44.3.3 Task C — minimal liveness probe (yes/no, no
+# startup-state gating). ``/health`` covers real readiness;
+# ``/healthz`` is the Kubernetes-style alias the orchestrator
+# + E2E suite both expect to exist.
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"ok": True, "service": "sap_hcm"}
+
+
 # v1.43.2 (LLM R1 hardening): /mcp/* must respect startup state. See
 # cartridges/replicon/app/main.py for the rationale.
 

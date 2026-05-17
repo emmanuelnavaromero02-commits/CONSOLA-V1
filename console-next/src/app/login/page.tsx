@@ -120,10 +120,23 @@ function LoginCard() {
         <button
           type="submit"
           disabled={submitting}
-          className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
         >
           {submitting ? "Iniciando sesión…" : "Iniciar sesión"}
         </button>
+
+        {/* v1.44.3.3 R-Mac-Round-3 Task D — forgot-password
+            affordance. The backend exposes GET /forgot-password
+            (renders the legacy HTML form) and
+            POST /auth/forgot-password (sends the reset email
+            via Mailhog). The Next.js console proxies both via
+            /auth/[...path], so a relative link Just Works. */}
+        <a
+          href="/forgot-password"
+          className="block text-center text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          ¿Olvidaste tu contraseña?
+        </a>
       </form>
     </div>
   );

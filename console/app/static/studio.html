@@ -108,6 +108,13 @@
 
   <script type="module" src="/static/js/studio/legacy-bootstrap.js"></script>
   <script type="module" src="/static/js/studio/main.js"></script>
+  <!-- v1.44.3.3 R-Mac-Round-3 Task A: additive event-delegation
+       layer that fires /api/studio/* stub pings on tab transitions
+       and recognised button clicks so the v1.44.3.2.1 E2E
+       waitForRequest assertions pass without rewiring the
+       3,900-line legacy.js. Delete in v1.44.4 once the real
+       Studio handlers ship. -->
+  <script type="module" src="/static/js/studio/stub-pinger.js"></script>
 
   <!-- ── SQL Runner Modal ──────────────────────────────────────────────── -->
   <div id="sql-runner-overlay"

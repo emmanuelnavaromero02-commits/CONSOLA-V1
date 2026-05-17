@@ -64,8 +64,21 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
     try {
       const r = await testMut.mutateAsync();
       setLastTest(r);
-      if (r.ok) toast.success("Conexión OK.");
-      else      toast.error("Conexión fallida — ver detalle.");
+      if (r.ok) {
+        toast.success("Conexión OK.");
+      } else {
+        // v1.44.3.3 Task I: surface the specific failure
+        // reason instead of a generic "ver detalle" pointer.
+        // The backend's normalised shape ({ok, message,
+        // latency_ms}) already includes a human-readable
+        // reason (e.g. "missing credentials", "401 from
+        // upstream", "timeout"). Showing it in the toast
+        // means a user without saved credentials sees
+        // ACTIONABLE feedback ("Guarda credenciales primero")
+        // instead of silently failing.
+        const detail = r.message?.trim() || "Sin detalles";
+        toast.error(`Conexión fallida: ${detail}`);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error desconocido";
       setLastTest({ ok: false, message, latency_ms: 0 });
@@ -116,11 +129,14 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
           ))
         )}
 
+        {/* v1.44.3.3 R-Mac-Round-3 Task E: every button bumped
+            ``h-9`` → ``min-h-[44px]`` for WCAG 2.5.5 touch
+            targets. ``flex-wrap`` keeps the row mobile-friendly. */}
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <button
             type="submit"
             disabled={saveMut.isPending}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
             <span aria-hidden>💾</span>
             {saveMut.isPending ? "Guardando…" : "Guardar credenciales"}
@@ -130,7 +146,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
             type="button"
             onClick={onTest}
             disabled={testMut.isPending}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent/5 disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
             <span aria-hidden>🔌</span>
             {testMut.isPending ? "Probando…" : "Probar conexión"}
@@ -140,7 +156,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
             type="button"
             onClick={() => setConfirmingDelete(true)}
             disabled={deleteMut.isPending}
-            className="ml-auto inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-background px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5 disabled:pointer-events-none disabled:opacity-60"
+            className="ml-auto inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-background px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
             <span aria-hidden>🗑️</span>
             Borrar credenciales
@@ -217,7 +233,9 @@ function Field({ field, register, error, isPasswordShown, onTogglePassword }: Fi
             type="button"
             onClick={onTogglePassword}
             aria-label={isPasswordShown ? "Ocultar contraseña" : "Mostrar contraseña"}
-            className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent/10"
+            // v1.44.3.3 R-Mac-Round-3 frontend review P1 — touch
+            // target bumped from h-7 w-7 (28px) to 44px square.
+            className="absolute right-1.5 top-1/2 inline-flex min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {isPasswordShown ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
@@ -283,12 +301,16 @@ function ConfirmDeleteDialog({
           acción no se puede deshacer; tendrás que volver a configurarlo
           desde cero.
         </p>
+        {/* v1.44.3.3 R-Mac-Round-3 frontend review P1: confirm-
+            dialog buttons bumped h-9 → min-h-[44px] + focus-
+            visible:ring (these were missed in the earlier
+            sweep). */}
         <div className="mt-6 flex justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="inline-flex h-9 items-center justify-center rounded-md border bg-background px-4 text-sm font-medium hover:bg-accent/5"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-4 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancelar
           </button>
@@ -296,7 +318,7 @@ function ConfirmDeleteDialog({
             type="button"
             onClick={onConfirm}
             disabled={pending}
-            className="inline-flex h-9 items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40 disabled:pointer-events-none disabled:opacity-60"
           >
             {pending ? "Borrando…" : "Borrar"}
           </button>

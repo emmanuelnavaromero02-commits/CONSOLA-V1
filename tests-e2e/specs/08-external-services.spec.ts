@@ -40,13 +40,53 @@ const SERVICES = [
   },
 ];
 
+/**
+ * v1.44.3.3 R-Mac-Round-3 Task H: helper that distinguishes
+ * "service is broken / returning a real HTTP error" (test
+ * FAILURE) from "service container is wedged at the TCP level"
+ * (test SKIP). The Superset container reports docker-healthy
+ * but the UI socket sometimes ECONNRESETs — when that happens
+ * we want the E2E suite to surface the issue WITHOUT counting
+ * it as a regression of the console code under test.
+ *
+ * Any operator looking at the report sees both signals:
+ *   - "Superset → SKIPPED (ECONNRESET)" — infra issue, not the
+ *     console PR's fault
+ *   - "Superset → FAILED 5xx" — real service regression
+ */
+async function fetchOrSkip(
+  ctx: import("@playwright/test").APIRequestContext,
+  url: string,
+  { timeout = 10_000 } = {},
+) {
+  try {
+    return await ctx.fetch(url, { timeout });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    // v1.44.3.3 R-Mac-Round-3 DevOps review P2: narrowed the
+    // skip regex to TRUE mid-handshake transients only.
+    // ECONNREFUSED + "fetch failed" mean "port not bound" /
+    // "DNS broken" — those are real ops issues that should
+    // still SURFACE as failures, not silently skip. The
+    // Superset symptom is specifically ECONNRESET (container
+    // accepts the SYN, then resets mid-handshake), which is
+    // what we want to forgive.
+    const transient =
+      /econnreset|socket hang up|other side closed/i.test(message);
+    if (transient) {
+      test.skip(true, `${url} unreachable at TCP level: ${message.slice(0, 200)}`);
+    }
+    throw err;
+  }
+}
+
 test.describe("External services — root reachability", () => {
   for (const svc of SERVICES) {
     test(`${svc.name} responds at ${svc.url}`, async () => {
       const ctx = await pwRequest.newContext({
         ignoreHTTPSErrors: true,
       });
-      const response = await ctx.fetch(svc.url, { timeout: 10_000 });
+      const response = await fetchOrSkip(ctx, svc.url);
       const status = response.status();
       expect(svc.okStatuses,
         `${svc.name} returned ${status}. ${svc.note}`,
@@ -61,9 +101,7 @@ test.describe("External services — health probes", () => {
     if (!svc.pathCheck) continue;
     test(`${svc.name} ${svc.pathCheck} probe`, async () => {
       const ctx = await pwRequest.newContext({ ignoreHTTPSErrors: true });
-      const response = await ctx.fetch(`${svc.url}${svc.pathCheck}`, {
-        timeout: 10_000,
-      });
+      const response = await fetchOrSkip(ctx, `${svc.url}${svc.pathCheck}`);
       expect([200, 204],
         `${svc.name}${svc.pathCheck} returned ${response.status()}. ` +
         "Container healthcheck-vs-actual-response mismatch is a v1.44.3.3 fix target.",

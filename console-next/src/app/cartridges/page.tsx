@@ -65,14 +65,18 @@ export default function CartridgesPage() {
       </header>
 
       {list.isError ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm">
+        <div
+          role="alert"
+          aria-live="polite"
+          className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm"
+        >
           <p className="font-medium text-destructive">
             No se pudieron cargar los cartuchos.
           </p>
           <button
             type="button"
             onClick={() => list.refetch()}
-            className="mt-2 text-xs font-medium text-destructive underline-offset-2 hover:underline"
+            className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
           >
             Reintentar
           </button>

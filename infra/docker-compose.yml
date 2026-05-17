@@ -104,7 +104,27 @@ services:
       # v1.43.2 (Codex P1-2): APP_ENV default flipped to ``production`` in
       # code so an unset env never silently disables guardrails. Local dev
       # opts in explicitly here.
+      #
+      # v1.44.3.3 R-Mac Mini-fix review (DevOps P2): kept the
+      # ${APP_ENV:-development} substitution to preserve symmetry
+      # with every other service in this compose file (refinement,
+      # vault, workspace, mcp-infra, cartridges, airflow all use
+      # the same pattern). The "stale host env" risk the prior
+      # commit cited is already neutralised in code — the
+      # APP_ENV default in console/app/security.py is "production",
+      # so an unset/empty value fails CLOSED.
       APP_ENV: ${APP_ENV:-development}
+      # v1.44.3.3 Task A + R-Mac Mini-fix: hardcoded "false" so
+      # the limiter is OFF on the dev stack. The earlier
+      # ``${RATE_LIMIT_ENABLED:-}`` form produced an EMPTY string
+      # when the host env wasn't set, and the helper
+      # ``_rate_limit_disabled()`` only treats {false / 0 / no /
+      # off} as falsy — empty string fell through and the limiter
+      # stayed on, exhausting the 8/300s /auth/login quota during
+      # E2E. Production (AWS compose) does NOT set this var; the
+      # helper's default is ``enabled`` so prod behaviour is
+      # unchanged.
+      RATE_LIMIT_ENABLED: "false"
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:-}

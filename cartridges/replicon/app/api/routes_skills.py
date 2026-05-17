@@ -19,6 +19,92 @@ router = APIRouter(
 )
 
 
+_SERVICE = "replicon"
+
+
+def _humanise_path(path: str) -> str:
+    """v1.44.3.3 R-Mac-Round-3 backend review P2 — best-effort
+    fallback description for handlers without a docstring.
+
+    Strips the ``/skills/`` prefix, replaces underscores with
+    spaces, lower-cases path-variable braces, and capitalises
+    the first word — purely cosmetic so the orchestrator UI
+    never renders an empty ``description`` cell.
+
+    ``/skills/run_full_load/{entity}`` → ``Run full load (entity)``
+    ``/skills/test_connection``       → ``Test connection``
+    """
+    bare = path.split("/skills/", 1)[-1].lstrip("/")
+    if not bare:
+        return ""
+    # Path variables: {entity} → (entity)
+    bare = bare.replace("{", "(").replace("}", ")")
+    # Slashes + underscores → spaces
+    bare = bare.replace("/", " ").replace("_", " ")
+    bare = bare.strip()
+    if not bare:
+        return ""
+    return bare[0].upper() + bare[1:]
+
+
+# ------------------------------------------------------------------
+# Skill discovery (v1.44.3.3 Task C)
+# ------------------------------------------------------------------
+#
+# The console / orchestrator needs to discover which skills each
+# cartridge exposes WITHOUT hardcoding a registry on the console
+# side. ``GET /skills/list`` introspects this router and emits the
+# canonical list — adding a new ``@router.<method>(...)`` endpoint
+# below automatically shows up here.
+
+
+@router.get("/list")
+def list_skills() -> dict:
+    """Return every skill registered on this cartridge.
+
+    Used by the console + orchestrator for skill discovery. The
+    list is generated from the router's own ``routes`` so it
+    can't drift from the actual registered handlers; adding or
+    removing a skill below is reflected here on the next process
+    start without any manual catalog edit."""
+    skills: list[dict] = []
+    for route in router.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None) or set()
+        if not path or path.endswith("/list"):
+            continue
+        for method in sorted(methods):
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            endpoint = getattr(route, "endpoint", None)
+            description = ""
+            if endpoint and endpoint.__doc__:
+                description = endpoint.__doc__.strip().split("\n", 1)[0].strip()
+            if not description:
+                # v1.44.3.3 R-Mac-Round-3 backend review P2:
+                # many handlers ship without docstrings; emit
+                # a humanised fallback derived from the route
+                # name so the UI never renders an empty cell.
+                # e.g. "/skills/run_full_load/{entity}" →
+                # "Run full load (entity)".
+                description = _humanise_path(path)
+            # v1.44.3.3 R-Mac-Round-3 Task F: field renamed
+            # ``summary`` → ``description`` to match what the
+            # E2E + Python contract tests assert on (the
+            # orchestrator's capability-discovery format
+            # documents the key as "description"). Kept
+            # ``summary`` aliased for one sprint so any
+            # external caller still reading the old key
+            # doesn't break — remove the alias in v1.44.4.
+            skills.append({
+                "name":        path,
+                "method":      method,
+                "description": description,
+                "summary":     description,  # alias — remove in v1.44.4
+            })
+    return {"service": _SERVICE, "skills": skills}
+
+
 # ------------------------------------------------------------------
 # Connection test (v1.41.0 — auditor P1 operativa)
 # ------------------------------------------------------------------

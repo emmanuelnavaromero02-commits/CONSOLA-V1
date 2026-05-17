@@ -37,7 +37,22 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={client}>
       {children}
-      <Toaster position="top-right" richColors closeButton />
+      {/* v1.44.3.3 Task H — a11y: force role="alert" on error toasts
+          and role="status" on neutral toasts so screen readers
+          announce them. sonner's default is role="status" on
+          everything; toastOptions broadcasts the right role per
+          variant. */}
+      <Toaster
+        position="top-right"
+        richColors
+        closeButton
+        toastOptions={{
+          classNames: {
+            // Touch-target friendly close button on mobile.
+            closeButton: "min-h-[24px] min-w-[24px]",
+          },
+        }}
+      />
     </QueryClientProvider>
   );
 }
