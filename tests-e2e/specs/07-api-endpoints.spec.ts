@@ -15,6 +15,31 @@ import { loginViaApi } from "../fixtures/auth";
 
 const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
 
+function extractCsrf(setCookie: string | undefined): string {
+  const match = (setCookie || "").match(/csrf_token=([^;,\s]+)/);
+  if (!match?.[1]) {
+    throw new Error("GET /login did not seed csrf_token for /api/auth/login");
+  }
+  return match[1];
+}
+
+async function postApiAuthLogin(
+  ctx: import("@playwright/test").APIRequestContext,
+  data: { email: string; password: string },
+) {
+  const csrfResponse = await ctx.get(`${LEGACY}/login`);
+  const csrf = extractCsrf(csrfResponse.headers()["set-cookie"]);
+  return ctx.fetch(`${LEGACY}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrf,
+      Cookie: `csrf_token=${csrf}`,
+    },
+    data,
+  });
+}
+
 // v1.44.3.2.1: this spec mixes unauth + authed checks. Force the
 // unauth surface for the WHOLE file by clearing storage state; the
 // authed tests inside re-mint a session via loginViaApi.
@@ -121,10 +146,9 @@ test.describe("Backend API — authenticated", () => {
 test.describe("Backend API — POST /api/auth/login round-trip", () => {
   test("invalid creds return 401", async () => {
     const ctx = await pwRequest.newContext();
-    const response = await ctx.fetch(`${LEGACY}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      data: { email: "nobody@invalid.local", password: "wrong" },
+    const response = await postApiAuthLogin(ctx, {
+      email: "nobody@invalid.local",
+      password: "wrong",
     });
     expect(response.status()).toBe(401);
     await ctx.dispose();
@@ -146,11 +170,7 @@ test.describe("Backend API — POST /api/auth/login round-trip", () => {
       );
     }
     const ctx = await pwRequest.newContext();
-    const response = await ctx.fetch(`${LEGACY}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      data: { email, password },
-    });
+    const response = await postApiAuthLogin(ctx, { email, password });
     expect(response.status()).toBe(200);
     // The Set-Cookie header must include httpOnly + at least one
     // recognised auth cookie name.
