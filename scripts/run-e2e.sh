@@ -45,6 +45,18 @@ set -a
 source .env
 set +a
 
+# Some deep cartridge probes need the same internal API key the
+# running compose stack uses. Keep tests-e2e/.env operator-facing
+# and pull the secret from infra/.env when it was not explicitly
+# exported by the caller.
+if [ -z "${INTERNAL_API_KEY:-}" ] && [ -f "${ROOT}/infra/.env" ]; then
+    INTERNAL_API_KEY="$(
+        awk -F= '/^INTERNAL_API_KEY=/ { print substr($0, index($0, "=") + 1); exit }' \
+            "${ROOT}/infra/.env"
+    )"
+    export INTERNAL_API_KEY
+fi
+
 BASE_URL="${BASE_URL:-http://localhost:3000}"
 LEGACY_URL="${LEGACY_URL:-http://localhost:8000}"
 
