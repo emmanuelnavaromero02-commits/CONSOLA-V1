@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AppChrome } from "@/components/AppChrome";
 
 /**
@@ -34,6 +34,20 @@ export function Providers({ children }: { children: ReactNode }) {
         },
       }),
   );
+
+  useEffect(() => {
+    const markToasts = () => {
+      document.querySelectorAll("[data-sonner-toast]").forEach((toast) => {
+        if (!toast.getAttribute("role")) {
+          toast.setAttribute("role", "alert");
+        }
+      });
+    };
+    markToasts();
+    const observer = new MutationObserver(markToasts);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <QueryClientProvider client={client}>

@@ -50,6 +50,12 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   return (
     <>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow"
+      >
+        Saltar al contenido
+      </a>
       <header className="border-b bg-card">
         <div className="mx-auto flex min-h-14 max-w-6xl flex-wrap items-center gap-3 px-6 py-3">
           <Link
