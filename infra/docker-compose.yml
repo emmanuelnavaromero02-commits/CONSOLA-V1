@@ -105,6 +105,12 @@ services:
       # code so an unset env never silently disables guardrails. Local dev
       # opts in explicitly here.
       APP_ENV: ${APP_ENV:-development}
+      # v1.44.3.3 Task A: explicit env var so an E2E run can disable the
+      # auth-endpoint rate limiter without leaning on APP_ENV. Defaults
+      # to unset → enabled. Set RATE_LIMIT_ENABLED=false in tests-e2e/.env
+      # when hammering /auth/login from Playwright (see
+      # console/app/main.py::_rate_limit_disabled).
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT: ${INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:-}

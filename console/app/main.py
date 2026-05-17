@@ -585,6 +585,22 @@ def _client_ip(request: Request) -> str:
 
 
 async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
+    # v1.44.3.3 (Task A): E2E suites running through the Next.js
+    # same-origin proxy all surface to FastAPI as a single
+    # source-IP (the docker container's IP), so concurrent test
+    # logins share one per-IP bucket and exhaust the 8/300s
+    # window long before a real user could. The
+    # ``RATE_LIMIT_ENABLED`` env var lets the test harness bypass
+    # the limiter completely; in production it stays unset (or
+    # explicitly ``true``) and the brute-force protection is
+    # untouched.
+    #
+    # We also bypass when APP_ENV is ``test`` for the same reason
+    # — the Python suite calls these endpoints repeatedly during
+    # the auth contract tests.
+    if _rate_limit_disabled():
+        return
+
     limit, window = RATE_LIMITS[action]
     ip = _client_ip(request)
     subject_key = subject.lower().strip() or "-"
@@ -602,6 +618,30 @@ async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     for key in keys:
         if not await limiter.check(key, limit, window, sensitive=True):
             raise HTTPException(status_code=429, detail="too many requests")
+
+
+def _rate_limit_disabled() -> bool:
+    """Return True when rate limiting should bypass.
+
+    The bypass fires in two scenarios — both are EXPLICITLY
+    test-harness affordances, never production behaviour:
+
+      1. ``RATE_LIMIT_ENABLED=false`` (any case) — an explicit
+         opt-out for E2E suites that hammer /auth/login. Default
+         unset → enabled.
+      2. ``APP_ENV`` ∈ {``test``, ``testing``} — automatic for
+         pytest harnesses that don't bother setting
+         RATE_LIMIT_ENABLED.
+
+    Production deployments default ``APP_ENV`` to ``production``
+    (see console/app/security.py) and leave RATE_LIMIT_ENABLED
+    unset, so the limiter stays on.
+    """
+    enabled_env = os.environ.get("RATE_LIMIT_ENABLED")
+    if enabled_env is not None and enabled_env.strip().lower() in {"false", "0", "no", "off"}:
+        return True
+    app_env = os.environ.get("APP_ENV", "production").strip().lower()
+    return app_env in {"test", "testing"}
 
 
 def _is_viewer_path(path: str) -> bool:
