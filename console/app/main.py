@@ -884,9 +884,12 @@ async def auth_login(request: Request, body: dict):
     return await _login_response(request, body)
 
 
-@app.post("/api/auth/login")
+@app.post("/api/auth/login", dependencies=[Depends(require_csrf)])
 async def api_auth_login(request: Request, body: dict):
-    return await _login_response(request, body)
+    # Legacy compatibility alias for clients that still post to
+    # /api/auth/login. Delegate through the real handler so CSRF,
+    # rate-limit, and session behavior stay identical to /auth/login.
+    return await auth_login(request, body)
 
 
 @app.post("/auth/refresh")

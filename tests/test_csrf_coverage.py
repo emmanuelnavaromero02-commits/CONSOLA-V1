@@ -75,6 +75,9 @@ CSRF_EXEMPT_BY_DESIGN = frozenset({
     # decorator-level dep (it's a per-form token); listed here for
     # completeness so the test understands the route exists.
     ("/auth/login",         "POST"),
+    # Legacy compat alias for /auth/login. It delegates through the
+    # real handler and carries the same require_csrf dependency.
+    ("/api/auth/login",     "POST"),
     # Refresh-token POSTs validate via the refresh cookie itself, not
     # CSRF. The flow is HttpOnly cookie in + new access token out, with
     # the cookie's own SameSite=Lax protection as the CSRF substitute.
