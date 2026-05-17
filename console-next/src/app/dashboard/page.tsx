@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useKpis } from "@/lib/hooks/useKpis";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { FreshnessTable } from "@/components/dashboard/FreshnessTable";
@@ -55,9 +57,22 @@ export default function DashboardPage() {
             Estado en tiempo real de cartuchos, extracciones y copiloto.
           </p>
         </div>
-        {/* v1.44.3.3 Task E — logout affordance the 01-login-deep
-            spec was flagging as a known v1.44.4 deficit. */}
-        <LogoutButton />
+        <div className="flex flex-wrap items-center gap-2">
+          {/* v1.44.4 Task A — surface the new /workspace entry
+              point here so a returning operator can jump
+              straight into the copilot without the AppChrome
+              nav (which lands in Task H). */}
+          <Link
+            href="/workspace"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span aria-hidden className="mr-1.5">💬</span>
+            Ir al copiloto
+          </Link>
+          {/* v1.44.3.3 Task E — logout affordance the 01-login-deep
+              spec was flagging as a known v1.44.4 deficit. */}
+          <LogoutButton />
+        </div>
       </header>
 
       {isError ? (
