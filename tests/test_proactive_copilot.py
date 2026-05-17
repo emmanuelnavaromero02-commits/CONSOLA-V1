@@ -70,8 +70,8 @@ def test_freshness_analyzer_uses_correct_column():
     assert "FROM extraction_runs" in body
 
 
-def test_volume_analyzer_uses_records_output():
-    """The volume heuristic compares records_output (sum per day)
+def test_volume_analyzer_uses_records_extracted():
+    """The volume heuristic compares records_extracted (sum per day)
     not row count of extraction_runs — a single huge run shouldn't
     be diluted by a same-day tiny run."""
     src = _read(SERVICE)
@@ -80,7 +80,7 @@ def test_volume_analyzer_uses_records_output():
         src, re.DOTALL | re.MULTILINE,
     )
     body = block.group(0) if block else ""
-    assert "records_output" in body
+    assert "records_extracted" in body
     # The ±30% threshold the brief documents.
     assert "_VOLUME_DELTA_PCT" in src
     assert "30" in src

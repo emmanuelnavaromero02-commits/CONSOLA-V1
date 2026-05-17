@@ -43,6 +43,22 @@ def test_monitoring_mcp_tools_requires_auth():
     assert resp.status_code == 401
 
 
+def test_monitoring_mcp_tools_allows_internal_console_header():
+    main = _load_console_main()
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    resp = client.get(
+        "/monitoring/mcp/tools",
+        headers={
+            "x-api-key": os.environ["INTERNAL_API_KEY"],
+            "x-internal-service": "console",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert "tools" in resp.json()
+
+
 def test_monitoring_tools_requires_auth():
     main = _load_console_main()
     client = TestClient(main.app, raise_server_exceptions=False)

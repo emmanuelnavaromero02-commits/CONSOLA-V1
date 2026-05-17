@@ -142,9 +142,9 @@ async def analyze_volume_anomaly() -> list[Highlight]:
     """Compare yesterday's extraction count vs the median of the
     prior 7 days. A delta of more than ±30% surfaces as warning.
 
-    Uses extraction_runs.records_output (not row count) so a single
+    Uses extraction_runs.records_extracted (not row count) so a single
     run that pulled 1 M rows doesn't get diluted by a same-day run
-    that pulled 100 rows. NULL records_output is treated as 0 so
+    that pulled 100 rows. NULL records_extracted is treated as 0 so
     cartridges that haven't reported volumes don't surface here.
     """
     pool = await auth.pool()
@@ -153,7 +153,7 @@ async def analyze_volume_anomaly() -> list[Highlight]:
         WITH per_day AS (
             SELECT cartridge_id,
                    date_trunc('day', finished_at) AS day,
-                   SUM(COALESCE(records_output, 0)) AS records
+                   SUM(COALESCE(records_extracted, 0)) AS records
               FROM extraction_runs
              WHERE status = 'success'
                AND finished_at >= NOW() - INTERVAL '8 days'
