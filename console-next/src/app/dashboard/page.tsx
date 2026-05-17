@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useKpis } from "@/lib/hooks/useKpis";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { FreshnessTable } from "@/components/dashboard/FreshnessTable";
+import { BriefingSection } from "@/components/dashboard/BriefingSection";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 
 /**
@@ -74,6 +75,11 @@ export default function DashboardPage() {
           <LogoutButton />
         </div>
       </header>
+
+      {/* v1.44.4 Task B — proactive briefing surfaced ABOVE the
+          KPIs so a returning operator sees actionable alerts the
+          moment they land. Polls every 60 s. */}
+      <BriefingSection />
 
       {isError ? (
         // v1.44.3.3 R-Mac-Round-3 Task E: ``role="alert"`` so
