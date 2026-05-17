@@ -39,20 +39,19 @@ MIN_PASSWORD_LENGTH = 12
 _POOL: asyncpg.Pool | None = None
 
 
-def _login_attempt_tracking_disabled() -> bool:
-    """Disable DB-backed login lockouts for local E2E/test runs.
+def _login_attempt_lockout_disabled() -> bool:
+    """Disable only the DB-backed lockout for local E2E runs.
 
     ``console.app.main`` already honors RATE_LIMIT_ENABLED=false for
-    the Redis/IP limiter. The login_attempts lockout is the second
-    brute-force guard; keep it enabled by default, but let the same
-    explicit test/dev switch prevent repeated E2E runs from poisoning
-    the shared local account.
+    the Redis/IP limiter. ``login_attempts`` is a separate hardening
+    mechanism: attempts must still be tracked for auditability, but the
+    lockout check can be bypassed by the explicit local E2E switch so
+    repeated full-suite runs do not poison the shared test account.
     """
     enabled_env = os.environ.get("RATE_LIMIT_ENABLED")
     if enabled_env is not None and enabled_env.strip().lower() in {"false", "0", "no", "off"}:
         return True
-    app_env = os.environ.get("APP_ENV", "production").strip().lower()
-    return app_env in {"test", "testing"}
+    return False
 
 
 _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
@@ -345,29 +344,28 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
     """Returns user dict (without password_hash) on success, else None."""
     p = await pool()
     normalized_email = email.lower().strip()
-    login_attempts_enabled = not _login_attempt_tracking_disabled()
+    login_attempts_available = True
+    lockout_disabled = _login_attempt_lockout_disabled()
 
     # Check for brute force (5 failures in 15 minutes)
-    if login_attempts_enabled:
-        try:
-            recent_failures = await p.fetchval(
-                """SELECT COUNT(*) FROM login_attempts
-                   WHERE email = $1 AND success = FALSE
-                   AND created_at >= NOW() - INTERVAL '15 minutes'""",
-                normalized_email
-            )
-        except asyncpg.UndefinedTableError:
-            login_attempts_enabled = False
-            recent_failures = 0
-    else:
+    try:
+        recent_failures = await p.fetchval(
+            """SELECT COUNT(*) FROM login_attempts
+               WHERE email = $1 AND success = FALSE
+               AND created_at >= NOW() - INTERVAL '15 minutes'""",
+            normalized_email
+        )
+    except asyncpg.UndefinedTableError:
+        login_attempts_available = False
         recent_failures = 0
-    if recent_failures >= 5:
+
+    if not lockout_disabled and int(recent_failures or 0) >= 5:
         raise HTTPException(status_code=429, detail="Cuenta bloqueada temporalmente")
 
     u = await _get_user_auth_record_by_email(email)
 
     if not u or not u.get("is_active"):
-        if login_attempts_enabled:
+        if login_attempts_available:
             await p.execute(
                 "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
                 normalized_email, ip
@@ -375,7 +373,7 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
         return None
 
     if not verify_password(password, u["password_hash"]):
-        if login_attempts_enabled:
+        if login_attempts_available:
             await p.execute(
                 "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, FALSE)",
                 normalized_email, ip
@@ -383,7 +381,7 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
         return None
 
     # Success
-    if login_attempts_enabled:
+    if login_attempts_available:
         await p.execute(
             "INSERT INTO login_attempts (email, ip, success) VALUES ($1, $2, TRUE)",
             normalized_email, ip

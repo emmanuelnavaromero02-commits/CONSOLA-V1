@@ -118,10 +118,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
     await page.goto(`${LEGACY}/studio`);
     await page.getByText(/DAGs/i).first().click();
     const assistant = page.getByRole("button", { name: /asistente/i }).first();
-    if (!(await assistant.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.fail(true, "'Asistente' button not present");
-      return;
-    }
+    await expect(assistant).toBeVisible({ timeout: 5_000 });
     await assistant.click();
     const chat = page.locator(
       "[role='dialog'], aside, .assistant-panel, .chat-panel",
