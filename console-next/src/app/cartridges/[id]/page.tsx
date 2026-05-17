@@ -4,6 +4,27 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useConnectorSchema } from "@/lib/hooks/useCartridges";
 import { CredentialsForm } from "@/components/cartridges/CredentialsForm";
+import type { ConnectorSchema } from "@/lib/cartridges";
+
+function fallbackSchema(id: string): ConnectorSchema {
+  return {
+    name: id,
+    fields: [
+      {
+        name: "base_url",
+        type: "url",
+        label: "Base URL",
+        required: true,
+      },
+      {
+        name: "token",
+        type: "password",
+        label: "Bearer token",
+        required: true,
+      },
+    ],
+  };
+}
 
 /**
  * /cartridges/[id] detail page.
@@ -36,13 +57,7 @@ export default function CartridgeDetailPage() {
         ) : null}
       </header>
 
-      {schemaQuery.isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-12 animate-pulse rounded-md bg-muted" aria-hidden />
-          ))}
-        </div>
-      ) : schemaQuery.isError ? (
+      {schemaQuery.isError ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm">
           <p className="font-medium text-destructive">
             No se pudo cargar el esquema de configuración.
@@ -56,7 +71,7 @@ export default function CartridgeDetailPage() {
           </button>
         </div>
       ) : (
-        <CredentialsForm cartridgeId={id} schema={schemaQuery.data ?? { fields: [] }} />
+        <CredentialsForm cartridgeId={id} schema={schemaQuery.data ?? fallbackSchema(id)} />
       )}
     </main>
   );

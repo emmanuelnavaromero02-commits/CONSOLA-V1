@@ -678,7 +678,7 @@ async def security_headers_middleware(request: Request, call_next):
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
 _AUTH_PUBLIC_EXACT = {
-    "/login", "/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/auth/me-current", "/auth/refresh", "/favicon.ico",
+    "/login", "/auth/login", "/api/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/auth/me-current", "/auth/refresh", "/favicon.ico",
     "/activate", "/auth/activate", "/auth/activate/info",
     "/forgot-password", "/auth/forgot-password",
     "/reset-password",  "/auth/reset-password", "/auth/reset/info",
@@ -847,8 +847,7 @@ async def login_page():
     return response
 
 
-@app.post("/auth/login", dependencies=[Depends(require_csrf)])
-async def auth_login(request: Request, body: dict):
+async def _login_response(request: Request, body: dict):
     email = (body.get("email") or "").strip()
     pw    = body.get("password") or ""
     await _rate_limit(request, "/auth/login", email)
@@ -878,6 +877,16 @@ async def auth_login(request: Request, body: dict):
     # match the csrf_token cookie.
     set_csrf_cookie(resp, request.cookies.get(CSRF_COOKIE_NAME))
     return resp
+
+
+@app.post("/auth/login", dependencies=[Depends(require_csrf)])
+async def auth_login(request: Request, body: dict):
+    return await _login_response(request, body)
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request, body: dict):
+    return await _login_response(request, body)
 
 
 @app.post("/auth/refresh")

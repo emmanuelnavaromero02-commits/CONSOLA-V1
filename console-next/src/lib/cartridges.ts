@@ -59,6 +59,33 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
   // Tolerate both shapes — ``{ fields: [...] }`` AND the older
   // ``{ field_a: {...}, field_b: {...} }`` dict form.
   if (Array.isArray(data?.fields)) return data;
+  if (data?.connector && typeof data.connector === "object") {
+    const connector = data.connector;
+    const fields: ConnectorField[] = [];
+    if (connector.api?.base_url_env) {
+      fields.push({
+        name: "base_url",
+        type: "url",
+        label: "Base URL",
+        description: connector.api.base_url_env,
+        required: true,
+      });
+    }
+    if (connector.auth?.type === "bearer_token") {
+      fields.push({
+        name: "token",
+        type: "password",
+        label: "Bearer token",
+        description: connector.auth.env_var || "API token",
+        required: true,
+      });
+    }
+    return {
+      fields,
+      name: connector.name,
+      description: connector.description,
+    };
+  }
   if (data && typeof data === "object") {
     const fields: ConnectorField[] = Object.entries(data)
       .filter(([k]) => !["name", "description"].includes(k))

@@ -77,7 +77,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
         // ACTIONABLE feedback ("Guarda credenciales primero")
         // instead of silently failing.
         const detail = r.message?.trim() || "Sin detalles";
-        toast.error(`Conexión fallida: ${detail}`);
+        toast.error(`Error de conexión: ${detail}`);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error desconocido";
@@ -190,6 +190,8 @@ interface FieldProps {
 function Field({ field, register, error, isPasswordShown, onTogglePassword }: FieldProps) {
   const label = field.label ?? field.name;
   const id = `field-${field.name}`;
+  const isSecretField =
+    field.type === "password" || /password|token|secret|api[_-]?key/i.test(field.name);
   const baseClass =
     "w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
 
@@ -221,7 +223,7 @@ function Field({ field, register, error, isPasswordShown, onTogglePassword }: Fi
             </option>
           ))}
         </select>
-      ) : field.type === "password" ? (
+      ) : isSecretField ? (
         <div className="relative">
           <input
             {...common}
