@@ -149,6 +149,7 @@ async def dismiss_briefing(
     Reject empty IDs at the boundary so a malformed POST can't
     insert a row that mass-dismisses everything later.
     """
+    highlight_id = (highlight_id or "").strip()
     if not highlight_id or len(highlight_id) > 200:
         raise HTTPException(400, "Invalid highlight_id")
     await proactive_service.dismiss_highlight(user["id"], highlight_id)

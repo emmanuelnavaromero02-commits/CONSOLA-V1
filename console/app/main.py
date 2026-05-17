@@ -41,7 +41,7 @@ from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token, verify_access_token_async
-from app.services.csrf import require_csrf, set_csrf_cookie, clear_csrf_cookie
+from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie, clear_csrf_cookie
 from app.security import get_internal_api_key, required_secret
 from app.dependencies import (
     ROLE_ADMIN,
@@ -870,10 +870,13 @@ async def auth_login(request: Request, body: dict):
         path="/",
     )
     _set_refresh_cookie(resp, refresh_token, refresh_expires)
-    # Rotate the CSRF token after a successful login: the old value may
-    # have been exposed to whatever script is on the login page; the
-    # post-login surface should not accept it again.
-    set_csrf_cookie(resp)
+    # Keep the CSRF token stable across the login transition. API clients
+    # and the Next.js proxy seed the token on GET /login, submit it to
+    # /auth/login, then immediately use the same in-memory token for the
+    # first authenticated mutation while the cookie jar is catching up.
+    # The double-submit check remains active because the header must still
+    # match the csrf_token cookie.
+    set_csrf_cookie(resp, request.cookies.get(CSRF_COOKIE_NAME))
     return resp
 
 
