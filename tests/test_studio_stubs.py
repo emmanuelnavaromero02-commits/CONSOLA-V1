@@ -1,6 +1,6 @@
 """Sprint v1.44.3.3 Task B — Studio stub endpoint contracts.
 
-12 ``/api/studio/*`` endpoints exist as authenticated stubs so
+13 ``/api/studio/*`` endpoints exist as authenticated stubs so
 the E2E ``waitForRequest('/api/studio/*')`` assertions in
 ``tests-e2e/specs/05-studio*.spec.ts`` resolve once the legacy
 JS click handlers are rewired (planned for v1.44.4). This file

@@ -105,13 +105,15 @@ services:
       # code so an unset env never silently disables guardrails. Local dev
       # opts in explicitly here.
       #
-      # v1.44.3.3 R-Mac Mini-fix: hardcoded the dev value (was
-      # ``${APP_ENV:-development}``) so a stale host env can't
-      # silently flip the container into production/test by
-      # accident.  The AWS compose at
-      # infra/terraform/deploy/docker-compose.aws.yml is the prod
-      # source of truth and continues to default to ``production``.
-      APP_ENV: "development"
+      # v1.44.3.3 R-Mac Mini-fix review (DevOps P2): kept the
+      # ${APP_ENV:-development} substitution to preserve symmetry
+      # with every other service in this compose file (refinement,
+      # vault, workspace, mcp-infra, cartridges, airflow all use
+      # the same pattern). The "stale host env" risk the prior
+      # commit cited is already neutralised in code — the
+      # APP_ENV default in console/app/security.py is "production",
+      # so an unset/empty value fails CLOSED.
+      APP_ENV: ${APP_ENV:-development}
       # v1.44.3.3 Task A + R-Mac Mini-fix: hardcoded "false" so
       # the limiter is OFF on the dev stack. The earlier
       # ``${RATE_LIMIT_ENABLED:-}`` form produced an EMPTY string
