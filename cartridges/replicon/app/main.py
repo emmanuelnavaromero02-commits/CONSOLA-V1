@@ -63,6 +63,16 @@ app.include_router(health_router)
 app.include_router(skills_router)
 
 
+# v1.44.3.3 Task C — minimal liveness probe. ``/health`` (above)
+# reflects real startup state and gates on MCP tool registration;
+# ``/healthz`` is the Kubernetes-style yes/no liveness signal that
+# stays 200 as long as the process is serving HTTP. The console
+# orchestrator + E2E suite both expect ``/healthz`` to exist.
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"ok": True, "service": "replicon"}
+
+
 # v1.43.2 (LLM R1 hardening): /mcp/* must respect startup state. If
 # lifespan recorded a failure (job_runner schema missing, etc.), the
 # cartridge is in rotation only to /health (which already returns

@@ -22,6 +22,41 @@ router = APIRouter(
 )
 
 
+_SERVICE = "sap_s4hana"
+
+
+# v1.44.3.3 Task C — GET /skills/list (router-introspecting
+# skill discovery; see replicon/sap_hcm for the full rationale).
+
+
+@router.get("/list")
+def list_skills() -> dict:
+    """Return every skill registered on this cartridge.
+
+    Generated from the router's own ``routes``; used by the
+    console + orchestrator to discover capabilities without
+    hardcoding a registry on the caller side."""
+    skills: list[dict] = []
+    for route in router.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None) or set()
+        if not path or path.endswith("/list"):
+            continue
+        for method in sorted(methods):
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            endpoint = getattr(route, "endpoint", None)
+            summary = ""
+            if endpoint and endpoint.__doc__:
+                summary = endpoint.__doc__.strip().split("\n", 1)[0].strip()
+            skills.append({
+                "name":    path,
+                "method":  method,
+                "summary": summary,
+            })
+    return {"service": _SERVICE, "skills": skills}
+
+
 # v1.41.0 — auditor P1: validate credentials from the console without
 # triggering an extraction. SapS4Client.test_connection() is degraded-aware.
 @router.post("/test_connection")

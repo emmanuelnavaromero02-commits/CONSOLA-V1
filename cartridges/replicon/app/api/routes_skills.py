@@ -19,6 +19,50 @@ router = APIRouter(
 )
 
 
+_SERVICE = "replicon"
+
+
+# ------------------------------------------------------------------
+# Skill discovery (v1.44.3.3 Task C)
+# ------------------------------------------------------------------
+#
+# The console / orchestrator needs to discover which skills each
+# cartridge exposes WITHOUT hardcoding a registry on the console
+# side. ``GET /skills/list`` introspects this router and emits the
+# canonical list — adding a new ``@router.<method>(...)`` endpoint
+# below automatically shows up here.
+
+
+@router.get("/list")
+def list_skills() -> dict:
+    """Return every skill registered on this cartridge.
+
+    Used by the console + orchestrator for skill discovery. The
+    list is generated from the router's own ``routes`` so it
+    can't drift from the actual registered handlers; adding or
+    removing a skill below is reflected here on the next process
+    start without any manual catalog edit."""
+    skills: list[dict] = []
+    for route in router.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None) or set()
+        if not path or path.endswith("/list"):
+            continue
+        for method in sorted(methods):
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            endpoint = getattr(route, "endpoint", None)
+            summary = ""
+            if endpoint and endpoint.__doc__:
+                summary = endpoint.__doc__.strip().split("\n", 1)[0].strip()
+            skills.append({
+                "name":    path,
+                "method":  method,
+                "summary": summary,
+            })
+    return {"service": _SERVICE, "skills": skills}
+
+
 # ------------------------------------------------------------------
 # Connection test (v1.41.0 — auditor P1 operativa)
 # ------------------------------------------------------------------
