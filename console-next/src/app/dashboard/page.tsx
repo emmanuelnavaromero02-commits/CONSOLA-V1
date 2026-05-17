@@ -5,6 +5,22 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { FreshnessTable } from "@/components/dashboard/FreshnessTable";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 
+/**
+ * v1.44.3.3 R-Mac Mini-fix: backend KPI counts come through
+ * the JSON envelope as numbers (``int(...)`` in
+ * console/app/routers/dashboard.py), but a stale cache /
+ * Decimal-string DB driver / forgotten conversion downstream
+ * can produce strings that visually render the same but
+ * cause E2E "value is a number" assertions to fail. Force
+ * every count through ``Number(x ?? 0)`` so the render path
+ * is type-stable, and pass the raw numeric to the KpiCard via
+ * ``numericValue`` for E2E extraction.
+ */
+function coerceNumber(v: unknown): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export default function DashboardPage() {
   const { data, isLoading, isError, refetch } = useKpis();
 
@@ -15,6 +31,20 @@ export default function DashboardPage() {
         status:   info.status,
       }))
     : [];
+
+  // Pre-coerce every numeric we render so the card values are
+  // guaranteed to be JavaScript numbers (not "5"-as-string).
+  const cartridgesTotal        = coerceNumber(data?.cartridges.total);
+  const cartridgesConnected    = coerceNumber(data?.cartridges.connected);
+  const cartridgesDisconnected = coerceNumber(data?.cartridges.disconnected);
+  const extractionsToday       = coerceNumber(data?.extractions.today);
+  const extractionsWeek        = coerceNumber(data?.extractions.week);
+  const usersActiveToday       = coerceNumber(data?.users.active_today);
+  const usersTotal             = coerceNumber(data?.users.total);
+  const copilotToolsToday      = coerceNumber(data?.copilot.tools_invoked_today);
+  const copilotConvsToday      = coerceNumber(data?.copilot.conversations_today);
+  const auditEventsToday       = coerceNumber(data?.audit.events_today);
+  const auditDestructiveToday  = coerceNumber(data?.audit.destructive_actions_today);
 
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
@@ -51,37 +81,44 @@ export default function DashboardPage() {
       >
         <KpiCard
           label="Cartuchos conectados"
+          // Display "5 / 10"; expose the connected count as the
+          // numeric token tests key off (the more important number
+          // of the two).
           value={
             data
-              ? `${data.cartridges.connected} / ${data.cartridges.total}`
+              ? `${cartridgesConnected} / ${cartridgesTotal}`
               : "—"
           }
+          numericValue={data ? cartridgesConnected : undefined}
           hint={
-            data && data.cartridges.disconnected > 0
-              ? `${data.cartridges.disconnected} sin conexión`
+            data && cartridgesDisconnected > 0
+              ? `${cartridgesDisconnected} sin conexión`
               : "Todos en línea"
           }
-          trend={data && data.cartridges.disconnected === 0 ? "up" : "flat"}
+          trend={data && cartridgesDisconnected === 0 ? "up" : "flat"}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Extracciones hoy"
-          value={data ? data.extractions.today : "—"}
-          hint={data ? `${data.extractions.week} esta semana` : ""}
+          value={data ? extractionsToday : "—"}
+          numericValue={data ? extractionsToday : undefined}
+          hint={data ? `${extractionsWeek} esta semana` : ""}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Usuarios activos"
-          value={data ? data.users.active_today : "—"}
-          hint={data ? `${data.users.total} en total` : ""}
+          value={data ? usersActiveToday : "—"}
+          numericValue={data ? usersActiveToday : undefined}
+          hint={data ? `${usersTotal} en total` : ""}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Acciones copiloto"
-          value={data ? data.copilot.tools_invoked_today : "—"}
+          value={data ? copilotToolsToday : "—"}
+          numericValue={data ? copilotToolsToday : undefined}
           hint={
             data
-              ? `${data.copilot.conversations_today} conversaciones`
+              ? `${copilotConvsToday} conversaciones`
               : ""
           }
           loading={isLoading && !data}
@@ -98,19 +135,21 @@ export default function DashboardPage() {
       >
         <KpiCard
           label="Eventos hoy"
-          value={data ? data.audit.events_today : "—"}
+          value={data ? auditEventsToday : "—"}
+          numericValue={data ? auditEventsToday : undefined}
           loading={isLoading && !data}
         />
         <KpiCard
           label="Acciones destructivas"
-          value={data ? data.audit.destructive_actions_today : "—"}
+          value={data ? auditDestructiveToday : "—"}
+          numericValue={data ? auditDestructiveToday : undefined}
           hint={
-            data && data.audit.destructive_actions_today > 0
+            data && auditDestructiveToday > 0
               ? "Revisar audit log"
               : "Sin movimientos"
           }
           trend={
-            data && data.audit.destructive_actions_today > 0 ? "down" : "flat"
+            data && auditDestructiveToday > 0 ? "down" : "flat"
           }
           loading={isLoading && !data}
         />
