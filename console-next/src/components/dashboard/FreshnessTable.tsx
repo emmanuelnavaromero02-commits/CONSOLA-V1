@@ -101,7 +101,7 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
                   <td className="px-5 py-3">
                     <Link
                       href={`/cartridges/${row.cartridge}`}
-                      className="font-medium hover:underline"
+                      className="inline-flex min-h-[36px] items-center font-medium hover:underline"
                     >
                       {row.cartridge}
                     </Link>
