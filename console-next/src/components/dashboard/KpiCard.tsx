@@ -32,6 +32,11 @@ export function KpiCard({
   trend,
   loading,
 }: KpiCardProps) {
+  const numericLabel =
+    typeof numericValue === "number" && Number.isFinite(numericValue)
+      ? String(numericValue)
+      : "";
+
   return (
     <div
       className="flex flex-col gap-2 rounded-lg border bg-card p-5 shadow-sm"
@@ -39,7 +44,7 @@ export function KpiCard({
       data-label={label}
     >
       <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
+        {numericLabel ? `${label} ${numericLabel}` : label}
       </span>
       {loading ? (
         <span className="h-8 w-24 animate-pulse rounded bg-muted" aria-hidden />
