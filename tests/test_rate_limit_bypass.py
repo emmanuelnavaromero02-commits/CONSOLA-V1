@@ -189,3 +189,52 @@ def test_rate_limit_function_short_circuits_when_disabled(_import_main, _restore
     finally:
         _import_main.get_rate_limiter = original
     assert sentinel_called["hit"] is False
+
+
+def test_dev_compose_hardcodes_rate_limit_disabled():
+    """v1.44.3.3 R-Mac Mini-fix regression guard.
+
+    The earlier ``RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-}``
+    pattern produced an EMPTY string when the host env wasn't
+    set, and the bypass helper only treats {false / 0 / no /
+    off} as falsy — empty string fell through and the limiter
+    stayed on, exhausting /auth/login quota during E2E.
+
+    Pin the dev compose to the explicit literal so a future
+    refactor can't silently re-introduce the bug. The production
+    AWS compose does NOT set this var (helper defaults to
+    enabled), so this guard only constrains the dev side."""
+    compose = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
+    # Locate the console service block.
+    import re
+    console_block = re.search(
+        r"\n  console:\n[\s\S]*?(?=\n  [a-z_-]+:\n|\Z)", compose,
+    )
+    assert console_block, "console service block not found in dev compose"
+    body = console_block.group(0)
+    assert 'RATE_LIMIT_ENABLED: "false"' in body, (
+        "infra/docker-compose.yml console service must hardcode "
+        '``RATE_LIMIT_ENABLED: "false"`` — without the explicit '
+        "literal, a host-env-fallback yields empty string which "
+        "the bypass helper does NOT treat as falsy."
+    )
+
+
+def test_aws_compose_does_not_disable_rate_limit():
+    """Belt-and-braces: production AWS compose must NOT carry a
+    ``RATE_LIMIT_ENABLED=false`` line — the brute-force
+    protection on /auth/login is exactly what keeps prod safe.
+    The helper defaults to enabled when the var is unset, so
+    simply omitting the key is the correct prod posture."""
+    aws_compose = REPO / "infra/terraform/deploy/docker-compose.aws.yml"
+    if not aws_compose.exists():
+        return  # tolerate file being moved in a future sprint
+    src = aws_compose.read_text(encoding="utf-8")
+    assert 'RATE_LIMIT_ENABLED: "false"' not in src, (
+        "AWS prod compose must NOT carry RATE_LIMIT_ENABLED=false. "
+        "Removing the line is the prod posture — the helper "
+        "defaults to enabled when the var is unset."
+    )
+    # Also reject the unquoted form just in case someone copies
+    # from the dev file.
+    assert "RATE_LIMIT_ENABLED: false" not in src
