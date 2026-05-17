@@ -358,7 +358,17 @@ test.describe("Studio — IA Semántica + RAG tabs", () => {
       return;
     }
     await rag.click();
-    const panel = page.locator("form, .rag-config, .empty-state").first();
+    const panel = page.locator(
+      [
+        "form",
+        ".rag-config",
+        ".empty-state",
+        "input[placeholder*='Search the knowledge base']",
+        "textarea[placeholder*='Paste text here']",
+        "button:has-text('INGEST')",
+        "button:has-text('SEARCH')",
+      ].join(", "),
+    ).first();
     await expect(panel).toBeVisible({ timeout: 10_000 });
   });
 });
