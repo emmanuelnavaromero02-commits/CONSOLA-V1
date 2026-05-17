@@ -8,13 +8,12 @@ import type { MemoryResponse } from "./types";
 /**
  * v1.44.4 Task A — memory drawer hook.
  *
- * The drawer shows two collections from
- * GET /api/copilot/memory:
- *   - facts:       free-form key/value learned about the user
- *   - preferences: structured settings (tone, locale, target KPIs)
- *
- * Mutations (create / delete / set-preference) invalidate the
- * memory query so the drawer stays in sync after writes.
+ * Backend reality (Round 1 review caught this — keep in sync
+ * with copilot_memory.py):
+ *   - Fact body is ``{fact, source?}`` — NO ``key`` / ``value``.
+ *   - Preferences keys are ``pref_key`` / ``pref_value``.
+ *   - createFact wrapper returns ``{ok, fact}``; client.ts
+ *     unwraps to the inner MemoryFact.
  */
 export function useMemory() {
   const qc = useQueryClient();
@@ -28,15 +27,15 @@ export function useMemory() {
   const createFactMutation = useMutation<
     unknown,
     Error,
-    { key: string; value: string }
+    { fact: string; source?: string }
   >({
-    mutationFn: ({ key, value }) => createFact(key, value),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["copilot", "memory"] }),
+    mutationFn: ({ fact, source }) => createFact(fact, source),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ["copilot", "memory"] }),
   });
 
   const deleteFactMutation = useMutation<unknown, Error, number>({
     mutationFn: (id) => deleteFact(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["copilot", "memory"] }),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ["copilot", "memory"] }),
   });
 
   const setPreferenceMutation = useMutation<
@@ -45,7 +44,7 @@ export function useMemory() {
     { key: string; value: string }
   >({
     mutationFn: ({ key, value }) => setPreference(key, value),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["copilot", "memory"] }),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ["copilot", "memory"] }),
   });
 
   return {

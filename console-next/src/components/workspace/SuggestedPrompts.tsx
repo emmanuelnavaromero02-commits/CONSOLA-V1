@@ -26,6 +26,13 @@ interface Props {
  */
 const PROMPTS: SuggestedPrompt[] = [
   {
+    // Round 1 review: universal entry-point for first-time
+    // operators who don't yet know what OMEGA can do.
+    icon:   "✨",
+    title:  "¿Qué puedes hacer?",
+    prompt: "¿Qué puedes hacer? Dame ejemplos concretos para mi operación.",
+  },
+  {
     icon:   "📊",
     title:  "Estado de cartuchos",
     prompt: "Dame el estado actual de todos los cartuchos conectados.",
@@ -34,11 +41,6 @@ const PROMPTS: SuggestedPrompt[] = [
     icon:   "💼",
     title:  "Nómina último mes",
     prompt: "Genera un reporte de nómina del último mes con totales y desglose por departamento.",
-  },
-  {
-    icon:   "📈",
-    title:  "Tendencia de horas",
-    prompt: "Muestra la tendencia de horas registradas en Replicon en las últimas 8 semanas.",
   },
   {
     icon:   "💰",

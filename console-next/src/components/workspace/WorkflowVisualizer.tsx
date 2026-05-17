@@ -1,94 +1,134 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { Workflow, WorkflowStatus } from "@/lib/copilot/types";
+import type {
+  Workflow,
+  WorkflowDetailResponse,
+  WorkflowRunStatus,
+  WorkflowStep,
+  WorkflowStepStatus,
+} from "@/lib/copilot/types";
 
 interface Props {
-  workflow: Workflow;
+  detail: WorkflowDetailResponse;
 }
-
-const STATUS_DOT: Record<WorkflowStatus, string> = {
-  planning:          "bg-muted text-muted-foreground",
-  running:           "bg-blue-500 text-blue-50",
-  awaiting_approval: "bg-amber-500 text-amber-50",
-  completed:         "bg-emerald-500 text-emerald-50",
-  cancelled:         "bg-muted text-muted-foreground",
-  failed:            "bg-destructive text-destructive-foreground",
-};
-
-
-const STATUS_LABEL: Record<WorkflowStatus, string> = {
-  planning:          "Planeando",
-  running:           "En curso",
-  awaiting_approval: "Esperando aprobación",
-  completed:         "Completado",
-  cancelled:         "Cancelado",
-  failed:            "Falló",
-};
-
-
-const STATUS_ICON: Record<WorkflowStatus, string> = {
-  planning:          "○",
-  running:           "◐",
-  awaiting_approval: "⏸",
-  completed:         "✓",
-  cancelled:         "✕",
-  failed:            "!",
-};
-
 
 /**
  * v1.44.4 Task A — multi-step workflow visualiser.
  *
- * Renders the steps the copilot's planner emits via
- * /api/copilot/workflow. The list is vertical with a status
- * dot, label, optional detail, and a connector line so the
- * operator can trace progress at a glance.
+ * Renders the real backend shape: ``{workflow, steps}`` envelope
+ * from GET /api/copilot/workflow/{id}. Step fields are
+ * ``step_idx``, ``description``, ``tool``, ``args``, ``result``,
+ * ``status`` (one of pending|running|completed|failed|skipped),
+ * plus ``started_at`` / ``finished_at`` timestamps.
  *
- * Live status updates come from polling the workflow detail
- * endpoint via ``useWorkflow`` — the page passes the latest
- * Workflow object every render and this component is
- * pure-presentational.
+ * Live status updates come from polling via ``useWorkflow`` —
+ * the parent re-renders every ~5 s while the run is non-terminal.
  */
-export function WorkflowVisualizer({ workflow }: Props) {
+const RUN_STATUS_BADGE: Record<WorkflowRunStatus, string> = {
+  planning:   "bg-muted text-muted-foreground",
+  running:    "bg-blue-500 text-white",
+  completed:  "bg-emerald-500 text-white",
+  cancelled:  "bg-muted text-muted-foreground",
+  failed:     "bg-destructive text-destructive-foreground",
+};
+
+
+const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
+  planning:   "Planeando",
+  running:    "En curso",
+  completed:  "Completado",
+  cancelled:  "Cancelado",
+  failed:     "Falló",
+};
+
+
+const STEP_STATUS_DOT: Record<WorkflowStepStatus, string> = {
+  pending:   "bg-muted text-muted-foreground",
+  running:   "bg-blue-500 text-white",
+  completed: "bg-emerald-500 text-white",
+  failed:    "bg-destructive text-destructive-foreground",
+  skipped:   "bg-muted text-muted-foreground",
+};
+
+
+const STEP_STATUS_ICON: Record<WorkflowStepStatus, string> = {
+  pending:   "○",
+  running:   "◐",
+  completed: "✓",
+  failed:    "!",
+  skipped:   "—",
+};
+
+
+const STEP_STATUS_LABEL: Record<WorkflowStepStatus, string> = {
+  pending:   "Pendiente",
+  running:   "En curso",
+  completed: "Completado",
+  failed:    "Falló",
+  skipped:   "Omitido",
+};
+
+
+function StepRow({ step }: { step: WorkflowStep }) {
+  return (
+    <li className="relative">
+      <span
+        className={cn(
+          "absolute -left-[1.4rem] top-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+          STEP_STATUS_DOT[step.status],
+        )}
+        aria-label={STEP_STATUS_LABEL[step.status]}
+      >
+        {STEP_STATUS_ICON[step.status]}
+      </span>
+      <p className="text-sm font-medium">{step.description}</p>
+      {step.tool ? (
+        <p className="font-mono text-[11px] text-muted-foreground">
+          {step.tool}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+
+export function WorkflowVisualizer({ detail }: Props) {
+  const wf: Workflow = detail.workflow;
+  const steps: WorkflowStep[] = [...(detail.steps ?? [])].sort(
+    (a, b) => a.step_idx - b.step_idx,
+  );
+
   return (
     <section
-      aria-label={`Workflow ${workflow.title ?? workflow.id}`}
+      aria-label={`Workflow ${wf.intent ?? wf.id}`}
       className="rounded-lg border bg-card p-4 shadow-sm"
     >
       <header className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold tracking-tight">
-          {workflow.title ?? "Workflow"}
+          {wf.intent ?? "Workflow"}
         </h3>
         <span
           className={cn(
             "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
-            STATUS_DOT[workflow.status],
+            RUN_STATUS_BADGE[wf.status],
           )}
         >
-          {STATUS_LABEL[workflow.status]}
+          {RUN_STATUS_LABEL[wf.status]}
         </span>
       </header>
 
-      <ol className="relative space-y-2 border-l border-border pl-5">
-        {workflow.steps.map((s) => (
-          <li key={s.id} className="relative">
-            <span
-              className={cn(
-                "absolute -left-[1.4rem] top-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
-                STATUS_DOT[s.status],
-              )}
-              aria-hidden
-            >
-              {STATUS_ICON[s.status]}
-            </span>
-            <p className="text-sm font-medium">{s.title}</p>
-            {s.detail ? (
-              <p className="text-xs text-muted-foreground">{s.detail}</p>
-            ) : null}
-          </li>
-        ))}
-      </ol>
+      {steps.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Aún no hay pasos planeados.
+        </p>
+      ) : (
+        <ol className="relative space-y-2 border-l border-border pl-5">
+          {steps.map((s) => (
+            <StepRow key={s.step_idx} step={s} />
+          ))}
+        </ol>
+      )}
     </section>
   );
 }

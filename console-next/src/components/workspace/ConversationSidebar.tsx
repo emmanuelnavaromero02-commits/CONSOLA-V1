@@ -8,11 +8,13 @@ import type { Conversation } from "@/lib/copilot/types";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  conversations:    Conversation[];
-  activeId:         string | null;
-  onSelect:         (id: string) => void;
-  onCreate:         () => void;
-  loading?:         boolean;
+  conversations:  Conversation[];
+  activeId:       string | null;
+  onSelect:       (id: string) => void;
+  onCreate:       () => void;
+  loading?:       boolean;
+  errorLoading?:  boolean;
+  onRetry?:       () => void;
 }
 
 /**
@@ -22,14 +24,13 @@ interface Props {
  * each with title + relative-time updated stamp ("hace 4 h").
  * Includes a search filter that narrows by title substring.
  *
- * Empty state: gives a clear CTA so a brand-new user sees
- * "Sin conversaciones todavía" + the "Nueva conversación"
- * button highlighted.
- *
- * The "Nueva conversación" button at the top fires onCreate
- * which calls the page's createConversationMutation. The
- * sidebar itself is stateless except for the local search
- * input — the page owns activeId and conversation selection.
+ * Round 1 review fixes:
+ *   - Search input now meets 44px touch target.
+ *   - Conversation rows enforce min-h-[44px].
+ *   - Error state with retry CTA when listConversations fails.
+ *   - "Empezar nueva conversación" label is honest (the actual
+ *     conversation row materialises after the first message —
+ *     the button just resets to the empty-state).
  */
 export function ConversationSidebar({
   conversations,
@@ -37,6 +38,8 @@ export function ConversationSidebar({
   onSelect,
   onCreate,
   loading,
+  errorLoading,
+  onRetry,
 }: Props) {
   const [query, setQuery] = useState("");
 
@@ -60,7 +63,7 @@ export function ConversationSidebar({
           className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span aria-hidden>＋</span>
-          Nueva conversación
+          Empezar nueva
         </button>
         <label className="sr-only" htmlFor="conv-search">
           Buscar conversaciones
@@ -71,7 +74,7 @@ export function ConversationSidebar({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar…"
-          className="min-h-[36px] rounded-md border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-h-[44px] rounded-md border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </header>
 
@@ -88,11 +91,31 @@ export function ConversationSidebar({
           </li>
         ) : null}
 
-        {!loading && filtered.length === 0 ? (
+        {errorLoading ? (
+          <li
+            role="alert"
+            className="m-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs"
+          >
+            <p className="font-medium text-destructive">
+              No se pudieron cargar las conversaciones.
+            </p>
+            {onRetry ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+              >
+                Reintentar
+              </button>
+            ) : null}
+          </li>
+        ) : null}
+
+        {!loading && !errorLoading && filtered.length === 0 ? (
           <li className="px-3 py-6 text-center text-xs text-muted-foreground">
             {query
               ? "Sin coincidencias para esa búsqueda."
-              : "Sin conversaciones todavía. Empieza una nueva."}
+              : "Sin conversaciones todavía. Empieza una nueva arriba."}
           </li>
         ) : null}
 
@@ -109,10 +132,10 @@ export function ConversationSidebar({
                 onClick={() => onSelect(c.id)}
                 aria-current={isActive ? "true" : undefined}
                 className={cn(
-                  "block w-full rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "block w-full min-h-[44px] rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   isActive
-                    ? "bg-accent/15 font-medium"
-                    : "hover:bg-accent/5",
+                    ? "bg-accent/20 font-medium"
+                    : "hover:bg-accent/10",
                 )}
               >
                 <span className="line-clamp-1">

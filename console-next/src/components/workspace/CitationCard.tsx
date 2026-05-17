@@ -12,16 +12,42 @@ interface Props {
  * v1.44.4 Task A — citation card.
  *
  * Shows the source label + freshness signal under an assistant
- * reply ("📊 Replicon · time_entries · hace 4h"). If the
- * backend supplies an ``href`` it renders as a deep link;
- * otherwise the snippet (when present) is shown as a title
- * attribute so a tooltip hover gives the operator context.
+ * reply ("📊 Replicon · time_entries · hace 4h").
  *
- * Freshness is computed client-side from ``fetched_at`` —
- * displays in Spanish ("hace 4h", "hace 2d", etc.) per the
- * sprint copy convention. No external i18n library needed for
- * a single relative-time formatter.
+ * Security (Round 1 review P0): backend-supplied ``href`` is
+ * ULTIMATELY TOOL-DERIVED. A compromised or malicious tool
+ * result could emit ``href: "javascript:alert(1)"`` and the
+ * browser would execute that script in the console origin on
+ * click. ``rel="noopener noreferrer"`` does NOT block
+ * ``javascript:`` / ``data:`` schemes. ``safeHref`` allow-lists
+ * only ``http://``, ``https://`` and same-origin path
+ * references; anything else falls back to a non-clickable
+ * label with the snippet shown as a tooltip.
  */
+function safeHref(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  // Same-origin path reference (e.g. "/cartridges/replicon").
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    return trimmed;
+  }
+
+  // External absolute URL — only http(s) allowed.
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.toString();
+    }
+  } catch {
+    /* not a valid absolute URL — fall through */
+  }
+
+  return undefined;
+}
+
+
 function formatFreshness(fetchedAt: string | undefined): string | null {
   if (!fetchedAt) return null;
   const ts = Date.parse(fetchedAt);
@@ -49,7 +75,7 @@ export function CitationCard({ citation }: Props) {
 
   const source  = typeof citation.source === "string" ? citation.source : "fuente";
   const snippet = typeof citation.snippet === "string" ? citation.snippet : undefined;
-  const href    = typeof citation.href === "string" ? citation.href : undefined;
+  const href    = safeHref(citation.href);
 
   const inner = (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">

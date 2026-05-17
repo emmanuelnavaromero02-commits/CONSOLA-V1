@@ -13,6 +13,14 @@ interface Props {
 }
 
 /**
+ * Round 1 security P2 — bound the message length so a single
+ * paste can't blow up DB row size + downstream LLM token cost.
+ * 8 000 chars matches the documented backend MAX_USER_MESSAGE_CHARS
+ * referenced by copilot_service.py.
+ */
+const MAX_MESSAGE_CHARS = 8_000;
+
+/**
  * v1.44.4 Task A — chat input.
  *
  * Autoresizing textarea via react-textarea-autosize so the
@@ -49,6 +57,11 @@ export function MessageInput({
       return;
     }
     if (e.key === "/" && value === "" && onSlash) {
+      // Round 1 review: previously, "/" both opened the palette
+      // AND typed into the textarea — confusing dual state.
+      // Eat the keystroke so the palette becomes the SOLE
+      // input surface for the command.
+      e.preventDefault();
       onSlash();
     }
   }
@@ -63,11 +76,12 @@ export function MessageInput({
     >
       <TextareaAutosize
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => setValue(e.target.value.slice(0, MAX_MESSAGE_CHARS))}
         onKeyDown={handleKey}
         disabled={disabled}
         placeholder={placeholder ?? "Pregunta algo o escribe / para comandos…"}
         aria-label="Mensaje para el copiloto"
+        maxLength={MAX_MESSAGE_CHARS}
         minRows={1}
         maxRows={8}
         className="min-h-[44px] flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"

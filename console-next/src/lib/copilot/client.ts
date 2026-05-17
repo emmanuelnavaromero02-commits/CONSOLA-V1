@@ -2,30 +2,34 @@
  * v1.44.4 Task A — Copilot API client.
  *
  * Thin axios wrapper that returns the typed response shapes
- * defined in ./types.ts. Re-uses the shared ``api`` instance from
- * ``@/lib/api`` so CSRF + cookie + baseURL semantics stay
+ * defined in ./types.ts. Re-uses the shared ``api`` instance
+ * from ``@/lib/api`` so CSRF + cookie + baseURL semantics stay
  * consistent with the rest of the Next.js console.
  *
- * NOTE on the chat surface: ``sendMessage`` is non-streaming
- * today — the backend's ``run_turn`` returns a complete JSON
- * response with the full assistant reply. The hook layer in
- * ``./useChat.ts`` exposes loading state so the UI can show a
- * "pensando..." indicator while the round-trip is in flight.
- * Streaming via EventSource lands as a follow-up once the
- * backend emits ``StreamingResponse`` (copilot_workflows.py
- * docstring documents the SSE work as next-session scope).
+ * Backend reality (see types.ts module doc for the audit
+ * findings):
+ *   - run_turn (``sendMessage``) is non-streaming for now —
+ *     SSE is v1.44.4.1 backend scope.
+ *   - createFact + generateDraft return ENVELOPES
+ *     ({ok, fact} / {ok, draft}); we unwrap before returning
+ *     so call sites can stay simple.
+ *   - getWorkflow returns ``{workflow, steps}`` (NOT a flat
+ *     Workflow); the typed wrapper preserves both.
  */
 import { api } from "@/lib/api";
 import type {
   Conversation,
   ConversationDetailResponse,
   ConversationListResponse,
+  CreateFactResponse,
   Draft,
   DraftRequest,
+  GenerateDraftResponse,
   MemoryFact,
   MemoryResponse,
   SendMessageResponse,
   Workflow,
+  WorkflowDetailResponse,
   WorkflowListResponse,
 } from "./types";
 
@@ -96,15 +100,20 @@ export async function listMemory(): Promise<MemoryResponse> {
 }
 
 
+/**
+ * POST /api/copilot/memory/fact accepts ``{fact, source?}`` and
+ * returns ``{ok, fact}`` — we unwrap to the inner fact for the
+ * caller's convenience.
+ */
 export async function createFact(
-  key: string,
-  value: string,
+  fact: string,
+  source?: string,
 ): Promise<MemoryFact> {
-  const { data } = await api.post<MemoryFact>(
+  const { data } = await api.post<CreateFactResponse>(
     "/api/copilot/memory/fact",
-    { key, value },
+    source ? { fact, source } : { fact },
   );
-  return data;
+  return data.fact;
 }
 
 
@@ -127,12 +136,17 @@ export async function setPreference(
 // ── Drafts ──────────────────────────────────────────────────────────
 
 
+/**
+ * POST /api/copilot/drafts/generate. Backend requires
+ * ``{kind, about, tone?, audience?, title?, metadata?}`` and
+ * returns ``{ok, draft}``. We unwrap to the inner draft.
+ */
 export async function generateDraft(request: DraftRequest): Promise<Draft> {
-  const { data } = await api.post<Draft>(
+  const { data } = await api.post<GenerateDraftResponse>(
     "/api/copilot/drafts/generate",
     request,
   );
-  return data;
+  return data.draft;
 }
 
 
@@ -147,8 +161,8 @@ export async function listWorkflows(): Promise<Workflow[]> {
 }
 
 
-export async function getWorkflow(id: string): Promise<Workflow> {
-  const { data } = await api.get<Workflow>(
+export async function getWorkflow(id: string): Promise<WorkflowDetailResponse> {
+  const { data } = await api.get<WorkflowDetailResponse>(
     `/api/copilot/workflow/${encodeURIComponent(id)}`,
   );
   return data;

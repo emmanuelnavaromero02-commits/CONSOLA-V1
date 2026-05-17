@@ -1,22 +1,37 @@
 /**
  * v1.44.4 Task A — Copilot TypeScript types.
  *
- * Mirrors the real shapes returned by console/app/routers/copilot*.py
- * + console/app/services/copilot_service.py.  Confirmed against
- * the source on 2026-05-17 — keep these in lockstep with any
- * backend changes; drift here means silent UI breakage.
+ * Mirrors the real shapes returned by:
+ *   console/app/routers/copilot.py
+ *   console/app/routers/copilot_memory.py
+ *   console/app/routers/copilot_drafts.py
+ *   console/app/routers/copilot_workflows.py
+ *   console/app/services/copilot_service.py
+ *   console/app/services/proactive_service.py
  *
- * Notable shape facts:
- *   - run_turn → /api/copilot/conversations/{id}/messages returns
- *     a SINGLE JSON object (NOT a stream).  Streaming is documented
- *     as next-session work in copilot_workflows.py:6-7. The
- *     ``useChat`` hook awaits the full response; a future v1.44.4.1
- *     can swap the implementation to EventSource once the backend
- *     ships ``StreamingResponse``.
- *   - Severity enum on briefing highlights is
- *     ``info | warning | critical`` (NOT the brief's
- *     ``info | warn | alert`` shorthand).
- *   - Briefing text field is ``body`` (NOT ``description``).
+ * v1.44.4 Round 1 backend review caught major drift between an
+ * earlier draft and the real backend; everything below is now
+ * pinned against the live source as of 2026-05-17:
+ *
+ *   - Memory facts: ``fact`` (NOT ``value``), keyed by ``id``
+ *     with optional ``source`` + ``confidence``. Preferences:
+ *     ``pref_key`` / ``pref_value`` (NOT ``key`` / ``value``).
+ *   - Memory mutations: server returns an ``{ok, fact}``
+ *     envelope (NOT the bare fact).
+ *   - Drafts request: ``{kind, about, tone, audience, title,
+ *     metadata}`` (NOT ``{prompt, subject}``).
+ *   - Draft entity:   ``{kind, title, body, tone, status,
+ *     metadata}``. No ``subject`` field.
+ *   - Draft tones:    ``formal | neutral | friendly | urgent``
+ *     (NOT ``concise``).
+ *   - Workflow GET envelope: ``{workflow, steps}``.
+ *   - Workflow step:  ``{step_idx, description, tool, args,
+ *     result, status, started_at, finished_at}``.
+ *   - PendingAction has no ``rationale`` field — render from
+ *     ``args`` + ``risk_level`` instead.
+ *   - run_turn STILL returns JSON (NOT a stream). Streaming
+ *     SSE remains v1.44.4.1 backend work
+ *     (copilot_workflows.py:6-7).
  */
 
 export type Severity = "info" | "warning" | "critical";
@@ -29,7 +44,6 @@ export interface Conversation {
   title:        string | null;
   created_at:   string;
   updated_at:   string;
-  /** Number of persisted messages — populated by list_conversations. */
   message_count?: number;
 }
 
@@ -46,15 +60,10 @@ export type MessageRole = "user" | "assistant" | "system";
 
 
 export interface Citation {
-  /** Source label, e.g. "Replicon · time_entries". */
   source?:        string;
-  /** Optional ISO timestamp of the underlying data. */
   fetched_at?:    string;
-  /** Free-form snippet body. */
   snippet?:       string;
-  /** Optional URL to drill into. */
   href?:          string;
-  /** Any extra keys the backend emits — kept loose for UI display. */
   [key: string]:  unknown;
 }
 
@@ -73,13 +82,21 @@ export interface ToolResult {
 }
 
 
+/**
+ * Real shape emitted by copilot_service.py inside
+ * pending_actions: an invocation dict merged with
+ * ``approval_key`` — fields include ``tool``, ``server``,
+ * ``args``, ``risk_level``, ``requires_approval``,
+ * ``approval_key``. No ``rationale``.
+ */
 export interface PendingAction {
-  /** Stable key — the backend's approve endpoint expects the
-   *  message_id; this is mostly a UI hint for what would run. */
-  tool?:         string;
-  args?:         Record<string, unknown>;
-  rationale?:    string;
-  [key: string]: unknown;
+  tool?:              string;
+  server?:            string;
+  args?:              Record<string, unknown>;
+  risk_level?:        string;
+  requires_approval?: boolean;
+  approval_key?:      string;
+  [key: string]:      unknown;
 }
 
 
@@ -119,22 +136,30 @@ export interface SendMessageResponse {
 
 export interface MemoryFact {
   id:           number;
-  key:          string;
-  value:        string;
+  fact:         string;
+  source?:      string | null;
+  confidence?:  number | null;
   created_at?:  string;
-  updated_at?:  string;
 }
 
 
 export interface MemoryPreference {
-  key:    string;
-  value:  string;
+  pref_key:    string;
+  pref_value:  string;
+  updated_at?: string;
 }
 
 
 export interface MemoryResponse {
   facts:        MemoryFact[];
   preferences:  MemoryPreference[];
+}
+
+
+/** Wrapper returned by POST /api/copilot/memory/fact. */
+export interface CreateFactResponse {
+  ok:    boolean;
+  fact:  MemoryFact;
 }
 
 
@@ -161,29 +186,53 @@ export interface BriefingResponse {
 // ── Workflows ───────────────────────────────────────────────────────
 
 
-export type WorkflowStatus =
+/**
+ * Run statuses produced by copilot_workflows.py. ``awaiting_approval``
+ * is NOT a run status on the backend — destructive-action
+ * approval is captured at the message layer (run_turn ->
+ * pending_actions) and the workflow keeps its own state
+ * orthogonally.
+ */
+export type WorkflowRunStatus =
   | "planning"
   | "running"
-  | "awaiting_approval"
   | "completed"
   | "cancelled"
   | "failed";
 
 
-export interface WorkflowStep {
-  id:          string;
-  title:       string;
-  status:      WorkflowStatus;
-  detail?:     string;
-}
+export type WorkflowStepStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
 
 
 export interface Workflow {
   id:           string;
-  status:       WorkflowStatus;
-  title?:       string;
-  steps:        WorkflowStep[];
+  intent?:      string;
+  status:       WorkflowRunStatus;
   created_at?:  string;
+  finished_at?: string | null;
+}
+
+
+export interface WorkflowStep {
+  step_idx:     number;
+  description:  string;
+  tool?:        string;
+  args?:        Record<string, unknown>;
+  result?:      unknown;
+  status:       WorkflowStepStatus;
+  started_at?:  string | null;
+  finished_at?: string | null;
+}
+
+
+export interface WorkflowDetailResponse {
+  workflow: Workflow;
+  steps:    WorkflowStep[];
 }
 
 
@@ -195,19 +244,39 @@ export interface WorkflowListResponse {
 // ── Drafts ──────────────────────────────────────────────────────────
 
 
-export type DraftTone = "formal" | "friendly" | "concise";
+export type DraftTone = "formal" | "neutral" | "friendly" | "urgent";
 
 
+/**
+ * Body accepted by POST /api/copilot/drafts/generate. ``kind``
+ * is required ('email' | 'message' | 'note' typically — the
+ * backend enforces the allowlist). ``about`` is the
+ * free-form prompt; ``audience`` is who it's directed at;
+ * ``title`` seeds the subject line if relevant.
+ */
 export interface DraftRequest {
-  prompt:    string;
-  subject?:  string;
+  kind:      string;
+  about:     string;
   tone?:     DraftTone;
+  audience?: string;
+  title?:    string;
+  metadata?: Record<string, unknown>;
 }
 
 
 export interface Draft {
   id?:       string;
-  subject?:  string;
+  kind?:     string;
+  title?:    string;
   body:      string;
   tone?:     DraftTone;
+  status?:   string;
+  metadata?: Record<string, unknown>;
+}
+
+
+/** Wrapper returned by POST /api/copilot/drafts/generate. */
+export interface GenerateDraftResponse {
+  ok:    boolean;
+  draft: Draft;
 }
