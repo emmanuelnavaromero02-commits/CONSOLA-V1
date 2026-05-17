@@ -118,10 +118,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
     await page.goto(`${LEGACY}/studio`);
     await page.getByText(/DAGs/i).first().click();
     const assistant = page.getByRole("button", { name: /asistente/i }).first();
-    if (!(await assistant.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.fail(true, "'Asistente' button not present");
-      return;
-    }
+    await expect(assistant).toBeVisible({ timeout: 5_000 });
     await assistant.click();
     const chat = page.locator(
       "[role='dialog'], aside, .assistant-panel, .chat-panel",
@@ -195,10 +192,7 @@ test.describe("Studio — Entidades tab", () => {
     await page.goto(`${LEGACY}/studio`);
     await page.getByText(/Entidades/i).first().click();
     const addBtn = page.getByRole("button", { name: /\+ entidad|nueva entidad/i }).first();
-    if (!(await addBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.fail(true, "'+ Entidad' button not present");
-      return;
-    }
+    await expect(addBtn).toBeVisible({ timeout: 10_000 });
     await addBtn.click();
     const form = page.locator("form, [role='dialog']").first();
     await expect(form).toBeVisible({ timeout: 5_000 });

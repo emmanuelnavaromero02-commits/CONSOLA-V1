@@ -8,6 +8,8 @@
 import { test, expect } from "../fixtures/auth";
 
 test.describe("Mobile viewport — primary pages render", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
   for (const path of ["/login", "/dashboard", "/cartridges"]) {
     test(`${path} renders without horizontal scroll`, async ({ page }) => {
       await page.goto(path);
@@ -228,13 +230,12 @@ test.describe("Performance — page load budget", () => {
 });
 
 test.describe("Touch interactions", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
   test("dashboard freshness row is tappable on mobile", async ({ page }) => {
     await page.goto("/dashboard");
     const link = page.locator('table a[href^="/cartridges/"]').first();
-    if (!(await link.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.fail(true, "no freshness link rendered on dashboard");
-      return;
-    }
+    await expect(link).toBeVisible({ timeout: 10_000 });
     const box = await link.boundingBox();
     expect(box?.height ?? 0,
       "tap target should be ≥ 36 px tall on mobile",
