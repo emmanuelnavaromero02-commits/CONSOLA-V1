@@ -143,21 +143,63 @@ const CLICK_TRIGGERS = [
   },
 ];
 
-function hookGoStep() {
-  const original = window.goStep;
-  if (typeof original !== "function") return;
-  if (original.__studioStubPingerInstalled) return;
+/**
+ * Fire the pings for a given step number. Best-effort; no
+ * await — callers don't block on this.
+ */
+function firePingsForStep(n) {
+  const pings = STEP_PINGS[Number(n)] || [];
+  for (const p of pings) {
+    pingStudio(p.path, { method: p.method });
+  }
+}
 
-  window.goStep = function patchedGoStep(n) {
-    const pings = STEP_PINGS[Number(n)] || [];
-    for (const p of pings) {
-      // Fire-and-forget. No await — we don't want the tab
-      // render to wait on the stub.
-      pingStudio(p.path, { method: p.method });
-    }
-    return original.apply(this, arguments);
-  };
-  window.goStep.__studioStubPingerInstalled = true;
+/**
+ * v1.44.3.3 R-Mac-Round-3 Frontend review P0 fix.
+ *
+ * The original monkey-patch only wrapped ``window.goStep``,
+ * but ``wire-handlers.js`` imports ``goStep`` via the ES
+ * module binding and the seven step-bar buttons
+ * (``si-1``...``si-7``) call the ORIGINAL through that
+ * binding — never going through ``window``. So pings never
+ * fired for the primary nav path.
+ *
+ * Now we hook BOTH paths:
+ *   1. ``window.goStep`` for any inline ``onclick="goStep(N)"``
+ *      handler that ``legacy.js`` injects at render time, and
+ *      for keyboard-driven nav that reads ``window.goStep``.
+ *   2. A direct click listener on each ``#si-N`` button so
+ *      the tab-bar click triggers the pings even when the
+ *      module-import handler is the one doing the real work.
+ *
+ * Both layers are idempotent — clicking ``si-3`` once fires
+ * the entities ping once, not twice.
+ */
+function hookGoStep() {
+  // Layer 1 — window.goStep wrapper.
+  const original = window.goStep;
+  if (typeof original === "function" && !original.__studioStubPingerInstalled) {
+    window.goStep = function patchedGoStep(n) {
+      firePingsForStep(n);
+      return original.apply(this, arguments);
+    };
+    window.goStep.__studioStubPingerInstalled = true;
+  }
+
+  // Layer 2 — direct step-button click listeners. Capture phase
+  // so we run BEFORE the bubble-phase handler in
+  // wire-handlers.js even if the imported goStep call returns
+  // synchronously.
+  for (let i = 1; i <= 7; i++) {
+    const el = document.getElementById(`si-${i}`);
+    if (!el || el.__studioStubPingerInstalled) continue;
+    el.addEventListener(
+      "click",
+      () => firePingsForStep(i),
+      /* capture */ true,
+    );
+    el.__studioStubPingerInstalled = true;
+  }
 }
 
 function hookClicks() {

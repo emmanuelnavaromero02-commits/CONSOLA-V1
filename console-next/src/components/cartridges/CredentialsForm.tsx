@@ -233,7 +233,9 @@ function Field({ field, register, error, isPasswordShown, onTogglePassword }: Fi
             type="button"
             onClick={onTogglePassword}
             aria-label={isPasswordShown ? "Ocultar contraseña" : "Mostrar contraseña"}
-            className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent/10"
+            // v1.44.3.3 R-Mac-Round-3 frontend review P1 — touch
+            // target bumped from h-7 w-7 (28px) to 44px square.
+            className="absolute right-1.5 top-1/2 inline-flex min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {isPasswordShown ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
@@ -299,12 +301,16 @@ function ConfirmDeleteDialog({
           acción no se puede deshacer; tendrás que volver a configurarlo
           desde cero.
         </p>
+        {/* v1.44.3.3 R-Mac-Round-3 frontend review P1: confirm-
+            dialog buttons bumped h-9 → min-h-[44px] + focus-
+            visible:ring (these were missed in the earlier
+            sweep). */}
         <div className="mt-6 flex justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="inline-flex h-9 items-center justify-center rounded-md border bg-background px-4 text-sm font-medium hover:bg-accent/5"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-4 text-sm font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancelar
           </button>
@@ -312,7 +318,7 @@ function ConfirmDeleteDialog({
             type="button"
             onClick={onConfirm}
             disabled={pending}
-            className="inline-flex h-9 items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40 disabled:pointer-events-none disabled:opacity-60"
           >
             {pending ? "Borrando…" : "Borrar"}
           </button>

@@ -63,8 +63,16 @@ async function fetchOrSkip(
     return await ctx.fetch(url, { timeout });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    // v1.44.3.3 R-Mac-Round-3 DevOps review P2: narrowed the
+    // skip regex to TRUE mid-handshake transients only.
+    // ECONNREFUSED + "fetch failed" mean "port not bound" /
+    // "DNS broken" — those are real ops issues that should
+    // still SURFACE as failures, not silently skip. The
+    // Superset symptom is specifically ECONNRESET (container
+    // accepts the SYN, then resets mid-handshake), which is
+    // what we want to forgive.
     const transient =
-      /econnreset|econnrefused|socket hang up|fetch failed|net::err|other side closed/i.test(message);
+      /econnreset|socket hang up|other side closed/i.test(message);
     if (transient) {
       test.skip(true, `${url} unreachable at TCP level: ${message.slice(0, 200)}`);
     }

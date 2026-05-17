@@ -25,6 +25,18 @@ router = APIRouter(
 _SERVICE = "sap_successfactors"
 
 
+def _humanise_path(path: str) -> str:
+    """Backend review P2 fallback — see replicon for rationale."""
+    bare = path.split("/skills/", 1)[-1].lstrip("/")
+    if not bare:
+        return ""
+    bare = bare.replace("{", "(").replace("}", ")")
+    bare = bare.replace("/", " ").replace("_", " ").strip()
+    if not bare:
+        return ""
+    return bare[0].upper() + bare[1:]
+
+
 # v1.44.3.3 Task C — GET /skills/list (router-introspecting
 # skill discovery; see replicon/sap_hcm for the full rationale).
 
@@ -49,6 +61,8 @@ def list_skills() -> dict:
             description = ""
             if endpoint and endpoint.__doc__:
                 description = endpoint.__doc__.strip().split("\n", 1)[0].strip()
+            if not description:
+                description = _humanise_path(path)
             # v1.44.3.3 R-Mac-Round-3 Task F: ``description`` is
             # the canonical key (matches orchestrator contract);
             # ``summary`` aliased for one sprint.
