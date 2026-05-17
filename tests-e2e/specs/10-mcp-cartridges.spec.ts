@@ -61,6 +61,60 @@ for (const c of CARTS) {
       await ctx.dispose();
     });
 
+    test(`/skills/list GET unauth → 401 (privileged metadata)`, async () => {
+      // v1.44.3.3 R-Mac Mini-fix: Codex's Mac run reported tests
+      // expecting 200 here, but the agreed contract (Option B
+      // in the brief) is that /skills/list is PRIVILEGED — the
+      // skill catalogue is sensitive metadata that the
+      // orchestrator authenticates with X-Internal-Api-Key
+      // before reading. Anonymous → 401.
+      const ctx = await pwRequest.newContext();
+      const r = await ctx.get(`${c.url}/skills/list`, { timeout: 10_000 });
+      expect([401, 403],
+        `/skills/list unauth must 401/403; got ${r.status()}. ` +
+        `If 404 the route is gone (Task C regression).`,
+      ).toContain(r.status());
+      await ctx.dispose();
+    });
+
+    test(`/skills/list GET authed → 200 + {service, skills}`, async () => {
+      const ctx = await pwRequest.newContext({
+        extraHTTPHeaders: {
+          "X-Api-Key":           process.env.INTERNAL_API_KEY || "",
+          "X-Internal-Service":  "console",
+        },
+      });
+      const r = await ctx.get(`${c.url}/skills/list`, { timeout: 10_000 });
+      expect(r.status(),
+        `/skills/list authed must 200; got ${r.status()}`,
+      ).toBe(200);
+      const body = await r.json();
+      expect(body).toHaveProperty("service");
+      expect(body.service).toBe(c.id);
+      expect(body).toHaveProperty("skills");
+      expect(Array.isArray(body.skills)).toBe(true);
+      expect(body.skills.length,
+        `cartridge ${c.id} reported 0 skills — discovery is broken`,
+      ).toBeGreaterThan(0);
+      await ctx.dispose();
+    });
+
+    test(`/healthz GET no auth → 200 + {ok, service}`, async () => {
+      // v1.44.3.3 Task C: the new yes/no liveness probe must
+      // be PUBLIC (Kubernetes-style liveness doesn't carry
+      // auth) and independent of startup state. Distinct from
+      // /health which gates on app.state.startup_ok.
+      const ctx = await pwRequest.newContext();
+      const r = await ctx.get(`${c.url}/healthz`, { timeout: 10_000 });
+      expect(r.status(),
+        `/healthz must 200 no-auth; got ${r.status()}`,
+      ).toBe(200);
+      const body = await r.json();
+      expect(body.ok).toBe(true);
+      expect(body.service).toBe(c.id);
+      await ctx.dispose();
+    });
+
     test(`/mcp/tools GET unauth → 401/403`, async () => {
       const ctx = await pwRequest.newContext();
       const r = await ctx.get(`${c.url}/mcp/tools`, { timeout: 10_000 });
