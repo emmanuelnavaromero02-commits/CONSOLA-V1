@@ -9,7 +9,16 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/health", "/login-proxy"];
+// v1.44.3.3 R-Mac-Round-3 Task D: forgot/reset-password pages
+// must be reachable without an auth cookie — they're literally
+// how a user without an active session recovers access.
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/health",
+  "/login-proxy",
+  "/forgot-password",
+  "/reset-password",
+];
 
 const PUBLIC_PREFIXES = [
   "/_next/",

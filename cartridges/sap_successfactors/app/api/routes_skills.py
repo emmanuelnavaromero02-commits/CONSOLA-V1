@@ -46,13 +46,17 @@ def list_skills() -> dict:
             if method in {"HEAD", "OPTIONS"}:
                 continue
             endpoint = getattr(route, "endpoint", None)
-            summary = ""
+            description = ""
             if endpoint and endpoint.__doc__:
-                summary = endpoint.__doc__.strip().split("\n", 1)[0].strip()
+                description = endpoint.__doc__.strip().split("\n", 1)[0].strip()
+            # v1.44.3.3 R-Mac-Round-3 Task F: ``description`` is
+            # the canonical key (matches orchestrator contract);
+            # ``summary`` aliased for one sprint.
             skills.append({
-                "name":    path,
-                "method":  method,
-                "summary": summary,
+                "name":        path,
+                "method":      method,
+                "description": description,
+                "summary":     description,  # alias — remove in v1.44.4
             })
     return {"service": _SERVICE, "skills": skills}
 

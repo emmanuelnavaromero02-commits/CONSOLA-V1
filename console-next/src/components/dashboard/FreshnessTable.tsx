@@ -40,10 +40,16 @@ function formatAge(ageHours: number | null): string {
  */
 export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
   return (
+    // v1.44.3.3 R-Mac-Round-3 Task E: ``overflow-x-auto`` on
+    // the wrapper so a narrow viewport scrolls the table
+    // independently instead of overflowing the page (which
+    // produced the "scroll horizontal en /cartridges" + dashboard
+    // reports). The card itself stays full width.
     <div className="rounded-lg border bg-card shadow-sm">
       <header className="border-b px-5 py-3">
         <h2 className="text-sm font-semibold tracking-tight">Frescura de datos</h2>
       </header>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
@@ -118,6 +124,7 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
           )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

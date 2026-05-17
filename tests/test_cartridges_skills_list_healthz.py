@@ -96,13 +96,21 @@ def test_skills_list_response_shape(cartridge_id):
         f"skills/list on {cartridge_id} returned an empty list — "
         f"the cartridge must expose at least one skill (test_connection)"
     )
-    # Sanity check shape of one entry.
+    # Sanity check shape of one entry. v1.44.3.3 R-Mac-Round-3
+    # Task F: ``description`` is the canonical key; ``summary``
+    # is aliased for one sprint and will go away in v1.44.4.
     sample = skills[0]
-    for key in ("name", "method", "summary"):
+    for key in ("name", "method", "description", "summary"):
         assert key in sample, (
             f"skills/list entry on {cartridge_id} missing key {key!r}: "
             f"{sample}"
         )
+    assert sample["description"] == sample["summary"], (
+        f"skills/list ``description`` and ``summary`` must hold the "
+        f"same value for the one-sprint alias to be transparent. "
+        f"Got: description={sample['description']!r} vs "
+        f"summary={sample['summary']!r}"
+    )
 
 
 @pytest.mark.parametrize("cartridge_id", CARTRIDGES)

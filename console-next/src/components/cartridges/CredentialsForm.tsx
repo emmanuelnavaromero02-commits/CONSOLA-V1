@@ -129,11 +129,14 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
           ))
         )}
 
+        {/* v1.44.3.3 R-Mac-Round-3 Task E: every button bumped
+            ``h-9`` → ``min-h-[44px]`` for WCAG 2.5.5 touch
+            targets. ``flex-wrap`` keeps the row mobile-friendly. */}
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <button
             type="submit"
             disabled={saveMut.isPending}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
             <span aria-hidden>💾</span>
             {saveMut.isPending ? "Guardando…" : "Guardar credenciales"}
@@ -143,7 +146,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
             type="button"
             onClick={onTest}
             disabled={testMut.isPending}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent/5 disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
             <span aria-hidden>🔌</span>
             {testMut.isPending ? "Probando…" : "Probar conexión"}
@@ -153,7 +156,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
             type="button"
             onClick={() => setConfirmingDelete(true)}
             disabled={deleteMut.isPending}
-            className="ml-auto inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-background px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5 disabled:pointer-events-none disabled:opacity-60"
+            className="ml-auto inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-background px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
           >
             <span aria-hidden>🗑️</span>
             Borrar credenciales
