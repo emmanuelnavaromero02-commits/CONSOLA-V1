@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P&L Ejecutivo</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{--bg:#f6f8fa;--bg2:#ffffff;--border:#d0d7de;--text1:#1f2328;--text2:#656d76;--blue:#0969da;--green:#1a7f37;--red:#cf222e;--amber:#9a6700}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text1);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;padding:24px}
+  h1{font-size:18px;letter-spacing:1px;color:var(--blue);margin-bottom:2px}
+  .sub{font-size:11px;color:var(--text2);margin-bottom:18px}
+  .panel{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:16px}
+  .panel h2{font-size:11px;letter-spacing:1.5px;color:var(--text2);text-transform:uppercase;margin-bottom:12px;font-weight:600}
+  .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+  .field{display:flex;flex-direction:column;gap:4px;min-width:140px}
+  .field label{font-size:10px;color:var(--text2);letter-spacing:.5px;text-transform:uppercase}
+  .field select,.field input{background:var(--bg);border:1px solid var(--border);color:var(--text1);padding:6px 10px;font-size:12px;border-radius:4px;font-family:inherit}
+  .btn{background:var(--blue);color:#fff;border:none;padding:7px 18px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.5px;text-transform:uppercase}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .kpi{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px 14px}
+  .kpi-label{font-size:9px;color:var(--text2);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px}
+  .kpi-val{font-size:18px;font-weight:600}
+  .kpi-val.pos{color:var(--green)} .kpi-val.neg{color:var(--red)} .kpi-val.neu{color:var(--blue)}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th{text-align:right;padding:7px 9px;color:var(--text2);font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+  th.left{text-align:left}
+  td{text-align:right;padding:6px 9px;border-bottom:1px solid #eef0f3}
+  td.left{text-align:left;color:var(--text2)}
+  tr:hover td{background:#fafbfc}
+  .placeholder{text-align:center;padding:48px 20px;color:var(--text2);font-size:12px;line-height:1.7}
+  .err{color:var(--red);font-size:11px;padding:8px 12px;background:#fef2f2;border-radius:4px;border:1px solid #fecaca;margin-top:8px}
+  .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  canvas{max-height:260px}
+</style>
+</head>
+<body>
+  <h1>P&amp;L EJECUTIVO</h1>
+  <div class="sub">Vista consolidada de P&amp;L mensual · dataset <code>pnl_mensual</code></div>
+
+  <div class="panel">
+    <h2>Filtros</h2>
+    <div class="controls">
+      <div class="field">
+        <label for="f-rm">Revenue Manager</label>
+        <select id="f-rm"><option value="">— Todos —</option></select>
+      </div>
+      <div class="field">
+        <label for="f-fy">Año Fiscal</label>
+        <select id="f-fy"><option value="">— Todos —</option></select>
+      </div>
+      <div class="field">
+        <label for="f-cl">Cliente</label>
+        <select id="f-cl"><option value="">— Todos —</option></select>
+      </div>
+      <button class="btn" id="btn-run" type="button">Ver resultados</button>
+    </div>
+    <div id="err" class="err" hidden></div>
+  </div>
+
+  <div id="placeholder" class="placeholder">
+    Selecciona los filtros y presiona <strong>Ver resultados</strong> para consultar el P&amp;L mensual.
+  </div>
+
+  <div id="results" hidden>
+    <div class="panel">
+      <h2>KPIs del periodo seleccionado</h2>
+      <div id="kpis" class="kpis"></div>
+    </div>
+    <div class="panel">
+      <h2>Evolución mensual de revenue y margen</h2>
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Detalle por mes</h2>
+      <div id="tbl-wrap" style="overflow-x:auto"></div>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt$ = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const fmtPct = (n) => n == null ? '—' : Number(n).toFixed(1) + '%';
+let chartInst = null;
+
+function showError(msg) {
+  const el = $('err');
+  el.textContent = msg;
+  el.hidden = false;
+}
+function clearError() { $('err').hidden = true; }
+
+function fiscalYearFromMes(mes) {
+  if (!mes) return null;
+  const [y, m] = String(mes).split('-').map(Number);
+  if (!y || !m) return null;
+  return m >= 3 ? y : y - 1;
+}
+
+async function loadOptions() {
+  try {
+    const r = await fetch('/api/data/pnl_mensual/options?columns=revenue_manager,cliente', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('No se pudo cargar el catálogo de filtros');
+    const opts = await r.json();
+    const rmSel = $('f-rm');
+    (opts.revenue_manager || []).sort().forEach((v) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = v; rmSel.appendChild(o);
+    });
+    const clSel = $('f-cl');
+    (opts.cliente || []).sort().forEach((v) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = v; clSel.appendChild(o);
+    });
+  } catch (e) {
+    showError(e.message);
+  }
+  try {
+    const r = await fetch('/api/data/pnl_mensual/query', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: {}, limit: 5000, columns: ['mes'] }),
+    });
+    const rows = await r.json();
+    if (Array.isArray(rows)) {
+      const fys = [...new Set(rows.map((r) => fiscalYearFromMes(r.mes)).filter(Boolean))].sort().reverse();
+      const fySel = $('f-fy');
+      fys.forEach((y) => {
+        const o = document.createElement('option'); o.value = String(y); o.textContent = `AF${y} (mar-${y} / feb-${y + 1})`;
+        fySel.appendChild(o);
+      });
+    }
+  } catch (_) { /* leave FY empty — user can still filter */ }
+}
+
+function buildFilters() {
+  const f = {};
+  if ($('f-rm').value) f.revenue_manager = $('f-rm').value;
+  if ($('f-fy').value) f.fiscal_year     = Number($('f-fy').value);
+  if ($('f-cl').value) f.cliente         = $('f-cl').value;
+  return f;
+}
+
+function aggregate(rows) {
+  const totals = { revenue_usd: 0, costo_total: 0, margen_bruto_usd: 0, horas_facturables: 0, horas_totales: 0 };
+  const byMes = {};
+  rows.forEach((r) => {
+    totals.revenue_usd      += Number(r.revenue_usd || 0);
+    totals.costo_total      += Number(r.costo_total || 0);
+    totals.margen_bruto_usd += Number(r.margen_bruto_usd || 0);
+    totals.horas_facturables += Number(r.horas_facturables || 0);
+    totals.horas_totales    += Number(r.horas_totales || 0);
+    const m = r.mes;
+    if (!m) return;
+    byMes[m] = byMes[m] || { mes: m, revenue_usd: 0, costo_total: 0, margen_bruto_usd: 0 };
+    byMes[m].revenue_usd      += Number(r.revenue_usd || 0);
+    byMes[m].costo_total      += Number(r.costo_total || 0);
+    byMes[m].margen_bruto_usd += Number(r.margen_bruto_usd || 0);
+  });
+  totals.margen_pct = totals.revenue_usd ? (totals.margen_bruto_usd / totals.revenue_usd * 100) : null;
+  totals.utilizacion_pct = totals.horas_totales ? (totals.horas_facturables / totals.horas_totales * 100) : null;
+  const months = Object.values(byMes).sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
+  months.forEach((m) => { m.margen_pct = m.revenue_usd ? (m.margen_bruto_usd / m.revenue_usd * 100) : null; });
+  return { totals, months };
+}
+
+function renderKpis(t) {
+  const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : 'neu';
+  $('kpis').innerHTML = `
+    <div class="kpi"><div class="kpi-label">Revenue</div><div class="kpi-val ${cls(t.revenue_usd)}">${fmt$(t.revenue_usd)}</div></div>
+    <div class="kpi"><div class="kpi-label">Costo total</div><div class="kpi-val">${fmt$(t.costo_total)}</div></div>
+    <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-val ${cls(t.margen_bruto_usd)}">${fmt$(t.margen_bruto_usd)}</div></div>
+    <div class="kpi"><div class="kpi-label">% Margen</div><div class="kpi-val ${cls(t.margen_pct || 0)}">${fmtPct(t.margen_pct)}</div></div>
+    <div class="kpi"><div class="kpi-label">Utilización</div><div class="kpi-val neu">${fmtPct(t.utilizacion_pct)}</div></div>
+  `;
+}
+
+function renderTable(months) {
+  if (!months.length) { $('tbl-wrap').innerHTML = '<p style="color:var(--text2);font-size:11px">Sin filas.</p>'; return; }
+  const head = `<tr><th class="left">Mes</th><th>Revenue</th><th>Costo</th><th>Margen</th><th>% Margen</th></tr>`;
+  const body = months.map((m) =>
+    `<tr><td class="left">${m.mes}</td><td>${fmt$(m.revenue_usd)}</td><td>${fmt$(m.costo_total)}</td><td>${fmt$(m.margen_bruto_usd)}</td><td>${fmtPct(m.margen_pct)}</td></tr>`
+  ).join('');
+  $('tbl-wrap').innerHTML = `<table>${head}${body}</table>`;
+}
+
+function renderChart(months) {
+  const ctx = $('chart').getContext('2d');
+  if (chartInst) chartInst.destroy();
+  chartInst = new Chart(ctx, {
+    data: {
+      labels: months.map((m) => m.mes),
+      datasets: [
+        { type: 'bar',  label: 'Revenue',       data: months.map((m) => m.revenue_usd),      backgroundColor: '#0969da', yAxisID: 'y' },
+        { type: 'bar',  label: 'Margen bruto',  data: months.map((m) => m.margen_bruto_usd), backgroundColor: '#1a7f37', yAxisID: 'y' },
+        { type: 'line', label: '% Margen',      data: months.map((m) => m.margen_pct),       borderColor: '#9a6700', backgroundColor: '#9a6700', yAxisID: 'y1', tension: 0.25 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y:  { position: 'left',  ticks: { callback: (v) => '$' + v.toLocaleString() } },
+        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: (v) => v + '%' } },
+      },
+    },
+  });
+}
+
+async function runQuery() {
+  clearError();
+  const btn = $('btn-run');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Consultando…';
+  try {
+    const r = await fetch('/api/data/pnl_mensual/query', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filters: buildFilters(),
+        limit: 10000,
+        columns: ['mes', 'revenue_usd', 'costo_total', 'margen_bruto_usd', 'horas_facturables', 'horas_totales'],
+      }),
+    });
+    if (!r.ok) throw new Error('Error al consultar el dataset (' + r.status + ')');
+    const rows = await r.json();
+    if (!Array.isArray(rows)) throw new Error('Respuesta inesperada del servidor');
+    if (!rows.length) {
+      $('placeholder').textContent = 'La consulta no devolvió filas. Ajusta los filtros.';
+      $('placeholder').hidden = false;
+      $('results').hidden = true;
+      return;
+    }
+    const { totals, months } = aggregate(rows);
+    renderKpis(totals);
+    renderTable(months);
+    renderChart(months);
+    $('placeholder').hidden = true;
+    $('results').hidden = false;
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Ver resultados';
+  }
+}
+
+$('btn-run').addEventListener('click', runQuery);
+loadOptions();
+</script>
+</body>
+</html>

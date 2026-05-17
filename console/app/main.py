@@ -3509,7 +3509,9 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
 
 @app.get("/admin/users", dependencies=[Depends(require_admin)])
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
-    return FileResponse(STATIC / "admin_users.html")
+    # Compatibility URL, but not a separate users app anymore:
+    # /admin/users now enters the IAM ecosystem and opens the Users tab.
+    return FileResponse(STATIC / "iam.html")
 
 
 @app.get("/api/admin/users")

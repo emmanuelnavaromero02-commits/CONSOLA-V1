@@ -18,7 +18,7 @@ export const ROUTE_LABELS = {
   '/studio': 'Studio',
   '/iam': 'IAM / Accesos',
   '/security': 'Seguridad',
-  '/admin/users': 'Usuarios',
+  '/admin/users': 'IAM / Usuarios',
   '/viewer/vault': 'Caja fuerte',
   '/viewer/jobs': 'Trabajos recientes',
   '/viewer/datasets': 'Reportes de datos',
@@ -57,4 +57,3 @@ export const ERROR_LABELS = {
   network: 'No pudimos conectar con el servicio.',
   unknown: 'Ocurrió un error inesperado.',
 };
-

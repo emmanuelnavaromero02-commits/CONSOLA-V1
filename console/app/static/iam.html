@@ -150,7 +150,6 @@
           <button type="button" data-tab="policies">Reglas de acceso</button>
           <button type="button" data-tab="vault">Caja fuerte</button>
           <a href="/security">Centro de seguridad</a>
-          <a href="/admin/users">← Volver a admin de usuarios</a>
           <a href="/monitor">Monitor</a>
         </nav>
       </aside>
@@ -188,7 +187,7 @@
 
         <article class="panel" id="tab-users">
           <div class="panel-head">
-            <div><div class="panel-title">Usuarios</div><div class="panel-desc">Administración local de cuentas con roles compatibles con usuarios existentes.</div></div>
+            <div><div class="panel-title">Usuarios</div><div class="panel-desc">Administración local de cuentas dentro del centro IAM.</div></div>
             <div class="actions">
               <button class="btn" type="button" id="create-user">Crear usuario</button>
               <button class="btn primary" type="button" id="invite-user">Invitar usuario</button>
@@ -285,6 +284,6 @@
   <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
   <script type="module" src="/static/js/i18n/labels.js"></script>
-  <script src="/static/js/iam.js"></script>
+  <script src="/static/js/iam.js?v=4"></script>
 </body>
 </html>

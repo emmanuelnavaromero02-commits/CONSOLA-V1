@@ -7,11 +7,59 @@ const CATEGORY_LABELS = {
   general: 'General',
 };
 
+const VAULT_MANAGED_PREFIXES = [
+  'replicon_',
+  'sap_hcm_',
+  'sap_s4hana_',
+  'sap_successfactors_',
+];
+
+const VAULT_MANAGED_SUFFIXES = [
+  '_api_key',
+  '_base_url',
+  '_client_id',
+  '_client_secret',
+  '_password',
+  '_secret',
+  '_tenant',
+  '_token',
+  '_username',
+];
+
+function isVaultManagedSetting(item) {
+  if (!item || typeof item.key !== 'string') return false;
+  const key = item.key;
+  return VAULT_MANAGED_PREFIXES.some((prefix) => key.startsWith(prefix))
+    && VAULT_MANAGED_SUFFIXES.some((suffix) => key.endsWith(suffix));
+}
+
 function formatValue(item) {
   if (item.is_secret && item.value === '***') return '***';
   if (typeof item.value === 'object') return JSON.stringify(item.value);
   if (typeof item.value === 'string') return item.value;
   return String(item.value);
+}
+
+function buildVaultCallout(hiddenCount) {
+  const callout = document.createElement('section');
+  callout.className = 'settings-vault-callout';
+
+  const copy = document.createElement('div');
+  const title = document.createElement('h2');
+  title.textContent = 'Credenciales de cartuchos';
+  const body = document.createElement('p');
+  body.textContent = hiddenCount > 0
+    ? `${hiddenCount} configuración(es) de credenciales se gestionan ahora desde Vault para evitar duplicidad.`
+    : 'Las credenciales de Replicon y SAP se gestionan desde Vault.';
+  copy.append(title, body);
+
+  const link = document.createElement('a');
+  link.className = 'btn-primary settings-vault-link';
+  link.href = '/viewer/vault';
+  link.textContent = 'Abrir Vault';
+
+  callout.append(copy, link);
+  return callout;
 }
 
 function buildItem(item, onChange) {
@@ -127,15 +175,26 @@ function startEdit(row, item, onChange) {
 
 export function renderSettings(container, settings, onChange) {
   container.replaceChildren();
-  if (!settings || settings.length === 0) {
+
+  const visibleSettings = (settings || []).filter((item) => !isVaultManagedSetting(item));
+  const hiddenVaultCount = (settings || []).length - visibleSettings.length;
+
+  if (hiddenVaultCount > 0) {
+    container.appendChild(buildVaultCallout(hiddenVaultCount));
+  }
+
+  if (!visibleSettings || visibleSettings.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'settings-empty';
-    empty.textContent = 'No hay configuraciones registradas.';
+    empty.textContent = hiddenVaultCount > 0
+      ? 'No hay configuraciones globales para mostrar aquí.'
+      : 'No hay configuraciones registradas.';
     container.appendChild(empty);
     return;
   }
+
   const grouped = {};
-  for (const s of settings) (grouped[s.category] ||= []).push(s);
+  for (const s of visibleSettings) (grouped[s.category] ||= []).push(s);
 
   for (const [cat, items] of Object.entries(grouped)) {
     const section = document.createElement('section');

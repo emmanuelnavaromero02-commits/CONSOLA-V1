@@ -20,6 +20,36 @@
 
 .settings-status { padding: 16px; color: #6b7280; font-style: italic; }
 
+.settings-vault-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #f8fafc;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.settings-vault-callout h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: #1f2937;
+}
+.settings-vault-callout p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+.settings-vault-link {
+  white-space: nowrap;
+  text-decoration: none;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 .settings-section {
   background: #fff;
   border: 1px solid #e5e7eb;
@@ -90,4 +120,20 @@
   color: #991b1b;
   padding: 12px;
   border-radius: 6px;
+}
+
+@media (max-width: 720px) {
+  .settings-vault-callout {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .settings-item {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .settings-item-actions {
+    flex-wrap: wrap;
+  }
 }

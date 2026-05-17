@@ -47,10 +47,13 @@ export function renderTopbar() {
   nav.setAttribute('aria-label', 'Navegación principal');
   nav.append(
     navLink('Inicio', '/'),
-    navLink('Workspace', state.workspaceUrl),
-    navLink('Monitor', '/monitor'),
+    navLink('Workspace', '/workspace'),
+    navLink('Copiloto', '/copilot'),
+    navLink('Vault', '/viewer/vault'),
     navLink('Studio', '/studio'),
+    navLink('Monitor', '/monitor'),
     navLink('Datos', '/viewer/datasets'),
+    navLink('Operaciones', '/operations'),
     navLink('Seguridad', '/security'),
     navLink('Administración', '/iam')
   );

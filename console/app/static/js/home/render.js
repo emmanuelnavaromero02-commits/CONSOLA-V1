@@ -46,7 +46,9 @@ function renderHero() {
 
   const actions = el('div', 'home-hero-actions');
   actions.append(
-    linkButton('Abrir Workspace', state.workspaceUrl, 'primary', hasPermission('workspace.access'), permissionText('workspace.access')),
+    linkButton('Abrir Workspace', '/workspace', 'primary', hasPermission('workspace.access'), permissionText('workspace.access')),
+    linkButton('Abrir Copiloto', '/copilot', 'secondary', hasPermission('copilot.use'), permissionText('copilot.use')),
+    linkButton('Configurar Credenciales', '/viewer/vault', 'secondary', hasPermission('vault.connections.write'), permissionText('vault.connections.write')),
   );
   if (isAdminUser()) {
     actions.append(
@@ -122,27 +124,25 @@ function renderQuickAccess() {
 
 function renderOperational() {
   const grid = el('div', 'home-operational-grid');
-  // Workspace card is the only one a non-admin sees here. For admins we
-  // keep the original full grid (Workspace + Studio + Monitor + Decisions).
+  // Keep the important v1.44 surfaces visible from the canonical :8000
+  // home. Next.js may keep experimenting, but operators should not need
+  // secret direct URLs to reach Copilot or Cartridge configuration.
   grid.append(
     card({
       title: 'Workspace',
       icon: 'W',
-      description: 'Aplicaciones, asistente y datos listos para usuarios de negocio.',
-      href: state.workspaceUrl,
+      description: 'Área de trabajo diaria con copiloto, memoria, redacción, workflows y aprobación de acciones.',
+      href: '/workspace',
       primary: 'Abrir Workspace',
       permission: 'workspace.access',
       size: 'primary-card',
-      meta: [{ text: 'Apps' }, { text: 'Asistente' }],
-      secondary: [{ label: 'Abrir Apps', href: state.workspaceUrl, permission: 'workspace.access' }],
+      meta: [{ text: 'Copiloto' }, { text: 'Memoria' }, { text: 'Workflows' }],
+      secondary: [{ label: 'Nueva conversación', href: '/copilot', permission: 'copilot.use' }],
     }),
-  );
-  if (isAdminUser()) {
-    grid.append(
-      card({
+    card({
         title: 'Studio',
         icon: 'S',
-        description: 'Configura fuentes de datos, tablas, transformaciones y conocimiento semántico.',
+        description: 'Studio clásico Bronze→Silver→Master→Gold, entidades, transformaciones y ejecuciones.',
         href: '/studio',
         primary: 'Abrir Studio',
         permission: 'studio.read',
@@ -150,6 +150,9 @@ function renderOperational() {
         meta: [{ text: 'Fuentes de datos' }, { text: 'Reportes' }],
         secondary: [{ label: 'Nueva fuente', href: '/studio', permission: 'studio.write' }],
       }),
+  );
+  if (isAdminUser()) {
+    grid.append(
       card({
         title: 'Monitor',
         icon: 'M',
@@ -160,13 +163,13 @@ function renderOperational() {
         meta: [{ text: state.statuses.mcp?.label || 'Servicios internos no verificados' }],
       }),
       card({
-        title: 'Decisions',
-        icon: 'D',
-        description: 'Registra decisiones, KPIs, acciones y seguimiento operativo.',
-        href: '/decisions',
-        primary: 'Abrir Decisiones',
-        permission: 'workspace.access',
-        meta: [{ text: 'KPIs' }, { text: 'Acciones' }],
+        title: 'Operaciones',
+        icon: 'O',
+        description: 'Usuarios, auditoría, Vault, versión, migraciones y salud de servicios.',
+        href: '/operations',
+        primary: 'Abrir Operaciones',
+        permission: 'operations.read',
+        meta: [{ text: 'Usuarios' }, { text: 'Auditoría' }, { text: 'Vault' }],
       }),
     );
   }
@@ -193,19 +196,11 @@ function renderAdministration() {
       primary: 'Abrir IAM',
       permission: 'iam.users.read',
       kind: 'admin',
-      meta: [{ text: 'Permisos por rol' }],
-      secondary: [{ label: 'Gestionar usuarios', href: '/admin/users', permission: 'iam.users.read' }],
-    }),
-    card({
-      title: 'Usuarios',
-      icon: 'U',
-      description: 'Gestiona cuentas, roles, estado e invitaciones.',
-      href: '/admin/users',
-      primary: 'Gestionar usuarios',
-      permission: 'iam.users.read',
-      kind: 'admin',
-      meta: usersMeta(),
-      secondary: [{ label: 'Invitar usuario', href: '/iam', permission: 'iam.users.write' }],
+      meta: [{ text: 'Permisos por rol' }, ...usersMeta()],
+      secondary: [
+        { label: 'Gestionar usuarios', href: '/iam?tab=users', permission: 'iam.users.read' },
+        { label: 'Invitar usuario', href: '/iam?tab=users', permission: 'iam.users.write' },
+      ],
     }),
     card({
       title: 'Centro de seguridad',
@@ -219,15 +214,18 @@ function renderAdministration() {
       secondary: [{ label: 'Ver auditoría', href: '/security', permission: 'security.audit.read' }],
     }),
     card({
-      title: 'Caja fuerte',
+      title: 'Vault / Credenciales',
       icon: 'V',
-      description: 'Consulta conexiones protegidas y configura integraciones.',
+      description: 'Administra credenciales de cartuchos con conn_id, base URL, método auth, token y JSON adicional.',
       href: '/viewer/vault',
-      primary: 'Abrir Caja fuerte',
+      primary: 'Configurar credenciales',
       permission: 'vault.connections.read',
       kind: 'admin',
-      meta: [{ text: 'Secretos ocultos' }],
-      secondary: [{ label: 'Configurar conexiones', href: '/viewer/vault', permission: 'vault.connections.write' }],
+      meta: [{ text: 'Replicon' }, { text: 'SAP' }, { text: 'Secretos ocultos' }],
+      secondary: [
+        { label: 'Agregar conexión', href: '/viewer/vault', permission: 'vault.connections.write' },
+        { label: 'Ver secretos', href: '/viewer/vault', permission: 'vault.secrets.read_masked' },
+      ],
     }),
     card({
       title: 'Configuración',
@@ -241,9 +239,9 @@ function renderAdministration() {
       secondary: [{ label: 'Editar secretos', href: '/settings', permission: 'settings.write' }],
     }),
     card({
-      title: 'Operaciones',
+      title: 'Operaciones legacy',
       icon: 'O',
-      description: 'Versión, migraciones y salud de servicios.',
+      description: 'Versión, migraciones y salud de servicios en la consola base.',
       href: '/operations',
       primary: 'Abrir Operaciones',
       permission: 'operations.read',
@@ -345,7 +343,7 @@ export function renderHome(root) {
   const shell = el('div', 'home-shell');
   const container = el('div', 'home-container');
   // Non-admins only get the hero (with the Workspace CTA) and a single
-  // Workspace card in the operational grid — the administration,
+  // operational cards in the operational grid — the administration,
   // data-processes and system-ops blocks expose admin-only surface and
   // are hidden entirely instead of being rendered with "Acceso limitado"
   // chips. Admins keep the original layout.

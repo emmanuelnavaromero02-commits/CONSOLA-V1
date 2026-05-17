@@ -9,10 +9,9 @@ export const metadata: Metadata = {
 };
 
 /**
- * v1.44.4 Group 1: AppChrome mounted globally. It hides itself
- * on /login / /forgot-password / /reset-password and on the
- * full-viewport /workspace surface (the chat layout takes the
- * whole screen and renders its own header).
+ * v1.44.4 Group 1: AppChrome is mounted exactly once here.
+ * Providers only own client context (React Query + toasts), so
+ * the authenticated shell cannot be duplicated by nested wrappers.
  */
 export default function RootLayout({
   children,

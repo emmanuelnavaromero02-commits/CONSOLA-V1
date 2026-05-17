@@ -18,8 +18,95 @@
   const elTitle = $("#copilot-title");
   const elToast = $("#copilot-toast");
   const elNewBtn = $("#copilot-new");
+  const elCommandBtn = $("#copilot-command");
+  const elMemoryBtn = $("#copilot-memory");
+  const elDraftBtn = $("#copilot-draft");
+  const elWorkflowsBtn = $("#copilot-workflows");
+  const elPalette = $("#copilot-palette");
+  const elCommandFilter = $("#copilot-command-filter");
+  const elCommandList = $("#copilot-command-list");
+  const elMemoryDrawer = $("#copilot-memory-drawer");
+  const elMemoryBody = $("#copilot-memory-body");
+  const elMemoryForm = $("#copilot-memory-form");
+  const elMemoryFact = $("#copilot-memory-fact");
+  const elMemorySource = $("#copilot-memory-source");
+  const elDraftModal = $("#copilot-draft-modal");
+  const elDraftForm = $("#copilot-draft-form");
+  const elDraftOutput = $("#copilot-draft-output");
+  const elDraftCopy = $("#copilot-draft-copy");
+  const elDraftSubmit = $("#copilot-draft-submit");
+  const elWorkflowModal = $("#copilot-workflow-modal");
+  const elWorkflowForm = $("#copilot-workflow-form");
+  const elWorkflowList = $("#copilot-workflow-list");
 
   let activeConversationId = null;
+  let lastDraftBody = "";
+
+  const COMMANDS = [
+    {
+      id: "memoria",
+      group: "Basicos",
+      label: "Memoria",
+      description: "Ver y editar lo que sabe el copiloto.",
+      run: openMemory,
+    },
+    {
+      id: "redactar",
+      group: "Basicos",
+      label: "Redactar",
+      description: "Generar un borrador de email, mensaje o nota.",
+      run: () => openDraft(),
+    },
+    {
+      id: "workflows",
+      group: "Basicos",
+      label: "Workflows",
+      description: "Crear o revisar planes operativos.",
+      run: openWorkflows,
+    },
+    {
+      id: "briefing",
+      group: "Basicos",
+      label: "Briefing del dia",
+      description: "Pedir al copiloto alertas y novedades.",
+      prompt: "Dame el briefing del dia.",
+    },
+    {
+      id: "reporte_mensual",
+      group: "Reportes",
+      label: "Reporte mensual",
+      description: "Reporte ejecutivo del mes con KPIs principales.",
+      prompt: "Genera el reporte ejecutivo del mes con KPIs principales.",
+    },
+    {
+      id: "turnover_analysis",
+      group: "Reportes",
+      label: "Analisis de rotacion",
+      description: "Rotacion de personal del ultimo trimestre.",
+      prompt: "Analisis de rotacion de personal del ultimo trimestre.",
+    },
+    {
+      id: "cash_position",
+      group: "Reportes",
+      label: "Estado de caja",
+      description: "Caja por banco y moneda.",
+      prompt: "Dame el estado actual de caja por banco y moneda.",
+    },
+    {
+      id: "payroll_summary",
+      group: "Reportes",
+      label: "Resumen de nomina",
+      description: "Nomina del ultimo periodo por departamento.",
+      prompt: "Resumen de nomina del ultimo periodo por departamento.",
+    },
+    {
+      id: "headcount",
+      group: "Reportes",
+      label: "Headcount",
+      description: "Empleados activos por departamento y pais.",
+      prompt: "Empleados activos por departamento y por pais.",
+    },
+  ];
 
   // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -60,6 +147,35 @@
 
   function scrollToBottom() {
     elMessages.scrollTop = elMessages.scrollHeight;
+  }
+
+  function openOverlay(el) {
+    if (!el) return;
+    el.hidden = false;
+    const focusable = el.querySelector("input, textarea, select, button");
+    if (focusable) setTimeout(() => focusable.focus(), 0);
+  }
+
+  function closeOverlay(el) {
+    if (el) el.hidden = true;
+  }
+
+  function clearNode(el) {
+    while (el && el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function textEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    el.textContent = text || "";
+    return el;
+  }
+
+  function fmtDate(value) {
+    if (!value) return "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString();
   }
 
   // ── Renderers ────────────────────────────────────────────────────────
@@ -364,6 +480,246 @@
     }
   }
 
+  // ── Native v1.44.4 features ported back to :8000 ────────────────────
+
+  function openPalette(query = "") {
+    elCommandFilter.value = query;
+    renderCommands();
+    openOverlay(elPalette);
+  }
+
+  function renderCommands() {
+    const q = (elCommandFilter.value || "").trim().toLowerCase().replace(/^\//, "");
+    clearNode(elCommandList);
+    const matches = COMMANDS.filter((cmd) => {
+      const haystack = [cmd.id, cmd.group, cmd.label, cmd.description].join(" ").toLowerCase();
+      return !q || haystack.includes(q);
+    });
+    if (matches.length === 0) {
+      elCommandList.appendChild(textEl("p", "copilot-muted", "Sin comandos para ese filtro."));
+      return;
+    }
+    for (const cmd of matches) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copilot-command-item";
+      const title = textEl("strong", "", "/" + cmd.id + " · " + cmd.label);
+      const desc = textEl("span", "", cmd.description);
+      btn.appendChild(title);
+      btn.appendChild(desc);
+      btn.addEventListener("click", () => {
+        closeOverlay(elPalette);
+        if (cmd.run) {
+          cmd.run();
+        } else if (cmd.prompt) {
+          sendMessage(cmd.prompt);
+        }
+      });
+      elCommandList.appendChild(btn);
+    }
+  }
+
+  async function openMemory() {
+    openOverlay(elMemoryDrawer);
+    await loadMemory();
+  }
+
+  async function loadMemory() {
+    clearNode(elMemoryBody);
+    elMemoryBody.appendChild(textEl("p", "copilot-muted", "Cargando memoria..."));
+    try {
+      const data = await api("/api/copilot/memory");
+      renderMemory(data);
+    } catch (err) {
+      clearNode(elMemoryBody);
+      elMemoryBody.appendChild(textEl("p", "copilot-error-text", "No se pudo cargar memoria: " + err.message));
+    }
+  }
+
+  function renderMemory(data) {
+    clearNode(elMemoryBody);
+    const facts = data.facts || [];
+    const prefs = data.preferences || [];
+    if (facts.length === 0 && prefs.length === 0) {
+      elMemoryBody.appendChild(textEl("p", "copilot-muted", "El copiloto aun no tiene memoria guardada."));
+    }
+    if (facts.length > 0) {
+      elMemoryBody.appendChild(textEl("h3", "copilot-section-title", "Hechos"));
+      const list = document.createElement("ul");
+      list.className = "copilot-memory-list";
+      for (const fact of facts) {
+        const li = document.createElement("li");
+        const body = document.createElement("div");
+        body.appendChild(textEl("strong", "", fact.fact));
+        const meta = [fact.source, fmtDate(fact.created_at)].filter(Boolean).join(" · ");
+        if (meta) body.appendChild(textEl("span", "", meta));
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "copilot-icon-btn";
+        del.textContent = "x";
+        del.setAttribute("aria-label", "Borrar hecho");
+        del.addEventListener("click", () => deleteFact(fact.id));
+        li.appendChild(body);
+        li.appendChild(del);
+        list.appendChild(li);
+      }
+      elMemoryBody.appendChild(list);
+    }
+    if (prefs.length > 0) {
+      elMemoryBody.appendChild(textEl("h3", "copilot-section-title", "Preferencias"));
+      const list = document.createElement("dl");
+      list.className = "copilot-pref-list";
+      for (const pref of prefs) {
+        list.appendChild(textEl("dt", "", pref.pref_key));
+        list.appendChild(textEl("dd", "", pref.pref_value));
+      }
+      elMemoryBody.appendChild(list);
+    }
+  }
+
+  async function saveFact(e) {
+    e.preventDefault();
+    const fact = (elMemoryFact.value || "").trim();
+    const source = (elMemorySource.value || "explicit").trim() || "explicit";
+    if (!fact) return;
+    try {
+      await api("/api/copilot/memory/fact", {
+        method: "POST",
+        body: JSON.stringify({ fact, source }),
+      });
+      elMemoryFact.value = "";
+      toast("Hecho guardado en memoria.", "info");
+      await loadMemory();
+    } catch (err) {
+      toast("No se pudo guardar memoria: " + err.message, "error");
+    }
+  }
+
+  async function deleteFact(id) {
+    try {
+      await api("/api/copilot/memory/fact/" + encodeURIComponent(id), {
+        method: "DELETE",
+      });
+      toast("Hecho borrado.", "info");
+      await loadMemory();
+    } catch (err) {
+      toast("No se pudo borrar: " + err.message, "error");
+    }
+  }
+
+  function openDraft(seed = "") {
+    $("#copilot-draft-about").value = seed || "";
+    elDraftOutput.hidden = true;
+    elDraftOutput.textContent = "";
+    elDraftCopy.disabled = true;
+    lastDraftBody = "";
+    openOverlay(elDraftModal);
+  }
+
+  async function generateDraft(e) {
+    e.preventDefault();
+    const about = ($("#copilot-draft-about").value || "").trim();
+    if (!about) return;
+    elDraftSubmit.disabled = true;
+    elDraftSubmit.textContent = "Generando...";
+    try {
+      const data = await api("/api/copilot/drafts/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: $("#copilot-draft-kind").value,
+          about,
+          audience: ($("#copilot-draft-audience").value || "").trim() || undefined,
+          title: ($("#copilot-draft-subject").value || "").trim() || undefined,
+          tone: $("#copilot-draft-tone").value,
+        }),
+      });
+      const draft = data.draft || {};
+      lastDraftBody = draft.body || "";
+      clearNode(elDraftOutput);
+      if (draft.title) elDraftOutput.appendChild(textEl("strong", "", draft.title));
+      elDraftOutput.appendChild(textEl("pre", "", lastDraftBody || "Sin contenido."));
+      elDraftOutput.hidden = false;
+      elDraftCopy.disabled = !lastDraftBody;
+      toast("Borrador generado.", "info");
+    } catch (err) {
+      toast("No se pudo generar: " + err.message, "error");
+    } finally {
+      elDraftSubmit.disabled = false;
+      elDraftSubmit.textContent = "Generar";
+    }
+  }
+
+  async function copyDraft() {
+    if (!lastDraftBody) return;
+    try {
+      await navigator.clipboard.writeText(lastDraftBody);
+      toast("Borrador copiado.", "info");
+    } catch (_) {
+      toast("No se pudo copiar. Selecciona el texto manualmente.", "error");
+    }
+  }
+
+  async function openWorkflows() {
+    openOverlay(elWorkflowModal);
+    await loadWorkflows();
+  }
+
+  async function loadWorkflows() {
+    clearNode(elWorkflowList);
+    elWorkflowList.appendChild(textEl("p", "copilot-muted", "Cargando workflows..."));
+    try {
+      const data = await api("/api/copilot/workflow");
+      renderWorkflows(data.workflows || []);
+    } catch (err) {
+      clearNode(elWorkflowList);
+      elWorkflowList.appendChild(textEl("p", "copilot-error-text", "No se pudieron cargar workflows: " + err.message));
+    }
+  }
+
+  function renderWorkflows(workflows) {
+    clearNode(elWorkflowList);
+    if (workflows.length === 0) {
+      elWorkflowList.appendChild(textEl("p", "copilot-muted", "Sin workflows todavia."));
+      return;
+    }
+    for (const wf of workflows) {
+      const card = document.createElement("article");
+      card.className = "copilot-workflow-card";
+      card.appendChild(textEl("strong", "", wf.intent || "Workflow"));
+      card.appendChild(textEl("span", "", "Estado: " + (wf.status || "unknown")));
+      if (wf.error) card.appendChild(textEl("span", "copilot-error-text", wf.error));
+      elWorkflowList.appendChild(card);
+    }
+  }
+
+  async function createWorkflow(e) {
+    e.preventDefault();
+    const input = $("#copilot-workflow-intent");
+    const intent = (input.value || "").trim();
+    if (!intent) return;
+    try {
+      const created = await api("/api/copilot/workflow", {
+        method: "POST",
+        body: JSON.stringify({ intent }),
+      });
+      const workflow = created.workflow || {};
+      if (workflow.id) {
+        try {
+          await api("/api/copilot/workflow/" + encodeURIComponent(workflow.id) + "/plan", {
+            method: "POST",
+          });
+          toast("Workflow creado y planeado.", "info");
+        } catch (planErr) {
+          toast("Workflow creado, pero el plan fallo: " + planErr.message, "error");
+        }
+      }
+      input.value = "";
+      await loadWorkflows();
+    } catch (err) {
+      toast("No se pudo crear workflow: " + err.message, "error");
+    }
+  }
+
   // ── Wire up ──────────────────────────────────────────────────────────
 
   elForm.addEventListener("submit", (e) => {
@@ -373,6 +729,11 @@
   });
 
   elPrompt.addEventListener("keydown", (e) => {
+    if (e.key === "/" && !elPrompt.value.trim()) {
+      e.preventDefault();
+      openPalette("");
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       elForm.requestSubmit();
@@ -380,6 +741,28 @@
   });
 
   elNewBtn.addEventListener("click", newConversation);
+  elCommandBtn.addEventListener("click", () => openPalette(""));
+  elMemoryBtn.addEventListener("click", openMemory);
+  elDraftBtn.addEventListener("click", () => openDraft(elPrompt.value.trim()));
+  elWorkflowsBtn.addEventListener("click", openWorkflows);
+  elCommandFilter.addEventListener("input", renderCommands);
+  elMemoryForm.addEventListener("submit", saveFact);
+  elDraftForm.addEventListener("submit", generateDraft);
+  elDraftCopy.addEventListener("click", copyDraft);
+  elWorkflowForm.addEventListener("submit", createWorkflow);
+
+  document.addEventListener("click", (e) => {
+    const closeId = e.target && e.target.getAttribute
+      ? e.target.getAttribute("data-close")
+      : null;
+    if (closeId) closeOverlay(document.getElementById(closeId));
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      [elPalette, elMemoryDrawer, elDraftModal, elWorkflowModal].forEach(closeOverlay);
+    }
+  });
 
   // Initial load.
   loadConversations();

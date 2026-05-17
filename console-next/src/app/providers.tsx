@@ -3,7 +3,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { useEffect, useState, type ReactNode } from "react";
-import { AppChrome } from "@/components/AppChrome";
 
 /**
  * Client-side providers that wrap the entire app:
@@ -51,7 +50,7 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={client}>
-      <AppChrome>{children}</AppChrome>
+      {children}
       {/* v1.44.3.3 Task H — a11y: force role="alert" on error toasts
           and role="status" on neutral toasts so screen readers
           announce them. sonner's default is role="status" on

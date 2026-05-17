@@ -533,3 +533,20 @@ body.studio-modal-open {
     grid-template-columns: 1fr;
   }
 }
+
+/* The legacy EPI IA dock duplicated the real Workspace/Copilot surfaces and
+   covered Studio controls. Keep the old DOM hooks alive for compatibility,
+   but remove the dock from the operational Studio UI. */
+body.studio-modern-ready #ai-panel,
+body.studio-modern-ready #ai-resize-handle {
+  display: none !important;
+}
+
+body.studio-modern-ready .studio-body {
+  overflow: visible;
+}
+
+body.studio-modern-ready #step-content {
+  width: 100%;
+  max-width: 100%;
+}

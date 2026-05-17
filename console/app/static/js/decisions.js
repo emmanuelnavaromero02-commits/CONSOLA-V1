@@ -23,7 +23,7 @@ async function loadMe(){
   const bar = document.getElementById('user-bar');
   if (!ME) { bar.innerHTML = `<a href="/login">INICIAR SESIÓN</a>`; return; }
   const adminLink = ME.role === 'admin'
-    ? `<a href="/admin/users">USUARIOS</a> · `
+    ? `<a href="/iam?tab=users">USUARIOS</a> · `
     : '';
   const role = String(ME.role || '');
   bar.innerHTML = `
