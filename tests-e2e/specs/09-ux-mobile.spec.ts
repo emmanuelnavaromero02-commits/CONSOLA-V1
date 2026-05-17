@@ -8,6 +8,8 @@
 import { test, expect } from "../fixtures/auth";
 
 test.describe("Mobile viewport — primary pages render", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
   for (const path of ["/login", "/dashboard", "/cartridges"]) {
     test(`${path} renders without horizontal scroll`, async ({ page }) => {
       await page.goto(path);
