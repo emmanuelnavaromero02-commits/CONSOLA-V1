@@ -723,6 +723,7 @@ _RBAC_DEPENDENCY_PREFIXES = (
     "/api/rag",
     "/api/catalog",
     "/api/semantic",
+    "/api/studio",                      # v1.44.3.3 Task B (stubs)
     "/studio/cartridges",
     "/studio/import",
     "/studio/chat",
@@ -3653,6 +3654,7 @@ from app.routers import dashboard as dashboard_router      # v1.44.1 Tarea E
 from app.routers import freshness as freshness_router
 from app.routers import metrics as metrics_router
 from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
+from app.routers import studio as studio_router             # v1.44.3.3 Task B
 from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
@@ -3671,6 +3673,7 @@ app.include_router(onboarding_router.router)              # v1.44.1 Tarea F
 app.include_router(copilot_memory_router.router)          # v1.44.2 Tarea G
 app.include_router(copilot_drafts_router.router)          # v1.44.2 Tarea H
 app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
+app.include_router(studio_router.router)                  # v1.44.3.3 Task B (stub)
 
 
 # v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST
