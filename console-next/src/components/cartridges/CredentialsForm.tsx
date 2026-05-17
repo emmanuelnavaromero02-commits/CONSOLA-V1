@@ -64,8 +64,21 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
     try {
       const r = await testMut.mutateAsync();
       setLastTest(r);
-      if (r.ok) toast.success("Conexión OK.");
-      else      toast.error("Conexión fallida — ver detalle.");
+      if (r.ok) {
+        toast.success("Conexión OK.");
+      } else {
+        // v1.44.3.3 Task I: surface the specific failure
+        // reason instead of a generic "ver detalle" pointer.
+        // The backend's normalised shape ({ok, message,
+        // latency_ms}) already includes a human-readable
+        // reason (e.g. "missing credentials", "401 from
+        // upstream", "timeout"). Showing it in the toast
+        // means a user without saved credentials sees
+        // ACTIONABLE feedback ("Guarda credenciales primero")
+        // instead of silently failing.
+        const detail = r.message?.trim() || "Sin detalles";
+        toast.error(`Conexión fallida: ${detail}`);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error desconocido";
       setLastTest({ ok: false, message, latency_ms: 0 });

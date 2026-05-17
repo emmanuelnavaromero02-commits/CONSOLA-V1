@@ -53,21 +53,41 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
           </tr>
         </thead>
         <tbody>
-          {loading
-            ? Array.from({ length: 3 }).map((_, i) => (
-                <tr key={i} className="border-t">
-                  <td className="px-5 py-3">
-                    <span className="block h-4 w-32 animate-pulse rounded bg-muted" />
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className="block h-4 w-16 animate-pulse rounded bg-muted" />
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className="block h-4 w-20 animate-pulse rounded bg-muted" />
-                  </td>
-                </tr>
-              ))
-            : rows.map((row) => (
+          {loading ? (
+            // v1.44.3.3 Task D: render FOUR skeleton rows so the
+            // height matches the steady-state (one per cartridge),
+            // avoiding the layout jump that prompted the user's
+            // "freshness table no muestra 4 filas" report (we
+            // were showing 3 skeleton rows then jumping to 4).
+            Array.from({ length: 4 }).map((_, i) => (
+              <tr key={i} className="border-t">
+                <td className="px-5 py-3">
+                  <span className="block h-4 w-32 animate-pulse rounded bg-muted" />
+                </td>
+                <td className="px-5 py-3">
+                  <span className="block h-4 w-16 animate-pulse rounded bg-muted" />
+                </td>
+                <td className="px-5 py-3">
+                  <span className="block h-4 w-20 animate-pulse rounded bg-muted" />
+                </td>
+              </tr>
+            ))
+          ) : rows.length === 0 ? (
+            // v1.44.3.3 Task D: explicit empty-state so a failed
+            // fetch / empty payload renders SOMETHING instead of
+            // an invisible empty tbody. Without this row, the E2E
+            // assertion "table has rows" fails silently with no
+            // user-facing signal.
+            <tr className="border-t">
+              <td
+                colSpan={3}
+                className="px-5 py-6 text-center text-sm text-muted-foreground"
+              >
+                Sin datos de frescura todavía.
+              </td>
+            </tr>
+          ) : (
+            rows.map((row) => (
                 <tr
                   key={row.cartridge}
                   className="cursor-pointer border-t transition-colors hover:bg-accent/5"
@@ -94,7 +114,8 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
                     </span>
                   </td>
                 </tr>
-              ))}
+              ))
+          )}
         </tbody>
       </table>
     </div>

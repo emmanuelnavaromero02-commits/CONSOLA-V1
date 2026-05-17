@@ -120,7 +120,7 @@ function LoginCard() {
         <button
           type="submit"
           disabled={submitting}
-          className="inline-flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
         >
           {submitting ? "Iniciando sesión…" : "Iniciar sesión"}
         </button>
