@@ -198,6 +198,8 @@ function Field({ field, register, error, isPasswordShown, onTogglePassword }: Fi
   const common = {
     id,
     ...register(field.name),
+    required: field.required || undefined,
+    "aria-required": field.required ? "true" as const : undefined,
     "aria-invalid": error ? "true" as const : undefined,
     "aria-describedby": error ? `${id}-err` : undefined,
   };
