@@ -11,9 +11,11 @@ that prefix (existing Studio routes are mounted under
 ``/studio/...``), and the legacy.js click handlers route most
 button presses through ``/api/mcp/invoke`` instead.
 
-This file ships the BACKEND HALF of the fix: 12 thin stub
+This file ships the BACKEND HALF of the fix: 13 thin stub
 endpoints under ``/api/studio/*`` so the routes exist + respond
-200 with documented placeholder shapes. The legacy.js click
+200 with documented placeholder shapes. (12 from the original
+v1.44.3.3 Task B + ``GET /api/studio/entities`` added by the
+R-Mac Mini-fix once Codex's Mac probe found it missing.) The legacy.js click
 handlers still need to be rewired to fire these URLs — that's
 the FRONTEND HALF and lives in a follow-up sprint (v1.44.4) to
 avoid mid-session churn on a 3,900-line file we can't browser-
@@ -93,6 +95,18 @@ async def templates(user: dict = Depends(require_authenticated)):
 
 
 # ── Entities / spec upload ────────────────────────────────────────────────
+
+
+@router.get("/entities")
+async def entities_list(user: dict = Depends(require_authenticated)):
+    """v1.44.3.3 R-Mac Mini-fix: Codex's Mac probe found
+    ``GET /api/studio/entities`` returning 404. The Studio UI
+    needs a list endpoint distinct from the ``POST
+    /entities/upload`` ingest endpoint below; v1.44.4 fills in
+    the real entity catalogue, stub returns an empty array so
+    the UI renders a "no entities yet" placeholder without
+    crashing."""
+    return _stub_payload(entities=[], total=0)
 
 
 @router.post("/entities/upload")

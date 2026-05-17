@@ -75,6 +75,10 @@ STUBS = [
     ("GET",  "/api/studio/dag-graph",        {"format", "svg", "nodes", "edges"}),
     ("POST", "/api/studio/dag-deploy",       {"status", "dag_id", "message"}),
     ("GET",  "/api/studio/templates",        {"templates"}),
+    # v1.44.3.3 R-Mac Mini-fix: distinct GET /entities (list)
+    # vs POST /entities/upload (ingest). The Codex Mac probe
+    # caught the gap — Studio UI needs a list endpoint.
+    ("GET",  "/api/studio/entities",         {"entities", "total"}),
     ("POST", "/api/studio/entities/upload",  {"accepted", "accepted_count"}),
     ("POST", "/api/studio/entity",           {"created", "entity_id"}),
     ("GET",  "/api/studio/silver/preview",   {"columns", "rows", "total"}),
@@ -156,13 +160,15 @@ def test_stub_requires_authentication(client):
             app.dependency_overrides[require_authenticated] = override
 
 
-def test_all_12_endpoints_covered():
-    """Sentinel: the brief commits to exactly 12 stubs. If
-    someone adds a 13th endpoint to the catalogue without
-    updating this count, force them to acknowledge the
-    expansion."""
-    assert len(STUBS) == 12, (
-        f"STUBS catalogue has {len(STUBS)} entries — brief specifies "
-        f"exactly 12. If this is intentional (v1.44.4 expansion), "
-        f"update this assert + the studio.py module docstring."
+def test_all_13_endpoints_covered():
+    """Sentinel: the catalogue holds 13 stubs (12 from the
+    original v1.44.3.3 Task B plus GET /api/studio/entities
+    added by the R-Mac Mini-fix). If someone adds a 14th
+    endpoint without updating this count, force them to
+    acknowledge the expansion."""
+    assert len(STUBS) == 13, (
+        f"STUBS catalogue has {len(STUBS)} entries — current "
+        f"target is 13 (the 12 from Task B + the R-Mac Mini-fix "
+        f"entities list). If this is intentional (v1.44.4 "
+        f"expansion), update this assert + studio.py docstring."
     )
