@@ -39,6 +39,22 @@ MIN_PASSWORD_LENGTH = 12
 _POOL: asyncpg.Pool | None = None
 
 
+def _login_attempt_tracking_disabled() -> bool:
+    """Disable DB-backed login lockouts for local E2E/test runs.
+
+    ``console.app.main`` already honors RATE_LIMIT_ENABLED=false for
+    the Redis/IP limiter. The login_attempts lockout is the second
+    brute-force guard; keep it enabled by default, but let the same
+    explicit test/dev switch prevent repeated E2E runs from poisoning
+    the shared local account.
+    """
+    enabled_env = os.environ.get("RATE_LIMIT_ENABLED")
+    if enabled_env is not None and enabled_env.strip().lower() in {"false", "0", "no", "off"}:
+        return True
+    app_env = os.environ.get("APP_ENV", "production").strip().lower()
+    return app_env in {"test", "testing"}
+
+
 _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     # All 4 cartridges share one key — they play the same role.
@@ -329,18 +345,21 @@ async def authenticate(email: str, password: str, ip: str | None = None) -> dict
     """Returns user dict (without password_hash) on success, else None."""
     p = await pool()
     normalized_email = email.lower().strip()
-    login_attempts_enabled = True
+    login_attempts_enabled = not _login_attempt_tracking_disabled()
 
     # Check for brute force (5 failures in 15 minutes)
-    try:
-        recent_failures = await p.fetchval(
-            """SELECT COUNT(*) FROM login_attempts
-               WHERE email = $1 AND success = FALSE
-               AND created_at >= NOW() - INTERVAL '15 minutes'""",
-            normalized_email
-        )
-    except asyncpg.UndefinedTableError:
-        login_attempts_enabled = False
+    if login_attempts_enabled:
+        try:
+            recent_failures = await p.fetchval(
+                """SELECT COUNT(*) FROM login_attempts
+                   WHERE email = $1 AND success = FALSE
+                   AND created_at >= NOW() - INTERVAL '15 minutes'""",
+                normalized_email
+            )
+        except asyncpg.UndefinedTableError:
+            login_attempts_enabled = False
+            recent_failures = 0
+    else:
         recent_failures = 0
     if recent_failures >= 5:
         raise HTTPException(status_code=429, detail="Cuenta bloqueada temporalmente")
