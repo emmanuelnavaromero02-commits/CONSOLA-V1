@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -34,6 +35,9 @@ def fake_backend():
     import fakeredis.aioredis as fake_aioredis
 
     jwt_blacklist.reset_blacklist()
+    sys.modules["app.services.jwt_blacklist"] = jwt_blacklist
+    import app.services as services_pkg
+    setattr(services_pkg, "jwt_blacklist", jwt_blacklist)
     backend = jwt_blacklist.get_blacklist()
     fake = fake_aioredis.FakeRedis(decode_responses=True)
 
@@ -49,6 +53,9 @@ def fake_backend():
 def offline_backend():
     """Backend whose Redis client is None (simulates REDIS_URL unset)."""
     jwt_blacklist.reset_blacklist()
+    sys.modules["app.services.jwt_blacklist"] = jwt_blacklist
+    import app.services as services_pkg
+    setattr(services_pkg, "jwt_blacklist", jwt_blacklist)
     backend = jwt_blacklist.get_blacklist()
     backend._client = None
     backend._init_attempted = True
