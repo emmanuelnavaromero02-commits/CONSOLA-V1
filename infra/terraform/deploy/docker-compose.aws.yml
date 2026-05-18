@@ -75,9 +75,10 @@ services:
   # ── Application services ──────────────────────────────────────────────────
 
   console:
-    image: modecissions/console:latest
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:-v1.44.5}
     container_name: mode_console
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       APP_ENV:             ${APP_ENV:-production}
       DATABASE_URL:        "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required}@postgres:5432/modecissions"
@@ -142,9 +143,10 @@ services:
       start_period: 30s
 
   workspace:
-    image: modecissions/workspace:latest
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:-v1.44.5}
     container_name: mode_workspace
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       APP_ENV:              ${APP_ENV:-production}
       DATABASE_URL:         "postgresql+psycopg2://omega_workspace:${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required}@postgres:5432/modecissions"
@@ -178,9 +180,10 @@ services:
       start_period: 30s
 
   refinement:
-    image: modecissions/refinement:latest
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:-v1.44.5}
     container_name: mode_refinement
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       APP_ENV:            ${APP_ENV:-production}
       DATABASE_URL:       "postgresql+psycopg2://omega_refinement:${OMEGA_REFINEMENT_PASSWORD:?OMEGA_REFINEMENT_PASSWORD is required}@postgres:5432/modecissions"
@@ -214,9 +217,10 @@ services:
 
 
   vault:
-    image: modecissions/vault:latest
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/vault:${IMAGE_TAG:-v1.44.5}
     container_name: mode_vault
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       APP_ENV:           ${APP_ENV:-production}
       DATABASE_URL:      "postgresql+psycopg2://omega_vault:${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required}@postgres:5432/modecissions"
@@ -255,9 +259,10 @@ services:
   # ── MCP Infrastructure ────────────────────────────────────────────────────
 
   mcp-infra:
-    image: modecissions/mcp-infra:latest
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:-v1.44.5}
     container_name: mode_mcp_infra
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       APP_ENV:           ${APP_ENV:-production}
       AIRFLOW_URL:       http://airflow:8080
@@ -319,7 +324,8 @@ services:
   superset-init:
     image: apache/superset:3.1.3
     container_name: mode_superset_init
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       POSTGRES_PASSWORD:   ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -342,7 +348,8 @@ services:
   superset:
     image: apache/superset:3.1.3
     container_name: mode_superset
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -382,7 +389,8 @@ services:
     # runtime services (next two) can use the dedicated role.
     image: apache/airflow:2.10.5
     container_name: mode_airflow_init
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     entrypoint: /bin/bash
     command: >
       -c "
@@ -414,7 +422,8 @@ services:
   airflow:
     image: apache/airflow:2.10.5
     container_name: mode_airflow
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     entrypoint: /bin/bash
     command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
@@ -480,7 +489,8 @@ services:
   airflow-scheduler:
     image: apache/airflow:2.10.5
     container_name: mode_airflow_scheduler
-    env_file: .env
+    env_file:
+      - ${AWS_ENV_FILE:-../../.env}
     command: scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor

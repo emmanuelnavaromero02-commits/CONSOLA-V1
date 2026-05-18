@@ -26,3 +26,9 @@ variable "key_pair_name" {
   type        = string
   default     = "modecissions-key"
 }
+
+variable "vpn_admin_allowed_cidrs" {
+  description = "CIDRs allowed to reach the wg-easy admin UI. Empty means no public admin UI ingress."
+  type        = list(string)
+  default     = []
+}

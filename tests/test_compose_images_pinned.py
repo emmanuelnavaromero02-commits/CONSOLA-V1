@@ -26,23 +26,19 @@ def _doc(path: Path):
 
 @pytest.mark.parametrize("path", [COMPOSE_LOCAL, COMPOSE_AWS],
                          ids=lambda p: p.name)
-def test_no_third_party_image_pins_latest(path):
-    """No THIRD-PARTY image may pin ``:latest``. Reproducibility hard
-    rule. In-house images (``modecissions/*``) follow the build
-    pipeline's release-tagging policy and are out of scope for this
-    invariant — versioning those is a separate sprint."""
+def test_no_compose_image_pins_latest(path):
+    """No compose image may pin ``:latest``. Application images are
+    released through GHCR tags; compose files must consume a versioned tag."""
     doc = _doc(path)
     bad: list[str] = []
     for name, svc in (doc.get("services") or {}).items():
         image = (svc or {}).get("image", "") or ""
         if not isinstance(image, str):
             continue
-        if image.startswith("modecissions/"):
-            continue
         if image.endswith(":latest"):
             bad.append(f"{path.name}::{name} → {image}")
     assert not bad, (
-        "Third-party services pinning :latest are non-reproducible:\n  "
+        "Compose services pinning :latest are non-reproducible:\n  "
         + "\n  ".join(bad)
     )
 

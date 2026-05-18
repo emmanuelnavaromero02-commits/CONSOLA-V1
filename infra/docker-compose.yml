@@ -25,6 +25,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d
+      - ./init_dev/15_local_dev_bootstrap.sql:/docker-entrypoint-initdb.d/90_local_dev_bootstrap.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions"]
       interval: 5s
