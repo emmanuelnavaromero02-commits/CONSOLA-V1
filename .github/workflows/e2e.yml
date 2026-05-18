@@ -22,6 +22,8 @@ jobs:
           bash infra/bootstrap.sh
           bash infra/bootstrap-keys.sh infra/.env
           mkdir -p data/lakehouse
+          mkdir -p airflow/logs/scheduler airflow/logs/dag_processor airflow/logs/webserver
+          chmod -R 777 airflow/logs
 
       - name: Configure E2E credentials
         run: |
