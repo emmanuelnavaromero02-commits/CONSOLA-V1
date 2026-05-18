@@ -19,6 +19,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CARTRIDGES_ROOT = REPO_ROOT / "cartridges"
+CONSOLE_ROOT = REPO_ROOT / "console"
+if str(CONSOLE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONSOLE_ROOT))
+_BASE_SYS_PATH = list(sys.path)
 
 # v1.43.2 (Codex P1-2): the production code now defaults APP_ENV to
 # ``production`` so unset envs fail closed. The test harness explicitly
@@ -95,6 +99,17 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
         main.job_runner.ensure_schema = _ok
         main.job_runner.cleanup_stale = _ok
     return main
+
+
+@pytest.fixture(autouse=True)
+def _restore_sys_path_after_test():
+    """Root cartridge tests temporarily replace sys.path to import each
+    cartridge's ``app`` namespace package. Restore the original import path
+    after every test so a combined ``pytest tests/ console/tests/`` run does
+    not leave console's own ``app`` package unreachable."""
+    yield
+    _purge_app_modules()
+    sys.path[:] = list(_BASE_SYS_PATH)
 
 
 @pytest.fixture
