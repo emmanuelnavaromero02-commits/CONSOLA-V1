@@ -63,3 +63,13 @@ airflow/logs/
 # Local audit / review artefacts (never committed)
 _audit_out/
 *.zip
+
+# Terraform state and local operator secrets
+terraform.tfstate
+terraform.tfstate.backup
+**/terraform.tfstate
+**/terraform.tfstate.backup
+.terraform/
+**/.terraform/
+*.tfvars
+!*.tfvars.example
