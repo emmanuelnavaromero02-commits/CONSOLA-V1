@@ -22,6 +22,7 @@ resource "aws_instance" "app" {
     github_repo_url    = var.github_repo_url
     deploy_private_key = var.deploy_private_key
     aws_region         = var.aws_region
+    s3_bucket_name     = aws_s3_bucket.lakehouse.bucket
     secret_arns        = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
   })
 

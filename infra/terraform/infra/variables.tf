@@ -4,51 +4,6 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "postgres_password" {
-  description = "Password for the in-container PostgreSQL on the App EC2"
-  type        = string
-  sensitive   = true
-}
-
-variable "anthropic_api_key" {
-  description = "Anthropic API key injected into the App EC2 through Secrets Manager"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "gemini_api_key" {
-  description = "Gemini API key injected into the App EC2 through Secrets Manager"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "jwt_secret" {
-  description = "JWT signing secret injected into the App EC2 through Secrets Manager"
-  type        = string
-  sensitive   = true
-}
-
-variable "internal_api_key" {
-  description = "Legacy internal API key injected into the App EC2 through Secrets Manager"
-  type        = string
-  sensitive   = true
-}
-
-variable "field_encryption_key" {
-  description = "Fernet field encryption key injected into the App EC2 through Secrets Manager"
-  type        = string
-  sensitive   = true
-}
-
-variable "smtp_password" {
-  description = "SMTP password injected into the App EC2 through Secrets Manager"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "github_repo_url" {
   description = "SSH URL of the GitHub repo to clone on the App EC2 (e.g. git@github.com:org/modecissions.git)"
   type        = string

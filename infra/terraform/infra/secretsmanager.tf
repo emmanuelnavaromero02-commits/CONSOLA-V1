@@ -1,27 +1,32 @@
 locals {
-  modecissions_app_secrets = {
-    ANTHROPIC_API_KEY    = var.anthropic_api_key
-    GEMINI_API_KEY       = var.gemini_api_key
-    JWT_SECRET_KEY       = var.jwt_secret
-    INTERNAL_API_KEY     = var.internal_api_key
-    POSTGRES_PASSWORD    = var.postgres_password
-    FIELD_ENCRYPTION_KEY = var.field_encryption_key
-    SMTP_PASSWORD        = var.smtp_password
-  }
+  modecissions_app_secret_names = toset([
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "JWT_SECRET_KEY",
+    "INTERNAL_API_KEY",
+    "POSTGRES_PASSWORD",
+    "FIELD_ENCRYPTION_KEY",
+    "SMTP_PASSWORD",
+    "OMEGA_CONSOLE_PASSWORD",
+    "OMEGA_REFINEMENT_PASSWORD",
+    "OMEGA_VAULT_PASSWORD",
+    "OMEGA_WORKSPACE_PASSWORD",
+    "OMEGA_MCP_INFRA_PASSWORD",
+    "OMEGA_REFINEMENT_GOLD_PASSWORD",
+    "OMEGA_AIRFLOW_DAG_PASSWORD",
+    "OMEGA_AIRFLOW_META_PASSWORD",
+    "AIRFLOW_SECRET_KEY",
+    "AIRFLOW_ADMIN_PASSWORD",
+    "SUPERSET_SECRET_KEY",
+    "SUPERSET_ADMIN_PASSWORD",
+  ])
 }
 
 resource "aws_secretsmanager_secret" "app" {
-  for_each = local.modecissions_app_secrets
+  for_each = local.modecissions_app_secret_names
 
   name        = "modecissions/${lower(each.key)}"
   description = "MODecissions runtime secret for ${each.key}"
-}
-
-resource "aws_secretsmanager_secret_version" "app" {
-  for_each = local.modecissions_app_secrets
-
-  secret_id     = aws_secretsmanager_secret.app[each.key].id
-  secret_string = each.value
 }
 
 output "modecissions_secret_arns" {

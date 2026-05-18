@@ -17,6 +17,18 @@ REQUIRED_SECRET_NAMES = {
     "POSTGRES_PASSWORD",
     "FIELD_ENCRYPTION_KEY",
     "SMTP_PASSWORD",
+    "OMEGA_CONSOLE_PASSWORD",
+    "OMEGA_REFINEMENT_PASSWORD",
+    "OMEGA_VAULT_PASSWORD",
+    "OMEGA_WORKSPACE_PASSWORD",
+    "OMEGA_MCP_INFRA_PASSWORD",
+    "OMEGA_REFINEMENT_GOLD_PASSWORD",
+    "OMEGA_AIRFLOW_DAG_PASSWORD",
+    "OMEGA_AIRFLOW_META_PASSWORD",
+    "AIRFLOW_SECRET_KEY",
+    "AIRFLOW_ADMIN_PASSWORD",
+    "SUPERSET_SECRET_KEY",
+    "SUPERSET_ADMIN_PASSWORD",
 }
 
 
@@ -27,7 +39,8 @@ def _read(path: Path) -> str:
 def test_secretsmanager_tf_declares_all_required_secrets():
     src = _read(TF / "secretsmanager.tf")
     assert 'resource "aws_secretsmanager_secret" "app"' in src
-    assert 'resource "aws_secretsmanager_secret_version" "app"' in src
+    assert 'resource "aws_secretsmanager_secret_version"' not in src
+    assert "secret_string" not in src
     for secret_name in REQUIRED_SECRET_NAMES:
         assert secret_name in src
 

@@ -108,7 +108,6 @@ cd infra/
 terraform init
 
 terraform apply `
-  -var="postgres_password=CAMBIAR_POR_PASSWORD_SEGURO" `
   -var="github_repo_url=git@github.com:ORG/REPO.git" `
   -var="deploy_private_key=$(Get-Content ..\modecissions-deploy-key -Raw)"
 ```
@@ -241,30 +240,43 @@ ejecuta `scripts/aws-entrypoint.sh`, que escribe
 (solo root puede leerlo). Si falta un secreto obligatorio, el script
 falla y el stack no debe arrancar.
 
-Pasa los valores sensibles en `terraform apply` o en un
-`terraform.tfvars` local **no commiteado**:
+Terraform crea los contenedores de secretos vacíos en AWS Secrets
+Manager. Después del `terraform apply`, carga cada valor con AWS CLI
+o con tu gestor de secretos. Los valores **no** se pasan como variables
+Terraform para que no queden dentro del state.
 
 ```bash
-terraform apply \
-  -var="postgres_password=<password-seguro>" \
-  -var="jwt_secret=<64+ chars>" \
-  -var="internal_api_key=<64+ chars>" \
-  -var="field_encryption_key=<fernet-key>" \
-  -var="anthropic_api_key=<opcional>" \
-  -var="gemini_api_key=<opcional>" \
-  -var="smtp_password=<opcional-si-MailHog>"
+aws secretsmanager put-secret-value --secret-id modecissions/postgres_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/jwt_secret_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/internal_api_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/field_encryption_key --secret-string '<fernet-key>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_console_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_refinement_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_vault_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_workspace_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_mcp_infra_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_refinement_gold_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_dag_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_meta_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/airflow_secret_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/airflow_admin_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/superset_secret_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/superset_admin_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/anthropic_api_key --secret-string '<opcional>'
+aws secretsmanager put-secret-value --secret-id modecissions/gemini_api_key --secret-string '<opcional>'
+aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --secret-string '<opcional-si-MailHog>'
 ```
 
 | Variable                | Valor                                                    | De dónde sacarlo                       |
 |-------------------------|----------------------------------------------------------|----------------------------------------|
-| `POSTGRES_PASSWORD`     | `var.postgres_password`                                  | AWS Secrets Manager                    |
-| `JWT_SECRET_KEY`        | `var.jwt_secret`                                         | AWS Secrets Manager                    |
-| `INTERNAL_API_KEY`      | `var.internal_api_key`                                   | AWS Secrets Manager                    |
-| `FIELD_ENCRYPTION_KEY`  | `var.field_encryption_key`                               | AWS Secrets Manager                    |
+| `POSTGRES_PASSWORD`     | `modecissions/postgres_password`                         | AWS Secrets Manager                    |
+| `JWT_SECRET_KEY`        | `modecissions/jwt_secret_key`                            | AWS Secrets Manager                    |
+| `INTERNAL_API_KEY`      | `modecissions/internal_api_key`                          | AWS Secrets Manager                    |
+| `FIELD_ENCRYPTION_KEY`  | `modecissions/field_encryption_key`                      | AWS Secrets Manager                    |
 | `S3_BUCKET_NAME`        | `modecissions-lakehouse-xxx`                             | `terraform output s3_bucket_name`      |
 | `AWS_REGION`            | `us-east-1`                                              | tu región del apply                    |
-| `ANTHROPIC_API_KEY`     | `var.anthropic_api_key`                                  | AWS Secrets Manager                    |
-| `GEMINI_API_KEY`        | `var.gemini_api_key`                                     | AWS Secrets Manager                    |
+| `ANTHROPIC_API_KEY`     | `modecissions/anthropic_api_key`                         | AWS Secrets Manager                    |
+| `GEMINI_API_KEY`        | `modecissions/gemini_api_key`                            | AWS Secrets Manager                    |
 | `CHAT_LLM_PROVIDER`     | `anthropic`                                              | fijo                                   |
 | `CHAT_LLM_MODEL`        | `claude-haiku-4-5-20251001`                              | fijo (ajustable)                       |
 | `SQL_LLM_MODEL`         | `claude-sonnet-4-6`                                      | fijo                                   |
@@ -278,7 +290,7 @@ terraform apply \
 | `WORKSPACE_PUBLIC_URL`  | `http://10.0.2.X:8001`                                   | misma IP, puerto 8001                  |
 | `SMTP_HOST`             | `mailhog` (default — captura emails sin enviarlos)       | mantener hasta tener SES configurado   |
 | `SMTP_PORT`             | `1025`                                                   | fijo para MailHog                      |
-| `SMTP_PASSWORD`         | `var.smtp_password`                                      | AWS Secrets Manager                    |
+| `SMTP_PASSWORD`         | `modecissions/smtp_password`                             | AWS Secrets Manager                    |
 | `SMTP_FROM`             | `noreply@modecissions.local`                             | fijo para MailHog                      |
 | `INVITE_TOKEN_TTL_HOURS`| `72`                                                     | fijo (ajustable)                       |
 | `RESET_TOKEN_TTL_HOURS` | `1`                                                      | fijo                                   |

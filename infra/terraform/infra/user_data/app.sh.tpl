@@ -53,6 +53,9 @@ echo "[userdata] repo cloned: $(date -Iseconds)"
 mkdir -p /etc/modecissions
 cat > /etc/modecissions/aws-entrypoint.env <<'ENVEOF'
 AWS_REGION=${aws_region}
+S3_BUCKET_NAME=${s3_bucket_name}
+AIRFLOW_ADMIN_USER=admin
+SUPERSET_ADMIN_USER=admin
 MODECISSIONS_ENV_FILE=/opt/modecissions/infra/terraform/deploy/.env
 %{ for name, arn in secret_arns ~}
 MODECISSIONS_SECRET_${name}_ARN=${arn}

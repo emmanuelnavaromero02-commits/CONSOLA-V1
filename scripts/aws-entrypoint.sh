@@ -24,7 +24,36 @@ required_secrets=(
   POSTGRES_PASSWORD
   FIELD_ENCRYPTION_KEY
   SMTP_PASSWORD
+  OMEGA_CONSOLE_PASSWORD
+  OMEGA_REFINEMENT_PASSWORD
+  OMEGA_VAULT_PASSWORD
+  OMEGA_WORKSPACE_PASSWORD
+  OMEGA_MCP_INFRA_PASSWORD
+  OMEGA_REFINEMENT_GOLD_PASSWORD
+  OMEGA_AIRFLOW_DAG_PASSWORD
+  OMEGA_AIRFLOW_META_PASSWORD
+  AIRFLOW_SECRET_KEY
+  AIRFLOW_ADMIN_PASSWORD
+  SUPERSET_SECRET_KEY
+  SUPERSET_ADMIN_PASSWORD
 )
+
+tmp_file="$(mktemp)"
+err_file="$(mktemp)"
+trap 'rm -f "$tmp_file" "$err_file"' EXIT
+chmod 600 "$tmp_file" "$err_file"
+
+write_env() {
+  local key="$1"
+  local value="$2"
+  if [[ "$value" == *$'\n'* ]]; then
+    echo "[aws-entrypoint] value for $key contains newline; refusing to write dotenv" >&2
+    return 1
+  fi
+  local escaped="${value//\\/\\\\}"
+  escaped="${escaped//\'/\\\'}"
+  printf "%s='%s'\n" "$key" "$escaped" >> "$tmp_file"
+}
 
 fetch_secret() {
   local name="$1"
@@ -36,13 +65,13 @@ fetch_secret() {
     if value="$(aws --region "$AWS_REGION" secretsmanager get-secret-value \
       --secret-id "$arn" \
       --query SecretString \
-      --output text 2>/tmp/aws-entrypoint-secret.err)"; then
+      --output text 2>"$err_file")"; then
       printf '%s' "$value"
       return 0
     fi
-    echo "[aws-entrypoint] secret fetch failed for $name attempt=$attempt"
+    echo "[aws-entrypoint] secret fetch failed for $name attempt=$attempt" >&2
     if [[ "$attempt" == "3" ]]; then
-      cat /tmp/aws-entrypoint-secret.err || true
+      cat "$err_file" >&2 || true
       return 1
     fi
     sleep "$delay"
@@ -50,26 +79,54 @@ fetch_secret() {
   done
 }
 
-tmp_file="$(mktemp)"
-chmod 600 "$tmp_file"
-
 echo "[aws-entrypoint] writing runtime env to $ENV_FILE"
+required_config=(
+  AWS_REGION
+  S3_BUCKET_NAME
+  AIRFLOW_ADMIN_USER
+  SUPERSET_ADMIN_USER
+)
+
+AIRFLOW_ADMIN_USER="${AIRFLOW_ADMIN_USER:-admin}"
+SUPERSET_ADMIN_USER="${SUPERSET_ADMIN_USER:-admin}"
+SMTP_HOST="${SMTP_HOST:-mailhog}"
+SMTP_PORT="${SMTP_PORT:-1025}"
+SMTP_FROM="${SMTP_FROM:-noreply@modecissions.local}"
+SMTP_USE_TLS="${SMTP_USE_TLS:-false}"
+APP_ENV="${APP_ENV:-production}"
+
+for config_name in "${required_config[@]}"; do
+  value="${!config_name:-}"
+  if [[ -z "$value" ]]; then
+    echo "[aws-entrypoint] missing required config: $config_name" >&2
+    exit 1
+  fi
+  write_env "$config_name" "$value"
+done
+
+for config_name in SMTP_HOST SMTP_PORT SMTP_FROM SMTP_USE_TLS APP_ENV; do
+  write_env "$config_name" "${!config_name}"
+done
+
 for secret_name in "${required_secrets[@]}"; do
   arn_var="MODECISSIONS_SECRET_${secret_name}_ARN"
   arn="${!arn_var:-}"
   if [[ -z "$arn" ]]; then
     echo "[aws-entrypoint] missing ARN env var: $arn_var"
-    rm -f "$tmp_file"
     exit 1
   fi
   secret_value="$(fetch_secret "$secret_name" "$arn")" || {
     echo "[aws-entrypoint] unable to fetch required secret: $secret_name"
-    rm -f "$tmp_file"
     exit 1
   }
-  printf '%s=%s\n' "$secret_name" "$secret_value" >> "$tmp_file"
+  write_env "$secret_name" "$secret_value"
 done
 
+while IFS='=' read -r env_name env_value; do
+  if [[ "$env_name" == MODECISSIONS_ENV_* ]]; then
+    write_env "${env_name#MODECISSIONS_ENV_}" "$env_value"
+  fi
+done < <(env)
+
 install -m 600 -o root -g root "$tmp_file" "$ENV_FILE"
-rm -f "$tmp_file"
 echo "[aws-entrypoint] runtime env written successfully"
