@@ -141,13 +141,18 @@ def test_deploy_button_has_csp_safe_bridge_handler():
     assert "stopInlineHandler(event)" in src
 
 
-def test_studio_assistant_is_visible_in_modern_ui():
+def test_studio_assistant_is_collapsible_in_modern_ui():
     src = _read(STUDIO_MODERN_CSS)
-    hide_rule = re.search(
-        r"body\.studio-modern-ready #ai-panel,[\s\S]*?display:\s*none",
-        src,
-    )
-    assert hide_rule is None
+    assert "body.studio-modern-ready #ai-panel" in src
+    assert "display: none !important" in src
+    assert "body.studio-modern-ready.studio-ai-open #ai-panel" in src
+    assert "display: flex !important" in src
+    assert ".studio-ai-toggle" in src
+    bridge = _read(BRIDGE_JS)
+    assert "hookAssistantPanel" in bridge
+    assert "studio-ai-toggle" in bridge
+    assert "studio-ai-close" in bridge
+    assert "localStorage" in bridge
     assert "body.studio-modern-ready #ai-panel" in src
     assert "display: flex !important" in src
 

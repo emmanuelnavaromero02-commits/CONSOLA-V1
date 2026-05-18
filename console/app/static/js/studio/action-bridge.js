@@ -11,6 +11,7 @@
 import { state } from "./legacy-state.js";
 
 const ACTION_BRIDGE_VERSION = "v1.44.5";
+const AI_PANEL_STORAGE_KEY = "studio.ai.panel";
 
 function readCookie(name) {
   const prefix = `${name}=`;
@@ -368,11 +369,62 @@ function hookRuntimeActions() {
   }, true);
 }
 
+function setAssistantOpen(open) {
+  const isOpen = Boolean(open);
+  document.body.classList.toggle("studio-ai-open", isOpen);
+  document.body.classList.toggle("studio-ai-collapsed", !isOpen);
+  try {
+    window.localStorage.setItem(AI_PANEL_STORAGE_KEY, isOpen ? "open" : "collapsed");
+  } catch {}
+  const toggle = document.getElementById("studio-ai-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", String(isOpen));
+  if (isOpen) {
+    setTimeout(() => document.getElementById("ai-input")?.focus(), 50);
+  }
+}
+
+function hookAssistantPanel() {
+  if (document.__studioAssistantPanelHookInstalled) return;
+  document.__studioAssistantPanelHookInstalled = true;
+
+  if (!document.getElementById("studio-ai-toggle")) {
+    const toggle = document.createElement("button");
+    toggle.id = "studio-ai-toggle";
+    toggle.type = "button";
+    toggle.className = "studio-ai-toggle";
+    toggle.setAttribute("aria-label", "Abrir asistente de Studio");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = "◈";
+    document.body.appendChild(toggle);
+  }
+
+  const header = document.querySelector("#ai-panel .ai-hdr");
+  if (header && !document.getElementById("studio-ai-close")) {
+    const close = document.createElement("button");
+    close.id = "studio-ai-close";
+    close.type = "button";
+    close.className = "btn-sm studio-ai-close";
+    close.setAttribute("aria-label", "Cerrar asistente de Studio");
+    close.textContent = "×";
+    header.appendChild(close);
+  }
+
+  document.getElementById("studio-ai-toggle")?.addEventListener("click", () => setAssistantOpen(true));
+  document.getElementById("studio-ai-close")?.addEventListener("click", () => setAssistantOpen(false));
+
+  let initial = "collapsed";
+  try {
+    initial = window.localStorage.getItem(AI_PANEL_STORAGE_KEY) || "collapsed";
+  } catch {}
+  setAssistantOpen(initial === "open");
+}
+
 function boot() {
   hookGoStep();
   hookClicks();
   hookUploadZones();
   hookRuntimeActions();
+  hookAssistantPanel();
 }
 
 if (document.readyState === "loading") {

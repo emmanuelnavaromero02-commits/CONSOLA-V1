@@ -539,10 +539,13 @@ body.studio-modern-ready #ai-resize-handle {
   display: none !important;
 }
 
-/* Studio assistant: visible, scoped, and non-blocking. The old flex dock
-   covered controls; this floating panel keeps the same real chat handlers
-   without hiding the Studio workflow. */
+/* Studio assistant: collapsed by default so it never covers workflow content.
+   The user opens it explicitly from the small floating launcher. */
 body.studio-modern-ready #ai-panel {
+  display: none !important;
+}
+
+body.studio-modern-ready.studio-ai-open #ai-panel {
   display: flex !important;
   position: fixed;
   right: 18px;
@@ -553,6 +556,35 @@ body.studio-modern-ready #ai-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 18px 46px rgba(15, 23, 42, .18);
+}
+
+body.studio-modern-ready .studio-ai-toggle {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1199;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 14px 34px rgba(37, 99, 235, .28);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 20px;
+}
+
+body.studio-modern-ready.studio-ai-open .studio-ai-toggle {
+  display: none;
+}
+
+body.studio-modern-ready #studio-ai-close {
+  margin-left: 6px;
+  color: var(--text3);
 }
 
 body.studio-modern-ready .studio-body {
