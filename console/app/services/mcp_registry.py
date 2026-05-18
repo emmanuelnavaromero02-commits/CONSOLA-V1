@@ -8,16 +8,62 @@ Contract each MCP server must implement:
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+from urllib.parse import urlparse
 
 import asyncpg
 import httpx
+from fastapi import HTTPException
 
 from app.security import get_internal_api_key
 
 _pool: asyncpg.Pool | None = None
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+ALLOWED_MCP_HOSTS = {
+    "mcp-infra",
+    "replicon",
+    "sap-hcm",
+    "sap-s4hana",
+    "sap-successfactors",
+    "console",
+    "refinement",
+    "127.0.0.1",
+    "::1",
+    "localhost",
+}
+
+
+def _validate_mcp_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("mcp URL must use http or https")
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host:
+        raise ValueError("mcp URL host is required")
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        if host not in ALLOWED_MCP_HOSTS:
+            raise ValueError(f"mcp host not allowlisted: {host}")
+        return
+
+    if host in ALLOWED_MCP_HOSTS and ip.is_loopback:
+        return
+    if ip.is_link_local or host.startswith("169.254."):
+        raise ValueError("metadata/link-local MCP hosts are blocked")
+    if ip.is_private or ip.is_global or ip.is_reserved or ip.is_multicast:
+        raise ValueError(f"mcp IP host not allowlisted: {host}")
+
+
+def _enforce_mcp_url(url: str) -> None:
+    try:
+        _validate_mcp_url(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -134,6 +180,7 @@ async def list_servers() -> list[dict]:
 
 
 async def register(server: dict) -> dict:
+    _enforce_mcp_url(server["url"])
     pool = await _get_pool()
     tools = await _fetch_tools(server["url"])
     tool_count = len(tools)
@@ -166,6 +213,10 @@ async def list_tools(server_id: str) -> list[dict]:
     row = await pool.fetchrow("SELECT url FROM mcp_servers WHERE id=$1", server_id)
     if not row:
         return []
+    try:
+        _validate_mcp_url(row["url"])
+    except ValueError:
+        return []
     return await _fetch_tools(row["url"])
 
 
@@ -174,6 +225,10 @@ async def invoke(server_id: str, tool: str, args: dict) -> dict:
     row = await pool.fetchrow("SELECT url FROM mcp_servers WHERE id=$1", server_id)
     if not row:
         return {"error": f"Server '{server_id}' not found"}
+    try:
+        _validate_mcp_url(row["url"])
+    except ValueError as exc:
+        return {"error": "mcp_host_not_allowlisted", "detail": str(exc)}
     try:
         async with httpx.AsyncClient(headers={"x-api-key": get_internal_api_key(), "x-internal-service": "console"}, timeout=120) as client:
             r = await client.post(
@@ -193,7 +248,11 @@ async def health_check_all() -> int:
     pool = await _get_pool()
     rows = await pool.fetch("SELECT id, url FROM mcp_servers")
     for row in rows:
-        tools = await _fetch_tools(row["url"])
+        try:
+            _validate_mcp_url(row["url"])
+            tools = await _fetch_tools(row["url"])
+        except ValueError:
+            tools = []
         tool_count = len(tools)
         await pool.execute(
             """UPDATE mcp_servers
@@ -205,6 +264,7 @@ async def health_check_all() -> int:
 
 
 async def _fetch_tools(url: str) -> list[dict]:
+    _validate_mcp_url(url)
     try:
         async with httpx.AsyncClient(headers={"x-api-key": get_internal_api_key(), "x-internal-service": "console"}, timeout=10) as client:
             r = await client.get(f"{url}/mcp/tools")
