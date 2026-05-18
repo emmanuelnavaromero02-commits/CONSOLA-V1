@@ -4,15 +4,14 @@
  * Smoke checks: every admin page that's still served from the
  * FastAPI console must load with HTTP 200 and render its primary
  * content region. These pages live at /iam (users), /operations,
- * /monitor, /workspace, /me, /settings, /security, and the audit
- * log is mounted under /security/audit (NOT a bare /audit).
+ * /monitor, /workspace, /me, /settings, and /security.
  *
  * v1.44.3.3 Task F: the v1.44.3.2 spec asserted on /audit
- * directly but console/app/routers/security.py mounts the audit
- * page at /security/audit (router prefix=/security). The 404 in
- * the E2E report was a spec drift, not a backend bug. Updated to
- * use the canonical path so the assertion reflects shipping
- * behaviour.
+ * directly but console/app/routers/security.py exposes the audit
+ * log as the JSON API /security/audit (router prefix=/security).
+ * Keep that endpoint pinned below without treating it as an HTML
+ * page: the payload depends on the current audit stream and must
+ * not rely on a specific event action being present.
  *
  * Per the v1.44.2 brief these pages stay HTML for now (Next.js
  * migration is scoped to user-facing flows only).
@@ -28,7 +27,6 @@ interface LegacyPage {
 }
 
 const PAGES: LegacyPage[] = [
-  { path: "/security/audit", needle: /eventos|audit/i,          label: "audit" },
   { path: "/iam",            needle: /usuarios|users|iam/i,     label: "iam (users)" },
   { path: "/operations",     needle: /operations|operación/i,   label: "operations" },
   { path: "/monitor",        needle: /monitor/i,                label: "monitor" },
@@ -53,6 +51,27 @@ for (const p of PAGES) {
     ).toBeVisible({ timeout: 10_000 });
   });
 }
+
+test("legacy audit API (/security/audit) returns JSON audit stream", async ({
+  authedPage: page,
+}) => {
+  const response = await page.goto(`${LEGACY}/security/audit`);
+  expect(response?.status(),
+    `/security/audit must respond 200 (got ${response?.status()})`,
+  ).toBe(200);
+
+  const contentType = response?.headers()["content-type"] || "";
+  expect(contentType).toContain("application/json");
+
+  const events = await response!.json();
+  expect(Array.isArray(events)).toBe(true);
+  for (const event of events.slice(0, 5)) {
+    expect(event).toEqual(expect.objectContaining({
+      action: expect.any(String),
+      created_at: expect.any(String),
+    }));
+  }
+});
 
 test.describe("Legacy navigation surface", () => {
   test("at least one HTML page renders a global nav with a copilot link",
