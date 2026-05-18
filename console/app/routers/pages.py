@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from app.dependencies import require_admin
+from app.dependencies import require_authenticated
+from app.services import audit_service
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -200,7 +202,19 @@ async def workspace_page():
     "/workspace/chat",
     dependencies=[Depends(require_permission("workspace.access")), Depends(require_csrf)],
 )
-async def workspace_chat_proxy(request: Request):
+async def workspace_chat_proxy(request: Request, user: dict = Depends(require_authenticated)):
+    body = await request.body()
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="workspace.chat.proxy",
+        resource_type="workspace_chat",
+        resource_id="sync",
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        status="success",
+        metadata={"body_len": len(body)},
+    )
     return await _workspace_proxy(request, "/workspace/chat")
 
 
@@ -208,7 +222,19 @@ async def workspace_chat_proxy(request: Request):
     "/workspace/chat/refresh-context",
     dependencies=[Depends(require_permission("workspace.access")), Depends(require_csrf)],
 )
-async def workspace_refresh_proxy(request: Request):
+async def workspace_refresh_proxy(request: Request, user: dict = Depends(require_authenticated)):
+    body = await request.body()
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="workspace.chat.refresh_context",
+        resource_type="workspace_chat",
+        resource_id="context",
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        status="success",
+        metadata={"body_len": len(body)},
+    )
     return await _workspace_proxy(request, "/workspace/chat/refresh-context")
 
 
@@ -216,7 +242,19 @@ async def workspace_refresh_proxy(request: Request):
     "/workspace/chat/stream",
     dependencies=[Depends(require_permission("workspace.access")), Depends(require_csrf)],
 )
-async def workspace_chat_stream_proxy(request: Request):
+async def workspace_chat_stream_proxy(request: Request, user: dict = Depends(require_authenticated)):
+    body = await request.body()
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="workspace.chat.stream",
+        resource_type="workspace_chat",
+        resource_id="stream",
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        status="success",
+        metadata={"body_len": len(body)},
+    )
     return await _workspace_stream_proxy(request, "/workspace/chat/stream")
 
 
