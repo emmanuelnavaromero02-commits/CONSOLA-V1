@@ -134,8 +134,8 @@ async def operations_page():
 
 # Sprint v1.5 — viewer pages listed by the spec (jobs / datasets / semantic)
 # go admin-only. The /{job_id} and /{name} variants follow their parents to
-# keep the surface uniform. /viewer/schema is intentionally NOT in the
-# explicit spec list, so it stays open to authenticated callers.
+# keep the surface uniform. /viewer/schema exposes dataset schema and follows
+# the same admin-only viewer policy.
 @router.get("/viewer/jobs", dependencies=[Depends(require_admin)])
 async def viewer_jobs():
     return FileResponse(STATIC / "viewers" / "jobs.html")
@@ -146,7 +146,7 @@ async def viewer_job(job_id: str):
     return FileResponse(STATIC / "viewers" / "job.html")
 
 
-@router.get("/viewer/schema")
+@router.get("/viewer/schema", dependencies=[Depends(require_admin)])
 async def viewer_schema():
     return FileResponse(STATIC / "viewers" / "schema.html")
 

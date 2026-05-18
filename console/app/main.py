@@ -1257,6 +1257,14 @@ async def dataset_schema(name: str):
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/schema")
         return r.json()
 
+@app.get("/api/datasets", dependencies=[Depends(require_authenticated)])
+async def api_list_datasets_alias():
+    return await list_datasets()
+
+@app.get("/api/datasets/{name}/schema", dependencies=[Depends(require_authenticated)])
+async def api_dataset_schema_alias(name: str):
+    return await dataset_schema(name)
+
 @app.get("/datasets/{name}/data", dependencies=[Depends(require_authenticated)])
 async def dataset_data(name: str, request: Request, limit: int = 100):
     # Forward user context so refinement can apply RLS. Without it the GOLD
@@ -2349,7 +2357,7 @@ async def studio_import_cartridge(file: UploadFile = File(...)):
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat", dependencies=[Depends(require_csrf)])
+@app.post("/studio/chat", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))])
 async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
@@ -2359,10 +2367,11 @@ async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
         step     = body.get("step", 1),
         manifest = manifest,
         actor_role = user.get("workspace_role") or user.get("role"),
+        actor_user = user,
     )
 
 
-@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf)])
+@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))])
 async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
@@ -2388,6 +2397,7 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
                 manifest = manifest,
                 on_event = on_event,
                 actor_role = user.get("workspace_role") or user.get("role"),
+                actor_user = user,
             )
             await queue.put({"type": "done", **result})
         except Exception:

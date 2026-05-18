@@ -10,9 +10,10 @@ but with a different system prompt that is:
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
-from app.services import mcp_registry, llm_client
+from app.services import audit_service, mcp_registry, llm_client
+from app.services.tool_manifest import classify_tool
 
 
 STUDIO_TOOLS_WHITELIST = {
@@ -189,6 +190,34 @@ ANALYST_READ_ONLY_EXACT = {
 
 def _bare_tool_name(tool_name: str) -> str:
     return tool_name.split("__", 1)[-1]
+
+
+_SENSITIVE_ARG_FRAGMENTS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "client_secret",
+    "credential",
+    "password",
+    "secret",
+    "token",
+)
+
+
+def _scrub_tool_args(value: Any) -> Any:
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if any(fragment in key_text for fragment in _SENSITIVE_ARG_FRAGMENTS):
+                out[key] = "***"
+            else:
+                out[key] = _scrub_tool_args(item)
+        return out
+    if isinstance(value, list):
+        return [_scrub_tool_args(item) for item in value]
+    return value
 
 
 def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
@@ -474,6 +503,7 @@ async def chat(
     manifest: dict | None = None,
     on_event: Callable | None = None,
     actor_role: str | None = None,
+    actor_user: dict | None = None,
     tools_whitelist: set[str] | None = None,
 ) -> dict:
     servers = await mcp_registry.list_servers()
@@ -510,11 +540,54 @@ async def chat(
 
     async def _invoke_tool(srv: str, tool: str, args: dict):
         full_name = f"{srv}__{tool}"
-        if _bare_tool_name(full_name) not in (tools_whitelist or STUDIO_TOOLS_WHITELIST):
+        bare_name = _bare_tool_name(full_name)
+        if bare_name not in (tools_whitelist or STUDIO_TOOLS_WHITELIST):
+            await audit_service.record_event(
+                user_id=(actor_user or {}).get("id"),
+                email=(actor_user or {}).get("email"),
+                action="studio.assistant.tool_denied",
+                resource_type="mcp_tool",
+                resource_id=full_name,
+                status="forbidden",
+                metadata={"server": srv, "tool": tool, "reason": "outside_studio_scope"},
+                tool_name=full_name,
+                tool_args=_scrub_tool_args(args or {}),
+                tool_result_status="forbidden",
+                risk_level="write",
+            )
             return {"error": f"Forbidden: tool {tool} is outside Studio scope"}
         if not is_tool_allowed_for_role(actor_role, full_name):
+            await audit_service.record_event(
+                user_id=(actor_user or {}).get("id"),
+                email=(actor_user or {}).get("email"),
+                action="studio.assistant.tool_denied",
+                resource_type="mcp_tool",
+                resource_id=full_name,
+                status="forbidden",
+                metadata={"server": srv, "tool": tool, "reason": "role_policy"},
+                tool_name=full_name,
+                tool_args=_scrub_tool_args(args or {}),
+                tool_result_status="forbidden",
+                risk_level=classify_tool(bare_name)["risk_level"],
+            )
             return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
-        return await mcp_registry.invoke(srv, tool, args)
+        risk = classify_tool(bare_name)["risk_level"]
+        result = await mcp_registry.invoke(srv, tool, args)
+        status = "error" if isinstance(result, dict) and result.get("error") else "success"
+        await audit_service.record_event(
+            user_id=(actor_user or {}).get("id"),
+            email=(actor_user or {}).get("email"),
+            action="studio.assistant.tool_call",
+            resource_type="mcp_tool",
+            resource_id=full_name,
+            status=status,
+            metadata={"server": srv, "tool": tool},
+            tool_name=full_name,
+            tool_args=_scrub_tool_args(args or {}),
+            tool_result_status=status,
+            risk_level=risk,
+        )
+        return result
 
     reply, viewer_urls, full_msgs = await llm_client.chat(
         system=system,

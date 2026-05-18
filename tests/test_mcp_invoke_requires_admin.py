@@ -48,6 +48,12 @@ SERVICE_PATH_MARKERS = (
     "/vault",
     "/workspace",
 )
+_CSRF = "unit-test-csrf"
+
+
+def _set_csrf(client: TestClient) -> dict[str, str]:
+    client.cookies.set("csrf_token", _CSRF)
+    return {"X-CSRF-Token": _CSRF}
 
 
 def _purge_app_modules() -> None:
@@ -166,10 +172,11 @@ def test_mcp_invoke_accepts_admin():
         new=AsyncMock(return_value={"ok": True}),
     ):
         client = TestClient(_make_app())
+        csrf_headers = _set_csrf(client)
         resp = client.post(
             "/api/mcp/invoke",
             json={"server": "infra", "tool": "postgres_list_tables", "args": {}},
-            headers={"x-test-user-role": "admin"},
+            headers={"x-test-user-role": "admin", **csrf_headers},
         )
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"result": {"ok": True}}
@@ -248,10 +255,11 @@ def test_every_endpoint_accepts_admin(method, path, mock_attr):
         new=AsyncMock(return_value={"ok": True} if mock_attr != "list_servers" else []),
     ):
         client = TestClient(_make_app())
+        csrf_headers = _set_csrf(client)
         resp = client.request(
             method,
             path,
-            headers={"x-test-user-role": "admin", "Content-Type": "application/json"},
+            headers={"x-test-user-role": "admin", "Content-Type": "application/json", **csrf_headers},
             json={"server": "infra", "tool": "x", "args": {}} if method == "POST" else None,
         )
     assert resp.status_code == 200, (

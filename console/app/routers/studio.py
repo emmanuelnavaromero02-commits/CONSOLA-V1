@@ -299,7 +299,25 @@ async def dag_deploy(request: Request, user: dict = Depends(require_authenticate
         "description": body.get("description"),
     })
     if isinstance(result, dict) and result.get("error"):
+        await audit_service.record_event(
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="studio.dag.deploy",
+            resource_type="airflow_dag",
+            resource_id=dag_id,
+            status="failed",
+            metadata={"cartridge": cartridge, "entity": entity, "error": result.get("error")},
+        )
         return {"status": "failed", "dag_id": dag_id, "error": result["error"]}
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="studio.dag.deploy",
+        resource_type="airflow_dag",
+        resource_id=dag_id,
+        status="success",
+        metadata={"cartridge": cartridge, "entity": entity},
+    )
     return {"status": "deployed", "dag_id": dag_id, "result": result}
 
 
@@ -556,6 +574,7 @@ async def assistant(request: Request, user: dict = Depends(require_authenticated
         step=int(body.get("step") or 1),
         manifest=manifest,
         actor_role=user.get("workspace_role") or user.get("role"),
+        actor_user=user,
     )
     await audit_service.record_event(
         user_id=user.get("id"),

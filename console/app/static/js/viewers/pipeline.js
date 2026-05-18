@@ -378,7 +378,7 @@ async function loadDags() {
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
     });
     const d = await r.json();
@@ -447,7 +447,7 @@ async function selectDag(dagId, reloadList = true) {
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({
         server: 'infra', tool: 'dag_get_source',
         args: { cartridge_id: _cartridge, dag_id: dagId },
@@ -508,7 +508,7 @@ async function deployDag() {
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({
         server: 'infra', tool: 'airflow_create_dag',
         args: { dag_id: dagId, code, cartridge_id: _cartridge,
