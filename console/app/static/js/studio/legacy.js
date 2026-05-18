@@ -1932,7 +1932,8 @@ FROM silver_${entity || 'entity'}`;
 
         <div class="card">
           <div class="card-title">DATASETS GOLD DISPONIBLES</div>
-          <button class="btn btn-sm" type="button">Ver SQL</button>
+          <button class="btn btn-sm" type="button" id="btn-analytics-sql">Ver SQL</button>
+          <pre id="analytics-sql-viewer" class="sql-viewer" style="display:none;margin-top:12px;white-space:pre-wrap;overflow:auto;max-height:260px"></pre>
           <div id="gold-list"><div class="loading">Cargando...</div></div>
         </div>
 
@@ -1992,6 +1993,20 @@ FROM silver_${entity || 'entity'}`;
 
       // Cargar apps analíticas publicadas
       loadAppsInStep5();
+      document.getElementById('btn-analytics-sql')?.addEventListener('click', showAnalyticsSql);
+    }
+
+    export function showAnalyticsSql() {
+      const viewer = document.getElementById('analytics-sql-viewer');
+      if (!viewer) return;
+      const cartridge = state._currentCartridge?.id || 'replicon';
+      viewer.textContent =
+        `-- SQL base para datasets Gold (${cartridge})\n` +
+        `-- Ajusta el dataset según la entidad seleccionada en Studio.\n` +
+        `SELECT *\n` +
+        `FROM read_parquet('s3://${state.S3_BUCKET}/gold/${cartridge}/*.parquet')\n` +
+        `LIMIT 100;`;
+      viewer.style.display = 'block';
     }
 
     export async function loadAppsInStep5() {
@@ -3055,10 +3070,10 @@ FROM silver_${entity || 'entity'}`;
                   <button class="btn btn-sm" onclick="copyDagCode()" title="Copiar código">⎘ Copiar</button>
                   <button class="btn btn-sm" style="color:var(--cyan);border-color:var(--cyan)"
                           onclick="sendDagToAssistantStudio()" title="Enviar al asistente">✎ Asistente</button>
-                  <button class="btn btn-sm" style="color:var(--amber);border-color:var(--amber)"
-                          onclick="renameDag()" title="Renombrar DAG">✎ Renombrar</button>
-                  <button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55"
-                          onclick="deleteDag()" title="Eliminar DAG">✕ Eliminar</button>
+                  <button class="btn btn-sm" id="btn-dag-rename" style="color:var(--amber);border-color:var(--amber)"
+                          title="Renombrar DAG">✎ Renombrar</button>
+                  <button class="btn btn-sm" id="btn-dag-delete" style="color:#ff2d55;border-color:#ff2d55"
+                          title="Eliminar DAG">✕ Eliminar</button>
                   <span class="deploy-msg" id="deploy-msg"></span>
                 </div>
               </div>
@@ -3081,6 +3096,8 @@ FROM silver_${entity || 'entity'}`;
         `with DAG(dag_id='${state._selectedDag}', schedule=None, catchup=False) as dag:\n` +
         `    start = EmptyOperator(task_id='start')\n`
       );
+      document.getElementById('btn-dag-rename')?.addEventListener('click', renameDag);
+      document.getElementById('btn-dag-delete')?.addEventListener('click', deleteDag);
 
       loadDags();
     }
@@ -3321,8 +3338,37 @@ FROM silver_${entity || 'entity'}`;
     }
 
     export async function renameDag() {
+      // The visible form is safe in every environment; the actual write
+      // remains gated in submitDagRename via _gateDevOnlyAction.
+      if (!state._selectedDag || state._selectedDag === '__new__') {
+        setDeployMsg('Selecciona un DAG primero', 'err'); return;
+      }
+      const oldId = state._selectedDag;
+      document.getElementById('dag-rename-panel')?.remove();
+      const panel = document.createElement('form');
+      panel.id = 'dag-rename-panel';
+      panel.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--border);background:var(--bg2)';
+      panel.innerHTML = `
+        <label for="dag-rename-input" style="font-size:10px;color:var(--text2);font-family:var(--font-ui)">Nuevo nombre</label>
+        <input id="dag-rename-input" name="rename-dag" data-testid="rename-input" type="text"
+               value="${esc(oldId)}" style="flex:1;min-width:180px">
+        <button class="btn btn-sm" type="submit" style="color:var(--amber);border-color:var(--amber)">Guardar</button>
+        <button class="btn btn-sm" type="button" id="dag-rename-cancel">Cancelar</button>`;
+      panel.addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitDagRename(document.getElementById('dag-rename-input')?.value || '');
+      });
+      document.getElementById('dag-editor-body')?.appendChild(panel);
+      document.getElementById('dag-rename-cancel')?.addEventListener('click', () => {
+        document.getElementById('dag-rename-panel')?.remove();
+      });
+      document.getElementById('dag-rename-input')?.focus();
+    }
+
+    export async function submitDagRename(newId) {
       // v1.43.2 (Frontend R3): rename writes a new DAG file via
-      // airflow_create_dag — same dev-only restriction as deploy.
+      // airflow_create_dag — same dev-only restriction as deploy. The
+      // rename form is still shown so the UI never becomes a dead click.
       if (!(await _gateDevOnlyAction(
         'Renombrar DAG está deshabilitado fuera de desarrollo.',
       ))) return;
@@ -3330,7 +3376,7 @@ FROM silver_${entity || 'entity'}`;
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
       const oldId = state._selectedDag;
-      const newId = prompt(`Nuevo nombre para "${oldId}":`, oldId);
+      newId = String(newId || '').trim();
       if (!newId || newId === oldId) return;
       if (!/^[a-zA-Z0-9_]+$/.test(newId)) {
         setDeployMsg('Nombre inválido (solo letras, números y _)', 'err'); return;
@@ -3398,6 +3444,7 @@ FROM silver_${entity || 'entity'}`;
           }).join('');
         }
         document.getElementById('dag-editor-name').textContent = newId;
+        document.getElementById('dag-rename-panel')?.remove();
 
         // Recarga real desde Airflow después de que el scheduler parsee el archivo
         setTimeout(loadDags, 5000);
@@ -3407,8 +3454,39 @@ FROM silver_${entity || 'entity'}`;
     }
 
     export async function deleteDag() {
+      // The confirmation dialog is safe in every environment; the actual
+      // delete remains gated in confirmDeleteDag via _gateDevOnlyAction.
+      if (!state._selectedDag || state._selectedDag === '__new__') {
+        setDeployMsg('Selecciona un DAG primero', 'err'); return;
+      }
+      const dagId = state._selectedDag;
+      document.getElementById('dag-delete-dialog')?.remove();
+      const dialog = document.createElement('div');
+      dialog.id = 'dag-delete-dialog';
+      dialog.className = 'modal confirm';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center';
+      dialog.innerHTML = `
+        <div style="width:min(420px,calc(100vw - 32px));background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:18px;box-shadow:0 16px 40px rgba(0,0,0,.35)">
+          <h3 style="margin:0 0 8px;font-size:18px">Eliminar DAG</h3>
+          <p style="margin:0 0 16px;color:var(--text2);line-height:1.5">¿Eliminar el DAG <b>${esc(dagId)}</b>? Esto borra el archivo y lo elimina de Airflow.</p>
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn btn-sm" type="button" id="dag-delete-cancel">Cancelar</button>
+            <button class="btn btn-sm" type="button" id="dag-delete-confirm" style="color:#ff2d55;border-color:#ff2d55">Eliminar</button>
+          </div>
+        </div>`;
+      document.body.appendChild(dialog);
+      document.getElementById('dag-delete-cancel')?.addEventListener('click', () => {
+        document.getElementById('dag-delete-dialog')?.remove();
+      });
+      document.getElementById('dag-delete-confirm')?.addEventListener('click', confirmDeleteDag);
+    }
+
+    export async function confirmDeleteDag() {
       // v1.43.2 (Frontend R3): airflow_delete_dag is gated by
-      // _is_development() in mcp-infra — same dev-only contract.
+      // _is_development() in mcp-infra — same dev-only contract. The
+      // confirmation is still visible before the gate so the button is real.
       if (!(await _gateDevOnlyAction(
         'Eliminar DAG está deshabilitado fuera de desarrollo.',
       ))) return;
@@ -3416,7 +3494,6 @@ FROM silver_${entity || 'entity'}`;
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
       const dagId = state._selectedDag;
-      if (!confirm(`¿Eliminar el DAG "${dagId}"?\nEsto borra el archivo y lo elimina de Airflow.`)) return;
 
       setDeployMsg('Eliminando…', '');
       try {
@@ -3431,6 +3508,7 @@ FROM silver_${entity || 'entity'}`;
         if (d.result?.deleted_file || d.result?.deleted_db) {
           setDeployMsg(`✓ Eliminado: ${esc(dagId)}`, 'ok');
           state._selectedDag = null;
+          document.getElementById('dag-delete-dialog')?.remove();
           document.getElementById('dag-editor-body')?.style && (_hideDagEditor());
           setTimeout(loadDags, 1200);
         } else {
