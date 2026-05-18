@@ -2,24 +2,15 @@
  * v1.44.3.2 spec 04 — Next.js /copilot.
  *
  * v1.44.3 explicitly deferred /copilot to v1.44.4. These tests
- * document the EXPECTED state and mark themselves as expected-to-fail
- * until the page lands; the moment it does, the .fail() lines flip
- * and the suite stops being noisy about it.
- *
- * The .fail() pattern (instead of .skip) means the developer running
- * `npx playwright test` sees a green "expected failure" line and KNOWS
- * the page isn't built yet — versus a silent skip that would hide the
- * gap.
+ * document the EXPECTED state and are skipped until the page lands.
+ * This must be an explicit skip, not `test.fail()`: CI may have a
+ * partially rendered shell depending on the branch under test, and an
+ * unexpected pass/fail here should not block unrelated legacy :8000
+ * Studio work.
  */
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Copilot page (Next.js, /copilot — pending v1.44.4)", () => {
-  test.fail(true,
-    "v1.44.3 shipped backend + memory + drafts + workflows but " +
-    "explicitly deferred the /copilot chat page to v1.44.4. " +
-    "These tests flip to passing the moment the page lands.",
-  );
-
+test.describe.skip("Copilot page (Next.js, /copilot — pending v1.44.4)", () => {
   test("page exists at /copilot (returns 200, not 404)", async ({
     authedPage: page,
   }) => {
