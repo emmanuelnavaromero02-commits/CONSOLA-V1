@@ -8,6 +8,27 @@ import { state } from './legacy-state.js';
       .then(d => { if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket; })
       .catch(() => {});
 
+    function readCookie(name) {
+      const prefix = `${name}=`;
+      for (const raw of document.cookie.split(';')) {
+        const c = raw.trim();
+        if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
+      }
+      return null;
+    }
+
+    function jsonHeaders() {
+      const headers = {'Content-Type': 'application/json'};
+      const csrf = readCookie('csrf_token');
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      return headers;
+    }
+
+    function csrfHeaders() {
+      const csrf = readCookie('csrf_token');
+      return csrf ? {'X-CSRF-Token': csrf} : {};
+    }
+
 
 
 
@@ -156,11 +177,18 @@ import { state } from './legacy-state.js';
       const form = new FormData();
       form.append('file', file);
       try {
-        const r = await fetch(`/studio/cartridges/${encodeURIComponent(state._currentCartridge.id)}/spec`, {
-          method: 'POST', body: form,
+        const r = await fetch(`/api/studio/entities/upload?cartridge=${encodeURIComponent(state._currentCartridge.id)}`, {
+          method: 'POST',
+          headers: csrfHeaders(),
+          body: form,
         });
         const d = await r.json();
-        statusEl.innerHTML = `<span style="color:var(--green)">✓ ${esc(file.name)} subido (${(d.size/1024).toFixed(1)} KB)</span>`;
+        if (!r.ok || d.accepted === false) {
+          throw new Error(d.error || d.detail || `HTTP ${r.status}`);
+        }
+        const count = Number(d.accepted_count || 0);
+        statusEl.innerHTML = `<span style="color:var(--green)">✓ ${esc(file.name)} procesado · ${count} entidades</span>`;
+        await selectCartridge(state._currentCartridge.id);
         // Auto-notify assistant
         document.getElementById('ai-input').value =
           `Acabo de subir el spec "${file.name}". Léelo con infra__minio_read_spec y dime qué ${
@@ -363,7 +391,7 @@ import { state } from './legacy-state.js';
       try {
         // Fetch entities + pipeline_runs + DAG list in parallel
         const [semRes, runsRes, dagRes] = await Promise.all([
-          fetch(`/api/semantic?cartridge=${encodeURIComponent(cartridge)}`),
+          fetch(`/api/studio/entities?cartridge=${encodeURIComponent(cartridge)}`),
           fetch(`/api/pipeline_runs?cartridge=${encodeURIComponent(cartridge)}&limit=200`).catch(() => null),
           fetch('/api/mcp/invoke', {
             method: 'POST',
@@ -718,17 +746,22 @@ import { state } from './legacy-state.js';
       if (btn) btn.textContent = '...';
 
       try {
-        const r = await fetch(
-          `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(name)}`,
-          {
-            method: 'PATCH',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ display_name: display || undefined, mode, dag_id: dag || undefined, enabled: true }),
-          }
-        );
+        const r = await fetch('/api/studio/entity', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({
+            cartridge,
+            entity: name,
+            display_name: display || undefined,
+            mode,
+            dag_id: dag || undefined,
+            enabled: true,
+          }),
+        });
         if (r.ok) {
           state._newEntityRequested = false;
           document.getElementById('new-entity-row')?.remove();
+          await selectCartridge(cartridge);
           loadEntityList();   // refresh the full list
         } else {
           const msg = await r.text();
@@ -1143,8 +1176,7 @@ import { state } from './legacy-state.js';
             </div>
             <div id="ds-list-area" class="${state._activeLayer}-content empty-state"
                  style="flex:1;min-height:0;overflow:auto;background:var(--bg2);border-top:1px solid var(--border);padding:14px">
-              <textarea name="sql" style="width:100%;min-height:120px">SELECT 1;</textarea>
-              <button class="btn btn-amber" type="button">Ejecutar</button>
+              <div style="color:var(--text3);padding:16px">Cargando datasets reales...</div>
             </div>
           </div>`;
       }
@@ -1917,7 +1949,7 @@ FROM silver_${entity || 'entity'}`;
               <div class="ds-row-meta">${ds.row_count != null ? Number(ds.row_count).toLocaleString('es') + ' rows · ' : ''}${ds.updated_at ? esc(fmt(ds.updated_at)) : '—'}</div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
-              <button class="btn btn-sm btn-amber" onclick="askSuperset(${escJsArg(`Crea un dataset en Superset para la tabla ${ds.name} y un dashboard básico de KPIs`)})">
+              <button class="btn btn-sm btn-amber" onclick="createSupersetDataset(${escJsArg(ds.name)})">
                 + Crear en Superset
               </button>
               <a class="btn btn-sm" href="/viewer/datasets/${encodeURIComponent(ds.name || '')}" target="_blank">Ver SQL →</a>
@@ -1990,6 +2022,36 @@ FROM silver_${entity || 'entity'}`;
     export function askSuperset(msg) {
       document.getElementById('ai-input').value = msg;
       aiSend();
+    }
+
+    export async function createSupersetDataset(datasetName) {
+      const el = document.getElementById('gold-list');
+      const tableName = `gold_${String(datasetName || '').replace(/^gold_/, '')}`;
+      if (el) {
+        el.querySelectorAll('.superset-status').forEach(n => n.remove());
+        el.insertAdjacentHTML('afterbegin', '<div class="superset-status empty-card">⟳ Creando dataset en Superset...</div>');
+      }
+      try {
+        const r = await fetch('/api/studio/superset/dataset', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ table_name: tableName, schema: 'public' }),
+        });
+        const d = await r.json();
+        const status = document.querySelector('.superset-status');
+        if (!r.ok || d.error) {
+          if (status) status.innerHTML = `<span style="color:#ff2d55">No se pudo crear: ${esc(d.error || d.detail || `HTTP ${r.status}`)}</span>`;
+          return;
+        }
+        if (status) {
+          status.innerHTML = d.existing
+            ? `✓ Ya existía en Superset: ${esc(d.table || tableName)}`
+            : `✓ Dataset creado en Superset: ${esc(d.table || tableName)}`;
+        }
+      } catch(e) {
+        const status = document.querySelector('.superset-status');
+        if (status) status.innerHTML = `<span style="color:#ff2d55">Error: ${esc(e.message)}</span>`;
+      }
     }
 
     // ── Step 6: IA Semántica / Data Catalog ───────────────────────────────────
@@ -3186,17 +3248,19 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('Desplegando…', '');
 
       try {
-        const r = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
+        const r = await fetch('/api/studio/dag-deploy', {
+          method: 'POST',
+          headers: jsonHeaders(),
           body: JSON.stringify({
-            server: 'infra', tool: 'airflow_create_dag',
-            args: { dag_id: dagId, code, cartridge_id: _dagCartridge(),
-                    description: `DAG del cartucho ${_dagCartridge()}` },
+            dag_id: dagId,
+            code,
+            cartridge_id: _dagCartridge(),
+            description: `DAG del cartucho ${_dagCartridge()}`,
           }),
         });
         const d = await r.json();
-        if (d.result?.created || d.result?.dag_id) {
-          setDeployMsg(`✓ Desplegado: ${esc(d.result.created || dagId)}`, 'ok');
+        if (d.status === 'deployed' || d.result?.created || d.result?.dag_id) {
+          setDeployMsg(`✓ Desplegado: ${esc(d.result?.created || d.dag_id || dagId)}`, 'ok');
           state._deployedCode = code;
           dagMarkDirty();
           const nameEl = document.getElementById('dag-editor-name');
