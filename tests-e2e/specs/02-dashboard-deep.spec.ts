@@ -44,11 +44,7 @@ test.describe("Dashboard layout", () => {
       // The user email or its prefix should appear in any user
       // affordance — topbar, sidebar dropdown, etc.
       const userVisible = page.getByText(new RegExp(EMAIL.split("@")[0], "i"));
-      // Allow the test to fail (the v1.44.x Next.js skeleton may not
-      // yet render user info in the topbar) — that's a v1.44.4 gap.
-      if (!(await userVisible.first().isVisible({ timeout: 5_000 }).catch(() => false))) {
-        test.fail(true, "user email/name not surfaced on /dashboard — UX gap");
-      }
+      await expect(userVisible.first()).toBeVisible({ timeout: 10_000 });
     },
   );
 });
