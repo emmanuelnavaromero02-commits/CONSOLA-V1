@@ -49,6 +49,13 @@ def test_requires_approval_conservative_defaults(manifest_module):
     assert manifest_module.requires_approval("some_unknown_tool") is True
 
 
+def test_list_cartridges_is_read_only(manifest_module):
+    res = manifest_module.classify_tool("list_cartridges")
+    assert res["risk_level"] == "read"
+    assert res["requires_approval"] is False
+    assert manifest_module.requires_approval("list_cartridges") is False
+
+
 def test_classify_postgres_execute_is_destructive(manifest_module):
     """postgres_execute_query lets the caller run arbitrary SQL writes —
     must NOT be auto-executable by the future copilot router."""
