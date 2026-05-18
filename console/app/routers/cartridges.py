@@ -122,7 +122,7 @@ async def entities(cartridge: str):
     "/{cartridge}/entities/{entity}/run",
     dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.execute"))],
 )
-async def run_entity(cartridge: str, entity: str, mode: str = "incremental"):
+async def run_entity(cartridge: str, entity: str, request: Request, mode: str = "incremental"):
     """Trigger entity extraction via the cartridge /skills router."""
     if cartridge not in _CARTRIDGE_PORTS:
         raise HTTPException(404, "Unknown cartridge")
@@ -132,7 +132,27 @@ async def run_entity(cartridge: str, entity: str, mode: str = "incremental"):
     async with httpx.AsyncClient(timeout=30.0, headers=_cartridge_internal_headers()) as c:
         r = await c.post(_cartridge_url(cartridge, f"/skills/{skill}/{entity}"))
     if r.status_code >= 400:
+        user = getattr(request.state, "user", None) or {}
+        await audit_service.record_event(
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="cartridge.entity.run",
+            resource_type="cartridge_entity",
+            resource_id=f"{cartridge}.{entity}",
+            status="failed",
+            metadata={"mode": mode, "status_code": r.status_code},
+        )
         raise HTTPException(r.status_code, r.text[:500])
+    user = getattr(request.state, "user", None) or {}
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="cartridge.entity.run",
+        resource_type="cartridge_entity",
+        resource_id=f"{cartridge}.{entity}",
+        status="success",
+        metadata={"mode": mode, "skill": skill},
+    )
     return r.json()
 
 

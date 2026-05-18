@@ -27,6 +27,16 @@ function showError(el, message) {
 
 const humanizeError = (err) => window.ModLabels?.humanizeError?.(err) || (err?.message || String(err || 'Error'));
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function csrfHeaders(base = {}) {
+  const token = csrfToken();
+  return token ? { ...base, 'X-CSRF-Token': token } : base;
+}
+
 function formatDate(value) {
   if (!value) return '—';
   const d = new Date(value);
@@ -194,7 +204,8 @@ async function revokeSession(token) {
   if (!confirmed) return;
   const response = await fetch(`/security/sessions/${encodeURIComponent(token)}`, {
     method: 'DELETE',
-    credentials: 'same-origin'
+    credentials: 'same-origin',
+    headers: csrfHeaders(),
   });
   if (!response.ok) {
     showError(els.sessionsError, `No se pudo revocar la sesión: ${response.status}`);

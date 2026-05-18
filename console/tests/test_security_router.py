@@ -32,6 +32,12 @@ app = _make_app()
 client = TestClient(app)
 
 
+def _csrf_headers():
+    token = "test-csrf-token"
+    client.cookies.set("csrf_token", token)
+    return {"X-CSRF-Token": token}
+
+
 def _make_fetch_side_effect(data_rows):
     """Return a side_effect for mock_conn.fetch that handles _columns() queries."""
     async def fetch_side_effect(query, *args):
@@ -80,7 +86,7 @@ def test_revoke_session(mock_pool):
     mock_pool.return_value = mock_conn
     mock_conn.execute.return_value = "DELETE 1"
 
-    response = client.delete("/security/sessions/abc")
+    response = client.delete("/security/sessions/abc", headers=_csrf_headers())
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 

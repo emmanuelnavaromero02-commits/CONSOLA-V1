@@ -399,7 +399,7 @@ async def _llm_plan(intent: str, available_tools: list[str]) -> list[dict]:
     return _parse_plan_json(reply or "")
 
 
-@router.post("/{workflow_id}/plan", dependencies=[Depends(require_csrf)])
+@router.post("/{workflow_id}/plan", dependencies=[Depends(require_csrf), Depends(require_permission("copilot.execute"))])
 async def plan_workflow(
     workflow_id: str,
     user: dict = Depends(require_authenticated),
