@@ -98,6 +98,18 @@ def client(monkeypatch):
     async def fake_chat(**_kwargs):
         return {"reply": "Studio conectado", "viewer_urls": [], "messages": []}
 
+    class FakeSupersetClient:
+        configured = True
+
+        async def list_databases(self):
+            return [{"id": 7, "name": "modecissions_gold"}]
+
+        async def create_dataset(self, database_id, table_name, schema="public"):
+            return {"dataset_id": 12, "table": table_name, "schema": schema, "existing": False}
+
+    def fake_superset_client():
+        return FakeSupersetClient()
+
     async def fake_list_entities(cartridge=None):
         return [{
             "id": "TimeEntry",
@@ -116,6 +128,7 @@ def client(monkeypatch):
     monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
     monkeypatch.setattr(studio_router.studio_assistant, "chat", fake_chat)
     monkeypatch.setattr(studio_router.studio_entities, "list_entities", fake_list_entities)
+    monkeypatch.setattr(studio_router.superset_client, "client_from_env", fake_superset_client)
 
     test_client = TestClient(app)
     test_client.cookies.set("csrf_token", CSRF)

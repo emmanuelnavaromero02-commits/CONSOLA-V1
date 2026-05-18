@@ -18,7 +18,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.security import get_internal_api_key
-from app.services import cartridge_service, dag_templates, mcp_registry, studio_assistant, studio_entities, studio_preview
+from app.services import (
+    audit_service,
+    cartridge_service,
+    dag_templates,
+    mcp_registry,
+    studio_assistant,
+    studio_entities,
+    studio_preview,
+    superset_client,
+)
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -427,11 +436,11 @@ async def master_preview(request: Request, user: dict = Depends(require_authenti
     )
 
 
-@router.post("/superset/dataset", dependencies=[Depends(require_csrf)])
+@router.post("/superset/dataset", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
 async def superset_dataset(request: Request, user: dict = Depends(require_authenticated)):
     body = await _optional_json(request)
     database_id = body.get("database_id")
-    table_name = body.get("table_name")
+    table_name = body.get("table_name") or body.get("dataset_name")
     schema = body.get("schema") or "public"
 
     if not table_name:
@@ -440,28 +449,32 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
             return {"created": False, "available": False, "error": "No Gold datasets available for Superset"}
         table_name = _dataset_table_name(gold[0])
 
+    client = superset_client.client_from_env()
+    if not client.configured:
+        raise HTTPException(503, "Superset not configured")
+
     if not database_id:
-        databases = await mcp_registry.invoke("infra", "superset_list_databases", {})
-        dbs = databases.get("databases", []) if isinstance(databases, dict) else []
+        dbs = await client.list_databases()
         match = next((db for db in dbs if db.get("name") in {"modecissions_gold", "Postgres Gold"}), None)
         match = match or (dbs[0] if dbs else None)
         if not match:
-            return {"created": False, "available": False, "error": "No Superset database connection registered"}
+            raise HTTPException(503, "No Superset database connection registered")
         database_id = match["id"]
 
-    existing = await mcp_registry.invoke("infra", "superset_list_datasets", {})
-    for ds in existing.get("datasets", []) if isinstance(existing, dict) else []:
-        if ds.get("name") == table_name and ds.get("schema") == schema:
-            return {"created": False, "dataset_id": ds.get("id"), "table": table_name, "schema": schema, "existing": True}
-
-    result = await mcp_registry.invoke("infra", "superset_create_dataset", {
-        "database_id": int(database_id),
-        "table_name": table_name,
-        "schema": schema,
-    })
-    if isinstance(result, dict) and result.get("error"):
-        return {"created": False, "error": result["error"], "table": table_name, "schema": schema}
-    return {"created": True, "dataset_id": result.get("dataset_id"), "table": table_name, "schema": schema, "result": result}
+    try:
+        result = await client.create_dataset(int(database_id), table_name, schema=schema)
+    except superset_client.SupersetConfigError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="studio.superset.dataset_create",
+        resource_type="superset_dataset",
+        resource_id=f"{schema}.{table_name}",
+        status="success",
+        metadata={"database_id": int(database_id), "existing": bool(result.get("existing"))},
+    )
+    return {"created": not result.get("existing"), **result}
 
 
 @router.get("/semantic")

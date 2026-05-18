@@ -295,6 +295,7 @@ aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --sec
 | `EMBED_MODEL`           | `nomic-embed-text`                                       | fijo si usas Ollama                    |
 | `EMBED_DIM`             | `768`                                                    | debe coincidir con `EMBED_MODEL`       |
 | `SUPERSET_SECRET_KEY`   | hex de 32 bytes                                          | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `SUPERSET_ADMIN_USER`   | `admin`                                                  | usuario bootstrap de Superset        |
 | `SUPERSET_ADMIN_PASSWORD` | password fuerte                                        | inventado / gestor                     |
 | `AIRFLOW_SECRET_KEY`    | hex de 32 bytes                                          | mismo comando que Superset             |
 | `CONSOLE_URL`           | `http://10.0.2.X:8000` (IP privada de EC2 App)           | `aws-entrypoint.sh` vía IMDSv2         |
@@ -428,6 +429,25 @@ Abrir desde el navegador (con VPN activa):
 - Superset:   http://10.0.2.X:8088        (admin / `$SUPERSET_ADMIN_PASSWORD`)
 - Airflow:    http://10.0.2.X:8082        (admin / admin — cambiar después)
 - MailHog UI: http://10.0.2.X:8025        ← lee aquí los emails de invitación/reset
+
+---
+
+### Superset datasets desde Studio
+
+El botón **Crear en Superset** de Studio usa el backend `console` contra la API
+REST de Superset (`/api/v1/security/login`, CSRF y `/api/v1/dataset/`). Para
+que funcione en AWS, `scripts/aws-entrypoint.sh` debe inyectar `SUPERSET_URL`,
+`SUPERSET_ADMIN_USER` y `SUPERSET_ADMIN_PASSWORD` en el `.env` de deploy.
+
+Primer setup recomendado:
+
+1. Levantar Superset y entrar con `SUPERSET_ADMIN_USER` /
+   `SUPERSET_ADMIN_PASSWORD`.
+2. Registrar una conexión de base de datos hacia Postgres Gold
+   (`modecissions_gold`) si no existe.
+3. Desde Studio, ejecutar **Crear en Superset** sobre una tabla Gold. Si el
+   dataset ya existe, el backend devuelve el dataset existente en vez de crear
+   duplicados.
 
 ---
 
