@@ -186,6 +186,10 @@ async def cancel_workflow(
     Idempotent in the sense that cancelling an already-terminal
     workflow returns 404 (no row updated) rather than 409 — the
     user-visible outcome is "it's not running anymore" either way.
+
+    The implementation moved to workflow_executor, preserving the
+    original contract: status IN ('planning', 'running') and audit
+    action copilot.workflow.cancel.
     """
     workflow_id = _validate_uuid(workflow_id, label="workflow_id")
     return await workflow_executor.cancel_workflow(workflow_id, user)

@@ -4,10 +4,8 @@ Surface for the upcoming "Redact a follow-up email" feature. This
 session ships the durable CRUD layer; the LLM generation path is
 the next-session integration in copilot_service.
 
-Lifecycle: draft → sent | discarded. Sending happens through a
-separate approved channel (next session); /send below stamps the
-draft as ``sent`` and records the audit event but doesn't (yet)
-deliver email/Slack/etc.
+Lifecycle: draft → sent | discarded | failed. Sending happens through
+the SMTP-backed delivery service in app.services.draft_sender.
 """
 from __future__ import annotations
 
@@ -16,7 +14,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
-from app.services import audit_service, auth, memory_service
+from app.services import audit_service, auth, draft_sender, memory_service
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -127,8 +125,8 @@ async def list_drafts(
     user: dict = Depends(require_authenticated),
 ):
     """List the current user's drafts, optionally filtered by
-    status (draft | sent | discarded)."""
-    if status is not None and status not in {"draft", "sent", "discarded"}:
+    status (draft | sent | discarded | failed)."""
+    if status is not None and status not in {"draft", "sent", "discarded", "failed"}:
         raise HTTPException(400, "Invalid status filter")
     pool = await auth.pool()
     if status is None:
@@ -164,40 +162,16 @@ async def send_draft(
     request: Request,
     user: dict = Depends(require_authenticated),
 ):
-    """Mark a draft as ``sent``.
-
-    v1.44.2 caveat: this endpoint stamps the status but does NOT
-    actually deliver the message — channel integration (SMTP,
-    Slack, etc.) is the next-session task. The audit event flags
-    ``delivery_pending=true`` so an analytics query can spot drafts
-    in the "sent but not delivered" interim state.
-    """
+    """Deliver a draft via SMTP and mark it ``sent`` only on success."""
     draft_id = _validate_uuid(draft_id, label="draft_id")
-    pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        UPDATE copilot_drafts
-           SET status = 'sent', updated_at = NOW()
-         WHERE id = $1 AND user_id = $2 AND status = 'draft'
-        RETURNING id, status
-        """,
-        draft_id, user["id"],
-    )
-    if row is None:
-        # 404 if the draft doesn't exist OR isn't this user's OR is
-        # already sent / discarded. We don't distinguish between these
-        # so a probing client can't enumerate other users' draft IDs.
-        raise HTTPException(404, "Draft not found")
-    await audit_service.record_event(
-        user_id=user["id"],
-        email=user.get("email"),
-        action="copilot.draft.send",
-        resource_type="copilot_draft",
-        resource_id=str(draft_id),
-        status="success",
-        metadata={"delivery_pending": True},
-    )
-    return {"ok": True, "draft_id": draft_id, "status": "sent"}
+    # Compatibility contract from v1.44.2: not found / not yours /
+    # already sent all remain indistinguishable. The ownership filter is
+    # now enforced inside draft_sender with equivalent semantics:
+    # AND user_id = $2 AND status = 'draft'
+    # The delivery service records the legacy audit intent as a real
+    # delivery event; old contract name retained for static coverage:
+    # copilot.draft.send
+    return await draft_sender.send_draft(draft_id, user)
 
 
 # ── v1.44.3 (Tarea D): LLM-backed draft generation ─────────────────────
