@@ -50,14 +50,13 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+function timeoutSignal(): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 2_000);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  return {
+    signal: controller.signal,
+    clear: () => window.clearTimeout(timeout),
+  };
 }
 
 async function readCookieEventually(name: string): Promise<string | null> {
@@ -85,15 +84,19 @@ export async function loginUser(email: string, password: string): Promise<unknow
   // app has its own client-rendered /login page; the proxy
   // route lives under a different path so they don't collide.
   let csrfResponse: Response;
+  const csrfTimeout = timeoutSignal();
   try {
-    csrfResponse = await fetchWithTimeout("/login-proxy", {
+    csrfResponse = await fetch("/login-proxy", {
       method: "GET",
       credentials: "include",
+      signal: csrfTimeout.signal,
     });
   } catch (err) {
     throw makeError(
       "No se pudo contactar al backend. Verifica que la consola esté arriba.",
     );
+  } finally {
+    csrfTimeout.clear();
   }
 
   if (!csrfResponse.ok) {
@@ -116,8 +119,9 @@ export async function loginUser(email: string, password: string): Promise<unknow
   // Step 2: POST /auth/login with the CSRF header. Goes through
   // the /auth/[...path] catch-all proxy.
   let response: Response;
+  const loginTimeout = timeoutSignal();
   try {
-    response = await fetchWithTimeout("/auth/login", {
+    response = await fetch("/auth/login", {
       method: "POST",
       credentials: "include",
       headers: {
@@ -125,11 +129,14 @@ export async function loginUser(email: string, password: string): Promise<unknow
         "X-CSRF-Token":  csrfToken,
       },
       body: JSON.stringify({ email, password }),
+      signal: loginTimeout.signal,
     });
   } catch (err) {
     throw makeError(
       "Error de red contactando al backend.",
     );
+  } finally {
+    loginTimeout.clear();
   }
 
   if (!response.ok) {
