@@ -135,6 +135,28 @@ lands the suite automatically flips those tests to passing.
 
 ---
 
+## v1.44.5 Studio sentinel cleanup
+
+Sprint v1.44.5 removed the hidden `#studio-e2e-sentinels` block from
+`console/app/static/studio.html` and its invisible CSS rules from
+`console/app/static/css/studio.css`.
+
+The Studio specs now drive the real rendered UI through `window.goStep`
+after the legacy init finishes. Missing real affordances are skipped
+instead of hidden-sentinel-passed:
+
+| Gap | Spec | Reason |
+|---|---|---|
+| Studio assistant dock | `05-studio-deep.spec.ts` | Intentionally removed from Studio; Workspace/Copilot owns chat. |
+| Silver editable query / execute controls | `05-studio*.spec.ts` | Real visible Studio refine UI does not expose this control yet. |
+| Superset create/open affordance | `05-studio*.spec.ts` | No canonical visible control on the current Studio surface. |
+| Entity extraction mode controls | `05-studio-deep.spec.ts` | Current visible entities UI does not expose full/incremental mode controls. |
+
+These are product/UI gaps, not hidden test scaffolding. They should be
+reintroduced only as visible, user-operable controls.
+
+---
+
 ## Pre-existing context
 
 - v1.44.3.2 shipped the initial 71-test baseline.
