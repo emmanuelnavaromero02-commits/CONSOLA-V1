@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workspace — OMEGA</title>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    /* ── Tokens ─────────────────────────────────────────────────────────── */
+    :root {
+      --bg: #f8f7f4; --bg2: #ffffff; --bg3: #f3f4f6;
+      --border: #e5e7eb;
+      --text: #111827; --text2: #6b7280; --text3: #9ca3af;
+      --green: #059669; --amber: #2563eb; --cyan: #2563eb; --red: #dc2626;
+      --font-ui: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: var(--font-ui); font-size: 14px; overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 0 28px; height: 64px;
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-family: var(--font-ui); font-weight: 700; letter-spacing: 0;
+      color: var(--text); font-size: 18px;
+    }
+    .logo .accent { color: var(--cyan); }
+    .tagline {
+      font-size: 13px; color: var(--text2); letter-spacing: 0; margin-top: 2px;
+    }
+    .user-bar {
+      display: flex; align-items: center; gap: 14px; margin-left: auto;
+      font-family: var(--font-ui); font-size: 13px; letter-spacing: 0;
+      color: var(--text2);
+    }
+    .user-bar .me { color: var(--text2); }
+    .user-bar .me strong { color: var(--text); }
+    .user-bar a { color: var(--text3); text-decoration: none; }
+    .user-bar a:hover { color: var(--cyan); }
+    .role-pill {
+      padding: 3px 8px; border-radius: 999px; font-size: 11px;
+      letter-spacing: 0; background: var(--bg3); color: var(--text2);
+    }
+    .role-pill.admin { background: rgba(37,99,235,.10); color: var(--cyan); }
+
+    /* ── Main split ─────────────────────────────────────────────────────── */
+    .main {
+      display: grid; grid-template-columns: minmax(0, 1fr) 440px;
+      height: calc(100vh - 64px);
+      gap: 20px; background: var(--bg); padding: 20px;
+    }
+    @media (max-width: 1100px) {
+      .main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    }
+
+    .pane {
+      background: var(--bg2); overflow-y: auto;
+      border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(17, 24, 39, .04);
+    }
+    .pane-head {
+      padding: 14px 22px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+      position: sticky; top: 0; background: var(--bg2); z-index: 10;
+    }
+    .pane-head .icon { color: var(--cyan); font-size: 18px; }
+    .pane-head h2 {
+      font-family: var(--font-ui); font-size: 16px;
+      color: var(--text); letter-spacing: 0; flex: 1;
+    }
+
+    /* ── Apps grid ──────────────────────────────────────────────────────── */
+    .apps-grid {
+      padding: 22px; display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .app-card {
+      background: #ffffff; border: 1px solid var(--border); border-radius: 12px;
+      padding: 20px; display: flex; flex-direction: column;
+      gap: 12px; transition: border-color .15s, transform .15s, box-shadow .15s;
+      text-decoration: none; color: inherit;
+    }
+    .app-card:hover { border-color: var(--cyan); transform: translateY(-2px); box-shadow: 0 10px 24px rgba(17,24,39,.08); }
+    .app-icon { font-size: 18px; color: var(--cyan); }
+    .app-title {
+      font-family: var(--font-ui); font-size: 16px; font-weight: 700;
+      color: var(--text); letter-spacing: 0;
+    }
+    .app-desc { font-size: 13px; color: var(--text2); line-height: 1.6; flex: 1; }
+    .app-meta { font-size: 12px; color: var(--text3); font-family: var(--font-ui); }
+    .empty-state {
+      padding: 60px 20px; text-align: center;
+      color: var(--text2); font-size: 13px; line-height: 1.7;
+      font-family: var(--font-ui);
+    }
+    .empty-icon { font-size: 32px; opacity: .4; margin-bottom: 10px; }
+
+    /* ── Tab nav (left pane) ─────────────────────────────────────────────── */
+    .tab-nav {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .tab-btn {
+      padding: 14px 20px; cursor: pointer;
+      background: transparent; border: none; border-bottom: 2px solid transparent;
+      font-family: var(--font-ui); font-size: 13px; color: var(--text2);
+      letter-spacing: 0; transition: color .15s, border-color .15s;
+    }
+    .tab-btn:hover { color: var(--text2); }
+    .tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+    .tab-btn .count {
+      display: inline-block; margin-left: 6px; padding: 1px 6px;
+      background: var(--bg3); border-radius: 999px; font-size: 11px; color: var(--text2);
+    }
+    .tab-btn.active .count { background: rgba(88,166,255,.15); color: var(--cyan); }
+    .tab-page { display: none; }
+    .tab-page.active { display: block; }
+    .pane-toolbar {
+      padding: 14px 22px; display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid var(--border); background: var(--bg2);
+    }
+    .pane-toolbar .spacer { flex: 1; }
+
+    /* ── Decisions table ────────────────────────────────────────────────── */
+    .dec-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+    .dec-table th, .dec-table td {
+      text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--border);
+    }
+    .dec-table th {
+      font-family: var(--font-ui); font-size: 12px; color: var(--text2);
+      letter-spacing: 0; background: var(--bg3);
+    }
+    .dec-table tbody tr { cursor: pointer; transition: background .12s; }
+    .dec-table tbody tr:hover { background: var(--bg3); }
+    .badge {
+      display: inline-block; padding: 2px 7px; border-radius: 3px;
+      font-family: var(--font-ui); font-size: 11px; letter-spacing: 0;
+    }
+    .b-open    { background: rgba(63,185,80,.12);  color: var(--green); }
+    .b-closed  { background: rgba(110,118,129,.18); color: var(--text2); }
+    .b-overdue { background: rgba(248,81,73,.12);  color: var(--red); }
+    .b-ok      { background: rgba(63,185,80,.18);  color: var(--green); }
+    .b-fail    { background: rgba(248,81,73,.12);  color: var(--red); }
+    .b-shared  { background: rgba(88,166,255,.12); color: var(--cyan); }
+    .b-private { background: rgba(110,118,129,.18); color: var(--text2); }
+
+    .btn-pri {
+      background: var(--cyan); border: none; color: #ffffff;
+      font-family: var(--font-ui); font-size: 13px; letter-spacing: 0;
+      padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 600;
+    }
+    .btn-pri:hover { filter: brightness(1.1); }
+    .btn-ghost {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--text2); font-family: var(--font-ui); font-size: 13px;
+      letter-spacing: 0; padding: 7px 12px; border-radius: 8px; cursor: pointer;
+    }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text2); }
+    .btn-danger {
+      background: transparent; border: 1px solid var(--red);
+      color: var(--red); font-family: var(--font-ui); font-size: 13px;
+      letter-spacing: 0; padding: 7px 12px; border-radius: 8px; cursor: pointer;
+    }
+    .filter-pill {
+      background: var(--bg2); border: 1px solid var(--border); cursor: pointer;
+      color: var(--text2); padding: 7px 12px; border-radius: 999px;
+      font-family: var(--font-ui); font-size: 12px; letter-spacing: 0;
+    }
+    .filter-pill.active { color: var(--cyan); border-color: var(--cyan); }
+
+    /* ── Modal ──────────────────────────────────────────────────────────── */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(17,24,39,.35); z-index: 100;
+      display: flex; align-items: flex-start; justify-content: center;
+      padding-top: 5vh;
+    }
+    .modal {
+      background: #ffffff; border: 1px solid var(--border); border-radius: 12px;
+      width: min(620px, 92vw); max-height: 88vh; overflow: auto;
+      box-shadow: 0 24px 60px rgba(17,24,39,.16);
+    }
+    .modal-head {
+      padding: 14px 20px; display: flex; justify-content: space-between;
+      align-items: center; border-bottom: 1px solid var(--border);
+    }
+    .modal-head h3 { margin: 0; font-family: var(--font-ui); font-size: 18px; color: var(--text); letter-spacing: 0; }
+    .modal-close { background: transparent; border: none; color: var(--text3); font-size: 18px; cursor: pointer; }
+    .modal-body { padding: 20px; }
+    .modal-foot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label { font-family: var(--font-ui); font-size: 12px; color: var(--text2); letter-spacing: 0; font-weight: 600; }
+    .field input, .field select, .field textarea {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: 9px 11px; border-radius: 8px; font-family: var(--font-ui); font-size: 13px;
+    }
+    .field textarea { min-height: 70px; resize: vertical; }
+    .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--cyan); }
+    .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    .sub-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+    .sub-tab { padding: 8px 14px; cursor: pointer; font-family: var(--font-ui); font-size: 13px; color: var(--text2); letter-spacing: 0; border-bottom: 2px solid transparent; }
+    .sub-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+    .actions-list { display: flex; flex-direction: column; gap: 8px; }
+    .action-card {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      padding: 10px 12px;
+    }
+    .action-meta { display: flex; gap: 12px; font-family: var(--font-ui); font-size: 12px; color: var(--text3); margin-bottom: 5px; }
+
+    /* ── KPI editor ──────────────────────────────────────────────────── */
+    .kpi-row {
+      display: grid; grid-template-columns: 1.4fr 1.4fr 0.5fr 0.7fr 0.9fr 1.3fr auto;
+      gap: 6px; align-items: end; padding: 8px 0; border-bottom: 1px dashed var(--border);
+    }
+    .kpi-row > div > label {
+      font-family: var(--font-ui); font-size: 11px; color: var(--text2);
+      letter-spacing: 0; display: block; margin-bottom: 3px;
+    }
+    .kpi-row select, .kpi-row input {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 5px 7px; border-radius: 3px;
+      font-size: 12px; font-family: var(--font-ui);
+    }
+    .kpi-row select:focus, .kpi-row input:focus { outline: none; border-color: var(--cyan); }
+    .kpi-empty { padding: 14px; text-align: center; color: var(--text2); font-size: 13px; font-family: var(--font-ui); }
+
+    /* ── Chat: convert-to-decision button ─────────────────────────────── */
+    .chat-actions {
+      align-self: flex-start; display: flex; gap: 6px; margin-top: -8px;
+    }
+    .chat-action-btn {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--text2); font-family: var(--font-ui); font-size: 12px;
+      letter-spacing: 0; padding: 5px 9px; border-radius: 999px; cursor: pointer;
+    }
+    .chat-action-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+
+    /* ── Chat pane ──────────────────────────────────────────────────────── */
+    .chat-pane { display: flex; flex-direction: column; overflow: hidden; }
+    .chat-history {
+      flex: 1; overflow-y: auto; padding: 18px 22px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .msg { max-width: 92%; line-height: 1.5; font-size: 13px; }
+    .msg.user {
+      align-self: flex-end; background: rgba(37,99,235,.08);
+      border: 1px solid rgba(37,99,235,.16);
+      padding: 10px 14px; border-radius: 12px 12px 4px 12px;
+    }
+    .msg.assistant {
+      align-self: flex-start; color: var(--text);
+      padding: 4px 0;
+    }
+    .msg.assistant pre {
+      background: var(--bg3); border: 1px solid var(--border); padding: 10px;
+      border-radius: 8px; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12px;
+      overflow-x: auto; margin: 8px 0;
+    }
+    .msg.assistant code {
+      background: var(--bg3); padding: 1px 5px; border-radius: 3px;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12px;
+    }
+    .msg.assistant pre code { background: transparent; padding: 0; }
+    .msg.assistant a { color: var(--cyan); text-decoration: none; }
+    .msg.assistant a:hover { text-decoration: underline; }
+    .msg.assistant p { margin-bottom: 8px; }
+    .msg.assistant p:last-child { margin-bottom: 0; }
+    .msg.thinking {
+      align-self: flex-start; color: var(--text3); font-style: italic;
+      font-size: 12px; font-family: var(--font-ui); letter-spacing: 0;
+    }
+    .dot { animation: blink 1.4s infinite; }
+    .dot:nth-child(2) { animation-delay: .2s; }
+    .dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes blink { 0%,80%,100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+    /* ── Reasoning trail ────────────────────────────────────────────── */
+    .trail {
+      align-self: flex-start; max-width: 92%;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; font-family: var(--font-ui); font-size: 12px;
+      color: var(--text2); display: flex; flex-direction: column; gap: 4px;
+    }
+    .trail-row { display: flex; gap: 8px; align-items: baseline; line-height: 1.4; }
+    .trail-row.use      .trail-arrow { color: var(--cyan); }
+    .trail-row.result   .trail-arrow { color: var(--green); }
+    .trail-row.error    .trail-arrow { color: var(--red); }
+    .trail-row .tool    { color: var(--text); font-weight: 600; }
+    .trail-row .args    { color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+    .trail-row .summary { color: var(--green); }
+    .trail-row.thinking { color: var(--text3); font-style: italic; }
+    .trail-arrow { display: inline-block; min-width: 14px; }
+    .trail.collapsed .trail-row:not(.thinking) { display: none; }
+    .trail-toggle {
+      align-self: flex-start; background: transparent; border: none;
+      color: var(--text2); font-family: var(--font-ui); font-size: 12px;
+      letter-spacing: 0; cursor: pointer; padding: 0; margin-top: 2px;
+    }
+    .trail-toggle:hover { color: var(--cyan); }
+
+    .chat-empty {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; padding: 24px;
+      color: var(--text2); text-align: center; font-size: 13px;
+      line-height: 1.7; font-family: var(--font-ui); letter-spacing: 0;
+    }
+    .chat-empty .icon { font-size: 28px; margin-bottom: 10px; opacity: .5; }
+    .examples { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+    .example {
+      background: #ffffff; border: 1px solid var(--border); padding: 8px 12px;
+      border-radius: 8px; font-size: 13px; color: var(--text2);
+      cursor: pointer; text-align: left; font-family: var(--font-ui);
+      letter-spacing: 0;
+    }
+    .example:hover { border-color: var(--cyan); color: var(--text); }
+
+    .chat-input-bar {
+      border-top: 1px solid var(--border); padding: 14px 16px;
+      background: var(--bg2);
+      display: flex; gap: 10px; align-items: flex-end;
+    }
+    .chat-input-bar textarea {
+      flex: 1; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: 10px;
+      padding: 9px 12px; font-family: var(--font-ui); font-size: 13px;
+      resize: none; min-height: 40px; max-height: 200px;
+    }
+    .chat-input-bar textarea:focus { outline: none; border-color: var(--cyan); }
+    .btn-send {
+      background: var(--cyan); border: none; color: #ffffff;
+      padding: 9px 14px; border-radius: 10px; cursor: pointer; font-weight: 600;
+      font-family: var(--font-ui); font-size: 13px; letter-spacing: 0;
+    }
+    .btn-send:hover { filter: brightness(1.1); }
+    .btn-send:disabled { opacity: .4; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="logo">OMEGA Workspace</div>
+      <div class="tagline">Aplicaciones, decisiones y asistente operativo</div>
+    </div>
+    <div class="user-bar" id="user-bar"><span class="me">…</span></div>
+  </div>
+
+  <div class="main">
+    <!-- ── Left pane: tabs APPS / DECISIONES ── -->
+    <div class="pane">
+      <div class="tab-nav">
+        <button class="tab-btn active" data-tab="apps" data-action="switch-tab" data-tab="apps">Apps <span class="count" id="cnt-apps">·</span></button>
+        <button class="tab-btn"        data-tab="decisions" data-action="switch-tab" data-tab="decisions">Decisiones <span class="count" id="cnt-decisions">·</span></button>
+      </div>
+
+      <!-- APPS tab -->
+      <div class="tab-page active" id="tab-apps">
+        <div class="pane-toolbar">
+          <h2 style="font-family:var(--font-ui);font-size:15px;color:var(--text);letter-spacing:0;flex:1">Aplicaciones publicadas</h2>
+          <button class="btn-ghost" data-action="apps-reload">Actualizar</button>
+        </div>
+        <div id="apps-container"><div class="empty-state">Cargando…</div></div>
+      </div>
+
+      <!-- DECISIONES tab -->
+      <div class="tab-page" id="tab-decisions">
+        <div class="pane-toolbar">
+          <button class="filter-pill active" data-filter="visible" data-action="dec-filter" data-filter="visible">Visibles</button>
+          <button class="filter-pill" data-filter="mine"     data-action="dec-filter" data-filter="mine">Mías</button>
+          <button class="filter-pill" data-filter="open"     data-action="dec-filter" data-filter="open">Abiertas</button>
+          <button class="filter-pill" data-filter="overdue"  data-action="dec-filter" data-filter="overdue">Vencidas</button>
+          <div class="spacer"></div>
+          <button class="btn-pri" data-action="decision-new">Nueva decisión</button>
+        </div>
+        <div id="decisions-container"><div class="empty-state">Cargando…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Chat pane ── -->
+    <div class="pane chat-pane">
+      <div class="pane-head">
+        <span class="icon">●</span>
+        <h2>Asistente</h2>
+        <button class="btn-send" style="background:transparent;color:var(--text2);border:1px solid var(--border)"
+                data-action="chat-reset" title="Nueva conversación">Nuevo chat</button>
+      </div>
+      <div class="chat-history" id="chat-history">
+        <div class="chat-empty" id="chat-empty">
+          <div class="icon">●</div>
+          <div>Pregúntame algo sobre los datos, los KPIs o pídeme un dashboard.</div>
+          <div class="examples">
+            <button class="example" data-action="chat-example">¿Cuál fue el margen bruto del último trimestre?</button>
+            <button class="example" data-action="chat-example">Genera un dashboard de horas por consultor.</button>
+            <button class="example" data-action="chat-example">¿Qué políticas hay sobre proyectos T&amp;M vs fixed?</button>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-bar">
+        <textarea id="chat-input" placeholder="Escribe tu pregunta…  (Shift+Enter = salto de línea)"
+                  rows="1"></textarea>
+        <button class="btn-send" id="btn-send" data-action="chat-send">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-host" style="display:none"></div>
+
+  <script src="/static/js/workspace.js?v=2"></script>
+</body>
+</html>

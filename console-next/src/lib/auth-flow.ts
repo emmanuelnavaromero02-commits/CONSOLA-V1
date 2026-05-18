@@ -46,6 +46,19 @@ function makeError(message: string, status?: number, detail?: string): LoginErro
   return e;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readCookieEventually(name: string): Promise<string | null> {
+  for (let i = 0; i < 8; i++) {
+    const value = readCookie(name);
+    if (value) return value;
+    await sleep(25);
+  }
+  return readCookie(name);
+}
+
 /**
  * Run the 2-step CSRF login flow. Throws a LoginError with a
  * useful message on any failure path (no CSRF cookie, 401, 5xx,
@@ -61,8 +74,9 @@ export async function loginUser(email: string, password: string): Promise<unknow
   // hit `/login-proxy` instead of `/login` because the Next.js
   // app has its own client-rendered /login page; the proxy
   // route lives under a different path so they don't collide.
+  let csrfResponse: Response;
   try {
-    await fetch("/login-proxy", {
+    csrfResponse = await fetch("/login-proxy", {
       method: "GET",
       credentials: "include",
     });
@@ -72,7 +86,17 @@ export async function loginUser(email: string, password: string): Promise<unknow
     );
   }
 
-  const csrfToken = readCookie("csrf_token");
+  if (!csrfResponse.ok) {
+    throw makeError(
+      `El backend no pudo preparar CSRF (HTTP ${csrfResponse.status}).`,
+      csrfResponse.status,
+    );
+  }
+
+  // Some browsers do not expose the Set-Cookie value through
+  // document.cookie on the exact same tick the fetch resolves.
+  // Retry briefly before reporting the hard CSRF failure.
+  const csrfToken = await readCookieEventually("csrf_token");
   if (!csrfToken) {
     throw makeError(
       "El backend no devolvió el token CSRF. Verifica que /login responde 200.",

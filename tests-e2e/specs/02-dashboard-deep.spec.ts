@@ -199,6 +199,14 @@ test.describe("Dashboard — error + retry surface", () => {
 });
 
 test.describe("Dashboard — internal navigation", () => {
+  test("global AppChrome renders exactly once", async ({ page }) => {
+    await page.goto("/dashboard");
+    await expect(page.locator('header[role="banner"]')).toHaveCount(1);
+    await expect(
+      page.getByRole("navigation", { name: "Navegación principal" }),
+    ).toHaveCount(1);
+  });
+
   test("navigate from dashboard to /cartridges via link", async ({ page }) => {
     await page.goto("/dashboard");
     const link = page.locator('a[href="/cartridges"], a[href^="/cartridges/"]').first();
@@ -210,15 +218,12 @@ test.describe("Dashboard — internal navigation", () => {
     await page.waitForURL(/\/cartridges/, { timeout: 10_000 });
   });
 
-  test("navigate from dashboard to /copilot (if surfaced)", async ({ page }) => {
+  test("navigate from dashboard to /workspace copilot", async ({ page }) => {
     await page.goto("/dashboard");
-    const link = page.locator('a[href="/copilot"], a[href$="/copilot"], button[data-fab="copilot"]').first();
-    if (!(await link.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      test.fail(true, "no link to /copilot from /dashboard — v1.44.4 gap");
-      return;
-    }
+    const link = page.locator('a[href="/workspace"]').first();
+    await expect(link).toBeVisible({ timeout: 10_000 });
     await link.click();
-    await page.waitForURL(/\/copilot/, { timeout: 10_000 });
+    await page.waitForURL(/\/workspace/, { timeout: 10_000 });
   });
 
   test("logo / home link returns to /dashboard from any page",

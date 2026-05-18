@@ -22,14 +22,17 @@ const fallbackPermissions = {
     'iam.users.read', 'iam.users.write', 'iam.roles.read',
     'security.audit.read', 'security.sessions.read',
     'vault.connections.read', 'vault.connections.write',
+    'operations.read', 'settings.read', 'settings.write',
+    'cartridges.read', 'cartridges.write', 'cartridges.execute',
+    'copilot.use', 'copilot.write', 'copilot.execute',
   ],
-  security_admin: ['monitor.read', 'iam.users.read', 'iam.users.write', 'iam.roles.read', 'security.audit.read', 'security.sessions.read', 'vault.connections.read'],
-  workspace_admin: ['workspace.access', 'monitor.read', 'studio.read', 'studio.write', 'pipelines.read', 'pipelines.run', 'datasets.read', 'datasets.write', 'vault.connections.read'],
-  analyst: ['workspace.access', 'monitor.read', 'studio.read', 'pipelines.read', 'datasets.read'],
+  security_admin: ['monitor.read', 'iam.users.read', 'iam.users.write', 'iam.roles.read', 'security.audit.read', 'security.sessions.read', 'vault.connections.read', 'copilot.use'],
+  workspace_admin: ['workspace.access', 'monitor.read', 'studio.read', 'studio.write', 'pipelines.read', 'pipelines.run', 'datasets.read', 'datasets.write', 'vault.connections.read', 'vault.connections.write', 'cartridges.read', 'cartridges.write', 'cartridges.execute', 'copilot.use', 'copilot.write', 'copilot.execute'],
+  analyst: ['workspace.access', 'monitor.read', 'studio.read', 'pipelines.read', 'datasets.read', 'cartridges.read', 'copilot.use'],
   auditor: ['monitor.read', 'security.audit.read', 'security.sessions.read', 'iam.roles.read'],
-  viewer: ['workspace.access', 'monitor.read', 'studio.read', 'pipelines.read', 'datasets.read'],
+  viewer: ['workspace.access', 'monitor.read', 'studio.read', 'pipelines.read', 'datasets.read', 'cartridges.read', 'copilot.use'],
   workspace_user: ['workspace.access'],
-  user: ['workspace.access', 'monitor.read', 'studio.read'],
+  user: ['workspace.access', 'monitor.read', 'studio.read', 'cartridges.read', 'copilot.use'],
 };
 
 export function applyPermissionsFromRole(role) {

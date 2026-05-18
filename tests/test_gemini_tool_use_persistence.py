@@ -53,7 +53,10 @@ def llm_module():
     )
     fake_gtypes.FunctionDeclaration   = lambda **kw: object()
     fake_gtypes.Tool                   = lambda **kw: object()
-    fake_gtypes.GenerateContentConfig  = lambda **kw: object()
+    class _FakeConfig:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+    fake_gtypes.GenerateContentConfig = _FakeConfig
     # _to_genai_schema (line 328) reads gtypes.Type.STRING etc. to
     # translate the JSON-schema "type" field into the SDK enum.
     fake_gtypes.Type = types.SimpleNamespace(
@@ -130,6 +133,45 @@ def test_gemini_returns_text_block_when_no_tool_called(llm_module, monkeypatch):
     assert new_chunk[0]["content"] == [
         {"type": "text", "text": "Hola, ¿cómo estás?"},
     ]
+
+
+def test_gemini_stale_cached_content_falls_back_inline(llm_module, monkeypatch):
+    """If Gemini evicts cached_content before our process forgets it,
+    clear the local cache pointer and retry inline instead of returning
+    a 502 to the copilot user."""
+    tools = [{"name": "srv__read", "description": "",
+              "input_schema": {"type": "object", "properties": {}}}]
+    sig = llm_module._gemini_cache_signature("sys", tools)
+    llm_module._gemini_cache_by_sig[sig] = "cachedContents/dead"
+    monkeypatch.setattr(llm_module, "GEMINI_CACHE_ENABLED", True)
+    monkeypatch.setattr(llm_module.token_store, "record", AsyncMock())
+
+    seen_cached_content = []
+
+    async def fake_generate(**kw):
+        cache_name = getattr(kw["config"], "cached_content", None)
+        seen_cached_content.append(cache_name)
+        if cache_name:
+            raise RuntimeError(
+                "403 PERMISSION_DENIED. CachedContent not found (or permission denied)"
+            )
+        return _fake_response_text_only("Inline OK", llm_module)
+
+    monkeypatch.setattr(llm_module, "_gemini_generate_with_retry", fake_generate)
+
+    text, _, msgs = _run(llm_module._gemini_chat(
+        system="sys",
+        messages=[{"role": "user", "content": "hola"}],
+        tools=tools,
+        invoke_tool=AsyncMock(),
+        tool_server_map={"srv__read": "srv"},
+        on_event=None,
+    ))
+
+    assert text == "Inline OK"
+    assert seen_cached_content == ["cachedContents/dead", None]
+    assert sig not in llm_module._gemini_cache_by_sig
+    assert msgs[-1]["content"] == [{"type": "text", "text": "Inline OK"}]
 
 
 def test_gemini_emits_anthropic_shape_tool_use_blocks(llm_module, monkeypatch):

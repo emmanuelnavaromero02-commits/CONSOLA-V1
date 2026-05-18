@@ -42,6 +42,15 @@ export function LogoutButton({ className }: { className?: string }) {
       if (r.status >= 500) {
         throw new Error(`HTTP ${r.status}`);
       }
+      // v1.44.4 Group 1 Round 1 Security P2: clear the
+      // AppChrome localStorage cache so the next page render
+      // doesn't show the previous user's email under the new
+      // user's session.
+      try {
+        window.localStorage.removeItem("omega_user_email");
+      } catch {
+        /* Safari private mode / SSR — best-effort cleanup */
+      }
       router.replace("/login");
       router.refresh();
     } catch (err) {

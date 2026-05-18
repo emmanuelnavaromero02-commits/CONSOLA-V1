@@ -110,6 +110,7 @@ AUTH_DEPENDS = (
     "require_user",
     "get_current_user",
     "get_current_user_dependency",
+    "_internal_or_authenticated",
     "verify_internal_api_key",
 )
 

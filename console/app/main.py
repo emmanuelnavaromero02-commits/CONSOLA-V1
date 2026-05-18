@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -164,6 +165,35 @@ def _key_for(server: str) -> str:
 def _hdr_for(server: str) -> dict[str, str]:
     """Headers for an outbound internal call from console to ``server``."""
     return {"x-api-key": _key_for(server), "x-internal-service": "console"}
+
+
+def _is_internal_request(request: Request) -> bool:
+    supplied = (
+        request.headers.get("x-api-key")
+        or request.headers.get("x-internal-api-key")
+        or ""
+    )
+    service = (request.headers.get("x-internal-service") or "").strip().lower()
+    if service != "console" or not supplied:
+        return False
+    return secrets.compare_digest(str(supplied), str(INTERNAL_API_KEY))
+
+
+def _internal_service_user() -> dict:
+    return {
+        "id": 0,
+        "email": "internal@omega.local",
+        "role": ROLE_ADMIN,
+        "workspace_role": ROLE_ADMIN,
+        "active_workspace_id": None,
+    }
+
+
+async def _internal_or_authenticated(request: Request) -> dict:
+    if _is_internal_request(request):
+        return _internal_service_user()
+    return await require_authenticated(request)
+
 
 app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
 
@@ -695,6 +725,7 @@ _AUTH_PUBLIC_EXACT = {
 _AUTH_PUBLIC_PREFIX = ("/static/",)
 _AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/internal/", "/datasets", "/jobs", "/tokens",
                          "/studio/", "/studio_ops/", "/monitoring/", "/auth/")
+_AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
 
 # Routes a user is allowed to hit while in must_change_password=true state.
 _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
@@ -747,6 +778,10 @@ async def auth_middleware(request: Request, call_next):
     # Internal routes (server-to-server) bypass session auth.
     # Their own router-level dependency (verify_internal_api_key) handles auth via header.
     if path.startswith("/internal/"):
+        return await call_next(request)
+
+    if path.startswith(_AUTH_INTERNAL_SERVICE_PREFIX) and _is_internal_request(request):
+        request.state.user = _internal_service_user()
         return await call_next(request)
 
     is_public = path in _AUTH_PUBLIC_EXACT or any(path.startswith(p) for p in _AUTH_PUBLIC_PREFIX)
@@ -2579,8 +2614,8 @@ async def _refinement_invoke(tool: str, args: dict):
 
 # ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────
 
-@app.get("/monitoring/mcp/tools", dependencies=[Depends(require_authenticated)])
-async def monitoring_mcp_tools(user: dict = Depends(require_authenticated)):
+@app.get("/monitoring/mcp/tools")
+async def monitoring_mcp_tools(user: dict = Depends(_internal_or_authenticated)):
     """MCP-compatible tools endpoint so the registry can discover monitoring tools.
 
     Sprint v1.22: added auth. Tool descriptors include parameter
@@ -2590,8 +2625,8 @@ async def monitoring_mcp_tools(user: dict = Depends(require_authenticated)):
     return t  # already returns {"tools": [...]}
 
 
-@app.post("/monitoring/mcp/invoke", dependencies=[Depends(require_authenticated)])
-async def monitoring_mcp_invoke(body: dict):
+@app.post("/monitoring/mcp/invoke")
+async def monitoring_mcp_invoke(body: dict, user: dict = Depends(_internal_or_authenticated)):
     """MCP-compatible invoke endpoint so the assistant can call monitoring tools.
 
     Sprint v1.21 (F1): added require_authenticated. This route is the
@@ -2619,7 +2654,7 @@ def _require_studio_ops_write_role(user: dict) -> None:
 
 
 @app.get("/studio_ops/mcp/tools")
-async def studio_ops_tools(user: dict = Depends(require_authenticated)):
+async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
     tools = [
         {
             "name": "rename_entity",
@@ -2715,7 +2750,7 @@ async def studio_ops_tools(user: dict = Depends(require_authenticated)):
 
 
 @app.post("/studio_ops/mcp/invoke", dependencies=[Depends(require_csrf)])
-async def studio_ops_invoke(body: dict, user: dict = Depends(require_authenticated)):
+async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authenticated)):
     tool = body.get("tool")
     args = body.get("args", {})
 
@@ -3509,7 +3544,9 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
 
 @app.get("/admin/users", dependencies=[Depends(require_admin)])
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
-    return FileResponse(STATIC / "admin_users.html")
+    # Compatibility URL, but not a separate users app anymore:
+    # /admin/users now enters the IAM ecosystem and opens the Users tab.
+    return FileResponse(STATIC / "iam.html")
 
 
 @app.get("/api/admin/users")

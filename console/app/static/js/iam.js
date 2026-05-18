@@ -31,8 +31,22 @@
     const humanizePermissionKey = (key) => window.ModLabels?.humanizePermissionKey?.(key) || key;
     const humanizeError = (err) => window.ModLabels?.humanizeError?.(err) || (err?.message || String(err || 'Error'));
 
+    function csrfToken() {
+      const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+
     async function fetchJson(url, options) {
-      const res = await fetch(url, { credentials: 'same-origin', ...(options || {}) });
+      const init = { ...(options || {}) };
+      const method = (init.method || 'GET').toUpperCase();
+      const headers = new Headers(init.headers || {});
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !headers.has('X-CSRF-Token')) {
+        const token = csrfToken();
+        if (token) headers.set('X-CSRF-Token', token);
+      }
+      init.headers = headers;
+
+      const res = await fetch(url, { credentials: 'same-origin', ...init });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `${res.status} ${res.statusText}`);
@@ -557,20 +571,29 @@
       }
     }
 
+    function activateTab(tab) {
+      const target = document.querySelector(`.nav button[data-tab="${tab}"]`);
+      if (!target) return;
+      document.querySelectorAll('.nav button[data-tab]').forEach((b) => b.classList.toggle('active', b === target));
+      document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${tab}`));
+    }
+
     document.querySelectorAll('.nav button[data-tab]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.nav button[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
-        document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`));
-      });
+      btn.addEventListener('click', () => activateTab(btn.dataset.tab));
     });
 
-    // Cross-link from /admin/users: open Users tab and remember preselected user.
+    // /admin/users is a compatibility URL inside the IAM ecosystem, not a
+    // separate page. It opens the Users tab directly without redirecting.
     const _qs = new URLSearchParams(location.search);
     const _preUserId = _qs.get('user_id');
+    const _requestedTab = _qs.get('tab');
+    if (location.pathname === '/admin/users' || _requestedTab === 'users' || _preUserId) {
+      activateTab('users');
+    } else if (_requestedTab) {
+      activateTab(_requestedTab);
+    }
     if (_preUserId) {
       window.__iamPreselectUserId = _preUserId;
-      const usersBtn = document.querySelector('.nav button[data-tab="users"]');
-      if (usersBtn) usersBtn.click();
     }
     $('refresh-btn').addEventListener('click', refreshAll);
     $('create-user').addEventListener('click', openCreateUser);

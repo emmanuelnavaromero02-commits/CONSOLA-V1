@@ -20,6 +20,7 @@ from typing import Optional
 
 from fastapi import HTTPException, Request, Response
 
+from app.security import get_internal_api_key
 from app.services.auth import cookie_secure
 
 CSRF_COOKIE_NAME = "csrf_token"
@@ -27,6 +28,7 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 CSRF_BODY_FIELD = "_csrf"
 # Bytes-of-entropy in the random token.  32 bytes → ~43-char URL-safe string.
 _TOKEN_BYTES = 32
+_INTERNAL_CSRF_EXEMPT_PREFIXES = ("/monitoring/mcp/", "/studio_ops/mcp/")
 
 
 def generate_csrf_token() -> str:
@@ -81,6 +83,26 @@ def verify_csrf(request: Request, body_token: Optional[str] = None) -> bool:
     return secrets.compare_digest(cookie_value, provided)
 
 
+def _valid_internal_service_request(request: Request) -> bool:
+    """Server-to-server calls authenticate with INTERNAL_API_KEY, not cookies."""
+    path = request.url.path
+    if not path.startswith(_INTERNAL_CSRF_EXEMPT_PREFIXES):
+        return False
+    service = (request.headers.get("x-internal-service") or "").strip().lower()
+    supplied = (
+        request.headers.get("x-api-key")
+        or request.headers.get("x-internal-api-key")
+        or ""
+    )
+    if service != "console" or not supplied:
+        return False
+    try:
+        expected = get_internal_api_key()
+    except RuntimeError:
+        return False
+    return secrets.compare_digest(str(supplied), str(expected))
+
+
 async def require_csrf(request: Request) -> None:
     """FastAPI dependency.  403 if CSRF check fails.
 
@@ -104,6 +126,9 @@ async def require_csrf(request: Request) -> None:
         # Bearer-authed request — CSRF doesn't apply. The bearer token
         # itself is the auth credential; downstream `require_authenticated`
         # validates it (and the per-user JWT blacklist).
+        return
+
+    if _valid_internal_service_request(request):
         return
 
     if request.headers.get(CSRF_HEADER_NAME):

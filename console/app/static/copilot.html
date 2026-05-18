@@ -25,8 +25,24 @@
 
     <main class="copilot-chat">
       <header class="copilot-header">
-        <h1>Copiloto OMEGA</h1>
-        <span id="copilot-title" class="copilot-title-sub"></span>
+        <div>
+          <h1>Copiloto OMEGA</h1>
+          <span id="copilot-title" class="copilot-title-sub"></span>
+        </div>
+        <div class="copilot-actions" aria-label="Acciones del copiloto">
+          <button id="copilot-command" type="button" class="copilot-btn-secondary">
+            /
+          </button>
+          <button id="copilot-memory" type="button" class="copilot-btn-secondary">
+            Memoria
+          </button>
+          <button id="copilot-draft" type="button" class="copilot-btn-secondary">
+            Redactar
+          </button>
+          <button id="copilot-workflows" type="button" class="copilot-btn-secondary">
+            Workflows
+          </button>
+        </div>
       </header>
 
       <div id="copilot-messages" class="copilot-messages" aria-live="polite">
@@ -64,6 +80,106 @@
         </button>
       </form>
     </main>
+  </div>
+
+  <div id="copilot-palette" class="copilot-overlay" hidden>
+    <div class="copilot-dialog copilot-dialog-sm" role="dialog" aria-modal="true" aria-labelledby="copilot-palette-title">
+      <header class="copilot-dialog-header">
+        <h2 id="copilot-palette-title">Comandos</h2>
+        <button type="button" class="copilot-icon-btn" data-close="copilot-palette" aria-label="Cerrar comandos">x</button>
+      </header>
+      <input id="copilot-command-filter" class="copilot-field" placeholder="Filtrar comandos..." aria-label="Filtrar comandos">
+      <div id="copilot-command-list" class="copilot-command-list"></div>
+    </div>
+  </div>
+
+  <div id="copilot-memory-drawer" class="copilot-overlay copilot-overlay-right" hidden>
+    <aside class="copilot-drawer" role="dialog" aria-modal="true" aria-labelledby="copilot-memory-title">
+      <header class="copilot-dialog-header">
+        <h2 id="copilot-memory-title">Memoria del copiloto</h2>
+        <button type="button" class="copilot-icon-btn" data-close="copilot-memory-drawer" aria-label="Cerrar memoria">x</button>
+      </header>
+      <div id="copilot-memory-body" class="copilot-panel-body">
+        <p class="copilot-muted">Cargando memoria...</p>
+      </div>
+      <form id="copilot-memory-form" class="copilot-stacked-form">
+        <label>
+          <span>Hecho</span>
+          <textarea id="copilot-memory-fact" maxlength="500" rows="3" placeholder="Ej. Mi DSO objetivo es 30 dias"></textarea>
+        </label>
+        <label>
+          <span>Fuente</span>
+          <input id="copilot-memory-source" maxlength="64" value="explicit">
+        </label>
+        <button type="submit" class="copilot-btn-primary">Guardar hecho</button>
+      </form>
+    </aside>
+  </div>
+
+  <div id="copilot-draft-modal" class="copilot-overlay" hidden>
+    <div class="copilot-dialog" role="dialog" aria-modal="true" aria-labelledby="copilot-draft-title">
+      <header class="copilot-dialog-header">
+        <h2 id="copilot-draft-title">Redactar con el copiloto</h2>
+        <button type="button" class="copilot-icon-btn" data-close="copilot-draft-modal" aria-label="Cerrar redactor">x</button>
+      </header>
+      <form id="copilot-draft-form" class="copilot-stacked-form">
+        <label>
+          <span>Tipo</span>
+          <select id="copilot-draft-kind">
+            <option value="email">Email</option>
+            <option value="message">Mensaje</option>
+            <option value="note">Nota</option>
+          </select>
+        </label>
+        <label>
+          <span>Que quieres redactar</span>
+          <textarea id="copilot-draft-about" maxlength="4000" rows="4" placeholder="Describe contexto, destinatario y objetivo."></textarea>
+        </label>
+        <div class="copilot-form-grid">
+          <label>
+            <span>Destinatario</span>
+            <input id="copilot-draft-audience" maxlength="120" placeholder="Ej. Equipo de finanzas">
+          </label>
+          <label>
+            <span>Asunto</span>
+            <input id="copilot-draft-subject" maxlength="120" placeholder="Opcional">
+          </label>
+        </div>
+        <label>
+          <span>Tono</span>
+          <select id="copilot-draft-tone">
+            <option value="formal">Formal</option>
+            <option value="neutral">Neutro</option>
+            <option value="friendly">Cercano</option>
+            <option value="urgent">Urgente</option>
+          </select>
+        </label>
+        <div id="copilot-draft-output" class="copilot-generated" hidden></div>
+        <div class="copilot-dialog-actions">
+          <button id="copilot-draft-copy" type="button" class="copilot-btn-secondary" disabled>Copiar</button>
+          <button id="copilot-draft-submit" type="submit" class="copilot-btn-primary">Generar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="copilot-workflow-modal" class="copilot-overlay" hidden>
+    <div class="copilot-dialog" role="dialog" aria-modal="true" aria-labelledby="copilot-workflow-title">
+      <header class="copilot-dialog-header">
+        <h2 id="copilot-workflow-title">Workflows del copiloto</h2>
+        <button type="button" class="copilot-icon-btn" data-close="copilot-workflow-modal" aria-label="Cerrar workflows">x</button>
+      </header>
+      <form id="copilot-workflow-form" class="copilot-stacked-form">
+        <label>
+          <span>Objetivo</span>
+          <textarea id="copilot-workflow-intent" maxlength="1000" rows="3" placeholder="Ej. Planea el cierre mensual con validaciones de SAP y Replicon"></textarea>
+        </label>
+        <button type="submit" class="copilot-btn-primary">Crear y planear</button>
+      </form>
+      <div id="copilot-workflow-list" class="copilot-panel-body">
+        <p class="copilot-muted">Cargando workflows...</p>
+      </div>
+    </div>
   </div>
 
   <script src="/static/js/theme.js" defer></script>

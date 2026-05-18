@@ -4,9 +4,11 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from starlette.datastructures import Headers
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +43,43 @@ def test_monitoring_mcp_tools_requires_auth():
     resp = client.get("/monitoring/mcp/tools")
 
     assert resp.status_code == 401
+
+
+def test_monitoring_mcp_tools_allows_internal_console_header():
+    main = _load_console_main()
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    resp = client.get(
+        "/monitoring/mcp/tools",
+        headers={
+            "x-api-key": os.environ["INTERNAL_API_KEY"],
+            "x-internal-service": "console",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert "tools" in resp.json()
+
+
+def test_internal_csrf_bypass_is_scoped_to_mcp_paths():
+    _load_console_main()
+    from app.services import csrf
+
+    headers = Headers({
+        "x-api-key": os.environ["INTERNAL_API_KEY"],
+        "x-internal-service": "console",
+    })
+    allowed = SimpleNamespace(
+        url=SimpleNamespace(path="/studio_ops/mcp/invoke"),
+        headers=headers,
+    )
+    disallowed = SimpleNamespace(
+        url=SimpleNamespace(path="/api/admin/users"),
+        headers=headers,
+    )
+
+    assert csrf._valid_internal_service_request(allowed)
+    assert not csrf._valid_internal_service_request(disallowed)
 
 
 def test_monitoring_tools_requires_auth():

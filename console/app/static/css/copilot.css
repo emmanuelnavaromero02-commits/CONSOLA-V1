@@ -116,7 +116,8 @@
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 .copilot-header h1 {
@@ -127,6 +128,12 @@
 .copilot-title-sub {
   color: var(--text3);
   font-size: 13px;
+}
+.copilot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .copilot-messages {
@@ -269,6 +276,210 @@
   border: 1px solid var(--primary);
 }
 
+/* ── Native :8000 copiloto panels (memory, drafts, workflows) ─────────── */
+.copilot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, .5);
+}
+.copilot-overlay[hidden] { display: none; }
+.copilot-overlay-right {
+  justify-content: flex-end;
+  padding: 0;
+}
+.copilot-dialog,
+.copilot-drawer {
+  width: min(720px, 100%);
+  max-height: 88vh;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--copilot-bubble-radius);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .45);
+  display: flex;
+  flex-direction: column;
+}
+.copilot-dialog-sm { width: min(520px, 100%); }
+.copilot-drawer {
+  width: min(460px, 92vw);
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
+  border-right: 0;
+}
+.copilot-dialog-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.copilot-dialog-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.copilot-icon-btn {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text2);
+  cursor: pointer;
+}
+.copilot-icon-btn:hover {
+  color: var(--text);
+  border-color: var(--primary);
+}
+.copilot-field,
+.copilot-stacked-form input,
+.copilot-stacked-form select,
+.copilot-stacked-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+}
+.copilot-field {
+  margin: 14px 16px 8px;
+  width: calc(100% - 32px);
+}
+.copilot-command-list,
+.copilot-panel-body {
+  overflow: auto;
+  padding: 12px 16px 16px;
+}
+.copilot-command-list {
+  display: grid;
+  gap: 8px;
+}
+.copilot-command-item {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.copilot-command-item:hover {
+  border-color: var(--primary);
+  background: var(--bg3);
+}
+.copilot-command-item strong,
+.copilot-command-item span {
+  display: block;
+}
+.copilot-command-item span {
+  margin-top: 4px;
+  color: var(--text3);
+  font-size: 12px;
+}
+.copilot-stacked-form {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+.copilot-stacked-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text2);
+  font-size: 12px;
+}
+.copilot-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.copilot-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.copilot-generated {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+.copilot-generated strong {
+  display: block;
+  margin-bottom: 8px;
+}
+.copilot-generated pre {
+  white-space: pre-wrap;
+  margin: 0;
+  color: var(--text);
+  font: inherit;
+}
+.copilot-muted {
+  color: var(--text3);
+  margin: 0;
+}
+.copilot-error-text { color: var(--danger); }
+.copilot-section-title {
+  margin: 10px 0 8px;
+  color: var(--text3);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.copilot-memory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.copilot-memory-list li,
+.copilot-workflow-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+.copilot-memory-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.copilot-memory-list strong,
+.copilot-memory-list span,
+.copilot-workflow-card strong,
+.copilot-workflow-card span {
+  display: block;
+}
+.copilot-memory-list span,
+.copilot-workflow-card span {
+  color: var(--text3);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.copilot-pref-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 12px;
+  margin: 0;
+}
+.copilot-pref-list dt {
+  color: var(--text3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+.copilot-pref-list dd { margin: 0; }
+
 /* ── Input area ───────────────────────────────────────────────────────── */
 .copilot-input {
   display: grid;
@@ -301,6 +512,12 @@
 @media (max-width: 720px) {
   .copilot-container { grid-template-columns: 1fr; }
   .copilot-sidebar { display: none; }
+  .copilot-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .copilot-actions { justify-content: flex-start; }
+  .copilot-form-grid { grid-template-columns: 1fr; }
 }
 
 /* ── v1.43: citation cards (evidence under each assistant reply) ───────── */
