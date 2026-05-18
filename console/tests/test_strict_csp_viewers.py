@@ -177,3 +177,13 @@ def test_pipeline_js_uses_event_delegation_for_dynamic_handlers():
     # All three callable targets must still be defined.
     for fn in ("extractEntity", "selectDag", "applyTemplate"):
         assert f"function {fn}" in src or f"async function {fn}" in src
+
+
+def test_pipeline_extract_all_uses_canonical_endpoint_and_csrf():
+    src = (JS_DIR / "pipeline.js").read_text(encoding="utf-8")
+    html = (VIEWERS / "pipeline.html").read_text(encoding="utf-8")
+
+    assert 'data-action="extract-all"' in html
+    assert "/api/pipeline/${encodeURIComponent(_cartridge)}/extract_all" in src
+    assert "X-CSRF-Token" in src
+    assert "jsonHeaders()" in src

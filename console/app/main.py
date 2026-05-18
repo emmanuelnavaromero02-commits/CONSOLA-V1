@@ -2055,6 +2055,56 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
     return result
 
 
+@app.post(
+    "/api/pipeline/{cartridge}/extract_all",
+    dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)],
+)
+async def api_pipeline_extract_all(cartridge: str, body: dict | None = None):
+    """Trigger extraction for every entity currently visible in the pipeline."""
+    body = body or {}
+    pipeline = await api_pipeline(cartridge)
+    rows = pipeline.get("pipeline") or []
+    triggered: list[dict] = []
+    errors: list[dict] = []
+
+    for row in rows:
+        entity = row.get("entity")
+        if not entity:
+            continue
+        try:
+            result = await api_pipeline_extract(cartridge, entity, body)
+            triggered.append({
+                "entity": entity,
+                "job_id": result.get("job_id") or result.get("dag_run_id") or result.get("run_id"),
+                "dag_run_id": result.get("dag_run_id") or result.get("run_id"),
+                "dag_id": result.get("dag_id"),
+                "state": result.get("state") or result.get("status"),
+                "result": result,
+            })
+        except HTTPException as exc:
+            errors.append({
+                "entity": entity,
+                "status_code": exc.status_code,
+                "error": str(exc.detail),
+            })
+        except Exception:
+            error_id = uuid.uuid4().hex
+            logger.exception("pipeline extract_all failed for %s.%s error_id=%s", cartridge, entity, error_id)
+            errors.append({
+                "entity": entity,
+                "status_code": 500,
+                "error": f"Internal server error. error_id={error_id}",
+            })
+
+    return {
+        "cartridge": cartridge,
+        "triggered": triggered,
+        "errors": errors,
+        "count": len(triggered),
+        "error_count": len(errors),
+    }
+
+
 async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
     pool = await _get_db_pool()
     row = await pool.fetchrow(
