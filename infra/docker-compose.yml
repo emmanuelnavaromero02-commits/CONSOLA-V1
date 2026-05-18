@@ -822,6 +822,11 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
+      # GitHub Actions runners are memory-constrained; the default
+      # Airflow webserver worker count can restart-loop before E2E
+      # begins. Keep the UI available with a single worker by default,
+      # while allowing operators to raise it locally/prod via env.
+      AIRFLOW__WEBSERVER__WORKERS: ${AIRFLOW_WEBSERVER_WORKERS:-1}
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
       # Variables disponibles en los DAGs via Variable.get(). Sprint
       # v1.38: scoped to the operational omega_airflow_dag role

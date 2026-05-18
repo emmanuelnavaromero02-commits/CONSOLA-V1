@@ -74,3 +74,5 @@ jobs:
           docker compose -f infra/docker-compose.yml ps
           docker logs mode_console --tail 120 2>&1 || true
           docker logs omega_console_next --tail 120 2>&1 || true
+          docker logs mode_airflow --tail 160 2>&1 || true
+          docker logs mode_airflow_scheduler --tail 160 2>&1 || true
