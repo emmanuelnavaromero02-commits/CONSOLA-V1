@@ -43,6 +43,12 @@ def test_classify_tool_default_write(manifest_module):
     assert res["freshness_minutes"] is None
 
 
+def test_requires_approval_conservative_defaults(manifest_module):
+    assert manifest_module.requires_approval("airflow_list_dags") is False
+    assert manifest_module.requires_approval("airflow_delete_dag") is True
+    assert manifest_module.requires_approval("some_unknown_tool") is True
+
+
 def test_classify_postgres_execute_is_destructive(manifest_module):
     """postgres_execute_query lets the caller run arbitrary SQL writes —
     must NOT be auto-executable by the future copilot router."""

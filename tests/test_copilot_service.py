@@ -266,6 +266,46 @@ def test_copilot_destructive_tool_blocks_without_approval(
     assert out["pending_actions"][0]["tool"] == "airflow_delete_dag"
 
 
+def test_copilot_write_tool_blocks_without_approval(
+    copilot_module, db, admin_user,
+):
+    """Non-read tools with requires_approval=True must not bypass the gate
+    merely because their risk is "write" instead of "destructive"."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
+    ])
+    _patch_audit(copilot_module, db)
+
+    invoked = []
+
+    async def fake_invoke(*a, **kw):
+        invoked.append(a)
+        return {"ok": True}
+
+    captured = []
+
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+        r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
+        captured.append(r)
+        return ("Necesito aprobación.", [], [])
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat)
+
+    conv = _run(copilot_module.create_conversation(user_id=1))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="actualiza algo",
+        user=admin_user,
+    ))
+    assert invoked == []
+    assert captured[0]["error"] == "approval_required"
+    assert "(write)" in captured[0]["message"]
+    assert out["requires_approval"] is True
+    assert len(out["pending_actions"]) == 1
+    assert out["pending_actions"][0]["tool"] == "foo_write_bar"
+
+
 def test_copilot_destructive_tool_executes_with_approval(
     copilot_module, db, admin_user,
 ):

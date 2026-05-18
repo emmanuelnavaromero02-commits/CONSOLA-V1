@@ -58,6 +58,19 @@ def classify_tool(tool_name: str) -> dict[str, Any]:
     }
 
 
+def requires_approval(tool_name: str) -> bool:
+    """Return whether a tool must be gated before execution.
+
+    The default is intentionally conservative: any unclassified write-style
+    tool requires explicit user approval until the manifest marks it read-only.
+    """
+    if tool_name in READ_ONLY_TOOLS:
+        return False
+    if tool_name in DESTRUCTIVE_TOOLS:
+        return True
+    return True
+
+
 async def build_manifest() -> dict[str, Any]:
     """Aggregate tools from all registered MCP servers + classify them."""
     servers = await mcp_registry.list_servers()

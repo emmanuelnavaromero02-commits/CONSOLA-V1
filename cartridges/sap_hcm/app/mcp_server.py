@@ -314,8 +314,14 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/sap_hcm/TimeEntry/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
+    from app.core.sql_guard import validate_kb_sql
+
     limit = min(limit, 5000)
     resolved = sql.replace("{bucket}", settings.minio_bucket)
+    allowed_prefix = f"s3://{settings.minio_bucket}/raw/sap_hcm/"
+    ok, err = validate_kb_sql(resolved, allowed_prefix)
+    if not ok:
+        return {"error": "sql_blocked", "reason": err}
     # Inject LIMIT if the query doesn't already have one
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"

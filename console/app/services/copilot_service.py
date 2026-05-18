@@ -882,9 +882,15 @@ async def _run_loop(
                 ),
             }
 
-        # 2. Destructive → approval gate.
+        # 2. Approval gate.
         key = _approval_key(bare_name, args)
-        if risk == "destructive" and key not in approved_keys:
+        declared_approval = meta.get("requires_approval")
+        needs_approval = (
+            risk == "destructive"
+            or declared_approval is True
+            or (declared_approval is None and tool_manifest.requires_approval(bare_name))
+        )
+        if needs_approval and key not in approved_keys:
             if key not in seen_pending_keys:
                 seen_pending_keys.add(key)
                 pending_actions.append({**inv_base, "approval_key": key})
@@ -896,9 +902,9 @@ async def _run_loop(
             return {
                 "error": "approval_required",
                 "message": (
-                    f"La acción '{bare_name}' es destructiva y requiere "
-                    f"aprobación explícita del usuario. NO la reintentes — "
-                    f"explica al usuario qué hará y espera su confirmación."
+                    f"La acción '{bare_name}' requiere aprobación explícita "
+                    f"del usuario ({risk}). NO la reintentes — explica al "
+                    f"usuario qué hará y espera su confirmación."
                 ),
                 "tool": bare_name,
                 "args": scrubbed,

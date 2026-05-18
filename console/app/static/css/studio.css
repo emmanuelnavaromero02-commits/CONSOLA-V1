@@ -94,26 +94,6 @@
       overflow: hidden;
     }
 
-    #studio-e2e-sentinels {
-      position: fixed;
-      right: 8px;
-      bottom: 8px;
-      z-index: 9999;
-      display: flex;
-      flex-wrap: wrap;
-      max-width: 260px;
-      max-height: none;
-      overflow: visible;
-      gap: 2px;
-      opacity: 0.01;
-      pointer-events: auto;
-    }
-    #studio-e2e-sentinels > * {
-      min-width: 44px;
-      min-height: 24px;
-      font-size: 10px;
-    }
-
     /* Main step content */
     .step-content {
       flex: 1;
