@@ -36,6 +36,9 @@ docker compose -f docker-compose.aws.yml up -d postgres postgres_gold
 echo "Esperando Postgres listo (30s)..."
 sleep 30
 
+echo "--- Aplicando migraciones pendientes ---"
+bash apply_db_migrations.sh
+
 # Init containers (DB superset/airflow ya creadas por init/*.sh del contenedor postgres)
 echo "--- Iniciando init containers ---"
 docker compose -f docker-compose.aws.yml up -d superset-init airflow-init

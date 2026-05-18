@@ -93,6 +93,21 @@ def _manifest(entity="TimeEntry"):
     }
 
 
+def _manifest_with_entities(*entities):
+    manifest = _manifest()
+    manifest["entities"] = [
+        {
+            "entity": entity,
+            "display_name": entity,
+            "mode": "full",
+            "primary_key": "id",
+            "dag_id": f"replicon_{entity.lower()}_full",
+        }
+        for entity in entities
+    ]
+    return manifest
+
+
 def _pool_factory(pool):
     async def fake_pool():
         return pool
@@ -127,7 +142,7 @@ async def test_list_entities_filtered_by_cartridge(studio_entities, monkeypatch)
         "updated_at": None,
     }])
     async def fake_get_cartridge(cartridge):
-        return _manifest()
+        return _manifest_with_entities("TimeEntry", "Invoice")
 
     monkeypatch.setattr(studio_entities.auth, "pool", _pool_factory(pool))
     monkeypatch.setattr(studio_entities.cartridge_service, "get_cartridge", fake_get_cartridge)

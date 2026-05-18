@@ -33,7 +33,6 @@ EXPECTED_CLICK_ACTIONS = [
     ("grafo", "GET", "/api/studio/dag-graph"),
     ("plantillas", "GET", "/api/studio/templates"),
     ("entidad", "GET", "/api/studio/entities"),
-    ("asistente", "POST", "/api/studio/assistant"),
 ]
 
 
@@ -67,6 +66,11 @@ def test_bridge_includes_real_click_actions():
         assert marker in src.lower()
         assert f'"{method}"' in src
         assert f'"{path}"' in src
+
+
+def test_bridge_does_not_autofire_assistant_before_legacy_prompt():
+    src = _read(BRIDGE_JS)
+    assert "/api/studio/assistant" not in re.search(r"const CLICK_ACTIONS = \[[\s\S]*?\];", src).group(0)
 
 
 def test_bridge_attaches_csrf_on_mutations():

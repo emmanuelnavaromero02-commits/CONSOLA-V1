@@ -20,10 +20,16 @@ source .env
 set +a
 
 if [ -n "${1:-}" ]; then
+  docker compose -f docker-compose.aws.yml up -d postgres postgres_gold
+  sleep 15
+  bash apply_db_migrations.sh
   docker compose -f docker-compose.aws.yml pull "$1"
   docker compose -f docker-compose.aws.yml up -d --force-recreate "$1"
 else
   bash build.sh
+  docker compose -f docker-compose.aws.yml up -d postgres postgres_gold
+  sleep 15
+  bash apply_db_migrations.sh
   docker compose -f docker-compose.aws.yml up -d --force-recreate
 fi
 

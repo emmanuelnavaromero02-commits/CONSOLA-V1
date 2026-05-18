@@ -211,6 +211,8 @@ async def list_entities(cartridge: str | None = None) -> list[dict[str, Any]]:
 
     for key, item in authored.items():
         current = result.get(key, {})
+        if not current:
+            continue
         spec = item.get("spec") or {}
         result[key] = {
             **current,

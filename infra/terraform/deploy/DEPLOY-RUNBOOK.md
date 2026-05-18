@@ -436,16 +436,21 @@ Abrir desde el navegador (con VPN activa):
 
 El botón **Crear en Superset** de Studio usa el backend `console` contra la API
 REST de Superset (`/api/v1/security/login`, CSRF y `/api/v1/dataset/`). Para
-que funcione en AWS, `scripts/aws-entrypoint.sh` debe inyectar `SUPERSET_URL`,
-`SUPERSET_ADMIN_USER` y `SUPERSET_ADMIN_PASSWORD` en el `.env` de deploy.
+que funcione en AWS, `docker-compose.aws.yml` fija `SUPERSET_URL=http://superset:8088`
+y `scripts/aws-entrypoint.sh` inyecta `SUPERSET_ADMIN_USER` /
+`SUPERSET_ADMIN_PASSWORD`. Para reducir blast radius, configura también
+`SUPERSET_SERVICE_USER` y el secreto `SUPERSET_SERVICE_PASSWORD` con una cuenta
+de servicio limitada a listar bases y crear datasets.
 
 Primer setup recomendado:
 
 1. Levantar Superset y entrar con `SUPERSET_ADMIN_USER` /
    `SUPERSET_ADMIN_PASSWORD`.
-2. Registrar una conexión de base de datos hacia Postgres Gold
+2. Crear opcionalmente un usuario de servicio para Studio y guardarlo como
+   `SUPERSET_SERVICE_USER` / `SUPERSET_SERVICE_PASSWORD`.
+3. Registrar una conexión de base de datos hacia Postgres Gold
    (`modecissions_gold`) si no existe.
-3. Desde Studio, ejecutar **Crear en Superset** sobre una tabla Gold. Si el
+4. Desde Studio, ejecutar **Crear en Superset** sobre una tabla Gold. Si el
    dataset ya existe, el backend devuelve el dataset existente en vez de crear
    duplicados.
 

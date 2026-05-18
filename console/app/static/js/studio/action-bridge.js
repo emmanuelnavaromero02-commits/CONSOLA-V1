@@ -108,18 +108,6 @@ const CLICK_ACTIONS = [
     path: "/api/studio/gold/preview",
     render: data => renderLayerPreview("gold", data),
   },
-  {
-    match: /^✎\s*asistente$/i,
-    path: "/api/studio/assistant",
-    method: "POST",
-    body: () => ({
-      message: document.getElementById("ai-input")?.value || "Ayúdame con este paso de Studio.",
-      cartridge_id: currentCartridge(),
-      step: state.currentStep || 1,
-      history: state.aiHistory || [],
-    }),
-    render: renderAssistant,
-  },
 ];
 
 function fireActionsForStep(n) {

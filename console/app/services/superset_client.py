@@ -39,8 +39,18 @@ class SupersetClient:
 
     def __post_init__(self) -> None:
         self.base_url = (self.base_url or os.environ.get("SUPERSET_URL") or "").rstrip("/")
-        self.username = self.username or os.environ.get("SUPERSET_ADMIN_USER") or os.environ.get("SUPERSET_USER")
-        self.password = self.password or os.environ.get("SUPERSET_ADMIN_PASSWORD") or os.environ.get("SUPERSET_PASSWORD")
+        self.username = (
+            self.username
+            or os.environ.get("SUPERSET_SERVICE_USER")
+            or os.environ.get("SUPERSET_ADMIN_USER")
+            or os.environ.get("SUPERSET_USER")
+        )
+        self.password = (
+            self.password
+            or os.environ.get("SUPERSET_SERVICE_PASSWORD")
+            or os.environ.get("SUPERSET_ADMIN_PASSWORD")
+            or os.environ.get("SUPERSET_PASSWORD")
+        )
         self._access_token: str | None = None
         self._csrf_token: str | None = None
 
@@ -50,7 +60,10 @@ class SupersetClient:
 
     def require_configured(self) -> None:
         if not self.configured:
-            raise SupersetConfigError("Superset not configured: set SUPERSET_URL, SUPERSET_ADMIN_USER and SUPERSET_ADMIN_PASSWORD")
+            raise SupersetConfigError(
+                "Superset not configured: set SUPERSET_URL plus SUPERSET_SERVICE_USER/"
+                "SUPERSET_SERVICE_PASSWORD or SUPERSET_ADMIN_USER/SUPERSET_ADMIN_PASSWORD"
+            )
 
     async def login(self) -> dict[str, str]:
         self.require_configured()
