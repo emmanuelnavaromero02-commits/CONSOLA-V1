@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.security import get_internal_api_key
-from app.services import cartridge_service, dag_templates, mcp_registry, studio_assistant, studio_entities
+from app.services import cartridge_service, dag_templates, mcp_registry, studio_assistant, studio_entities, studio_preview
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -416,7 +416,15 @@ async def gold_preview(request: Request, user: dict = Depends(require_authentica
 
 @router.get("/master/preview")
 async def master_preview(request: Request, user: dict = Depends(require_authenticated)):
-    return await _layer_preview("master", request, user)
+    limit = min(max(int(request.query_params.get("limit", "20")), 1), 200)
+    return await studio_preview.preview_master(
+        entity=request.query_params.get("entity") or request.query_params.get("dataset"),
+        cartridge=request.query_params.get("cartridge") or "replicon",
+        limit=limit,
+        user_context=_rls_user_context(user),
+        list_datasets=_refinement_datasets,
+        invoke_refinement=lambda tool, args: _refinement_invoke(tool, args, timeout=60),
+    )
 
 
 @router.post("/superset/dataset", dependencies=[Depends(require_csrf)])
