@@ -213,7 +213,10 @@ async def workflow_status(
     return await workflow_executor.workflow_status(workflow_id, user)
 
 
-@router.post("/{workflow_id}/steps/{step_idx}/approve", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/{workflow_id}/steps/{step_idx}/approve",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.execute"))],
+)
 async def approve_workflow_step(
     workflow_id: str,
     step_idx: int,
@@ -252,7 +255,10 @@ async def cancel_workflow_plural(
     return await workflow_executor.cancel_workflow(workflow_id, user)
 
 
-@plural_router.post("/{workflow_id}/steps/{step_idx}/approve", dependencies=[Depends(require_csrf)])
+@plural_router.post(
+    "/{workflow_id}/steps/{step_idx}/approve",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.execute"))],
+)
 async def approve_workflow_step_plural(
     workflow_id: str,
     step_idx: int,

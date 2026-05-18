@@ -18,10 +18,6 @@ from fastapi import HTTPException
 from app.services import audit_service, auth, email_service
 
 
-def _is_admin(user: dict[str, Any]) -> bool:
-    return str(user.get("role", "")).lower() in {"admin", "owner", "super_admin"}
-
-
 def _extract_recipient(metadata: dict[str, Any]) -> str:
     for key in ("to", "recipient", "recipient_email", "email"):
         value = metadata.get(key)
@@ -50,6 +46,14 @@ def _production_missing_smtp_host() -> bool:
     )
 
 
+def _safe_error(error: Any) -> str:
+    text = str(error or "smtp_delivery_failed")[:300]
+    lowered = text.lower()
+    if any(token in lowered for token in ("password", "secret", "token", "api_key", "apikey", "authorization")):
+        return "smtp_delivery_failed"
+    return text
+
+
 async def _send_email(*, to: str, subject: str, body: str, from_user: str | None) -> bool:
     """Call the existing email helper, passing from_user only if the
     helper grows that parameter in a later sprint."""
@@ -71,7 +75,21 @@ async def _mark_failed(pool: Any, draft_id: str, error: str) -> None:
            SET status = 'failed',
                updated_at = NOW(),
                delivery_log = $2::jsonb
-         WHERE id = $1
+         WHERE id = $1 AND status = 'sending'
+        """,
+        draft_id,
+        json.dumps({"ok": False, "error": error}),
+    )
+
+
+async def _restore_draft_after_validation_error(pool: Any, draft_id: str, error: str) -> None:
+    await pool.execute(
+        """
+        UPDATE copilot_drafts
+           SET status = 'draft',
+               updated_at = NOW(),
+               delivery_log = $2::jsonb
+         WHERE id = $1 AND status = 'sending'
         """,
         draft_id,
         json.dumps({"ok": False, "error": error}),
@@ -88,21 +106,20 @@ async def send_draft(draft_id: str, user: dict[str, Any]) -> dict[str, Any]:
     pool = await auth.pool()
     row = await pool.fetchrow(
         """
-        SELECT id, user_id, kind, title, body, tone, status, metadata
-          FROM copilot_drafts
+        UPDATE copilot_drafts
+           SET status = 'sending', updated_at = NOW()
          WHERE id = $1
+           AND user_id = $2
+           AND status = 'draft'
+        RETURNING id, user_id, kind, title, body, tone, status, metadata
         """,
         draft_id,
+        user["id"],
     )
     if row is None:
         raise HTTPException(404, "Draft not found")
 
     draft = dict(row)
-    owner_id = draft.get("user_id")
-    if owner_id != user.get("id") and not _is_admin(user):
-        raise HTTPException(404, "Draft not found")
-    if draft.get("status") != "draft":
-        raise HTTPException(404, "Draft not found")
 
     metadata = draft.get("metadata") or {}
     if isinstance(metadata, str):
@@ -117,10 +134,13 @@ async def send_draft(draft_id: str, user: dict[str, Any]) -> dict[str, Any]:
     subject = _subject_for_draft(draft, metadata)
     body = draft.get("body") or ""
     if not recipient:
+        await _restore_draft_after_validation_error(pool, draft_id, "draft recipient is required")
         raise HTTPException(400, "draft recipient is required")
     if not subject:
+        await _restore_draft_after_validation_error(pool, draft_id, "draft subject is required")
         raise HTTPException(400, "draft subject is required")
     if not isinstance(body, str) or not body.strip():
+        await _restore_draft_after_validation_error(pool, draft_id, "draft body is required")
         raise HTTPException(400, "draft body is required")
 
     if _production_missing_smtp_host():
@@ -128,23 +148,33 @@ async def send_draft(draft_id: str, user: dict[str, Any]) -> dict[str, Any]:
         await _mark_failed(pool, draft_id, error)
         raise HTTPException(500, error)
 
-    sent = await _send_email(
-        to=recipient,
-        subject=subject,
-        body=body,
-        from_user=user.get("email"),
-    )
-    if not sent:
+    try:
+        sent = await _send_email(
+            to=recipient,
+            subject=subject,
+            body=body,
+            from_user=user.get("email"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        sent = False
+        error = _safe_error(exc)
+    else:
         error = "smtp_delivery_failed"
+    if not sent:
         await _mark_failed(pool, draft_id, error)
         await audit_service.record_event(
             user_id=user.get("id"),
             email=user.get("email"),
-            action="draft_sent",
+            action="copilot.draft.send",
             resource_type="copilot_draft",
             resource_id=draft_id,
             status="failure",
-            metadata={"to": recipient, "subject": subject, "error": error},
+            metadata={
+                "channel": "smtp",
+                "recipient_present": True,
+                "subject_len": len(subject),
+                "error": error,
+            },
         )
         return {"ok": False, "draft_id": draft_id, "status": "failed", "error": error}
 
@@ -163,6 +193,7 @@ async def send_draft(draft_id: str, user: dict[str, Any]) -> dict[str, Any]:
                updated_at = NOW(),
                delivery_log = $2::jsonb
          WHERE id = $1
+           AND status = 'sending'
         """,
         draft_id,
         json.dumps(delivery_log),
@@ -170,11 +201,15 @@ async def send_draft(draft_id: str, user: dict[str, Any]) -> dict[str, Any]:
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
-        action="draft_sent",
+        action="copilot.draft.send",
         resource_type="copilot_draft",
         resource_id=draft_id,
         status="success",
-        metadata={"to": recipient, "subject": subject},
+        metadata={
+            "channel": "smtp",
+            "recipient_present": True,
+            "subject_len": len(subject),
+        },
     )
     return {
         "ok": True,

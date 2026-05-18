@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services import audit_service, auth, mcp_registry, tool_manifest
+from app.services import audit_service, auth, mcp_registry, permissions, tool_manifest
 
 MAX_ATTEMPTS = 3
 BASE_BACKOFF_SECONDS = 1.0
@@ -67,14 +67,11 @@ def _step_timeout(args: dict[str, Any]) -> int:
 
 
 def _is_approved(step: dict[str, Any]) -> bool:
-    args = _json_load(step.get("args"), {})
     result = _json_load(step.get("result"), {})
-    return bool(
-        args.get("approved")
-        or args.get("_approved")
-        or result.get("approved")
-        or result.get("approval_key")
-    )
+    # Approval must be server-side state written by approve_step().
+    # Never trust args.approved / args._approved: args come from the
+    # LLM-authored plan and would let the plan approve itself.
+    return bool(result.get("approved") or result.get("approval_key"))
 
 
 def _scrub_args(args: Any) -> Any:
@@ -90,6 +87,14 @@ def _scrub_args(args: Any) -> Any:
     if isinstance(args, list):
         return [_scrub_args(item) for item in args]
     return args
+
+
+def _safe_error(error: Any) -> str:
+    text = str(error or "tool invocation failed")[:500]
+    lowered = text.lower()
+    if any(token in lowered for token in ("password", "secret", "token", "api_key", "apikey", "authorization")):
+        return "upstream error redacted"
+    return text
 
 
 async def _record_step_audit(
@@ -218,6 +223,52 @@ async def _mark_remaining_skipped(pool: Any, workflow_id: str, after_idx: int) -
     )
 
 
+async def _claim_step(pool: Any, workflow_id: str, step_idx: int) -> dict[str, Any] | None:
+    row = await pool.fetchrow(
+        """
+        UPDATE workflow_steps
+           SET status = 'running', started_at = COALESCE(started_at, NOW())
+         WHERE workflow_id = $1
+           AND step_idx = $2
+           AND status = 'pending'
+        RETURNING id, workflow_id, step_idx, description, tool, args,
+                  result, status, started_at, finished_at
+        """,
+        workflow_id,
+        step_idx,
+    )
+    if row is None:
+        return None
+    claimed = _row_to_dict(row)
+    claimed["args"] = _json_load(claimed.get("args"), {})
+    claimed["result"] = _json_load(claimed.get("result"), {})
+    return claimed
+
+
+async def _complete_human_step(pool: Any, workflow_id: str, step_idx: int) -> bool:
+    row = await pool.fetchrow(
+        """
+        UPDATE workflow_steps
+           SET status = 'completed',
+               result = jsonb_set(
+                   COALESCE(result, '{}'::jsonb),
+                   '{human_review_completed}',
+                   'true'::jsonb,
+                   true
+               ),
+               finished_at = NOW()
+         WHERE workflow_id = $1
+           AND step_idx = $2
+           AND status = 'pending'
+           AND COALESCE(result, '{}'::jsonb) @> '{"approved": true}'::jsonb
+        RETURNING id
+        """,
+        workflow_id,
+        step_idx,
+    )
+    return row is not None
+
+
 async def _invoke_with_retry(
     server_id: str,
     tool: str,
@@ -232,11 +283,14 @@ async def _invoke_with_retry(
                 timeout=timeout_seconds,
             )
             if isinstance(result, dict) and (result.get("_error") or result.get("error")):
-                last_error = str(result.get("error_message") or result.get("error"))[:500]
-                raise RuntimeError(last_error)
+                # Tool-level error envelopes are semantic failures, not
+                # transport failures. Retrying them can duplicate side
+                # effects for write tools that partially applied.
+                last_error = _safe_error(result.get("error_message") or result.get("error"))
+                return False, None, last_error
             return True, result, None
         except Exception as exc:  # noqa: BLE001
-            last_error = str(exc)[:500]
+            last_error = _safe_error(exc)
             if attempt < MAX_ATTEMPTS - 1:
                 await asyncio.sleep(BASE_BACKOFF_SECONDS * (2 ** attempt))
                 continue
@@ -291,6 +345,20 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
         tool_full = step.get("tool")
 
         if not tool_full:
+            if _is_approved(step):
+                completed = await _complete_human_step(pool, workflow_id, step_idx)
+                if completed:
+                    await _record_step_audit(
+                        user=user,
+                        workflow_id=workflow_id,
+                        step_idx=step_idx,
+                        tool_name=None,
+                        args=args,
+                        risk_level="write",
+                        status="success",
+                        metadata={"human_review_step": True},
+                    )
+                continue
             await pool.execute(
                 """
                 UPDATE workflow_steps
@@ -383,15 +451,17 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
             results = await _refresh_step_results(pool, workflow_id)
             return {"ok": True, "workflow_id": workflow_id, "status": "waiting_approval", "step_results": results}
 
-        await pool.execute(
-            """
-            UPDATE workflow_steps
-               SET status = 'running', started_at = COALESCE(started_at, NOW())
-             WHERE workflow_id = $1 AND step_idx = $2
-            """,
-            workflow_id,
-            step_idx,
-        )
+        claimed = await _claim_step(pool, workflow_id, step_idx)
+        if claimed is None:
+            latest_status = await pool.fetchval(
+                "SELECT status FROM workflow_runs WHERE id = $1",
+                workflow_id,
+            )
+            if latest_status == "cancelled":
+                results = await _refresh_step_results(pool, workflow_id)
+                return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
+            continue
+        args = claimed["args"]
         await pool.execute(
             "UPDATE workflow_runs SET status = 'running', current_step = $2 WHERE id = $1",
             workflow_id,
@@ -400,16 +470,23 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
 
         ok, result, error = await _invoke_with_retry(server_id, bare_tool, args, _step_timeout(args))
         if ok:
+            latest_status = await pool.fetchval(
+                "SELECT status FROM workflow_runs WHERE id = $1",
+                workflow_id,
+            )
             await pool.execute(
                 """
                 UPDATE workflow_steps
                    SET status = 'completed', result = $3::jsonb, finished_at = NOW()
-                 WHERE workflow_id = $1 AND step_idx = $2
+                 WHERE workflow_id = $1 AND step_idx = $2 AND status = 'running'
                 """,
                 workflow_id,
                 step_idx,
                 json.dumps(result, default=str),
             )
+            if latest_status == "cancelled":
+                results = await _refresh_step_results(pool, workflow_id)
+                return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
             await _record_step_audit(
                 user=user,
                 workflow_id=workflow_id,
@@ -422,6 +499,13 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
             )
             continue
 
+        latest_status = await pool.fetchval(
+            "SELECT status FROM workflow_runs WHERE id = $1",
+            workflow_id,
+        )
+        if latest_status == "cancelled":
+            results = await _refresh_step_results(pool, workflow_id)
+            return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
         await pool.execute(
             """
             UPDATE workflow_steps
@@ -457,16 +541,19 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
         return {"ok": False, "workflow_id": workflow_id, "status": "failed", "step_results": results}
 
     results = await _refresh_step_results(pool, workflow_id)
-    await pool.execute(
+    row = await pool.fetchrow(
         """
         UPDATE workflow_runs
            SET status = 'completed', completed_at = NOW(), finished_at = NOW(),
                current_step = GREATEST(current_step, $2)
-         WHERE id = $1
+         WHERE id = $1 AND status <> 'cancelled'
+        RETURNING status
         """,
         workflow_id,
         len(steps) - 1 if steps else 0,
     )
+    if row is None:
+        return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
     return {"ok": True, "workflow_id": workflow_id, "status": "completed", "step_results": results}
 
 
@@ -513,6 +600,8 @@ async def cancel_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, A
 
 
 async def approve_step(workflow_id: str, step_idx: int, user: dict[str, Any]) -> dict[str, Any]:
+    if not permissions.has_permission(user, "copilot.execute"):
+        raise HTTPException(403, "permission required: copilot.execute")
     pool = await auth.pool()
     await _load_workflow(pool, workflow_id, user)
     row = await pool.fetchrow(

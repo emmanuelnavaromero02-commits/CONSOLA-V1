@@ -52,20 +52,34 @@ class FakePool:
 
     async def fetchrow(self, query: str, *args):
         q = " ".join(query.split())
-        if q.startswith("SELECT id, user_id, kind"):
-            return copy.deepcopy(self.row) if args[0] == self.draft_id else None
+        if q.startswith("UPDATE copilot_drafts SET status = 'sending'"):
+            if (
+                args[0] == self.draft_id
+                and args[1] == self.user_id
+                and self.row["status"] == "draft"
+            ):
+                self.row["status"] = "sending"
+                return copy.deepcopy(self.row)
+            return None
         raise AssertionError(f"unmocked fetchrow: {q[:120]}")
 
     async def execute(self, query: str, *args):
         q = " ".join(query.split())
         self.updates.append((q, args))
         if q.startswith("UPDATE copilot_drafts SET status = 'sent'"):
-            self.row["status"] = "sent"
-            self.row["delivery_log"] = json.loads(args[1])
+            if self.row["status"] == "sending":
+                self.row["status"] = "sent"
+                self.row["delivery_log"] = json.loads(args[1])
             return "UPDATE 1"
         if q.startswith("UPDATE copilot_drafts SET status = 'failed'"):
-            self.row["status"] = "failed"
-            self.row["delivery_log"] = json.loads(args[1])
+            if self.row["status"] == "sending":
+                self.row["status"] = "failed"
+                self.row["delivery_log"] = json.loads(args[1])
+            return "UPDATE 1"
+        if q.startswith("UPDATE copilot_drafts SET status = 'draft'"):
+            if self.row["status"] == "sending":
+                self.row["status"] = "draft"
+                self.row["delivery_log"] = json.loads(args[1])
             return "UPDATE 1"
         raise AssertionError(f"unmocked execute: {q[:120]}")
 
@@ -119,6 +133,17 @@ def test_send_draft_marks_status_failed_on_smtp_error(draft_sender_module, fake_
     assert fake_pool.row["delivery_log"]["error"] == "smtp_delivery_failed"
 
 
+def test_send_draft_marks_status_failed_on_smtp_exception(draft_sender_module, fake_pool, user, monkeypatch):
+    monkeypatch.setattr(draft_sender_module.email_service, "send_email", AsyncMock(side_effect=RuntimeError("SMTP down")))
+    monkeypatch.setattr(draft_sender_module.audit_service, "record_event", AsyncMock())
+
+    out = run(draft_sender_module.send_draft(fake_pool.draft_id, user))
+
+    assert out["ok"] is False
+    assert fake_pool.row["status"] == "failed"
+    assert fake_pool.row["delivery_log"]["error"] == "SMTP down"
+
+
 def test_send_draft_validates_ownership(draft_sender_module, fake_pool, monkeypatch):
     monkeypatch.setattr(draft_sender_module.email_service, "send_email", AsyncMock(return_value=True))
     monkeypatch.setattr(draft_sender_module.audit_service, "record_event", AsyncMock())
@@ -126,6 +151,17 @@ def test_send_draft_validates_ownership(draft_sender_module, fake_pool, monkeypa
 
     with pytest.raises(HTTPException) as exc:
         run(draft_sender_module.send_draft(fake_pool.draft_id, other_user))
+
+    assert exc.value.status_code == 404
+
+
+def test_send_draft_does_not_let_admin_send_another_users_draft(draft_sender_module, fake_pool, monkeypatch):
+    monkeypatch.setattr(draft_sender_module.email_service, "send_email", AsyncMock(return_value=True))
+    monkeypatch.setattr(draft_sender_module.audit_service, "record_event", AsyncMock())
+    admin = {"id": 999, "email": "admin@example.com", "role": "admin"}
+
+    with pytest.raises(HTTPException) as exc:
+        run(draft_sender_module.send_draft(fake_pool.draft_id, admin))
 
     assert exc.value.status_code == 404
 
@@ -163,9 +199,26 @@ def test_send_draft_audit_event_no_body_in_metadata(draft_sender_module, fake_po
     run(draft_sender_module.send_draft(fake_pool.draft_id, user))
 
     metadata = audit.await_args.kwargs["metadata"]
-    assert metadata["to"] == "rrhh@example.com"
-    assert metadata["subject"] == "Error detectado"
+    assert metadata["channel"] == "smtp"
+    assert metadata["recipient_present"] is True
+    assert metadata["subject_len"] == len("Error detectado")
+    assert "to" not in metadata
+    assert "subject" not in metadata
     assert "body" not in metadata
+    assert audit.await_args.kwargs["action"] == "copilot.draft.send"
+
+
+def test_send_draft_second_send_does_not_redeliver(draft_sender_module, fake_pool, user, monkeypatch):
+    send_email = AsyncMock(return_value=True)
+    monkeypatch.setattr(draft_sender_module.email_service, "send_email", send_email)
+    monkeypatch.setattr(draft_sender_module.audit_service, "record_event", AsyncMock())
+
+    run(draft_sender_module.send_draft(fake_pool.draft_id, user))
+    with pytest.raises(HTTPException) as exc:
+        run(draft_sender_module.send_draft(fake_pool.draft_id, user))
+
+    assert exc.value.status_code == 404
+    send_email.assert_awaited_once()
 
 
 def test_send_draft_fails_in_prod_without_smtp_host(draft_sender_module, fake_pool, user, monkeypatch):

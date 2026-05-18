@@ -70,12 +70,30 @@ class FakePool:
             if args[0] == self.workflow_id and args[1] == self.user_id:
                 return copy.deepcopy(self.workflow)
             return None
+        if q.startswith("UPDATE workflow_steps SET status = 'running'"):
+            step = self._step(args[0], args[1])
+            if step["status"] == "pending":
+                step["status"] = "running"
+                return copy.deepcopy(step)
+            return None
+        if q.startswith("UPDATE workflow_steps SET status = 'completed', result = jsonb_set"):
+            step = self._step(args[0], args[1])
+            if step["status"] == "pending" and step["result"].get("approved") is True:
+                step["status"] = "completed"
+                step["result"]["human_review_completed"] = True
+                return {"id": step["id"]}
+            return None
         if q.startswith("UPDATE workflow_steps SET status = 'pending'"):
             for step in self.steps:
                 if step["workflow_id"] == args[0] and step["step_idx"] == args[1] and step["status"] == "waiting_approval":
                     step["status"] = "pending"
                     step["result"]["approved"] = True
                     return copy.deepcopy(step)
+            return None
+        if q.startswith("UPDATE workflow_runs SET status = 'completed'"):
+            if self.workflow["status"] != "cancelled":
+                self.workflow["status"] = "completed"
+                return {"status": "completed"}
             return None
         if q.startswith("UPDATE workflow_runs SET status = 'cancelled'"):
             if args[0] == self.workflow_id and args[1] == self.user_id and self.workflow["status"] in {"planning", "running", "waiting_approval"}:
@@ -118,9 +136,6 @@ class FakePool:
         if q.startswith("UPDATE workflow_runs SET status = 'failed'"):
             self.workflow["status"] = "failed"
             self.workflow["error"] = args[1]
-            return "UPDATE 1"
-        if q.startswith("UPDATE workflow_runs SET status = 'completed'"):
-            self.workflow["status"] = "completed"
             return "UPDATE 1"
         if q.startswith("UPDATE workflow_steps SET status = 'running'"):
             self._step(args[0], args[1])["status"] = "running"
@@ -208,7 +223,7 @@ def test_executor_retries_transient_failures(executor_module, fake_pool, user, m
         nonlocal calls
         calls += 1
         if calls < 3:
-            return {"error": "temporary"}
+            raise RuntimeError("temporary")
         return {"ok": True}
 
     monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
@@ -231,6 +246,43 @@ def test_executor_fails_fast_after_3_retries(executor_module, fake_pool, user, m
     assert out["status"] == "failed"
     assert fake_pool.steps[0]["status"] == "failed"
     assert fake_pool.steps[1]["status"] == "skipped"
+
+
+def test_executor_does_not_trust_plan_args_approved(executor_module, fake_pool, user, monkeypatch):
+    fake_pool.add_step(0, "infra.unknown_write_tool", {"approved": True})
+    invoked = False
+
+    async def invoke(*_):
+        nonlocal invoked
+        invoked = True
+        return {"ok": True}
+
+    monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+
+    assert out["status"] == "waiting_approval"
+    assert invoked is False
+
+
+def test_executor_human_step_resumes_after_approval(executor_module, fake_pool, user):
+    fake_pool.add_step(0, None)
+
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+    assert out["status"] == "waiting_approval"
+
+    out = run(executor_module.approve_step(fake_pool.workflow_id, 0, user))
+    assert out["status"] == "completed"
+    assert fake_pool.steps[0]["status"] == "completed"
+
+
+def test_executor_approval_requires_execute_permission(executor_module, fake_pool):
+    fake_pool.add_step(0, None, status="waiting_approval")
+    user = {"id": fake_pool.user_id, "email": "viewer@example.com", "role": "viewer"}
+
+    with pytest.raises(Exception) as exc:
+        run(executor_module.approve_step(fake_pool.workflow_id, 0, user))
+
+    assert getattr(exc.value, "status_code", None) == 403
 
 
 def test_executor_cancels_running_workflow_cleanly(executor_module, fake_pool, user):

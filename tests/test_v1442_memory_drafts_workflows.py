@@ -232,18 +232,17 @@ def test_drafts_send_returns_404_for_other_users():
     draft IDs by send-attempt error semantics. The brief's
     contract: 404 covers all four "not yours / not draft / not
     found / already sent" branches identically."""
-    src = _read(SRC / "routers/copilot_drafts.py")
-    body = re.search(
-        r"async def send_draft.*?(?=^async def|\Z)",
-        src, re.DOTALL | re.MULTILINE,
-    )
-    assert body and "AND user_id = $2 AND status = 'draft'" in body.group(0)
+    src = _read(SRC / "services/draft_sender.py")
+    assert "AND user_id = $2" in src
+    assert "AND status = 'draft'" in src
+    assert "UPDATE copilot_drafts" in src
 
 
 def test_drafts_router_audits_create_and_send():
-    src = _read(SRC / "routers/copilot_drafts.py")
-    assert "copilot.draft.create" in src
-    assert "copilot.draft.send" in src
+    router_src = _read(SRC / "routers/copilot_drafts.py")
+    sender_src = _read(SRC / "services/draft_sender.py")
+    assert "copilot.draft.create" in router_src
+    assert "copilot.draft.send" in sender_src
 
 
 # ── Workflows router ────────────────────────────────────────────────────

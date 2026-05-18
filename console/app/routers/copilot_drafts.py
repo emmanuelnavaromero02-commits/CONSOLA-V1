@@ -164,13 +164,6 @@ async def send_draft(
 ):
     """Deliver a draft via SMTP and mark it ``sent`` only on success."""
     draft_id = _validate_uuid(draft_id, label="draft_id")
-    # Compatibility contract from v1.44.2: not found / not yours /
-    # already sent all remain indistinguishable. The ownership filter is
-    # now enforced inside draft_sender with equivalent semantics:
-    # AND user_id = $2 AND status = 'draft'
-    # The delivery service records the legacy audit intent as a real
-    # delivery event; old contract name retained for static coverage:
-    # copilot.draft.send
     return await draft_sender.send_draft(draft_id, user)
 
 
