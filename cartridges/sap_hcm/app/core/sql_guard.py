@@ -10,6 +10,10 @@ _FORBIDDEN_RE = re.compile(
     r"TRUNCATE|ALTER|SET|EXPORT|IMPORT_DATABASE|IMPORT|CALL)\b",
     re.IGNORECASE,
 )
+_READER_FN_RE = re.compile(
+    r"\b(read_[a-z0-9_]+|parquet_scan|csv_auto|csv_scan)\s*\(",
+    re.IGNORECASE,
+)
 _READ_FN_RE = re.compile(
     r"\b(read_parquet|read_csv)\s*\(\s*(['\"])(?P<path>[^'\"]+)\2",
     re.IGNORECASE,
@@ -22,7 +26,19 @@ def _mask_quoted(sql: str) -> str:
     return _QUOTED_RE.sub("''", sql)
 
 
-def validate_kb_sql(sql: str, allowed_bucket_prefix: str) -> tuple[bool, str | None]:
+def _prefixes(allowed_bucket_prefix: str | tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if isinstance(allowed_bucket_prefix, str):
+        allowed = (allowed_bucket_prefix,)
+    else:
+        allowed = tuple(allowed_bucket_prefix)
+    return tuple(p.rstrip("/") + "/" for p in allowed)
+
+
+def has_limit_clause(sql: str) -> bool:
+    return bool(re.search(r"\bLIMIT\b", _mask_quoted(sql), re.IGNORECASE))
+
+
+def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | list[str]) -> tuple[bool, str | None]:
     """Validate ad-hoc DuckDB SQL before it reaches query_kb.
 
     We allow read-only SELECT/WITH statements and only permit file readers
@@ -49,13 +65,26 @@ def validate_kb_sql(sql: str, allowed_bucket_prefix: str) -> tuple[bool, str | N
     if match:
         return False, f"Forbidden DuckDB keyword in query_kb: {match.group(1).upper()}"
 
-    normalized_prefix = allowed_bucket_prefix.rstrip("/") + "/"
+    read_calls = list(_READER_FN_RE.finditer(stripped))
+    allowed_read_names = {"read_parquet", "read_csv"}
+    for call in read_calls:
+        fn = call.group(1).lower()
+        if fn not in allowed_read_names:
+            return False, f"Forbidden DuckDB reader function in query_kb: {fn}"
+
+    direct_literal_calls = list(_READ_FN_RE.finditer(stripped))
+    if len(direct_literal_calls) != len(read_calls):
+        return False, "DuckDB readers must use a direct string literal path"
+
+    normalized_prefixes = _prefixes(allowed_bucket_prefix)
     for fn in _READ_FN_RE.finditer(stripped):
         name = fn.group(1).lower()
         raw_path = unquote(fn.group("path")).replace("\\", "/")
-        if raw_path.lower().startswith(("file:", "/", "../", "~")):
-            return False, f"{name} may only read from the cartridge S3 prefix"
-        if not raw_path.startswith(normalized_prefix):
-            return False, f"{name} path must start with {normalized_prefix}"
+        if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
+            return False, f"{name} may only read from the cartridge S3 prefixes"
+        if "/../" in raw_path or raw_path.endswith("/.."):
+            return False, f"{name} path traversal is not allowed"
+        if not any(raw_path.startswith(prefix) for prefix in normalized_prefixes):
+            return False, f"{name} path must start with one of {normalized_prefixes}"
 
     return True, None

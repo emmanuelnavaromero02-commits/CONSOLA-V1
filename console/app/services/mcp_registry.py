@@ -34,6 +34,25 @@ ALLOWED_MCP_HOSTS = {
     "::1",
     "localhost",
 }
+_BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _configured_allowed_hosts() -> set[str]:
+    raw = os.environ.get("MCP_ALLOWED_HOSTS", "")
+    return {h.strip().rstrip(".").lower() for h in raw.split(",") if h.strip()}
+
+
+def _configured_allowed_cidrs() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    networks = []
+    raw = os.environ.get("MCP_ALLOWED_CIDRS", "")
+    for item in (p.strip() for p in raw.split(",")):
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            continue
+    return networks
 
 
 def _validate_mcp_url(url: str) -> None:
@@ -47,14 +66,16 @@ def _validate_mcp_url(url: str) -> None:
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        if host not in ALLOWED_MCP_HOSTS:
+        if host not in ALLOWED_MCP_HOSTS and host not in _configured_allowed_hosts():
             raise ValueError(f"mcp host not allowlisted: {host}")
         return
 
     if host in ALLOWED_MCP_HOSTS and ip.is_loopback:
         return
-    if ip.is_link_local or host.startswith("169.254."):
+    if ip.is_link_local or host.startswith("169.254.") or ip in _BLOCKED_SHARED_ADDRESS_SPACE:
         raise ValueError("metadata/link-local MCP hosts are blocked")
+    if any(ip in cidr for cidr in _configured_allowed_cidrs()):
+        return
     if ip.is_private or ip.is_global or ip.is_reserved or ip.is_multicast:
         raise ValueError(f"mcp IP host not allowlisted: {host}")
 

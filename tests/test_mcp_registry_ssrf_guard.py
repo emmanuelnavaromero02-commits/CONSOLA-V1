@@ -51,6 +51,8 @@ def test_mcp_registry_allows_internal_hosts(registry_module, url):
         "https://example.org/mcp",
         "http://10.0.0.12:8201/mcp",
         "http://192.168.1.10:8201/mcp",
+        "http://100.64.0.1:8201/mcp",
+        "http://100.127.255.254:8201/mcp",
         "http://localhost.evil.com:8000/mcp",
         "file:///etc/passwd",
     ],
@@ -83,3 +85,8 @@ def test_invoke_refuses_malicious_stored_url(registry_module, monkeypatch):
     result = _run(registry_module.invoke("evil", "list", {}))
     assert result["error"] == "mcp_host_not_allowlisted"
     assert "blocked" in result["detail"]
+
+
+def test_mcp_registry_allows_operator_configured_private_cidr(registry_module, monkeypatch):
+    monkeypatch.setenv("MCP_ALLOWED_CIDRS", "10.42.0.0/16")
+    registry_module._validate_mcp_url("http://10.42.5.10:8201/mcp")

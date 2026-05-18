@@ -31,4 +31,11 @@ variable "vpn_admin_allowed_cidrs" {
   description = "CIDRs allowed to reach the wg-easy admin UI. Empty means no public admin UI ingress."
   type        = list(string)
   default     = []
+  validation {
+    condition = alltrue([
+      for cidr in var.vpn_admin_allowed_cidrs :
+      cidr != "0.0.0.0/0" && cidr != "::/0"
+    ])
+    error_message = "vpn_admin_allowed_cidrs must not include 0.0.0.0/0 or ::/0."
+  }
 }

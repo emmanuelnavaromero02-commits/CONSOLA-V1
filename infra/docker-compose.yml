@@ -25,12 +25,27 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d
-      - ./init_dev/15_local_dev_bootstrap.sql:/docker-entrypoint-initdb.d/90_local_dev_bootstrap.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  postgres_dev_seed:
+    image: postgres:15
+    container_name: mode_postgres_dev_seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ./init_dev:/dev-seeds:ro
+    command: >
+      bash -lc "psql -h postgres -U postgres -d modecissions
+      -v ON_ERROR_STOP=1
+      -f /dev-seeds/15_local_dev_bootstrap.sql"
+    restart: "no"
 
   postgres_gold:
     image: postgres:15

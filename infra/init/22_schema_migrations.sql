@@ -24,7 +24,6 @@ INSERT INTO schema_migrations (filename, applied_at) VALUES
   ('12_refresh_tokens.sql', NOW()),
   ('13_rbac_models.sql', NOW()),
   ('14_token_usage_cache_columns.sql', NOW()),
-  ('15_local_dev_bootstrap.sql', NOW()),
   ('16_audit_events.sql', NOW()),
   ('17_login_security.sql', NOW()),
   ('18_sessions_extended.sql', NOW()),

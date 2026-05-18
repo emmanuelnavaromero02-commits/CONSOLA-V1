@@ -268,13 +268,16 @@ nano .env
 
 ---
 
-## 7. Build de imágenes Docker — 30-45 min
+## 7. Pull de imágenes Docker — 5-10 min
 
 ```bash
 bash /opt/modecissions/infra/terraform/deploy/build.sh
 ```
 
-Buildea las 4 imágenes locales: `console`, `workspace`, `refinement`, `mcp-infra` (RAG ya migró dentro de mcp-infra). La **primera vez** tarda 30-45 min porque baja todas las base images y resuelve `pip` de cero. Las siguientes corridas usan cache de capas y suelen tomar 2-5 min.
+Descarga las imágenes versionadas desde GHCR usando `GHCR_OWNER` e
+`IMAGE_TAG` definidos en `.env`. El compose AWS ya no consume
+`modecissions/*:latest`; si cambias el tag de release, actualiza
+`IMAGE_TAG` y vuelve a ejecutar este paso.
 
 **Monitoreo en otra sesión SSH**:
 
@@ -433,14 +436,14 @@ docker system prune -f
 free -h     # confirma RAM disponible
 ```
 
-Buildear de a uno y con `--no-cache` para forzar limpieza si hace falta:
+Bajar una imagen específica si hace falta:
 
 ```bash
-cd /opt/modecissions
-docker build -t modecissions/console:latest ./console
-docker build -t modecissions/refinement:latest ./refinement
-docker build -t modecissions/rag:latest ./rag
-docker build -t modecissions/mcp-infra:latest ./mcp-infra
+cd /opt/modecissions/infra/terraform/deploy
+docker compose -f docker-compose.aws.yml pull console
+docker compose -f docker-compose.aws.yml pull refinement
+docker compose -f docker-compose.aws.yml pull vault
+docker compose -f docker-compose.aws.yml pull mcp-infra
 ```
 
 Si persiste, agrega swap temporal (la `m6i.xlarge` tiene 16 GB RAM pero los wheels grandes pueden picarla):
@@ -502,13 +505,13 @@ bash /opt/modecissions/infra/terraform/deploy/logs.sh             # todos
 bash /opt/modecissions/infra/terraform/deploy/logs.sh console     # solo console
 ```
 
-**Actualizar un servicio** (después de un cambio en su Dockerfile):
+**Actualizar un servicio** (nuevo tag ya publicado en GHCR):
 
 ```bash
 bash /opt/modecissions/infra/terraform/deploy/update.sh console
 ```
 
-**Actualizar todo** (git pull + rebuild + restart):
+**Actualizar todo** (git pull + pull de imágenes + restart):
 
 ```bash
 bash /opt/modecissions/infra/terraform/deploy/update.sh

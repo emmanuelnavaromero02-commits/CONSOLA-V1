@@ -515,8 +515,8 @@ def _is_admin_or_owner(conv_user_id: int, user: dict) -> bool:
     return role in {"admin", "owner", "super_admin"}
 
 
-def _approval_key(bare_name: str, args: dict) -> str:
-    return f"{bare_name}|{json.dumps(args, sort_keys=True, default=str)}"
+def _approval_key(server_id: str, bare_name: str, args: dict) -> str:
+    return f"{server_id}|{bare_name}|{json.dumps(args, sort_keys=True, default=str)}"
 
 
 async def _load_conversation(conn, conversation_id: str) -> dict | None:
@@ -883,7 +883,7 @@ async def _run_loop(
             }
 
         # 2. Approval gate.
-        key = _approval_key(bare_name, args)
+        key = _approval_key(server_id, bare_name, args)
         declared_approval = meta.get("requires_approval")
         needs_approval = (
             risk == "destructive"
@@ -1303,10 +1303,9 @@ async def approve_pending_action(
     approved_keys = {
         c["approval_key"] for c in (raw_calls or [])
         if isinstance(c, dict) and c.get("approval_key")
-        and c.get("risk_level") == "destructive"
     }
     if not approved_keys:
-        raise HTTPException(400, "no destructive actions pending in this message")
+        raise HTTPException(400, "no approvable actions pending in this message")
 
     return await _run_loop(
         conversation_id=conversation_id,

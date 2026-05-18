@@ -25,7 +25,7 @@ The `.env` is gitignored. Required keys:
 | Var | Default | Notes |
 |---|---|---|
 | `TEST_EMAIL` | `emmanuel@local.ai` | Must exist in the `users` table |
-| `TEST_PASSWORD` | `ChangeMeFirstBoot123!` | Plaintext — bcrypt'd by the backend |
+| `TEST_PASSWORD` | `Admin123!` | Plaintext — bcrypt'd by the backend for local-dev seed only |
 | `BASE_URL` | `http://localhost:3000` | Next.js console |
 | `LEGACY_URL` | `http://localhost:8000` | FastAPI console |
 | `AIRFLOW_URL` | `http://localhost:8082` | **Local compose uses :8082, not :8080** |

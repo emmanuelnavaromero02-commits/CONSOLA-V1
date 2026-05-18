@@ -13,6 +13,7 @@ from app.core.sql_guard import validate_kb_sql
 
 
 PREFIX = "s3://lakehouse/raw/sap_s4hana/"
+PREFIXES = (PREFIX, "s3://lakehouse/silver/sap_s4hana/")
 
 
 @pytest.mark.parametrize(
@@ -22,10 +23,11 @@ PREFIX = "s3://lakehouse/raw/sap_s4hana/"
         "WITH x AS (SELECT 1 AS ok) SELECT * FROM x",
         "SELECT * FROM read_parquet('s3://lakehouse/raw/sap_s4hana/BusinessPartner/*.parquet')",
         'SELECT * FROM read_parquet("s3://lakehouse/raw/sap_s4hana/JournalEntry/**/*.parquet")',
+        "SELECT * FROM read_parquet('s3://lakehouse/silver/sap_s4hana/kb_open_sales_orders/*.parquet')",
     ],
 )
 def test_validate_kb_sql_allows_safe_reads(sql):
-    assert validate_kb_sql(sql, PREFIX) == (True, None)
+    assert validate_kb_sql(sql, PREFIXES) == (True, None)
 
 
 @pytest.mark.parametrize(
@@ -37,12 +39,18 @@ def test_validate_kb_sql_allows_safe_reads(sql):
         ("SELECT 1; ATTACH 'foo.db' AS x", "Multiple statements"),
         ("SELECT * FROM x -- hide", "comments"),
         ("SELECT * FROM x /* hide */", "comments"),
-        ("SELECT * FROM read_parquet('file:///etc/passwd')", "S3 prefix"),
-        ("SELECT * FROM read_csv('file:///etc/passwd')", "S3 prefix"),
-        ("SELECT * FROM read_parquet('/etc/passwd')", "S3 prefix"),
-        ("SELECT * FROM read_parquet('../secret.parquet')", "S3 prefix"),
-        ("SELECT * FROM read_parquet('s3://other/raw/sap_s4hana/x.parquet')", PREFIX),
-        ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_hcm/x.parquet')", PREFIX),
+        ("SELECT * FROM read_parquet('file:///etc/passwd')", "S3 prefixes"),
+        ("SELECT * FROM read_csv('file:///etc/passwd')", "S3 prefixes"),
+        ("SELECT * FROM read_parquet('/etc/passwd')", "S3 prefixes"),
+        ("SELECT * FROM read_parquet('../secret.parquet')", "S3 prefixes"),
+        ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_s4hana/../secret.parquet')", "traversal"),
+        ("SELECT * FROM read_parquet('s3://other/raw/sap_s4hana/x.parquet')", "path must start"),
+        ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_hcm/x.parquet')", "path must start"),
+        ("SELECT * FROM read_parquet(['file:///etc/passwd'])", "direct string literal"),
+        ("SELECT * FROM parquet_scan('/etc/passwd')", "parquet_scan"),
+        ("SELECT * FROM read_csv_auto('/etc/passwd')", "read_csv_auto"),
+        ("SELECT * FROM read_json_auto('/etc/passwd')", "read_json_auto"),
+        ("SELECT * FROM read_text('/etc/passwd')", "read_text"),
         ("SELECT * FROM x WHERE a = 1 UPDATE y SET a=2", "UPDATE"),
         ("SELECT * FROM x PRAGMA database_list", "PRAGMA"),
         ("SELECT * FROM x COPY TO 'x'", "COPY"),
@@ -65,3 +73,10 @@ def test_query_kb_returns_sql_blocked_before_duckdb():
     result = query_kb("SELECT * FROM read_parquet('file:///etc/passwd')")
     assert result["error"] == "sql_blocked"
     assert "S3 prefix" in result["reason"]
+
+
+def test_limit_detection_ignores_strings():
+    from app.core.sql_guard import has_limit_clause
+
+    assert has_limit_clause("SELECT * FROM x LIMIT 10") is True
+    assert has_limit_clause("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_s4hana/unlimited.parquet')") is False

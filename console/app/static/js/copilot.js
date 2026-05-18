@@ -210,7 +210,7 @@
 
     const title = document.createElement("div");
     title.className = "copilot-approval-title";
-    title.textContent = "⚠️ Acción destructiva — requiere tu aprobación";
+    title.textContent = "Acción sensible — requiere tu aprobación";
     el.appendChild(title);
 
     for (const p of pending) {
@@ -289,7 +289,7 @@
         }
         if (m.tool_calls && Array.isArray(m.tool_calls)) {
           for (const c of m.tool_calls) {
-            if (c.risk_level === "destructive" && c.approval_key) {
+            if (c.approval_key) {
               // Render the pending approval card on history reload too.
               appendApprovalCard([c], m.id, id);
             } else {

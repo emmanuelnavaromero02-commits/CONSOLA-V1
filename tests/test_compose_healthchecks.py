@@ -95,7 +95,7 @@ def test_app_service_healthcheck_has_start_period(service):
 # Init / one-shot containers exit with status 0 by design; docker compose
 # represents their terminal state as Exited (0), not a healthy/unhealthy
 # pair, so a healthcheck on these would only confuse compose ps.
-_INIT_SERVICES = {"airflow-init", "superset-init"}
+_INIT_SERVICES = {"airflow-init", "superset-init", "postgres_dev_seed"}
 
 
 def _long_running_services():

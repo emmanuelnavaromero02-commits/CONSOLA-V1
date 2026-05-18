@@ -23,8 +23,7 @@
  * probe the FastAPI backend directly (debug helpers, health
  * checks). The login flow itself goes through FRONTEND_URL.
  *
- * Credentials live in tests-e2e/.env (gitignored) — see
- * .env.example for the documented defaults. The brief confirms
+ * Credentials live in tests-e2e/.env (gitignored). The brief confirms
  * emmanuel@local.ai / Admin123! EXIST in the local-dev DB.
  */
 import {
@@ -41,7 +40,7 @@ const FRONTEND_URL =
   process.env.BASE_URL || "http://localhost:3000";
 
 const TEST_EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
-const TEST_PASSWORD = process.env.TEST_PASSWORD || "Admin123!";
+const TEST_PASSWORD = process.env.TEST_PASSWORD || "";
 
 /**
  * Extract the csrf_token value from a Set-Cookie header (either a

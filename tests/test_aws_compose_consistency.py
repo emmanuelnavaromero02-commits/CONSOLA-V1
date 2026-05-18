@@ -106,13 +106,24 @@ def test_aws_application_images_use_ghcr_release_tags():
         assert f"ghcr.io/${{GHCR_OWNER:-emmanuelnavaromero02-commits}}/{service}:${{IMAGE_TAG:-v1.44.5}}" in src
 
 
+def test_aws_env_file_defaults_to_documented_deploy_env():
+    """The AWS runbook creates infra/terraform/deploy/.env. The compose
+    file may accept AWS_ENV_FILE override for local validation, but the
+    default must stay .env relative to the deploy compose file."""
+    src = AWS.read_text(encoding="utf-8")
+    assert "${AWS_ENV_FILE:-.env}" in src
+    assert "${AWS_ENV_FILE:-../../.env}" not in src
+
+
 def test_prod_compose_does_not_mount_dev_init_seeds():
     """AWS may mount schema migrations only; local development seeds must
     remain outside infra/init and outside the AWS compose mount."""
     aws_src = AWS.read_text(encoding="utf-8")
     local_src = LOCAL.read_text(encoding="utf-8")
     assert "init_dev" not in aws_src
-    assert "init_dev/15_local_dev_bootstrap.sql" in local_src
+    assert "postgres_dev_seed" in local_src
+    assert "./init_dev:/dev-seeds:ro" in local_src
+    assert "/docker-entrypoint-initdb.d/90_local_dev_bootstrap.sql" not in local_src
     assert not (REPO / "infra/init/15_local_dev_bootstrap.sql").exists()
     assert (REPO / "infra/init_dev/15_local_dev_bootstrap.sql").exists()
 
