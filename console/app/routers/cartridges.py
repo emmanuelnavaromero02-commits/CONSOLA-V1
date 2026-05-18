@@ -142,6 +142,15 @@ async def run_entity(cartridge: str, entity: str, request: Request, mode: str = 
             status="failed",
             metadata={"mode": mode, "status_code": r.status_code},
         )
+        if r.status_code >= 500:
+            raise HTTPException(
+                424,
+                {
+                    "error": "cartridge_not_ready",
+                    "message": "Cartridge extraction failed or is not configured.",
+                    "upstream_status": r.status_code,
+                },
+            )
         raise HTTPException(r.status_code, r.text[:500])
     user = getattr(request.state, "user", None) or {}
     await audit_service.record_event(
