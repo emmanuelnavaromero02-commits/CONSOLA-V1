@@ -7,7 +7,7 @@ fi
 
 DEPLOY_DIR="/opt/modecissions/infra/terraform/deploy"
 cd /opt/modecissions
-git pull
+sudo -u ubuntu git pull
 cd "${DEPLOY_DIR}"
 
 if [ ! -f .env ]; then

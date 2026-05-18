@@ -19,11 +19,11 @@ resource "aws_instance" "app" {
   }
 
   user_data = templatefile("${path.module}/user_data/app.sh.tpl", {
-    github_repo_url    = var.github_repo_url
-    deploy_private_key = var.deploy_private_key
-    aws_region         = var.aws_region
-    s3_bucket_name     = aws_s3_bucket.lakehouse.bucket
-    secret_arns        = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
+    github_repo_url              = var.github_repo_url
+    github_deploy_key_secret_arn = aws_secretsmanager_secret.app["GITHUB_DEPLOY_KEY"].arn
+    aws_region                   = var.aws_region
+    s3_bucket_name               = aws_s3_bucket.lakehouse.bucket
+    secret_arns                  = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
   })
 
   # Repo clone needs outbound internet via NAT GW

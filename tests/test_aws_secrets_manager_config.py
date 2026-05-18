@@ -29,6 +29,7 @@ REQUIRED_SECRET_NAMES = {
     "AIRFLOW_ADMIN_PASSWORD",
     "SUPERSET_SECRET_KEY",
     "SUPERSET_ADMIN_PASSWORD",
+    "GITHUB_DEPLOY_KEY",
 }
 
 
@@ -67,6 +68,12 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     assert "exit 1" in src
     assert "secretsmanager get-secret-value" in src
     assert "sleep \"$delay\"" in src
+    assert "optional_secrets" in src
+    assert "GHCR_OWNER" in src
+    assert "IMAGE_TAG" in src
+    assert "CONSOLE_URL" in src
+    assert "WORKSPACE_PUBLIC_URL" in src
+    assert 'printf \'%s="%s' in src
 
 
 def test_compose_aws_does_not_contain_secret_literals():
@@ -79,8 +86,28 @@ def test_compose_aws_does_not_contain_secret_literals():
     assert "aws-entrypoint.sh" in src
 
 
+def test_deploy_key_is_not_passed_through_terraform_state():
+    variables = _read(TF / "variables.tf")
+    ec2 = _read(TF / "ec2_app.tf")
+    userdata = _read(TF / "user_data/app.sh.tpl")
+    assert "deploy_private_key" not in variables
+    assert "deploy_private_key" not in ec2
+    assert "${deploy_private_key}" not in userdata
+    assert "GITHUB_DEPLOY_KEY" in ec2
+    assert "secretsmanager get-secret-value" in userdata
+
+
+def test_aws_env_example_does_not_document_static_aws_keys():
+    src = _read(DEPLOY / ".env.example")
+    assert "AWS_ACCESS_KEY_ID=" not in src
+    assert "AWS_SECRET_ACCESS_KEY=" not in src
+    assert "instance profile" in src
+
+
 def test_deploy_runbook_mentions_secretsmanager_not_nano_env():
     src = _read(DEPLOY / "DEPLOY-RUNBOOK.md")
     assert "AWS Secrets Manager" in src
     assert "scripts/aws-entrypoint.sh" in src
     assert "nano .env" not in src
+    assert "deploy_private_key" not in src
+    assert "terraform apply -target=aws_secretsmanager_secret.app" in src

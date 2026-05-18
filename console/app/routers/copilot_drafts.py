@@ -156,7 +156,10 @@ async def list_drafts(
     return {"drafts": [_serialize(r) for r in rows]}
 
 
-@router.post("/{draft_id}/send", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/{draft_id}/send",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.write"))],
+)
 async def send_draft(
     draft_id: str,
     request: Request,

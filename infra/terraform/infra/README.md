@@ -12,9 +12,15 @@ export AWS_REGION=us-east-1
 bash scripts/bootstrap_tf_backend.sh
 cd infra/terraform/infra
 terraform init
+terraform apply -target=aws_secretsmanager_secret.app
+# Load required Secrets Manager values, including modecissions/github_deploy_key.
 terraform plan
 terraform apply
 ```
+
+The full apply expects the runtime secrets to already have versions in
+AWS Secrets Manager. Do not pass deploy keys, API keys, or database
+passwords as Terraform variables; they would land in state.
 
 If you already have local state, `terraform init` will ask whether to
 migrate it into S3. Answer yes only after confirming the S3 bucket has

@@ -14,6 +14,8 @@ def _load_router():
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
+    siblings = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
+    sys.path[:] = [p for p in sys.path if not any(marker in p for marker in siblings)]
     sys.path.insert(0, str(REPO / "console"))
     from app.routers import copilot_workflows
     return copilot_workflows
@@ -33,6 +35,17 @@ def test_execute_endpoint_authenticated_only():
     }
     route = next(r for r in mod.plural_router.routes if r.path.endswith("/{workflow_id}/execute"))
     assert {"POST"} == route.methods
+    dep_names = {getattr(dep.dependency, "__name__", "") for dep in route.dependencies}
+    assert "require_csrf" in dep_names
+    assert any(getattr(dep.dependency, "required_permission", None) == "copilot.write" for dep in route.dependencies)
+
+
+def test_approve_endpoint_requires_execute_permission():
+    mod = _load_router()
+    route = next(r for r in mod.plural_router.routes if r.path.endswith("/{workflow_id}/steps/{step_idx}/approve"))
+    dep_names = {getattr(dep.dependency, "__name__", "") for dep in route.dependencies}
+    assert "require_csrf" in dep_names
+    assert any(getattr(dep.dependency, "required_permission", None) == "copilot.execute" for dep in route.dependencies)
 
 
 def test_execute_endpoint_returns_workflow_id(monkeypatch):

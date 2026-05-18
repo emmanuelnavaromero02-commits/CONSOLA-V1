@@ -9,12 +9,6 @@ variable "github_repo_url" {
   type        = string
 }
 
-variable "deploy_private_key" {
-  description = "Contents of the GitHub deploy private key to install on the App EC2"
-  type        = string
-  sensitive   = true
-}
-
 variable "key_pair_name" {
   description = "Name of the existing EC2 key pair to attach to both instances"
   type        = string

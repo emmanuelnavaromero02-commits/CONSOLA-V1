@@ -228,6 +228,8 @@ def require_permission(permission: str) -> Callable:
             raise HTTPException(status_code=403, detail=f"permission required: {permission}")
         return user
 
+    dependency.__name__ = f"require_permission_{permission.replace('.', '_')}"
+    dependency.required_permission = permission  # type: ignore[attr-defined]
     return dependency
 
 

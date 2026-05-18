@@ -24,6 +24,8 @@ def draft_sender_module(monkeypatch):
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
+    siblings = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
+    sys.path[:] = [p for p in sys.path if not any(marker in p for marker in siblings)]
     sys.path.insert(0, str(REPO / "console"))
     from app.services import draft_sender
 

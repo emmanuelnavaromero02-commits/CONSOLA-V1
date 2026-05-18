@@ -204,7 +204,8 @@ def test_drafts_router_exists_with_crud_surface():
     src = _read(path)
     assert "@router.post(\"\"" in src or "@router.post('')" in src
     assert "@router.get(\"\"" in src or "@router.get('')" in src
-    assert '@router.post("/{draft_id}/send"' in src
+    assert '"/{draft_id}/send"' in src
+    assert "async def send_draft" in src
 
 
 def test_drafts_router_validates_kind_and_tone():
@@ -255,7 +256,8 @@ def test_workflows_router_exists():
     assert "@router.post(\"\"" in src
     assert '@router.get("/{workflow_id}")' in src
     assert "@router.get(\"\"" in src
-    assert '@router.post("/{workflow_id}/cancel"' in src
+    assert '"/{workflow_id}/cancel"' in src
+    assert "async def cancel_workflow" in src
 
 
 def test_workflows_create_validates_intent():
@@ -289,18 +291,17 @@ def test_workflows_cancel_only_active():
     """Cancel transitions planning|running → cancelled. Terminal
     statuses (completed, failed, already cancelled) return 404 so
     a probe can't enumerate workflow states."""
-    src = _read(SRC / "routers/copilot_workflows.py")
-    body = re.search(
-        r"async def cancel_workflow.*?(?=^async def|\Z)",
-        src, re.DOTALL | re.MULTILINE,
-    )
-    assert body and "status IN ('planning', 'running')" in body.group(0)
+    src = _read(SRC / "services/workflow_executor.py")
+    assert "status IN ('planning', 'running', 'waiting_approval')" in src
+    assert "UPDATE workflow_runs" in src
+    assert "SET status = 'cancelled'" in src
 
 
 def test_workflows_router_audits():
-    src = _read(SRC / "routers/copilot_workflows.py")
-    assert "copilot.workflow.create" in src
-    assert "copilot.workflow.cancel" in src
+    router_src = _read(SRC / "routers/copilot_workflows.py")
+    executor_src = _read(SRC / "services/workflow_executor.py")
+    assert "copilot.workflow.create" in router_src
+    assert "copilot.workflow.cancel" in executor_src
 
 
 # ── main.py wiring ──────────────────────────────────────────────────────
@@ -387,6 +388,8 @@ def test_drafts_router_validates_uuid_path_params():
         src, re.DOTALL | re.MULTILINE,
     )
     assert send_body and "_validate_uuid" in send_body.group(0)
+    decorator_body = src[src.rfind("@router.post", 0, send_body.start()):send_body.start()]
+    assert "copilot.write" in decorator_body
 
 
 def test_workflows_404_strings_identical_across_branches():

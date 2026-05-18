@@ -176,7 +176,10 @@ async def list_workflows(user: dict = Depends(require_authenticated)):
     return {"workflows": [_serialize_run(r) for r in rows]}
 
 
-@router.post("/{workflow_id}/cancel", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/{workflow_id}/cancel",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.write"))],
+)
 async def cancel_workflow(
     workflow_id: str,
     user: dict = Depends(require_authenticated),
@@ -187,15 +190,17 @@ async def cancel_workflow(
     workflow returns 404 (no row updated) rather than 409 — the
     user-visible outcome is "it's not running anymore" either way.
 
-    The implementation moved to workflow_executor, preserving the
-    original contract: status IN ('planning', 'running') and audit
-    action copilot.workflow.cancel.
+    The implementation lives in workflow_executor; waiting approval is
+    cancellable as an active state, terminal states still return 404.
     """
     workflow_id = _validate_uuid(workflow_id, label="workflow_id")
     return await workflow_executor.cancel_workflow(workflow_id, user)
 
 
-@router.post("/{workflow_id}/execute", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/{workflow_id}/execute",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.write"))],
+)
 async def execute_workflow(
     workflow_id: str,
     user: dict = Depends(require_authenticated),
@@ -228,7 +233,10 @@ async def approve_workflow_step(
     return await workflow_executor.approve_step(workflow_id, step_idx, user)
 
 
-@plural_router.post("/{workflow_id}/execute", dependencies=[Depends(require_csrf)])
+@plural_router.post(
+    "/{workflow_id}/execute",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.write"))],
+)
 async def execute_workflow_plural(
     workflow_id: str,
     user: dict = Depends(require_authenticated),
@@ -246,7 +254,10 @@ async def workflow_status_plural(
     return await workflow_executor.workflow_status(workflow_id, user)
 
 
-@plural_router.post("/{workflow_id}/cancel", dependencies=[Depends(require_csrf)])
+@plural_router.post(
+    "/{workflow_id}/cancel",
+    dependencies=[Depends(require_csrf), Depends(require_permission("copilot.write"))],
+)
 async def cancel_workflow_plural(
     workflow_id: str,
     user: dict = Depends(require_authenticated),
@@ -448,14 +459,17 @@ async def plan_workflow(
 
     # Persist the plan + the per-step rows. Status flips to 'running'
     # so the (next-session) executor loop knows it can start.
-    await pool.execute(
+    claimed = await pool.fetchrow(
         """
         UPDATE workflow_runs
            SET plan = $2::jsonb, status = 'running'
-         WHERE id = $1
+         WHERE id = $1 AND user_id = $3 AND status = 'planning'
+        RETURNING id
         """,
-        workflow_id, json.dumps(plan),
+        workflow_id, json.dumps(plan), user["id"],
     )
+    if claimed is None:
+        raise HTTPException(409, "Workflow already planned or finished")
     for idx, step in enumerate(plan):
         await pool.execute(
             """

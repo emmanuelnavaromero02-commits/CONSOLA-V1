@@ -22,9 +22,24 @@ resource "aws_iam_role_policy_attachment" "app_ssm" {
 
 data "aws_iam_policy_document" "app_s3" {
   statement {
-    actions = ["s3:*"]
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
     resources = [
       aws_s3_bucket.lakehouse.arn,
+    ]
+  }
+
+  statement {
+    actions = [
+      "s3:AbortMultipartUpload",
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObject",
+    ]
+    resources = [
       "${aws_s3_bucket.lakehouse.arn}/*",
     ]
   }

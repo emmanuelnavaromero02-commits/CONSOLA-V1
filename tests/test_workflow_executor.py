@@ -19,6 +19,8 @@ def executor_module(monkeypatch):
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
+    siblings = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
+    sys.path[:] = [p for p in sys.path if not any(marker in p for marker in siblings)]
     sys.path.insert(0, str(REPO / "console"))
     from app.services import workflow_executor as mod
 
@@ -72,15 +74,48 @@ class FakePool:
             return None
         if q.startswith("UPDATE workflow_steps SET status = 'running'"):
             step = self._step(args[0], args[1])
+            if any(
+                prev["workflow_id"] == args[0]
+                and prev["step_idx"] < args[1]
+                and prev["status"] not in {"completed", "skipped"}
+                for prev in self.steps
+            ):
+                return None
             if step["status"] == "pending":
                 step["status"] = "running"
                 return copy.deepcopy(step)
+            return None
+        if q.startswith("UPDATE workflow_runs SET status = 'running', started_at"):
+            if self.workflow["status"] != "cancelled":
+                self.workflow["status"] = "running"
+                self.workflow["started_at"] = self.workflow["started_at"] or "now"
+                return {"status": "running"}
+            return None
+        if q.startswith("UPDATE workflow_runs SET status = 'running', current_step"):
+            if self.workflow["status"] != "cancelled":
+                self.workflow["status"] = "running"
+                self.workflow["current_step"] = args[1]
+                return {"status": "running"}
             return None
         if q.startswith("UPDATE workflow_steps SET status = 'completed', result = jsonb_set"):
             step = self._step(args[0], args[1])
             if step["status"] == "pending" and step["result"].get("approved") is True:
                 step["status"] = "completed"
                 step["result"]["human_review_completed"] = True
+                return {"id": step["id"]}
+            return None
+        if q.startswith("UPDATE workflow_steps SET status = 'completed'"):
+            step = self._step(args[0], args[1])
+            if step["status"] == "running" and self.workflow["status"] != "cancelled":
+                step["status"] = "completed"
+                step["result"] = json.loads(args[2])
+                return {"id": step["id"]}
+            return None
+        if q.startswith("UPDATE workflow_steps SET status = 'failed'"):
+            step = self._step(args[0], args[1])
+            if step["status"] == "running" and self.workflow["status"] != "cancelled":
+                step["status"] = "failed"
+                step["result"] = json.loads(args[2])
                 return {"id": step["id"]}
             return None
         if q.startswith("UPDATE workflow_steps SET status = 'pending'"):
@@ -94,6 +129,12 @@ class FakePool:
             if self.workflow["status"] != "cancelled":
                 self.workflow["status"] = "completed"
                 return {"status": "completed"}
+            return None
+        if q.startswith("UPDATE workflow_runs SET status = 'failed'"):
+            if self.workflow["status"] != "cancelled":
+                self.workflow["status"] = "failed"
+                self.workflow["error"] = args[1]
+                return {"status": "failed"}
             return None
         if q.startswith("UPDATE workflow_runs SET status = 'cancelled'"):
             if args[0] == self.workflow_id and args[1] == self.user_id and self.workflow["status"] in {"planning", "running", "waiting_approval"}:
@@ -121,34 +162,9 @@ class FakePool:
         if q.startswith("UPDATE workflow_runs SET step_results"):
             self.workflow["step_results"] = json.loads(args[1])
             return "UPDATE 1"
-        if q.startswith("UPDATE workflow_runs SET status = 'running', started_at"):
-            self.workflow["status"] = "running"
-            self.workflow["started_at"] = self.workflow["started_at"] or "now"
-            return "UPDATE 1"
-        if q.startswith("UPDATE workflow_runs SET status = 'running', current_step"):
-            self.workflow["status"] = "running"
-            self.workflow["current_step"] = args[1]
-            return "UPDATE 1"
         if q.startswith("UPDATE workflow_runs SET status = 'waiting_approval'"):
             self.workflow["status"] = "waiting_approval"
             self.workflow["current_step"] = args[1]
-            return "UPDATE 1"
-        if q.startswith("UPDATE workflow_runs SET status = 'failed'"):
-            self.workflow["status"] = "failed"
-            self.workflow["error"] = args[1]
-            return "UPDATE 1"
-        if q.startswith("UPDATE workflow_steps SET status = 'running'"):
-            self._step(args[0], args[1])["status"] = "running"
-            return "UPDATE 1"
-        if q.startswith("UPDATE workflow_steps SET status = 'completed'"):
-            step = self._step(args[0], args[1])
-            step["status"] = "completed"
-            step["result"] = json.loads(args[2])
-            return "UPDATE 1"
-        if q.startswith("UPDATE workflow_steps SET status = 'failed'"):
-            step = self._step(args[0], args[1])
-            step["status"] = "failed"
-            step["result"] = json.loads(args[2])
             return "UPDATE 1"
         if q.startswith("UPDATE workflow_steps SET status = 'waiting_approval'"):
             step = self._step(args[0], args[1])
@@ -236,16 +252,54 @@ def test_executor_retries_transient_failures(executor_module, fake_pool, user, m
 def test_executor_fails_fast_after_3_retries(executor_module, fake_pool, user, monkeypatch):
     fake_pool.add_step(0, "infra.airflow_list_dags")
     fake_pool.add_step(1, "infra.airflow_get_run_status")
+    calls = 0
 
     async def invoke(*_):
-        return {"error": "down"}
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("down")
 
     monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
     out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
 
+    assert calls == 3
     assert out["status"] == "failed"
     assert fake_pool.steps[0]["status"] == "failed"
     assert fake_pool.steps[1]["status"] == "skipped"
+
+
+def test_executor_does_not_retry_semantic_tool_errors(executor_module, fake_pool, user, monkeypatch):
+    fake_pool.add_step(0, "infra.airflow_list_dags")
+    calls = 0
+
+    async def invoke(*_):
+        nonlocal calls
+        calls += 1
+        return {"error": "permission denied"}
+
+    monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+
+    assert calls == 1
+    assert out["status"] == "failed"
+
+
+def test_executor_does_not_run_later_step_while_previous_is_running(executor_module, fake_pool, user, monkeypatch):
+    fake_pool.add_step(0, "infra.airflow_list_dags", status="running")
+    fake_pool.add_step(1, "infra.airflow_get_run_status")
+    invoked = False
+
+    async def invoke(*_):
+        nonlocal invoked
+        invoked = True
+        return {"ok": True}
+
+    monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+
+    assert out["status"] == "running"
+    assert fake_pool.steps[1]["status"] == "pending"
+    assert invoked is False
 
 
 def test_executor_does_not_trust_plan_args_approved(executor_module, fake_pool, user, monkeypatch):

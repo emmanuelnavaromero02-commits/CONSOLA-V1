@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euxo pipefail
+set -euo pipefail
 exec > >(tee -a /var/log/userdata.log) 2>&1
 
 echo "[userdata] start: $(date -Iseconds)"
@@ -29,9 +29,10 @@ echo "[userdata] docker ready: $(date -Iseconds)"
 mkdir -p /home/ubuntu/.ssh
 chmod 700 /home/ubuntu/.ssh
 
-cat > /home/ubuntu/.ssh/deploy_key <<'KEYEOF'
-${deploy_private_key}
-KEYEOF
+aws --region ${aws_region} secretsmanager get-secret-value \
+  --secret-id ${github_deploy_key_secret_arn} \
+  --query SecretString \
+  --output text > /home/ubuntu/.ssh/deploy_key
 chmod 600 /home/ubuntu/.ssh/deploy_key
 
 cat > /home/ubuntu/.ssh/config <<'SSHCONF'
@@ -51,11 +52,22 @@ sudo -u ubuntu git clone ${github_repo_url} /opt/modecissions
 echo "[userdata] repo cloned: $(date -Iseconds)"
 
 mkdir -p /etc/modecissions
-cat > /etc/modecissions/aws-entrypoint.env <<'ENVEOF'
+IMDS_TOKEN="$(curl -fsS -X PUT http://169.254.169.254/latest/api/token \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")"
+APP_PRIVATE_IP="$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
+  http://169.254.169.254/latest/meta-data/local-ipv4)"
+
+cat > /etc/modecissions/aws-entrypoint.env <<ENVEOF
 AWS_REGION=${aws_region}
 S3_BUCKET_NAME=${s3_bucket_name}
 AIRFLOW_ADMIN_USER=admin
 SUPERSET_ADMIN_USER=admin
+GHCR_OWNER=emmanuelnavaromero02-commits
+IMAGE_TAG=v1.44.5
+CONSOLE_URL=http://$APP_PRIVATE_IP:8000
+WORKSPACE_PUBLIC_URL=http://$APP_PRIVATE_IP:8001
+APP_BASE_URL=http://$APP_PRIVATE_IP:8000
+ALLOWED_ORIGINS=http://$APP_PRIVATE_IP:3000,http://$APP_PRIVATE_IP:8000,http://$APP_PRIVATE_IP:8001
 MODECISSIONS_ENV_FILE=/opt/modecissions/infra/terraform/deploy/.env
 %{ for name, arn in secret_arns ~}
 MODECISSIONS_SECRET_${name}_ARN=${arn}
