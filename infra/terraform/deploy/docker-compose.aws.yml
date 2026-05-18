@@ -1,5 +1,6 @@
 # ============================================================================
 # MODecissions — Producción AWS (EC2 single-node)
+# Secrets are injected by scripts/aws-entrypoint.sh at boot — DO NOT commit a .env to git.
 # Repo clonado en /opt/modecissions/   (este archivo: /opt/modecissions/deploy/)
 # postgres / postgres_gold → contenedores en la misma EC2 (paridad con local)
 # minio                    → S3
@@ -107,6 +108,7 @@ services:
       SMTP_USER:           ${SMTP_USER:-}
       SMTP_PASSWORD:       ${SMTP_PASSWORD:-}
       SMTP_FROM:           ${SMTP_FROM:-noreply@modecissions.local}
+      SMTP_FROM_DOMAIN:    ${SMTP_FROM_DOMAIN:-modecissions.local}
       SMTP_USE_TLS:        ${SMTP_USE_TLS:-false}
       APP_BASE_URL:        ${CONSOLE_URL:-http://localhost:8000}
       INVITE_TOKEN_TTL_HOURS: ${INVITE_TOKEN_TTL_HOURS:-72}

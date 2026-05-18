@@ -232,21 +232,39 @@ docker exec mode_postgres_gold psql -U postgres -p 5433 -c '\l'
 
 ---
 
-## 6. Configurar .env — 5 min
+## 6. Configurar AWS Secrets Manager — 5 min
+
+La EC2 App ya no se configura editando secretos en un `.env` manual.
+Terraform crea los secretos en AWS Secrets Manager y el boot de la EC2
+ejecuta `scripts/aws-entrypoint.sh`, que escribe
+`/opt/modecissions/infra/terraform/deploy/.env` con `umask 077`
+(solo root puede leerlo). Si falta un secreto obligatorio, el script
+falla y el stack no debe arrancar.
+
+Pasa los valores sensibles en `terraform apply` o en un
+`terraform.tfvars` local **no commiteado**:
 
 ```bash
-cd /opt/modecissions/infra/terraform/deploy
-cp .env.example .env
-nano .env
+terraform apply \
+  -var="postgres_password=<password-seguro>" \
+  -var="jwt_secret=<64+ chars>" \
+  -var="internal_api_key=<64+ chars>" \
+  -var="field_encryption_key=<fernet-key>" \
+  -var="anthropic_api_key=<opcional>" \
+  -var="gemini_api_key=<opcional>" \
+  -var="smtp_password=<opcional-si-MailHog>"
 ```
 
 | Variable                | Valor                                                    | De dónde sacarlo                       |
 |-------------------------|----------------------------------------------------------|----------------------------------------|
-| `POSTGRES_PASSWORD`     | el password que pasaste a `-var="postgres_password=..."` | tu gestor de secretos                  |
+| `POSTGRES_PASSWORD`     | `var.postgres_password`                                  | AWS Secrets Manager                    |
+| `JWT_SECRET_KEY`        | `var.jwt_secret`                                         | AWS Secrets Manager                    |
+| `INTERNAL_API_KEY`      | `var.internal_api_key`                                   | AWS Secrets Manager                    |
+| `FIELD_ENCRYPTION_KEY`  | `var.field_encryption_key`                               | AWS Secrets Manager                    |
 | `S3_BUCKET_NAME`        | `modecissions-lakehouse-xxx`                             | `terraform output s3_bucket_name`      |
 | `AWS_REGION`            | `us-east-1`                                              | tu región del apply                    |
-| `ANTHROPIC_API_KEY`     | `sk-ant-...`                                             | console.anthropic.com → API Keys       |
-| `GEMINI_API_KEY`        | (opcional, si quieres Gemini)                            | aistudio.google.com                    |
+| `ANTHROPIC_API_KEY`     | `var.anthropic_api_key`                                  | AWS Secrets Manager                    |
+| `GEMINI_API_KEY`        | `var.gemini_api_key`                                     | AWS Secrets Manager                    |
 | `CHAT_LLM_PROVIDER`     | `anthropic`                                              | fijo                                   |
 | `CHAT_LLM_MODEL`        | `claude-haiku-4-5-20251001`                              | fijo (ajustable)                       |
 | `SQL_LLM_MODEL`         | `claude-sonnet-4-6`                                      | fijo                                   |
@@ -260,11 +278,21 @@ nano .env
 | `WORKSPACE_PUBLIC_URL`  | `http://10.0.2.X:8001`                                   | misma IP, puerto 8001                  |
 | `SMTP_HOST`             | `mailhog` (default — captura emails sin enviarlos)       | mantener hasta tener SES configurado   |
 | `SMTP_PORT`             | `1025`                                                   | fijo para MailHog                      |
+| `SMTP_PASSWORD`         | `var.smtp_password`                                      | AWS Secrets Manager                    |
 | `SMTP_FROM`             | `noreply@modecissions.local`                             | fijo para MailHog                      |
 | `INVITE_TOKEN_TTL_HOURS`| `72`                                                     | fijo (ajustable)                       |
 | `RESET_TOKEN_TTL_HOURS` | `1`                                                      | fijo                                   |
 
-> Permisos: `chmod 600 /opt/modecissions/infra/terraform/deploy/.env` después de editarlo.
+Rotación de secretos:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id modecissions/jwt_secret_key \
+  --secret-string '<nuevo-valor>'
+sudo bash /opt/modecissions/scripts/aws-entrypoint.sh
+docker compose --env-file /opt/modecissions/infra/terraform/deploy/.env \
+  -f /opt/modecissions/infra/terraform/deploy/docker-compose.aws.yml up -d
+```
 
 ---
 

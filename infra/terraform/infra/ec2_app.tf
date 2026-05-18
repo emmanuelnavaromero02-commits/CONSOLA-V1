@@ -21,6 +21,8 @@ resource "aws_instance" "app" {
   user_data = templatefile("${path.module}/user_data/app.sh.tpl", {
     github_repo_url    = var.github_repo_url
     deploy_private_key = var.deploy_private_key
+    aws_region         = var.aws_region
+    secret_arns        = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
   })
 
   # Repo clone needs outbound internet via NAT GW

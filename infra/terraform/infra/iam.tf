@@ -49,6 +49,21 @@ resource "aws_iam_role_policy" "app_bedrock" {
   policy = data.aws_iam_policy_document.app_bedrock.json
 }
 
+data "aws_iam_policy_document" "app_secretsmanager" {
+  statement {
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      for secret in aws_secretsmanager_secret.app : secret.arn
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "app_secretsmanager" {
+  name   = "modecissions-app-secretsmanager"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.app_secretsmanager.json
+}
+
 resource "aws_iam_instance_profile" "app" {
   name = "modecissions-app-profile"
   role = aws_iam_role.app.name

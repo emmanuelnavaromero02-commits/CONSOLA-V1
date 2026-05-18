@@ -6,7 +6,7 @@ echo "[userdata] start: $(date -Iseconds)"
 
 apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ca-certificates curl gnupg postgresql-client git
+  ca-certificates curl gnupg postgresql-client git awscli
 echo "[userdata] base packages installed: $(date -Iseconds)"
 
 install -m 0755 -d /etc/apt/keyrings
@@ -49,6 +49,19 @@ mkdir -p /opt/modecissions
 chown ubuntu:ubuntu /opt/modecissions
 sudo -u ubuntu git clone ${github_repo_url} /opt/modecissions
 echo "[userdata] repo cloned: $(date -Iseconds)"
+
+mkdir -p /etc/modecissions
+cat > /etc/modecissions/aws-entrypoint.env <<'ENVEOF'
+AWS_REGION=${aws_region}
+MODECISSIONS_ENV_FILE=/opt/modecissions/infra/terraform/deploy/.env
+%{ for name, arn in secret_arns ~}
+MODECISSIONS_SECRET_${name}_ARN=${arn}
+%{ endfor ~}
+ENVEOF
+chmod 600 /etc/modecissions/aws-entrypoint.env
+
+bash /opt/modecissions/scripts/aws-entrypoint.sh
+echo "[userdata] secrets injected: $(date -Iseconds)"
 
 date -Iseconds > /opt/modecissions/READY
 chown ubuntu:ubuntu /opt/modecissions/READY
