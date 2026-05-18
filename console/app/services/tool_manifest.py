@@ -28,6 +28,8 @@ READ_ONLY_TOOLS = {
     # cartridge read-only (replicon + SAP same pattern)
     "list_entities", "get_schema", "preview", "get_run_status",
     "list_kbs", "get_watermarks",
+    # infra catalog read-only
+    "list_cartridges",
 }
 
 DESTRUCTIVE_TOOLS = {
