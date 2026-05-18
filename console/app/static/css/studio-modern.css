@@ -570,7 +570,7 @@ body.studio-modern-ready .studio-ai-toggle {
   z-index: 1199;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--blue);
+  background: var(--studio-accent);
   color: #fff;
   box-shadow: 0 14px 34px rgba(37, 99, 235, .28);
   cursor: pointer;
