@@ -93,7 +93,16 @@ Smoke:
 make smoke
 ```
 
-Salida esperada: `30/30 OK ✅`.
+Salida esperada: `34/34 OK ✅`.
+
+## Login local de desarrollo
+
+En el compose local, el seed de desarrollo crea el usuario
+`emmanuel@local.ai` con password `Admin123!`. Ese usuario existe solo
+para levantar y validar la consola local; en un entorno real usa el
+flujo de bootstrap admin de
+[02 Primer tenant](02_primer_tenant.md) y rota la contraseña antes de
+cargar datos sensibles.
 
 ## Sanity HTTP
 

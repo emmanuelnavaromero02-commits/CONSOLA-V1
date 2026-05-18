@@ -136,12 +136,13 @@ async def list_servers() -> list[dict]:
 async def register(server: dict) -> dict:
     pool = await _get_pool()
     tools = await _fetch_tools(server["url"])
+    tool_count = len(tools)
     await pool.execute("""
-        INSERT INTO mcp_servers (id, name, url, category, description, tools, healthy, last_seen)
-        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,NOW())
+        INSERT INTO mcp_servers (id, name, url, category, description, tools, tool_count, healthy, last_seen)
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,NOW())
         ON CONFLICT (id) DO UPDATE SET
             name=$2, url=$3, category=$4, description=$5,
-            tools=$6::jsonb, healthy=$7, last_seen=NOW()
+            tools=$6::jsonb, tool_count=$7, healthy=$8, last_seen=NOW()
     """,
         server["id"],
         server["name"],
@@ -149,9 +150,10 @@ async def register(server: dict) -> dict:
         server.get("category", "other"),
         server.get("description", ""),
         json.dumps(tools),
-        len(tools) > 0,
+        tool_count,
+        tool_count > 0,
     )
-    return {"registered": True, "tools": len(tools)}
+    return {"registered": True, "tools": tool_count, "tool_count": tool_count}
 
 
 async def deregister(server_id: str):
@@ -192,11 +194,12 @@ async def health_check_all() -> int:
     rows = await pool.fetch("SELECT id, url FROM mcp_servers")
     for row in rows:
         tools = await _fetch_tools(row["url"])
+        tool_count = len(tools)
         await pool.execute(
             """UPDATE mcp_servers
-               SET tools=$1::jsonb, healthy=$2, last_seen=NOW()
-               WHERE id=$3""",
-            json.dumps(tools), len(tools) > 0, row["id"],
+               SET tools=$1::jsonb, tool_count=$2, healthy=$3, last_seen=NOW()
+               WHERE id=$4""",
+            json.dumps(tools), tool_count, tool_count > 0, row["id"],
         )
     return len(rows)
 

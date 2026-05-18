@@ -283,7 +283,7 @@ def test_proxy_preserves_csrf_header_on_post():
 @requires_next
 def test_auth_login_via_proxy_returns_200_with_real_creds():
     """End-to-end happy path. Requires emmanuel@local.ai /
-    omega2026 to exist in the local-dev DB (per the sprint
+    Admin123! to exist in the local-dev DB (per the local
     brief)."""
     import http.cookiejar
     import json
@@ -303,7 +303,7 @@ def test_auth_login_via_proxy_returns_200_with_real_creds():
     # Step 2: POST /auth/login with the echoed header + cookie jar.
     body = json.dumps({
         "email": "emmanuel@local.ai",
-        "password": "omega2026",
+        "password": "Admin123!",
     }).encode()
     req = urllib.request.Request(
         f"{FRONTEND_URL}/auth/login",
@@ -319,7 +319,7 @@ def test_auth_login_via_proxy_returns_200_with_real_creds():
             assert r.status == 200, (
                 f"POST /auth/login returned {r.status}. The same-origin "
                 "proxy + CSRF dance round-tripped, but FastAPI rejected "
-                "the credentials. Verify emmanuel@local.ai / omega2026 "
+                "the credentials. Verify emmanuel@local.ai / Admin123! "
                 "still exists in the local DB."
             )
             session_cookies = [c.name for c in jar]

@@ -25,7 +25,7 @@
  *
  * Credentials live in tests-e2e/.env (gitignored) — see
  * .env.example for the documented defaults. The brief confirms
- * emmanuel@local.ai / omega2026 EXIST in the local-dev DB.
+ * emmanuel@local.ai / Admin123! EXIST in the local-dev DB.
  */
 import {
   test as base,
@@ -41,7 +41,7 @@ const FRONTEND_URL =
   process.env.BASE_URL || "http://localhost:3000";
 
 const TEST_EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
-const TEST_PASSWORD = process.env.TEST_PASSWORD || "omega2026";
+const TEST_PASSWORD = process.env.TEST_PASSWORD || "Admin123!";
 
 /**
  * Extract the csrf_token value from a Set-Cookie header (either a

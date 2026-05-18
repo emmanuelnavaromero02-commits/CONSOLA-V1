@@ -21,7 +21,7 @@ broken. The findings below capture the post-detection state with
    ```
 
 2. Make sure `tests-e2e/.env` carries the verified credentials
-   (`emmanuel@local.ai` / `omega2026`):
+   (`emmanuel@local.ai` / `Admin123!`):
    ```bash
    cp tests-e2e/.env.example tests-e2e/.env
    ```
@@ -145,7 +145,7 @@ lands the suite automatically flips those tests to passing.
     studio (50+), APIs (40+), UX/mobile/a11y (20+), MCP (36),
     copilot (22)
   - Categorised report digest via `scripts/e2e-report-summary.sh`
-- Real credentials: `emmanuel@local.ai` / `omega2026` (verified
+- Real credentials: `emmanuel@local.ai` / `Admin123!` (verified
   by Codex's diagnostic — the user EXISTS in the bootstrap DB).
 - Login endpoint: `POST /auth/login` (NOT `/api/auth/login`).
   CSRF flow: GET `/login` → echo `csrf_token` cookie value as
