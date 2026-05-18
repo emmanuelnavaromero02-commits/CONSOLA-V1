@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth
+from app.services import workflow_executor
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -37,6 +38,12 @@ def _validate_uuid(value: str, *, label: str) -> str:
 
 router = APIRouter(
     prefix="/api/copilot/workflow",
+    tags=["copilot-workflows"],
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+
+plural_router = APIRouter(
+    prefix="/api/copilot/workflows",
     tags=["copilot-workflows"],
     dependencies=[Depends(require_permission("copilot.use"))],
 )
@@ -181,34 +188,76 @@ async def cancel_workflow(
     user-visible outcome is "it's not running anymore" either way.
     """
     workflow_id = _validate_uuid(workflow_id, label="workflow_id")
-    pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        UPDATE workflow_runs
-           SET status = 'cancelled', finished_at = NOW()
-         WHERE id = $1 AND user_id = $2
-           AND status IN ('planning', 'running')
-        RETURNING id, status
-        """,
-        workflow_id, user["id"],
-    )
-    if row is None:
-        # v1.44.2 (R1 Security P2): IDENTICAL error string to the
-        # get_workflow 404 branch above. The pre-fix message
-        # ("…or already finished") leaked terminal-status info to a
-        # probe — comparing the two strings let a caller distinguish
-        # "this UUID is yours and terminal" from "this UUID isn't
-        # yours". Collapse to one string.
-        raise HTTPException(404, "Workflow not found")
-    await audit_service.record_event(
-        user_id=user["id"],
-        email=user.get("email"),
-        action="copilot.workflow.cancel",
-        resource_type="workflow_run",
-        resource_id=str(workflow_id),
-        status="success",
-    )
-    return {"ok": True, "workflow_id": workflow_id, "status": "cancelled"}
+    return await workflow_executor.cancel_workflow(workflow_id, user)
+
+
+@router.post("/{workflow_id}/execute", dependencies=[Depends(require_csrf)])
+async def execute_workflow(
+    workflow_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    return await workflow_executor.execute_workflow(workflow_id, user)
+
+
+@router.get("/{workflow_id}/status")
+async def workflow_status(
+    workflow_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    return await workflow_executor.workflow_status(workflow_id, user)
+
+
+@router.post("/{workflow_id}/steps/{step_idx}/approve", dependencies=[Depends(require_csrf)])
+async def approve_workflow_step(
+    workflow_id: str,
+    step_idx: int,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    if step_idx < 0:
+        raise HTTPException(400, "Invalid step index")
+    return await workflow_executor.approve_step(workflow_id, step_idx, user)
+
+
+@plural_router.post("/{workflow_id}/execute", dependencies=[Depends(require_csrf)])
+async def execute_workflow_plural(
+    workflow_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    return await workflow_executor.execute_workflow(workflow_id, user)
+
+
+@plural_router.get("/{workflow_id}/status")
+async def workflow_status_plural(
+    workflow_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    return await workflow_executor.workflow_status(workflow_id, user)
+
+
+@plural_router.post("/{workflow_id}/cancel", dependencies=[Depends(require_csrf)])
+async def cancel_workflow_plural(
+    workflow_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    return await workflow_executor.cancel_workflow(workflow_id, user)
+
+
+@plural_router.post("/{workflow_id}/steps/{step_idx}/approve", dependencies=[Depends(require_csrf)])
+async def approve_workflow_step_plural(
+    workflow_id: str,
+    step_idx: int,
+    user: dict = Depends(require_authenticated),
+):
+    workflow_id = _validate_uuid(workflow_id, label="workflow_id")
+    if step_idx < 0:
+        raise HTTPException(400, "Invalid step index")
+    return await workflow_executor.approve_step(workflow_id, step_idx, user)
 
 
 # ── v1.44.3 (Tarea D): LLM-backed planning ─────────────────────────────
