@@ -39,6 +39,7 @@ export const state = {
 
   _runsByEntity: {},
   _extractingEntities: {},
+  _newEntityRequested: false,
 
   _selectedDS: null,    // dataset object currently in editor
   _dsEditorDirty: false,
