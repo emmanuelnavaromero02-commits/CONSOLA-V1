@@ -15,6 +15,8 @@ REPO = Path(__file__).resolve().parents[1]
 STUDIO_HTML = REPO / "console/app/static/studio.html"
 BRIDGE_JS = REPO / "console/app/static/js/studio/action-bridge.js"
 BOOTSTRAP_JS = REPO / "console/app/static/js/studio/legacy-bootstrap.js"
+LEGACY_JS = REPO / "console/app/static/js/studio/legacy.js"
+STUDIO_MODERN_CSS = REPO / "console/app/static/css/studio-modern.css"
 
 
 EXPECTED_STEP_ACTIONS = [
@@ -103,3 +105,55 @@ def test_bridge_does_not_await_in_step_handler():
     block = re.search(r"function patchedGoStep[\s\S]*?return original\.apply", src)
     assert block
     assert "await studioAction" not in block.group(0)
+
+
+def test_spec_upload_zone_is_wired_without_inline_handlers():
+    src = _read(LEGACY_JS)
+    block = re.search(r"export function makeUploadZone[\s\S]*?`;\n    \}", src)
+    assert block
+    assert "onclick=" not in block.group(0)
+    assert "ondrop=" not in block.group(0)
+    assert "onchange=" not in block.group(0)
+    bridge = _read(BRIDGE_JS)
+    assert "hookUploadZones" in bridge
+    assert "handleSpecFile" in bridge
+    assert "handleSpecDrop" in bridge
+    css = _read(REPO / "console/app/static/css/studio.css")
+    assert ".upload-zone input[type=file]" in css
+    assert "opacity: 0" in css
+
+
+def test_dag_templates_are_wired_without_inline_handlers():
+    src = _read(LEGACY_JS)
+    block = re.search(r"export async function loadDagTemplates[\s\S]*?catch\(e\)", src)
+    assert block
+    assert "onclick=" not in block.group(0)
+    assert "data-template-id" in block.group(0)
+    bridge = _read(BRIDGE_JS)
+    assert "hookRuntimeActions" in bridge
+    assert "applyDagTemplate" in bridge
+
+
+def test_deploy_button_has_csp_safe_bridge_handler():
+    src = _read(BRIDGE_JS)
+    assert "#btn-deploy" in src
+    assert "deployDag" in src
+    assert "stopInlineHandler(event)" in src
+
+
+def test_studio_assistant_is_visible_in_modern_ui():
+    src = _read(STUDIO_MODERN_CSS)
+    hide_rule = re.search(
+        r"body\.studio-modern-ready #ai-panel,[\s\S]*?display:\s*none",
+        src,
+    )
+    assert hide_rule is None
+    assert "body.studio-modern-ready #ai-panel" in src
+    assert "display: flex !important" in src
+
+
+def test_studio_assistant_stream_uses_csrf_headers():
+    src = _read(LEGACY_JS)
+    block = re.search(r"export async function aiSend[\s\S]*?fetch\('/studio/chat/stream'[\s\S]*?body: JSON\.stringify", src)
+    assert block
+    assert "headers: jsonHeaders()" in block.group(0)

@@ -139,13 +139,9 @@ import { state } from './legacy-state.js';
 
     export function makeUploadZone(containerId, label, sublabel) {
       return `
-        <div class="upload-zone" id="${containerId}"
-             onclick="document.getElementById('fi-${containerId}').click()"
-             ondragover="event.preventDefault();this.classList.add('drag-over')"
-             ondragleave="this.classList.remove('drag-over')"
-             ondrop="handleSpecDrop(event,'${containerId}')">
+        <div class="upload-zone" id="${containerId}" data-upload-zone="${containerId}">
           <input type="file" id="fi-${containerId}" accept=".yaml,.yml,.json,.xml,.wsdl"
-                 onchange="handleSpecFile(this,'${containerId}')">
+                 data-upload-input="${containerId}">
           <div class="uz-icon">↑</div>
           <div class="uz-label">${esc(label)}</div>
           <div class="uz-sub">${esc(sublabel)}</div>
@@ -2814,7 +2810,7 @@ FROM silver_${entity || 'entity'}`;
       try {
         const r = await fetch('/studio/chat/stream', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: jsonHeaders(),
           body: JSON.stringify({
             message:      msg,
             history:      state.aiHistory,
@@ -4011,7 +4007,7 @@ FROM silver_${entity || 'entity'}`;
           return;
         }
         list.innerHTML = tpls.map(t => `
-          <div class="tpl-item" onclick="applyDagTemplate(${escJsArg(t.id)})">
+          <div class="tpl-item" data-template-id="${esc(t.id)}" role="button" tabindex="0">
             <div class="tpl-item-name">◈ ${esc(t.name)}</div>
             <div class="tpl-item-desc">${esc(t.description)}</div>
             <div class="tpl-tags">${(t.tags||[]).map(tag => `<span class="tpl-tag">${esc(tag)}</span>`).join('')}</div>

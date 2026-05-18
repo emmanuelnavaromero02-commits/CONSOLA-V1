@@ -130,7 +130,7 @@ function renderTemplates(data) {
   }
   panel.innerHTML = data.templates.map(t => `
     <button class="btn btn-sm" type="button" style="display:block;width:100%;margin:5px 0;text-align:left"
-            onclick="applyDagTemplate && applyDagTemplate('${String(t.id || "").replace(/'/g, "\\'")}')">
+            data-template-id="${escapeHtml(t.id || "")}">
       ${escapeHtml(t.name || t.id || "template")}
     </button>
   `).join("");
@@ -258,9 +258,121 @@ function hookClicks() {
   }, true);
 }
 
+function stopInlineHandler(event) {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}
+
+function uploadZoneId(zone) {
+  return zone?.getAttribute("data-upload-zone") || zone?.id || "";
+}
+
+function hookUploadZones() {
+  if (document.__studioUploadZoneHookInstalled) return;
+  document.__studioUploadZoneHookInstalled = true;
+
+  document.addEventListener("click", event => {
+    if (event.target instanceof Element && event.target.matches("input[type='file'][data-upload-input]")) {
+      return;
+    }
+    const zone = event.target instanceof Element
+      ? event.target.closest(".upload-zone[data-upload-zone], .upload-zone[id]")
+      : null;
+    if (!zone) return;
+    stopInlineHandler(event);
+    const id = uploadZoneId(zone);
+    const input = document.getElementById(`fi-${id}`);
+    if (input) input.click();
+  }, true);
+
+  document.addEventListener("dragover", event => {
+    const zone = event.target instanceof Element
+      ? event.target.closest(".upload-zone[data-upload-zone], .upload-zone[id]")
+      : null;
+    if (!zone) return;
+    stopInlineHandler(event);
+    zone.classList.add("drag-over");
+  }, true);
+
+  document.addEventListener("dragleave", event => {
+    const zone = event.target instanceof Element
+      ? event.target.closest(".upload-zone[data-upload-zone], .upload-zone[id]")
+      : null;
+    if (!zone) return;
+    stopInlineHandler(event);
+    zone.classList.remove("drag-over");
+  }, true);
+
+  document.addEventListener("drop", event => {
+    const zone = event.target instanceof Element
+      ? event.target.closest(".upload-zone[data-upload-zone], .upload-zone[id]")
+      : null;
+    if (!zone) return;
+    stopInlineHandler(event);
+    const id = uploadZoneId(zone);
+    if (typeof window.handleSpecDrop === "function") {
+      window.handleSpecDrop(event, id);
+    }
+  }, true);
+
+  document.addEventListener("change", event => {
+    const input = event.target instanceof Element
+      ? event.target.closest("input[type='file'][data-upload-input], input[type='file'][id^='fi-']")
+      : null;
+    if (!input) return;
+    stopInlineHandler(event);
+    const id = input.getAttribute("data-upload-input") || String(input.id || "").replace(/^fi-/, "");
+    if (typeof window.handleSpecFile === "function") {
+      window.handleSpecFile(input, id);
+    }
+  }, true);
+}
+
+function hookRuntimeActions() {
+  if (document.__studioRuntimeActionHookInstalled) return;
+  document.__studioRuntimeActionHookInstalled = true;
+
+  document.addEventListener("click", event => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+
+    const template = target.closest("[data-template-id]");
+    if (template) {
+      stopInlineHandler(event);
+      const id = template.getAttribute("data-template-id");
+      if (id && typeof window.applyDagTemplate === "function") {
+        window.applyDagTemplate(id);
+      }
+      return;
+    }
+
+    const deploy = target.closest("#btn-deploy");
+    if (deploy) {
+      stopInlineHandler(event);
+      if (typeof window.deployDag === "function") {
+        window.deployDag();
+      }
+    }
+  }, true);
+
+  document.addEventListener("keydown", event => {
+    const template = event.target instanceof Element
+      ? event.target.closest("[data-template-id]")
+      : null;
+    if (!template || !["Enter", " "].includes(event.key)) return;
+    stopInlineHandler(event);
+    const id = template.getAttribute("data-template-id");
+    if (id && typeof window.applyDagTemplate === "function") {
+      window.applyDagTemplate(id);
+    }
+  }, true);
+}
+
 function boot() {
   hookGoStep();
   hookClicks();
+  hookUploadZones();
+  hookRuntimeActions();
 }
 
 if (document.readyState === "loading") {
