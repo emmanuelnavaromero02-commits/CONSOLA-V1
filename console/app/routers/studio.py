@@ -491,18 +491,17 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
     if table_name not in allowed_tables:
         raise HTTPException(400, f"Table '{table_name}' is not a registered Gold/Master dataset")
 
-    dbs = await client.list_databases()
-    if database_id:
-        if not any(str(db.get("id")) == str(database_id) for db in dbs):
-            raise HTTPException(400, "database_id is not registered in Superset")
-    else:
-        match = next((db for db in dbs if db.get("name") in {"modecissions_gold", "Postgres Gold"}), None)
-        match = match or (dbs[0] if dbs else None)
-        if not match:
-            raise HTTPException(503, "No Superset database connection registered")
-        database_id = match["id"]
-
     try:
+        dbs = await client.list_databases()
+        if database_id:
+            if not any(str(db.get("id")) == str(database_id) for db in dbs):
+                raise HTTPException(400, "database_id is not registered in Superset")
+        else:
+            match = next((db for db in dbs if db.get("name") in {"modecissions_gold", "Postgres Gold"}), None)
+            match = match or (dbs[0] if dbs else None)
+            if not match:
+                raise HTTPException(503, "No Superset database connection registered")
+            database_id = match["id"]
         result = await client.create_dataset(int(database_id), table_name, schema=schema)
     except superset_client.SupersetConfigError as exc:
         raise HTTPException(503, str(exc)) from exc

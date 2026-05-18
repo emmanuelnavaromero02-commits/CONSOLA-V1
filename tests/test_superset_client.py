@@ -158,6 +158,31 @@ def test_dataset_endpoint_returns_503_without_config(studio_client, monkeypatch)
     assert "Superset not configured" in response.text
 
 
+def test_dataset_endpoint_returns_503_when_superset_unreachable(studio_client, monkeypatch):
+    client, studio_router = studio_client
+
+    class FailingClient:
+        configured = True
+
+        async def list_databases(self):
+            raise studio_router.superset_client.SupersetRequestError(503, "Superset connection failed")
+
+    async def fake_datasets():
+        return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
+
+    monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FailingClient())
+    monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
+
+    response = client.post(
+        "/api/studio/superset/dataset",
+        json={"table_name": "gold_hours"},
+        headers={"X-CSRF-Token": CSRF},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Superset connection failed"
+
+
 def test_dataset_endpoint_audits_creation(studio_client, monkeypatch):
     client, studio_router = studio_client
     audits = []
