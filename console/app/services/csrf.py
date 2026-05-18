@@ -28,6 +28,7 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 CSRF_BODY_FIELD = "_csrf"
 # Bytes-of-entropy in the random token.  32 bytes → ~43-char URL-safe string.
 _TOKEN_BYTES = 32
+_INTERNAL_CSRF_EXEMPT_PREFIXES = ("/monitoring/mcp/", "/studio_ops/mcp/")
 
 
 def generate_csrf_token() -> str:
@@ -84,6 +85,9 @@ def verify_csrf(request: Request, body_token: Optional[str] = None) -> bool:
 
 def _valid_internal_service_request(request: Request) -> bool:
     """Server-to-server calls authenticate with INTERNAL_API_KEY, not cookies."""
+    path = request.url.path
+    if not path.startswith(_INTERNAL_CSRF_EXEMPT_PREFIXES):
+        return False
     service = (request.headers.get("x-internal-service") or "").strip().lower()
     supplied = (
         request.headers.get("x-api-key")

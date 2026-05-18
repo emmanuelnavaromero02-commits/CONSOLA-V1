@@ -393,6 +393,16 @@ async def _gemini_generate_with_retry(*, model: str, contents, config):
 _gemini_cache_by_sig: dict[str, str] = {}  # hash(system+tools) → cache resource name
 
 
+def _gemini_cached_content_is_stale(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "cachedcontent not found" in msg
+        or "cached content not found" in msg
+        or ("cached_content" in msg and "not found" in msg)
+        or ("cachedcontent" in msg and "permission_denied" in msg)
+    )
+
+
 def _gemini_cache_signature(system: str, tools: list[dict]) -> str:
     import hashlib
     blob = system + "|" + "|".join(sorted(t["name"] for t in tools))
@@ -424,6 +434,13 @@ async def _get_or_create_gemini_cache(
         return cache.name
     except Exception:
         return None  # too few tokens, model unsupported, or quota — fall back
+
+
+def _gemini_inline_config(system: str, gemini_tools: list | None):
+    return gtypes.GenerateContentConfig(
+        system_instruction=system,
+        tools=gemini_tools,
+    )
 
 
 def _proto_args_to_plain_dict(args) -> dict:
@@ -477,7 +494,8 @@ async def _gemini_chat(
     ]
     gemini_tools = [gtypes.Tool(function_declarations=fn_decls)] if fn_decls else None
 
-    # Try to use prompt cache (system + tools); fall back to inline if unavailable
+    # Try to use prompt cache (system + tools); fall back to inline if unavailable.
+    cache_sig = _gemini_cache_signature(system, tools) if GEMINI_CACHE_ENABLED else None
     cache_name = (
         await _get_or_create_gemini_cache(system, tools, gemini_tools)
         if GEMINI_CACHE_ENABLED else None
@@ -485,10 +503,7 @@ async def _gemini_chat(
     if cache_name:
         gen_config = gtypes.GenerateContentConfig(cached_content=cache_name)
     else:
-        gen_config = gtypes.GenerateContentConfig(
-            system_instruction=system,
-            tools=gemini_tools,
-        )
+        gen_config = _gemini_inline_config(system, gemini_tools)
 
     # v1.43.1 R1 LLM-F1: walk every message, NOT just string-content
     # ones. _load_history rehydrates prior turns as Anthropic-shape
@@ -553,11 +568,24 @@ async def _gemini_chat(
     synthetic: list[dict] = list(messages)
 
     for _i in range(20):
-        response = await _gemini_generate_with_retry(
-            model=CHAT_MODEL,
-            contents=contents,
-            config=gen_config,
-        )
+        try:
+            response = await _gemini_generate_with_retry(
+                model=CHAT_MODEL,
+                contents=contents,
+                config=gen_config,
+            )
+        except Exception as exc:
+            if cache_name and cache_sig and _gemini_cached_content_is_stale(exc):
+                _gemini_cache_by_sig.pop(cache_sig, None)
+                cache_name = None
+                gen_config = _gemini_inline_config(system, gemini_tools)
+                response = await _gemini_generate_with_retry(
+                    model=CHAT_MODEL,
+                    contents=contents,
+                    config=gen_config,
+                )
+            else:
+                raise
 
         if response.usage_metadata:
             um = response.usage_metadata
