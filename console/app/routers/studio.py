@@ -500,7 +500,7 @@ async def rag(user: dict = Depends(require_authenticated)):
     return {"sources": sources, "corpus": sources, "docs_indexed": len(sources) if isinstance(sources, list) else 0}
 
 
-@router.post("/assistant", dependencies=[Depends(require_csrf)])
+@router.post("/assistant", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
 async def assistant(request: Request, user: dict = Depends(require_authenticated)):
     body = await _optional_json(request)
     message = (body.get("message") or body.get("prompt") or "").strip()
@@ -514,6 +514,15 @@ async def assistant(request: Request, user: dict = Depends(require_authenticated
         step=int(body.get("step") or 1),
         manifest=manifest,
         actor_role=user.get("workspace_role") or user.get("role"),
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="studio.assistant.message",
+        resource_type="studio_assistant",
+        resource_id=cartridge_id,
+        status="success",
+        metadata={"step": int(body.get("step") or 1), "message_len": len(message)},
     )
     result["session_id"] = body.get("session_id")
     return result

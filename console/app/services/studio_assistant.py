@@ -14,6 +14,60 @@ from typing import Callable
 
 from app.services import mcp_registry, llm_client
 
+
+STUDIO_TOOLS_WHITELIST = {
+    "list_cartridges",
+    "cartridge_get_manifest",
+    "cartridge_list_entities",
+    "cartridge_get_schema",
+    "cartridge_search_term",
+    "cartridge_get_semantic",
+    "cartridge_list_jobs",
+    "cartridge_list_kbs",
+    "minio_list_cartridge_specs",
+    "minio_read_spec",
+    "minio_upload_spec",
+    "airflow_list_dags",
+    "airflow_create_dag",
+    "airflow_trigger_dag",
+    "airflow_get_run_status",
+    "airflow_get_task_logs",
+    "airflow_list_dag_runs",
+    "dag_save_source",
+    "dag_get_source",
+    "cartridge_preview",
+    "cartridge_extract",
+    "cartridge_extract_all",
+    "cartridge_get_run_logs",
+    "cartridge_get_job_status",
+    "list_entities",
+    "rename_entity",
+    "update_entity",
+    "get_entity_logs",
+    "list_sources",
+    "preview_source",
+    "get_source_partitions",
+    "generate_transform",
+    "preview_transform",
+    "save_dataset",
+    "materialize",
+    "list_datasets",
+    "get_schema",
+    "query_dataset",
+    "list_datasets_with_schemas",
+    "get_lineage",
+    "superset_list_databases",
+    "superset_create_dataset",
+    "superset_list_datasets",
+    "get_data_catalog",
+    "upsert_catalog_entries",
+    "register_relationship",
+    "cartridge_sync_semantic_to_rag",
+    "search_rag",
+    "ingest_document",
+    "list_rag_sources",
+}
+
 # ── Step metadata (aligned with studio.html nav) ──────────────────────────────
 
 STEP_LABELS = {
@@ -167,6 +221,12 @@ def filter_tools_for_step(tools: list[dict], step: int) -> list[dict]:
             out.append(t)
     return out
 
+
+def filter_tools_by_whitelist(tools: list[dict], whitelist: set[str] | None) -> list[dict]:
+    if not whitelist:
+        return tools
+    return [t for t in tools if _bare_tool_name(t["name"]) in whitelist]
+
 STEP_INSTRUCTIONS = {
     1: """\
 Step RESUMEN — visión general del cartucho activo.
@@ -303,6 +363,8 @@ Eres el asistente constructor de cartuchos en MODecissions Studio.
 Un cartucho es un conector portable que define: conexión al origen, extracción de
 entidades, refinamiento Bronze→Silver→Gold, publicación de dashboards y vocabulario
 de negocio.
+Tu ámbito es SOLO Studio. Si el usuario pide algo fuera de diseñar entidades,
+DAGs, datasets, Superset, semántica o RAG de Studio, redirígelo al copiloto global.
 </rol>
 
 <reglas_criticas>
@@ -412,6 +474,7 @@ async def chat(
     manifest: dict | None = None,
     on_event: Callable | None = None,
     actor_role: str | None = None,
+    tools_whitelist: set[str] | None = None,
 ) -> dict:
     servers = await mcp_registry.list_servers()
     tools:           list[dict]       = []
@@ -432,6 +495,7 @@ async def chat(
     # Tool slimming: only expose tools relevant to the active step + common ones.
     # Reduces ~60 tools to 10–20 per call, sharply improving LLM accuracy.
     tools = filter_tools_for_step(tools, step)
+    tools = filter_tools_by_whitelist(tools, tools_whitelist or STUDIO_TOOLS_WHITELIST)
     tools = [t for t in tools if is_tool_allowed_for_role(actor_role, t["name"])]
 
     # Keep full history (including tool call/result blocks) so the model
@@ -446,6 +510,8 @@ async def chat(
 
     async def _invoke_tool(srv: str, tool: str, args: dict):
         full_name = f"{srv}__{tool}"
+        if _bare_tool_name(full_name) not in (tools_whitelist or STUDIO_TOOLS_WHITELIST):
+            return {"error": f"Forbidden: tool {tool} is outside Studio scope"}
         if not is_tool_allowed_for_role(actor_role, full_name):
             return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
         return await mcp_registry.invoke(srv, tool, args)
