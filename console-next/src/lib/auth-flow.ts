@@ -50,6 +50,16 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 2_000);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 async function readCookieEventually(name: string): Promise<string | null> {
   for (let i = 0; i < 8; i++) {
     const value = readCookie(name);
@@ -76,7 +86,7 @@ export async function loginUser(email: string, password: string): Promise<unknow
   // route lives under a different path so they don't collide.
   let csrfResponse: Response;
   try {
-    csrfResponse = await fetch("/login-proxy", {
+    csrfResponse = await fetchWithTimeout("/login-proxy", {
       method: "GET",
       credentials: "include",
     });
@@ -107,7 +117,7 @@ export async function loginUser(email: string, password: string): Promise<unknow
   // the /auth/[...path] catch-all proxy.
   let response: Response;
   try {
-    response = await fetch("/auth/login", {
+    response = await fetchWithTimeout("/auth/login", {
       method: "POST",
       credentials: "include",
       headers: {
