@@ -39,6 +39,10 @@ def _normalise_spec(name: str, cartridge: str, spec: dict[str, Any] | None) -> d
     raw = dict(spec or {})
     raw["name"] = _clean_identifier(str(raw.get("name") or raw.get("entity") or name), label="entity")
     raw["cartridge"] = _clean_identifier(str(raw.get("cartridge") or cartridge), label="cartridge")
+    if raw["name"] != name:
+        raise ValueError("spec.name must match requested entity")
+    if raw["cartridge"] != cartridge:
+        raise ValueError("spec.cartridge must match requested cartridge")
     fields = raw.get("fields")
     if fields is None:
         fields = raw.get("columns")
@@ -107,7 +111,7 @@ def _iter_entity_specs(parsed: Any, default_cartridge: str | None = None) -> lis
 
     if default:
         for item in entities:
-            item.setdefault("cartridge", default)
+            item["cartridge"] = default
     return entities
 
 
@@ -126,6 +130,37 @@ async def _ensure_cartridge(cartridge: str) -> dict:
     if not manifest:
         raise UnknownCartridgeError(f"Cartridge '{cartridge}' not found")
     return manifest
+
+
+async def _sync_entity_config(conn, cartridge_id: str, entity: str, spec: dict[str, Any]) -> None:
+    fields = _entity_config_fields(spec)
+    await conn.execute(
+        """
+        INSERT INTO entity_config
+            (cartridge_id, entity, display_name, mode, primary_key,
+             dag_id, trigger_type, cron_expression, description, enabled)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (cartridge_id, entity) DO UPDATE SET
+            display_name = EXCLUDED.display_name,
+            mode = EXCLUDED.mode,
+            primary_key = EXCLUDED.primary_key,
+            dag_id = EXCLUDED.dag_id,
+            trigger_type = EXCLUDED.trigger_type,
+            cron_expression = EXCLUDED.cron_expression,
+            description = EXCLUDED.description,
+            enabled = EXCLUDED.enabled
+        """,
+        cartridge_id,
+        entity,
+        fields.get("display_name"),
+        fields.get("mode", "full"),
+        fields.get("primary_key"),
+        fields.get("dag_id"),
+        fields.get("trigger_type", "manual"),
+        fields.get("cron_expression"),
+        fields.get("description", ""),
+        fields.get("enabled", True),
+    )
 
 
 async def list_entities(cartridge: str | None = None) -> list[dict[str, Any]]:
@@ -197,28 +232,28 @@ async def create_entity(name: str, cartridge: str, spec: dict[str, Any] | None, 
     normalised = _normalise_spec(entity_name, cartridge_id, spec)
 
     pool = await auth.pool()
+    conn = await pool.acquire()
     try:
-        row = await pool.fetchrow(
-            """
-            INSERT INTO studio_entities (name, cartridge, spec, created_by)
-            VALUES ($1, $2, $3::jsonb, $4)
-            RETURNING id, name, cartridge, spec, created_by, created_at, updated_at
-            """,
-            normalised["name"],
-            normalised["cartridge"],
-            json.dumps(normalised),
-            user.get("id"),
-        )
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO studio_entities (name, cartridge, spec, created_by)
+                VALUES ($1, $2, $3::jsonb, $4)
+                RETURNING id, name, cartridge, spec, created_by, created_at, updated_at
+                """,
+                normalised["name"],
+                normalised["cartridge"],
+                json.dumps(normalised),
+                user.get("id"),
+            )
+            await _sync_entity_config(conn, normalised["cartridge"], normalised["name"], normalised)
     except asyncpg.UniqueViolationError as exc:
         raise DuplicateEntityError(
             f"Entity '{normalised['name']}' already exists for cartridge '{normalised['cartridge']}'"
         ) from exc
+    finally:
+        await pool.release(conn)
 
-    await cartridge_service.upsert_entity(
-        normalised["cartridge"],
-        normalised["name"],
-        **_entity_config_fields(normalised),
-    )
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

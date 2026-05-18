@@ -35,6 +35,24 @@ class FakePool:
         self.duplicate = duplicate
         self.fetch_calls = []
         self.fetchrow_calls = []
+        self.execute_calls = []
+        self.released = False
+
+    async def acquire(self):
+        return self
+
+    async def release(self, conn):
+        assert conn is self
+        self.released = True
+
+    def transaction(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 
     async def fetch(self, query, *args):
         self.fetch_calls.append((query, args))
@@ -55,6 +73,10 @@ class FakePool:
             "created_at": None,
             "updated_at": None,
         }
+
+    async def execute(self, query, *args):
+        self.execute_calls.append((query, args))
+        return "INSERT 0 1"
 
 
 def _manifest(entity="TimeEntry"):
@@ -119,21 +141,16 @@ async def test_list_entities_filtered_by_cartridge(studio_entities, monkeypatch)
 @pytest.mark.asyncio
 async def test_create_entity_persists_and_audits(studio_entities, monkeypatch):
     pool = FakePool()
-    upserts = []
     audits = []
 
     async def fake_get_cartridge(cartridge):
         return _manifest()
-
-    async def fake_upsert(cartridge, entity, **fields):
-        upserts.append((cartridge, entity, fields))
 
     async def fake_audit(**kwargs):
         audits.append(kwargs)
 
     monkeypatch.setattr(studio_entities.auth, "pool", _pool_factory(pool))
     monkeypatch.setattr(studio_entities.cartridge_service, "get_cartridge", fake_get_cartridge)
-    monkeypatch.setattr(studio_entities.cartridge_service, "upsert_entity", fake_upsert)
     monkeypatch.setattr(studio_entities.audit_service, "record_event", fake_audit)
 
     row = await studio_entities.create_entity(
@@ -144,9 +161,10 @@ async def test_create_entity_persists_and_audits(studio_entities, monkeypatch):
     )
 
     assert row["name"] == "Invoice"
-    assert upserts[0][0:2] == ("replicon", "Invoice")
-    assert upserts[0][2]["mode"] == "incremental"
+    assert pool.execute_calls[0][1][0:2] == ("replicon", "Invoice")
+    assert pool.execute_calls[0][1][3] == "incremental"
     assert audits[0]["action"] == "studio.entity.create"
+    assert pool.released is True
 
 
 @pytest.mark.asyncio
@@ -177,6 +195,30 @@ async def test_create_entity_rejects_unknown_cartridge(studio_entities, monkeypa
 
     with pytest.raises(studio_entities.UnknownCartridgeError):
         await studio_entities.create_entity("Invoice", "missing", {"fields": [{"name": "id"}]}, {"id": 7})
+
+
+@pytest.mark.asyncio
+async def test_create_entity_rejects_spec_name_or_cartridge_override(studio_entities, monkeypatch):
+    async def fake_get_cartridge(cartridge):
+        return _manifest()
+
+    monkeypatch.setattr(studio_entities.cartridge_service, "get_cartridge", fake_get_cartridge)
+
+    with pytest.raises(ValueError, match="spec.name"):
+        await studio_entities.create_entity(
+            "Invoice",
+            "replicon",
+            {"name": "Other", "fields": [{"name": "id"}]},
+            {"id": 7},
+        )
+
+    with pytest.raises(ValueError, match="spec.cartridge"):
+        await studio_entities.create_entity(
+            "Invoice",
+            "replicon",
+            {"cartridge": "sap_hcm", "fields": [{"name": "id"}]},
+            {"id": 7},
+        )
 
 
 @pytest.mark.asyncio

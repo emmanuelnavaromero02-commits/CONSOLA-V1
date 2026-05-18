@@ -61,7 +61,10 @@ async def test_create_dataset_handles_409_existing(superset_client_module):
         if request.url.path == "/api/v1/dataset/" and request.method == "POST":
             return httpx.Response(409, json={"message": "already exists"})
         if request.url.path == "/api/v1/dataset/" and request.method == "GET":
-            return httpx.Response(200, json={"result": [{"id": 42, "table_name": "gold_hours", "schema": "public"}]})
+            return httpx.Response(
+                200,
+                json={"result": [{"id": 42, "table_name": "gold_hours", "schema": "public", "database": {"id": 7}}]},
+            )
         return httpx.Response(404)
 
     client = superset_client_module.SupersetClient(
@@ -162,14 +165,21 @@ def test_dataset_endpoint_audits_creation(studio_client, monkeypatch):
     class FakeClient:
         configured = True
 
+        async def list_databases(self):
+            return [{"id": 7, "name": "modecissions_gold"}]
+
         async def create_dataset(self, database_id, table_name, schema="public"):
             return {"dataset_id": 9, "table": table_name, "schema": schema, "existing": False}
 
     async def fake_audit(**kwargs):
         audits.append(kwargs)
 
+    async def fake_datasets():
+        return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
+
     monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FakeClient())
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
+    monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
 
     response = client.post(
         "/api/studio/superset/dataset",

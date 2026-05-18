@@ -39,6 +39,8 @@ require_studio_write = require_permission("studio.write")
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_MAX_SPEC_BYTES = 2 * 1024 * 1024
 
 
 def _key_for(server: str) -> str:
@@ -56,6 +58,7 @@ def _rls_user_context(user: dict | None) -> dict[str, Any]:
     if not user:
         return {}
     role = user.get("role")
+    workspace_role = user.get("workspace_role")
     return {
         "id": user.get("id"),
         "email": user.get("email", ""),
@@ -63,8 +66,8 @@ def _rls_user_context(user: dict | None) -> dict[str, Any]:
         "role": role,
         "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
         "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
-        "workspace_role": user.get("workspace_role"),
-        "_trusted_admin": role == "admin",
+        "workspace_role": workspace_role,
+        "_trusted_admin": workspace_role in {"admin", "owner", "super_admin"},
     }
 
 
@@ -73,6 +76,24 @@ def _clean_identifier(value: str, *, label: str) -> str:
     if not _IDENT_RE.fullmatch(ident):
         raise HTTPException(400, f"Invalid {label}: use letters, numbers and underscores only")
     return ident
+
+
+def _clean_filename(value: str) -> str:
+    name = _SAFE_FILENAME_RE.sub("_", os.path.basename(value or "spec.yaml")).strip("._")
+    return name or "spec.yaml"
+
+
+def _downstream_error(service: str, status_code: int) -> HTTPException:
+    return HTTPException(status_code, f"{service} request failed with HTTP {status_code}")
+
+
+def _limit_param(request: Request, *, default: int = 20, maximum: int = 200) -> int:
+    raw = request.query_params.get("limit", str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "limit must be an integer") from exc
+    return min(max(value, 1), maximum)
 
 
 async def _optional_json(request: Request) -> dict[str, Any]:
@@ -90,7 +111,7 @@ async def _refinement_invoke(tool: str, args: dict[str, Any], *, timeout: int = 
             json={"tool": tool, "args": args},
         )
     if response.status_code >= 400:
-        raise HTTPException(response.status_code, response.text[:500])
+        raise _downstream_error("Refinement", response.status_code)
     return response.json()
 
 
@@ -98,7 +119,7 @@ async def _refinement_datasets() -> list[dict]:
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as client:
         response = await client.get(f"{REFINEMENT_URL}/datasets")
     if response.status_code >= 400:
-        raise HTTPException(response.status_code, response.text[:500])
+        raise _downstream_error("Refinement", response.status_code)
     payload = response.json()
     datasets = payload.get("datasets") if isinstance(payload, dict) else []
     return datasets if isinstance(datasets, list) else []
@@ -108,7 +129,7 @@ async def _rag_sources() -> list[dict]:
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as client:
         response = await client.get(f"{MCP_INFRA_URL.rstrip('/')}/rag/sources")
     if response.status_code >= 400:
-        raise HTTPException(response.status_code, response.text[:500])
+        raise _downstream_error("MCP infra", response.status_code)
     payload = response.json()
     sources = payload.get("sources") or payload.get("results") or []
     return sources if isinstance(sources, list) else []
@@ -218,7 +239,7 @@ def _extract_entities_from_spec(content: str) -> list[dict]:
     return out
 
 
-@router.get("/dag-graph")
+@router.get("/dag-graph", dependencies=[Depends(require_studio_read)])
 async def dag_graph(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
@@ -255,7 +276,7 @@ async def dag_graph(
     return {"format": "svg", "svg": _svg_for_graph(nodes, edges), "nodes": nodes, "edges": edges}
 
 
-@router.post("/dag-deploy", dependencies=[Depends(require_csrf)])
+@router.post("/dag-deploy", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
 async def dag_deploy(request: Request, user: dict = Depends(require_authenticated)):
     body = await _optional_json(request)
     cartridge = body.get("cartridge") or body.get("cartridge_id") or "replicon"
@@ -282,7 +303,7 @@ async def dag_deploy(request: Request, user: dict = Depends(require_authenticate
     return {"status": "deployed", "dag_id": dag_id, "result": result}
 
 
-@router.get("/templates")
+@router.get("/templates", dependencies=[Depends(require_studio_read)])
 async def templates(user: dict = Depends(require_authenticated)):
     return {"templates": dag_templates.get_all()}
 
@@ -311,24 +332,30 @@ async def entities_upload(request: Request, user: dict = Depends(require_authent
         uploaded = form.get("file") or form.get("spec")
         if uploaded is not None and hasattr(uploaded, "read"):
             raw = await uploaded.read()
-            filename = getattr(uploaded, "filename", None) or filename
+            if len(raw) > _MAX_SPEC_BYTES:
+                raise HTTPException(413, "spec file too large")
+            filename = _clean_filename(getattr(uploaded, "filename", None) or filename)
             content = raw.decode("utf-8", errors="replace")
     else:
         body = await _optional_json(request)
         cartridge = body.get("cartridge") or body.get("cartridge_id") or cartridge
-        filename = body.get("filename") or filename
+        filename = _clean_filename(body.get("filename") or filename)
         content = body.get("content") or body.get("yaml") or body.get("spec") or ""
+        if len(content.encode("utf-8")) > _MAX_SPEC_BYTES:
+            raise HTTPException(413, "spec content too large")
 
     if not content.strip():
         return {"accepted": False, "accepted_count": 0, "error": "spec content is required"}
     if not await cartridge_service.get_cartridge(cartridge):
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
 
-    spec_key = cartridge_service.upload_spec(cartridge, filename, content)
     try:
         result = await studio_entities.upload_spec(content, user, default_cartridge=cartridge)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    spec_key = None
+    if not result["errors"]:
+        spec_key = cartridge_service.upload_spec(cartridge, filename, content)
     return {
         "accepted": not result["errors"],
         "accepted_count": len(result["created"]),
@@ -350,8 +377,8 @@ async def entity(request: Request, user: dict = Depends(require_authenticated)):
     spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
     spec = {
         **spec,
-        "name": spec.get("name") or entity_name,
-        "cartridge": spec.get("cartridge") or cartridge,
+        "name": entity_name,
+        "cartridge": cartridge,
         "fields": spec.get("fields") or body.get("fields") or [{"name": body.get("primary_key") or "id", "type": "string", "primary_key": True}],
         "display_name": body.get("display_name") or body.get("title") or entity_name,
         "mode": body.get("mode") or "full",
@@ -371,7 +398,7 @@ async def entity(request: Request, user: dict = Depends(require_authenticated)):
 
 async def _layer_preview(layer: str, request: Request, user: dict) -> dict:
     layer = layer.lower()
-    limit = min(max(int(request.query_params.get("limit", "20")), 1), 200)
+    limit = _limit_param(request)
     cartridge = request.query_params.get("cartridge") or "replicon"
     requested = request.query_params.get("dataset")
     datasets = await _refinement_datasets()
@@ -413,19 +440,19 @@ async def _layer_preview(layer: str, request: Request, user: dict) -> dict:
     }
 
 
-@router.get("/silver/preview")
+@router.get("/silver/preview", dependencies=[Depends(require_studio_read)])
 async def silver_preview(request: Request, user: dict = Depends(require_authenticated)):
     return await _layer_preview("silver", request, user)
 
 
-@router.get("/gold/preview")
+@router.get("/gold/preview", dependencies=[Depends(require_studio_read)])
 async def gold_preview(request: Request, user: dict = Depends(require_authenticated)):
     return await _layer_preview("gold", request, user)
 
 
-@router.get("/master/preview")
+@router.get("/master/preview", dependencies=[Depends(require_studio_read)])
 async def master_preview(request: Request, user: dict = Depends(require_authenticated)):
-    limit = min(max(int(request.query_params.get("limit", "20")), 1), 200)
+    limit = _limit_param(request)
     return await studio_preview.preview_master(
         entity=request.query_params.get("entity") or request.query_params.get("dataset"),
         cartridge=request.query_params.get("cartridge") or "replicon",
@@ -452,9 +479,23 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
     client = superset_client.client_from_env()
     if not client.configured:
         raise HTTPException(503, "Superset not configured")
+    table_name = _clean_identifier(str(table_name), label="table_name")
+    schema = _clean_identifier(str(schema), label="schema")
+    if schema != "public":
+        raise HTTPException(400, "Only schema 'public' is allowed for Studio-created Superset datasets")
+    datasets = [
+        ds for ds in await _refinement_datasets()
+        if (ds.get("layer") or "").lower() in {"gold", "master"}
+    ]
+    allowed_tables = {_dataset_table_name(ds) for ds in datasets}
+    if table_name not in allowed_tables:
+        raise HTTPException(400, f"Table '{table_name}' is not a registered Gold/Master dataset")
 
-    if not database_id:
-        dbs = await client.list_databases()
+    dbs = await client.list_databases()
+    if database_id:
+        if not any(str(db.get("id")) == str(database_id) for db in dbs):
+            raise HTTPException(400, "database_id is not registered in Superset")
+    else:
         match = next((db for db in dbs if db.get("name") in {"modecissions_gold", "Postgres Gold"}), None)
         match = match or (dbs[0] if dbs else None)
         if not match:
@@ -465,6 +506,8 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
         result = await client.create_dataset(int(database_id), table_name, schema=schema)
     except superset_client.SupersetConfigError as exc:
         raise HTTPException(503, str(exc)) from exc
+    except superset_client.SupersetRequestError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
@@ -477,7 +520,7 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
     return {"created": not result.get("existing"), **result}
 
 
-@router.get("/semantic")
+@router.get("/semantic", dependencies=[Depends(require_studio_read)])
 async def semantic(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
@@ -494,7 +537,7 @@ async def semantic(
     }
 
 
-@router.get("/rag")
+@router.get("/rag", dependencies=[Depends(require_studio_read)])
 async def rag(user: dict = Depends(require_authenticated)):
     sources = await _rag_sources()
     return {"sources": sources, "corpus": sources, "docs_indexed": len(sources) if isinstance(sources, list) else 0}

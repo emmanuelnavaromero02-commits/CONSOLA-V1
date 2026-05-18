@@ -18,6 +18,17 @@ class SupersetConfigError(RuntimeError):
     pass
 
 
+class SupersetRequestError(RuntimeError):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _raise_superset_error(response: httpx.Response, *, action: str) -> None:
+    if response.status_code >= 400:
+        raise SupersetRequestError(response.status_code, f"Superset {action} failed with HTTP {response.status_code}")
+
+
 @dataclass
 class SupersetClient:
     base_url: str | None = None
@@ -53,13 +64,13 @@ class SupersetClient:
                     "refresh": True,
                 },
             )
-            response.raise_for_status()
+            _raise_superset_error(response, action="login")
             self._access_token = response.json()["access_token"]
             csrf = await client.get(
                 f"{self.base_url}/api/v1/security/csrf_token/",
                 headers={"Authorization": f"Bearer {self._access_token}"},
             )
-            csrf.raise_for_status()
+            _raise_superset_error(csrf, action="csrf")
             payload = csrf.json()
             self._csrf_token = (payload.get("result") or {}).get("csrf_token") or payload.get("csrf_token") or ""
         return {"access_token": self._access_token, "csrf_token": self._csrf_token or ""}
@@ -95,10 +106,16 @@ class SupersetClient:
                     delay *= 2
                     continue
                 return response
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            except httpx.TimeoutException as exc:
                 last_exc = exc
                 if attempt == 2:
-                    raise
+                    raise SupersetRequestError(504, "Superset request timed out") from exc
+                await asyncio.sleep(delay)
+                delay *= 2
+            except httpx.ConnectError as exc:
+                last_exc = exc
+                if attempt == 2:
+                    raise SupersetRequestError(503, "Superset connection failed") from exc
                 await asyncio.sleep(delay)
                 delay *= 2
         if last_exc:
@@ -107,7 +124,7 @@ class SupersetClient:
 
     async def list_databases(self) -> list[dict[str, Any]]:
         response = await self._request("GET", "/api/v1/database/")
-        response.raise_for_status()
+        _raise_superset_error(response, action="list databases")
         result = response.json().get("result", [])
         if isinstance(result, dict):
             result = result.get("data") or result.get("result") or []
@@ -130,14 +147,14 @@ class SupersetClient:
             for db in await self.list_databases():
                 if db.get("name") == name:
                     return {**db, "existing": True}
-        response.raise_for_status()
+        _raise_superset_error(response, action="create database")
         payload = response.json()
         result = payload.get("result") if isinstance(payload, dict) else {}
         return {"id": payload.get("id") or (result or {}).get("id"), "name": name, "existing": False}
 
     async def list_datasets(self) -> list[dict[str, Any]]:
         response = await self._request("GET", "/api/v1/dataset/")
-        response.raise_for_status()
+        _raise_superset_error(response, action="list datasets")
         result = response.json().get("result", [])
         if isinstance(result, dict):
             result = result.get("data") or result.get("result") or []
@@ -156,9 +173,10 @@ class SupersetClient:
         response = await self._request("POST", "/api/v1/dataset/", json=payload)
         if response.status_code == 409:
             for ds in await self.list_datasets():
-                if ds.get("name") == table_name and (ds.get("schema") or "public") == schema:
+                same_database = str(ds.get("database_id")) == str(database_id)
+                if same_database and ds.get("name") == table_name and (ds.get("schema") or "public") == schema:
                     return {"dataset_id": ds.get("id"), "table": table_name, "schema": schema, "existing": True}
-        response.raise_for_status()
+        _raise_superset_error(response, action="create dataset")
         data = response.json()
         result = data.get("result") if isinstance(data, dict) else {}
         return {
