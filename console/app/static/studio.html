@@ -87,8 +87,7 @@
       <button type="button">Extraer</button>
       <button type="button">Ejecutar</button>
       <button type="button">Ver SQL</button>
-      <button type="button"
-              onclick="document.getElementById('new-entity-compat-form').hidden=false">
+      <button type="button" id="new-entity-compat-toggle">
         + Entidad
       </button>
       <a href="http://localhost:8088" target="_blank" rel="noreferrer">Abrir Superset</a>
@@ -130,8 +129,7 @@
         <div class="ai-hdr">
           ◈ EPI IA
           <span class="ai-ctx-badge" id="ai-ctx-badge">Paso 1</span>
-          <button class="btn-sm" id="ai-focus-btn" title="Enfocar asistente"
-                  onclick="document.getElementById('ai-input')?.focus()">
+          <button class="btn-sm" id="ai-focus-btn" title="Enfocar asistente">
             Asistente
           </button>
           <button class="btn-sm" id="ai-clear-btn" title="Borrar historial" style="margin-left:auto;color:var(--text3);opacity:0.6">🗑</button>

@@ -36,10 +36,17 @@ export function wireStudioHandlers() {
 
   // AI assistant
   on($('ai-resize-handle'), 'mousedown', aiResizeStart);
+  on($('ai-focus-btn'), 'click', () => $('ai-input')?.focus());
   on($('ai-clear-btn'), 'click', aiClearHistory);
   on($('ai-input'), 'keydown', aiKey);
   on($('ai-input'), 'input', (e) => aiAutogrow(e.target));
   on($('ai-send-btn'), 'click', aiSend);
+
+  // E2E compatibility sentinels
+  on($('new-entity-compat-toggle'), 'click', () => {
+    const form = $('new-entity-compat-form');
+    if (form) form.hidden = false;
+  });
 
   // SQL Runner modal
   on($('sql-runner-overlay'), 'click', (e) => {
