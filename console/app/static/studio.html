@@ -72,41 +72,6 @@
 
     <section id="studio-modern-root" class="studio-summary-block" aria-label="Studio overview"></section>
 
-    <div id="studio-e2e-sentinels" aria-label="Studio legacy compatibility actions">
-      <button type="button">Abrir Superset</button>
-      <button type="button">RAG</button>
-      <button type="button">Grafo</button>
-      <button type="button">Deploy a Airflow</button>
-      <button type="button">Crear en Superset</button>
-      <button type="button">Plantillas</button>
-      <button type="button">Renombrar</button>
-      <button type="button">Bronze</button>
-      <button type="button">Silver</button>
-      <button type="button">Master</button>
-      <button type="button">Gold</button>
-      <button type="button">Extraer</button>
-      <button type="button">Ejecutar</button>
-      <button type="button">Ver SQL</button>
-      <button type="button" id="new-entity-compat-toggle">
-        + Entidad
-      </button>
-      <a href="http://localhost:8088" target="_blank" rel="noreferrer">Abrir Superset</a>
-      <select name="mode" aria-label="Modo">
-        <option value="full">full</option>
-        <option value="incremental">incremental</option>
-      </select>
-      <textarea name="code" class="code-editor" aria-label="Código">SELECT 1;</textarea>
-      <pre class="sql-viewer">SELECT * FROM omega_preview LIMIT 10;</pre>
-      <div class="empty-state" data-state="empty">Studio listo</div>
-      <div class="templates-list plantillas">Plantillas listas</div>
-      <form class="rag-config" aria-label="RAG config">
-        <input name="rag" value="ready">
-      </form>
-      <form id="new-entity-compat-form" aria-label="Nueva entidad" hidden>
-        <input name="entity" value="preview_entity">
-      </form>
-    </div>
-
     <!-- Mini-header (visible only in steps 2-7; populated by goStep/selectCartridge) -->
     <div id="studio-mini-header" class="studio-mini-header" hidden>
       <span class="studio-mini-name">—</span>

@@ -266,6 +266,103 @@ def test_copilot_destructive_tool_blocks_without_approval(
     assert out["pending_actions"][0]["tool"] == "airflow_delete_dag"
 
 
+def test_copilot_write_tool_blocks_without_approval(
+    copilot_module, db, admin_user,
+):
+    """Non-read tools with requires_approval=True must not bypass the gate
+    merely because their risk is "write" instead of "destructive"."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
+    ])
+    _patch_audit(copilot_module, db)
+
+    invoked = []
+
+    async def fake_invoke(*a, **kw):
+        invoked.append(a)
+        return {"ok": True}
+
+    captured = []
+
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+        r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
+        captured.append(r)
+        return ("Necesito aprobación.", [], [])
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat)
+
+    conv = _run(copilot_module.create_conversation(user_id=1))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="actualiza algo",
+        user=admin_user,
+    ))
+    assert invoked == []
+    assert captured[0]["error"] == "approval_required"
+    assert "(write)" in captured[0]["message"]
+    assert out["requires_approval"] is True
+    assert len(out["pending_actions"]) == 1
+    assert out["pending_actions"][0]["tool"] == "foo_write_bar"
+
+
+def test_copilot_write_tool_executes_after_approval(
+    copilot_module, db, admin_user,
+):
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
+    ])
+    _patch_audit(copilot_module, db)
+
+    invoke_count = []
+
+    async def fake_invoke(server_id, tool, args):
+        invoke_count.append((server_id, tool, args))
+        return {"ok": True}
+
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1",
+                 "name": "infra__foo_write_bar", "input": {"value": 1}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1",
+                 "content": str(r)},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat_first)
+
+    conv = _run(copilot_module.create_conversation(user_id=1))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="actualiza algo",
+        user=admin_user,
+    ))
+    assert out["requires_approval"] is True
+    pending_msg_id = out["message_id"]
+    assert invoke_count == []
+
+    async def fake_chat_second(*, messages, invoke_tool, **_kw):
+        r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
+        assert r == {"ok": True}
+        return ("Listo.", [], list(messages))
+
+    _patch_llm(copilot_module, fake_chat_second)
+    out2 = _run(copilot_module.approve_pending_action(
+        conversation_id=conv["id"], message_id=pending_msg_id, user=admin_user,
+    ))
+    assert invoke_count == [("infra", "foo_write_bar", {"value": 1})]
+    assert out2["requires_approval"] is False
+
+
 def test_copilot_destructive_tool_executes_with_approval(
     copilot_module, db, admin_user,
 ):
@@ -847,10 +944,12 @@ def test_copilot_rejects_invalid_uuid_with_400(copilot_module, db, admin_user):
 def test_copilot_approval_key_is_args_specific(copilot_module):
     """The approval key must include args so approving 'delete X' does
     NOT also approve 'delete Y' that happened to share the bare name."""
-    k1 = copilot_module._approval_key("airflow_delete_dag", {"dag_id": "X"})
-    k2 = copilot_module._approval_key("airflow_delete_dag", {"dag_id": "Y"})
+    k1 = copilot_module._approval_key("infra", "airflow_delete_dag", {"dag_id": "X"})
+    k2 = copilot_module._approval_key("infra", "airflow_delete_dag", {"dag_id": "Y"})
     assert k1 != k2
+    k_other_server = copilot_module._approval_key("sap", "airflow_delete_dag", {"dag_id": "X"})
+    assert k1 != k_other_server
     # Order-insensitive: {a:1,b:2} == {b:2,a:1}.
-    k3 = copilot_module._approval_key("foo", {"a": 1, "b": 2})
-    k4 = copilot_module._approval_key("foo", {"b": 2, "a": 1})
+    k3 = copilot_module._approval_key("infra", "foo", {"a": 1, "b": 2})
+    k4 = copilot_module._approval_key("infra", "foo", {"b": 2, "a": 1})
     assert k3 == k4

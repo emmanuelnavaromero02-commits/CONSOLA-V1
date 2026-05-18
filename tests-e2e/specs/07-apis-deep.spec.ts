@@ -12,7 +12,7 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 const BACKEND = process.env.LEGACY_URL || "http://localhost:8000";
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
-const PASSWORD = process.env.TEST_PASSWORD || "omega2026";
+const PASSWORD = process.env.TEST_PASSWORD || "";
 
 /** Mint a fresh authenticated APIRequestContext using the CSRF flow. */
 async function authedCtx() {

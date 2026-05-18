@@ -13,7 +13,7 @@ test.use({ storageState: { cookies: [], origins: [] } });
 const FRONT = process.env.BASE_URL || "http://localhost:3000";
 const BACKEND = process.env.LEGACY_URL || "http://localhost:8000";
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
-const PASSWORD = process.env.TEST_PASSWORD || "omega2026";
+const PASSWORD = process.env.TEST_PASSWORD || "";
 
 async function csrfToken(ctx = pwRequest) {
   const c = await ctx.newContext();

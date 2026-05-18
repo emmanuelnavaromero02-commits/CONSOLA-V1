@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     category    TEXT NOT NULL,  -- workflow | cartridge | analytics | refinement
     description TEXT,
     tools       JSONB DEFAULT '[]',
+    tool_count  INT NOT NULL DEFAULT 0,
     healthy     BOOLEAN DEFAULT false,
     registered_at TIMESTAMPTZ DEFAULT NOW(),
     last_seen   TIMESTAMPTZ DEFAULT NOW()

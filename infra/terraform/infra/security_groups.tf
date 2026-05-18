@@ -19,12 +19,15 @@ resource "aws_security_group" "vpn" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    description = "wg-easy admin UI"
-    from_port   = 51821
-    to_port     = 51821
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  dynamic "ingress" {
+    for_each = length(var.vpn_admin_allowed_cidrs) > 0 ? [1] : []
+    content {
+      description = "wg-easy admin UI"
+      from_port   = 51821
+      to_port     = 51821
+      protocol    = "tcp"
+      cidr_blocks = var.vpn_admin_allowed_cidrs
+    }
   }
 
   egress {
@@ -63,4 +66,3 @@ resource "aws_security_group" "app" {
     Name = "modecissions-sg-app"
   }
 }
-

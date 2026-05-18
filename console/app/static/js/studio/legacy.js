@@ -357,6 +357,7 @@ import { state } from './legacy-state.js';
       if (!cartridge) return;
 
       const area = document.getElementById('entity-list-area');
+      const restoreNewEntityRow = state._newEntityRequested || !!document.getElementById('new-entity-row');
       area.innerHTML = '<div class="loading">Cargando entidades...</div>';
 
       try {
@@ -377,6 +378,7 @@ import { state } from './legacy-state.js';
 
         if (!entities.length) {
           area.innerHTML = '<div class="empty-card">Sin entidades registradas en este cartucho.</div>';
+          if (restoreNewEntityRow) showAddEntityRow();
           return;
         }
 
@@ -410,8 +412,10 @@ import { state } from './legacy-state.js';
             </div>
             ${entities.map(e => renderEntityRow(e, cartridge, dagOptions)).join('')}
           </div>`;
+        if (restoreNewEntityRow) showAddEntityRow();
       } catch(e) {
         area.innerHTML = `<div class="empty-card" style="color:#ff2d55">Error: ${esc(e.message)}</div>`;
+        if (restoreNewEntityRow) showAddEntityRow();
       }
     }
 
@@ -632,6 +636,7 @@ import { state } from './legacy-state.js';
     export function showAddEntityRow() {
       const area = document.getElementById('entity-list-area');
       if (!area) return;
+      state._newEntityRequested = true;
       // Don't add duplicate rows
       if (document.getElementById('new-entity-row')) return;
 
@@ -661,7 +666,7 @@ import { state } from './legacy-state.js';
           <button class="btn btn-sm" style="color:var(--green);border-color:var(--green)"
                   onclick="saveNewEntity(${escJsArg(cartridge)})">✓ Guardar</button>
           <button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55"
-                  onclick="document.getElementById('new-entity-row').remove()">✕</button>
+                  onclick="cancelNewEntity()">✕</button>
         </span>`;
 
       area.appendChild(row);
@@ -669,6 +674,11 @@ import { state } from './legacy-state.js';
 
       // Populate DAG selector from Airflow
       _loadDagSelector('ne-dag', cartridge);
+    }
+
+    export function cancelNewEntity() {
+      state._newEntityRequested = false;
+      document.getElementById('new-entity-row')?.remove();
     }
 
     export async function _loadDagSelector(selectId, cartridge) {
@@ -717,6 +727,7 @@ import { state } from './legacy-state.js';
           }
         );
         if (r.ok) {
+          state._newEntityRequested = false;
           document.getElementById('new-entity-row')?.remove();
           loadEntityList();   // refresh the full list
         } else {

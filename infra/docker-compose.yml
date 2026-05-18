@@ -31,6 +31,22 @@ services:
       timeout: 5s
       retries: 20
 
+  postgres_dev_seed:
+    image: postgres:15
+    container_name: mode_postgres_dev_seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ./init_dev:/dev-seeds:ro
+    command: >
+      bash -lc "psql -h postgres -U postgres -d modecissions
+      -v ON_ERROR_STOP=1
+      -f /dev-seeds/15_local_dev_bootstrap.sql"
+    restart: "no"
+
   postgres_gold:
     image: postgres:15
     container_name: mode_postgres_gold
@@ -806,6 +822,11 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
+      # GitHub Actions runners are memory-constrained; the default
+      # Airflow webserver worker count can restart-loop before E2E
+      # begins. Keep the UI available with a single worker by default,
+      # while allowing operators to raise it locally/prod via env.
+      AIRFLOW__WEBSERVER__WORKERS: ${AIRFLOW_WEBSERVER_WORKERS:-1}
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
       # Variables disponibles en los DAGs via Variable.get(). Sprint
       # v1.38: scoped to the operational omega_airflow_dag role

@@ -314,10 +314,19 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/sap_s4hana/TimeEntry/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
+    from app.core.sql_guard import has_limit_clause, validate_kb_sql
+
     limit = min(limit, 5000)
     resolved = sql.replace("{bucket}", settings.minio_bucket)
+    allowed_prefixes = (
+        f"s3://{settings.minio_bucket}/raw/sap_s4hana/",
+        f"s3://{settings.minio_bucket}/silver/sap_s4hana/",
+    )
+    ok, err = validate_kb_sql(resolved, allowed_prefixes)
+    if not ok:
+        return {"error": "sql_blocked", "reason": err}
     # Inject LIMIT if the query doesn't already have one
-    if "limit" not in resolved.lower():
+    if not has_limit_clause(resolved):
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()
@@ -340,8 +349,24 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
     """Register a SQL-query custom tool on the mcp instance."""
+    from app.core.sql_guard import has_limit_clause, validate_kb_sql
+
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
-    if "limit" not in resolved_sql.lower():
+    allowed_prefixes = (
+        f"s3://{settings.minio_bucket}/raw/sap_s4hana/",
+        f"s3://{settings.minio_bucket}/silver/sap_s4hana/",
+    )
+    ok, err = validate_kb_sql(resolved_sql, allowed_prefixes)
+    if not ok:
+        def _blocked_tool_fn() -> dict[str, Any]:
+            return {"error": "sql_blocked", "reason": err}
+
+        _blocked_tool_fn.__name__ = name
+        _blocked_tool_fn.__doc__ = description or f"Blocked custom SQL tool: {name}"
+        mcp.add_tool(_blocked_tool_fn)
+        return
+
+    if not has_limit_clause(resolved_sql):
         resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
 
     def _tool_fn() -> dict[str, Any]:

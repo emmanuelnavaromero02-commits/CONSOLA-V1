@@ -1,16 +1,23 @@
 #!/bin/bash
-set -e
-cd /opt/modecissions
+set -euo pipefail
 
-echo "=== Building MODecissions images ==="
-# RAG was migrated into mcp-infra. Workspace is the new end-user surface.
-SERVICES=(console workspace refinement mcp-infra)
-for svc in "${SERVICES[@]}"; do
-  echo "--- Building $svc ---"
-  start=$(date +%s)
-  docker build -t modecissions/$svc:latest ./$svc
-  end=$(date +%s)
-  echo "✓ $svc built in $((end-start))s"
-done
-echo "=== All images built ==="
-docker images | grep modecissions
+DEPLOY_DIR="/opt/modecissions/infra/terraform/deploy"
+cd "${DEPLOY_DIR}"
+
+if [ ! -f .env ]; then
+  echo "ERROR: .env no existe en ${DEPLOY_DIR}. Copia .env.example y complétalo."
+  exit 1
+fi
+
+set -a
+source .env
+set +a
+
+echo "=== Pulling MODecissions release images ==="
+echo "GHCR_OWNER=${GHCR_OWNER:-emmanuelnavaromero02-commits}"
+echo "IMAGE_TAG=${IMAGE_TAG:-v1.44.5}"
+
+docker compose -f docker-compose.aws.yml pull \
+  console workspace refinement vault mcp-infra
+
+echo "=== Release images ready ==="

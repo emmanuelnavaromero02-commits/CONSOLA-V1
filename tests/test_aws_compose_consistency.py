@@ -81,23 +81,51 @@ def test_superset_version_matches_local():
 def test_no_floating_tags_on_third_party_images():
     """``:latest``, ``:main``, ``:edge`` on any upstream image is an
     invitation to ship a different binary every redeploy. Application
-    images (modecissions/*) are allowed to use ``:latest`` until the
-    registry-push sprint lands."""
+    images must also use the release-tagged GHCR path."""
     aws_images = _images(AWS)
     forbidden_tags = ("latest", "main", "edge", "stable")
     offenders: list[str] = []
     for img in aws_images:
-        if img.startswith("modecissions/"):
-            continue  # v1.45 sprint will rewire these to versioned tags
         name, _, tag = img.partition(":")
         if not tag:
             offenders.append(f"{img} (no tag)")
         elif tag in forbidden_tags:
             offenders.append(img)
     assert not offenders, (
-        f"AWS compose has floating tags on upstream images: {offenders}. "
+        f"AWS compose has floating tags: {offenders}. "
         f"Pin to an explicit version."
     )
+
+
+def test_aws_application_images_use_ghcr_release_tags():
+    """AWS should pull immutable release images from GHCR, not local
+    modecissions/*:latest builds."""
+    src = AWS.read_text(encoding="utf-8")
+    assert "modecissions/console:latest" not in src
+    for service in ("console", "workspace", "refinement", "vault", "mcp-infra"):
+        assert f"ghcr.io/${{GHCR_OWNER:-emmanuelnavaromero02-commits}}/{service}:${{IMAGE_TAG:-v1.44.5}}" in src
+
+
+def test_aws_env_file_defaults_to_documented_deploy_env():
+    """The AWS runbook creates infra/terraform/deploy/.env. The compose
+    file may accept AWS_ENV_FILE override for local validation, but the
+    default must stay .env relative to the deploy compose file."""
+    src = AWS.read_text(encoding="utf-8")
+    assert "${AWS_ENV_FILE:-.env}" in src
+    assert "${AWS_ENV_FILE:-../../.env}" not in src
+
+
+def test_prod_compose_does_not_mount_dev_init_seeds():
+    """AWS may mount schema migrations only; local development seeds must
+    remain outside infra/init and outside the AWS compose mount."""
+    aws_src = AWS.read_text(encoding="utf-8")
+    local_src = LOCAL.read_text(encoding="utf-8")
+    assert "init_dev" not in aws_src
+    assert "postgres_dev_seed" in local_src
+    assert "./init_dev:/dev-seeds:ro" in local_src
+    assert "/docker-entrypoint-initdb.d/90_local_dev_bootstrap.sql" not in local_src
+    assert not (REPO / "infra/init/15_local_dev_bootstrap.sql").exists()
+    assert (REPO / "infra/init_dev/15_local_dev_bootstrap.sql").exists()
 
 
 def test_no_remaining_2_9_x_airflow_in_aws():

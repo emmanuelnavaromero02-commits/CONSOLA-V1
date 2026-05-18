@@ -17,7 +17,7 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 const BACKEND = process.env.LEGACY_URL || "http://localhost:8000";
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
-const PASSWORD = process.env.TEST_PASSWORD || "omega2026";
+const PASSWORD = process.env.TEST_PASSWORD || "";
 const HAS_LLM_KEY = Boolean(
   process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY,
 );

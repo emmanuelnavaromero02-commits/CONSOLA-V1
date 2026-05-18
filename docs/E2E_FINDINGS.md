@@ -21,7 +21,7 @@ broken. The findings below capture the post-detection state with
    ```
 
 2. Make sure `tests-e2e/.env` carries the verified credentials
-   (`emmanuel@local.ai` / `omega2026`):
+   (`emmanuel@local.ai` / `Admin123!`):
    ```bash
    cp tests-e2e/.env.example tests-e2e/.env
    ```
@@ -135,6 +135,28 @@ lands the suite automatically flips those tests to passing.
 
 ---
 
+## v1.44.5 Studio sentinel cleanup
+
+Sprint v1.44.5 removed the hidden `#studio-e2e-sentinels` block from
+`console/app/static/studio.html` and its invisible CSS rules from
+`console/app/static/css/studio.css`.
+
+The Studio specs now drive the real rendered UI through `window.goStep`
+after the legacy init finishes. Missing real affordances are skipped
+instead of hidden-sentinel-passed:
+
+| Gap | Spec | Reason |
+|---|---|---|
+| Studio assistant dock | `05-studio-deep.spec.ts` | Intentionally removed from Studio; Workspace/Copilot owns chat. |
+| Silver editable query / execute controls | `05-studio*.spec.ts` | Real visible Studio refine UI does not expose this control yet. |
+| Superset create/open affordance | `05-studio*.spec.ts` | No canonical visible control on the current Studio surface. |
+| Entity extraction mode controls | `05-studio-deep.spec.ts` | Current visible entities UI does not expose full/incremental mode controls. |
+
+These are product/UI gaps, not hidden test scaffolding. They should be
+reintroduced only as visible, user-operable controls.
+
+---
+
 ## Pre-existing context
 
 - v1.44.3.2 shipped the initial 71-test baseline.
@@ -145,7 +167,7 @@ lands the suite automatically flips those tests to passing.
     studio (50+), APIs (40+), UX/mobile/a11y (20+), MCP (36),
     copilot (22)
   - Categorised report digest via `scripts/e2e-report-summary.sh`
-- Real credentials: `emmanuel@local.ai` / `omega2026` (verified
+- Real credentials: `emmanuel@local.ai` / `Admin123!` (verified
   by Codex's diagnostic — the user EXISTS in the bootstrap DB).
 - Login endpoint: `POST /auth/login` (NOT `/api/auth/login`).
   CSRF flow: GET `/login` → echo `csrf_token` cookie value as

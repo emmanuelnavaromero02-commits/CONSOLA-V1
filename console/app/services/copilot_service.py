@@ -515,8 +515,8 @@ def _is_admin_or_owner(conv_user_id: int, user: dict) -> bool:
     return role in {"admin", "owner", "super_admin"}
 
 
-def _approval_key(bare_name: str, args: dict) -> str:
-    return f"{bare_name}|{json.dumps(args, sort_keys=True, default=str)}"
+def _approval_key(server_id: str, bare_name: str, args: dict) -> str:
+    return f"{server_id}|{bare_name}|{json.dumps(args, sort_keys=True, default=str)}"
 
 
 async def _load_conversation(conn, conversation_id: str) -> dict | None:
@@ -882,9 +882,15 @@ async def _run_loop(
                 ),
             }
 
-        # 2. Destructive → approval gate.
-        key = _approval_key(bare_name, args)
-        if risk == "destructive" and key not in approved_keys:
+        # 2. Approval gate.
+        key = _approval_key(server_id, bare_name, args)
+        declared_approval = meta.get("requires_approval")
+        needs_approval = (
+            risk == "destructive"
+            or declared_approval is True
+            or (declared_approval is None and tool_manifest.requires_approval(bare_name))
+        )
+        if needs_approval and key not in approved_keys:
             if key not in seen_pending_keys:
                 seen_pending_keys.add(key)
                 pending_actions.append({**inv_base, "approval_key": key})
@@ -896,9 +902,9 @@ async def _run_loop(
             return {
                 "error": "approval_required",
                 "message": (
-                    f"La acción '{bare_name}' es destructiva y requiere "
-                    f"aprobación explícita del usuario. NO la reintentes — "
-                    f"explica al usuario qué hará y espera su confirmación."
+                    f"La acción '{bare_name}' requiere aprobación explícita "
+                    f"del usuario ({risk}). NO la reintentes — explica al "
+                    f"usuario qué hará y espera su confirmación."
                 ),
                 "tool": bare_name,
                 "args": scrubbed,
@@ -1297,10 +1303,9 @@ async def approve_pending_action(
     approved_keys = {
         c["approval_key"] for c in (raw_calls or [])
         if isinstance(c, dict) and c.get("approval_key")
-        and c.get("risk_level") == "destructive"
     }
     if not approved_keys:
-        raise HTTPException(400, "no destructive actions pending in this message")
+        raise HTTPException(400, "no approvable actions pending in this message")
 
     return await _run_loop(
         conversation_id=conversation_id,

@@ -38,7 +38,6 @@ FROM (VALUES
     ('12_refresh_tokens.sql'),
     ('13_rbac_models.sql'),
     ('14_token_usage_cache_columns.sql'),
-    ('15_local_dev_bootstrap.sql'),
     ('16_audit_events.sql'),
     ('17_login_security.sql'),
     ('18_sessions_extended.sql'),
