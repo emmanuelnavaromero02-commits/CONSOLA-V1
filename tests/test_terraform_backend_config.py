@@ -36,8 +36,12 @@ def test_bootstrap_script_is_idempotent_check():
     src = _read(REPO / "scripts/bootstrap_tf_backend.sh")
     assert "aws s3api head-bucket" in src
     assert "aws s3api create-bucket" in src
+    assert "put-bucket-policy" in src
+    assert "DenyInsecureTransport" in src
+    assert "DenyUnencryptedObjectUploads" in src
     assert "aws dynamodb describe-table" in src
     assert "aws dynamodb create-table" in src
+    assert "aws dynamodb update-table" in src
     assert "--billing-mode PAY_PER_REQUEST" in src
 
 
