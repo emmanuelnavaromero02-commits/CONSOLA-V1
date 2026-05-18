@@ -18,11 +18,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.security import get_internal_api_key
-from app.services import cartridge_service, dag_templates, mcp_registry, studio_assistant
+from app.services import cartridge_service, dag_templates, mcp_registry, studio_assistant, studio_entities
 from app.services.csrf import require_csrf
+from app.services.permissions import require_permission
 
 
 router = APIRouter(prefix="/api/studio", tags=["Studio"])
+require_studio_read = require_permission("studio.read")
+require_studio_write = require_permission("studio.write")
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
@@ -275,19 +278,18 @@ async def templates(user: dict = Depends(require_authenticated)):
     return {"templates": dag_templates.get_all()}
 
 
-@router.get("/entities")
+@router.get("/entities", dependencies=[Depends(require_studio_read)])
 async def entities_list(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
 ):
-    manifest = await cartridge_service.get_cartridge(cartridge)
-    if not manifest:
+    if not await cartridge_service.get_cartridge(cartridge):
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
-    entities = manifest.get("entities") or []
+    entities = await studio_entities.list_entities(cartridge=cartridge)
     return {"cartridge": cartridge, "entities": entities, "total": len(entities)}
 
 
-@router.post("/entities/upload", dependencies=[Depends(require_csrf)])
+@router.post("/entities/upload", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
 async def entities_upload(request: Request, user: dict = Depends(require_authenticated)):
     content_type = request.headers.get("content-type", "")
     cartridge = request.query_params.get("cartridge") or "replicon"
@@ -313,20 +315,22 @@ async def entities_upload(request: Request, user: dict = Depends(require_authent
     if not await cartridge_service.get_cartridge(cartridge):
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
 
-    entities = _extract_entities_from_spec(content)
     spec_key = cartridge_service.upload_spec(cartridge, filename, content)
-    for entity in entities:
-        name = entity.pop("entity")
-        await cartridge_service.upsert_entity(cartridge, name, **entity)
+    try:
+        result = await studio_entities.upload_spec(content, user, default_cartridge=cartridge)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
-        "accepted": True,
-        "accepted_count": len(entities),
+        "accepted": not result["errors"],
+        "accepted_count": len(result["created"]),
         "uploaded": spec_key,
-        "entities": [e["entity"] for e in _extract_entities_from_spec(content)],
+        "entities": [e["name"] for e in result["created"]],
+        "created": result["created"],
+        "errors": result["errors"],
     }
 
 
-@router.post("/entity", dependencies=[Depends(require_csrf)])
+@router.post("/entity", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
 async def entity(request: Request, user: dict = Depends(require_authenticated)):
     body = await _optional_json(request)
     cartridge = body.get("cartridge") or body.get("cartridge_id") or "replicon"
@@ -334,9 +338,12 @@ async def entity(request: Request, user: dict = Depends(require_authenticated)):
     if not entity_name:
         return {"created": False, "error": "entity is required"}
     entity_name = _clean_identifier(str(entity_name), label="entity")
-    if not await cartridge_service.get_cartridge(cartridge):
-        raise HTTPException(404, f"Cartridge '{cartridge}' not found")
-    updates = {
+    spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
+    spec = {
+        **spec,
+        "name": spec.get("name") or entity_name,
+        "cartridge": spec.get("cartridge") or cartridge,
+        "fields": spec.get("fields") or body.get("fields") or [{"name": body.get("primary_key") or "id", "type": "string", "primary_key": True}],
         "display_name": body.get("display_name") or body.get("title") or entity_name,
         "mode": body.get("mode") or "full",
         "primary_key": body.get("primary_key") or "",
@@ -346,10 +353,11 @@ async def entity(request: Request, user: dict = Depends(require_authenticated)):
         "description": body.get("description") or "",
         "enabled": body.get("enabled", True),
     }
-    await cartridge_service.upsert_entity(cartridge, entity_name, **updates)
-    manifest = await cartridge_service.get_cartridge(cartridge)
-    created = next((e for e in (manifest or {}).get("entities", []) if e.get("entity") == entity_name), None)
-    return {"created": True, "entity_id": entity_name, "entity": created or {"entity": entity_name, **updates}}
+    try:
+        created = await studio_entities.create_entity(entity_name, cartridge, spec, user)
+    except (ValueError, studio_entities.DuplicateEntityError, studio_entities.UnknownCartridgeError) as exc:
+        raise studio_entities.to_http_error(exc) from exc
+    return {"created": True, "entity_id": entity_name, "entity": created}
 
 
 async def _layer_preview(layer: str, request: Request, user: dict) -> dict:

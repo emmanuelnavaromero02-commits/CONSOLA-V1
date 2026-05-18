@@ -37,6 +37,18 @@ def client(monkeypatch):
         "role": "admin",
         "workspace_role": "admin",
     }
+    app.dependency_overrides[studio_router.require_studio_read] = lambda: {
+        "id": 1,
+        "email": "admin@local.ai",
+        "role": "admin",
+        "workspace_role": "admin",
+    }
+    app.dependency_overrides[studio_router.require_studio_write] = lambda: {
+        "id": 1,
+        "email": "admin@local.ai",
+        "role": "admin",
+        "workspace_role": "admin",
+    }
 
     manifest = {
         "id": "replicon",
@@ -86,12 +98,24 @@ def client(monkeypatch):
     async def fake_chat(**_kwargs):
         return {"reply": "Studio conectado", "viewer_urls": [], "messages": []}
 
+    async def fake_list_entities(cartridge=None):
+        return [{
+            "id": "TimeEntry",
+            "name": "TimeEntry",
+            "entity": "TimeEntry",
+            "cartridge": cartridge or "replicon",
+            "display_name": "Time Entry",
+            "mode": "full",
+            "spec": {"name": "TimeEntry", "cartridge": "replicon", "fields": [{"name": "id"}]},
+        }]
+
     monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
     monkeypatch.setattr(studio_router, "_refinement_datasets", fake_datasets)
     monkeypatch.setattr(studio_router, "_refinement_invoke", fake_refinement)
     monkeypatch.setattr(studio_router, "_rag_sources", fake_rag_sources)
     monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
     monkeypatch.setattr(studio_router.studio_assistant, "chat", fake_chat)
+    monkeypatch.setattr(studio_router.studio_entities, "list_entities", fake_list_entities)
 
     test_client = TestClient(app)
     test_client.cookies.set("csrf_token", CSRF)
@@ -99,6 +123,8 @@ def client(monkeypatch):
         yield test_client, studio_router
     finally:
         app.dependency_overrides.pop(require_authenticated, None)
+        app.dependency_overrides.pop(studio_router.require_studio_read, None)
+        app.dependency_overrides.pop(studio_router.require_studio_write, None)
 
 
 REAL_ENDPOINTS = [
@@ -130,10 +156,11 @@ def test_entity_create_persists_via_cartridge_service(client, monkeypatch):
     test_client, studio_router = client
     calls = []
 
-    async def fake_upsert(cartridge, entity, **fields):
-        calls.append((cartridge, entity, fields))
+    async def fake_create(entity, cartridge, spec, user):
+        calls.append((cartridge, entity, spec, user))
+        return {"id": "uuid", "name": entity, "cartridge": cartridge, "spec": spec}
 
-    monkeypatch.setattr(studio_router.cartridge_service, "upsert_entity", fake_upsert)
+    monkeypatch.setattr(studio_router.studio_entities, "create_entity", fake_create)
     response = test_client.post(
         "/api/studio/entity",
         json={"cartridge": "replicon", "entity": "Invoice", "mode": "incremental"},
@@ -148,17 +175,18 @@ def test_entity_create_persists_via_cartridge_service(client, monkeypatch):
 def test_spec_upload_parses_yaml_and_persists_entities(client, monkeypatch):
     test_client, studio_router = client
     uploaded = []
-    entities = []
+    uploads = []
 
     def fake_upload(cartridge, filename, content):
         uploaded.append((cartridge, filename, content))
         return f"cartridges/{cartridge}/specs/{filename}"
 
-    async def fake_upsert(cartridge, entity, **fields):
-        entities.append((cartridge, entity, fields))
+    async def fake_upload_spec(content, user, default_cartridge=None):
+        uploads.append((content, default_cartridge, user))
+        return {"created": [{"name": "Invoice", "cartridge": default_cartridge}], "errors": []}
 
     monkeypatch.setattr(studio_router.cartridge_service, "upload_spec", fake_upload)
-    monkeypatch.setattr(studio_router.cartridge_service, "upsert_entity", fake_upsert)
+    monkeypatch.setattr(studio_router.studio_entities, "upload_spec", fake_upload_spec)
 
     response = test_client.post(
         "/api/studio/entities/upload",
@@ -174,5 +202,4 @@ def test_spec_upload_parses_yaml_and_persists_entities(client, monkeypatch):
     assert body["accepted"] is True
     assert body["accepted_count"] == 1
     assert uploaded and uploaded[0][1] == "entities.yaml"
-    assert entities[0][1] == "Invoice"
-    assert entities[0][2]["primary_key"] == "invoice_id"
+    assert uploads and uploads[0][1] == "replicon"

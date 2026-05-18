@@ -173,6 +173,17 @@ import { state } from './legacy-state.js';
         return;
       }
       const statusEl = document.getElementById(`uz-status-${zoneId}`);
+      if (zoneId === 'uz-entity') {
+        const previewText = await file.text();
+        const preview = previewText.slice(0, 900);
+        const ok = confirm(
+          `Vista previa de ${file.name}\n\n${preview}${previewText.length > 900 ? '\n\n…' : ''}\n\n¿Importar estas entidades al Studio?`
+        );
+        if (!ok) {
+          statusEl.innerHTML = '<span style="color:var(--text3)">Importación cancelada.</span>';
+          return;
+        }
+      }
       statusEl.innerHTML = `<span style="color:var(--cyan)">⟳ Subiendo ${esc(file.name)}...</span>`;
       const form = new FormData();
       form.append('file', file);
@@ -695,7 +706,10 @@ import { state } from './legacy-state.js';
                   onclick="saveNewEntity(${escJsArg(cartridge)})">✓ Guardar</button>
           <button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55"
                   onclick="cancelNewEntity()">✕</button>
-        </span>`;
+        </span>
+        <textarea id="ne-spec" spellcheck="false"
+          style="grid-column:1/-1;min-height:84px;font-size:10px;font-family:var(--font-mono);background:var(--bg2);color:var(--text1);border:1px solid var(--border);padding:8px;box-sizing:border-box"
+          placeholder='{"fields":[{"name":"id","type":"string","primary_key":true}]}'></textarea>`;
 
       area.appendChild(row);
       document.getElementById('ne-name').focus();
@@ -741,6 +755,21 @@ import { state } from './legacy-state.js';
       const display = document.getElementById('ne-display')?.value?.trim() || null;
       const mode    = document.getElementById('ne-mode')?.value || 'full';
       const dag     = document.getElementById('ne-dag')?.value?.trim() || null;
+      const specRaw = document.getElementById('ne-spec')?.value?.trim();
+      let spec = {};
+      if (specRaw) {
+        try {
+          spec = JSON.parse(specRaw);
+        } catch (e) {
+          const specEl = document.getElementById('ne-spec');
+          if (specEl) specEl.style.borderColor = '#ff2d55';
+          alert(`Spec JSON inválido: ${e.message}`);
+          return;
+        }
+      }
+      if (!Array.isArray(spec.fields) || !spec.fields.length) {
+        spec.fields = [{ name: 'id', type: 'string', primary_key: true }];
+      }
 
       const btn = document.querySelector('#new-entity-row .btn');
       if (btn) btn.textContent = '...';
@@ -752,6 +781,7 @@ import { state } from './legacy-state.js';
           body: JSON.stringify({
             cartridge,
             entity: name,
+            spec,
             display_name: display || undefined,
             mode,
             dag_id: dag || undefined,
