@@ -10,6 +10,7 @@ sys.modules.setdefault('app.services.auth', MagicMock())
 from fastapi import Request
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
+from app.routers import security as security_router
 from app.routers.security import router
 
 _ADMIN_USER = {"id": 1, "role": "admin", "email": "admin@example.com"}
@@ -53,7 +54,7 @@ def _make_fetch_side_effect(data_rows):
     return fetch_side_effect
 
 
-@patch("app.routers.security._auth.pool", new_callable=AsyncMock)
+@patch.object(security_router._auth, "pool", new_callable=AsyncMock)
 def test_get_sessions(mock_pool):
     mock_conn = AsyncMock()
     mock_pool.return_value = mock_conn
@@ -73,7 +74,7 @@ def test_get_sessions(mock_pool):
     assert "***" in data[0]["token_preview"] or "..." in data[0]["token_preview"]
 
 
-@patch("app.routers.security._auth.pool", new_callable=AsyncMock)
+@patch.object(security_router._auth, "pool", new_callable=AsyncMock)
 def test_revoke_session(mock_pool):
     mock_conn = AsyncMock()
     mock_pool.return_value = mock_conn
@@ -84,7 +85,7 @@ def test_revoke_session(mock_pool):
     assert response.json() == {"status": "ok"}
 
 
-@patch("app.routers.security._auth.pool", new_callable=AsyncMock)
+@patch.object(security_router._auth, "pool", new_callable=AsyncMock)
 def test_get_audit_events(mock_pool):
     mock_conn = AsyncMock()
     mock_pool.return_value = mock_conn

@@ -22,9 +22,24 @@ resource "aws_iam_role_policy_attachment" "app_ssm" {
 
 data "aws_iam_policy_document" "app_s3" {
   statement {
-    actions = ["s3:*"]
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
     resources = [
       aws_s3_bucket.lakehouse.arn,
+    ]
+  }
+
+  statement {
+    actions = [
+      "s3:AbortMultipartUpload",
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObject",
+    ]
+    resources = [
       "${aws_s3_bucket.lakehouse.arn}/*",
     ]
   }
@@ -47,6 +62,21 @@ resource "aws_iam_role_policy" "app_bedrock" {
   name   = "modecissions-app-bedrock"
   role   = aws_iam_role.app.id
   policy = data.aws_iam_policy_document.app_bedrock.json
+}
+
+data "aws_iam_policy_document" "app_secretsmanager" {
+  statement {
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      for secret in aws_secretsmanager_secret.app : secret.arn
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "app_secretsmanager" {
+  name   = "modecissions-app-secretsmanager"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.app_secretsmanager.json
 }
 
 resource "aws_iam_instance_profile" "app" {

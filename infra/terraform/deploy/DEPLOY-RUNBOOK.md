@@ -97,7 +97,9 @@ Get-Content .\modecissions-deploy-key.pub
 4. **NO** marcar "Allow write access" (solo lectura)
 5. Add key
 
-> El archivo `modecissions-deploy-key` (privada) lo pasaremos a Terraform como variable. **Nunca commitearlo**.
+> El archivo `modecissions-deploy-key` (privada) se carga en AWS Secrets
+> Manager antes de crear la EC2 App. **Nunca commitearlo ni pasarlo como
+> variable Terraform**, porque `user_data` queda en el state.
 
 ---
 
@@ -107,13 +109,18 @@ Get-Content .\modecissions-deploy-key.pub
 cd infra/
 terraform init
 
+terraform apply -target=aws_secretsmanager_secret.app
+
+aws secretsmanager put-secret-value `
+  --secret-id modecissions/github_deploy_key `
+  --secret-string (Get-Content ..\modecissions-deploy-key -Raw)
+
 terraform apply `
-  -var="postgres_password=CAMBIAR_POR_PASSWORD_SEGURO" `
-  -var="github_repo_url=git@github.com:ORG/REPO.git" `
-  -var="deploy_private_key=$(Get-Content ..\modecissions-deploy-key -Raw)"
+  -var="github_repo_url=git@github.com:ORG/REPO.git"
 ```
 
-> Bash equivalente: `-var="deploy_private_key=$(cat ../modecissions-deploy-key)"`.
+> Bash equivalente para la clave privada:
+> `aws secretsmanager put-secret-value --secret-id modecissions/github_deploy_key --secret-string "$(cat ../modecissions-deploy-key)"`.
 
 **Recursos creados y tiempo aproximado**:
 
@@ -232,21 +239,55 @@ docker exec mode_postgres_gold psql -U postgres -p 5433 -c '\l'
 
 ---
 
-## 6. Configurar .env — 5 min
+## 6. Configurar AWS Secrets Manager — 5 min
+
+La EC2 App ya no se configura editando secretos en un `.env` manual.
+Terraform crea los secretos en AWS Secrets Manager y el boot de la EC2
+ejecuta `scripts/aws-entrypoint.sh`, que escribe
+`/opt/modecissions/infra/terraform/deploy/.env` con `umask 077`
+(solo root puede leerlo). Si falta un secreto obligatorio, el script
+falla y el stack no debe arrancar.
+
+Terraform crea los contenedores de secretos vacíos en AWS Secrets
+Manager. Este paso se ejecuta **después del apply parcial**
+`terraform apply -target=aws_secretsmanager_secret.app` y **antes del
+apply completo** que crea la EC2 App; si cargas secretos después de
+crear la EC2, el `user_data` fallará por diseño. Los valores **no** se
+pasan como variables Terraform para que no queden dentro del state.
 
 ```bash
-cd /opt/modecissions/infra/terraform/deploy
-cp .env.example .env
-nano .env
+aws secretsmanager put-secret-value --secret-id modecissions/postgres_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/jwt_secret_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/internal_api_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/field_encryption_key --secret-string '<fernet-key>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_console_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_refinement_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_vault_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_workspace_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_mcp_infra_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_refinement_gold_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_dag_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_meta_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/airflow_secret_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/airflow_admin_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/superset_secret_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/superset_admin_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/github_deploy_key --secret-string "$(cat ../modecissions-deploy-key)"
+aws secretsmanager put-secret-value --secret-id modecissions/anthropic_api_key --secret-string '<requerido-si-CHAT_LLM_PROVIDER=anthropic>'
+aws secretsmanager put-secret-value --secret-id modecissions/gemini_api_key --secret-string ''
+aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --secret-string ''
 ```
 
 | Variable                | Valor                                                    | De dónde sacarlo                       |
 |-------------------------|----------------------------------------------------------|----------------------------------------|
-| `POSTGRES_PASSWORD`     | el password que pasaste a `-var="postgres_password=..."` | tu gestor de secretos                  |
+| `POSTGRES_PASSWORD`     | `modecissions/postgres_password`                         | AWS Secrets Manager                    |
+| `JWT_SECRET_KEY`        | `modecissions/jwt_secret_key`                            | AWS Secrets Manager                    |
+| `INTERNAL_API_KEY`      | `modecissions/internal_api_key`                          | AWS Secrets Manager                    |
+| `FIELD_ENCRYPTION_KEY`  | `modecissions/field_encryption_key`                      | AWS Secrets Manager                    |
 | `S3_BUCKET_NAME`        | `modecissions-lakehouse-xxx`                             | `terraform output s3_bucket_name`      |
 | `AWS_REGION`            | `us-east-1`                                              | tu región del apply                    |
-| `ANTHROPIC_API_KEY`     | `sk-ant-...`                                             | console.anthropic.com → API Keys       |
-| `GEMINI_API_KEY`        | (opcional, si quieres Gemini)                            | aistudio.google.com                    |
+| `ANTHROPIC_API_KEY`     | `modecissions/anthropic_api_key`                         | AWS Secrets Manager                    |
+| `GEMINI_API_KEY`        | `modecissions/gemini_api_key`                            | AWS Secrets Manager, opcional puede ser vacío |
 | `CHAT_LLM_PROVIDER`     | `anthropic`                                              | fijo                                   |
 | `CHAT_LLM_MODEL`        | `claude-haiku-4-5-20251001`                              | fijo (ajustable)                       |
 | `SQL_LLM_MODEL`         | `claude-sonnet-4-6`                                      | fijo                                   |
@@ -256,15 +297,25 @@ nano .env
 | `SUPERSET_SECRET_KEY`   | hex de 32 bytes                                          | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `SUPERSET_ADMIN_PASSWORD` | password fuerte                                        | inventado / gestor                     |
 | `AIRFLOW_SECRET_KEY`    | hex de 32 bytes                                          | mismo comando que Superset             |
-| `CONSOLE_URL`           | `http://10.0.2.X:8000` (la IP privada de EC2 App)        | `terraform output ec2_app_private_ip` |
-| `WORKSPACE_PUBLIC_URL`  | `http://10.0.2.X:8001`                                   | misma IP, puerto 8001                  |
+| `CONSOLE_URL`           | `http://10.0.2.X:8000` (IP privada de EC2 App)           | `aws-entrypoint.sh` vía IMDSv2         |
+| `WORKSPACE_PUBLIC_URL`  | `http://10.0.2.X:8001`                                   | `aws-entrypoint.sh` vía IMDSv2         |
 | `SMTP_HOST`             | `mailhog` (default — captura emails sin enviarlos)       | mantener hasta tener SES configurado   |
 | `SMTP_PORT`             | `1025`                                                   | fijo para MailHog                      |
+| `SMTP_PASSWORD`         | `modecissions/smtp_password`                             | AWS Secrets Manager, opcional puede ser vacío |
 | `SMTP_FROM`             | `noreply@modecissions.local`                             | fijo para MailHog                      |
 | `INVITE_TOKEN_TTL_HOURS`| `72`                                                     | fijo (ajustable)                       |
 | `RESET_TOKEN_TTL_HOURS` | `1`                                                      | fijo                                   |
 
-> Permisos: `chmod 600 /opt/modecissions/infra/terraform/deploy/.env` después de editarlo.
+Rotación de secretos:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id modecissions/jwt_secret_key \
+  --secret-string '<nuevo-valor>'
+sudo bash /opt/modecissions/scripts/aws-entrypoint.sh
+sudo docker compose --env-file /opt/modecissions/infra/terraform/deploy/.env \
+  -f /opt/modecissions/infra/terraform/deploy/docker-compose.aws.yml up -d
+```
 
 ---
 
@@ -275,7 +326,7 @@ bash /opt/modecissions/infra/terraform/deploy/build.sh
 ```
 
 Descarga las imágenes versionadas desde GHCR usando `GHCR_OWNER` e
-`IMAGE_TAG` definidos en `.env`. El compose AWS ya no consume
+`IMAGE_TAG` generados por `aws-entrypoint.sh` en `.env`. El compose AWS ya no consume
 `modecissions/*:latest`; si cambias el tag de release, actualiza
 `IMAGE_TAG` y vuelve a ejecutar este paso.
 
@@ -298,10 +349,10 @@ docker images | grep modecissions
 **Resultado esperado** al terminar:
 
 ```
-modecissions/console      latest  ...  ~1.2 GB
-modecissions/workspace    latest  ...  ~900 MB
-modecissions/refinement   latest  ...  ~1.0 GB
-modecissions/mcp-infra    latest  ...  ~800 MB
+ghcr.io/OWNER/console      v1.44.5  ...  ~1.2 GB
+ghcr.io/OWNER/workspace    v1.44.5  ...  ~900 MB
+ghcr.io/OWNER/refinement   v1.44.5  ...  ~1.0 GB
+ghcr.io/OWNER/mcp-infra    v1.44.5  ...  ~800 MB
 ```
 
 > Si el build falla por OOM, ver Troubleshooting (sección 10).

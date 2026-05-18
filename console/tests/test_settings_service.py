@@ -35,7 +35,7 @@ async def test_list_settings_masks_secret_when_include_secrets_false():
         _row("plain", "visible", False),
         _row("secret_key", "hex-value", True),
     ]
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool):
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool):
         result = await settings_service.list_settings()
     assert result[0]["value"] == "visible"
     assert result[1]["value"] == "***"
@@ -45,7 +45,7 @@ async def test_list_settings_masks_secret_when_include_secrets_false():
 async def test_list_settings_returns_real_value_when_include_secrets_true():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = [_row("secret_key", "hex-value", True)]
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool):
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool):
         result = await settings_service.list_settings(include_secrets=True)
     assert result[0]["value"] == "hex-value"
 
@@ -54,7 +54,7 @@ async def test_list_settings_returns_real_value_when_include_secrets_true():
 async def test_list_settings_filters_by_category():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool):
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool):
         await settings_service.list_settings(category="integrations")
     args = mock_pool.fetch.call_args[0]
     assert "WHERE category = $1" in args[0]
@@ -65,8 +65,8 @@ async def test_list_settings_filters_by_category():
 async def test_set_setting_updates_and_audits():
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = _row("airflow_connection_mode", "real", False, category="integrations")
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool), \
-         patch("app.services.settings_service.audit_service.record_event", new=AsyncMock()) as mock_audit:
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool), \
+         patch.object(settings_service.audit_service, "record_event", new=AsyncMock()) as mock_audit:
         result = await settings_service.set_setting(
             "airflow_connection_mode", "real", user_id=1, user_email="a@b.com",
         )
@@ -87,8 +87,8 @@ async def test_set_setting_updates_and_audits():
 async def test_set_setting_raises_keyerror_when_missing():
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = None
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool), \
-         patch("app.services.settings_service.audit_service.record_event", new=AsyncMock()):
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool), \
+         patch.object(settings_service.audit_service, "record_event", new=AsyncMock()):
         with pytest.raises(KeyError):
             await settings_service.set_setting("nonexistent", "x", user_id=1)
 
@@ -97,8 +97,8 @@ async def test_set_setting_raises_keyerror_when_missing():
 async def test_set_setting_masks_secret_value_on_return():
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = _row("replicon_token", "real-token", True, category="integrations")
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool), \
-         patch("app.services.settings_service.audit_service.record_event", new=AsyncMock()):
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool), \
+         patch.object(settings_service.audit_service, "record_event", new=AsyncMock()):
         result = await settings_service.set_setting("replicon_token", "real-token", user_id=1)
     assert result["value"] == "***"
 
@@ -107,8 +107,8 @@ async def test_set_setting_masks_secret_value_on_return():
 async def test_reveal_setting_returns_real_value_and_audits():
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = _row("replicon_token", "real-token", True, category="integrations")
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool), \
-         patch("app.services.settings_service.audit_service.record_event", new=AsyncMock()) as mock_audit:
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool), \
+         patch.object(settings_service.audit_service, "record_event", new=AsyncMock()) as mock_audit:
         result = await settings_service.reveal_setting("replicon_token", user_id=1, user_email="a@b.com")
     assert result["value"] == "real-token"
     mock_audit.assert_awaited_once()
@@ -119,8 +119,8 @@ async def test_reveal_setting_returns_real_value_and_audits():
 async def test_reveal_setting_returns_none_when_missing():
     mock_pool = AsyncMock()
     mock_pool.fetchrow.return_value = None
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool), \
-         patch("app.services.settings_service.audit_service.record_event", new=AsyncMock()) as mock_audit:
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool), \
+         patch.object(settings_service.audit_service, "record_event", new=AsyncMock()) as mock_audit:
         result = await settings_service.reveal_setting("nope", user_id=1)
     assert result is None
     mock_audit.assert_not_called()
@@ -132,8 +132,8 @@ async def test_rotate_secret_generates_64_hex_chars_and_audits():
     mock_pool = AsyncMock()
     # set_setting fetches updated row
     mock_pool.fetchrow.return_value = _row("internal_api_key", "newhex", True, category="security")
-    with patch("app.services.settings_service.auth.pool", return_value=mock_pool), \
-         patch("app.services.settings_service.audit_service.record_event", new=AsyncMock()) as mock_audit:
+    with patch.object(settings_service.auth, "pool", return_value=mock_pool), \
+         patch.object(settings_service.audit_service, "record_event", new=AsyncMock()) as mock_audit:
         await settings_service.rotate_secret("internal_api_key", user_id=1, user_email="a@b.com")
     # fetchrow(SQL, $1=key, $2=json_value, $3=user_id). $2 must decode to 64 hex chars.
     sent_value = json.loads(mock_pool.fetchrow.call_args[0][2])

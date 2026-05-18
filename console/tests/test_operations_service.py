@@ -22,7 +22,7 @@ async def test_list_migrations_returns_rows_as_dicts():
         {"filename": "00_schema.sql", "applied_at": datetime(2026, 1, 1), "checksum": None},
         {"filename": "21_system_settings.sql", "applied_at": datetime(2026, 5, 1), "checksum": None},
     ]
-    with patch("app.services.operations_service.auth.pool", return_value=mock_pool):
+    with patch.object(operations_service.auth, "pool", return_value=mock_pool):
         result = await operations_service.list_migrations()
     assert len(result) == 2
     assert result[0]["filename"] == "00_schema.sql"
@@ -35,7 +35,7 @@ async def test_list_migrations_returns_rows_as_dicts():
 async def test_list_migrations_empty_table_returns_empty_list():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
-    with patch("app.services.operations_service.auth.pool", return_value=mock_pool):
+    with patch.object(operations_service.auth, "pool", return_value=mock_pool):
         result = await operations_service.list_migrations()
     assert result == []
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import sys
 import types
+from importlib import import_module
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,6 +26,19 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 @pytest.fixture(scope="module")
 def client():
+    auth_module = sys.modules.get("app.services.auth")
+    if isinstance(auth_module, Mock) or getattr(auth_module, "__name__", "") == "stub":
+        sys.modules.pop("app.services.auth", None)
+    services_pkg = import_module("app.services")
+    auth_module = import_module("app.services.auth")
+    setattr(services_pkg, "auth", auth_module)
+
+    routers_pkg = import_module("app.routers")
+    for attr in ("mcp", "settings_internal"):
+        if hasattr(routers_pkg, attr):
+            delattr(routers_pkg, attr)
+    for module_name in ("app.main", "app.routers.mcp", "app.routers.settings_internal"):
+        sys.modules.pop(module_name, None)
     from app.main import app
     return TestClient(app)
 

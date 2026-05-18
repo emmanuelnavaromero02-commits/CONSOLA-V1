@@ -1,23 +1,23 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
-from app.services.auth import authenticate
+from app.services import auth as auth_service
 
 @pytest.fixture
 def mock_pool():
-    with patch("app.services.auth.pool", new_callable=AsyncMock) as mock:
+    with patch.object(auth_service, "pool", new_callable=AsyncMock) as mock:
         pool_instance = AsyncMock()
         mock.return_value = pool_instance
         yield pool_instance
 
 @pytest.fixture
 def mock_get_user():
-    with patch("app.services.auth._get_user_auth_record_by_email", new_callable=AsyncMock) as mock:
+    with patch.object(auth_service, "_get_user_auth_record_by_email", new_callable=AsyncMock) as mock:
         yield mock
 
 @pytest.fixture
 def mock_verify_password():
-    with patch("app.services.auth.verify_password", new_callable=MagicMock) as mock:
+    with patch.object(auth_service, "verify_password", new_callable=MagicMock) as mock:
         yield mock
 
 @pytest.mark.asyncio
@@ -28,7 +28,7 @@ async def test_successful_login_registers_success(mock_pool, mock_get_user, mock
     mock_verify_password.return_value = True
 
     # Action
-    result = await authenticate("test@example.com", "password", "127.0.0.1")
+    result = await auth_service.authenticate("test@example.com", "password", "127.0.0.1")
 
     # Verify
     assert result is not None
@@ -49,7 +49,7 @@ async def test_failed_login_registers_failure_wrong_password(mock_pool, mock_get
     mock_verify_password.return_value = False
 
     # Action
-    result = await authenticate("test@example.com", "wrong_password", "127.0.0.1")
+    result = await auth_service.authenticate("test@example.com", "wrong_password", "127.0.0.1")
 
     # Verify
     assert result is None
@@ -64,7 +64,7 @@ async def test_failed_login_registers_failure_user_not_found(mock_pool, mock_get
     mock_get_user.return_value = None
 
     # Action
-    result = await authenticate("test@example.com", "password", "127.0.0.1")
+    result = await auth_service.authenticate("test@example.com", "password", "127.0.0.1")
 
     # Verify
     assert result is None
@@ -79,7 +79,7 @@ async def test_brute_force_protection_blocks_after_5_failures(mock_pool, mock_ge
 
     # Action
     with pytest.raises(HTTPException) as excinfo:
-        await authenticate("test@example.com", "password", "127.0.0.1")
+        await auth_service.authenticate("test@example.com", "password", "127.0.0.1")
 
     # Verify
     assert excinfo.value.status_code == 429
@@ -95,7 +95,7 @@ async def test_brute_force_protection_allows_after_15_minutes_expire(mock_pool, 
     mock_verify_password.return_value = True
 
     # Action
-    result = await authenticate("test@example.com", "password", "127.0.0.1")
+    result = await auth_service.authenticate("test@example.com", "password", "127.0.0.1")
 
     # Verify
     assert result is not None

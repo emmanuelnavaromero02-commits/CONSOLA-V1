@@ -3725,6 +3725,7 @@ app.include_router(onboarding_router.router)              # v1.44.1 Tarea F
 app.include_router(copilot_memory_router.router)          # v1.44.2 Tarea G
 app.include_router(copilot_drafts_router.router)          # v1.44.2 Tarea H
 app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
+app.include_router(copilot_workflows_router.plural_router) # v1.44.6 Task 1 executor aliases
 app.include_router(studio_router.router)                  # v1.44.3.3 Task B (stub)
 
 
