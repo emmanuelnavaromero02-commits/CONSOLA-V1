@@ -195,6 +195,45 @@ function renderAssistant(data) {
   window.aiAppend("assistant", data.reply);
 }
 
+function datasetNameFromSupersetButton(button) {
+  const row = button?.closest?.(".ds-row");
+  const rawName = row?.querySelector?.(".ds-row-name")?.textContent?.trim();
+  if (!rawName) return null;
+  return `gold_${rawName.replace(/^gold_/, "")}`;
+}
+
+function renderSupersetStatus(payload, response, button) {
+  const row = button?.closest?.(".ds-row");
+  const host = row?.parentElement || document.getElementById("gold-list");
+  if (!host) return;
+  host.querySelectorAll(".superset-status").forEach(node => node.remove());
+  const box = document.createElement("div");
+  box.className = "superset-status empty-card";
+  if (!response.ok || payload?.error || payload?.detail) {
+    box.innerHTML = `<span style="color:#ff2d55">No se pudo crear: ${escapeHtml(payload?.error || payload?.detail || `HTTP ${response.status}`)}</span>`;
+  } else {
+    const table = payload?.table || payload?.table_name || payload?.dataset_name || "dataset";
+    box.textContent = payload?.existing
+      ? `✓ Ya existía en Superset: ${table}`
+      : `✓ Dataset creado en Superset: ${table}`;
+  }
+  host.prepend(box);
+}
+
+function createSupersetDatasetFromButton(button) {
+  const tableName = datasetNameFromSupersetButton(button);
+  const host = button?.closest?.(".ds-row")?.parentElement || document.getElementById("gold-list");
+  if (host) {
+    host.querySelectorAll(".superset-status").forEach(node => node.remove());
+    host.insertAdjacentHTML("afterbegin", '<div class="superset-status empty-card">⟳ Creando dataset en Superset...</div>');
+  }
+  return studioAction("/api/studio/superset/dataset", {
+    method: "POST",
+    body: { table_name: tableName, schema: "public" },
+    render: (payload, response) => renderSupersetStatus(payload, response, button),
+  });
+}
+
 function openEntityForm() {
   if (typeof window.showAddEntityRow === "function") {
     try { window.showAddEntityRow(); } catch {}
@@ -353,6 +392,14 @@ function hookRuntimeActions() {
       if (typeof window.deployDag === "function") {
         window.deployDag();
       }
+      return;
+    }
+
+    const supersetCreate = target.closest("button");
+    const supersetText = (supersetCreate?.innerText || supersetCreate?.textContent || "").trim();
+    if (supersetCreate && /crear\s+en\s+superset/i.test(supersetText)) {
+      stopInlineHandler(event);
+      createSupersetDatasetFromButton(supersetCreate);
     }
   }, true);
 
