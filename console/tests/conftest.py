@@ -3,10 +3,14 @@ from __future__ import annotations
 import os
 import sys
 from importlib import import_module
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+CONSOLE_ROOT = Path(__file__).resolve().parents[1]
+if str(CONSOLE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONSOLE_ROOT))
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("INTERNAL_API_KEY", "test_internal_api_key_with_more_than_32_chars")

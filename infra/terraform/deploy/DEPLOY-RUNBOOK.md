@@ -295,6 +295,7 @@ aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --sec
 | `EMBED_MODEL`           | `nomic-embed-text`                                       | fijo si usas Ollama                    |
 | `EMBED_DIM`             | `768`                                                    | debe coincidir con `EMBED_MODEL`       |
 | `SUPERSET_SECRET_KEY`   | hex de 32 bytes                                          | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `SUPERSET_ADMIN_USER`   | `admin`                                                  | usuario bootstrap de Superset        |
 | `SUPERSET_ADMIN_PASSWORD` | password fuerte                                        | inventado / gestor                     |
 | `AIRFLOW_SECRET_KEY`    | hex de 32 bytes                                          | mismo comando que Superset             |
 | `CONSOLE_URL`           | `http://10.0.2.X:8000` (IP privada de EC2 App)           | `aws-entrypoint.sh` vía IMDSv2         |
@@ -428,6 +429,30 @@ Abrir desde el navegador (con VPN activa):
 - Superset:   http://10.0.2.X:8088        (admin / `$SUPERSET_ADMIN_PASSWORD`)
 - Airflow:    http://10.0.2.X:8082        (admin / admin — cambiar después)
 - MailHog UI: http://10.0.2.X:8025        ← lee aquí los emails de invitación/reset
+
+---
+
+### Superset datasets desde Studio
+
+El botón **Crear en Superset** de Studio usa el backend `console` contra la API
+REST de Superset (`/api/v1/security/login`, CSRF y `/api/v1/dataset/`). Para
+que funcione en AWS, `docker-compose.aws.yml` fija `SUPERSET_URL=http://superset:8088`
+y `scripts/aws-entrypoint.sh` inyecta `SUPERSET_ADMIN_USER` /
+`SUPERSET_ADMIN_PASSWORD`. Para reducir blast radius, configura también
+`SUPERSET_SERVICE_USER` y el secreto `SUPERSET_SERVICE_PASSWORD` con una cuenta
+de servicio limitada a listar bases y crear datasets.
+
+Primer setup recomendado:
+
+1. Levantar Superset y entrar con `SUPERSET_ADMIN_USER` /
+   `SUPERSET_ADMIN_PASSWORD`.
+2. Crear opcionalmente un usuario de servicio para Studio y guardarlo como
+   `SUPERSET_SERVICE_USER` / `SUPERSET_SERVICE_PASSWORD`.
+3. Registrar una conexión de base de datos hacia Postgres Gold
+   (`modecissions_gold`) si no existe.
+4. Desde Studio, ejecutar **Crear en Superset** sobre una tabla Gold. Si el
+   dataset ya existe, el backend devuelve el dataset existente en vez de crear
+   duplicados.
 
 ---
 

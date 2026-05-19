@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { loginUser, type LoginError } from "@/lib/auth-flow";
@@ -46,17 +46,26 @@ function LoginCard() {
   const router = useRouter();
   const params = useSearchParams();
   const nextPath = params.get("next") || "/dashboard";
+  const emailRef = useRef<HTMLInputElement>(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    emailRef.current?.focus();
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!email || !password) {
-      toast.error("Ingresa tu email y contraseña.");
+      const message = "Ingresa tu email y contraseña.";
+      setAuthError(message);
+      toast.error(message, { duration: 10_000 });
       return;
     }
+    setAuthError(null);
     setSubmitting(true);
     try {
       // v1.44.3.2.2 R-Mac: loginUser handles the GET /login → read
@@ -70,7 +79,9 @@ function LoginCard() {
       router.refresh();
     } catch (err: unknown) {
       const e = err as LoginError;
-      toast.error(e?.message || "No se pudo iniciar sesión. Intenta de nuevo.");
+      const message = e?.message || "No se pudo iniciar sesión. Intenta de nuevo.";
+      setAuthError(message);
+      toast.error(message, { duration: 10_000 });
     } finally {
       setSubmitting(false);
     }
@@ -91,12 +102,17 @@ function LoginCard() {
             Email
           </label>
           <input
+            ref={emailRef}
             id="email"
             type="email"
+            autoFocus
             autoComplete="email"
             required
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setAuthError(null);
+            }}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             disabled={submitting}
           />
@@ -112,7 +128,10 @@ function LoginCard() {
             autoComplete="current-password"
             required
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setAuthError(null);
+            }}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             disabled={submitting}
           />
@@ -125,6 +144,12 @@ function LoginCard() {
         >
           {submitting ? "Iniciando sesión…" : "Iniciar sesión"}
         </button>
+
+        {authError ? (
+          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+            {authError}
+          </p>
+        ) : null}
 
         {/* v1.44.3.3 R-Mac-Round-3 Task D — forgot-password
             affordance. The backend exposes GET /forgot-password

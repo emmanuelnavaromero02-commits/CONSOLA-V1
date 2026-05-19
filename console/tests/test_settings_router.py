@@ -33,6 +33,7 @@ from app.services import settings_service as _svc  # noqa: E402
 
 _ADMIN = {"id": 1, "role": "admin", "email": "admin@example.com"}
 _USER = {"id": 2, "role": "user", "email": "user@example.com"}
+_CSRF = "unit-test-csrf"
 
 
 def _make_app(user: dict | None = None) -> FastAPI:
@@ -41,6 +42,11 @@ def _make_app(user: dict | None = None) -> FastAPI:
         app.dependency_overrides[require_authenticated] = lambda: user
     app.include_router(settings_router.router)
     return app
+
+
+def _csrf_headers(client: TestClient) -> dict[str, str]:
+    client.cookies.set("csrf_token", _CSRF)
+    return {"X-CSRF-Token": _CSRF}
 
 
 def _setting_row(key, value, is_secret=False, category="test"):
@@ -111,7 +117,7 @@ def test_reveal_setting_admin_returns_real_value():
     client = TestClient(_make_app(user=_ADMIN))
     real = _setting_row("replicon_token", "real-bearer", is_secret=True)
     with patch.object(_svc, "reveal_setting", new=AsyncMock(return_value=real)) as mock:
-        response = client.post("/api/settings/replicon_token/reveal")
+        response = client.post("/api/settings/replicon_token/reveal", headers=_csrf_headers(client))
     assert response.status_code == 200
     assert response.json()["value"] == "real-bearer"
     # v1.41.0: settings router forwards ip + user_agent to settings_service
@@ -128,7 +134,7 @@ def test_reveal_setting_admin_returns_real_value():
 def test_reveal_setting_unknown_returns_404():
     client = TestClient(_make_app(user=_ADMIN))
     with patch.object(_svc, "reveal_setting", new=AsyncMock(return_value=None)):
-        response = client.post("/api/settings/nope/reveal")
+        response = client.post("/api/settings/nope/reveal", headers=_csrf_headers(client))
     assert response.status_code == 404
 
 
@@ -141,6 +147,7 @@ def test_update_setting_admin_persists():
         response = client.put(
             "/api/settings/airflow_connection_mode",
             json={"value": "real"},
+            headers=_csrf_headers(client),
         )
     assert response.status_code == 200
     assert response.json()["value"] == "real"
@@ -156,14 +163,14 @@ def test_update_setting_admin_persists():
 
 def test_update_setting_missing_value_returns_400():
     client = TestClient(_make_app(user=_ADMIN))
-    response = client.put("/api/settings/k", json={})
+    response = client.put("/api/settings/k", json={}, headers=_csrf_headers(client))
     assert response.status_code == 400
 
 
 def test_update_setting_unknown_key_returns_404():
     client = TestClient(_make_app(user=_ADMIN))
     with patch.object(_svc, "set_setting", new=AsyncMock(side_effect=KeyError("nope"))):
-        response = client.put("/api/settings/nope", json={"value": "x"})
+        response = client.put("/api/settings/nope", json={"value": "x"}, headers=_csrf_headers(client))
     assert response.status_code == 404
 
 
@@ -173,7 +180,7 @@ def test_rotate_secret_admin_returns_updated_row():
     client = TestClient(_make_app(user=_ADMIN))
     rotated = _setting_row("internal_api_key", "***", is_secret=True)
     with patch.object(_svc, "rotate_secret", new=AsyncMock(return_value=rotated)) as mock:
-        response = client.post("/api/settings/internal_api_key/rotate")
+        response = client.post("/api/settings/internal_api_key/rotate", headers=_csrf_headers(client))
     assert response.status_code == 200
     mock.assert_awaited_once_with(
         "internal_api_key",
@@ -187,5 +194,5 @@ def test_rotate_secret_admin_returns_updated_row():
 def test_rotate_secret_unknown_key_returns_404():
     client = TestClient(_make_app(user=_ADMIN))
     with patch.object(_svc, "rotate_secret", new=AsyncMock(side_effect=KeyError("nope"))):
-        response = client.post("/api/settings/nope/rotate")
+        response = client.post("/api/settings/nope/rotate", headers=_csrf_headers(client))
     assert response.status_code == 404

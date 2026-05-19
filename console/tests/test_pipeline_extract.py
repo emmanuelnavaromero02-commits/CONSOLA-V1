@@ -222,6 +222,63 @@ async def test_mcp_based_cartridge_keeps_mcp_invoke_fallback(console_main, monke
 
 
 @pytest.mark.anyio
+async def test_api_pipeline_extract_all_triggers_visible_entities(console_main, monkeypatch):
+    async def pipeline(cartridge):
+        assert cartridge == "replicon"
+        return {"pipeline": [
+            {"entity": "Activity"},
+            {"entity": "Department"},
+        ]}
+
+    calls = []
+
+    async def extract(cartridge, entity, body):
+        calls.append((cartridge, entity, body))
+        return {
+            "triggered": True,
+            "entity": entity,
+            "dag_run_id": f"manual__{entity}",
+            "dag_id": f"replicon_{entity.lower()}",
+            "state": "queued",
+        }
+
+    monkeypatch.setattr(console_main, "api_pipeline", pipeline)
+    monkeypatch.setattr(console_main, "api_pipeline_extract", extract)
+
+    result = await console_main.api_pipeline_extract_all("replicon", {"mode": "incremental"})
+
+    assert calls == [
+        ("replicon", "Activity", {"mode": "incremental"}),
+        ("replicon", "Department", {"mode": "incremental"}),
+    ]
+    assert result["count"] == 2
+    assert result["error_count"] == 0
+    assert [item["entity"] for item in result["triggered"]] == ["Activity", "Department"]
+    assert result["triggered"][0]["job_id"] == "manual__Activity"
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_extract_all_reports_per_entity_errors(console_main, monkeypatch):
+    async def pipeline(cartridge):
+        return {"pipeline": [{"entity": "Good"}, {"entity": "Bad"}]}
+
+    async def extract(cartridge, entity, body):
+        if entity == "Bad":
+            raise HTTPException(400, "Entity is disabled")
+        return {"job_id": "job-good"}
+
+    monkeypatch.setattr(console_main, "api_pipeline", pipeline)
+    monkeypatch.setattr(console_main, "api_pipeline_extract", extract)
+
+    result = await console_main.api_pipeline_extract_all("replicon", {})
+
+    assert result["count"] == 1
+    assert result["error_count"] == 1
+    assert result["triggered"][0]["entity"] == "Good"
+    assert result["errors"] == [{"entity": "Bad", "status_code": 400, "error": "Entity is disabled"}]
+
+
+@pytest.mark.anyio
 async def test_dag_based_missing_entity_returns_404(console_main, monkeypatch):
     async def metadata(cartridge, entity):
         return {"pattern": "dag-based", "entity": None}

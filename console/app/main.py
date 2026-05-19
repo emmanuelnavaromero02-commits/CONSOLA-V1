@@ -1257,6 +1257,14 @@ async def dataset_schema(name: str):
         r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/schema")
         return r.json()
 
+@app.get("/api/datasets", dependencies=[Depends(require_authenticated)])
+async def api_list_datasets_alias():
+    return await list_datasets()
+
+@app.get("/api/datasets/{name}/schema", dependencies=[Depends(require_authenticated)])
+async def api_dataset_schema_alias(name: str):
+    return await dataset_schema(name)
+
 @app.get("/datasets/{name}/data", dependencies=[Depends(require_authenticated)])
 async def dataset_data(name: str, request: Request, limit: int = 100):
     # Forward user context so refinement can apply RLS. Without it the GOLD
@@ -2055,6 +2063,56 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
     return result
 
 
+@app.post(
+    "/api/pipeline/{cartridge}/extract_all",
+    dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)],
+)
+async def api_pipeline_extract_all(cartridge: str, body: dict | None = None):
+    """Trigger extraction for every entity currently visible in the pipeline."""
+    body = body or {}
+    pipeline = await api_pipeline(cartridge)
+    rows = pipeline.get("pipeline") or []
+    triggered: list[dict] = []
+    errors: list[dict] = []
+
+    for row in rows:
+        entity = row.get("entity")
+        if not entity:
+            continue
+        try:
+            result = await api_pipeline_extract(cartridge, entity, body)
+            triggered.append({
+                "entity": entity,
+                "job_id": result.get("job_id") or result.get("dag_run_id") or result.get("run_id"),
+                "dag_run_id": result.get("dag_run_id") or result.get("run_id"),
+                "dag_id": result.get("dag_id"),
+                "state": result.get("state") or result.get("status"),
+                "result": result,
+            })
+        except HTTPException as exc:
+            errors.append({
+                "entity": entity,
+                "status_code": exc.status_code,
+                "error": str(exc.detail),
+            })
+        except Exception:
+            error_id = uuid.uuid4().hex
+            logger.exception("pipeline extract_all failed for %s.%s error_id=%s", cartridge, entity, error_id)
+            errors.append({
+                "entity": entity,
+                "status_code": 500,
+                "error": f"Internal server error. error_id={error_id}",
+            })
+
+    return {
+        "cartridge": cartridge,
+        "triggered": triggered,
+        "errors": errors,
+        "count": len(triggered),
+        "error_count": len(errors),
+    }
+
+
 async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
     pool = await _get_db_pool()
     row = await pool.fetchrow(
@@ -2299,7 +2357,7 @@ async def studio_import_cartridge(file: UploadFile = File(...)):
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat", dependencies=[Depends(require_csrf)])
+@app.post("/studio/chat", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))])
 async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
@@ -2309,10 +2367,11 @@ async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
         step     = body.get("step", 1),
         manifest = manifest,
         actor_role = user.get("workspace_role") or user.get("role"),
+        actor_user = user,
     )
 
 
-@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf)])
+@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))])
 async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
@@ -2338,6 +2397,7 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
                 manifest = manifest,
                 on_event = on_event,
                 actor_role = user.get("workspace_role") or user.get("role"),
+                actor_user = user,
             )
             await queue.put({"type": "done", **result})
         except Exception:

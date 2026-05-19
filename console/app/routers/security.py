@@ -7,6 +7,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.services import auth as _auth
 from app.services import audit_service as _audit
+from app.services.csrf import require_csrf
 from app.services.jwt_auth import DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES
 from app.services.permissions import (
     PERMISSIONS,
@@ -124,7 +125,7 @@ async def get_sessions(user: dict = Depends(require_permission("security.session
         res.append(d)
     return res
 
-@router.delete("/sessions/{token}")
+@router.delete("/sessions/{token}", dependencies=[Depends(require_csrf)])
 async def revoke_session(token: str, request: Request, user: dict = Depends(require_permission("security.sessions.revoke"))):
     p = await _auth.pool()
     res = await p.execute("DELETE FROM user_sessions WHERE token = $1", token)

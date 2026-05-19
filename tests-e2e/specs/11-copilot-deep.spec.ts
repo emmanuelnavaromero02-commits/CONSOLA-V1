@@ -279,9 +279,7 @@ test.describe("Copilot briefing", () => {
   });
 });
 
-test.describe("Copilot streaming + chat UI — deferred to v1.44.4", () => {
-  test.fail(true, "SSE chat stream endpoint deferred to v1.44.4");
-
+test.describe.skip("Copilot streaming + chat UI — deferred to v1.44.4", () => {
   test("GET /api/copilot/chat/{id}/stream exists", async () => {
     const { ctx } = await authedCtxAndCsrf();
     const r = await ctx.get(

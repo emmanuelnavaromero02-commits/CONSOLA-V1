@@ -13,6 +13,18 @@ let _cartridge    = 'replicon';
 let _activeTab    = 'pipeline';
 let _selectedDag  = null;  // currently selected dag_id in editor
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function jsonHeaders() {
+  const headers = {'Content-Type': 'application/json'};
+  const csrf = csrfToken();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
+  return headers;
+}
+
 async function loadCartridgeSelector() {
   try {
     const r = await fetch('/studio/cartridges');
@@ -232,7 +244,8 @@ function render(rows) {
 async function extractEntity(cartridge, entity) {
   const r = await fetch(`/api/pipeline/${cartridge}/${entity}/extract`, {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    headers: jsonHeaders(),
     body: JSON.stringify({mode: 'incremental'}),
   });
   const d = await r.json();
@@ -244,16 +257,21 @@ async function extractEntity(cartridge, entity) {
 }
 
 async function extractAll() {
-  const r = await fetch('/api/mcp/servers/infra/invoke', {
+  const r = await fetch(`/api/pipeline/${encodeURIComponent(_cartridge)}/extract_all`, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({tool: 'cartridge_extract_all', args: {cartridge_id: _cartridge, mode: 'incremental'}}),
+    headers: jsonHeaders(),
+    body: JSON.stringify({mode: 'incremental'}),
   });
   const d = await r.json();
+  if (!r.ok) {
+    alert(`Extract All falló: ${d.detail || d.error || r.status}`);
+    return;
+  }
   if (d.triggered && d.triggered.length) {
     d.triggered.forEach(t => {
-      if (!t.error) activeJobs[t.entity] = {job_id: t.dag_run_id, message: 'Batch iniciado...'};
+      const jobId = t.job_id || t.dag_run_id || t.run_id;
+      if (jobId) activeJobs[t.entity] = {job_id: jobId, message: 'Batch iniciado...'};
     });
     _rerender();
     setTimeout(load, 3000);
@@ -360,7 +378,7 @@ async function loadDags() {
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
     });
     const d = await r.json();
@@ -429,7 +447,7 @@ async function selectDag(dagId, reloadList = true) {
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({
         server: 'infra', tool: 'dag_get_source',
         args: { cartridge_id: _cartridge, dag_id: dagId },
@@ -490,7 +508,7 @@ async function deployDag() {
   try {
     const r = await fetch('/api/mcp/invoke', {
       method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({
         server: 'infra', tool: 'airflow_create_dag',
         args: { dag_id: dagId, code, cartridge_id: _cartridge,
@@ -734,7 +752,6 @@ function sendDagToAssistant() {
 
 function _wireStaticListeners() {
   document.getElementById('cart-sel').addEventListener('change', onCartridgeChange);
-  document.getElementById('btn-extract-all').addEventListener('click', extractAll);
   document.getElementById('btn-refresh').addEventListener('click', load);
   document.getElementById('tab-pipeline').addEventListener('click', () => switchTab('pipeline'));
   document.getElementById('tab-dags').addEventListener('click', () => switchTab('dags'));
@@ -759,6 +776,8 @@ function _wireDelegation() {
     const action = target.dataset.action;
     if (action === 'extract-entity') {
       extractEntity(target.dataset.cartridge, target.dataset.entity);
+    } else if (action === 'extract-all') {
+      extractAll();
     } else if (action === 'select-dag') {
       selectDag(target.dataset.dagId);
     } else if (action === 'apply-template') {

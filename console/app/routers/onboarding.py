@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app.dependencies import require_authenticated
 from app.services import audit_service, auth
+from app.services.csrf import require_csrf
 
 
 router = APIRouter(prefix="/api/system/onboarding", tags=["Onboarding"])
@@ -46,7 +47,7 @@ async def onboarding_state(user: dict = Depends(require_authenticated)):
     }
 
 
-@router.post("/complete")
+@router.post("/complete", dependencies=[Depends(require_csrf)])
 async def onboarding_complete(
     request: Request,
     user: dict = Depends(require_authenticated),

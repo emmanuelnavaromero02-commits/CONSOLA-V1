@@ -165,6 +165,12 @@ services:
       REFINEMENT_URL:    http://refinement:8500
       MCP_INFRA_URL:     http://mcp-infra:8010
       SUPERSET_URL:      http://superset:8088
+      # Prefer a least-privilege Superset service account for Studio dataset
+      # creation. Local dev falls back to the bootstrap admin until one exists.
+      SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:-}
+      SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:-}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       CONSOLE_URL:       ${CONSOLE_URL:-http://localhost:8000}
       WORKSPACE_URL:     ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
       RAG_URL:           http://mcp-infra:8010   # RAG migrado a mcp-infra

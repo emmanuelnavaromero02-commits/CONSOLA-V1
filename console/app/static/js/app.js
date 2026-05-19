@@ -27,9 +27,19 @@ async function bootSequence() {
 
 // ── API helper ────────────────────────────────────────────────────────────────
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 async function apiFetch(url, method = 'GET', body = null) {
   try {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    const headers = { 'Content-Type': 'application/json' };
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(String(method).toUpperCase())) {
+      const csrf = csrfToken();
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+    }
+    const opts = { method, credentials: 'same-origin', headers };
     if (body) opts.body = JSON.stringify(body);
     const r = await fetch(url, opts);
     if (!r.ok) return null;

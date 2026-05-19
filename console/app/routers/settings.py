@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated, ROLE_ADMIN
 from app.services import settings_service
+from app.services.csrf import require_csrf
 
 
 async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
@@ -42,7 +43,7 @@ async def get_setting(key: str, _: dict = Depends(_require_admin)):
     return item
 
 
-@router.post("/{key}/reveal")
+@router.post("/{key}/reveal", dependencies=[Depends(require_csrf)])
 async def reveal_setting(key: str, request: Request, user: dict = Depends(_require_admin)):
     ip, ua = _forensic(request)
     item = await settings_service.reveal_setting(
@@ -53,7 +54,7 @@ async def reveal_setting(key: str, request: Request, user: dict = Depends(_requi
     return item
 
 
-@router.put("/{key}")
+@router.put("/{key}", dependencies=[Depends(require_csrf)])
 async def update_setting(key: str, body: dict, request: Request, user: dict = Depends(_require_admin)):
     if "value" not in body:
         raise HTTPException(status_code=400, detail="missing 'value' in body")
@@ -67,7 +68,7 @@ async def update_setting(key: str, body: dict, request: Request, user: dict = De
         raise HTTPException(status_code=404, detail="setting not found")
 
 
-@router.post("/{key}/rotate")
+@router.post("/{key}/rotate", dependencies=[Depends(require_csrf)])
 async def rotate_secret(key: str, request: Request, user: dict = Depends(_require_admin)):
     ip, ua = _forensic(request)
     try:

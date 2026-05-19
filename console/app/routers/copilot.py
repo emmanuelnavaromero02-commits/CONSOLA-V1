@@ -40,6 +40,7 @@ def _forensic(request: Request) -> tuple[str | None, str | None]:
 @router.post("/conversations", dependencies=[Depends(require_csrf)])
 async def create_conversation(
     body: dict,
+    request: Request,
     user: dict = Depends(require_authenticated),
 ):
     # Sprint v1.42 R1 security finding: never trust ``workspace_id`` from
@@ -48,9 +49,22 @@ async def create_conversation(
     # the authenticated session (already vetted by the auth layer).
     title = (body or {}).get("title")
     workspace_id = user.get("active_workspace_id")
-    return await copilot_service.create_conversation(
+    result = await copilot_service.create_conversation(
         user_id=user["id"], workspace_id=workspace_id, title=title,
     )
+    ip, ua = _forensic(request)
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.conversation.create",
+        resource_type="conversation",
+        resource_id=result.get("id"),
+        ip=ip,
+        user_agent=ua,
+        status="success",
+        metadata={"title_len": len(title or "")},
+    )
+    return result
 
 
 @router.get("/conversations")
@@ -85,12 +99,25 @@ async def send_message(
     if not message:
         raise HTTPException(400, "empty message")
     ip, ua = _forensic(request)
-    return await copilot_service.run_turn(
+    result = await copilot_service.run_turn(
         conversation_id=conversation_id,
         user_message=message,
         user=user,
         ip=ip, user_agent=ua,
     )
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.message.send",
+        resource_type="conversation",
+        resource_id=conversation_id,
+        ip=ip,
+        user_agent=ua,
+        status="success",
+        metadata={"message_len": len(message)},
+        conversation_id=conversation_id,
+    )
+    return result
 
 
 @router.post(
@@ -104,12 +131,25 @@ async def approve_action(
     user: dict = Depends(require_authenticated),
 ):
     ip, ua = _forensic(request)
-    return await copilot_service.approve_pending_action(
+    result = await copilot_service.approve_pending_action(
         conversation_id=conversation_id,
         message_id=message_id,
         user=user,
         ip=ip, user_agent=ua,
     )
+    await audit_service.record_event(
+        user_id=user["id"],
+        email=user.get("email"),
+        action="copilot.action.approve",
+        resource_type="conversation_message",
+        resource_id=message_id,
+        ip=ip,
+        user_agent=ua,
+        status="success",
+        metadata={"conversation_id": conversation_id},
+        conversation_id=conversation_id,
+    )
+    return result
 
 
 # ── v1.44.2 (Tarea F): proactive briefing ────────────────────────────────

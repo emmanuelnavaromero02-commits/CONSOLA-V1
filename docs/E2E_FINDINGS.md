@@ -147,13 +147,23 @@ instead of hidden-sentinel-passed:
 
 | Gap | Spec | Reason |
 |---|---|---|
-| Studio assistant dock | `05-studio-deep.spec.ts` | Intentionally removed from Studio; Workspace/Copilot owns chat. |
+| Studio assistant dock | `05-studio-deep.spec.ts` | Reintroduced as a visible, scoped Studio assistant in PR #167. |
 | Silver editable query / execute controls | `05-studio*.spec.ts` | Real visible Studio refine UI does not expose this control yet. |
 | Superset create/open affordance | `05-studio*.spec.ts` | No canonical visible control on the current Studio surface. |
 | Entity extraction mode controls | `05-studio-deep.spec.ts` | Current visible entities UI does not expose full/incremental mode controls. |
 
 These are product/UI gaps, not hidden test scaffolding. They should be
 reintroduced only as visible, user-operable controls.
+
+## PR #167 Studio live validation
+
+The Silver, Gold, and Master preview endpoints are wired to real
+Refinement datasets, but the local lakehouse seed used during browser
+validation has no materialized parquet data under `lakehouse/silver`,
+`lakehouse/gold`, or `lakehouse/master`. In that state the endpoints
+correctly return `rows: []` and `total: 0`; this is a data seed gap,
+not a UI stub. A production-like E2E pass needs a Bronze→Silver→Gold→Master
+seed before asserting non-empty preview rows.
 
 ---
 

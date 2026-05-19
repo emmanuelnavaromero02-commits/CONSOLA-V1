@@ -33,6 +33,25 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
+function loadLocalEnv(): void {
+  const envPath = path.resolve(process.cwd(), ".env");
+  if (!existsSync(envPath)) return;
+  for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    const idx = line.indexOf("=");
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadLocalEnv();
 
 const BACKEND_URL =
   process.env.LEGACY_URL || process.env.BACKEND_URL || "http://localhost:8000";
@@ -131,6 +150,7 @@ export async function loginViaBrowser(
     await page.click('button[type="submit"]');
     await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
       timeout: 15_000,
+      waitUntil: "commit",
     });
   } finally {
     await page.close();

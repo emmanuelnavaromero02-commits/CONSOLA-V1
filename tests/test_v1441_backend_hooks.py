@@ -242,7 +242,7 @@ def test_onboarding_state_payload_shape():
 
 def test_onboarding_router_declares_complete_endpoint():
     src = _read(ONB_ROUTER)
-    assert '@router.post("/complete")' in src
+    assert '@router.post("/complete", dependencies=[Depends(require_csrf)])' in src
 
 
 def test_onboarding_complete_writes_and_audits():
