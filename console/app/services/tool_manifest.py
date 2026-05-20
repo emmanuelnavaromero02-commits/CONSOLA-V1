@@ -17,24 +17,63 @@ from app.services import mcp_registry
 
 # Static classification overrides per tool name.
 # Default: every tool not listed is treated as 'write' + requires_approval=True
-# for safety. Explicit READ tools listed here unlock auto-execution in the
-# future copilot.
+# for safety. Explicit READ tools listed here unlock auto-execution for pure
+# inspection/query actions so the copilot can actually answer platform
+# questions without asking for approval to "look".
 READ_ONLY_TOOLS = {
     # mcp-infra airflow read-only
     "airflow_list_dags", "airflow_get_run_status", "airflow_get_task_logs",
     "airflow_list_task_instances", "airflow_list_dag_runs",
+
+    # monitoring deeplinks/read-only console viewers
+    "view_job", "view_jobs", "view_schema", "view_dataset", "view_datasets",
+    "view_semantic", "view_pipeline",
+
     # postgres read-only
-    "postgres_list_tables", "postgres_describe_table", "postgres_select",
+    "postgres_list_schemas", "postgres_list_tables",
+    "postgres_get_table_schema", "postgres_get_sample",
+    "postgres_describe_table", "postgres_select",
+
+    # MinIO/lakehouse read-only browsing and samples
+    "minio_list_objects", "minio_get_parquet_schema", "minio_get_sample_rows",
+    "minio_list_cartridge_specs", "minio_read_spec",
+
+    # RAG read-only
+    "search_rag", "list_rag_sources",
+
+    # agent catalog read-only
+    "agent_list", "agent_get",
+
+    # pipeline metadata read-only
+    "watermark_get",
+
     # cartridge read-only (replicon + SAP same pattern)
-    "list_entities", "get_schema", "preview", "get_run_status",
-    "list_kbs", "get_watermarks",
+    "list_entities", "get_entity_logs", "get_schema", "preview",
+    "get_run_status", "list_kbs", "get_watermarks",
+    "cartridge_get_semantic", "cartridge_search_term",
+    "cartridge_get_manifest", "cartridge_list_entities",
+    "cartridge_get_schema", "cartridge_preview",
+    "cartridge_get_run_logs", "cartridge_get_job_status",
+    "cartridge_list_jobs", "cartridge_list_kbs",
+
     # infra catalog read-only
     "list_cartridges",
+
+    # Superset read-only discovery/export
+    "superset_list_databases", "superset_list_datasets",
+    "superset_list_charts", "superset_list_dashboards",
+    "superset_export_dashboard",
+
+    # Vault returns masked values for get/list tools.
+    "vault_list_connections", "vault_get_connection", "vault_list_secrets",
 }
 
 DESTRUCTIVE_TOOLS = {
     "airflow_delete_dag", "airflow_create_dag", "airflow_set_variable",
     "postgres_execute_query",  # arbitrary write
+    "postgres_execute_ddl",
+    "agent_delete",
+    "delete_entity", "vault_delete_connection",
 }
 
 DEFAULT_FRESHNESS_MINUTES = 60

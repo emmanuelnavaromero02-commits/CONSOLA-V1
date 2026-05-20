@@ -407,6 +407,32 @@ function hookRuntimeActions() {
         if (dagId) window.openDagEditor(dagId);
         return;
       }
+      if (action === "rag-reindex" && typeof window.reindexSource === "function") {
+        stopInlineHandler(event);
+        const kind = actionEl.getAttribute("data-rag-kind") || "";
+        const name = actionEl.getAttribute("data-rag-name") || "";
+        const ragCartridge = actionEl.getAttribute("data-cartridge") || cartridge;
+        if (kind && name) window.reindexSource(kind, name, ragCartridge, actionEl);
+        return;
+      }
+      if (action === "open-cartridge-entities" && typeof window.openCartridgeEntities === "function") {
+        stopInlineHandler(event);
+        if (cartridge) window.openCartridgeEntities(cartridge);
+        return;
+      }
+      if (action === "export-cartridge" && typeof window.exportCartridge === "function") {
+        stopInlineHandler(event);
+        if (cartridge) window.exportCartridge(cartridge);
+        return;
+      }
+    }
+
+    const dagItem = target.closest(".dag-sidebar-item[data-dag-id]");
+    if (dagItem && typeof window.selectDag === "function") {
+      stopInlineHandler(event);
+      const dagId = dagItem.getAttribute("data-dag-id") || "";
+      if (dagId) window.selectDag(dagId);
+      return;
     }
 
     const template = target.closest("[data-template-id]");

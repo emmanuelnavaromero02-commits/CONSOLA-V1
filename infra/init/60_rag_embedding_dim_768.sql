@@ -1,7 +1,6 @@
--- Keep pgvector storage aligned with the active Gemini embedder.
--- Existing volumes created from older Bedrock/Titan defaults may have
--- rag_chunks.embedding as vector(1024). Those vectors cannot be searched with
--- 768-dimension Gemini queries, so reset embeddings and require reindex.
+-- Legacy migration kept for existing installations that passed through the
+-- Gemini/768 embedding period. Migration 71 supersedes this and finishes the
+-- schema at Titan v2 / vector(1024), clearing embeddings again for reindex.
 
 DO $$
 BEGIN

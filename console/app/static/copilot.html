@@ -9,23 +9,31 @@
   <link rel="stylesheet" href="/static/css/main.css">
   <link rel="stylesheet" href="/static/css/copilot.css">
 </head>
-<body>
+<body class="copilot-page">
   <div class="copilot-container">
     <aside class="copilot-sidebar">
       <div class="copilot-sidebar-header">
-        <a href="/" class="copilot-back">← OMEGA</a>
+        <a href="/" class="copilot-back">Inicio</a>
+        <div class="copilot-brand">OMEGA</div>
+        <div class="copilot-rail-title">Copiloto</div>
         <button id="copilot-new" type="button" class="copilot-btn-primary">
           + Nueva conversación
         </button>
       </div>
+      <div class="copilot-sidebar-label">Conversaciones</div>
       <ul id="copilot-conv-list" class="copilot-conv-list" aria-label="Historial">
         <li class="copilot-empty">Cargando…</li>
       </ul>
+      <div class="copilot-sidebar-footer">
+        <span>Enterprise Copilot</span>
+        <strong>Seguro por aprobaciones</strong>
+      </div>
     </aside>
 
     <main class="copilot-chat">
       <header class="copilot-header">
         <div>
+          <span class="copilot-eyebrow">Consola operativa</span>
           <h1>Copiloto OMEGA</h1>
           <span id="copilot-title" class="copilot-title-sub"></span>
         </div>
@@ -47,17 +55,17 @@
 
       <div id="copilot-messages" class="copilot-messages" aria-live="polite">
         <div class="copilot-welcome">
-          <h2>Hola 👋</h2>
+          <span class="copilot-welcome-kicker">Copiloto conectado</span>
+          <h2>Listo para operar la consola</h2>
           <p>
-            Soy el copiloto de OMEGA. Puedo consultar tus cartuchos
-            (Replicon, SAP HCM / S4 / SuccessFactors), revisar el estado
-            de los DAGs en Airflow, y ejecutar acciones cuando me lo pidas.
+            Consulta cartuchos, revisa DAGs en Airflow, cruza contexto de
+            RAG y prepara acciones con trazabilidad.
           </p>
-          <ul>
-            <li>· "¿Cuántos empleados se extrajeron de SAP HCM hoy?"</li>
-            <li>· "Muéstrame los DAGs que fallaron en las últimas 24h"</li>
-            <li>· "Lanza extracción incremental de Replicon TimeEntry"</li>
-          </ul>
+          <div class="copilot-prompt-grid" aria-label="Ejemplos">
+            <div>"Dame el estado de los DAGs de hoy"</div>
+            <div>"Revisa freshness de Replicon"</div>
+            <div>"Prepara un resumen ejecutivo de SAP"</div>
+          </div>
           <p class="copilot-welcome-note">
             Las acciones destructivas se piden con un botón
             <strong>Aprobar</strong>; nada se ejecuta sin tu OK.
@@ -68,13 +76,15 @@
       <div id="copilot-toast" class="copilot-toast" hidden role="status"></div>
 
       <form id="copilot-form" class="copilot-input">
-        <textarea
-          id="copilot-prompt"
-          rows="2"
-          placeholder="Escribe tu pregunta o instrucción…"
-          aria-label="Mensaje al copiloto"
-          required
-        ></textarea>
+        <div class="copilot-input-shell">
+          <textarea
+            id="copilot-prompt"
+            rows="2"
+            placeholder="Escribe tu pregunta o instrucción..."
+            aria-label="Mensaje al copiloto"
+            required
+          ></textarea>
+        </div>
         <button id="copilot-send" type="submit" class="copilot-btn-primary">
           Enviar
         </button>
@@ -182,7 +192,7 @@
     </div>
   </div>
 
-  <script src="/static/js/theme.js" defer></script>
+  <script type="module" src="/static/js/theme.js"></script>
   <script src="/static/js/copilot.js" defer></script>
   <script src="/static/js/theme-switch.js" defer></script>
 </body>

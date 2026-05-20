@@ -1,134 +1,114 @@
 """
-Gemini text embeddings via google-genai SDK.
+AWS Bedrock embeddings (Titan Text Embeddings v2 by default).
 
-Uses the model configured in EMBED_MODEL (default gemini-embedding-001) with:
-  - outputDimensionality=EMBED_DIM (MRL truncation, server-side, fits HNSW indexes)
-  - task_type=RETRIEVAL_DOCUMENT for documents (improves recall)
-  - task_type=RETRIEVAL_QUERY for queries (asymmetric retrieval)
+Uses the model configured in EMBED_MODEL (default amazon.titan-embed-text-v2:0)
+with output dimensionality EMBED_DIM (Titan v2 supports 256 / 512 / 1024).
 
-Batching strategy:
-  - Splits inputs by both item count (≤_BATCH_MAX_ITEMS) and total chars
-    (≤_BATCH_CHAR_BUDGET) so long chunks don't overflow the per-request
-    token limit even when the item count is fine.
-  - Runs up to _MAX_CONCURRENCY batches in parallel; 429s are caught and
-    retried with backoff parsed from the error payload.
+boto3 is synchronous, so the public async interface wraps invoke_model calls in
+asyncio.to_thread and keeps the existing embed_documents / embed_query contract.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 
-from google import genai
-from google.genai import types as gtypes
+import boto3
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
-from app.rag.config import GEMINI_API_KEY, EMBED_MODEL, EMBED_DIM
+from app.rag.config import BEDROCK_REGION, EMBED_DIM, EMBED_MODEL
 
-_client: genai.Client | None = None
+_client = None
 
+_MAX_CONCURRENCY = 8
+_MAX_RETRIES = 4
 
-def _gemini_client() -> genai.Client:
-    global _client
-    if _client is None:
-        api_key = (GEMINI_API_KEY or "").strip()
-        if not api_key or api_key == "dummy-local-key":
-            raise RuntimeError("GEMINI_API_KEY is required to generate RAG embeddings")
-        _client = genai.Client(api_key=api_key)
-    return _client
-
-_DOC_CFG = gtypes.EmbedContentConfig(
-    outputDimensionality=EMBED_DIM,
-    taskType="RETRIEVAL_DOCUMENT",
-)
-_QUERY_CFG = gtypes.EmbedContentConfig(
-    outputDimensionality=EMBED_DIM,
-    taskType="RETRIEVAL_QUERY",
-)
-
-_BATCH_MAX_ITEMS   = 100       # Gemini embed_content per-request item cap
-_BATCH_CHAR_BUDGET = 80_000    # ≈20k tokens — safe under per-request token limit
-_MAX_CONCURRENCY   = 4         # parallel batches; tune against your quota
-
-# Match retryDelay across the shapes Google returns it in:
-#   "retry in 5s" / "retry after 5 seconds"
-#   retryDelay: "5s"  /  retry_delay: "5s"
-#   retry_delay { seconds: 5 }   (proto text format)
-_RETRY_PATTERNS = [
+_RETRY_DELAY_PATTERNS = [
     re.compile(r"retry\s*(?:in|after)\s+([\d.]+)\s*s", re.IGNORECASE),
-    re.compile(r"retry[_]?delay[\s:=\"']*([\d.]+)\s*s", re.IGNORECASE),
-    re.compile(r"retry[_]?delay[^}]*?seconds:\s*([\d.]+)", re.IGNORECASE),
 ]
 
 
+def _bedrock_client():
+    global _client
+    if _client is None:
+        _client = boto3.client(
+            "bedrock-runtime",
+            config=BotoConfig(
+                region_name=BEDROCK_REGION,
+                retries={"max_attempts": 5, "mode": "adaptive"},
+                read_timeout=30,
+                connect_timeout=10,
+            ),
+        )
+    return _client
+
+
 def _parse_retry_delay(msg: str, attempt: int) -> float:
-    for pat in _RETRY_PATTERNS:
-        m = pat.search(msg)
-        if m:
-            return min(float(m.group(1)) + 2, 90)
-    return min(10 * (attempt + 1), 90)
+    for pattern in _RETRY_DELAY_PATTERNS:
+        match = pattern.search(msg)
+        if match:
+            return min(float(match.group(1)) + 1, 60)
+    return min(2 ** attempt, 30)
 
 
-async def _embed_with_retry(contents: list[str], cfg) -> list:
-    """Single embed call with retry on 429."""
-    for attempt in range(4):
+def _invoke_sync(text: str) -> list[float]:
+    body = json.dumps({
+        "inputText": text,
+        "dimensions": EMBED_DIM,
+        "normalize": True,
+    })
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
         try:
-            response = await _gemini_client().aio.models.embed_content(
-                model=EMBED_MODEL, contents=contents, config=cfg,
+            response = _bedrock_client().invoke_model(
+                modelId=EMBED_MODEL,
+                body=body,
+                accept="application/json",
+                contentType="application/json",
             )
-            return response.embeddings
-        except Exception as exc:
-            msg = str(exc)
-            rate_limited = "429" in msg or "RESOURCE_EXHAUSTED" in msg
-            if rate_limited and attempt < 3:
-                await asyncio.sleep(_parse_retry_delay(msg, attempt))
+            payload = json.loads(response["body"].read())
+            return payload["embedding"]
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            retryable = code in {"ThrottlingException", "ServiceUnavailableException"}
+            last_exc = exc
+            if retryable and attempt < _MAX_RETRIES - 1:
+                import time
+                time.sleep(_parse_retry_delay(str(exc), attempt))
                 continue
             raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES - 1:
+                import time
+                time.sleep(_parse_retry_delay(str(exc), attempt))
+                continue
+            raise
+    raise last_exc or RuntimeError("Bedrock invoke failed without raising")
 
 
-def _plan_batches(texts: list[str]) -> list[tuple[int, int]]:
-    """Greedy split into [start, end) ranges respecting item count + char budget."""
-    batches: list[tuple[int, int]] = []
-    start = 0
-    chars = 0
-    for i, t in enumerate(texts):
-        item_len = len(t)
-        if i > start and (
-            i - start >= _BATCH_MAX_ITEMS
-            or chars + item_len > _BATCH_CHAR_BUDGET
-        ):
-            batches.append((start, i))
-            start = i
-            chars = 0
-        chars += item_len
-    if start < len(texts):
-        batches.append((start, len(texts)))
-    return batches
+async def _invoke(text: str) -> list[float]:
+    return await asyncio.to_thread(_invoke_sync, text)
 
 
 async def embed_documents(texts: list[str]) -> list[list[float]]:
-    """Embed document chunks for storage. task_type=RETRIEVAL_DOCUMENT."""
     if not texts:
         return []
-    plans = _plan_batches(texts)
     sem = asyncio.Semaphore(_MAX_CONCURRENCY)
 
-    async def _run(start: int, end: int):
+    async def _one(text: str) -> list[float]:
         async with sem:
-            return await _embed_with_retry(texts[start:end], _DOC_CFG)
+            return await _invoke(text)
 
-    batch_results = await asyncio.gather(*(_run(s, e) for s, e in plans))
-    out: list[list[float]] = []
-    for embs in batch_results:
-        out.extend(e.values for e in embs)
-    return out
+    return await asyncio.gather(*(_one(text) for text in texts))
 
 
 async def embed_query(text: str) -> list[float]:
-    """Embed a search query. task_type=RETRIEVAL_QUERY. Retries on 429."""
-    embeddings = await _embed_with_retry([text], _QUERY_CFG)
-    return embeddings[0].values
+    return await _invoke(text)
 
 
-# ── Backwards-compatible aliases (older callers) ──────────────────────────────
+# Backwards-compatible aliases for older callers.
 async def embed(texts: list[str]) -> list[list[float]]:
     return await embed_documents(texts)
 

@@ -688,8 +688,13 @@ services:
       SUPERSET_USER:    ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       GEMINI_API_KEY:   ${GEMINI_API_KEY:-}
-      EMBED_MODEL:      ${EMBED_MODEL:-gemini-embedding-001}
-      EMBED_DIM:        ${EMBED_DIM:-768}
+      AWS_REGION:       ${AWS_REGION:-us-east-1}
+      BEDROCK_REGION:   ${BEDROCK_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      EMBED_MODEL:      ${EMBED_MODEL:-amazon.titan-embed-text-v2:0}
+      EMBED_DIM:        ${EMBED_DIM:-1024}
       ADMIN_EMAIL:      ${ADMIN_EMAIL:-}
     ports:
       - "8010:8010"

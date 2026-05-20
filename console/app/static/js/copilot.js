@@ -197,7 +197,7 @@
     header.textContent = "🔧 " + (call.tool || "tool");
     el.appendChild(header);
     const args = document.createElement("div");
-    args.textContent = JSON.stringify(call.args || {}, null, 2);
+    args.textContent = JSON.stringify(call.args || call.input || {}, null, 2);
     el.appendChild(args);
     elMessages.appendChild(el);
     scrollToBottom();
@@ -288,8 +288,11 @@
           appendMessage(m.role, m.content || "");
         }
         if (m.tool_calls && Array.isArray(m.tool_calls)) {
+          const alreadyProcessed =
+            m.tool_results != null &&
+            !(Array.isArray(m.tool_results) && m.tool_results.length === 0);
           for (const c of m.tool_calls) {
-            if (c.approval_key) {
+            if (c.approval_key && !alreadyProcessed) {
               // Render the pending approval card on history reload too.
               appendApprovalCard([c], m.id, id);
             } else {

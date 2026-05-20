@@ -16,9 +16,9 @@ else:
         f"{os.environ.get('PG_DB', 'modecissions')}"
     )
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY",  "")
-EMBED_MODEL    = os.environ.get("EMBED_MODEL",     "gemini-embedding-001")
-EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "768"))
+EMBED_MODEL    = os.environ.get("EMBED_MODEL",     "amazon.titan-embed-text-v2:0")
+EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "1024"))
+BEDROCK_REGION = os.environ.get("BEDROCK_REGION") or os.environ.get("AWS_REGION") or "us-east-1"
 
 PARENT_CHUNK_SIZE = int(os.environ.get("PARENT_CHUNK_SIZE", "3000"))
 CHILD_CHUNK_SIZE  = int(os.environ.get("CHILD_CHUNK_SIZE",  "600"))

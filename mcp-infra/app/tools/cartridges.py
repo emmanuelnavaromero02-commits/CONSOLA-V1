@@ -456,9 +456,13 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
             col("select_fields", "NULL::jsonb"),
             col("effective_dated", "FALSE"),
             col("date_field", "NULL::text"),
-            "primary_key",
-            "dag_id",
-            "description",
+            col("primary_key", "NULL::text"),
+            col("dag_id", "NULL::text"),
+            col("trigger_type", "'manual'::text"),
+            col("cron_expression", "NULL::text"),
+            col("description", "NULL::text"),
+            col("display_name", "NULL::text"),
+            col("enabled", "TRUE"),
         ])
         cur.execute(
             f"""
@@ -482,7 +486,11 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
         "date_field":       row[7],
         "primary_key":      row[8],
         "dag_id":           row[9],
-        "description":      row[10],
+        "trigger_type":     row[10],
+        "cron_expression":  row[11],
+        "description":      row[12],
+        "display_name":     row[13],
+        "enabled":          row[14],
     }
 
 

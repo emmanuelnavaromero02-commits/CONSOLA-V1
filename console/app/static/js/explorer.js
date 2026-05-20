@@ -257,8 +257,8 @@ $('bucket-sel').addEventListener('change', () => {
 $('prefix-input').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') listObjects();
 });
-$('list-btn').addEventListener('click', listObjects);
-$('refresh-btn').addEventListener('click', listObjects);
+$('list-btn').addEventListener('click', () => listObjects());
+$('refresh-btn').addEventListener('click', () => listObjects());
 $('up-btn').addEventListener('click', goUp);
 
 $('quicklinks').addEventListener('click', (event) => {

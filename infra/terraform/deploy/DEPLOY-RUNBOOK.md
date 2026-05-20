@@ -292,9 +292,10 @@ aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --sec
 | `CHAT_LLM_PROVIDER`     | `anthropic`                                              | fijo                                   |
 | `CHAT_LLM_MODEL`        | `claude-haiku-4-5-20251001`                              | fijo (ajustable)                       |
 | `SQL_LLM_MODEL`         | `claude-sonnet-4-6`                                      | fijo                                   |
-| `OLLAMA_URL`            | `http://host.docker.internal:11434`                      | si usas Ollama en el host Docker       |
-| `EMBED_MODEL`           | `nomic-embed-text`                                       | fijo si usas Ollama                    |
-| `EMBED_DIM`             | `768`                                                    | debe coincidir con `EMBED_MODEL`       |
+| `OLLAMA_URL`            | `http://host.docker.internal:11434`                      | legacy/local si usas Ollama            |
+| `BEDROCK_REGION`        | mismo valor que `AWS_REGION`                             | región del runtime Bedrock             |
+| `EMBED_MODEL`           | `amazon.titan-embed-text-v2:0`                           | default RAG en Bedrock                 |
+| `EMBED_DIM`             | `1024`                                                   | debe coincidir con Titan v2            |
 | `SUPERSET_SECRET_KEY`   | hex de 32 bytes                                          | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `SUPERSET_ADMIN_USER`   | `admin`                                                  | usuario bootstrap de Superset        |
 | `SUPERSET_ADMIN_PASSWORD` | password fuerte                                        | inventado / gestor                     |

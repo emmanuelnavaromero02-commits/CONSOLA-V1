@@ -167,7 +167,7 @@ import { state } from './legacy-state.js';
     };
 
     export async function exportCartridge(id = null) {
-      id = id || state._currentCartridge?.id || '';
+      id = id || state._currentCartridge?.id || document.getElementById('cartridge-sel')?.value || '';
       if (!id) return;
       window.open(`/studio/cartridges/${encodeURIComponent(id)}/export`, '_blank');
     }
@@ -189,9 +189,12 @@ import { state } from './legacy-state.js';
     // ── File upload (specs) ────────────────────────────────────────────────────
 
     export function makeUploadZone(containerId, label, sublabel) {
+      const accept = containerId === 'uz-conn'
+        ? '.zip,application/zip'
+        : '.yaml,.yml,.json,.xml,.wsdl';
       return `
         <div class="upload-zone" id="${containerId}" data-upload-zone="${containerId}">
-          <input type="file" id="fi-${containerId}" accept=".yaml,.yml,.json,.xml,.wsdl"
+          <input type="file" id="fi-${containerId}" accept="${accept}"
                  data-upload-input="${containerId}">
           <div class="uz-icon">↑</div>
           <div class="uz-label">${esc(label)}</div>
@@ -215,6 +218,10 @@ import { state } from './legacy-state.js';
     }
 
     export async function doUploadSpec(file, zoneId) {
+      if (zoneId === 'uz-conn') {
+        await importCartridgeZip(file, zoneId);
+        return;
+      }
       if (!state._currentCartridge) {
         alert('Primero selecciona o crea un cartucho.');
         return;
@@ -255,6 +262,41 @@ import { state } from './legacy-state.js';
         aiSend();
       } catch(e) {
         statusEl.innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+      }
+    }
+
+    async function importCartridgeZip(file, zoneId) {
+      const statusEl = document.getElementById(`uz-status-${zoneId}`);
+      if (!/\.zip$/i.test(file.name || '')) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Selecciona un ZIP exportado del Studio.</span>';
+        return;
+      }
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--cyan)">⟳ Importando ${esc(file.name)}...</span>`;
+      const form = new FormData();
+      form.append('file', file);
+      try {
+        const r = await fetch('/studio/import', {
+          method: 'POST',
+          headers: csrfHeaders(),
+          body: form,
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || d.error || `HTTP ${r.status}`);
+        const id = d.id || d.cartridge_id || d.manifest?.id || '';
+        if (statusEl) {
+          const dagCount = Number(d.import_summary?.dag_files || 0);
+          statusEl.innerHTML = `<span style="color:var(--green)">✓ ZIP importado${id ? ': ' + esc(id) : ''}${dagCount ? ' · ' + dagCount + ' DAGs' : ''}</span>`;
+        }
+        await loadCartridges();
+        if (id && state._cartridges.find(c => c.id === id)) {
+          const sel = document.getElementById('cartridge-sel');
+          if (sel) sel.value = id;
+          await selectCartridge(id);
+        } else if (state.currentStep === 1) {
+          await renderResumen();
+        }
+      } catch (e) {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">Error importando ZIP: ${esc(e.message)}</span>`;
       }
     }
 
@@ -390,10 +432,23 @@ import { state } from './legacy-state.js';
             <span style="color:var(--text3)">${esc(c.source || '')}</span>
           </div>
           <div style="display:flex;gap:6px;margin-top:10px">
-            <button class="btn btn-sm" onclick="event.stopPropagation();selectCartridge(${escJsArg(c.id)});goStep(3)" title="Ver entidades">Entidades →</button>
-            <button class="btn btn-sm" onclick="event.stopPropagation();exportCartridge(${escJsArg(c.id)})" title="Exportar ZIP">↓ ZIP</button>
+            <button class="btn btn-sm"
+                    data-studio-action="open-cartridge-entities"
+                    data-cartridge="${esc(c.id)}"
+                    onclick='event.stopPropagation();openCartridgeEntities(${escJsArg(c.id)})'
+                    title="Ver entidades">Entidades →</button>
+            <button class="btn btn-sm"
+                    data-studio-action="export-cartridge"
+                    data-cartridge="${esc(c.id)}"
+                    onclick='event.stopPropagation();exportCartridge(${escJsArg(c.id)})'
+                    title="Exportar ZIP">↓ ZIP</button>
           </div>
         </div>`;
+    }
+
+    export async function openCartridgeEntities(id) {
+      await selectCartridge(id);
+      await goStep(3);
     }
 
     // ── Step 2: Entidades ──────────────────────────────────────────────────────
@@ -626,6 +681,10 @@ import { state } from './legacy-state.js';
                     onclick="toggleEntityPreview(${escJsArg(cartridge)},${escJsArg(rawName)},this)">◉</button>
             <button class="btn btn-sm" title="Re-indexar schema al RAG"
                     style="color:var(--cyan);border-color:var(--cyan)"
+                    data-studio-action="rag-reindex"
+                    data-rag-kind="raw"
+                    data-rag-name="${esc(rawName)}"
+                    data-cartridge="${esc(cartridge)}"
                     onclick="reindexSource('raw',${escJsArg(rawName)},${escJsArg(cartridge)},this)">↻ RAG</button>
             ${dagRaw ? `<button class="btn btn-sm" title="Editar DAG: ${esc(dagRaw)}"
                     style="color:var(--amber);border-color:var(--amber)"
@@ -648,7 +707,26 @@ import { state } from './legacy-state.js';
 
     export async function reindexSource(kind, name, cartridge, btn) {
       const original = btn ? btn.innerHTML : '';
-      if (btn) { btn.innerHTML = '⟳ ...'; btn.disabled = true; }
+      const showStatus = (message, type = '') => {
+        if (!btn) return;
+        const row = btn.closest('.et-row, .ds-row');
+        if (!row) return;
+        const old = row.nextElementSibling?.classList?.contains('rag-inline-status')
+          ? row.nextElementSibling
+          : null;
+        if (old) old.remove();
+        const box = document.createElement('div');
+        box.className = 'rag-inline-status';
+        box.style.cssText = `grid-column:1/-1;margin:0 0 8px 0;padding:8px 12px;border-top:1px solid var(--border);font-size:11px;color:${type === 'err' ? 'var(--red)' : type === 'ok' ? 'var(--green)' : 'var(--cyan)'}`;
+        box.textContent = message;
+        row.insertAdjacentElement('afterend', box);
+      };
+      if (btn) {
+        btn.innerHTML = '⟳ RAG';
+        btn.disabled = true;
+        btn.title = 'Re-indexando en RAG...';
+        showStatus(`Re-indexando ${kind}:${name} en RAG...`);
+      }
       try {
         const body = { kind, name };
         if (cartridge) body.cartridge = cartridge;
@@ -661,11 +739,19 @@ import { state } from './legacy-state.js';
         if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
         if (btn) {
           btn.innerHTML = '✓ RAG';
-          setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1500);
+          btn.title = `RAG re-indexado: ${kind}:${name}`;
+          showStatus(`RAG re-indexado correctamente: ${kind}:${name}`, 'ok');
+          setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1800);
         }
       } catch (e) {
-        alert('Error re-indexando: ' + e.message);
-        if (btn) { btn.innerHTML = original; btn.disabled = false; }
+        if (btn) {
+          showStatus(`Error re-indexando RAG: ${e.message}`, 'err');
+          btn.innerHTML = original;
+          btn.disabled = false;
+          btn.title = `Error RAG: ${e.message}`;
+        } else {
+          alert('Error re-indexando: ' + e.message);
+        }
       }
     }
 
@@ -2087,6 +2173,7 @@ FROM silver_${entity || 'entity'}`;
     // ── Step 4: Analytics ──────────────────────────────────────────────────────
 
     export function renderAnalytics() {
+      const cartridge = _dagCartridge();
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -2150,7 +2237,11 @@ FROM silver_${entity || 'entity'}`;
             <div style="display:flex;gap:6px;flex-shrink:0">
               <button class="btn btn-sm" title="Re-indexar SQL + descripcion al RAG"
                       style="color:var(--cyan);border-color:var(--cyan)"
-                      onclick="reindexSource('dataset',${escJsArg(ds.name)},'',this)">↻ RAG</button>
+                      data-studio-action="rag-reindex"
+                      data-rag-kind="dataset"
+                      data-rag-name="${esc(ds.name)}"
+                      data-cartridge="${esc(cartridge)}"
+                      onclick="reindexSource('dataset',${escJsArg(ds.name)},${escJsArg(cartridge)},this)">↻ RAG</button>
               <button class="btn btn-sm btn-amber" onclick="createSupersetDataset(${escJsArg(ds.name)})">
                 + Crear en Superset
               </button>
@@ -3353,6 +3444,7 @@ FROM silver_${entity || 'entity'}`;
             : '';
           return `<div class="dag-sidebar-item ${state._selectedDag === dag.dag_id ? 'selected' : ''}"
                        id="dagitem-${esc(dag.dag_id)}"
+                       data-dag-id="${esc(dag.dag_id)}"
                        onclick="selectDag(${escJsArg(dag.dag_id)})">
             <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
             <div class="dag-item-meta">${statusDot}</div>
@@ -3370,8 +3462,11 @@ FROM silver_${entity || 'entity'}`;
 
     export async function selectDag(dagId) {
       state._selectedDag = dagId;
+      const requestId = (state._dagSourceRequestId || 0) + 1;
+      state._dagSourceRequestId = requestId;
+      const isCurrentRequest = () => state._selectedDag === dagId && state._dagSourceRequestId === requestId;
       document.querySelectorAll('.dag-sidebar-item').forEach(el => {
-        el.classList.toggle('selected', el.id === `dagitem-${dagId}`);
+        el.classList.toggle('selected', el.getAttribute('data-dag-id') === dagId || el.id === `dagitem-${dagId}`);
       });
 
       _showDagEditor();
@@ -3398,11 +3493,14 @@ FROM silver_${entity || 'entity'}`;
       try {
         const r = await fetch(`/api/studio/dags/${encodeURIComponent(dagId)}/source?cartridge=${encodeURIComponent(_dagCartridge())}`);
         const d = await jsonOrThrow(r);
+        if (!isCurrentRequest()) return;
         if (d.found && d.source_code) {
           dagSetEditorCode(d.source_code);
           return;
         }
       } catch(_) {}
+
+      if (!isCurrentRequest()) return;
 
       dagSetEditorCode(
         `# Fuente no encontrada en BD para "${dagId}".\n` +
@@ -3534,7 +3632,7 @@ FROM silver_${entity || 'entity'}`;
             const list = document.getElementById('dag-list');
             if (list) list.innerHTML = state._dagsCache.map(dag => {
               const dot = dag.is_paused ? `<span style="color:#555">● pausado</span>` : `<span style="color:var(--green)">● activo</span>`;
-              return `<div class="dag-sidebar-item ${state._selectedDag===dag.dag_id?'selected':''}" id="dagitem-${esc(dag.dag_id)}" onclick="selectDag(${escJsArg(dag.dag_id)})">
+              return `<div class="dag-sidebar-item ${state._selectedDag===dag.dag_id?'selected':''}" id="dagitem-${esc(dag.dag_id)}" data-dag-id="${esc(dag.dag_id)}" onclick="selectDag(${escJsArg(dag.dag_id)})">
                 <div class="dag-item-id">${esc(dag.dag_id)}</div>
                 <div class="dag-item-meta">${dot}</div></div>`;
             }).join('');
@@ -3649,6 +3747,7 @@ FROM silver_${entity || 'entity'}`;
               ? `<span style="font-size:8px;color:var(--text3);margin-left:4px">[${esc(prefix)}]</span>` : '';
             return `<div class="dag-sidebar-item ${dag.dag_id === newId ? 'selected' : ''}"
                          id="dagitem-${esc(dag.dag_id)}"
+                         data-dag-id="${esc(dag.dag_id)}"
                          onclick="selectDag(${escJsArg(dag.dag_id)})">
               <div class="dag-item-id">${esc(dag.dag_id)}${badge}</div>
               <div class="dag-item-meta">${statusDot}</div>
