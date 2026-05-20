@@ -32,7 +32,7 @@ export function wireStudioHandlers() {
   // Cartridge picker
   on($('cartridge-sel'), 'change', (e) => selectCartridge(e.target.value));
   on($('btn-create-cartridge'), 'click', showCreateCartridge);
-  on($('btn-export-cart'), 'click', exportCartridge);
+  on($('btn-export-cart'), 'click', () => exportCartridge());
 
   // AI assistant
   on($('ai-resize-handle'), 'mousedown', aiResizeStart);
