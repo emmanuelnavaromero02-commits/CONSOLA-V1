@@ -111,10 +111,10 @@ if [ "${EXIT}" -ne 0 ]; then
     if [ -n "${SUMMARY}" ]; then
         echo "${SUMMARY}"
         if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-            ANNOTATION="$(printf '%s' "${SUMMARY}" | head -n 20 | tr '\n' ' ')"
-            ANNOTATION="${ANNOTATION//'%'/'%25'}"
-            ANNOTATION="${ANNOTATION//$'\r'/'%0D'}"
-            ANNOTATION="${ANNOTATION//$'\n'/'%0A'}"
+            ANNOTATION="$(printf '%s\n' "${SUMMARY}" | awk 'NR <= 20 { printf "%s%s", sep, $0; sep=" " }')"
+            ANNOTATION="${ANNOTATION//%/%25}"
+            ANNOTATION="${ANNOTATION//$'\r'/%0D}"
+            ANNOTATION="${ANNOTATION//$'\n'/%0A}"
             echo "::error title=Playwright E2E failed::${ANNOTATION}"
         fi
     else
