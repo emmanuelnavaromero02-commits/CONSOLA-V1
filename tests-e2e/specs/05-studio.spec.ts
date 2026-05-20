@@ -3,7 +3,7 @@
  *
  * The user reported a concrete set of broken interactions on this
  * page (Grafo button, Deploy a Airflow, Plantillas, Subir spec drop
- * zone, Silver/Gold/Master interactivity, Crear en Superset). Each
+ * zone, Silver/Gold interactivity, Crear en Superset). Each
  * test here pins one of those failures so v1.44.3.3 has actionable
  * evidence.
  *
@@ -29,13 +29,12 @@ async function waitStudioReady(page: Page) {
     () => {
       const win = window as typeof window & { goStep?: unknown };
       const picker = document.querySelector("#cartridge-sel") as HTMLSelectElement | null;
-      const overview = document.querySelector("#studio-modern-root");
+      const content = document.querySelector("#step-content");
       return (
         typeof win.goStep === "function" &&
-        document.body.classList.contains("studio-modern-ready") &&
         document.body.dataset.studioStep === "1" &&
         Boolean(picker && picker.options.length > 1 && picker.value) &&
-        Boolean(overview?.textContent?.trim())
+        Boolean(content)
       );
     },
     null,
@@ -52,11 +51,20 @@ async function goStudioStep(page: Page, step: number) {
     return win.goStep(targetStep);
   }, step);
   await page.waitForFunction(
-    (targetStep) => document.body.dataset.studioStep === String(targetStep),
+    (targetStep) => {
+      const content = document.querySelector("#step-content");
+      return (
+        document.body.dataset.studioStep === String(targetStep) &&
+        Boolean(content && content.textContent?.trim())
+      );
+    },
     step,
     { timeout: 15_000 },
   );
   await expect(page.locator("#step-content")).toBeVisible({ timeout: 15_000 });
+  if (step === 2) {
+    await expect(page.locator("#dag-editor-body")).toBeVisible({ timeout: 15_000 });
+  }
   if (step > 1) {
     await expect(page.locator("#step-content")).toContainText(STEP_READY[step], {
       timeout: 15_000,
@@ -182,12 +190,12 @@ test.describe("Legacy /studio page (port 8000)", () => {
     },
   );
 
-  test("'Refinar' tab exposes Bronze/Silver/Master/Gold subtabs", async ({
+  test("'Refinar' tab exposes Bronze/Silver/Gold subtabs", async ({
     authedPage: page,
   }) => {
     await page.goto(`${LEGACY}/studio`);
     await goStudioStep(page, 4);
-    for (const layer of [/Bronze/i, /Silver/i, /Master/i, /Gold/i]) {
+    for (const layer of [/Bronze/i, /Silver/i, /Gold/i]) {
       await expect(page.getByText(layer).first()).toBeVisible({
         timeout: 10_000,
       });

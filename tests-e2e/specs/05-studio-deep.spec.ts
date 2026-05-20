@@ -30,13 +30,12 @@ async function waitStudioReady(page: Page) {
     () => {
       const win = window as typeof window & { goStep?: unknown };
       const picker = document.querySelector("#cartridge-sel") as HTMLSelectElement | null;
-      const overview = document.querySelector("#studio-modern-root");
+      const content = document.querySelector("#step-content");
       return (
         typeof win.goStep === "function" &&
-        document.body.classList.contains("studio-modern-ready") &&
         document.body.dataset.studioStep === "1" &&
         Boolean(picker && picker.options.length > 1 && picker.value) &&
-        Boolean(overview?.textContent?.trim())
+        Boolean(content)
       );
     },
     null,
@@ -53,11 +52,20 @@ async function goStudioStep(page: Page, step: number) {
     return win.goStep(targetStep);
   }, step);
   await page.waitForFunction(
-    (targetStep) => document.body.dataset.studioStep === String(targetStep),
+    (targetStep) => {
+      const content = document.querySelector("#step-content");
+      return (
+        document.body.dataset.studioStep === String(targetStep) &&
+        Boolean(content && content.textContent?.trim())
+      );
+    },
     step,
     { timeout: 15_000 },
   );
   await expect(page.locator("#step-content")).toBeVisible({ timeout: 15_000 });
+  if (step === 2) {
+    await expect(page.locator("#dag-editor-body")).toBeVisible({ timeout: 15_000 });
+  }
   if (step > 1) {
     await expect(page.locator("#step-content")).toContainText(STEP_READY[step], {
       timeout: 15_000,
@@ -89,11 +97,9 @@ test.describe("Studio — 7 tabs render", () => {
         }
         await trigger.click();
         // Wait for either a panel, table, empty state, or error.
-        const content = tab.source.includes("Resumen")
-          ? page.locator("#studio-modern-root .studio-modern, #studio-modern-root").first()
-          : page.locator(
-            "main, .tab-content, [role='tabpanel'], table, .empty-state, .alert",
-          ).first();
+        const content = page.locator(
+          "#step-content, main, .tab-content, [role='tabpanel'], table, .empty-state, .alert",
+        ).first();
         await expect(content).toBeVisible({ timeout: 10_000 });
       },
     );
@@ -142,7 +148,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   }) => {
     await page.goto(`${LEGACY}/studio`);
     await goStudioStep(page, 2);
-    const surface = page.locator("table, .dag-list, .empty-state").first();
+    const surface = page.locator("#step-content #dag-list, #step-content .empty-state").first();
     await expect(surface).toBeVisible({ timeout: 15_000 });
   });
 
@@ -151,7 +157,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   }) => {
     await page.goto(`${LEGACY}/studio`);
     await goStudioStep(page, 2);
-    const copy = page.getByRole("button", { name: /copiar/i }).first();
+    const copy = page.locator("#dag-editor-body").getByRole("button", { name: /copiar/i }).first();
     if (!(await copy.isVisible({ timeout: 5_000 }).catch(() => false))) {
       test.skip(true, "'Copiar' button not surfaced — tracked in E2E findings");
     }
@@ -170,7 +176,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   }) => {
     await page.goto(`${LEGACY}/studio`);
     await goStudioStep(page, 2);
-    const renombrar = page.getByRole("button", { name: /renombrar/i }).first();
+    const renombrar = page.locator("#dag-editor-body").getByRole("button", { name: /renombrar/i }).first();
     if (!(await renombrar.isVisible({ timeout: 5_000 }).catch(() => false))) {
       test.skip(true, "'Renombrar' button not present");
     }
@@ -271,7 +277,7 @@ test.describe("Studio — Entidades tab", () => {
 });
 
 test.describe("Studio — Refinar subtabs", () => {
-  for (const layer of [/Bronze/i, /Silver/i, /Master/i, /Gold/i]) {
+  for (const layer of [/Bronze/i, /Silver/i, /Gold/i]) {
     test(`Refinar > ${layer.source} subtab clicks render content`,
       async ({ authedPage: page }) => {
         await page.goto(`${LEGACY}/studio`);

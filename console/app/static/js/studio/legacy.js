@@ -3482,20 +3482,15 @@ FROM silver_${entity || 'entity'}`;
     }
 
     export async function deployDag() {
-      // R2 gate: refuse early with a clear, actionable message in
+      // R2/R3 gate: refuse early with a clear, actionable message in
       // production so the user never sees a raw mcp-infra error.
-      if (!(await _isDagDeployEnabled())) {
+      if (!(await _gateDevOnlyAction(
+        'Deploy a Airflow está deshabilitado fuera de desarrollo. Usa el pipeline de despliegue o la UI de Airflow.',
+      ))) {
         const btn = document.getElementById('btn-deploy');
         if (btn) {
           btn.title = 'Deploy disabled outside development';
         }
-        const info = await _systemInfo();
-        setDeployMsg(
-          info.dev_mode
-            ? 'Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.'
-            : 'Deploy a Airflow está deshabilitado fuera de desarrollo. Usa el pipeline de despliegue o la UI de Airflow.',
-          'err',
-        );
         return;
       }
 
