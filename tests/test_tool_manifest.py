@@ -94,9 +94,24 @@ def test_build_manifest_aggregates_servers(manifest_module, monkeypatch):
     infra_tool = result["servers"]["infra"][0]
     assert infra_tool["risk_level"] == "read"
     assert infra_tool["requires_approval"] is False
-    # query_kb is not classified → default write
+    # query_kb is intentionally not auto-read: cartridge SQL-backed KB tools
+    # can execute engine-specific SQL and must stay approval-gated.
     replicon_tool = result["servers"]["replicon"][0]
     assert replicon_tool["risk_level"] == "write"
+    assert replicon_tool["requires_approval"] is True
+
+
+def test_sql_backed_kb_tools_are_not_read_only(manifest_module):
+    for name in ("query_kb", "cartridge_query_kb"):
+        res = manifest_module.classify_tool(name)
+        assert res["risk_level"] == "write"
+        assert res["requires_approval"] is True
+
+
+def test_dag_get_source_is_not_read_only_because_it_caches(manifest_module):
+    res = manifest_module.classify_tool("dag_get_source")
+    assert res["risk_level"] == "write"
+    assert res["requires_approval"] is True
 
 
 def test_build_manifest_tolerates_list_tools_failure(manifest_module, monkeypatch):

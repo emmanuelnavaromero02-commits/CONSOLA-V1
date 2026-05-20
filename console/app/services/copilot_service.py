@@ -713,6 +713,198 @@ def _audit(
         pass
 
 
+def _tool_result_content(result: Any) -> str:
+    return llm_client._clip_tool_result_for_model(result)
+
+
+def _decode_tool_calls(raw_calls: Any) -> list[dict]:
+    if isinstance(raw_calls, str):
+        try:
+            raw_calls = json.loads(raw_calls)
+        except Exception:
+            raw_calls = None
+    if not isinstance(raw_calls, list):
+        return []
+    return [c for c in raw_calls if isinstance(c, dict)]
+
+
+def _normalise_stored_tool_call(call: dict, classifications: dict[str, dict]) -> dict:
+    full_name = call.get("name") or ""
+    server_id = call.get("server")
+    bare_name = call.get("tool") or call.get("bare_name")
+    if not server_id and "__" in full_name:
+        server_id = full_name.split("__", 1)[0]
+    if not bare_name and "__" in full_name:
+        bare_name = full_name.split("__", 1)[1]
+    if not server_id or not bare_name:
+        raise HTTPException(400, "pending action has an invalid tool reference")
+
+    full = f"{server_id}__{bare_name}"
+    meta = classifications.get(full) or {}
+    risk = meta.get("risk_level") or call.get("risk_level") or "destructive"
+    if risk not in _PERMISSION_BY_RISK:
+        risk = "destructive"
+    args = call.get("input") or {}
+    if not isinstance(args, dict):
+        args = {}
+    return {
+        "server": server_id,
+        "tool": bare_name,
+        "bare_name": bare_name,
+        "full_name": full,
+        "args": args,
+        "risk_level": risk,
+    }
+
+
+def _approved_entries_from_calls(
+    raw_calls: list[dict],
+    classifications: dict[str, dict],
+) -> list[dict]:
+    entries: list[dict] = []
+    seen_keys: set[str] = set()
+    for call in raw_calls or []:
+        if not isinstance(call, dict):
+            continue
+        approval_key = call.get("approval_key")
+        if not approval_key or approval_key in seen_keys:
+            continue
+        seen_keys.add(approval_key)
+        entry = _normalise_stored_tool_call(call, classifications)
+        entry["approval_key"] = approval_key
+        entries.append(entry)
+    return entries
+
+
+async def _execute_approved_tool_calls(
+    *,
+    conversation_id: str,
+    entries: list[dict],
+    user: dict,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict:
+    """Execute the tool calls captured in a pending approval message.
+
+    Older flow asked the LLM to re-emit the same tool call after the user
+    clicked Approve. That is brittle in production: a model may simply
+    explain that approval was received without actually calling the tool.
+    This helper performs the approved calls server-side, persists a normal
+    assistant tool_use + tool_result pair, then the LLM only has to
+    summarise the real result.
+    """
+    pool = await auth.pool()
+    async with pool.acquire() as conn:
+        await _persist_message(
+            conn,
+            conversation_id=conversation_id,
+            role="user",
+            content=(
+                "Aprobé la ejecución de "
+                f"{len(entries)} acción(es) pendiente(s)."
+            ),
+        )
+
+    tool_calls: list[dict] = []
+    tool_results: list[dict] = []
+    summary: list[dict] = []
+    citations: list[dict] = []
+    freshness_cache: dict[str, dict] = {}
+
+    for entry in entries:
+        server_id = entry["server"]
+        bare_name = entry["tool"]
+        args = entry["args"]
+        risk = entry["risk_level"]
+        result: Any
+        status = "success"
+
+        if isinstance(args, dict) and args.get("_clipped"):
+            status = "error"
+            result = {
+                "error": "approval_args_clipped",
+                "message": (
+                    "Los argumentos de esta acción eran demasiado grandes "
+                    "para guardarse de forma segura; vuelve a pedir la "
+                    "acción con parámetros más pequeños."
+                ),
+            }
+            _audit(
+                user=user, server=server_id, bare_name=bare_name, args=args,
+                risk_level=risk, conversation_id=conversation_id,
+                ip=ip, user_agent=user_agent, status="error",
+                error=result["message"],
+            )
+        else:
+            result = await _invoke_tool_with_retry(server_id, bare_name, args)
+            is_error = (
+                isinstance(result, dict)
+                and bool(result.get("_error") or result.get("error"))
+            )
+            status = "error" if is_error else "success"
+            _audit(
+                user=user, server=server_id, bare_name=bare_name, args=args,
+                risk_level=risk, conversation_id=conversation_id,
+                ip=ip, user_agent=user_agent, status=status,
+                error=(
+                    str(result.get("error_message") or result.get("error"))
+                    if is_error else None
+                ),
+            )
+            if not is_error:
+                try:
+                    extracted = _extract_citations(bare_name, result, server_id)
+                except Exception:
+                    extracted = []
+                for c in extracted:
+                    await _annotate_citation_freshness(c, cache=freshness_cache)
+                citations.extend(extracted)
+
+        tool_use_id = f"approval_{uuid.uuid4().hex}"
+        stored_args = _clip_tool_args(_scrub_args(args))
+        tool_calls.append({
+            "id": tool_use_id,
+            "name": entry["full_name"],
+            "input": stored_args,
+            "server": server_id,
+            "tool": bare_name,
+            "bare_name": bare_name,
+            "risk_level": risk,
+            "status": status,
+            "approved": True,
+        })
+        tool_results.append({
+            "tool_use_id": tool_use_id,
+            "content": _tool_result_content(result),
+        })
+        summary.append({
+            "server": server_id,
+            "tool": bare_name,
+            "args": stored_args,
+            "risk_level": risk,
+            "status": status,
+        })
+
+    pool = await auth.pool()
+    async with pool.acquire() as conn:
+        await _persist_message(
+            conn,
+            conversation_id=conversation_id,
+            role="assistant",
+            content="Ejecuté las acciones aprobadas y recibí estos resultados.",
+            tool_calls=tool_calls,
+            citations=citations or None,
+        )
+        await _persist_message(
+            conn,
+            conversation_id=conversation_id,
+            role="tool",
+            tool_results=tool_results,
+        )
+
+    return {"tool_calls": summary, "citations": citations}
+
+
 # ── Public CRUD ─────────────────────────────────────────────────────────────
 
 async def create_conversation(
@@ -1256,11 +1448,9 @@ async def approve_pending_action(
     ip: str | None = None,
     user_agent: str | None = None,
 ) -> dict:
-    """Execute every pending destructive action stored in the given
-    assistant message, then continue the conversation so the LLM can
-    respond to the new tool results."""
-    if not permissions.has_permission(user, "copilot.execute"):
-        raise HTTPException(403, "permission required: copilot.execute")
+    """Execute every pending approved action stored in the given assistant
+    message, then continue the conversation so the LLM can respond to the
+    new tool results."""
     conversation_id = _safe_uuid(conversation_id, what="conversation_id")
     message_id = _safe_uuid(message_id, what="message_id")
 
@@ -1271,6 +1461,38 @@ async def approve_pending_action(
             raise HTTPException(404, "conversation not found")
         if conv["user_id"] != user.get("id"):
             raise HTTPException(403, "not your conversation")
+        pending_row = await conn.fetchrow(
+            """
+            SELECT tool_calls
+            FROM conversation_messages
+            WHERE id = $1::uuid
+              AND conversation_id = $2::uuid
+              AND tool_calls IS NOT NULL
+              AND tool_results IS NULL
+            """,
+            message_id, conversation_id,
+        )
+    if not pending_row:
+        raise HTTPException(
+            409, "this approval was already processed or no pending action found"
+        )
+
+    raw_calls = _decode_tool_calls(pending_row["tool_calls"])
+    if not raw_calls:
+        raise HTTPException(400, "no approvable actions pending in this message")
+
+    _tools, _server_map, classifications = await _build_tools_for_llm()
+    entries = _approved_entries_from_calls(raw_calls, classifications)
+    if not entries:
+        raise HTTPException(400, "no approvable actions pending in this message")
+
+    for entry in entries:
+        needed = _required_permission(entry["risk_level"])
+        if not permissions.has_permission(user, needed):
+            raise HTTPException(403, f"permission required: {needed}")
+
+    pool = await auth.pool()
+    async with pool.acquire() as conn:
         # Atomic claim: marks the message as "consumed" so a concurrent
         # POST /approve cannot execute the destructive action twice. We
         # encode the claim in tool_results (previously NULL meant pending)
@@ -1296,19 +1518,20 @@ async def approve_pending_action(
         raise HTTPException(
             409, "this approval was already processed or no pending action found"
         )
-    raw_calls = row["tool_calls"]
-    if isinstance(raw_calls, str):
-        try: raw_calls = json.loads(raw_calls)
-        except Exception: raw_calls = None
-    approved_keys = {
-        c["approval_key"] for c in (raw_calls or [])
-        if isinstance(c, dict) and c.get("approval_key")
-    }
-    if not approved_keys:
-        raise HTTPException(400, "no approvable actions pending in this message")
 
-    return await _run_loop(
+    executed = await _execute_approved_tool_calls(
+        conversation_id=conversation_id,
+        entries=entries,
+        user=user,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+    out = await _run_loop(
         conversation_id=conversation_id,
         user=user, ip=ip, user_agent=user_agent,
-        approved_keys=approved_keys,
+        approved_keys=set(),
     )
+    out["tool_calls"] = (executed.get("tool_calls") or []) + (out.get("tool_calls") or [])
+    out["citations"] = (executed.get("citations") or []) + (out.get("citations") or [])
+    return out

@@ -72,7 +72,10 @@ class FakeDB:
             return {"id": mid}
         if q.startswith("SELECT tool_calls FROM conversation_messages"):
             for m in self.messages:
-                if m["id"] == args[0] and m["conversation_id"] == args[1]:
+                if (m["id"] == args[0]
+                        and m["conversation_id"] == args[1]
+                        and m["tool_calls"] is not None
+                        and m["tool_results"] is None):
                     return {"tool_calls": m["tool_calls"]}
             return None
         if q.startswith("UPDATE conversation_messages SET tool_results = jsonb_build_array"):
@@ -351,9 +354,29 @@ def test_copilot_write_tool_executes_after_approval(
     assert invoke_count == []
 
     async def fake_chat_second(*, messages, invoke_tool, **_kw):
-        r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
-        assert r == {"ok": True}
-        return ("Listo.", [], list(messages))
+        # Approval execution is now deterministic in the service layer:
+        # the LLM receives the real tool_result and only has to summarise.
+        assert any(
+            m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and "Aprobé la ejecución" in m["content"]
+            for m in messages
+        )
+        assert any(
+            m.get("role") == "user"
+            and isinstance(m.get("content"), list)
+            and any(
+                b.get("type") == "tool_result" and '"ok": true' in str(b.get("content"))
+                for b in m["content"]
+            )
+            for m in messages
+        )
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Listo."},
+            ]},
+        ]
+        return ("Listo.", [], final)
 
     _patch_llm(copilot_module, fake_chat_second)
     out2 = _run(copilot_module.approve_pending_action(
@@ -361,6 +384,67 @@ def test_copilot_write_tool_executes_after_approval(
     ))
     assert invoke_count == [("infra", "foo_write_bar", {"value": 1})]
     assert out2["requires_approval"] is False
+
+
+def test_copilot_write_approval_does_not_require_execute_permission(
+    copilot_module, db, monkeypatch,
+):
+    """A write-level approved action needs copilot.write, not the
+    destructive copilot.execute permission."""
+    writer_user = {"id": 3, "email": "writer@example.com", "role": "custom"}
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
+    ])
+    _patch_audit(copilot_module, db)
+    monkeypatch.setattr(
+        copilot_module.permissions,
+        "has_permission",
+        lambda _user, permission: permission in {"copilot.use", "copilot.write"},
+    )
+
+    invoke_count = []
+
+    async def fake_invoke(server_id, tool, args):
+        invoke_count.append((server_id, tool, args))
+        return {"ok": True}
+
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "foo_write_bar", {"value": 7})
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1",
+                 "name": "infra__foo_write_bar", "input": {"value": 7}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1",
+                 "content": "approval_required"},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
+
+    async def fake_chat_second(*, messages, **_kw):
+        final = list(messages) + [
+            {"role": "assistant",
+             "content": [{"type": "text", "text": "Listo."}]},
+        ]
+        return ("Listo.", [], final)
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat_first)
+    conv = _run(copilot_module.create_conversation(user_id=writer_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="actualiza algo", user=writer_user,
+    ))
+
+    _patch_llm(copilot_module, fake_chat_second)
+    _run(copilot_module.approve_pending_action(
+        conversation_id=conv["id"], message_id=out["message_id"], user=writer_user,
+    ))
+    assert invoke_count == [("infra", "foo_write_bar", {"value": 7})]
 
 
 def test_copilot_destructive_tool_executes_with_approval(
@@ -416,22 +500,21 @@ def test_copilot_destructive_tool_executes_with_approval(
     pending_msg_id = out["message_id"]
 
     async def fake_chat_second(*, messages, invoke_tool, **_kw):
-        r = await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
-        assert r == {"deleted": True}
         final = list(messages) + [
-            {"role": "assistant", "content": [
-                {"type": "tool_use", "id": "toolu_2",
-                 "name": "infra__airflow_delete_dag",
-                 "input": {"dag_id": "x"}},
-            ]},
-            {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "toolu_2",
-                 "content": str(r)},
-            ]},
             {"role": "assistant", "content": [
                 {"type": "text", "text": "Listo, eliminado."},
             ]},
         ]
+        assert any(
+            m.get("role") == "user"
+            and isinstance(m.get("content"), list)
+            and any(
+                b.get("type") == "tool_result"
+                and '"deleted": true' in str(b.get("content"))
+                for b in m["content"]
+            )
+            for m in messages
+        )
         return ("Listo, eliminado.", [], final)
 
     _patch_llm(copilot_module, fake_chat_second)
@@ -806,7 +889,16 @@ def test_copilot_approval_race_returns_409_on_second_call(
 
     # First approve wins, executes once.
     async def fake_chat_second(*, messages, invoke_tool, **_kw):
-        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
+        assert any(
+            m.get("role") == "user"
+            and isinstance(m.get("content"), list)
+            and any(
+                b.get("type") == "tool_result"
+                and '"deleted": true' in str(b.get("content"))
+                for b in m["content"]
+            )
+            for m in messages
+        )
         final = list(messages) + [
             {"role": "assistant",
              "content": [{"type": "text", "text": "Eliminado."}]},
@@ -828,6 +920,130 @@ def test_copilot_approval_race_returns_409_on_second_call(
     assert "409" in str(exc_info.value)
     # And no extra invocation happened.
     assert len(invoke_log) == 1
+
+
+def test_copilot_approval_dedupes_duplicate_tool_calls(
+    copilot_module, db, admin_user,
+):
+    """If a model emits the same pending tool twice, one approval must
+    still execute the captured action only once."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___airflow_delete_dag", "risk_level": "destructive"},
+    ])
+    _patch_audit(copilot_module, db)
+
+    invoke_log = []
+
+    async def fake_invoke(*a, **_kw):
+        invoke_log.append(a)
+        return {"deleted": True}
+
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "dupe"})
+        await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "dupe"})
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1",
+                 "name": "infra__airflow_delete_dag",
+                 "input": {"dag_id": "dupe"}},
+                {"type": "tool_use", "id": "toolu_2",
+                 "name": "infra__airflow_delete_dag",
+                 "input": {"dag_id": "dupe"}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1",
+                 "content": "approval_required"},
+                {"type": "tool_result", "tool_use_id": "toolu_2",
+                 "content": "approval_required"},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
+
+    async def fake_chat_second(*, messages, **_kw):
+        final = list(messages) + [
+            {"role": "assistant",
+             "content": [{"type": "text", "text": "Eliminado una vez."}]},
+        ]
+        return ("Eliminado una vez.", [], final)
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat_first)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"],
+        user_message="borra dupe dos veces",
+        user=admin_user,
+    ))
+
+    _patch_llm(copilot_module, fake_chat_second)
+    _run(copilot_module.approve_pending_action(
+        conversation_id=conv["id"], message_id=out["message_id"], user=admin_user,
+    ))
+    assert invoke_log == [("infra", "airflow_delete_dag", {"dag_id": "dupe"})]
+
+
+def test_copilot_approved_tool_result_is_clipped_before_history(
+    copilot_module, db, admin_user, monkeypatch,
+):
+    """Approved tool results use the same model-facing clipping as the
+    normal llm_client tool loop."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [
+        {"name": "infra___foo_write_bar", "risk_level": "write", "requires_approval": True},
+    ])
+    _patch_audit(copilot_module, db)
+    monkeypatch.setattr(copilot_module.llm_client, "_MAX_TOOL_RESULT_BYTES", 100)
+
+    async def fake_invoke(*_a, **_kw):
+        return {"rows": [{"value": "x" * 80} for _ in range(20)], "count": 20}
+
+    async def fake_chat_first(*, messages, invoke_tool, **_kw):
+        await invoke_tool("infra", "foo_write_bar", {"value": 1})
+        final = list(messages) + [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1",
+                 "name": "infra__foo_write_bar", "input": {"value": 1}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1",
+                 "content": "approval_required"},
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Espero aprobación."},
+            ]},
+        ]
+        return ("Espero aprobación.", [], final)
+
+    seen_tool_result = []
+
+    async def fake_chat_second(*, messages, **_kw):
+        for m in messages:
+            if m.get("role") == "user" and isinstance(m.get("content"), list):
+                for b in m["content"]:
+                    if b.get("type") == "tool_result":
+                        seen_tool_result.append(str(b.get("content")))
+        final = list(messages) + [
+            {"role": "assistant",
+             "content": [{"type": "text", "text": "Listo."}]},
+        ]
+        return ("Listo.", [], final)
+
+    _patch_invoke(copilot_module, fake_invoke)
+    _patch_llm(copilot_module, fake_chat_first)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+    out = _run(copilot_module.run_turn(
+        conversation_id=conv["id"], user_message="write big", user=admin_user,
+    ))
+
+    _patch_llm(copilot_module, fake_chat_second)
+    _run(copilot_module.approve_pending_action(
+        conversation_id=conv["id"], message_id=out["message_id"], user=admin_user,
+    ))
+    assert any("_truncated" in item for item in seen_tool_result)
 
 
 def test_copilot_pending_action_args_are_scrubbed(
