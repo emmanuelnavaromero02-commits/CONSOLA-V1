@@ -62,11 +62,14 @@ INTERNAL_API_KEY = get_internal_api_key()
 
 def _key_for(server: str) -> str:
     """Sprint v1.12: pick the per-pair INTERNAL_API_KEY_WORKSPACE_TO_<SERVER>
-    secret if present, falling back to the shared legacy INTERNAL_API_KEY.
+    secret if present, falling back to the shared legacy INTERNAL_API_KEY only
+    outside production.
     ``server`` is one of ``CONSOLE`` / ``REFINEMENT`` / ``MCP_INFRA``."""
     pair = os.environ.get(f"INTERNAL_API_KEY_WORKSPACE_TO_{server}")
     if pair:
         return pair
+    if _is_production_env():
+        raise RuntimeError(f"Missing INTERNAL_API_KEY_WORKSPACE_TO_{server}; legacy fallback disabled in production")
     if INTERNAL_API_KEY:
         return INTERNAL_API_KEY
     raise RuntimeError(f"Missing INTERNAL_API_KEY_WORKSPACE_TO_{server} (no legacy fallback either)")
@@ -127,8 +130,50 @@ def _rls_user_context(user: dict | None) -> dict:
         "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
         "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
         "workspace_role": user.get("workspace_role"),
-        "_trusted_admin": role == "admin",
+        "_trusted_admin": role in {"admin", "owner", "super_admin"},
+        "_server_trusted_context": True,
     }
+
+
+def _security_context(user: dict | None) -> dict:
+    ctx = _rls_user_context(user)
+    if not ctx:
+        return {"trusted": False, "permissions": []}
+    role = ctx.get("role") or "workspace_user"
+    admin = role in {"admin", "owner", "super_admin"}
+    explicit_cartridges = (user or {}).get("allowed_cartridges") or (user or {}).get("cartridges") or []
+    allowed_cartridges = explicit_cartridges or (["*"] if admin else [])
+    if admin or "*" in allowed_cartridges:
+        allowed_prefixes = ["raw/", "silver/", "gold/", "uploads/", "cartridges/"]
+    else:
+        allowed_prefixes = [
+            f"{layer}/{str(cart).strip().strip('/')}/"
+            for cart in allowed_cartridges
+            for layer in ("raw", "silver", "gold", "uploads", "cartridges")
+            if str(cart).strip().strip("/")
+        ]
+    return {
+        "trusted": True,
+        "source": "workspace",
+        "user_id": ctx.get("id"),
+        "email": ctx.get("email", ""),
+        "role": role,
+        "workspace_role": ctx.get("workspace_role"),
+        "tenant_id": ctx.get("tenant_id"),
+        "workspace_id": ctx.get("workspace_id"),
+        "permissions": ["datasets.read", "apps.read", "workspace.access"],
+        "allowed_cartridges": allowed_cartridges,
+        "allowed_buckets": ["lakehouse"],
+        "allowed_prefixes": allowed_prefixes,
+        "_trusted_admin": admin,
+    }
+
+
+def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
+    payload = {"tool": tool, "args": args}
+    if user is not None:
+        payload["security_context"] = _security_context(user)
+    return payload
 
 
 SECURITY_HEADERS = {
@@ -432,9 +477,11 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
         raise HTTPException(404, f"Dataset '{dataset}' not found")
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "query_dataset",
-                               "args": {"name": dataset, "limit": limit,
-                                        "user_context": _rls_user_context(user)}})
+                         json=_mcp_payload(
+                             "query_dataset",
+                             {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
+                             user,
+                         ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
@@ -465,9 +512,11 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
 
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "preview_transform",
-                               "args": {"sql": union_sql, "limit": 5000,
-                                        "user_context": _rls_user_context(user)}})
+                         json=_mcp_payload(
+                             "preview_transform",
+                             {"sql": union_sql, "limit": 5000, "user_context": _rls_user_context(user)},
+                             user,
+                         ))
     result = r.json()
     rows = result.get("data", [])
     options: dict = {col: [] for col in cols}
@@ -539,9 +588,11 @@ async def api_data_query(request: Request, dataset: str, body: dict):
 
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "preview_transform",
-                               "args": {"sql": sql, "params": params, "limit": limit,
-                                        "user_context": _rls_user_context(user)}})
+                         json=_mcp_payload(
+                             "preview_transform",
+                             {"sql": sql, "params": params, "limit": limit, "user_context": _rls_user_context(user)},
+                             user,
+                         ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()

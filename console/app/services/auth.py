@@ -61,11 +61,11 @@ _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "cartridge-sap_hcm":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
     "cartridge-sap_s4hana":         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-    # The old whitelist allowed these too; kept via legacy key only.
+    "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
+    # The old whitelist allowed these too; kept via legacy key only outside prod.
     "console":    None,
     "refinement": None,
     "mcp-infra":  None,
-    "airflow":    None,
 }
 
 
@@ -579,7 +579,7 @@ def verify_internal_api_key(
         if pair_key:
             accepted.append(pair_key)
     legacy = get_internal_api_key()
-    if legacy:
+    if legacy and not _is_production():
         accepted.append(legacy)
 
     if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):

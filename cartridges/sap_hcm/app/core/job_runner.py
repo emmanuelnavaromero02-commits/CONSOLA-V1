@@ -220,13 +220,11 @@ async def _trigger_silver_refresh(entity: str) -> None:
     """
     source = f"raw/sap_hcm/{entity}"
     try:
-        # Sprint v1.12: cartridge→refinement uses its own pair key, with
-        # legacy fallback. Previously this call was unauthenticated and
-        # silently 403'd at refinement; the new pair key fixes that.
-        api_key = (
-            os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
-            or os.environ.get("INTERNAL_API_KEY", "")
-        )
+        api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
+        if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
+            api_key = os.environ.get("INTERNAL_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("Missing INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",

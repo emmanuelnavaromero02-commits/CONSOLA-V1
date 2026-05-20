@@ -234,7 +234,7 @@ def _patch_full(mod, db, tools, fake_chat, fake_invoke):
 def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
     db = _FakeDB()
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         # Tool result with the standard _meta envelope.
         return {
             "rows": [{"x": 1}],

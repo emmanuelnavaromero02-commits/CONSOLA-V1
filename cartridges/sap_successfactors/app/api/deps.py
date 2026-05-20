@@ -6,6 +6,7 @@ it without triggering the FastAPI app construction.
 """
 from __future__ import annotations
 
+import os
 import secrets
 
 from fastapi import Header, HTTPException, status
@@ -32,10 +33,16 @@ def verify_api_key(
     (legacy). When ``X-Internal-Service`` is provided it must match the
     allow-list of service identifiers.
     """
-    expected = get_internal_api_key()
     presented = x_internal_api_key or x_api_key
+    accepted = []
+    if x_internal_service == "console":
+        pair = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
+        if pair:
+            accepted.append(pair)
+    if os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
+        accepted.append(get_internal_api_key())
 
-    if not presented or not secrets.compare_digest(presented, expected):
+    if not presented or not any(secrets.compare_digest(presented, k) for k in accepted if k):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid X-Internal-Api-Key",

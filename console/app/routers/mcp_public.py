@@ -78,7 +78,7 @@ async def list_tools(server_id: str):
 async def invoke_tool(server_id: str, body: dict, user: dict = Depends(require_admin)):
     tool = body.get("tool")
     args = body.get("args", {})
-    result = await mcp_registry.invoke(server_id, tool, args)
+    result = await mcp_registry.invoke(server_id, tool, args, user=user)
     risk = classify_tool(tool or "")["risk_level"]
     status = "error" if isinstance(result, dict) and result.get("error") else "success"
     await audit_service.record_event(
@@ -103,7 +103,7 @@ async def invoke_tool_generic(body: dict, user: dict = Depends(require_admin)):
     server_id = body.get("server", "")
     tool = body.get("tool", "")
     args = body.get("args", {})
-    result = await mcp_registry.invoke(server_id, tool, args)
+    result = await mcp_registry.invoke(server_id, tool, args, user=user)
     risk = classify_tool(tool)["risk_level"]
     status = "error" if isinstance(result, dict) and result.get("error") else "success"
     await audit_service.record_event(

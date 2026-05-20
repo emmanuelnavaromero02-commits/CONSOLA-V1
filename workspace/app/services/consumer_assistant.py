@@ -49,13 +49,62 @@ SERVER_URLS = {
 }
 
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
 def _headers_for(server_id: str) -> dict[str, str]:
     key = ""
+    key_env = ""
     if server_id == "mcp-infra":
-        key = os.environ.get("INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA") or os.environ.get("INTERNAL_API_KEY", "")
+        key_env = "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA"
     elif server_id == "refinement":
-        key = os.environ.get("INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT") or os.environ.get("INTERNAL_API_KEY", "")
+        key_env = "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT"
+    if key_env:
+        key = os.environ.get(key_env, "")
+        if not key and _is_production():
+            raise RuntimeError(f"Missing {key_env}; legacy fallback disabled in production")
+    if not key and not _is_production():
+        key = os.environ.get("INTERNAL_API_KEY", "")
     return {"x-api-key": key, "x-internal-service": "workspace"} if key else {}
+
+
+def _security_context(user: dict | None) -> dict:
+    if not user:
+        return {
+            "trusted": False,
+            "source": "workspace",
+            "permissions": [],
+            "allowed_cartridges": [],
+            "allowed_buckets": [],
+            "allowed_prefixes": [],
+        }
+    role = (user or {}).get("role") or "workspace_user"
+    admin = role in {"admin", "owner", "super_admin"}
+    allowed_cartridges = (user or {}).get("allowed_cartridges") or (["*"] if admin else [])
+    return {
+        "trusted": True,
+        "source": "workspace",
+        "user_id": (user or {}).get("id"),
+        "email": (user or {}).get("email", ""),
+        "role": role,
+        "workspace_role": (user or {}).get("workspace_role"),
+        "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
+        "workspace_id": (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id"),
+        "permissions": ["datasets.read", "cartridges.read", "apps.read", "workspace.access"],
+        "allowed_cartridges": allowed_cartridges,
+        "allowed_buckets": ["lakehouse"],
+        "allowed_prefixes": (
+            ["raw/", "silver/", "gold/", "uploads/", "cartridges/"]
+            if admin
+            else [f"{layer}/{cart}/" for cart in allowed_cartridges for layer in ("raw", "silver", "gold", "uploads", "cartridges")]
+        ),
+        "_trusted_admin": admin,
+    }
+
+
+def _payload(tool: str, args: dict, user: dict | None = None) -> dict:
+    return {"tool": tool, "args": args, "security_context": _security_context(user)}
 
 
 SYSTEM_BASE = """Eres el asistente de ΩMEGA by EPIUSE para usuarios de negocio.
@@ -182,12 +231,12 @@ async def _discover_tools() -> tuple[list[dict], dict[str, str]]:
     return tools, server_map
 
 
-async def _raw_invoke(server_id: str, tool: str, args: dict) -> Any:
+async def _raw_invoke(server_id: str, tool: str, args: dict, user: dict | None = None) -> Any:
     base = SERVER_URLS.get(server_id)
     if not base:
         return {"error": f"unknown server: {server_id}"}
     async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.post(f"{base}/mcp/invoke", json={"tool": tool, "args": args}, headers=_headers_for(server_id))
+        r = await c.post(f"{base}/mcp/invoke", json=_payload(tool, args, user), headers=_headers_for(server_id))
     try:
         return r.json()
     except Exception:
@@ -205,6 +254,8 @@ def _make_user_aware_invoke(user: dict | None):
     prefix = f"wk_{uid}_" if uid else ""
 
     async def invoke(server_id: str, tool: str, args: dict) -> Any:
+        if tool not in ALLOWED_TOOLS.get(server_id, set()):
+            return {"error": f"tool_not_allowed: {server_id}__{tool}"}
         if tool == "save_dataset":
             # Force gold layer (consumer never creates lower-layer models)
             if args.get("layer") != "gold":
@@ -232,7 +283,7 @@ def _make_user_aware_invoke(user: dict | None):
                 if name and not name.startswith(prefix) and not _looks_official(name):
                     args = {**args, "name": prefix + name}
 
-        return await _raw_invoke(server_id, tool, args)
+        return await _raw_invoke(server_id, tool, args, user)
 
     return invoke
 
@@ -248,7 +299,7 @@ def _looks_official(name: str) -> bool:
 
 # ── Catalog context (cached) ────────────────────────────────────────────────
 
-_catalog_text: str = ""
+_catalog_text_by_scope: dict[str, str] = {}
 _catalog_ts:   float = 0.0
 _CATALOG_TTL = int(os.environ.get("CATALOG_TTL_SECONDS", "3600"))
 
@@ -285,41 +336,55 @@ def _format_catalog(data: dict) -> str:
     return "\n".join(lines)
 
 
-async def _catalog_context() -> str:
-    global _catalog_text, _catalog_ts
-    if _catalog_text and (time.time() - _catalog_ts) < _CATALOG_TTL:
-        return _catalog_text
+def _scope_cache_key(user: dict | None) -> str:
+    sec = _security_context(user)
+    return "|".join([
+        str(sec.get("user_id") or ""),
+        str(sec.get("workspace_id") or ""),
+        ",".join(sec.get("allowed_prefixes") or []),
+    ])
+
+
+async def _catalog_context(user: dict | None) -> str:
+    global _catalog_ts
+    key = _scope_cache_key(user)
+    if key in _catalog_text_by_scope and (time.time() - _catalog_ts) < _CATALOG_TTL:
+        return _catalog_text_by_scope[key]
     try:
         async with httpx.AsyncClient(timeout=20) as c:
             r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                             json={"tool": "get_data_catalog", "args": {}},
+                             json=_payload("get_data_catalog", {}, user),
                              headers=_headers_for("refinement"))
             r.raise_for_status()
-            _catalog_text = _format_catalog(r.json())
+            _catalog_text_by_scope[key] = _format_catalog(r.json())
             _catalog_ts   = time.time()
     except Exception:
         pass
-    return _catalog_text
+    return _catalog_text_by_scope.get(key, "")
 
 
-_hints_text: str = ""
+_hints_text_by_scope: dict[str, str] = {}
 _hints_ts:   float = 0.0
 _HINTS_TTL = 300
 
 
-async def _cartridge_hints_block() -> str:
+async def _cartridge_hints_block(user: dict | None) -> str:
     """Concatenate `assistant_hints` from every registered cartridge so the
     workspace assistant honors cartridge-specific rules across the catalog."""
-    global _hints_text, _hints_ts
-    if _hints_text and (time.time() - _hints_ts) < _HINTS_TTL:
-        return _hints_text
+    global _hints_ts
+    key = _scope_cache_key(user)
+    if key in _hints_text_by_scope and (time.time() - _hints_ts) < _HINTS_TTL:
+        return _hints_text_by_scope[key]
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(f"{MCP_INFRA_URL}/mcp/invoke",
-                             json={"tool": "postgres_execute_query",
-                                   "args": {"sql": "SELECT id, COALESCE(assistant_hints,'') AS hints "
-                                                   "FROM cartridges WHERE assistant_hints IS NOT NULL "
-                                                   "AND length(assistant_hints) > 0"}},
+                             json=_payload(
+                                 "postgres_execute_query",
+                                 {"sql": "SELECT id, COALESCE(assistant_hints,'') AS hints "
+                                         "FROM cartridges WHERE assistant_hints IS NOT NULL "
+                                         "AND length(assistant_hints) > 0"},
+                                 user,
+                             ),
                              headers=_headers_for("mcp-infra"))
             data = (r.json().get("result") or r.json()).get("rows") or []
         sections = []
@@ -329,22 +394,22 @@ async def _cartridge_hints_block() -> str:
                 continue
             sections.append(f"## Cartucho `{row.get('id','?')}`\n{h}")
         if sections:
-            _hints_text = "\n\n<hints_cartuchos>\n" + "\n\n".join(sections) + "\n</hints_cartuchos>"
+            _hints_text_by_scope[key] = "\n\n<hints_cartuchos>\n" + "\n\n".join(sections) + "\n</hints_cartuchos>"
         else:
-            _hints_text = ""
+            _hints_text_by_scope[key] = ""
         _hints_ts = time.time()
     except Exception:
         pass
-    return _hints_text
+    return _hints_text_by_scope.get(key, "")
 
 
 # ── Public entry ────────────────────────────────────────────────────────────
 
 async def chat(message: str, history: list[dict], user: dict | None = None,
                on_event=None) -> dict:
-    catalog_ctx = await _catalog_context()
+    catalog_ctx = await _catalog_context(user)
     user_ctx    = _user_context_block(user) if user else ""
-    hints_ctx   = await _cartridge_hints_block()
+    hints_ctx   = await _cartridge_hints_block(user)
     system      = SYSTEM_BASE + user_ctx + ("\n\n" + catalog_ctx if catalog_ctx else "") + hints_ctx
     tools, server_map = await _discover_tools()
 
@@ -391,8 +456,10 @@ def _user_context_block(user: dict) -> str:
 
 def invalidate_caches():
     """Force the next chat() to re-fetch the catalog and tool list."""
-    global _catalog_text, _catalog_ts, _tools_cache, _tools_ts
-    _catalog_text = ""
+    global _catalog_ts, _hints_ts, _tools_cache, _tools_ts
+    _catalog_text_by_scope.clear()
     _catalog_ts = 0.0
+    _hints_text_by_scope.clear()
+    _hints_ts = 0.0
     _tools_cache = None
     _tools_ts = 0.0

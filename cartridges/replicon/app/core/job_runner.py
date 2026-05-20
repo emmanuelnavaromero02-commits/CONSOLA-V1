@@ -218,9 +218,18 @@ async def _trigger_silver_refresh(entity: str) -> None:
     """
     source = f"raw/replicon/{entity}"
     try:
+        api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
+        if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
+            api_key = os.environ.get("INTERNAL_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("Missing INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
         async with httpx.AsyncClient(timeout=300) as client:
             await client.post(
                 f"{REFINEMENT_URL}/refresh-by-source",
+                headers={
+                    "x-api-key": api_key,
+                    "x-internal-service": "cartridge-replicon",
+                },
                 json={"source": source},
             )
     except Exception:

@@ -188,7 +188,7 @@ def test_dataset_endpoint_returns_503_when_superset_unreachable(studio_client, m
         async def list_databases(self):
             raise studio_router.superset_client.SupersetRequestError(503, "Superset connection failed")
 
-    async def fake_datasets():
+    async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
     monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FailingClient())
@@ -220,7 +220,7 @@ def test_dataset_endpoint_audits_creation(studio_client, monkeypatch):
     async def fake_audit(**kwargs):
         audits.append(kwargs)
 
-    async def fake_datasets():
+    async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
     monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FakeClient())
@@ -259,7 +259,7 @@ def test_dataset_endpoint_creates_gold_database_when_missing(studio_client, monk
     async def fake_audit(**kwargs):
         return None
 
-    async def fake_datasets():
+    async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
     monkeypatch.setenv("SUPERSET_GOLD_SQLALCHEMY_URI", "postgresql+psycopg2://gold@postgres_gold/modecissions_gold")
@@ -295,7 +295,7 @@ def test_dataset_endpoint_returns_materialization_hint_for_missing_gold_table(st
                 "Superset create dataset failed with HTTP 422: Table [gold_hours] could not be found",
             )
 
-    async def fake_datasets():
+    async def fake_datasets(*_args, **_kwargs):
         return [{"name": "hours", "layer": "gold", "cartridge": "replicon"}]
 
     monkeypatch.setattr(studio_router.superset_client, "client_from_env", lambda: FakeClient())
@@ -320,7 +320,7 @@ def test_dag_delete_passes_cartridge_scope(studio_client, monkeypatch):
     async def fake_get_cartridge(cartridge):
         return {"id": cartridge, "name": cartridge, "dags": [{"dag_id": "replicon_extract"}], "entities": []}
 
-    async def fake_invoke(server, tool, payload):
+    async def fake_invoke(server, tool, payload, **_kwargs):
         invoked.append((server, tool, payload))
         return {"deleted_file": True, "deleted_db": True}
 
@@ -349,7 +349,7 @@ def test_dag_delete_rejects_other_cartridge_prefix(studio_client, monkeypatch):
     async def fake_get_cartridge(cartridge):
         return {"id": cartridge, "name": cartridge, "dags": [{"dag_id": "replicon_extract"}], "entities": []}
 
-    async def fake_invoke(server, tool, payload):
+    async def fake_invoke(server, tool, payload, **_kwargs):
         invoked.append((server, tool, payload))
         return {"deleted_file": True, "deleted_db": True}
 

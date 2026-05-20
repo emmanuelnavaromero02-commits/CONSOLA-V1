@@ -19,6 +19,7 @@ import httpx
 
 from app.security import get_internal_api_key
 from app.services import llm_client
+from app.services.security_context import build_security_context, rls_user_context
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL  = os.environ.get("MCP_INFRA_URL",  "http://mcp-infra:8010")
@@ -37,6 +38,8 @@ _SERVER_ENV_KEYS = {
 def _headers_for(server_id: str) -> dict[str, str]:
     server_key = _SERVER_ENV_KEYS.get(server_id, server_id.replace("-", "_").upper())
     pair_key = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server_key}")
+    if os.environ.get("APP_ENV", "production").lower() in {"production", "prod"} and not pair_key:
+        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server_key}; legacy fallback disabled in production")
     return {
         "x-api-key": pair_key or get_internal_api_key(),
         "x-internal-service": "console",
@@ -223,18 +226,36 @@ def invalidate_catalog_cache(server_id: str | None = None):
 # ── Invocation (applies rag_filter automatically) ───────────────────────────
 
 def _rls_user_context(user: dict | None) -> dict:
-    if not user:
-        return {}
-    role = user.get("role")
+    return rls_user_context(user)
+
+
+def _agent_security_context(agent: Agent, user: dict | None) -> dict:
+    if user is not None:
+        return build_security_context(user)
+    cartridge = (agent.cartridge_id or "").strip()
+    prefixes = []
+    if cartridge:
+        prefixes = [
+            f"raw/{cartridge}/",
+            f"silver/{cartridge}/",
+            f"gold/{cartridge}/",
+            f"uploads/{cartridge}/",
+            f"cartridges/{cartridge}/",
+        ]
     return {
-        "id": user.get("id"),
-        "email": user.get("email", ""),
-        "name": user.get("name") or user.get("email", ""),
-        "role": role,
-        "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
-        "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
-        "workspace_role": user.get("workspace_role"),
-        "_trusted_admin": role == "admin",
+        "trusted": True,
+        "source": "agent_runner",
+        "user_id": None,
+        "email": "agent-runner@omega.local",
+        "role": "agent",
+        "workspace_role": None,
+        "tenant_id": None,
+        "workspace_id": None,
+        "permissions": ["datasets.read", "cartridges.read"],
+        "allowed_cartridges": [cartridge] if cartridge else [],
+        "allowed_buckets": ["lakehouse"],
+        "allowed_prefixes": prefixes,
+        "_trusted_admin": False,
     }
 
 
@@ -248,15 +269,21 @@ def _make_invoke(agent: Agent, user: dict | None = None):
         if tool in ("search_rag", "list_rag_sources"):
             if "kinds" in rf and "kinds" not in args:
                 args = {**args, "kinds": rf["kinds"]}
-        if server_id == "refinement" and tool in ("query_dataset", "preview_sql"):
-            if "user_context" not in args:
-                args = {**args, "user_context": _rls_user_context(user)}
+        if server_id == "refinement" and tool in ("query_dataset", "preview_sql", "preview_transform"):
+            # Always overwrite model-supplied context with the authenticated
+            # backend context. Agent prompts/tool args are untrusted input.
+            args = {**args, "user_context": _rls_user_context(user)}
 
         base = SERVER_URLS.get(server_id)
         if not base:
             return {"error": f"unknown server: {server_id}"}
+        payload = {
+            "tool": tool,
+            "args": args,
+            "security_context": _agent_security_context(agent, user),
+        }
         async with httpx.AsyncClient(headers=_headers_for(server_id), timeout=120) as c:
-            r = await c.post(f"{base}/mcp/invoke", json={"tool": tool, "args": args})
+            r = await c.post(f"{base}/mcp/invoke", json=payload)
         try:
             payload = r.json()
         except Exception:

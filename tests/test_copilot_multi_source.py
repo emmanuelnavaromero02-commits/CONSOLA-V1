@@ -110,7 +110,7 @@ def test_two_cartridge_query_returns_two_citations(copilot_module):
     db = _FakeDB()
 
     # The LLM calls one tool from Replicon and one from SAP HCM.
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         if server_id == "replicon":
             return {"_meta": {"entity": "TimeEntry", "row_count": 40,
                               "timestamp": "2026-05-16T10:00:00Z"}}
@@ -165,7 +165,7 @@ def test_source_cap_enforced_at_3(copilot_module, caplog):
     only the first 3 sources (in invocation order) and logs a warning."""
     db = _FakeDB()
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         return {"_meta": {"entity": "Foo", "row_count": 1,
                           "timestamp": "2026-05-16T00:00:00Z"}}
 
@@ -224,7 +224,7 @@ def test_citations_grouped_by_source_in_order(copilot_module):
     that ordering to render cards left-to-right."""
     db = _FakeDB()
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         return {"_meta": {"entity": tool, "row_count": 1,
                           "timestamp": "2026-05-16T00:00:00Z"}}
 

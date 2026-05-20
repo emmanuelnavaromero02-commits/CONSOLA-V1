@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MCP_MAIN = ROOT / "mcp-infra" / "app" / "main.py"
+REFINEMENT_MAIN = ROOT / "refinement" / "app" / "main.py"
+MCP_REGISTRY = ROOT / "console" / "app" / "services" / "mcp_registry.py"
+
+
+def test_mcp_invoke_enforces_trusted_security_context_before_data_tools():
+    source = MCP_MAIN.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    assert "trusted security_context required" in source
+    assert "_enforce_data_scope(req, internal_service)" in source
+    assert '"postgres_execute_query"' in source
+    assert '"minio_list_objects"' in source
+    assert '"cartridge_preview"' in source
+    assert '"cartridge_query_kb"' in source
+    assert "object prefix is required" in source
+    assert "direct gold SQL requires admin context" in source
+    assert "cartridge SQL must stay inside its cartridge prefix" in source
+    assert "sensitive internal tables are not readable through MCP" in source
+
+
+def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
+    source = REFINEMENT_MAIN.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    assert "_SQL_READER_CALL_RE" in source
+    assert "_SCOPED_READER_RE" in source
+    assert "_SQL_STORAGE_LITERAL_RE" in source
+    assert "_DIRECT_STORAGE_SCAN_RE" in source
+    assert "_PGGOLD_SCHEMA_TABLE_RE" in source
+    assert "len(reader_calls) != len(direct_readers)" in source
+    assert "SQL readers must use a direct string literal path" in source
+    assert "pgdb schema is not readable through refinement" in source
+    assert "_body_from_security_header" in source
+    assert "_require_dataset_scope(_body_from_security_header" in source
+    assert "pggold table is not registered as an allowed dataset" in source
+    assert "existing = store.get_dataset(args[\"name\"])" in source
+    assert "_require_dataset_scope(body, existing, \"datasets.write\")" in source
+
+
+def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
+    source = MCP_MAIN.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    assert "_validate_cartridge_query_sql" in source
+    assert "_postgres_mentioned_tables" in source
+    assert "_DIRECT_STORAGE_SCAN_RE" in source
+    assert "cartridge SQL must read only direct s3:// file literals" in source
+    assert "cartridge SQL cannot read service database schemas" in source
+    assert "RAG source is outside caller scope" in source
+    assert "source = next((s for s in sources" in source
+
+
+def test_console_registry_scopes_direct_cartridge_mcp_calls():
+    source = MCP_REGISTRY.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    assert "SELECT url, category FROM mcp_servers" in source
+    assert "_enforce_outbound_scope" in source
+    assert "category != \"cartridge\"" in source
+    assert "\"query_kb\"" in source
+    assert "trusted security_context required" in source
+    assert "cartridge SQL cannot read service database schemas" in source
+    assert "_DIRECT_STORAGE_SCAN_RE" in source

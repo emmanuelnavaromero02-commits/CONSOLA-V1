@@ -39,19 +39,30 @@ ENTITY        = "AgentRunner"
 AGENT_RUNNER_DAG_ID = "agent_runner"
 CONSOLE_URL   = os.environ.get("CONSOLE_URL", "http://mode_console:8000")
 MCP_INFRA_URL = "http://mcp-infra:8010"
-MCP_INFRA_KEY = (
-    os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
-    or os.environ.get("INTERNAL_API_KEY", "")
-)
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key(env_name: str) -> str:
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+
+
+MCP_INFRA_KEY = _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
 
 # Shared token so this DAG can call /invoke/scheduled without a user cookie.
 # Set in the App EC2's .env as AGENT_RUNNER_TOKEN, propagated to mode_airflow
 # and mode_console via docker-compose env.
 RUNNER_TOKEN  = os.environ.get("AGENT_RUNNER_TOKEN", "")
-CONSOLE_INTERNAL_KEY = (
-    os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE")
-    or os.environ.get("INTERNAL_API_KEY", "")
-)
+CONSOLE_INTERNAL_KEY = _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE")
 
 POSTGRES_DSN  = os.environ.get(
     "DATABASE_URL",

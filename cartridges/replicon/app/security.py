@@ -24,6 +24,10 @@ ALLOWED_INTERNAL_SERVICES = {
 }
 
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
 def get_internal_api_key() -> str:
     key = os.environ.get("INTERNAL_API_KEY", "")
     if not key or any(secrets.compare_digest(key, bad) for bad in INSECURE_DEFAULTS):
@@ -37,8 +41,14 @@ def get_internal_api_key() -> str:
 def _is_valid_internal_request(x_api_key: str | None, x_internal_service: str | None) -> bool:
     if not x_internal_service or x_internal_service not in ALLOWED_INTERNAL_SERVICES:
         return False
-    expected = get_internal_api_key()
-    return bool(x_api_key and secrets.compare_digest(x_api_key, expected))
+    accepted = []
+    if x_internal_service == "console":
+        pair = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
+        if pair:
+            accepted.append(pair)
+    if not _is_production():
+        accepted.append(get_internal_api_key())
+    return bool(x_api_key and any(secrets.compare_digest(x_api_key, k) for k in accepted if k))
 
 
 class InternalApiKeyASGIGuard:

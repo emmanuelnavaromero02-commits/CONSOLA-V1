@@ -207,7 +207,7 @@ def test_copilot_read_tool_executes_immediately(
     _patch_audit(copilot_module, db)
     invoked = []
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         invoked.append((server_id, tool, args))
         return {"dags": ["sap_hcm_full", "replicon_users"]}
 
@@ -320,7 +320,7 @@ def test_copilot_write_tool_executes_after_approval(
 
     invoke_count = []
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         invoke_count.append((server_id, tool, args))
         return {"ok": True}
 
@@ -405,7 +405,7 @@ def test_copilot_write_approval_does_not_require_execute_permission(
 
     invoke_count = []
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         invoke_count.append((server_id, tool, args))
         return {"ok": True}
 
@@ -463,7 +463,7 @@ def test_copilot_destructive_tool_executes_with_approval(
 
     invoke_count = []
 
-    async def fake_invoke(server_id, tool, args):
+    async def fake_invoke(server_id, tool, args, **_kwargs):
         invoke_count.append((server_id, tool, args))
         return {"deleted": True}
 

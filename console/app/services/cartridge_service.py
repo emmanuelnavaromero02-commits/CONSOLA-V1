@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import textwrap
 import zipfile
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from datetime import datetime, timezone
 import asyncpg
 
 from app.security import get_internal_api_key, required_secret
+from app.services.security_context import build_security_context
 
 _DATABASE_URL = (
     os.environ.get("DATABASE_URL", "")
@@ -36,13 +38,50 @@ _MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
 _MINIO_SECRET_KEY = required_secret("MINIO_SECRET_KEY", dev_default="minioadmin")
 _MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
 _MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+_MAX_IMPORT_ZIP_BYTES = int(os.environ.get("CARTRIDGE_IMPORT_MAX_BYTES", str(25 * 1024 * 1024)))
+_MAX_IMPORT_UNCOMPRESSED_BYTES = int(
+    os.environ.get("CARTRIDGE_IMPORT_MAX_UNCOMPRESSED_BYTES", str(50 * 1024 * 1024))
+)
+_MAX_IMPORT_MEMBER_BYTES = int(
+    os.environ.get("CARTRIDGE_IMPORT_MAX_MEMBER_BYTES", str(10 * 1024 * 1024))
+)
+_MAX_IMPORT_MEMBERS = int(os.environ.get("CARTRIDGE_IMPORT_MAX_MEMBERS", "500"))
+_ALLOWED_SEED_TABLES = {
+    "cartridges",
+    "cartridge_connections",
+    "cartridge_dags",
+    "entity_config",
+    "semantic_terms",
+    "kb_config",
+    "mcp_custom_tools",
+    "analytic_apps",
+    "agents",
+}
+_FORBIDDEN_SEED_SQL = re.compile(
+    r"\b(drop|truncate|delete|copy|create\s+extension|create\s+function|"
+    r"create\s+procedure|do\s+\$|grant|revoke|alter\s+system|attach|dblink|"
+    r"foreign\s+server|foreign\s+table)\b|\\",
+    re.IGNORECASE,
+)
 
 
 def _mcp_infra_headers() -> dict[str, str]:
+    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA")
+    if not key and os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+        raise RuntimeError("Missing INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA; legacy fallback disabled in production")
+    if not key:
+        key = get_internal_api_key()
     return {
-        "x-api-key": os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA") or get_internal_api_key(),
+        "x-api-key": key,
         "x-internal-service": "console",
     }
+
+
+def _mcp_infra_payload(tool: str, args: dict, actor_user: dict | None = None) -> dict:
+    payload = {"tool": tool, "args": args}
+    if actor_user is not None:
+        payload["security_context"] = build_security_context(actor_user)
+    return payload
 
 
 # ── DB connection ─────────────────────────────────────────────────────────────
@@ -522,83 +561,91 @@ async def export_cartridge(cartridge_id: str) -> bytes:
     return buf.read()
 
 
-async def import_cartridge(zip_bytes: bytes) -> dict:
+async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> dict:
     """
     Import a cartridge from a previously exported ZIP.
       1. Run config/seed.sql against the DB (cartridges + all related tables)
       2. Write dags/*.py to /opt/airflow/dags/ so Airflow picks them up
       3. Upload specs/* and other extras to MinIO under cartridges/{id}/
     """
-    import os, pathlib, re
+    import pathlib
+
+    if len(zip_bytes or b"") > _MAX_IMPORT_ZIP_BYTES:
+        raise ValueError(f"ZIP too large (max {_MAX_IMPORT_ZIP_BYTES} bytes)")
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        names = z.namelist()
+        infos = z.infolist()
+        _validate_import_zip_members(infos)
+        names = [info.filename for info in infos]
         if "config/seed.sql" not in names:
             raise ValueError("ZIP must contain config/seed.sql")
 
         sql = z.read("config/seed.sql").decode("utf-8")
+        _validate_seed_sql(sql)
 
         m = re.search(r"INSERT INTO cartridges[^V]*VALUES\s*\(\s*'([^']+)'", sql, re.DOTALL)
         cartridge_id = m.group(1) if m else None
         if not cartridge_id:
             raise ValueError("Could not parse cartridge_id from seed.sql")
 
-        # 1 · Apply seed
+        allow_dag_import = (
+            os.environ.get("ALLOW_CARTRIDGE_DAG_IMPORT", "").strip().lower() in {"1", "true", "yes"}
+            or os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}
+        )
+        dag_names = [name for name in names if name.startswith("dags/") and name.endswith(".py")]
+        if dag_names and not allow_dag_import:
+            raise ValueError("DAG import is disabled in production")
+
+        # Apply seed and dependent metadata in one DB transaction. External
+        # side effects still happen in MCP/MinIO, but a later DAG/import
+        # failure cannot leave the cartridge seed half-applied in Postgres.
+        dag_files_written: list[str] = []
+        spec_files_written: list[str] = []
+        extra_names = [name for name in names if name != "config/seed.sql" and not name.startswith("dags/")]
         conn = await _pg()
         try:
-            await conn.execute(sql)
+            async with conn.transaction():
+                await conn.execute(sql)
+
+                # 1b · Cartridge-specific assistant hints (optional file)
+                if "hints/assistant.md" in names:
+                    hints = z.read("hints/assistant.md").decode("utf-8")
+                    await conn.execute(
+                        "UPDATE cartridges SET assistant_hints=$2 WHERE id=$1",
+                        cartridge_id, hints,
+                    )
+
+                # 2 · Supplementary files (specs etc.) → MinIO under cartridges/{id}/
+                if extra_names:
+                    c = _minio()
+                    _ensure_bucket(c)
+                    for name in extra_names:
+                        raw = z.read(name)
+                        key = f"cartridges/{cartridge_id}/{name}"
+                        c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw))
+                        spec_files_written.append(name)
+
+                # 3 · DAG files → Airflow dags directory (via mcp-infra, which has the mount)
+                import httpx
+                mcp_infra_url = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
+                async with httpx.AsyncClient(headers=_mcp_infra_headers(), timeout=30) as client:
+                    for name in dag_names:
+                        fname  = pathlib.Path(name).name
+                        dag_id = fname[:-3]
+                        code   = z.read(name).decode("utf-8")
+                        r = await client.post(
+                            f"{mcp_infra_url}/mcp/invoke",
+                            json=_mcp_infra_payload(
+                                "airflow_create_dag",
+                                {"dag_id": dag_id, "code": code, "cartridge_id": cartridge_id},
+                                actor_user,
+                            ),
+                        )
+                        if r.status_code >= 400:
+                            raise ValueError(f"DAG import failed for {fname}: {r.text[:300]}")
+                        dag_files_written.append(fname)
         finally:
             await conn.close()
-
-        # 1b · Cartridge-specific assistant hints (optional file)
-        if "hints/assistant.md" in names:
-            hints = z.read("hints/assistant.md").decode("utf-8")
-            conn = await _pg()
-            try:
-                await conn.execute(
-                    "UPDATE cartridges SET assistant_hints=$2 WHERE id=$1",
-                    cartridge_id, hints,
-                )
-            finally:
-                await conn.close()
-
-        # 2 · DAG files → Airflow dags directory (via mcp-infra, which has the mount)
-        import httpx
-        mcp_infra_url = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
-        dag_files_written: list[str] = []
-        try:
-            async with httpx.AsyncClient(headers=_mcp_infra_headers(), timeout=30) as client:
-                for name in names:
-                    if not name.startswith("dags/") or not name.endswith(".py"):
-                        continue
-                    fname  = pathlib.Path(name).name
-                    dag_id = fname[:-3]
-                    code   = z.read(name).decode("utf-8")
-                    r = await client.post(
-                        f"{mcp_infra_url}/mcp/invoke",
-                        json={"tool": "airflow_create_dag",
-                              "args": {"dag_id": dag_id, "code": code,
-                                       "cartridge_id": cartridge_id}},
-                    )
-                    if r.status_code < 400:
-                        dag_files_written.append(fname)
-        except Exception:
-            pass
-
-        # 3 · Supplementary files (specs etc.) → MinIO under cartridges/{id}/
-        spec_files_written: list[str] = []
-        try:
-            c = _minio()
-            _ensure_bucket(c)
-            for name in names:
-                if name == "config/seed.sql" or name.startswith("dags/"):
-                    continue
-                raw = z.read(name)
-                key = f"cartridges/{cartridge_id}/{name}"
-                c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw))
-                spec_files_written.append(name)
-        except Exception:
-            pass
 
     result = await get_cartridge(cartridge_id) or {"imported": True, "id": cartridge_id}
     result["import_summary"] = {
@@ -606,6 +653,96 @@ async def import_cartridge(zip_bytes: bytes) -> dict:
         "spec_files": spec_files_written,
     }
     return result
+
+
+def _validate_import_zip_members(members: list[object]) -> None:
+    if len(members) > _MAX_IMPORT_MEMBERS:
+        raise ValueError(f"ZIP contains too many files (max {_MAX_IMPORT_MEMBERS})")
+
+    total_uncompressed = 0
+    seen: set[str] = set()
+    for member in members:
+        name = getattr(member, "filename", str(member))
+        size = int(getattr(member, "file_size", 0) or 0)
+        normalized = name.replace("\\", "/")
+        if normalized in seen:
+            raise ValueError(f"duplicate ZIP member: {name}")
+        seen.add(normalized)
+        if normalized.startswith("/") or "/../" in f"/{normalized}" or normalized in {"..", "."}:
+            raise ValueError(f"unsafe ZIP path: {name}")
+        if normalized.endswith("/"):
+            continue
+        if size > _MAX_IMPORT_MEMBER_BYTES:
+            raise ValueError(f"ZIP member too large: {name}")
+        total_uncompressed += size
+        if total_uncompressed > _MAX_IMPORT_UNCOMPRESSED_BYTES:
+            raise ValueError("ZIP uncompressed payload too large")
+        allowed = (
+            normalized == "config/seed.sql"
+            or normalized == "hints/assistant.md"
+            or normalized.startswith("dags/") and normalized.endswith(".py")
+            or normalized.startswith("specs/")
+            or normalized.startswith("agents/")
+            or normalized.startswith("apps/")
+            or normalized.startswith("datasets/")
+            or normalized.startswith("hints/")
+        )
+        if not allowed:
+            raise ValueError(f"unexpected ZIP member: {name}")
+
+
+def _validate_seed_sql(sql: str) -> None:
+    if "\x00" in sql or _FORBIDDEN_SEED_SQL.search(sql or ""):
+        raise ValueError("seed.sql contains forbidden SQL")
+    cleaned = "\n".join(
+        line for line in (sql or "").splitlines()
+        if not line.lstrip().startswith("--")
+    )
+    statements = _split_sql_statements(cleaned)
+    for statement in statements:
+        normalized = re.sub(r"\s+", " ", statement).strip()
+        lower = normalized.lower()
+        insert_match = re.match(r"insert\s+into\s+([a-z_][a-z0-9_]*)\b", lower)
+        if insert_match:
+            table = insert_match.group(1)
+            if table not in _ALLOWED_SEED_TABLES:
+                raise ValueError(f"seed.sql cannot insert into {table}")
+            continue
+        if re.match(r"update\s+cartridges\s+set\s+assistant_hints\s*=", lower):
+            continue
+        if re.match(r"alter\s+table\s+analytic_apps\s+add\s+column\s+if\s+not\s+exists\s+cartridge_id\s+text$", lower):
+            continue
+        if lower.startswith("on conflict") or lower.startswith("values"):
+            # These should be part of an INSERT statement; if our simple
+            # splitter sees them alone, fail closed rather than guessing.
+            raise ValueError("seed.sql has malformed statement boundary")
+        raise ValueError("seed.sql contains unsupported statement")
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    statements: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        buf.append(ch)
+        if ch == "'":
+            if in_single and i + 1 < len(sql) and sql[i + 1] == "'":
+                buf.append(sql[i + 1])
+                i += 2
+                continue
+            in_single = not in_single
+        elif ch == ";" and not in_single:
+            statement = "".join(buf[:-1]).strip()
+            if statement:
+                statements.append(statement)
+            buf = []
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return statements
 
 
 def _entity_dag_params(v) -> dict:

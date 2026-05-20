@@ -62,6 +62,21 @@ PASSTHROUGH_EXTS = {".xlsx", ".xls", ".csv", ".pdf", ".tsv", ".txt"}
 SKIP_NAMES       = {"AMAZON_SES_SETUP_NOTIFICATION"}
 
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key(env_name: str) -> str:
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+
+
 default_args = {
     "owner": "replicon",
     "retries": 2,
@@ -114,8 +129,10 @@ def _is_passthrough(name: str) -> bool:
 def _pipeline_run_save(**kwargs) -> None:
     """Best-effort write to pipeline_runs through mcp-infra."""
     try:
-        api_key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA") or os.environ.get("INTERNAL_API_KEY", "")
-        headers = {"x-api-key": api_key, "x-internal-service": "airflow"} if api_key else {}
+        headers = {
+            "x-api-key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"),
+            "x-internal-service": "airflow",
+        }
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
             json={"tool": "pipeline_run_save",

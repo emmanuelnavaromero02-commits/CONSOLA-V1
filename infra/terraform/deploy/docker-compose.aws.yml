@@ -73,6 +73,22 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    container_name: mode_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - modecissions_net
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # ── Application services ──────────────────────────────────────────────────
 
   console:
@@ -113,6 +129,7 @@ services:
       CONSOLE_URL:         ${CONSOLE_URL:?CONSOLE_URL is required}
       WORKSPACE_URL:       ${WORKSPACE_PUBLIC_URL:?WORKSPACE_PUBLIC_URL is required}
       RAG_URL:             http://mcp-infra:8010   # RAG migrado a mcp-infra
+      REDIS_URL:           ${REDIS_URL:-redis://redis:6379/0}
       # SMTP: MailHog en VPC interno hasta que se enchufe SES
       SMTP_HOST:           ${SMTP_HOST:-mailhog}
       SMTP_PORT:           ${SMTP_PORT:-1025}
@@ -148,6 +165,8 @@ services:
     # in a restart loop while the operator stared at "starting".
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       mcp-infra:
         condition: service_healthy
@@ -365,20 +384,57 @@ services:
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       POSTGRES_PASSWORD:   ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SQLALCHEMY_DATABASE_URI: "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset"
+      OMEGA_SUPERSET_META_PASSWORD: ${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}
+      SUPERSET_TALISMAN_ENABLED: ${SUPERSET_TALISMAN_ENABLED:-true}
+      SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
+      SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
+      SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
     entrypoint: /bin/bash
-    # Single-line command — YAML folded scalars (>) preserve newlines on
-    # indented continuation lines, which breaks bash multi-arg commands.
-    command: -c "superset db upgrade && (superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required} --firstname Admin --lastname User --email admin@modecissions.local --password \"$$SUPERSET_ADMIN_PASSWORD\" || true) && superset init"
+    command:
+      - -lc
+      - |
+        set -e
+        superset db upgrade
+        superset fab create-admin --username "$SUPERSET_ADMIN_USER" --firstname Admin --lastname User --email admin@modecissions.local --password "$SUPERSET_ADMIN_PASSWORD" || true
+        superset init
+        python3 - <<'PY'
+        import os
+        import psycopg2
+
+        conn = psycopg2.connect(
+            host="postgres",
+            port=5432,
+            dbname="superset",
+            user="postgres",
+            password=os.environ["POSTGRES_PASSWORD"],
+        )
+        conn.autocommit = True
+        cur = conn.cursor()
+        for statement in (
+            "GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_superset_meta",
+            "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_superset_meta",
+            "GRANT ALL ON SCHEMA public TO omega_superset_meta",
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_superset_meta",
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_superset_meta",
+        ):
+            cur.execute(statement)
+        print("omega_superset_meta grants applied to superset DB")
+        cur.close()
+        conn.close()
+        PY
     networks:
       - modecissions_net
     # v1.43.4 (Claude N3): one-shot init waits on postgres healthy
     # so ``superset db upgrade`` doesn't race the DB startup.
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: "no"
     logging: *default-logging
@@ -392,6 +448,11 @@ services:
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SQLALCHEMY_DATABASE_URI: "postgresql+psycopg2://omega_superset_meta:${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}@postgres:5432/superset"
+      SUPERSET_TALISMAN_ENABLED: ${SUPERSET_TALISMAN_ENABLED:-true}
+      SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
+      SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
+      SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
       SUPERSET_WEBSERVER_PORT: 8088
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
@@ -405,6 +466,8 @@ services:
       - modecissions_net
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       superset-init:
         condition: service_completed_successfully
@@ -600,6 +663,7 @@ services:
 volumes:
   postgres_data:
   postgres_gold_data:
+  redis_data:
   airflow_logs:
   airflow_plugins:
   wireguard_data:

@@ -209,6 +209,7 @@ def test_superset_config_honors_runtime_sqlalchemy_uri_env():
         / "infra/terraform/deploy/superset_config/superset_config.py"
     ).read_text(encoding="utf-8")
     assert 'os.environ.get("SQLALCHEMY_DATABASE_URI")' in config
+    assert "refusing superuser fallback" in config
 
 
 def test_local_compose_pgoptions_carries_six_new_passwords():

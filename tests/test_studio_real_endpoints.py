@@ -67,7 +67,7 @@ def client(monkeypatch):
     async def fake_get_cartridge(cartridge_id):
         return manifest if cartridge_id == "replicon" else None
 
-    async def fake_datasets():
+    async def fake_datasets(*_args, **_kwargs):
         return [
             {"name": "timeentry_clean", "layer": "silver", "cartridge": "replicon", "sources": ["raw/replicon/TimeEntry"]},
             {"name": "timeentry_master", "layer": "master", "cartridge": "replicon", "sources": ["raw/replicon/TimeEntry"]},
@@ -81,10 +81,10 @@ def client(monkeypatch):
             return {"fields": [{"name": "id"}, {"name": "hours"}]}
         raise AssertionError(f"unexpected refinement tool {tool}")
 
-    async def fake_rag_sources():
+    async def fake_rag_sources(*_args, **_kwargs):
         return [{"id": 1, "name": "manual.pdf"}]
 
-    async def fake_invoke(server, tool, args):
+    async def fake_invoke(server, tool, args, **_kwargs):
         if tool == "superset_list_databases":
             return {"databases": [{"id": 7, "name": "modecissions_gold"}]}
         if tool == "superset_list_datasets":

@@ -413,7 +413,13 @@ _TOOL_RETRY_MAX_ATTEMPTS = 3
 _TOOL_RETRY_BASE_DELAY_S = 1.0
 
 
-async def _invoke_tool_with_retry(server_id: str, tool: str, args: dict) -> Any:
+async def _invoke_tool_with_retry(
+    server_id: str,
+    tool: str,
+    args: dict,
+    *,
+    user: dict | None = None,
+) -> Any:
     """Wrap ``mcp_registry.invoke`` with exponential backoff retry.
 
     Returns either the tool's real result (dict, list, scalar) OR an error envelope shaped
@@ -437,7 +443,7 @@ async def _invoke_tool_with_retry(server_id: str, tool: str, args: dict) -> Any:
     last_exc: Exception | None = None
     for attempt in range(_TOOL_RETRY_MAX_ATTEMPTS):
         try:
-            return await mcp_registry.invoke(server_id, tool, args)
+            return await mcp_registry.invoke(server_id, tool, args, user=user)
         except Exception as exc:                     # noqa: BLE001
             last_exc = exc
             if attempt < _TOOL_RETRY_MAX_ATTEMPTS - 1:
@@ -836,7 +842,7 @@ async def _execute_approved_tool_calls(
                 error=result["message"],
             )
         else:
-            result = await _invoke_tool_with_retry(server_id, bare_name, args)
+            result = await _invoke_tool_with_retry(server_id, bare_name, args, user=user)
             is_error = (
                 isinstance(result, dict)
                 and bool(result.get("_error") or result.get("error"))
@@ -1106,7 +1112,7 @@ async def _run_loop(
         # failures don't ruin the turn). _invoke_tool_with_retry never
         # raises — on exhaustion it returns an error envelope shaped
         # for the LLM to read on the next tool_result.
-        result = await _invoke_tool_with_retry(server_id, bare_name, args)
+        result = await _invoke_tool_with_retry(server_id, bare_name, args, user=user)
         result_is_dict = isinstance(result, dict)
         if result_is_dict and result.get("_error"):
             invocations.append({**inv_base, "status": "error"})
