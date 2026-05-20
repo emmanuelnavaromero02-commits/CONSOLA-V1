@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Apps Analíticas — OMEGA</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
     body { padding: 0; margin: 0; }
@@ -29,9 +27,9 @@
     }
     .gallery-header a:hover { color: var(--green); }
     .gallery-title {
-      font-family: var(--font-pixel);
+      font-family: var(--font-mono);
       font-size: 13px;
-      color: #7c9fff;
+      color: var(--color-accent);
       letter-spacing: 3px;
     }
     .gallery-subtitle {
@@ -56,14 +54,14 @@
       transition: border-color .2s, transform .15s;
     }
     .app-card:hover {
-      border-color: #7c9fff;
+      border-color: var(--color-accent);
       transform: translateY(-2px);
     }
-    .app-card-icon { font-size: 20px; color: #7c9fff; }
+    .app-card-icon { font-size: 20px; color: var(--color-accent); }
     .app-card-title {
       font-family: var(--font-mono);
       font-size: 12px;
-      color: var(--text1);
+      color: var(--text);
       letter-spacing: 1px;
     }
     .app-card-desc {
@@ -81,16 +79,16 @@
       display: inline-block;
       padding: 6px 14px;
       background: transparent;
-      border: 1px solid #7c9fff;
+      border: 1px solid var(--color-accent);
       border-radius: 4px;
-      color: #7c9fff;
+      color: var(--color-accent);
       font-size: 10px;
       font-family: var(--font-mono);
       text-decoration: none;
       text-align: center;
       transition: background .2s;
     }
-    .app-card-btn:hover { background: rgba(124,159,255,.1); }
+    .app-card-btn:hover { background: var(--primary-soft); }
     .empty-state {
       text-align: center;
       padding: 80px 20px;
@@ -126,5 +124,6 @@
   </div>
 
   <script src="/static/js/apps_gallery.js"></script>
+  <script src="/static/js/theme-switch.js" defer></script>
 </body>
 </html>

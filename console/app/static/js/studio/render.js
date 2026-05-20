@@ -77,7 +77,7 @@ function renderHeader() {
   );
   const nav = el('nav', 'studio-modern-nav');
   nav.setAttribute('aria-label', 'Studio navigation');
-  nav.append(link('Monitor', '/monitor'), link('RAG', '/rag'), link('Inicio', '/'));
+  nav.append(link('Monitor', '/monitor'), link('Agentes', '/agents'), link('Explorer', '/explorer'), link('Lineage', '/viewer/lineage'), link('Inicio', '/'));
   top.append(copy, nav);
   return top;
 }

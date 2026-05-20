@@ -8,12 +8,14 @@ fastapi==0.121.0
 starlette>=0.49.1
 uvicorn[standard]==0.30.6
 httpx==0.27.2
+boto3==1.35.99
 asyncpg==0.29.0
 anthropic==0.49.0
 google-genai==1.2.0
 openai==2.36.0
 pyyaml==6.0.2
 minio==7.2.9
+pyzipper==0.3.6
 # v1.43.2 (DevOps R1 follow-up): python-multipart 0.0.9 had 4 CVEs
 # (GHSA-59g5-xgcq-4qw3, GHSA-wp53-j4wj-2cfg, GHSA-mj87-hwqh-73pj,
 # GHSA-pp6c-gr5w-3c5g). 0.0.27 escapes all four.

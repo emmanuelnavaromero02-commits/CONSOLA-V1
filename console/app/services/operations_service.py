@@ -33,21 +33,29 @@ async def get_system_version() -> str:
     return "unknown"
 
 
-SERVICE_PROBES = {
-    "console":            "http://localhost:8000/api/system/info",
-    "workspace":          "http://workspace:8001/healthz",
-    "refinement":         "http://refinement:8500/healthz",
-    "mcp-infra":          "http://mcp-infra:8010/healthz",
-    "vault":              "http://vault:8300/healthz",
-    "replicon":           "http://replicon:8201/health",
-    "sap-hcm":            "http://sap-hcm:8202/health",
-    "sap-successfactors": "http://sap-successfactors:8203/health",
-    "sap-s4hana":         "http://sap-s4hana:8204/health",
-    "airflow":            "http://airflow:8080/health",
-    "superset":           "http://superset:8088/health",
-    "mailhog":            "http://mailhog:8025/api/v1/messages",
-    "minio":              "http://minio:9000/minio/health/live",
-}
+def _base_url(env_name: str, default: str) -> str:
+    return os.environ.get(env_name, default).rstrip("/")
+
+
+def service_probes() -> dict[str, str]:
+    return {
+        "console":            f"{_base_url('CONSOLE_INTERNAL_URL', 'http://console:8000')}/api/system/info",
+        "workspace":          f"{_base_url('WORKSPACE_INTERNAL_URL', 'http://workspace:8001')}/healthz",
+        "refinement":         f"{_base_url('REFINEMENT_URL', 'http://refinement:8500')}/healthz",
+        "mcp-infra":          f"{_base_url('MCP_INFRA_URL', 'http://mcp-infra:8010')}/healthz",
+        "vault":              f"{_base_url('VAULT_URL', 'http://vault:8300')}/healthz",
+        "replicon":           f"{_base_url('REPLICON_URL', 'http://replicon:8201')}/health",
+        "sap-hcm":            f"{_base_url('SAP_HCM_URL', 'http://sap-hcm:8202')}/health",
+        "sap-successfactors": f"{_base_url('SAP_SUCCESSFACTORS_URL', 'http://sap-successfactors:8203')}/health",
+        "sap-s4hana":         f"{_base_url('SAP_S4HANA_URL', 'http://sap-s4hana:8204')}/health",
+        "airflow":            f"{_base_url('AIRFLOW_URL', 'http://airflow:8080')}/health",
+        "superset":           f"{_base_url('SUPERSET_URL', 'http://superset:8088')}/health",
+        "mailhog":            f"{_base_url('MAILHOG_URL', 'http://mailhog:8025')}/api/v1/messages",
+        "minio":              f"{_base_url('MINIO_HEALTH_URL', 'http://minio:9000')}/minio/health/live",
+    }
+
+
+SERVICE_PROBES = service_probes()
 
 
 async def _probe_one(name: str, url: str) -> dict:
@@ -64,5 +72,5 @@ async def _probe_one(name: str, url: str) -> dict:
 
 
 async def probe_services() -> list[dict]:
-    tasks = [_probe_one(name, url) for name, url in SERVICE_PROBES.items()]
+    tasks = [_probe_one(name, url) for name, url in service_probes().items()]
     return await asyncio.gather(*tasks)

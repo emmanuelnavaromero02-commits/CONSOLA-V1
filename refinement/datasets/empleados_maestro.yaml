@@ -10,7 +10,7 @@ column_mapping:
   userid: id_empleado
 description: Maestro de empleados activos con terminos de negocio
 last_refresh: '2026-04-17T02:51:41.160713+00:00'
-layer: master
+layer: gold
 name: empleados_maestro
 row_count: 202
 source_load_date: '2026-04-16'

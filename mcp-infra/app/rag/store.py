@@ -21,12 +21,19 @@ async def get_pool() -> asyncpg.Pool:
     return _pool
 
 
-async def list_sources() -> list[dict]:
+async def list_sources(kinds: list[str] | None = None) -> list[dict]:
     pool = await get_pool()
-    rows = await pool.fetch(
-        "SELECT id, name, description, mime_type, size_chars, chunk_count, created_at "
-        "FROM rag_sources ORDER BY created_at DESC"
-    )
+    if kinds:
+        rows = await pool.fetch(
+            "SELECT id, name, description, mime_type, size_chars, chunk_count, kind, created_at "
+            "FROM rag_sources WHERE kind = ANY($1) ORDER BY created_at DESC",
+            kinds,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id, name, description, mime_type, size_chars, chunk_count, kind, created_at "
+            "FROM rag_sources ORDER BY created_at DESC"
+        )
     return [
         {**dict(r), "created_at": str(r["created_at"])[:19]}
         for r in rows
@@ -46,20 +53,22 @@ async def ingest_chunks(
     size_chars: int,
     chunks: list[TextChunk],
     embeddings: dict[int, list[float]],   # child_index → vector
+    kind: str = "document",
 ) -> dict:
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             source_id: int = await conn.fetchval("""
-                INSERT INTO rag_sources (name, description, mime_type, size_chars)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO rag_sources (name, description, mime_type, size_chars, kind)
+                VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (name) DO UPDATE SET
                     description = EXCLUDED.description,
                     mime_type   = EXCLUDED.mime_type,
                     size_chars  = EXCLUDED.size_chars,
+                    kind        = EXCLUDED.kind,
                     updated_at  = NOW()
                 RETURNING id
-            """, source_name, source_desc, mime_type, size_chars)
+            """, source_name, source_desc, mime_type, size_chars, kind)
 
             await conn.execute("DELETE FROM rag_chunks WHERE source_id = $1", source_id)
 
@@ -101,12 +110,18 @@ async def search(
     query_vec: list[float],
     top_k: int = 5,
     source_ids: list[int] | None = None,
+    kinds: list[str] | None = None,
 ) -> list[dict]:
     pool = await get_pool()
-    extra = " AND c.source_id = ANY($3)" if source_ids else ""
     params: list = [query_vec, top_k * 3]
+    extras: list[str] = []
     if source_ids:
         params.append(source_ids)
+        extras.append(f"AND c.source_id = ANY(${len(params)})")
+    if kinds:
+        params.append(kinds)
+        extras.append(f"AND s.kind = ANY(${len(params)})")
+    extra = (" " + " ".join(extras)) if extras else ""
 
     rows = await pool.fetch(f"""
         SELECT
@@ -114,6 +129,7 @@ async def search(
             p.content     AS context,
             s.name        AS source_name,
             s.id          AS source_id,
+            s.kind        AS source_kind,
             c.content     AS child_content,
             1 - (c.embedding <=> $1) AS similarity
         FROM rag_chunks c
@@ -134,6 +150,7 @@ async def search(
                 "parent_id":   pid,
                 "source_id":   r["source_id"],
                 "source_name": r["source_name"],
+                "source_kind": r["source_kind"],
                 "context":     r["context"],
                 "child_content": r["child_content"],
                 "similarity":  float(r["similarity"]),

@@ -1,35 +1,4 @@
-:root {
-  color-scheme: light;
-  --bg: #f6f8fb;
-  --surface: #ffffff;
-  --surface-soft: #f8fafc;
-  --text: #111827;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --primary: #0057b8;
-  --primary-dark: #071b4d;
-  --accent-red: #c8102e;
-  --success: #059669;
-  --warning: #d97706;
-  --danger: #dc2626;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #0b1630;
-  --surface: #111e3a;
-  --surface-soft: #162544;
-  --text: #f8fafc;
-  --muted: #aeb8ca;
-  --border: rgba(226, 232, 240, 0.16);
-  --primary: #38a8e8;
-  --primary-dark: #dbeafe;
-  --accent-red: #ff5c75;
-  --success: #34d399;
-  --warning: #fbbf24;
-  --danger: #f87171;
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-}
+/* Compatibility shim.
+   The canonical design tokens live in tokens.css; this file remains only
+   for older pages/imports that still reference theme.css directly. */
+@import url("./tokens.css");

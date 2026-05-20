@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'mode-theme';
+const STORAGE_KEY = 'mod-theme';
 
 function systemTheme() {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

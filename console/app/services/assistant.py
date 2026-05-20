@@ -82,7 +82,7 @@ def _format_catalog(data: dict) -> str:
     lines = ["## Modelo de datos — Data Catalog\n"]
     lines.append("Usa este catálogo para generar SQL sin necesitar tool calls adicionales.")
     lines.append("Paths Parquet silver: s3://lakehouse/silver/{cartridge}/{dataset}/data.parquet")
-    lines.append("Tablas Gold/Master en Postgres analítico (alias DuckDB pggold): gold_{dataset}, master_{dataset}\n")
+    lines.append("Tablas Gold en Postgres analítico (alias DuckDB pggold): gold_{dataset}\n")
 
     datasets = data.get("datasets", {})
     for ds_name, ds in datasets.items():

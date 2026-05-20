@@ -1,0 +1,6 @@
+{
+  "name": "resource_availability",
+  "title": "Resource Availability",
+  "description": "Disponibilidad de recursos (FTE, horas, % utilización) por Revenue Manager / Supervisor, Tipo de Empleado o Tipo de Proveedor. Para meses pasados se usa horas_facturables (TimeEntry); para mes actual y futuro horas_asignadas (ResourceAllocation). Fuente: dataset gold consultor_asignacion.",
+  "datasets_used": ["consultor_asignacion"]
+}

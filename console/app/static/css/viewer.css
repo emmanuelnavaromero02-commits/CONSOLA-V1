@@ -68,12 +68,11 @@ html, body { overflow: auto; }
   cursor: pointer;
   transition: border-color .15s, color .15s, background .15s;
 }
-.btn:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(88,166,255,.06); }
-html[data-theme="light"] .btn:hover { background: rgba(9,105,218,.06); }
+.btn:hover { border-color: var(--cyan); color: var(--cyan); background: var(--info-soft); }
 .btn:disabled { border-color: var(--border); color: var(--text3); cursor: default; background: var(--bg2); }
 
 .btn-amber { border-color: var(--amber); color: var(--amber); }
-.btn-amber:hover { background: var(--amber); color: var(--bg); border-color: var(--amber); }
+.btn-amber:hover { background: var(--amber); color: var(--text-inverse); border-color: var(--amber); }
 
 .btn-sm {
   padding: 3px 9px;
@@ -170,10 +169,10 @@ tr:hover td { background: var(--bg3); }
   font-family: var(--font-mono);
   font-weight: 400;
 }
-.badge-running { background: rgba(63,185,80,.15);  color: var(--green); border: 1px solid var(--green);  animation: pulse 1.5s infinite; }
-.badge-done    { background: rgba(88,166,255,.12); color: var(--cyan);  border: 1px solid var(--cyan); }
-.badge-failed  { background: rgba(248,81,73,.12);  color: var(--red);   border: 1px solid var(--red); }
-.badge-pending { background: rgba(210,153,34,.12); color: var(--amber); border: 1px solid var(--amber); }
+.badge-running { background: var(--success-soft); color: var(--green); border: 1px solid var(--green);  animation: pulse 1.5s infinite; }
+.badge-done    { background: var(--info-soft);    color: var(--cyan);  border: 1px solid var(--cyan); }
+.badge-failed  { background: var(--danger-soft);  color: var(--red);   border: 1px solid var(--red); }
+.badge-pending { background: var(--warning-soft); color: var(--amber); border: 1px solid var(--amber); }
 
 /* ── Layer badges ──────────────────────────────────────────────────────────── */
 .layer-badge {
@@ -183,9 +182,9 @@ tr:hover td { background: var(--bg3); }
   font-size: 11px;
   font-family: var(--font-mono);
 }
-.layer-silver { background: rgba(88,166,255,.12);  color: var(--cyan);  border: 1px solid var(--cyan); }
-.layer-master { background: rgba(210,153,34,.12);  color: var(--amber); border: 1px solid var(--amber); }
-.layer-gold   { background: rgba(210,153,34,.08);  color: var(--amber); border: 1px solid var(--amber); }
+.layer-silver { background: var(--info-soft);    color: var(--cyan);  border: 1px solid var(--cyan); }
+.layer-master { background: var(--warning-soft); color: var(--amber); border: 1px solid var(--amber); }
+.layer-gold   { background: var(--warning-soft); color: var(--amber); border: 1px solid var(--amber); }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────────── */
 .tab-bar { display: flex; gap: 0; margin-bottom: -1px; }

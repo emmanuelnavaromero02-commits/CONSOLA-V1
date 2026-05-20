@@ -5,7 +5,7 @@ catalog, RAG retrieval, and queries against GOLD datasets.
 Constraints (vs the builder assistant):
   - Tool whitelist (no cartridge/dataset lifecycle operations beyond promoting to gold)
   - save_dataset is forced to layer='gold' regardless of model output
-  - Never deletes, never edits cartridges, never touches silver/master config
+  - Never deletes, never edits cartridges, never touches pipeline config
 """
 from __future__ import annotations
 
@@ -21,6 +21,9 @@ REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL  = os.environ.get("MCP_INFRA_URL",  "http://mcp-infra:8010")
 
 # ── Tool whitelist (server_id → set of allowed tool names) ──────────────────
+# Read-only by design: the business user can EXPLORE and ASK, never create or
+# modify pipelines/datasets/apps. Anything that would require new infra is
+# routed to the admin via request_admin_help.
 ALLOWED_TOOLS = {
     "refinement": {
         "get_data_catalog",
@@ -29,18 +32,14 @@ ALLOWED_TOOLS = {
         "get_schema",
         "query_dataset",
         "preview_transform",
-        "save_dataset",
-        "materialize",
-        "publish_app",
         "list_apps",
         "get_app_details",
-        "get_app_html",
-        "generate_transform",
     },
     "mcp-infra": {
         "search_rag",
         "list_rag_sources",
         "cartridge_search_term",
+        "request_admin_help",
     },
 }
 
@@ -50,68 +49,79 @@ SERVER_URLS = {
 }
 
 
-SYSTEM_BASE = """Eres el asistente de MODecissions para usuarios de negocio.
+def _headers_for(server_id: str) -> dict[str, str]:
+    key = ""
+    if server_id == "mcp-infra":
+        key = os.environ.get("INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA") or os.environ.get("INTERNAL_API_KEY", "")
+    elif server_id == "refinement":
+        key = os.environ.get("INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT") or os.environ.get("INTERNAL_API_KEY", "")
+    return {"x-api-key": key, "x-internal-service": "workspace"} if key else {}
+
+
+SYSTEM_BASE = """Eres el asistente de ΩMEGA by EPIUSE para usuarios de negocio.
 
 ## Tu rol
-Respondes preguntas analíticas, generas dashboards y consultas datos GOLD ya
-publicados. NO construyes pipelines ni configuras cartuchos: eso es trabajo del
-equipo Studio.
+Respondes preguntas analíticas consultando los datos GOLD ya publicados y los
+documentos cargados en el RAG. **NO** construyes pipelines, **NO** creas ni
+modificas datasets, **NO** publicas dashboards, **NO** modificas el modelo.
+Si la pregunta no se puede resolver con lo que ya existe, escalas al admin
+con `request_admin_help` — nunca improvises infra nueva.
 
 ## Datos disponibles
 - **Modelo de datos** (catálogo semántico): inyectado abajo, contiene datasets,
   columnas, descripciones de negocio y relaciones.
 - **GOLD tables**: en Postgres analítico (alias DuckDB `pggold.gold_<dataset>`).
-  Son las tablas listas para consumo (KPIs, agregaciones, hechos).
-- **MASTER tables**: dimensiones pequeñas (`pggold.master_<dataset>`) — úsalas
-  para joins y descripciones.
+  Son las tablas listas para consumo: dimensiones (dim_*), hechos (fact_*),
+  agregados y KPIs. Todo lo que antes vivía en MASTER ahora es gold.
 - **RAG**: usa `search_rag` para preguntas de definición/proceso/política/contexto
-  de negocio (NO para datos numéricos).
+  de negocio (NO para datos numéricos). El RAG tiene **dos tipos** de fuentes:
+  - `kinds=["document"]` → reportes, políticas, manuales y notas que el equipo
+    sube manualmente (úsalo SIEMPRE para preguntas de negocio).
+  - `kinds=["schema"]` → metadatos auto-indexados de cada dataset (SQL del gold,
+    columnas y descripciones). Útil cuando preguntan cómo se calcula un campo.
+  - Sin `kinds` → busca en todo (last resort).
 
 ## Reglas de oro
 
-1. **Definición o proceso de negocio** → SIEMPRE `search_rag` ANTES de responder.
+1. **Definición o proceso de negocio** → SIEMPRE `search_rag` con
+   `kinds=["document"]` ANTES de responder. Si no encuentras nada, intenta sin
+   filtro. Si el usuario pregunta cómo se calcula un campo del dataset, usa
+   `kinds=["schema"]`.
 2. **Pregunta numérica/agregada** → consulta GOLD con `query_dataset` o
    `preview_transform` (SQL libre sobre `pggold.*`).
-3. **Datos no están en GOLD pero sí en silver/parquet** → crea un dataset GOLD
-   con `save_dataset` (layer='gold') y luego `materialize`. Avisa al usuario:
-   "Voy a publicar el dataset gold `<nombre>` para responder esto."
-4. **Datos no están en silver/parquet** → escala: dile al usuario que el equipo
-   Studio debe crear el dataset bronze/silver primero. NO intentes crearlo tú.
-5. **NUNCA** llames `save_dataset` con layer='silver' o 'master' — solo 'gold'.
-6. **NUNCA** llames `delete_*`. Los datos son del equipo, no tuyos.
+3. **Los datos NO están en ningún GOLD ni en el RAG** → escala al admin con
+   `request_admin_help`. NO inventes datasets, NO publiques apps, NO crees
+   pipelines. Tu trabajo es responder lo que ya existe; lo demás es del admin.
+4. **NUNCA** llames `save_dataset`, `materialize`, `publish_app`, `delete_*`
+   ni ningún tool de creación/edición. Esos tools NO están en tu whitelist —
+   intentarlos solo desperdicia turnos.
 
-## Dashboards / apps analíticas
+## Apps analíticas existentes
 
-Si el usuario pide un dashboard, reporte o visualización interactiva:
+`list_apps` te muestra qué dashboards ya publicó el equipo. Puedes mencionar
+al usuario el link de un app existente si responde a la pregunta:
+`[Ver dashboard](/apps/<name>)`. **No creas, no modificas** — si el usuario
+quiere una visualización que no existe, escalas con `request_admin_help`
+describiendo qué app/visualización necesita.
 
-1. **NO consultes los datos** con `query_dataset` para construir el dashboard.
-   Los datos los carga la app en tiempo de ejecución vía `fetch('/api/data/<dataset>')`.
-   - Para conocer las columnas: usa el catálogo (ya inyectado arriba) o
-     `describe_silver(name)` / `get_schema(name)` — devuelven solo schema.
-   - Solo si necesitas validar 1-2 valores reales para el cálculo:
-     `query_dataset(name, limit=3)` (NUNCA limit alto).
+## Escalación al admin — request_admin_help
 
-2. Genera HTML auto-contenido con Chart.js (CDN) y tema oscuro.
-   - Datos: `fetch('/api/data/<dataset>')` devuelve array de rows.
-   - Filtros: `fetch('/api/data/<dataset>/options?columns=col1,col2')`.
-   - KPIs, tablas, charts. Formato USD `$X,XXX.XX`, % `XX.XX%`.
-   - Mantén el HTML conciso (≤500 líneas). Usa estilos inline mínimos y los
-     defaults de Chart.js cuando sea suficiente — no re-implementes un sistema
-     de diseño desde cero.
+Úsalo cuando:
+- La pregunta requiere un dataset que no existe en GOLD ni en silver/parquet.
+- La pregunta requiere un cálculo que no está expuesto en ningún campo y
+  combinarlo desde GOLD no es viable.
+- La pregunta requiere documentación / política que no está en el RAG.
 
-3. Llama `publish_app(name, title, html, description)` con el HTML COMPLETO
-   en `html`. **NUNCA** llames `publish_app` sin `html` o con un placeholder.
-   Si tu output va a ser muy largo, simplifica el dashboard antes de publicar.
-   Devuelve `{url: "/apps/<name>"}`.
-
-   **Cuando el usuario pida MODIFICAR una app existente** (cambiar un campo,
-   ajustar un cálculo, agregar un filtro): SIEMPRE empieza con
-   `get_app_html(name)` para leer el HTML actual, edita SOLO lo que pidió,
-   y vuelve a publicar con `publish_app`. NUNCA regeneres una app desde cero
-   cuando ya existe — perderías el trabajo del usuario y los detalles que
-   no estaban en tu memoria.
-
-4. Preséntalo al usuario como link clickeable Markdown.
+Antes de escalar:
+1. Verifica honestamente con `get_data_catalog`, `list_datasets`, `search_rag`
+   sin filtro — confirma que NO existe el dato.
+2. Llama `request_admin_help` con:
+   - `user_question`: la pregunta literal del usuario.
+   - `why_unanswerable`: por qué no pudiste (qué dataset/tool falta).
+   - `what_is_needed`: descripción concreta (ej. "extractor de Replicon entity
+     X" o "nueva tabla GOLD que cruce A y B" o "subir el manual de procesos").
+3. Al usuario respóndele: "He enviado tu solicitud al equipo admin —
+   recibirás respuesta en cuanto el dataset/herramienta esté disponible."
 
 **Resultados de tools grandes son automáticamente truncados** antes de volver
 a ti — si ves `_truncated` en una respuesta, significa que pediste demasiado;
@@ -120,10 +130,12 @@ re-formula con `limit` bajo o usa `get_schema` en su lugar.
 ## Flujo recomendado
 
 1. Lee el catálogo (ya inyectado).
-2. Si la pregunta tiene componente de negocio (no técnico) → `search_rag`.
-3. Decide qué tabla GOLD necesitas. Si no existe pero el silver sí → `save_dataset` + `materialize`.
-4. `query_dataset` o `preview_transform` para el cálculo.
-5. Si pidieron visualización → genera HTML + `publish_app`.
+2. Si la pregunta tiene componente de negocio (no técnico) → `search_rag`
+   con `kinds=["document"]`.
+3. Decide qué tabla GOLD necesitas. Si no existe → `request_admin_help`.
+4. Si existe → `query_dataset` / `preview_transform` para el cálculo.
+5. Si pidieron una visualización nueva → menciona apps existentes con
+   `list_apps`; si ninguna sirve, `request_admin_help`.
 6. Responde en el idioma del usuario, formato directo, sin jerga técnica innecesaria.
 """
 
@@ -149,7 +161,7 @@ async def _discover_tools() -> tuple[list[dict], dict[str, str]]:
         for srv_id, base_url in SERVER_URLS.items():
             allow = ALLOWED_TOOLS.get(srv_id, set())
             try:
-                r = await c.get(f"{base_url}/mcp/tools")
+                r = await c.get(f"{base_url}/mcp/tools", headers=_headers_for(srv_id))
                 r.raise_for_status()
                 data = r.json()
             except Exception:
@@ -175,7 +187,7 @@ async def _raw_invoke(server_id: str, tool: str, args: dict) -> Any:
     if not base:
         return {"error": f"unknown server: {server_id}"}
     async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.post(f"{base}/mcp/invoke", json={"tool": tool, "args": args})
+        r = await c.post(f"{base}/mcp/invoke", json={"tool": tool, "args": args}, headers=_headers_for(server_id))
     try:
         return r.json()
     except Exception:
@@ -194,7 +206,7 @@ def _make_user_aware_invoke(user: dict | None):
 
     async def invoke(server_id: str, tool: str, args: dict) -> Any:
         if tool == "save_dataset":
-            # Force gold layer (consumer never creates silver/master)
+            # Force gold layer (consumer never creates lower-layer models)
             if args.get("layer") != "gold":
                 args = {**args, "layer": "gold"}
             if uid is not None:
@@ -244,7 +256,7 @@ _CATALOG_TTL = int(os.environ.get("CATALOG_TTL_SECONDS", "3600"))
 def _format_catalog(data: dict) -> str:
     lines = ["## Modelo de datos — Data Catalog", ""]
     lines.append("Tablas Postgres analítico (DuckDB alias `pggold`):"
-                 " `pggold.gold_<name>`, `pggold.master_<name>`")
+                 " `pggold.gold_<name>` (incluye dim_* y fact_*)")
     lines.append("Parquet silver (lake): `s3://lakehouse/silver/<cartridge>/<name>/data.parquet`")
     lines.append("")
     datasets = data.get("datasets", {})
@@ -280,7 +292,8 @@ async def _catalog_context() -> str:
     try:
         async with httpx.AsyncClient(timeout=20) as c:
             r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                             json={"tool": "get_data_catalog", "args": {}})
+                             json={"tool": "get_data_catalog", "args": {}},
+                             headers=_headers_for("refinement"))
             r.raise_for_status()
             _catalog_text = _format_catalog(r.json())
             _catalog_ts   = time.time()
@@ -289,13 +302,50 @@ async def _catalog_context() -> str:
     return _catalog_text
 
 
+_hints_text: str = ""
+_hints_ts:   float = 0.0
+_HINTS_TTL = 300
+
+
+async def _cartridge_hints_block() -> str:
+    """Concatenate `assistant_hints` from every registered cartridge so the
+    workspace assistant honors cartridge-specific rules across the catalog."""
+    global _hints_text, _hints_ts
+    if _hints_text and (time.time() - _hints_ts) < _HINTS_TTL:
+        return _hints_text
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(f"{MCP_INFRA_URL}/mcp/invoke",
+                             json={"tool": "postgres_execute_query",
+                                   "args": {"sql": "SELECT id, COALESCE(assistant_hints,'') AS hints "
+                                                   "FROM cartridges WHERE assistant_hints IS NOT NULL "
+                                                   "AND length(assistant_hints) > 0"}},
+                             headers=_headers_for("mcp-infra"))
+            data = (r.json().get("result") or r.json()).get("rows") or []
+        sections = []
+        for row in data:
+            h = (row.get("hints") or "").strip()
+            if not h:
+                continue
+            sections.append(f"## Cartucho `{row.get('id','?')}`\n{h}")
+        if sections:
+            _hints_text = "\n\n<hints_cartuchos>\n" + "\n\n".join(sections) + "\n</hints_cartuchos>"
+        else:
+            _hints_text = ""
+        _hints_ts = time.time()
+    except Exception:
+        pass
+    return _hints_text
+
+
 # ── Public entry ────────────────────────────────────────────────────────────
 
 async def chat(message: str, history: list[dict], user: dict | None = None,
                on_event=None) -> dict:
     catalog_ctx = await _catalog_context()
     user_ctx    = _user_context_block(user) if user else ""
-    system      = SYSTEM_BASE + user_ctx + ("\n\n" + catalog_ctx if catalog_ctx else "")
+    hints_ctx   = await _cartridge_hints_block()
+    system      = SYSTEM_BASE + user_ctx + ("\n\n" + catalog_ctx if catalog_ctx else "") + hints_ctx
     tools, server_map = await _discover_tools()
 
     messages = list(history)

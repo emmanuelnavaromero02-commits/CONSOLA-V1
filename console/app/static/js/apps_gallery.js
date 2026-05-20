@@ -1,7 +1,5 @@
 // Sprint v1.11 phase 3 — extracted from apps_gallery.html for strict CSP.
 
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-
 async function loadApps() {
   const container = document.getElementById('apps-container');
   try {

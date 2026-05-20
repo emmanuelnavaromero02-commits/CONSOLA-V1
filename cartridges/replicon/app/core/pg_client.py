@@ -4,15 +4,6 @@ from app.core.config import settings
 
 
 def get_connection():
-    # Sprint v1.40.2: route every psycopg2 connection through
-    # ``settings.database_url`` so the DATABASE_URL env override
-    # applies here too. Previously this used pg_host / pg_user /
-    # pg_password directly and silently fell back to the
-    # ``postgres:postgres`` defaults when the env wasn't read by
-    # pydantic, which is exactly the auth-loop the cartridge hit
-    # after v1.40 wired it as ``omega_cartridge_replicon``.
-    # psycopg2.connect() accepts a libpq DSN; strip the SQLAlchemy
-    # ``+psycopg2`` driver hint since libpq doesn't parse it.
     dsn = settings.database_url.replace("postgresql+psycopg2://", "postgresql://")
     return psycopg2.connect(dsn)
 

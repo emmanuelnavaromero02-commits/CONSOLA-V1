@@ -105,3 +105,13 @@ def test_mcp_registry_startup_cartridge_urls_from_env():
         assert f'os.environ.get("{env_var}", "{default}")' in src, (
             f"{env_var} not used with default {default!r}"
         )
+
+
+def test_mcp_registry_console_tools_use_internal_url():
+    """Monitoring/studio_ops run inside console, but registry health checks
+    happen from the console container. They must use service DNS, not the
+    browser-facing CONSOLE_URL, otherwise AWS/local compose can store localhost.
+    """
+    src = (REPO / "console/app/services/mcp_registry.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("CONSOLE_INTERNAL_URL", "http://console:8000")' in src
+    assert 'os.environ.get("CONSOLE_URL", "http://console:8000")' not in src

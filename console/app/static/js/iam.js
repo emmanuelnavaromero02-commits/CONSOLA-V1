@@ -2,8 +2,6 @@
 // The body executes after the script is parsed; the original <script> tag
 // sat at the bottom of <body>, so the DOM is already available.
 
-    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
-
     const state = { users: [], sessions: [], audit: [], permissions: null, attempts: [], editing: null };
     const $ = (id) => document.getElementById(id);
     const fmt = (v) => {
@@ -173,6 +171,21 @@
         actions.appendChild(button('Permisos', 'btn', () => showUserPermissions(u)));
         if (!u.is_active && !u.last_login) actions.appendChild(button('Reinvite', 'btn', () => reinviteUser(u)));
         if (u.is_active) actions.appendChild(button('Restablecer', 'btn', () => sendReset(u)));
+        if (['owner', 'super_admin', 'admin'].includes(u.role) && u.is_active) {
+          const escBtn = button(
+            u.escalation_notify ? 'Esc ON' : 'Esc OFF',
+            'btn',
+            () => toggleEscalation(u),
+          );
+          escBtn.title = u.escalation_notify
+            ? 'Recibe solicitudes escaladas del asistente'
+            : 'No recibe solicitudes escaladas del asistente';
+          if (u.escalation_notify) {
+            escBtn.style.borderColor = 'var(--warning)';
+            escBtn.style.color = 'var(--warning)';
+          }
+          actions.appendChild(escBtn);
+        }
         tr.appendChild(actions);
         body.appendChild(tr);
       });
@@ -426,6 +439,16 @@
       if (!window.confirm(`Reenviar invitación a ${user.email}?`)) return;
       const data = await fetchJson(`/api/admin/users/${encodeURIComponent(user.id)}/reinvite`, { method: 'POST' });
       toast(data.email_sent ? 'Invitación reenviada' : 'Llave temporal generada; correo no enviado', data.email_sent ? 'success' : 'error');
+    }
+
+    async function toggleEscalation(user) {
+      await fetchJson(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ escalation_notify: !user.escalation_notify })
+      });
+      await loadUsers();
+      toast(!user.escalation_notify ? 'Escalaciones activadas' : 'Escalaciones desactivadas');
     }
 
     async function revokeSession(sessionId) {

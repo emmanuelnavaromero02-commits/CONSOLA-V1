@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultores — Horas y Costos</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#1e2736;--border:#30363d;
+  --text1:#e6edf3;--text2:#8b949e;--text3:#58626d;
+  --green:#2ea043;--blue:#7c9fff;--amber:#e3b341;--red:#f85149;--purple:#bc8cff;
+  --card-r:8px;
+}
+[data-theme=light]{
+  --bg:#f0f2f5;--bg2:#ffffff;--bg3:#e8ecf1;--border:#d0d7de;
+  --text1:#1f2328;--text2:#656d76;--text3:#a0aab4;
+  --green:#1a7f37;--blue:#0969da;--amber:#9a6700;--red:#cf222e;--purple:#8250df;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text1);font-family:system-ui,-apple-system,sans-serif;min-height:100vh;transition:background .2s,color .2s}
+
+.hdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 28px;display:flex;align-items:center;gap:12px}
+.hdr-title{font-size:13px;font-weight:700;letter-spacing:1px;color:var(--purple);flex:1}
+.hdr-sub{font-size:10px;color:var(--text2);letter-spacing:1px}
+.theme-btn{background:transparent;border:1px solid var(--border);color:var(--text2);padding:5px 12px;font-size:10px;border-radius:20px;cursor:pointer}
+.theme-btn:hover{border-color:var(--purple);color:var(--purple)}
+
+.filters{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.filter-group{display:flex;align-items:center;gap:6px}
+label{font-size:10px;color:var(--text2);white-space:nowrap;font-weight:600;letter-spacing:.5px}
+.btn{padding:8px 20px;font-size:11px;font-weight:600;border-radius:6px;cursor:pointer;border:none;letter-spacing:.5px}
+.btn-primary{background:var(--purple);color:#fff}
+.btn-primary:hover{opacity:.9}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.spinner{display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Multi-select */
+.ms-wrap{position:relative;min-width:160px}
+.ms-trigger{background:var(--bg);border:1px solid var(--border);color:var(--text1);padding:7px 28px 7px 12px;font-size:11px;border-radius:6px;cursor:pointer;width:100%;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;position:relative}
+.ms-trigger::after{content:'';position:absolute;right:10px;top:50%;width:8px;height:8px;border-right:1.5px solid var(--text2);border-bottom:1.5px solid var(--text2);transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.ms-trigger.open::after{border-color:var(--blue)}
+.ms-trigger.open,.ms-trigger:focus{outline:none;border-color:var(--purple)}
+.ms-dropdown{position:absolute;top:calc(100% + 3px);left:0;min-width:100%;background:var(--bg2);border:1px solid var(--purple);border-radius:6px;z-index:999;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5);display:none}
+.ms-dropdown.open{display:block}
+.ms-search{width:100%;background:var(--bg);border:none;border-bottom:1px solid var(--border);color:var(--text1);padding:7px 10px;font-size:10px;outline:none}
+.ms-opt{display:flex;align-items:center;gap:7px;padding:6px 10px;cursor:pointer;font-size:10px}
+.ms-opt:hover{background:var(--bg3)}
+.ms-opt input[type=checkbox]{accent-color:var(--purple);width:11px;height:11px;flex-shrink:0}
+.ms-actions{display:flex;gap:4px;padding:5px 8px;border-top:1px solid var(--border)}
+.ms-act{flex:1;background:transparent;border:1px solid var(--border);color:var(--text2);padding:3px;font-size:9px;border-radius:3px;cursor:pointer}
+.ms-act:hover{border-color:var(--purple);color:var(--purple)}
+
+.content{padding:24px 28px;max-width:1600px;margin:0 auto}
+.placeholder{text-align:center;padding:100px 20px;color:var(--text2)}
+.placeholder-icon{font-size:40px;margin-bottom:16px;opacity:.3}
+.placeholder h2{font-size:14px;font-weight:400;margin-bottom:8px}
+.placeholder p{font-size:11px;color:var(--text3)}
+
+/* KPI strip */
+.kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:24px}
+.kpi-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-r);padding:16px 18px;border-left:3px solid var(--accent,var(--border))}
+.kpi-label{font-size:9px;color:var(--text2);letter-spacing:1.5px;font-weight:600;margin-bottom:7px;text-transform:uppercase}
+.kpi-val{font-size:20px;font-weight:700;line-height:1}
+.kpi-sub{font-size:9px;color:var(--text3);margin-top:4px}
+
+/* Section */
+.section{margin-bottom:28px}
+.section-hdr{display:flex;align-items:baseline;gap:10px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px}
+.section-title{font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--text2);text-transform:uppercase}
+.section-count{font-size:10px;color:var(--text3)}
+
+/* Chart */
+.chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-r);padding:20px;margin-bottom:24px}
+canvas{max-height:260px}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;background:var(--bg2);border:1px solid var(--border);border-radius:var(--card-r)}
+.tbl-wrap table{border-collapse:collapse}
+table{width:100%;border-collapse:collapse;font-size:10px}
+th{padding:9px 12px;text-align:right;color:var(--text2);font-size:9px;letter-spacing:.8px;border-bottom:1px solid var(--border);white-space:nowrap;font-weight:600;cursor:pointer;user-select:none}
+th:hover{color:var(--purple)}
+th.left{text-align:left}
+th.active{color:var(--purple)}
+td{padding:8px 12px;text-align:right;border-bottom:1px solid var(--bg3);white-space:nowrap;font-size:10px}
+td.left{text-align:left;color:var(--text2)}
+td.name{text-align:left;color:var(--text1);font-weight:500}
+tr:hover td{background:var(--bg3)}
+tr.subtotal td{background:var(--bg3);font-weight:600;font-size:9px;color:var(--text2)}
+tr.grand-total td{border-top:2px solid var(--purple);font-weight:700;color:var(--purple)}
+.bar-cell{width:80px}
+.mini-bar{height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-top:3px}
+.mini-fill{height:100%;border-radius:3px}
+.pos{color:var(--green)}.neg{color:var(--red)}.neu{color:var(--blue)}.warn{color:var(--amber)}
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:8px;font-weight:700;letter-spacing:.5px}
+.badge-emp{background:rgba(124,159,255,.15);color:var(--blue)}
+.badge-con{background:rgba(188,140,255,.15);color:var(--purple)}
+.sort-icon{font-size:8px;margin-left:3px;opacity:.4}
+.sort-icon.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-title">◇ CONSULTORES — HORAS Y COSTOS</div>
+    <div class="hdr-sub">Gold table consultor_mensual · Año fiscal mar–feb</div>
+  </div>
+  <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">☀ Claro</button>
+</div>
+
+<div class="filters">
+  <div class="filter-group"><label>Revenue Manager</label><div class="ms-wrap" id="ms-rm"></div></div>
+  <div class="filter-group"><label>Año Fiscal</label><div class="ms-wrap" id="ms-yr"></div></div>
+  <div class="filter-group"><label>Proyecto</label><div class="ms-wrap" id="ms-pr" style="min-width:200px"></div></div>
+  <div class="filter-group"><label>Consultor</label><div class="ms-wrap" id="ms-con" style="min-width:180px"></div></div>
+  <div class="filter-group"><label>Tipo Empleado</label><div class="ms-wrap" id="ms-tipo"></div></div>
+  <div class="filter-group">
+    <label>Utilización del mes (vs 168h)</label>
+    <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+      <select id="util-mes" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 6px;font-size:11px;border-radius:2px;min-width:90px">
+        <option value="">— mes —</option>
+      </select>
+      <select id="util-op" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 6px;font-size:11px;border-radius:2px">
+        <option value="">—</option>
+        <option value="lt">&lt;</option>
+        <option value="lte">≤</option>
+        <option value="gt">&gt;</option>
+        <option value="gte">≥</option>
+      </select>
+      <input id="util-val" type="number" min="0" max="200" step="1" placeholder="%" style="width:55px;background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:4px 6px;font-size:11px;border-radius:2px">
+      <span id="mes-actual-tag" style="font-size:9px;color:var(--text3);letter-spacing:.5px;margin-left:4px"></span>
+    </div>
+  </div>
+  <button class="btn btn-primary" id="btn-filter" onclick="applyFilter()">Ver resultados</button>
+</div>
+
+<div class="content">
+  <div id="placeholder" class="placeholder">
+    <div class="placeholder-icon">👥</div>
+    <h2>Selecciona filtros y presiona <strong style="color:var(--purple)">Ver resultados</strong></h2>
+    <p>Horas ejecutadas · Facturables · No facturables · Costo hundido</p>
+  </div>
+  <div id="main" style="display:none">
+    <div class="kpi-strip" id="kpis"></div>
+    <div class="section">
+      <div class="section-hdr"><span class="section-title">Tendencia de horas</span></div>
+      <div class="chart-card"><canvas id="chart"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="section-hdr">
+        <span class="section-title">Matriz de asignación mensual</span>
+        <span class="section-count">Horas asignadas · % vs 168h</span>
+      </div>
+      <div class="tbl-wrap" id="matrix-wrap"></div>
+    </div>
+    <div class="section">
+      <div class="section-hdr">
+        <span class="section-title">Desglose por consultor y proyecto</span>
+        <span class="section-count" id="tbl-count"></span>
+      </div>
+      <div class="tbl-wrap" id="tbl-wrap"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let ROWS=[], ASIG=[], chartInst=null;
+const PROJ_LABEL={};
+
+const fmt  = n => n==null?'—':'$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:0,maximumFractionDigits:0});
+const fmtH = n => n==null?'—':Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1})+'h';
+const fmtP = n => n==null?'—':Number(n).toFixed(1)+'%';
+const fmtR = n => n==null?'—':'$'+Number(n).toFixed(2)+'/h';
+
+function fiscalYear(s){const p=(s||'').slice(0,7).split('-');const yr=parseInt(p[0])||0,mo=parseInt(p[1])||0;return mo<=2?yr-1:yr;}
+function groupBy(arr,key){return arr.reduce((m,r)=>{(m[r[key]]=m[r[key]]||[]).push(r);return m;},{});}
+function sum(rows,key){return rows.reduce((a,r)=>a+(+r[key]||0),0);}
+function sumRow(rows){
+  const k=['horas_asignadas','horas_ejecutadas','horas_facturables','horas_no_facturables','costo_directo','costo_no_facturable','costo_hundido','costo_total','revenue_generado'];
+  const a={}; k.forEach(f=>a[f]=sum(rows,f));
+  a.margen_usd=a.revenue_generado-a.costo_total;
+  a.util_pct=a.horas_ejecutadas?a.horas_facturables/a.horas_ejecutadas*100:null;
+  a.ejec_vs_asig_pct=a.horas_asignadas?a.horas_ejecutadas/a.horas_asignadas*100:null;
+  return a;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const MS={};
+function msCreate(id,ph='Todos'){
+  const w=document.getElementById(id);
+  w.innerHTML=`<button class="ms-trigger">${ph}</button>
+    <div class="ms-dropdown" id="${id}-dd">
+      <input class="ms-search" placeholder="Buscar…" oninput="msRender('${id}',this.value)">
+      <div id="${id}-list"></div>
+      <div class="ms-actions">
+        <button class="ms-act" onclick="msAll('${id}',true)">TODO</button>
+        <button class="ms-act" onclick="msAll('${id}',false)">NINGUNO</button>
+      </div>
+    </div>`;
+  MS[id]={selected:new Set(),options:[],ph,labelFn:null};
+  w.querySelector('.ms-trigger').addEventListener('click',function(e){
+    e.stopPropagation();
+    msToggle(id);
+  });
+  document.addEventListener('click',function(e){if(!w.contains(e.target))msClose(id);});
+}
+function msToggle(id){
+  const dd=document.getElementById(id+'-dd'),btn=document.querySelector('#'+id+' .ms-trigger');
+  const was=dd.classList.contains('open');
+  Object.keys(MS).forEach(k=>msClose(k));
+  if(!was){dd.classList.add('open');btn.classList.add('open');}
+}
+function msClose(id){document.getElementById(id+'-dd')?.classList.remove('open');document.querySelector(`#${id} .ms-trigger`)?.classList.remove('open');}
+function msSetOptions(id,opts,labelFn=null){MS[id].options=opts;MS[id].labelFn=labelFn;msRender(id,'');}
+function msRender(id,search){
+  const {options,selected,labelFn}=MS[id];
+  const fil=search?options.filter(o=>String(labelFn?labelFn(o):o).toLowerCase().includes(search.toLowerCase())):options;
+  document.getElementById(id+'-list').innerHTML=fil.map(o=>{
+    const lbl=labelFn?labelFn(o):o, val=String(o);
+    return `<label class="ms-opt"><input type="checkbox" value="${val}" ${selected.has(val)?'checked':''} onchange="msCheck('${id}','${val.replace(/'/g,"\\\\'")}',this.checked)"><span>${lbl}</span></label>`;
+  }).join('');
+}
+function msCheck(id,val,chk){chk?MS[id].selected.add(val):MS[id].selected.delete(val);msLabel(id);msCascade(id);}
+function msAll(id,sel){sel?MS[id].options.forEach(o=>MS[id].selected.add(String(o))):MS[id].selected.clear();msRender(id,'');msLabel(id);msCascade(id);}
+function msCascade(id){
+  if(id==='ms-rm'||id==='ms-yr'){clearTimeout(MS._t);MS._t=setTimeout(refreshProyectos,400);}
+  if(id==='ms-pr'){clearTimeout(MS._t2);MS._t2=setTimeout(refreshConsultores,400);}
+}
+function msLabel(id){
+  const {selected,ph,labelFn}=MS[id];
+  const btn=document.querySelector(`#${id} .ms-trigger`);
+  if(!selected.size)btn.textContent=ph;
+  else if(selected.size===1)btn.textContent=labelFn?labelFn([...selected][0]):[...selected][0];
+  else btn.textContent=`${selected.size} seleccionados`;
+}
+function msGet(id){return[...MS[id].selected];}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+async function loadInitialOptions(){
+  msCreate('ms-rm','Todos');
+  msCreate('ms-yr','Selecciona...');
+  msCreate('ms-pr','Todos');
+  msCreate('ms-con','Todos');
+  msCreate('ms-tipo','Todos');
+
+  try{
+    const r=await fetch('/api/data/consultor_mensual/options?columns=revenue_manager,tipo_empleado');
+    const o=await r.json();
+    msSetOptions('ms-rm',o.revenue_manager||[]);
+    msSetOptions('ms-tipo',o.tipo_empleado||[]);
+  }catch(e){}
+
+  try{
+    const r=await fetch('/api/data/consultor_mensual/query',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filters:{},limit:5000,columns:['mes']})});
+    const rows=await r.json();
+    if(Array.isArray(rows)){
+      const fys=[...new Set(rows.map(r=>fiscalYear(r.mes)).filter(Boolean))].sort().reverse();
+      msSetOptions('ms-yr',fys,y=>`AF${y} (mar ${y} – feb ${y+1})`);
+    }
+  }catch(e){}
+
+  await refreshProyectos();
+}
+
+async function refreshProyectos(){
+  const rm=msGet('ms-rm'),yr=msGet('ms-yr').map(Number);
+  const filters={};
+  if(rm.length) filters.revenue_manager=rm.length===1?rm[0]:rm;
+  if(yr.length) filters.fiscal_year=yr.length===1?yr[0]:yr;
+  try{
+    const r=await fetch('/api/data/consultor_mensual/query',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filters,limit:10000,columns:['proyecto','project_name']})});
+    const rows=await r.json();
+    if(!Array.isArray(rows)) return;
+    rows.forEach(r=>{
+      if(r.proyecto&&!PROJ_LABEL[r.proyecto])
+        PROJ_LABEL[r.proyecto]=r.project_name?`${r.proyecto} — ${r.project_name}`:r.proyecto;
+    });
+    const prevPr=msGet('ms-pr');
+    const prs=[...new Set(rows.map(r=>r.proyecto).filter(Boolean))].sort();
+    msSetOptions('ms-pr',prs,p=>PROJ_LABEL[p]||p);
+    prevPr.forEach(v=>{if(prs.includes(v))MS['ms-pr'].selected.add(v);}); msLabel('ms-pr');
+  }catch(e){}
+  await refreshConsultores();
+}
+
+async function refreshConsultores(){
+  const rm=msGet('ms-rm'),yr=msGet('ms-yr').map(Number),pr=msGet('ms-pr');
+  const filters={};
+  if(rm.length) filters.revenue_manager=rm.length===1?rm[0]:rm;
+  if(yr.length) filters.fiscal_year=yr.length===1?yr[0]:yr;
+  if(pr.length) filters.proyecto=pr.length===1?pr[0]:pr;
+  try{
+    const r=await fetch('/api/data/consultor_mensual/query',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filters,limit:10000,columns:['consultor']})});
+    const rows=await r.json();
+    if(!Array.isArray(rows)) return;
+    const prevCon=msGet('ms-con');
+    const cons=[...new Set(rows.map(r=>r.consultor).filter(Boolean))].sort();
+    msSetOptions('ms-con',cons);
+    prevCon.forEach(v=>{if(cons.includes(v))MS['ms-con'].selected.add(v);}); msLabel('ms-con');
+  }catch(e){}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+async function applyFilter(){
+  const rm=msGet('ms-rm'),yr=msGet('ms-yr').map(Number),con=msGet('ms-con'),pr=msGet('ms-pr'),tp=msGet('ms-tipo');
+  const filters={};
+  if(rm.length)  filters.revenue_manager=rm.length===1?rm[0]:rm;
+  if(yr.length)  filters.fiscal_year=yr.length===1?yr[0]:yr;
+  if(pr.length)  filters.proyecto=pr.length===1?pr[0]:pr;
+  if(con.length) filters.consultor=con.length===1?con[0]:con;
+  if(tp.length)  filters.tipo_empleado=tp.length===1?tp[0]:tp;
+
+  const btn=document.getElementById('btn-filter');
+  btn.innerHTML='<span class="spinner"></span>Cargando…';btn.disabled=true;
+  try{
+    const [r1, r2] = await Promise.all([
+      fetch('/api/data/consultor_mensual/query',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filters,limit:10000})}),
+      fetch('/api/data/consultor_asignacion/query',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filters,limit:20000})}),
+    ]);
+    ROWS = await r1.json(); if(!Array.isArray(ROWS)) ROWS=[];
+    ASIG = await r2.json(); if(!Array.isArray(ASIG)) ASIG=[];
+    [...ROWS,...ASIG].forEach(r=>{
+      if(r.proyecto&&!PROJ_LABEL[r.proyecto])
+        PROJ_LABEL[r.proyecto]=r.project_name?`${r.proyecto} — ${r.project_name}`:r.proyecto;
+    });
+
+    // Poblar dropdown de meses con los disponibles en el resultado
+    const mesesDisponibles = [...new Set(ROWS.map(r=>String(r.mes).slice(0,7)).filter(Boolean))].sort();
+    const utilMesSel = document.getElementById('util-mes');
+    const prevMes = utilMesSel.value;
+    utilMesSel.innerHTML = '<option value="">— mes —</option>' +
+      mesesDisponibles.map(m=>{
+        const p=m.split('-'); const lbl=`${['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][+p[1]]} ${p[0].slice(2)}`;
+        return `<option value="${m}" ${m===prevMes?'selected':''}>${lbl}</option>`;
+      }).join('');
+
+    // Filtro de utilización del mes seleccionado (post-fetch)
+    const utilOp = document.getElementById('util-op').value;
+    const utilVal = parseFloat(document.getElementById('util-val').value);
+    const utilMes = utilMesSel.value;  // formato 'YYYY-MM'
+    const today = new Date();
+    const curMes = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+    if(utilOp && !isNaN(utilVal) && utilMes){
+      const isPast = utilMes < curMes;
+      const cmp = (a,b) => utilOp==='lt'?a<b: utilOp==='lte'?a<=b: utilOp==='gt'?a>b: utilOp==='gte'?a>=b: false;
+      const byC = {};   // consultor → {fact, asig} en utilMes
+      ROWS.forEach(r=>{
+        if(String(r.mes).slice(0,7) !== utilMes) return;
+        const k = r.consultor;
+        if(!byC[k]) byC[k]={fact:0, asig:0};
+        byC[k].fact += +r.horas_facturables||0;
+        byC[k].asig += +r.horas_asignadas ||0;
+      });
+      const matchingCons = new Set();
+      Object.entries(byC).forEach(([c,v])=>{
+        const numer = isPast ? v.fact : v.asig;
+        const u = numer / 168 * 100;
+        if(cmp(u, utilVal)) matchingCons.add(c);
+      });
+      ROWS = ROWS.filter(r=>matchingCons.has(r.consultor));
+      ASIG = ASIG.filter(r=>matchingCons.has(r.consultor));
+    }
+
+    document.getElementById('placeholder').style.display='none';
+    document.getElementById('main').style.display='';
+    render();
+  }catch(e){alert('Error: '+e.message);}
+  finally{btn.textContent='Ver resultados';btn.disabled=false;}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+function render(){renderKPIs(ROWS);renderChart(ROWS);renderMatrix(ASIG);renderTable(ROWS);}
+
+function renderKPIs(rows){
+  const t=sumRow(rows);
+  const nCon=new Set(rows.map(r=>r.consultor)).size;
+  const nProj=new Set(rows.map(r=>r.proyecto)).size;
+  const items=[
+    {label:'Consultores',         val:nCon,              sub:nProj+' proyectos',            accent:'var(--purple)'},
+    {label:'Horas Asignadas',     val:fmtH(t.horas_asignadas),    sub:'según ResourceAllocation', accent:'var(--purple)'},
+    {label:'Horas Ejecutadas',    val:fmtH(t.horas_ejecutadas),   sub:fmtP(t.ejec_vs_asig_pct)+' vs asignadas', accent:'var(--blue)'},
+    {label:'Horas Facturables',   val:fmtH(t.horas_facturables),  sub:fmtP(t.util_pct)+' utilización', accent:'var(--green)'},
+    {label:'Horas No Facturables',val:fmtH(t.horas_no_facturables),sub:'no billable',      accent:'var(--amber)'},
+    {label:'Costo Directo',       val:fmt(t.costo_directo),        sub:'hrs fact × costo/h',accent:'var(--blue)'},
+    {label:'Costo No Facturable', val:fmt(t.costo_no_facturable),  sub:'hrs no-fact × costo/h',accent:'var(--amber)'},
+    {label:'Costo Hundido',       val:fmt(t.costo_hundido),        sub:'capacidad ociosa (168h)',accent:'var(--red)'},
+    {label:'Revenue Generado',    val:fmt(t.revenue_generado),     sub:'facturables × tarifa',accent:'var(--green)'},
+  ];
+  document.getElementById('kpis').innerHTML=items.map(({label,val,sub,accent})=>`
+    <div class="kpi-card" style="--accent:${accent}">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-val">${val}</div>
+      <div class="kpi-sub">${sub}</div>
+    </div>`).join('');
+}
+
+function renderChart(rows){
+  const byMes=groupBy(rows,'mes');
+  const meses=Object.keys(byMes).sort();
+  const labels=meses.map(m=>{const p=m.slice(0,7).split('-');const mo=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];return `${mo[parseInt(p[1])]} ${p[0].slice(2)}`;});
+  const hAsig  =meses.map(m=>sum(byMes[m],'horas_asignadas'));
+  const hFact  =meses.map(m=>sum(byMes[m],'horas_facturables'));
+  const hNoFact=meses.map(m=>sum(byMes[m],'horas_no_facturables'));
+  const hHund  =meses.map(m=>{const t=sumRow(byMes[m]);return Math.max(0,168*new Set(byMes[m].map(r=>r.consultor)).size-t.horas_facturables-t.horas_no_facturables);});
+
+  if(chartInst)chartInst.destroy();
+  const isLight=document.documentElement.dataset.theme==='light';
+  const tick=isLight?'#656d76':'#8b949e';
+  const grid=isLight?'#e8ecf0':'#1e2430';
+
+  chartInst=new Chart(document.getElementById('chart').getContext('2d'),{
+    type:'bar',
+    data:{labels,datasets:[
+      {label:'Asignadas',      data:hAsig,  type:'line', borderColor:'rgba(188,140,255,.9)', backgroundColor:'transparent', tension:.3, pointRadius:4, borderWidth:2, borderDash:[4,3]},
+      {label:'Facturables',    data:hFact,  backgroundColor:'rgba(46,160,67,.7)',  borderRadius:3,stack:'h'},
+      {label:'No Facturables', data:hNoFact,backgroundColor:'rgba(227,179,65,.6)',borderRadius:3,stack:'h'},
+      {label:'Capacidad Ociosa',data:hHund, backgroundColor:'rgba(248,81,73,.4)', borderRadius:3,stack:'h'},
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:true,
+      plugins:{
+        legend:{labels:{color:tick,font:{size:10},padding:14}},
+        tooltip:{
+          mode:'index', intersect:false,
+          backgroundColor:'rgba(0,0,0,.85)', borderColor:'rgba(255,255,255,.12)', borderWidth:1,
+          titleFont:{size:11}, bodyFont:{size:10}, padding:10,
+          callbacks:{
+            // Stack total for the hovered month (bar series only, excluding the "Asignadas" line).
+            label:(ctx)=>{
+              const ds = ctx.dataset;
+              const hrs = +ctx.parsed.y || 0;
+              const dsets = ctx.chart.data.datasets;
+              const idx = ctx.dataIndex;
+              const stackTotal = dsets
+                .filter(d => d.type !== 'line')
+                .reduce((s,d) => s + (+d.data[idx] || 0), 0);
+              const pct = stackTotal > 0 ? (hrs / stackTotal * 100) : 0;
+              // The "Asignadas" line is shown alone with no % (no stack share).
+              if (ds.type === 'line') {
+                return ` ${ds.label}: ${hrs.toLocaleString('es-MX',{maximumFractionDigits:1})} h`;
+              }
+              return ` ${ds.label}: ${hrs.toLocaleString('es-MX',{maximumFractionDigits:1})} h  ·  ${pct.toFixed(1)}%`;
+            },
+            footer:(items)=>{
+              if (!items || !items.length) return '';
+              const idx = items[0].dataIndex;
+              const dsets = items[0].chart.data.datasets;
+              const total = dsets
+                .filter(d => d.type !== 'line')
+                .reduce((s,d) => s + (+d.data[idx] || 0), 0);
+              return `Total mes: ${total.toLocaleString('es-MX',{maximumFractionDigits:1})} h`;
+            },
+          },
+        },
+      },
+      scales:{
+        x:{ticks:{color:tick,font:{size:9}},grid:{color:grid},stacked:true},
+        y:{ticks:{color:tick,font:{size:9},callback:v=>v+'h'},grid:{color:grid},stacked:true},
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+let sortKey='horas_facturables', sortAsc=false;
+
+const COLS=[
+  {key:'margen_usd',           label:'Margen USD',    f:fmt,  cls:'', derived:r=>r.revenue_generado-r.costo_total},
+  {key:'horas_asignadas',      label:'Asignadas',     f:fmtH, cls:'neu'},
+  {key:'horas_ejecutadas',     label:'Ejecutadas',    f:fmtH, cls:''},
+  {key:'horas_facturables',    label:'Facturables',   f:fmtH, cls:'pos'},
+  {key:'horas_no_facturables', label:'No Fact.',      f:fmtH, cls:'warn'},
+  {key:'billing_rate_usd',     label:'Tarifa/h',      f:fmtR, cls:'neu'},
+  {key:'costo_hora',           label:'Costo/h',       f:fmtR, cls:''},
+  {key:'costo_directo',        label:'C.Directo',     f:fmt,  cls:''},
+  {key:'costo_no_facturable',  label:'C.No Fact.',    f:fmt,  cls:'warn'},
+  {key:'costo_hundido',        label:'C.Hundido',     f:fmt,  cls:'neg'},
+  {key:'costo_total',          label:'C.Total',       f:fmt,  cls:''},
+  {key:'revenue_generado',     label:'Revenue',       f:fmt,  cls:'pos'},
+];
+
+function renderTable(rows){
+  const byRM=groupBy(rows,'revenue_manager');
+  const rms=Object.keys(byRM).sort();
+
+  const head=`<tr>
+    <th class="left" style="min-width:180px">Consultor / Proyecto</th>
+    ${COLS.map(c=>`<th onclick="setSort('${c.key}')" class="${sortKey===c.key?'active':''}\">${c.label}<span class="sort-icon ${sortKey===c.key?'on':''}\">${sortKey===c.key?(sortAsc?'▲':'▼'):'⦙'}</span></th>`).join('')}
+  </tr>`;
+
+  const maxFact=Math.max(...rows.map(r=>+r.horas_facturables||0),1);
+
+  let bodyHtml='';
+  rms.forEach(rm=>{
+    const rmRows=byRM[rm];
+    const rmT=sumRow(rmRows);
+    // RM header row
+    bodyHtml+=`<tr style="background:rgba(188,140,255,.06)">
+      <td class="left name" colspan="1" style="color:var(--purple);font-size:9px;letter-spacing:1px;padding:10px 12px">▸ ${rm}</td>
+      ${COLS.map(c=>`<td class="${c.cls}" style="font-weight:600;font-size:9px">${c.key==='billing_rate_usd'||c.key==='costo_hora'?'—':c.f(c.derived?c.derived(rmT):rmT[c.key])}</td>`).join('')}
+    </tr>`;
+
+    const byConsultor=groupBy(rmRows,'consultor');
+    const consultores=Object.keys(byConsultor).sort();
+
+    consultores.forEach((con,ci)=>{
+      const conId=`c${rms.indexOf(rm)}-${ci}`;
+      const conRows=byConsultor[con];
+      const conT=sumRow(conRows);
+      const tipo=conRows[0]?.tipo_empleado||'';
+      const dep=conRows[0]?.departamento||'—';
+      const util=conT.horas_ejecutadas?conT.horas_facturables/conT.horas_ejecutadas*100:0;
+
+      // Consultor row (start collapsed)
+      const tipoColor = tipo==='Employee' ? 'var(--green)' : tipo==='Contractor' ? 'var(--amber)' : 'var(--text3)';
+      const tipoBadge = tipo
+        ? `<span style="display:inline-block;font-size:8px;letter-spacing:.5px;padding:1px 5px;margin-left:6px;border:1px solid ${tipoColor};color:${tipoColor};border-radius:2px;text-transform:uppercase;font-weight:600">${tipo}</span>`
+        : '';
+      bodyHtml+=`<tr class="con-row" data-con="${conId}" data-collapsed="1" style="background:var(--bg3);cursor:pointer" onclick="toggleCon('${conId}',this)">
+        <td class="left name" style="padding-left:20px;font-size:10px">
+          <span class="tg-arrow" style="display:inline-block;width:12px;color:var(--text3)">▸</span>
+          ${con}${tipoBadge}
+          <div class="mini-bar"><div class="mini-fill" style="width:${Math.min(100,util)}%;background:${util>=70?'var(--green)':util>=40?'var(--amber)':'var(--red)'}"></div></div>
+        </td>
+        ${COLS.map(c=>`<td class="${c.cls} ${c.key==='margen_usd'?(conT.margen_usd>0?'pos':conT.margen_usd<0?'neg':''):''}\" style="font-weight:600">${c.key==='billing_rate_usd'||c.key==='costo_hora'?'—':c.f(c.derived?c.derived(conT):conT[c.key])}</td>`).join('')}
+      </tr>`;
+
+      // Mes subtotal → proyectos del mes
+      const MO=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      const fmtMes=m=>{if(!m) return '—'; const p=String(m).slice(0,7).split('-'); return `${MO[parseInt(p[1])]||p[1]} ${p[0].slice(2)}`;}; 
+      const mesKey=r=>String(r.mes||'').slice(0,7);
+      const byMesC=groupBy(conRows.map(r=>({...r,_mk:mesKey(r)})),'_mk');
+      const meses=Object.keys(byMesC).sort();
+      meses.forEach((mk,mi)=>{
+        const mesId=`${conId}-m${mi}`;
+        const mRows=byMesC[mk];
+        const mT=sumRow(mRows);
+        // Mes subtotal row (start collapsed and hidden — consultor is collapsed)
+        bodyHtml+=`<tr class="mes-row" data-con-child="${conId}" data-mes="${mesId}" data-collapsed="1" style="background:var(--bg2);cursor:pointer;display:none" onclick="toggleMes('${mesId}',this)">
+          <td class="left" style="padding-left:36px;font-size:9px;color:var(--text);font-weight:600">
+            <span class="tg-arrow" style="display:inline-block;width:12px;color:var(--text3)">▸</span>
+            ${fmtMes(mk)}
+          </td>
+          ${COLS.map(c=>`<td class="${c.cls||''} ${c.key==='margen_usd'?(mT.margen_usd>0?'pos':mT.margen_usd<0?'neg':''):''}\" style="font-weight:600">${c.key==='billing_rate_usd'||c.key==='costo_hora'?'—':c.f(c.derived?c.derived(mT):mT[c.key])}</td>`).join('')}
+        </tr>`;
+        // Proyectos del mes (ordenados)
+        const sorted=[...mRows].sort((a,b)=>sortAsc?(+a[sortKey]||0)-(+b[sortKey]||0):(+b[sortKey]||0)-(+a[sortKey]||0));
+        sorted.forEach(r=>{
+          const label=PROJ_LABEL[r.proyecto]||r.proyecto;
+          const row={...r, margen_usd:(+r.revenue_generado||0)-(+r.costo_total||0)};
+          bodyHtml+=`<tr class="proj-row" data-con-child="${conId}" data-mes-child="${mesId}" style="display:none">
+            <td class="left" style="padding-left:60px;font-size:9px;color:var(--text3)">${label}</td>
+            ${COLS.map(c=>`<td class="${c.cls||''} ${c.key==='margen_usd'?(row.margen_usd>0?'pos':row.margen_usd<0?'neg':''):''}\">${c.derived?c.f(c.derived(row)):c.f(+row[c.key]||0)}</td>`).join('')}
+          </tr>`;
+        });
+      });
+    });
+  });
+
+  // Grand total
+  const grand=sumRow(rows);
+  const nCon=new Set(rows.map(r=>r.consultor)).size;
+  bodyHtml+=`<tr class="grand-total">
+    <td class="left">TOTAL — ${nCon} consultores</td>
+    ${COLS.map(c=>`<td class="${c.key==='margen_usd'?(grand.margen_usd>0?'pos':grand.margen_usd<0?'neg':''):''}\">${c.key==='billing_rate_usd'||c.key==='costo_hora'?'—':c.f(c.derived?c.derived(grand):grand[c.key])}</td>`).join('')}
+  </tr>`;
+
+  document.getElementById('tbl-count').textContent=`${rows.length} registros · ${new Set(rows.map(r=>r.consultor)).size} consultores`;
+  document.getElementById('tbl-wrap').innerHTML=`<table><thead>${head}</thead><tbody>${bodyHtml}</tbody></table>`;
+}
+
+function renderMatrix(rows){
+  if(!rows.length){document.getElementById('matrix-wrap').innerHTML='<div style="padding:20px;color:var(--text3);font-size:11px">Sin datos de asignación</div>';return;}
+  const MO=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const today=new Date().toISOString().slice(0,7);
+  const meses=[...new Set(rows.map(r=>r.mes?r.mes.slice(0,7):null).filter(Boolean))].sort();
+
+  const byRM=groupBy(rows,'revenue_manager');
+  const rms=Object.keys(byRM).sort();
+
+  // Cell data: asignadas + ejecutadas + estado
+  function cellData(mesRows){
+    return {
+      asig: mesRows.reduce((a,r)=>a+(+r.horas_asignadas||0),0),
+      ejec: mesRows.reduce((a,r)=>a+(+r.horas_ejecutadas||0),0),
+      futuro: mesRows.every(r=>r.estado==='futuro')
+    };
+  }
+
+  function cellStyle(pct, futuro){
+    if(pct<=0) return 'color:var(--text3)';
+    const alpha=futuro?'.12':'.2';
+    if(pct>100) return `background:rgba(124,159,255,${alpha});color:var(--blue)`;
+    if(pct>=80)  return `background:rgba(46,160,67,${alpha});color:var(--green)`;
+    if(pct>=50)  return `background:rgba(227,179,65,${alpha});color:var(--amber)`;
+    return `background:rgba(248,81,73,${alpha});color:var(--red)`;
+  }
+
+  const mesLabel=m=>{
+    const p=m.split('-');
+    const isFut=m>today;
+    return `<span style="${isFut?'color:var(--text3)':''}\">${MO[parseInt(p[1])]} ${p[0].slice(2)}${isFut?' ⬇':''}</span>`;
+  };
+
+  const head=`<tr>
+    <th class="left" style="min-width:170px;position:sticky;left:0;z-index:2;background:var(--bg2)">Consultor</th>
+    ${meses.map(m=>`<th style="min-width:72px;text-align:center">${mesLabel(m)}</th>`).join('')}
+    <th style="min-width:65px">Total h</th>
+    <th style="min-width:55px">Prom %</th>
+  </tr>`;
+
+  let body='';
+  rms.forEach(rm=>{
+    const rmRows=byRM[rm];
+    const byC=groupBy(rmRows,'consultor');
+    const cons=Object.keys(byC).sort();
+
+    // RM totals row
+    const rmCell={};
+    meses.forEach(m=>{rmCell[m]=cellData(rmRows.filter(r=>r.mes&&r.mes.startsWith(m)));});
+    const rmTotal=Object.values(rmCell).reduce((a,c)=>a+c.asig,0);
+    const rmActMes=meses.filter(m=>rmCell[m].asig>0);
+    const rmPctAvg=rmActMes.length?rmActMes.reduce((a,m)=>a+(rmCell[m].asig/168*100),0)/rmActMes.length:0;
+
+    body+=`<tr style="background:rgba(188,140,255,.06)">
+      <td class="left name" style="color:var(--purple);font-size:9px;letter-spacing:1px;padding:10px 12px;position:sticky;left:0;z-index:1;background:rgba(20,12,40,.97)">▸ ${rm}</td>
+      ${meses.map(m=>{const c=rmCell[m];const pct=c.asig/168*100;
+        return `<td style="text-align:center;font-size:9px;font-weight:600;${cellStyle(pct,c.futuro)}">${c.asig?fmtH(c.asig):'—'}</td>`;
+      }).join('')}
+      <td style="text-align:center;font-size:9px;font-weight:700;color:var(--purple)">${fmtH(rmTotal)}</td>
+      <td style="text-align:center;font-size:9px;font-weight:700;color:var(--purple)">${rmActMes.length?fmtP(rmPctAvg):'—'}</td>
+    </tr>`;
+
+    cons.forEach(con=>{
+      const conRows=byC[con];
+      const cell={};
+      meses.forEach(m=>{cell[m]=cellData(conRows.filter(r=>r.mes&&r.mes.startsWith(m)));});
+      const total=Object.values(cell).reduce((a,c)=>a+c.asig,0);
+      const actMes=meses.filter(m=>cell[m].asig>0);
+      const pctAvg=actMes.length?actMes.reduce((a,m)=>a+(cell[m].asig/168*100),0)/actMes.length:0;
+
+      body+=`<tr>
+        <td class="left" style="padding-left:20px;font-size:10px;font-weight:500;position:sticky;left:0;z-index:1;background:var(--bg2)">${con}</td>
+        ${meses.map(m=>{
+          const c=cell[m]; 
+          const pct=c.asig/168*100;
+          if(!c.asig) return `<td style="text-align:center"><span style="opacity:.2;font-size:9px">—</span></td>`;
+          return `<td style="text-align:center;padding:4px 3px;${cellStyle(pct,c.futuro)}">
+            <div style="font-size:9px;font-weight:700">${fmtH(c.asig)}</div>
+            <div style="font-size:8px;opacity:.85">${fmtP(pct)}</div>
+            ${!c.futuro&&c.ejec?`<div style="font-size:7px;opacity:.6">${fmtH(c.ejec)} ej.</div>`:''}<br>
+          </td>`;
+        }).join('')}
+        <td style="text-align:center;font-size:9px;font-weight:600">${fmtH(total)}</td>
+        <td style="text-align:center;font-size:9px;font-weight:600;${cellStyle(pctAvg,false)}">${actMes.length?fmtP(pctAvg):'—'}</td>
+      </tr>`;
+    });
+  });
+
+  const legend=`<div style="display:flex;gap:16px;padding:10px 14px;border-top:1px solid var(--border);font-size:9px;flex-wrap:wrap;align-items:center">
+    <span style="color:var(--blue)">● >100% sobreasignado</span>
+    <span style="color:var(--green)">● 80-100% óptimo</span>
+    <span style="color:var(--amber)">● 50-80% parcial</span>
+    <span style="color:var(--red)">● <50% subutilizado</span>
+    <span style="color:var(--text3);margin-left:8px">⬇ mes futuro (sin ejecución aún)</span>
+  </div>`;
+
+  document.getElementById('matrix-wrap').innerHTML=
+    `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%"><thead>${head}</thead><tbody>${body}</tbody></table></div>${legend}`;
+}
+
+function toggleCon(conId, el){
+  event.stopPropagation();
+  const collapsed = el.dataset.collapsed === '1';
+  el.dataset.collapsed = collapsed ? '0' : '1';
+  el.querySelector('.tg-arrow').textContent = collapsed ? '▾' : '▸';
+  if (collapsed) {
+    // expand: show mes subtotals only, keep their projects collapsed
+    document.querySelectorAll(`tr.mes-row[data-con-child="${conId}"]`).forEach(mr => {
+      mr.style.display = '';
+      mr.dataset.collapsed = '1';
+      mr.querySelector('.tg-arrow').textContent = '▸';
+    });
+    document.querySelectorAll(`tr.proj-row[data-con-child="${conId}"]`).forEach(pr => {
+      pr.style.display = 'none';
+    });
+  } else {
+    // collapse everything inside
+    document.querySelectorAll(`tr[data-con-child="${conId}"]`).forEach(r => {
+      r.style.display = 'none';
+    });
+  }
+}
+function toggleMes(mesId, el){
+  event.stopPropagation();
+  const collapsed = el.dataset.collapsed === '1';
+  el.dataset.collapsed = collapsed ? '0' : '1';
+  el.querySelector('.tg-arrow').textContent = collapsed ? '▾' : '▸';
+  document.querySelectorAll(`tr.proj-row[data-mes-child="${mesId}"]`).forEach(r => {
+    r.style.display = collapsed ? '' : 'none';
+  });
+}
+
+function setSort(key){
+  if(sortKey===key) sortAsc=!sortAsc; else{sortKey=key;sortAsc=false;}
+  renderTable(ROWS);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+function toggleTheme(){
+  const html=document.documentElement;
+  const isLight=html.dataset.theme==='light';
+  html.dataset.theme=isLight?'dark':'light';
+  document.getElementById('theme-btn').textContent=isLight?'\u2600 Claro':'\u263e Oscuro';
+  localStorage.setItem('con-theme',html.dataset.theme);
+  if(chartInst)renderChart(ROWS);
+}
+
+async function init(){
+  const saved=localStorage.getItem('con-theme')||'dark';
+  document.documentElement.dataset.theme=saved;
+  document.getElementById('theme-btn').textContent=saved==='light'?'\u263e Oscuro':'\u2600 Claro';
+  // Mostrar mes actual de referencia
+  const td=new Date();
+  const MO=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const tag=document.getElementById('mes-actual-tag');
+  if(tag) tag.textContent = `(hoy: ${MO[td.getMonth()+1]} ${String(td.getFullYear()).slice(2)} — meses pasados=facturables, mes actual y futuros=asignadas)`;
+  await loadInitialOptions();
+}
+init();
+</script>
+</body>
+</html>

@@ -16,7 +16,7 @@ function showTab(name) {
 }
 
 function layerBadge(layer) {
-  const cls = { silver: 'layer-silver', master: 'layer-master', gold: 'layer-gold' }[layer] || 'layer-silver';
+  const cls = { silver: 'layer-silver', gold: 'layer-gold' }[layer] || 'layer-silver';
   return `<span class="layer-badge ${cls}">${esc((layer || 'silver').toUpperCase())}</span>`;
 }
 

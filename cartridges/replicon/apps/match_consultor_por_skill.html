@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Match de Consultores por Skill</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh; padding: 20px;
+}
+.container {
+  max-width: 1400px; margin: 0 auto; background: white;
+  border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  padding: 30px;
+}
+h1 { color: #333; margin-bottom: 6px; font-size: 24px; }
+.subtitle { color: #666; margin-bottom: 24px; font-size: 13px; }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px; padding: 16px;
+  background: #f5f7fb; border: 1px solid #e0e6ef; border-radius: 8px;
+  margin-bottom: 22px;
+}
+.form-grid label { font-weight: 600; color: #444; font-size: 12px; display: block; margin-bottom: 4px; }
+.form-grid select, .form-grid input {
+  width: 100%; padding: 8px 10px; border: 2px solid #e0e0e0;
+  border-radius: 6px; font-size: 13px;
+}
+.form-grid button {
+  align-self: end; padding: 8px 18px; background: #667eea; color: white;
+  border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px;
+}
+.form-grid button:hover { background: #5568d3; }
+
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px; margin-bottom: 22px;
+}
+.stat-card {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white; padding: 18px; border-radius: 8px; text-align: center;
+}
+.stat-card.ext { background: linear-gradient(135deg, #f57c00, #d84315); }
+.stat-value { font-size: 28px; font-weight: 700; }
+.stat-label { font-size: 11px; opacity: .9; letter-spacing: .04em; text-transform: uppercase; }
+
+.section-title {
+  font-size: 15px; color: #333; margin: 18px 0 8px;
+  padding-bottom: 6px; border-bottom: 2px solid #e0e6ef;
+}
+.section-title.ext { color: #d84315; border-bottom-color: #ffd0b0; }
+
+table.results {
+  width: 100%; border-collapse: collapse; font-size: 12.5px;
+  margin-bottom: 10px;
+}
+table.results th {
+  background: #f5f7fb; color: #555; text-align: left;
+  padding: 8px 10px; border-bottom: 1px solid #e0e6ef;
+  font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+}
+table.results td { padding: 8px 10px; border-bottom: 1px solid #f0f2f7; color: #333; }
+table.results tr:hover td { background: #fafbfd; }
+.rating-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; font-weight: 700; color: white;
+}
+.r-5 { background: #1b5e20; }
+.r-4 { background: #388e3c; }
+.r-3 { background: #689f38; }
+.r-2 { background: #f57c00; }
+.r-1 { background: #d32f2f; }
+.empty {
+  padding: 24px; text-align: center; color: #888; font-style: italic;
+  background: #fafbfd; border-radius: 6px;
+}
+.error {
+  background: #ffebee; color: #c62828;
+  padding: 14px; border-radius: 6px; margin-bottom: 18px; font-size: 13px;
+}
+.help {
+  margin-top: 22px; padding: 14px 18px;
+  background: #f5f7fb; border: 1px solid #e0e6ef; border-radius: 8px;
+  font-size: 12.5px; color: #444; line-height: 1.55;
+}
+.help b { color: #333; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🧩 Match de Consultores por Skill</h1>
+  <p class="subtitle">Dado un skill, un volumen de horas y un mes, encuentra qué consultores internos o externos podrían atenderlo.</p>
+
+  <div class="form-grid">
+    <div>
+      <label for="skill">Skill</label>
+      <select id="skill"></select>
+    </div>
+    <div>
+      <label for="mes">Mes objetivo</label>
+      <input id="mes" type="month">
+    </div>
+    <div>
+      <label for="horas">Horas requeridas</label>
+      <input id="horas" type="number" min="1" step="1" value="40">
+    </div>
+    <div>
+      <label for="rating">Rating mínimo</label>
+      <select id="rating">
+        <option value="1">≥ 1 (básico)</option>
+        <option value="2">≥ 2 (en desarrollo)</option>
+        <option value="3" selected>≥ 3 (competente)</option>
+        <option value="4">≥ 4 (experto)</option>
+        <option value="5">5 (mentor)</option>
+      </select>
+    </div>
+    <button onclick="buscar()">🔍 Buscar</button>
+  </div>
+
+  <div id="error"></div>
+
+  <div class="stats-grid" id="stats" style="display:none">
+    <div class="stat-card"><div class="stat-value" id="kpi-int">0</div><div class="stat-label">Internos disponibles</div></div>
+    <div class="stat-card ext"><div class="stat-value" id="kpi-ext">0</div><div class="stat-label">Externos disponibles</div></div>
+    <div class="stat-card"><div class="stat-value" id="kpi-total">0</div><div class="stat-label">Total con skill</div></div>
+    <div class="stat-card ext"><div class="stat-value" id="kpi-no">0</div><div class="stat-label">Sin capacidad libre</div></div>
+  </div>
+
+  <div id="resultadosInt" style="display:none">
+    <div class="section-title">Consultores internos · disponibles</div>
+    <div id="tablaInt"></div>
+  </div>
+
+  <div id="resultadosExt" style="display:none">
+    <div class="section-title ext">Consultores externos · disponibles</div>
+    <div id="tablaExt"></div>
+  </div>
+
+  <div id="resultadosBusy" style="display:none">
+    <div class="section-title" style="color:#888;border-bottom-color:#ddd">Con skill pero sin capacidad libre</div>
+    <div id="tablaBusy"></div>
+  </div>
+
+  <div class="help">
+    <b>Cómo se calcula la disponibilidad</b> (definiciones tomadas del modelo
+    semántico de Replicon en el RAG — son las mismas usadas por Studio y los
+    reportes ejecutivos):
+    <ul style="margin:6px 0 0 18px">
+      <li><b>Skill / rating</b> — <code>fact_empleado_skills.skill_rating</code>:
+        evaluación de competencia del empleado en una skill, escala 1-5
+        (1 básico, 4 experto, 5 mentor). Para el match se usa el mejor rating
+        del consultor en la skill elegida.</li>
+      <li><b>Horas asignadas</b> — <code>consultor_asignacion.horas_asignadas</code>:
+        "Horas planificadas de asignación" (proviene de Replicon
+        ResourceAllocation). Incluye meses futuros marcados con
+        <code>estado='futuro'</code>.</li>
+      <li><b>Horas disponibles</b> — <code>costo_consultor_mensual.horas_disponibles</code>:
+        "Horas disponibles en el mes (típicamente ~160-168 h para Full-Time)".
+        Es la capacidad teórica del consultor, no descuenta ausencias.</li>
+      <li><b>Capacidad libre</b> = horas_disponibles − horas_asignadas. Si
+        el resultado es ≥ las horas requeridas, el consultor entra al match
+        como "disponible"; si no, aparece en "sin capacidad libre".</li>
+      <li><b>Tipo de empleado</b> — <code>fact_empleado_skills.tipo_empleado</code>:
+        clasificación interna del consultor. Se considera externo cuando el
+        valor contiene "External", "Contractor" u "Outsourcing"; el resto se
+        trata como interno.</li>
+      <li><b>Supervisor</b> — <code>fact_empleado_skills.supervisor</code>:
+        Revenue Manager o jefe directo del consultor.</li>
+    </ul>
+    <p style="margin-top:10px;color:#666;font-size:11.5px">
+      Las celdas <b>asignadas / libre</b> de cada mes leen los datasets
+      <code>consultor_asignacion</code> y <code>costo_consultor_mensual</code>
+      en el mes correspondiente — el mes objetivo va resaltado en verde si
+      la capacidad libre alcanza las horas requeridas, rojo si no.
+    </p>
+  </div>
+</div>
+
+<script>
+let SKILLS = [];
+let ASIG   = [];
+let CAP    = [];
+let EMP    = [];
+
+async function init() {
+  try {
+    const [s, a, c, e] = await Promise.all([
+      fetch('/api/data/fact_empleado_skills').then(r => r.json()),
+      fetch('/api/data/consultor_asignacion').then(r => r.json()),
+      fetch('/api/data/costo_consultor_mensual').then(r => r.json()),
+      fetch('/api/data/empleados_maestro').then(r => r.json()),
+    ]);
+    SKILLS = s || []; ASIG = a || []; CAP = c || []; EMP = e || [];
+    poblarFiltros();
+  } catch (err) {
+    document.getElementById('error').innerHTML =
+      `<div class="error">❌ Error cargando datos: ${err.message}</div>`;
+  }
+}
+
+function poblarFiltros() {
+  const skillSel = document.getElementById('skill');
+  const cats = [...new Set(SKILLS.map(r => r.skill_name).filter(Boolean))].sort();
+  skillSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+
+  // Default month: prefer current month if there's capacity data for it,
+  // else the most recent month present in CAP.
+  const mesInput = document.getElementById('mes');
+  const meses = [...new Set(CAP.map(r => (r.mes || '').slice(0, 7)).filter(Boolean))].sort();
+  const hoy = new Date().toISOString().slice(0, 7);
+  mesInput.value = meses.includes(hoy) ? hoy : (meses[meses.length - 1] || hoy);
+}
+
+function renderSkillsCell(skills) {
+  if (!skills || !skills.length) return '<span style="color:#aaa">—</span>';
+  const top = skills.slice(0, 4);
+  const rest = skills.length - top.length;
+  const chips = top.map(s => {
+    const rv = Math.round(s.rating);
+    const colors = {1:'#d32f2f',2:'#f57c00',3:'#689f38',4:'#388e3c',5:'#1b5e20'};
+    const bg = colors[rv] || '#888';
+    return `<span style="display:inline-block;font-size:10px;padding:1px 6px;margin:1px 3px 1px 0;border-radius:8px;background:${bg};color:#fff;white-space:nowrap" title="${s.name} · rating ${s.rating.toFixed(1)}">${s.name}</span>`;
+  }).join('');
+  const allList = skills.map(s => `${s.name} (${s.rating.toFixed(1)})`).join(', ');
+  const more = rest > 0
+    ? `<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;background:#eee;color:#555;cursor:help" title="${allList}">+${rest}</span>`
+    : '';
+  return `<div style="max-width:280px;line-height:1.7" title="${allList}">${chips}${more}</div>`;
+}
+
+function ratingPill(r) {
+  if (r == null) return '—';
+  const v = Math.round(Number(r));
+  return `<span class="rating-pill r-${v}">${Number(r).toFixed(1)}</span>`;
+}
+
+function buscar() {
+  const skillCat   = document.getElementById('skill').value;
+  const mes        = document.getElementById('mes').value;
+  const horasReq   = Number(document.getElementById('horas').value) || 0;
+  const ratingMin  = Number(document.getElementById('rating').value) || 1;
+
+  if (!skillCat || !mes) return;
+
+  // 1. Empleados con el skill al rating mínimo (toma mejor rating del empleado en el skill).
+  // Además construimos un catálogo completo de todos los skills por usuario
+  // (skill → mejor rating) para mostrarlo como columna informativa.
+  const skillByUser     = new Map();
+  const allSkillsByUser = new Map();
+  for (const r of SKILLS) {
+    const key = (r.usuario || '').toLowerCase().trim();
+    if (!key) continue;
+    const rt = Number(r.skill_rating);
+    // 1a. catálogo completo de skills del consultor (cualquier rating).
+    if (r.skill_name && isFinite(rt)) {
+      if (!allSkillsByUser.has(key)) allSkillsByUser.set(key, new Map());
+      const m = allSkillsByUser.get(key);
+      if (!m.has(r.skill_name) || m.get(r.skill_name) < rt) m.set(r.skill_name, rt);
+    }
+    // 1b. match contra el skill buscado.
+    if (r.skill_name !== skillCat) continue;
+    if (!isFinite(rt) || rt < ratingMin) continue;
+    if (!skillByUser.has(key) || skillByUser.get(key).rating < rt) {
+      skillByUser.set(key, {
+        rating: rt,
+        name: r.usuario,
+        tipo: r.tipo_empleado || 'Unknown',
+        supervisor: r.supervisor || '',
+      });
+    }
+  }
+
+  // Mes objetivo + 3 siguientes ("YYYY-MM").
+  const monthsAhead = nextMonths(mes, 4);
+
+  // 2. Horas asignadas por (consultor, mes) — para todos los meses analizados.
+  const asigByUserMonth = new Map();  // key: `${user}|${YYYY-MM}` → horas
+  for (const a of ASIG) {
+    const m = (a.mes || '').slice(0, 7);
+    if (!monthsAhead.includes(m)) continue;
+    const key = (a.consultor || a.username || '').toLowerCase().trim();
+    if (!key) continue;
+    const k = `${key}|${m}`;
+    asigByUserMonth.set(k, (asigByUserMonth.get(k) || 0) + (Number(a.horas_asignadas) || 0));
+  }
+
+  // 3. Capacidad disponible por (consultor, mes).
+  // El gold costo_consultor_mensual sólo cubre hasta el mes actual; para
+  // meses futuros caemos a un default FT (160 h) — el usuario lo ve avisado.
+  const FT_DEFAULT_HOURS = 160;
+  const capByUserMonth = new Map();
+  for (const c of CAP) {
+    const m = (c.mes || '').slice(0, 7);
+    if (!monthsAhead.includes(m)) continue;
+    const key = (c.username || c.nombre_completo || '').toLowerCase().trim();
+    if (!key) continue;
+    capByUserMonth.set(`${key}|${m}`, Number(c.horas_disponibles) || 0);
+  }
+  // Convenience accessors for the target month
+  const asigByUser = new Map();
+  const capByUser  = new Map();
+  for (const [k, v] of asigByUserMonth) if (k.endsWith('|' + mes)) asigByUser.set(k.split('|')[0], v);
+  for (const [k, v] of capByUserMonth)  if (k.endsWith('|' + mes)) capByUser.set(k.split('|')[0], v);
+
+  // 4. Tipo (interno/externo) y departamento desde empleados_maestro.
+  const empByUser = new Map();
+  for (const e of EMP) {
+    const key = (e.usuario || '').toLowerCase().trim();
+    if (!key) continue;
+    empByUser.set(key, {
+      tipo: (e.tipo_empleado || 'Unknown'),
+      departamento: e.departamento || '',
+      nombre: e.usuario,
+    });
+  }
+
+  // 5. Cruzar. tipo_empleado y departamento ya vienen en fact_empleado_skills.
+  const filas = [];
+  let usedFallbackCapacity = false;
+  for (const [key, s] of skillByUser.entries()) {
+    // Forward projection per next 4 months.
+    const proyeccion = monthsAhead.map(m => {
+      const a = asigByUserMonth.get(`${key}|${m}`) || 0;
+      let d = capByUserMonth.get(`${key}|${m}`);
+      let estimated = false;
+      if (d == null || d === 0) {
+        d = FT_DEFAULT_HOURS;
+        estimated = true;
+        usedFallbackCapacity = true;
+      }
+      return { mes: m, asignadas: a, disponibles: d, libre: Math.max(0, d - a), estimated };
+    });
+    const target = proyeccion[0];
+    const asignadas   = target.asignadas;
+    const disponibles = target.disponibles;
+    const libre       = target.libre;
+    const emp         = empByUser.get(key);
+    const allSkills = allSkillsByUser.get(key) || new Map();
+    const skillsList = [...allSkills.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([n, r]) => ({ name: n, rating: r }));
+    filas.push({
+      consultor:  s.name,
+      supervisor: s.supervisor || '',
+      tipo:       s.tipo,
+      rating:     s.rating,
+      asignadas,
+      disponibles,
+      libre,
+      cubre: libre >= horasReq,
+      proyeccion,
+      skillsList,
+    });
+  }
+
+  const isExterno = f => /externo|external|contractor|outsourcing/i.test(f.tipo);
+  const internos = filas.filter(f => !isExterno(f) && f.cubre)
+                        .sort((a,b) => b.rating - a.rating || b.libre - a.libre);
+  const externos = filas.filter(f => isExterno(f)  && f.cubre)
+                        .sort((a,b) => b.rating - a.rating || b.libre - a.libre);
+  const sinCap   = filas.filter(f => !f.cubre)
+                        .sort((a,b) => b.rating - a.rating || b.libre - a.libre);
+
+  document.getElementById('stats').style.display = 'grid';
+  document.getElementById('kpi-int').textContent   = internos.length;
+  document.getElementById('kpi-ext').textContent   = externos.length;
+  document.getElementById('kpi-total').textContent = filas.length;
+  document.getElementById('kpi-no').textContent    = sinCap.length;
+
+  renderTabla('tablaInt',  internos, monthsAhead, 'No hay consultores internos con capacidad libre para esas horas en ' + mes + '.');
+  renderTabla('tablaExt',  externos, monthsAhead, 'No hay consultores externos con capacidad libre para esas horas en ' + mes + '.');
+  renderTabla('tablaBusy', sinCap,   monthsAhead, 'Todos los que tienen el skill cubren las horas pedidas — sin "ocupados".');
+  document.getElementById('resultadosInt').style.display  = '';
+  document.getElementById('resultadosExt').style.display  = '';
+  document.getElementById('resultadosBusy').style.display = '';
+
+  // Aviso si tuvimos que estimar capacidad para algún mes futuro.
+  const errEl = document.getElementById('error');
+  if (usedFallbackCapacity) {
+    errEl.innerHTML = `<div style="background:#fff8e1;color:#8a6d3b;padding:10px 14px;border-radius:6px;margin-bottom:18px;font-size:12.5px;border:1px solid #ffe082">
+      ⚠ Algunos meses no tienen <code>horas_disponibles</code> calculadas en
+      <code>costo_consultor_mensual</code> (solo hay datos hasta el mes en curso).
+      Para esos meses se asumió <b>${FT_DEFAULT_HOURS} h FT estándar</b>; el valor
+      real puede variar según ausencias, contrato parcial o feriados. Las celdas
+      estimadas aparecen marcadas con <i>~</i>.
+    </div>`;
+  } else {
+    errEl.innerHTML = '';
+  }
+}
+
+function nextMonths(start, n) {
+  // start = "YYYY-MM"
+  const [y, m] = start.split('-').map(Number);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(Date.UTC(y, m - 1 + i, 1));
+    out.push(d.toISOString().slice(0, 7));
+  }
+  return out;
+}
+
+function renderTabla(elId, filas, months, emptyMsg) {
+  const el = document.getElementById(elId);
+  if (!filas.length) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+
+  const monthCols = months.map(m =>
+    `<th style="text-align:right" title="Asignadas / Libre en ${m}">${m}</th>`
+  ).join('');
+
+  el.innerHTML = `
+    <table class="results">
+      <thead><tr>
+        <th>Consultor</th><th>Otros skills</th><th>Supervisor</th><th>Rating</th>
+        ${monthCols}
+      </tr></thead>
+      <tbody>
+        ${filas.map(f => {
+          const cells = f.proyeccion.map((p, i) => {
+            const target = (i === 0);
+            const tilde = p.estimated ? '~' : '';
+            const txt = `${tilde}${p.asignadas.toFixed(0)} / ${p.libre.toFixed(0)}`;
+            const style = target ? 'font-weight:700;color:#333' : 'color:#666';
+            const bg    = (target && f.cubre) ? 'background:#e8f5e9' :
+                          (target && !f.cubre) ? 'background:#ffebee' : '';
+            const tip = `Asignadas ${p.asignadas.toFixed(1)} / Disponibles ${p.disponibles.toFixed(1)}${p.estimated ? ' (estimadas FT)' : ''} / Libre ${p.libre.toFixed(1)}`;
+            return `<td style="text-align:right;${style};${bg}" title="${tip}">${txt}</td>`;
+          }).join('');
+          const skillsCell = renderSkillsCell(f.skillsList);
+          return `<tr>
+            <td><b>${f.consultor}</b></td>
+            <td>${skillsCell}</td>
+            <td>${f.supervisor || '—'}</td>
+            <td>${ratingPill(f.rating)}</td>
+            ${cells}
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <div style="font-size:11px;color:#888;margin-top:4px">Cada celda muestra <b>asignadas / libre</b> para el mes. El mes objetivo está resaltado (verde = cubre las horas, rojo = no las cubre).</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

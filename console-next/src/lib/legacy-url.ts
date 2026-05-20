@@ -13,13 +13,14 @@
  * This module exports a single ``legacyConsoleUrl(path)`` helper
  * that:
  *   - rejects anything that isn't http(s)://
- *   - falls back to the documented ``http://localhost:8000``
- *     default if the env value fails validation
+ *   - falls back to the same-origin /legacy redirector if the env
+ *     value fails validation, avoiding localhost links in deployed
+ *     builds without baking an AWS hostname into the client bundle
  *   - guarantees the returned string starts with the validated
  *     base so downstream renderers don't have to defend on their
  *     own.
  */
-const DEFAULT_LEGACY = "http://localhost:8000";
+const DEFAULT_LEGACY = "/legacy";
 
 
 function validateBase(raw: string | undefined | null): string {
@@ -38,7 +39,7 @@ function validateBase(raw: string | undefined | null): string {
   if (typeof console !== "undefined") {
     // eslint-disable-next-line no-console
     console.warn(
-      "[legacy-url] NEXT_PUBLIC_LEGACY_CONSOLE_URL rejected, falling back to localhost",
+      "[legacy-url] NEXT_PUBLIC_LEGACY_CONSOLE_URL rejected; using deployment-safe fallback",
       { raw: trimmed },
     );
   }

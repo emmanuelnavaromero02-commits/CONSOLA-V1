@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import os
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "replicon"
 
+    database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
+    gold_database_url_override: str | None = Field(default=None, alias="GOLD_DATABASE_URL")
+
     # Replicon API
     replicon_base_url:      str   = "https://na5.replicon.com/analytics"
-    replicon_api_token:     str | None = None
+    replicon_api_token:     str | None = os.environ.get("REPLICON_API_TOKEN") or os.environ.get("REPLICON_TOKEN")
     replicon_poll_interval: float = 2.0
     replicon_poll_timeout:  int   = 300
 
@@ -45,19 +49,8 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        # Sprint v1.40.2: respect the DATABASE_URL env var first. The
-        # OMEGA compose passes
-        # ``postgresql+psycopg2://omega_cartridge_replicon:<pwd>@postgres:5432/modecissions``
-        # there, and pre-v1.40.2 this getter ignored it and rebuilt
-        # the URL from ``pg_user=postgres`` / ``pg_password=postgres``
-        # defaults, which made the cartridge try to log in as the
-        # postgres superuser and fail asyncpg auth in a restart loop.
-        # The override stays opt-in: dev runs without DATABASE_URL
-        # still hit the legacy field-based path so the original ZIP
-        # contract is intact.
-        env_url = os.environ.get("DATABASE_URL", "").strip()
-        if env_url:
-            return env_url
+        if self.database_url_override and self.database_url_override.strip():
+            return self.database_url_override
         return (
             f"postgresql+psycopg2://{self.pg_user}:{self.pg_password}"
             f"@{self.pg_host}:{self.pg_port}/{self.pg_db}"
@@ -65,9 +58,8 @@ class Settings(BaseSettings):
 
     @property
     def gold_database_url(self) -> str:
-        env_url = os.environ.get("GOLD_DATABASE_URL", "").strip()
-        if env_url:
-            return env_url
+        if self.gold_database_url_override and self.gold_database_url_override.strip():
+            return self.gold_database_url_override
         return (
             f"postgresql+psycopg2://{self.pg_user}:{self.pg_password}"
             f"@postgres_gold:5433/{self.pg_db}_gold"
@@ -75,11 +67,7 @@ class Settings(BaseSettings):
 
     @property
     def asyncpg_dsn(self) -> str:
-        """asyncpg-compatible DSN — drops the SQLAlchemy ``+psycopg2``
-        driver hint that asyncpg refuses to parse."""
-        return self.database_url.replace(
-            "postgresql+psycopg2://", "postgresql://"
-        )
+        return self.database_url.replace("postgresql+psycopg2://", "postgresql://")
 
     @property
     def resolved_minio(self) -> dict:

@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resource Availability</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{--bg:#0d1117;--bg2:#161b22;--border:#30363d;--text1:#e6edf3;--text2:#8b949e;--green:#3fb950;--blue:#7c9fff;--amber:#d29922;--red:#f85149}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text1);font-family:'Share Tech Mono',monospace,sans-serif;min-height:100vh}
+h1{font-size:14px;letter-spacing:3px;color:var(--blue);padding:24px 28px 0}
+.subtitle{font-size:10px;color:var(--text2);letter-spacing:2px;padding:4px 28px 16px}
+.controls{padding:0 28px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+label{font-size:10px;color:var(--text2);letter-spacing:1px}
+select,input{background:var(--bg2);border:1px solid var(--border);color:var(--text1);padding:6px 10px;font-size:11px;font-family:inherit;border-radius:3px}
+.kpis{display:flex;gap:12px;padding:0 28px 18px;flex-wrap:wrap}
+.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:14px 18px;min-width:150px}
+.kpi-lbl{font-size:9px;color:var(--text2);letter-spacing:2px;margin-bottom:5px}
+.kpi-val{font-size:20px;color:var(--blue)}
+.section{margin:0 28px 24px}
+.section-title{font-size:10px;letter-spacing:2px;color:var(--text2);border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:10px}
+th{text-align:right;padding:7px 8px;color:var(--text2);font-size:9px;letter-spacing:.8px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg2)}
+th.left{text-align:left}
+td{text-align:right;padding:6px 8px;border-bottom:1px solid #1e2430;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.left{text-align:left;color:var(--text1)}
+tr.total td{font-weight:700;background:var(--bg2);border-top:2px solid var(--blue)}
+.chart-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:16px;margin-bottom:18px;height:340px}
+.placeholder{text-align:center;padding:60px 20px;color:var(--text2);font-size:11px}
+.spinner{display:inline-block;width:11px;height:11px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin-right:5px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.help{margin:0 28px 24px;padding:14px 18px;background:var(--bg2);border:1px solid var(--border);border-radius:5px;font-size:11px;color:var(--text2);line-height:1.6}
+.help b{color:var(--text1)}
+</style>
+</head>
+<body>
+<h1>◆ RESOURCE AVAILABILITY</h1>
+<div class="subtitle">FTE · Horas · % Utilización — pasado: horas facturables · futuro: horas asignadas</div>
+
+<div class="controls">
+  <label>Agrupar por:</label>
+  <select id="groupBy" onchange="render()">
+    <option value="revenue_manager">Revenue Manager / Supervisor</option>
+    <option value="tipo_empleado">Tipo de Empleado</option>
+    <option value="tipo_de_proveedor">Tipo de Proveedor</option>
+  </select>
+  <label>Métrica chart:</label>
+  <select id="metric" onchange="renderChart()">
+    <option value="fte">FTE (168 h)</option>
+    <option value="horas" selected>Horas</option>
+    <option value="pct">% Utilización</option>
+  </select>
+  <label>Meses:</label>
+  <select id="window" onchange="render()">
+    <option value="6">±6</option>
+    <option value="12" selected>±12</option>
+    <option value="24">±24</option>
+  </select>
+</div>
+
+<div id="placeholder" class="placeholder"><span class="spinner"></span> Cargando…</div>
+<div id="main" style="display:none">
+  <div class="kpis" id="kpis"></div>
+  <div class="section">
+    <div class="section-title">EVOLUCIÓN MENSUAL</div>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </div>
+  <div class="section">
+    <div class="section-title">TABLA — Horas / FTE / % por mes</div>
+    <div id="tbl" style="overflow-x:auto"></div>
+  </div>
+  <div class="help">
+    <b>Cómo se calcula</b><br>
+    · <b>Horas</b> — para meses pasados: <code>SUM(horas_facturables)</code> del grupo. Para mes actual y futuro: <code>SUM(horas_asignadas)</code>.<br>
+    · <b>FTE</b> = Horas / 168 (capacidad mensual estándar full-time, según el modelo semántico).<br>
+    · <b>% Utilización</b> = Horas / (consultores únicos del grupo en el mes × 168) × 100.<br>
+    · Fuente: dataset gold <code>consultor_asignacion</code> (incluye <code>tipo_empleado</code> y <code>tipo_de_proveedor</code> tras el enrichment con <code>replicon_user_latest</code>).
+  </div>
+</div>
+
+<script>
+const HOURS_PER_FTE = 168;
+let DATA = [];
+let chartInst = null;
+
+const fmt = n => (+n||0).toLocaleString('es-MX',{maximumFractionDigits:1});
+const fmtH = n => fmt(n) + ' h';
+const fmtF = n => (+n||0).toFixed(1);
+const fmtP = n => (+n||0).toFixed(1) + '%';
+const monthLabel = m => { const p=String(m).slice(0,7).split('-'); const mo=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']; return `${mo[+p[1]]} ${p[0].slice(2)}`; };
+
+async function init() {
+  try {
+    const r = await fetch('/api/data/consultor_asignacion');
+    DATA = await r.json();
+    if (!Array.isArray(DATA)) DATA = [];
+  } catch(e) {
+    document.getElementById('placeholder').textContent = 'Error: ' + e.message;
+    return;
+  }
+  document.getElementById('placeholder').style.display='none';
+  document.getElementById('main').style.display='';
+  render();
+}
+
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+function activeMonths() {
+  const w = +document.getElementById('window').value || 12;
+  const cur = currentMonth();
+  const [cy, cm] = cur.split('-').map(Number);
+  const list = [];
+  for (let i = -w + 1; i <= w; i++) {
+    const d = new Date(Date.UTC(cy, cm - 1 + i, 1));
+    list.push(d.toISOString().slice(0,7));
+  }
+  return list;
+}
+
+function aggregate() {
+  const groupCol = document.getElementById('groupBy').value;
+  const months   = activeMonths();
+  const cur      = currentMonth();
+  // grid: group -> month -> {hours, users:Set}
+  const grid = new Map();
+  const monthSet = new Set(months);
+  for (const r of DATA) {
+    const m = String(r.mes).slice(0,7);
+    if (!monthSet.has(m)) continue;
+    const g = (r[groupCol] || '— Sin valor —').trim() || '— Sin valor —';
+    const isPast = m < cur;
+    const hrs = isPast ? (+r.horas_facturables || 0) : (+r.horas_asignadas || 0);
+    if (!grid.has(g)) grid.set(g, new Map());
+    const row = grid.get(g);
+    if (!row.has(m)) row.set(m, { hrs:0, users:new Set() });
+    const cell = row.get(m);
+    cell.hrs += hrs;
+    if (r.consultor) cell.users.add(r.consultor);
+  }
+  return { grid, months, cur };
+}
+
+function render() {
+  const { grid, months, cur } = aggregate();
+  renderKPIs(grid, months, cur);
+  renderTable(grid, months, cur);
+  renderChart();
+}
+
+function renderKPIs(grid, months, cur) {
+  // Aggregate for the current month over all groups
+  let curHrs = 0, curUsers = new Set();
+  for (const row of grid.values()) {
+    const c = row.get(cur);
+    if (!c) continue;
+    curHrs += c.hrs;
+    c.users.forEach(u => curUsers.add(u));
+  }
+  const curFTE = curHrs / HOURS_PER_FTE;
+  const cap = curUsers.size * HOURS_PER_FTE;
+  const pct = cap > 0 ? (curHrs / cap * 100) : 0;
+  const html = [
+    {l:'Horas (mes actual)', v: fmtH(curHrs)},
+    {l:'FTE (mes actual)',   v: fmtF(curFTE)},
+    {l:'% Utilización',      v: fmtP(pct)},
+    {l:'Consultores',        v: curUsers.size},
+    {l:'Grupos',             v: grid.size},
+  ].map(k => `<div class="kpi"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+  document.getElementById('kpis').innerHTML = html;
+}
+
+function renderTable(grid, months, cur) {
+  const groups = [...grid.keys()].sort();
+  const head = '<tr><th class="left">Grupo</th>' +
+    months.map(m => `<th>${monthLabel(m)}</th>`).join('') +
+    '<th>Σ Horas</th><th>Σ FTE</th></tr>';
+
+  const subHead = '<tr style="font-size:8px;color:var(--text2)"><th class="left"></th>' +
+    months.map(()=>'<th>H / FTE / %</th>').join('') + '<th></th><th></th></tr>';
+
+  const totals = months.map(() => ({hrs:0, users:new Set()}));
+  let grandHrs = 0, grandUsers = new Set();
+
+  const rows = groups.map(g => {
+    const row = grid.get(g);
+    let sumH = 0;
+    const cells = months.map((m,i) => {
+      const c = row.get(m);
+      const h = c ? c.hrs : 0;
+      const fte = h / HOURS_PER_FTE;
+      const cap = (c ? c.users.size : 0) * HOURS_PER_FTE;
+      const pct = cap > 0 ? (h / cap * 100) : 0;
+      totals[i].hrs += h;
+      if (c) c.users.forEach(u => totals[i].users.add(u));
+      sumH += h;
+      if (h) c && c.users && c.users.forEach(u => grandUsers.add(u));
+      const isFuture = m >= cur;
+      const dot = isFuture ? '' : '<span style="color:var(--green);opacity:.6">·</span>';
+      const bg = pct >= 100 ? 'rgba(248,81,73,.18)' :
+                 pct >= 80  ? 'rgba(63,185,80,.18)' :
+                 pct >= 40  ? 'rgba(210,153,34,.12)' :
+                 pct >  0   ? 'rgba(124,159,255,.10)' : '';
+      return `<td style="background:${bg}" title="${monthLabel(m)} · ${cap.toFixed(0)} h capacidad">
+        <div>${fmt(h)}</div>
+        <div style="color:var(--text2);font-size:9px">${fmtF(fte)} · ${fmtP(pct)}</div>
+      </td>`;
+    });
+    grandHrs += sumH;
+    const sumFTE = sumH / HOURS_PER_FTE;
+    return `<tr>
+      <td class="left">${escapeHtml(g)}</td>
+      ${cells.join('')}
+      <td><b>${fmt(sumH)}</b></td>
+      <td>${fmtF(sumFTE)}</td>
+    </tr>`;
+  }).join('');
+
+  const totRow = '<tr class="total"><td class="left">TOTAL</td>' +
+    totals.map((t,i) => {
+      const cap = t.users.size * HOURS_PER_FTE;
+      const pct = cap > 0 ? (t.hrs / cap * 100) : 0;
+      return `<td><div>${fmt(t.hrs)}</div><div style="color:var(--text2);font-size:9px">${fmtF(t.hrs/HOURS_PER_FTE)} · ${fmtP(pct)}</div></td>`;
+    }).join('') +
+    `<td>${fmt(grandHrs)}</td><td>${fmtF(grandHrs/HOURS_PER_FTE)}</td></tr>`;
+
+  document.getElementById('tbl').innerHTML =
+    `<table><thead>${head}${subHead}</thead><tbody>${rows}${totRow}</tbody></table>`;
+}
+
+function renderChart() {
+  const metric = document.getElementById('metric').value;
+  const { grid, months, cur } = aggregate();
+  const groups = [...grid.keys()].sort();
+  const labels = months.map(monthLabel);
+
+  const palette = ['#7c9fff','#3fb950','#d29922','#f85149','#bc8cff','#39c5cf','#ff79c6','#50fa7b','#ffb86c','#8be9fd','#bd93f9','#ff5555'];
+  const datasets = groups.map((g, i) => {
+    const row = grid.get(g);
+    const data = months.map(m => {
+      const c = row.get(m);
+      const h = c ? c.hrs : 0;
+      if (metric === 'horas') return h;
+      if (metric === 'fte')   return h / HOURS_PER_FTE;
+      const cap = (c ? c.users.size : 0) * HOURS_PER_FTE;
+      return cap > 0 ? (h / cap * 100) : 0;
+    });
+    return {
+      label: g,
+      data,
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '33',
+      tension: .25,
+      borderWidth: 2,
+      pointRadius: 3,
+    };
+  });
+
+  if (chartInst) chartInst.destroy();
+  const yLabel = metric === 'horas' ? 'Horas' : metric === 'fte' ? 'FTE (168 h)' : '% Utilización';
+  const fmtMetric = v => metric === 'horas' ? fmt(v)+' h' : metric === 'fte' ? fmtF(v) : fmtP(v);
+  chartInst = new Chart(document.getElementById('chart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { color:'#8b949e', font:{size:9}, padding:8, boxWidth:12 } },
+        tooltip: {
+          backgroundColor:'rgba(0,0,0,.85)', titleFont:{size:11}, bodyFont:{size:10}, padding:10,
+          callbacks: {
+            label: ctx => {
+              const h = (grid.get(ctx.dataset.label).get(months[ctx.dataIndex]) || {hrs:0,users:new Set()});
+              const cap = h.users.size * HOURS_PER_FTE;
+              const pct = cap > 0 ? (h.hrs/cap*100) : 0;
+              return ` ${ctx.dataset.label}: ${fmt(h.hrs)} h · ${fmtF(h.hrs/HOURS_PER_FTE)} FTE · ${fmtP(pct)}`;
+            },
+          }
+        },
+      },
+      scales: {
+        x: { ticks: { color:'#8b949e', font:{size:9} }, grid: { color:'#1e2430' } },
+        y: { ticks: { color:'#8b949e', font:{size:9}, callback: v => metric==='pct'? v+'%': v }, grid: { color:'#1e2430' }, title:{display:true, text:yLabel, color:'#8b949e', font:{size:10}} },
+      }
+    }
+  });
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+init();
+</script>
+</body>
+</html>

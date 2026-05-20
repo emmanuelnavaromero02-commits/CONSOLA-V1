@@ -6,9 +6,10 @@
 <title>P&L Ejecutivo</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-  :root{--bg:#f6f8fa;--bg2:#ffffff;--border:#d0d7de;--text1:#1f2328;--text2:#656d76;--blue:#0969da;--green:#1a7f37;--red:#cf222e;--amber:#9a6700}
+  :root{--bg:#f5f7fa;--bg2:#ffffff;--bg3:#eef2f7;--border:#d8dee8;--text:#0f172a;--text2:#334155;--blue:#0a6ed1;--green:#117a3d;--red:#b3261e;--amber:#b06d00;--danger-soft:rgba(179,38,30,.08);--on-primary:#fff}
+  :root[data-theme="dark"]{--bg:#0f1822;--bg2:#182331;--bg3:#1f2c3d;--border:rgba(226,232,240,.14);--text:#e6edf6;--text2:#c5cfdc;--blue:#4ea3e0;--green:#4cb27b;--red:#e0716b;--amber:#d4a042;--danger-soft:rgba(224,113,107,.14);--on-primary:#0f172a}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text1);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;padding:24px}
+  body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;padding:24px}
   h1{font-size:18px;letter-spacing:1px;color:var(--blue);margin-bottom:2px}
   .sub{font-size:11px;color:var(--text2);margin-bottom:18px}
   .panel{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:16px}
@@ -16,8 +17,8 @@
   .controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
   .field{display:flex;flex-direction:column;gap:4px;min-width:140px}
   .field label{font-size:10px;color:var(--text2);letter-spacing:.5px;text-transform:uppercase}
-  .field select,.field input{background:var(--bg);border:1px solid var(--border);color:var(--text1);padding:6px 10px;font-size:12px;border-radius:4px;font-family:inherit}
-  .btn{background:var(--blue);color:#fff;border:none;padding:7px 18px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.5px;text-transform:uppercase}
+  .field select,.field input{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-size:12px;border-radius:4px;font-family:inherit}
+  .btn{background:var(--blue);color:var(--on-primary);border:none;padding:7px 18px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.5px;text-transform:uppercase}
   .btn:disabled{opacity:.5;cursor:not-allowed}
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
   .kpi{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px 14px}
@@ -27,11 +28,11 @@
   table{width:100%;border-collapse:collapse;font-size:11px}
   th{text-align:right;padding:7px 9px;color:var(--text2);font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border)}
   th.left{text-align:left}
-  td{text-align:right;padding:6px 9px;border-bottom:1px solid #eef0f3}
+  td{text-align:right;padding:6px 9px;border-bottom:1px solid var(--border)}
   td.left{text-align:left;color:var(--text2)}
-  tr:hover td{background:#fafbfc}
+  tr:hover td{background:var(--bg3)}
   .placeholder{text-align:center;padding:48px 20px;color:var(--text2);font-size:12px;line-height:1.7}
-  .err{color:var(--red);font-size:11px;padding:8px 12px;background:#fef2f2;border-radius:4px;border:1px solid #fecaca;margin-top:8px}
+  .err{color:var(--red);font-size:11px;padding:8px 12px;background:var(--danger-soft);border-radius:4px;border:1px solid var(--red);margin-top:8px}
   .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
   @keyframes spin{to{transform:rotate(360deg)}}
   canvas{max-height:260px}
@@ -187,14 +188,16 @@ function renderTable(months) {
 
 function renderChart(months) {
   const ctx = $('chart').getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const color = (name) => css.getPropertyValue(name).trim();
   if (chartInst) chartInst.destroy();
   chartInst = new Chart(ctx, {
     data: {
       labels: months.map((m) => m.mes),
       datasets: [
-        { type: 'bar',  label: 'Revenue',       data: months.map((m) => m.revenue_usd),      backgroundColor: '#0969da', yAxisID: 'y' },
-        { type: 'bar',  label: 'Margen bruto',  data: months.map((m) => m.margen_bruto_usd), backgroundColor: '#1a7f37', yAxisID: 'y' },
-        { type: 'line', label: '% Margen',      data: months.map((m) => m.margen_pct),       borderColor: '#9a6700', backgroundColor: '#9a6700', yAxisID: 'y1', tension: 0.25 },
+        { type: 'bar',  label: 'Revenue',       data: months.map((m) => m.revenue_usd),      backgroundColor: color('--blue'), yAxisID: 'y' },
+        { type: 'bar',  label: 'Margen bruto',  data: months.map((m) => m.margen_bruto_usd), backgroundColor: color('--green'), yAxisID: 'y' },
+        { type: 'line', label: '% Margen',      data: months.map((m) => m.margen_pct),       borderColor: color('--amber'), backgroundColor: color('--amber'), yAxisID: 'y1', tension: 0.25 },
       ],
     },
     options: {
@@ -248,5 +251,6 @@ async function runQuery() {
 $('btn-run').addEventListener('click', runQuery);
 loadOptions();
 </script>
+  <script src="/static/js/theme-switch.js" defer></script>
 </body>
 </html>

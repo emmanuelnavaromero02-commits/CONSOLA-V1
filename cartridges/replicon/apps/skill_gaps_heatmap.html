@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skill Gaps por Manager — Heatmap Ejecutivo</title>
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js@2.26.0/dist/plotly.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+        }
+        select, input {
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 13px;
+            transition: border-color 0.3s;
+        }
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            padding: 8px 18px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        #heatmapContainer {
+            width: 100%;
+            min-height: 600px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 25px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+        .legend {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+            font-size: 13px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-box {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+        }
+        .critical { background-color: #d32f2f; }
+        .moderate { background-color: #f57c00; }
+        .ok { background-color: #388e3c; }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .tooltip-help {
+            margin-top: 24px;
+            padding: 16px 20px;
+            background: #f5f7fb;
+            border: 1px solid #e0e6ef;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #333;
+            line-height: 1.6;
+        }
+        .tooltip-help-title {
+            font-weight: 700;
+            font-size: 13px;
+            color: #444;
+            margin-bottom: 8px;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+        }
+        .tooltip-help ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .tooltip-help li {
+            padding: 4px 0;
+        }
+        .tooltip-help b {
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Skill Gaps por Manager — Heatmap Ejecutivo</h1>
+        <p class="subtitle">Análisis visual de brechas de competencias. Rojo = Crítica | Naranja = Moderada | Verde = OK</p>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="brechaFilter">Filtrar por Brecha:</label>
+                <select id="brechaFilter">
+                    <option value="">Todas</option>
+                    <option value="CRITICA">Crítica</option>
+                    <option value="MODERADA">Moderada</option>
+                    <option value="SATISFACTORIA">Satisfactoria</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="managerFilter">Filtrar por Manager:</label>
+                <select id="managerFilter">
+                    <option value="">Todos</option>
+                </select>
+            </div>
+            <button onclick="aplicarFiltros()">🔍 Aplicar Filtros</button>
+            <button onclick="limpiarFiltros()">🔄 Limpiar</button>
+        </div>
+
+        <div id="error"></div>
+
+        <div class="stats-grid" id="statsGrid" style="margin-top:0;margin-bottom:25px"></div>
+
+        <div id="heatmapContainer" class="loading">Cargando datos...</div>
+
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-box critical"></div>
+                <span>Brecha Crítica (Rating < 2)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box moderate"></div>
+                <span>Brecha Moderada (Rating 2-3)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box ok"></div>
+                <span>Satisfactoria (Rating > 3)</span>
+            </div>
+        </div>
+
+        <div class="tooltip-help">
+            <div class="tooltip-help-title">Cómo leer el tooltip</div>
+            <ul>
+                <li><b>Rating Promedio</b> — Media (1-5) de las evaluaciones de skill del equipo del manager en esa categoría. Mayor es mejor; el color del cuadro refleja este valor.</li>
+                <li><b>Empleados con Skills</b> — Cuántos integrantes del equipo tienen al menos una evaluación registrada en esa categoría, sobre el total del equipo.</li>
+                <li><b>Sin Evaluación</b> — Integrantes del equipo que aún no tienen ninguna evaluación de skill en esa categoría (puntos ciegos).</li>
+                <li><b>Expertos</b> — Cuántos del equipo califican como experto (rating 4+) en esa categoría.</li>
+                <li><b>Mentores</b> — Cuántos del equipo están marcados como mentor (rating 5 + flag explícito).</li>
+                <li><b>Brecha</b> — Etiqueta de negocio derivada del rating promedio: <span style="color:#d32f2f"><b>Alta</b></span>, <span style="color:#f57c00"><b>Moderada</b></span> o <span style="color:#388e3c"><b>Satisfactoria</b></span>.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+
+        async function cargarDatos() {
+            try {
+                const response = await fetch('/api/data/analytic_skill_gap_by_manager');
+                const data = await response.json();
+                allData = data || [];
+                poblarFiltroManagers(allData);
+                renderizarHeatmap(allData);
+                renderizarStats(allData);
+            } catch (error) {
+                document.getElementById('error').innerHTML =
+                    `<div class="error">❌ Error cargando datos: ${error.message}</div>`;
+                console.error('Error:', error);
+            }
+        }
+
+        function poblarFiltroManagers(datos) {
+            const sel = document.getElementById('managerFilter');
+            const managers = [...new Set(datos.map(d => d.manager_name).filter(Boolean))].sort();
+            sel.innerHTML = '<option value="">Todos</option>' +
+                managers.map(m => `<option value="${m}">${m}</option>`).join('');
+        }
+
+        function calcularColor(brecha) {
+            if (!brecha) return '#ccc';
+            if (brecha === 'CRITICA') return '#d32f2f';
+            if (brecha === 'MODERADA') return '#f57c00';
+            if (brecha === 'SATISFACTORIA') return '#388e3c';
+            return '#ccc';
+        }
+
+        function renderizarHeatmap(datos) {
+            if (datos.length === 0) {
+                document.getElementById('heatmapContainer').innerHTML = 
+                    '<div class="loading">No hay datos disponibles</div>';
+                return;
+            }
+
+            // Agrupar por Manager y Skill Category
+            const managers = [...new Set(datos.map(d => d.manager_name))].sort();
+            const skills = [...new Set(datos.map(d => d.skill_category))].sort();
+
+            // Matriz de valores (promedio de rating)
+            const zValues = managers.map(mgr => 
+                skills.map(skill => {
+                    const filtered = datos.filter(d => d.manager_name === mgr && d.skill_category === skill);
+                    return filtered.length > 0 ? filtered[0].avg_rating || 0 : 0;
+                })
+            );
+
+            // Matriz de colores (basada en brecha_nivel)
+            const colorText = managers.map(mgr => 
+                skills.map(skill => {
+                    const filtered = datos.filter(d => d.manager_name === mgr && d.skill_category === skill);
+                    return filtered.length > 0 ? (filtered[0].brecha_nivel || 'N/A') : 'N/A';
+                })
+            );
+
+            // Hover text — use <br> (no slash) and hovertemplate so Plotly
+            // renders line breaks instead of showing the tag verbatim.
+            const hoverText = managers.map(mgr =>
+                skills.map(skill => {
+                    const filtered = datos.filter(d => d.manager_name === mgr && d.skill_category === skill);
+                    if (filtered.length === 0) return 'Sin datos';
+                    const row = filtered[0];
+                    return `<b>${row.manager_name}</b><br>` +
+                           `<i>${row.skill_category}</i><br>` +
+                           `Rating Promedio: <b>${row.avg_rating?.toFixed(2) || 'N/A'}</b><br>` +
+                           `Empleados con Skills: ${row.empleados_con_skills}/${row.total_empleados_en_equipo}<br>` +
+                           `Sin Evaluación: ${row.empleados_sin_evaluacion}<br>` +
+                           `Expertos: ${row.count_experts} · Mentores: ${row.count_mentors}<br>` +
+                           `Brecha: <b>${row.brecha_nivel}</b>`;
+                })
+            );
+
+            const trace = {
+                z: zValues,
+                x: skills,
+                y: managers,
+                type: 'heatmap',
+                colorscale: [
+                    [0, '#d32f2f'],      // Rojo crítico
+                    [0.4, '#f57c00'],    // Naranja moderado
+                    [0.7, '#ffd54f'],    // Amarillo leve
+                    [1, '#388e3c']       // Verde ok
+                ],
+                text: hoverText,
+                hovertemplate: '%{text}<extra></extra>',
+                colorbar: {
+                    title: 'Avg Rating',
+                    thickness: 15,
+                    len: 0.7
+                }
+            };
+
+            // Height grows with row count so Y labels never overlap.
+            const dynamicHeight = Math.max(420, managers.length * 32 + 200);
+
+            const layout = {
+                title: { text: 'Brechas de Skills por Revenue Manager', x: 0.5 },
+                xaxis: {
+                    side: 'bottom',
+                    tickangle: -45,
+                    automargin: true,
+                    tickfont: { size: 11 }
+                },
+                yaxis: {
+                    automargin: true,
+                    tickfont: { size: 11 }
+                },
+                // Small base margins — automargin grows them as needed for long labels.
+                margin: { l: 10, r: 30, t: 60, b: 10 },
+                height: dynamicHeight,
+                plot_bgcolor: '#f9f9f9',
+                paper_bgcolor: 'white'
+            };
+
+            const container = document.getElementById('heatmapContainer');
+            container.style.minHeight = dynamicHeight + 'px';
+            Plotly.newPlot('heatmapContainer', [trace], layout, {
+                responsive: true,
+                displaylogo: false
+            });
+        }
+
+        function renderizarStats(datos) {
+            const totalManagers = [...new Set(datos.map(d => d.manager_name))].length;
+            const totalSkills = [...new Set(datos.map(d => d.skill_category))].length;
+            const totalEmployees = datos.reduce((sum, d) => sum + d.total_empleados_en_equipo, 0);
+            const totalExperts = datos.reduce((sum, d) => sum + d.count_experts, 0);
+
+            const html = `
+                <div class="stat-card">
+                    <div class="stat-value">${totalManagers}</div>
+                    <div class="stat-label">Revenue Managers</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${totalSkills}</div>
+                    <div class="stat-label">Categorías de Skills</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${totalEmployees}</div>
+                    <div class="stat-label">Empleados Totales</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${totalExperts}</div>
+                    <div class="stat-label">Expertos Identificados</div>
+                </div>
+            `;
+            document.getElementById('statsGrid').innerHTML = html;
+        }
+
+        function aplicarFiltros() {
+            const brechaFilter  = document.getElementById('brechaFilter').value;
+            const managerFilter = document.getElementById('managerFilter').value;
+
+            let filtered = allData;
+            if (brechaFilter)  filtered = filtered.filter(d => d.brecha_nivel === brechaFilter);
+            if (managerFilter) filtered = filtered.filter(d => d.manager_name === managerFilter);
+
+            renderizarHeatmap(filtered);
+            renderizarStats(filtered);
+        }
+
+        function limpiarFiltros() {
+            document.getElementById('brechaFilter').value = '';
+            document.getElementById('managerFilter').value = '';
+            renderizarHeatmap(allData);
+            renderizarStats(allData);
+        }
+
+        // Cargar datos al iniciar
+        cargarDatos();
+    </script>
+</body>
+</html>

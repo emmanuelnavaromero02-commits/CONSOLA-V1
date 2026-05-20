@@ -1,0 +1,6 @@
+{
+  "name": "pnl_revenue_manager",
+  "title": "P&L por Revenue Manager",
+  "description": "P&L mensual ejecutivo por Revenue Manager, Cliente y Proyecto. KPIs de revenue, facturación, WIP, costo total y margen bruto. Año fiscal mar-feb. Revenue por tipo: FPP=avance×contrato; T&M/AMS On Demand=horas×tarifa; Iguala/AMS Baseline/BPO/CFDI-Timbrado=BillingItem del mes. Expande un proyecto para ver el desglose por consultor con selector de mes.",
+  "datasets_used": ["pnl_mensual", "pnl_detalle_consultor"]
+}

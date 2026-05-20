@@ -1,0 +1,6 @@
+{
+  "name": "consultor_horas_costos",
+  "title": "Consultor — Horas & Costos",
+  "description": "",
+  "datasets_used": ["consultor_mensual", "consultor_asignacion"]
+}

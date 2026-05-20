@@ -56,8 +56,8 @@ def _conn(gold: bool = False):
             host=settings.pg_gold_host,
             port=settings.pg_gold_port,
             dbname=settings.pg_gold_db,
-            user=settings.pg_user,
-            password=settings.pg_password,
+            user=settings.pg_gold_user or settings.pg_user,
+            password=settings.pg_gold_password or settings.pg_password,
         )
     return psycopg2.connect(
         host=settings.pg_host,

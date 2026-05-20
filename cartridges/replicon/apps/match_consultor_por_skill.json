@@ -1,0 +1,6 @@
+{
+  "name": "match_consultor_por_skill",
+  "title": "Match de Consultores por Skill",
+  "description": "Dado un skill, un volumen de horas y un mes objetivo, encuentra qué consultores internos o externos podrían atender la demanda, considerando su rating en la categoría, sus horas asignadas en el mes y su capacidad mensual disponible.",
+  "datasets_used": ["fact_empleado_skills", "consultor_asignacion", "costo_consultor_mensual", "empleados_maestro"]
+}

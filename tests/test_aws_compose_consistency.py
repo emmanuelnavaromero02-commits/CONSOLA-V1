@@ -332,10 +332,9 @@ def test_no_healthcheck_uses_localhost_string():
     both compose files so a future copy-paste can't reintroduce the
     regression for a different service.
 
-    Note: this guard explicitly only audits the healthcheck ``test``
-    string. ``CONSOLE_URL=http://localhost:8000`` env defaults stay
-    untouched — those drive BROWSER-side URLs where the user's machine
-    has full dual-stack resolution.
+    Note: this guard explicitly only audits healthcheck ``test`` strings.
+    Browser-visible AWS URLs are covered separately so production never
+    falls back to localhost.
     """
     bad: list[str] = []
     for path in (
@@ -351,6 +350,16 @@ def test_no_healthcheck_uses_localhost_string():
         "never ``localhost`` — IPv6-preferring resolvers + IPv4-only "
         "listeners produce silent unhealthy states. Offenders:\n  "
         + "\n  ".join(bad)
+    )
+
+
+def test_aws_compose_does_not_default_public_urls_to_localhost():
+    """AWS browser-visible URLs must come from deploy env, never localhost."""
+    src = AWS.read_text(encoding="utf-8")
+    assert "localhost" not in src, (
+        "AWS compose must not contain localhost fallbacks. Public URLs "
+        "should come from CONSOLE_URL / WORKSPACE_PUBLIC_URL / *_PUBLIC_URL, "
+        "and internal calls should use compose service DNS."
     )
 
 

@@ -16,6 +16,7 @@ from app.registry import tool
 _AUTH = (settings.airflow_user, settings.airflow_password)
 _BASE = settings.airflow_url.rstrip("/")
 _DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
+_CARTRIDGE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,13 @@ def _validate_dag_id(dag_id: str) -> str:
     if not _DAG_ID_RE.fullmatch(dag_id):
         raise ValueError("Invalid dag_id: use letters, numbers and underscores only, starting with a letter")
     return dag_id
+
+
+def _validate_cartridge_id(cartridge_id: str) -> str:
+    cartridge_id = (cartridge_id or "").strip()
+    if not _CARTRIDGE_ID_RE.fullmatch(cartridge_id):
+        raise ValueError("Invalid cartridge_id: use letters, numbers and underscores only, starting with a letter")
+    return cartridge_id
 
 
 def _dag_file_path(dag_id: str) -> Path:
@@ -186,13 +194,16 @@ async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> d
                              "description": "Cartridge this DAG belongs to (e.g. 'replicon'). "
                                             "Enables auto-registration and source storage."},
             "description":  {"type": "string", "description": "Short description shown in Studio"},
+            "dag_params_example": {"type": "object",
+                             "description": "Optional default JSON shown as a template in Studio's dag_params editor."},
         },
         "required": ["dag_id", "code"],
     },
 )
 async def airflow_create_dag(dag_id: str, code: str,
                               cartridge_id: str | None = None,
-                              description: str | None = None) -> dict:
+                              description: str | None = None,
+                              dag_params_example: dict | None = None) -> dict:
     # v1.43.4 (Codex H1): double-gate. APP_ENV must be a dev variant
     # AND ALLOW_RCE_TOOLS must be explicitly set. Either gate alone
     # was demonstrably bypassable: APP_ENV gets flipped to debug
@@ -228,37 +239,92 @@ async def airflow_create_dag(dag_id: str, code: str,
     )
     path.write_text(code, encoding="utf-8")
 
+    sched_match = re.search(
+        r"schedule_interval\s*=\s*("
+        r"None|"
+        r"\"\"\"([^\"]*)\"\"\"|"
+        r"'''([^']*)'''|"
+        r"\"([^\"]*)\"|"
+        r"'([^']*)'"
+        r")",
+        code,
+    )
+    cron_value: str | None = None
+    trigger_type = "manual"
+    if sched_match:
+        whole = sched_match.group(1)
+        if whole == "None":
+            trigger_type = "manual"
+        else:
+            cron_value = next((g for g in sched_match.groups()[1:] if g is not None), None)
+            trigger_type = "scheduled" if cron_value else "manual"
+
+    entities_synced = 0
+    registered = False
+
     # Auto-register in cartridge_dags and save source if cartridge_id provided
-    if cartridge_id:
-        try:
-            import psycopg2
-            from app.config import settings as s
-            conn = psycopg2.connect(
-                host=s.pg_host, port=s.pg_port, dbname=s.pg_db,
-                user=s.pg_user, password=s.pg_password,
-            )
-            with conn.cursor() as cur:
+    try:
+        import json as _json
+        import psycopg2
+        from app.config import settings as s
+
+        conn = psycopg2.connect(
+            host=s.pg_host, port=s.pg_port, dbname=s.pg_db,
+            user=s.pg_user, password=s.pg_password,
+        )
+        with conn.cursor() as cur:
+            if cartridge_id:
+                ex_json = _json.dumps(dag_params_example) if dag_params_example is not None else None
                 # Solo registra si el cartucho ya existe — nunca crea cartuchos nuevos
                 cur.execute("SELECT 1 FROM cartridges WHERE id = %s", (cartridge_id,))
                 if cur.fetchone():
                     cur.execute(
                         """INSERT INTO cartridge_dags
-                               (cartridge_id, dag_id, file, description, source_code, updated_at)
-                           VALUES (%s, %s, %s, %s, %s, NOW())
+                               (cartridge_id, dag_id, file, description, source_code,
+                                dag_params_example, updated_at)
+                           VALUES (%s, %s, %s, %s, %s, COALESCE(%s::jsonb, '{}'::jsonb), NOW())
                            ON CONFLICT (cartridge_id, dag_id) DO UPDATE
-                           SET file        = EXCLUDED.file,
-                               description = COALESCE(EXCLUDED.description, cartridge_dags.description),
-                               source_code = EXCLUDED.source_code,
-                               updated_at  = NOW()""",
-                        (cartridge_id, dag_id, f"{dag_id}.py", description, code),
+                           SET file               = EXCLUDED.file,
+                               description        = COALESCE(EXCLUDED.description, cartridge_dags.description),
+                               source_code        = EXCLUDED.source_code,
+                               dag_params_example = CASE
+                                   WHEN %s::jsonb IS NULL THEN cartridge_dags.dag_params_example
+                                   ELSE EXCLUDED.dag_params_example
+                               END,
+                               updated_at         = NOW()""",
+                        (cartridge_id, dag_id, f"{dag_id}.py", description, code, ex_json, ex_json),
                     )
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass  # DAG file is already written; DB registration is best-effort
+                    registered = True
+
+            if cron_value is not None:
+                cur.execute(
+                    """UPDATE entity_config
+                          SET trigger_type    = %s,
+                              cron_expression = %s
+                        WHERE dag_id = %s""",
+                    (trigger_type, cron_value, dag_id),
+                )
+                entities_synced = cur.rowcount
+            else:
+                cur.execute(
+                    """UPDATE entity_config
+                          SET trigger_type = CASE
+                              WHEN cron_expression IS NOT NULL THEN 'scheduled'
+                              ELSE 'manual' END
+                        WHERE dag_id = %s""",
+                    (dag_id,),
+                )
+                entities_synced = cur.rowcount
+        conn.commit()
+        conn.close()
+    except Exception:
+        # DAG file is already written; DB registration/sync is best-effort.
+        pass
 
     return {"created": str(path), "dag_id": dag_id, "bytes": len(code.encode()),
-            "registered": bool(cartridge_id)}
+            "registered": registered,
+            "schedule": {"trigger_type": trigger_type, "cron": cron_value,
+                         "entities_synced": entities_synced}}
 
 
 @tool(
@@ -268,17 +334,49 @@ async def airflow_create_dag(dag_id: str, code: str,
         "type": "object",
         "properties": {
             "dag_id": {"type": "string"},
+            "cartridge_id": {"type": "string"},
         },
         "required": ["dag_id"],
     },
 )
-async def airflow_delete_dag(dag_id: str) -> dict:
+async def airflow_delete_dag(dag_id: str, cartridge_id: str | None = None) -> dict:
     if not _is_development():
         raise PermissionError(
             "airflow_delete_dag is disabled outside development because "
             "deleting DAGs is a destructive operation."
         )
+    if not _rce_tools_explicitly_enabled():
+        raise PermissionError(
+            "airflow_delete_dag refuses to run without explicit "
+            "ALLOW_RCE_TOOLS=true. APP_ENV=development is not enough; the "
+            "second opt-in protects destructive Airflow operations."
+        )
     dag_id = _validate_dag_id(dag_id)
+    safe_cartridge_id = _validate_cartridge_id(cartridge_id) if cartridge_id else None
+    if safe_cartridge_id:
+        try:
+            import psycopg2
+            from app.config import settings as s
+            conn = psycopg2.connect(
+                host=s.pg_host, port=s.pg_port, dbname=s.pg_db,
+                user=s.pg_user, password=s.pg_password,
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM cartridge_dags WHERE dag_id = %s AND cartridge_id = %s",
+                    (dag_id, safe_cartridge_id),
+                )
+                owned = cur.fetchone() is not None
+            conn.close()
+            if not owned:
+                raise PermissionError(
+                    f"airflow_delete_dag refuses to delete '{dag_id}' because it is not "
+                    f"registered for cartridge '{safe_cartridge_id}'."
+                )
+        except PermissionError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("Could not verify DAG cartridge ownership before delete") from exc
     path = _dag_file_path(dag_id)
     deleted_file = False
     if path.exists():
@@ -300,12 +398,23 @@ async def airflow_delete_dag(dag_id: str) -> dict:
             user=s.pg_user, password=s.pg_password,
         )
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM cartridge_dags WHERE dag_id = %s", (dag_id,))
+            if safe_cartridge_id:
+                cur.execute(
+                    "DELETE FROM cartridge_dags WHERE dag_id = %s AND cartridge_id = %s",
+                    (dag_id, safe_cartridge_id),
+                )
+            else:
+                cur.execute("DELETE FROM cartridge_dags WHERE dag_id = %s", (dag_id,))
         conn.commit()
         conn.close()
     except Exception:
         pass
-    return {"dag_id": dag_id, "deleted_file": deleted_file, "deleted_db": deleted_db}
+    return {
+        "dag_id": dag_id,
+        "cartridge_id": safe_cartridge_id,
+        "deleted_file": deleted_file,
+        "deleted_db": deleted_db,
+    }
 
 
 @tool(

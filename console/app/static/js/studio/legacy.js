@@ -5,13 +5,23 @@ import { state } from './legacy-state.js';
     // migrated to addEventListener.
     window.state = state;
 
-    // Apply saved theme
-    document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-
-    // S3/MinIO bucket — viene de /api/config; default cubre dev local.
+    // Runtime URLs — vienen de /api/config para no acoplar la UI a localhost.
     fetch('/api/config').then(r => r.json())
-      .then(d => { if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket; })
+      .then(d => {
+        if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket;
+        if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = d.airflow_url.replace(/\/+$/, '');
+        if (d.superset_url) state.SUPERSET_PUBLIC_URL = d.superset_url.replace(/\/+$/, '');
+      })
       .catch(() => {});
+
+    function airflowDagUrl(dagId) {
+      const base = state.AIRFLOW_PUBLIC_URL;
+      return base ? `${base}/dags/${encodeURIComponent(dagId)}/grid` : '#';
+    }
+
+    function supersetUrl() {
+      return state.SUPERSET_PUBLIC_URL || '#';
+    }
 
     function readCookie(name) {
       const prefix = `${name}=`;
@@ -34,6 +44,41 @@ import { state } from './legacy-state.js';
       return csrf ? {'X-CSRF-Token': csrf} : {};
     }
 
+    function currentCartridgeId() {
+      return state._currentCartridge?.id
+        || document.getElementById('ds-ed-cart')?.value.trim()
+        || document.getElementById('cartridge-sel')?.value
+        || '';
+    }
+
+    function currentEditorSources() {
+      const entity = _currentEditorEntity();
+      const cart = currentCartridgeId();
+      return entity && cart ? [`raw/${cart}/${entity}`] : [];
+    }
+
+    function entityDomId(entity) {
+      return String(entity || '').replace(/[^A-Za-z0-9_-]/g, ch => `_${ch.charCodeAt(0).toString(16)}_`);
+    }
+
+    async function jsonOrThrow(response) {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.detail || data.error) {
+        throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function friendlyError(payload, fallback) {
+      if (!payload) return fallback || 'Acción fallida';
+      if (typeof payload === 'string') return payload;
+      return payload.detail || payload.error || payload.message || payload.reason || fallback || 'Acción fallida';
+    }
+
+    function ragSelectedKinds() {
+      const value = document.getElementById('rag-kind-filter')?.value || '';
+      return value ? [value] : null;
+    }
 
 
 
@@ -59,6 +104,7 @@ import { state } from './legacy-state.js';
       try {
         const r = await fetch(`/studio/cartridges/${encodeURIComponent(id)}`);
         state._currentCartridge = await r.json();
+        try { localStorage.setItem('studio.selectedCartridge', id); } catch(_) {}
         _updateCartridgeInfo();
         _refreshStudioMiniHeader();
         const sel = document.getElementById('cartridge-sel');
@@ -120,9 +166,9 @@ import { state } from './legacy-state.js';
       if (state.currentStep === 1) renderCartridges();
     };
 
-    export async function exportCartridge() {
-      if (!state._currentCartridge) return;
-      const id = state._currentCartridge.id;
+    export async function exportCartridge(id = null) {
+      id = id || state._currentCartridge?.id || '';
+      if (!id) return;
       window.open(`/studio/cartridges/${encodeURIComponent(id)}/export`, '_blank');
     }
 
@@ -208,7 +254,7 @@ import { state } from './legacy-state.js';
           }.`;
         aiSend();
       } catch(e) {
-        statusEl.innerHTML = `<span style="color:#ff2d55">Error: ${esc(e.message)}</span>`;
+        statusEl.innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
       }
     }
 
@@ -247,6 +293,7 @@ import { state } from './legacy-state.js';
     }
 
     export async function goStep(n) {
+      closeStudioOverlays();
       state.currentStep = n;
       state.aiHistory = [];
       document.body.classList.toggle('studio-modern-summary-active', n === 1);
@@ -254,7 +301,7 @@ import { state } from './legacy-state.js';
       _refreshStudioMiniHeader();
 
       // Update step nav UI
-      for (let i = 1; i <= 6; i++) {
+      for (let i = 1; i <= 7; i++) {
         const el = document.getElementById(`si-${i}`);
         if (!el) continue;
         el.classList.toggle('active', i === n);
@@ -282,6 +329,13 @@ import { state } from './legacy-state.js';
         case 6: await renderSemantic(); break;
         case 7: await renderRAG();      break;
       }
+    }
+
+    function closeStudioOverlays() {
+      document.getElementById('cat-rel-modal')?.style && (document.getElementById('cat-rel-modal').style.display = 'none');
+      document.getElementById('sql-runner-overlay')?.style && (document.getElementById('sql-runner-overlay').style.display = 'none');
+      document.getElementById('dag-delete-dialog')?.remove();
+      document.getElementById('dag-rename-panel')?.remove();
     }
 
     // ── Step 1: Resumen ───────────────────────────────────────────────────────
@@ -337,7 +391,7 @@ import { state } from './legacy-state.js';
           </div>
           <div style="display:flex;gap:6px;margin-top:10px">
             <button class="btn btn-sm" onclick="event.stopPropagation();selectCartridge(${escJsArg(c.id)});goStep(3)" title="Ver entidades">Entidades →</button>
-            <button class="btn btn-sm" onclick="event.stopPropagation();exportCartridge()" title="Exportar ZIP">↓ ZIP</button>
+            <button class="btn btn-sm" onclick="event.stopPropagation();exportCartridge(${escJsArg(c.id)})" title="Exportar ZIP">↓ ZIP</button>
           </div>
         </div>`;
     }
@@ -405,11 +459,7 @@ import { state } from './legacy-state.js';
         const [semRes, runsRes, dagRes] = await Promise.all([
           fetch(`/api/studio/entities?cartridge=${encodeURIComponent(cartridge)}`),
           fetch(`/api/pipeline_runs?cartridge=${encodeURIComponent(cartridge)}&limit=200`).catch(() => null),
-          fetch('/api/mcp/invoke', {
-            method: 'POST',
-            headers: jsonHeaders(),
-            body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
-          }).catch(() => null),
+          fetch(`/api/studio/dags?cartridge=${encodeURIComponent(cartridge)}`).catch(() => null),
         ]);
 
         const d        = await semRes.json();
@@ -435,9 +485,10 @@ import { state } from './legacy-state.js';
         let dagOptions = [];
         if (dagRes?.ok) {
           const dagData = await dagRes.json();
-          dagOptions = (dagData.result?.dags || [])
+          const registered = new Set((state._currentCartridge?.dags || []).map(d => d.dag_id).filter(Boolean));
+          dagOptions = (dagData.dags || dagData.result?.dags || [])
             .map(d => d.dag_id)
-            .filter(id => id.startsWith(cartridge + '_'))
+            .filter(id => id.startsWith(cartridge + '_') || registered.has(id))
             .sort();
         }
 
@@ -454,7 +505,7 @@ import { state } from './legacy-state.js';
           </div>`;
         if (restoreNewEntityRow) showAddEntityRow();
       } catch(e) {
-        area.innerHTML = `<div class="empty-card" style="color:#ff2d55">Error: ${esc(e.message)}</div>`;
+        area.innerHTML = `<div class="empty-card" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
         if (restoreNewEntityRow) showAddEntityRow();
       }
     }
@@ -491,7 +542,7 @@ import { state } from './legacy-state.js';
       const displayInput = `
         <input type="text" value="${esc(displayRaw)}" placeholder="Nombre legible"
                style="width:100%;height:20px;font-size:9px;font-family:var(--font-mono);
-                      background:var(--bg2);color:var(--text1);border:1px solid var(--border);
+                      background:var(--bg2);color:var(--text);border:1px solid var(--border);
                       padding:0 4px;box-sizing:border-box"
                onchange="patchEntityField(${escJsArg(cartridge)},${escJsArg(rawName)},'display_name',this.value,this)">`;
 
@@ -503,33 +554,56 @@ import { state } from './legacy-state.js';
           <option value="incremental" ${modeRaw==='incremental' ?'selected':''}>incremental</option>
         </select>`;
 
-      // DAG select
-      const dagOpts = dagOptions.length
-        ? dagOptions.map(d => `<option value="${esc(d)}" ${d===dagRaw?'selected':''}>${esc(d)}</option>`).join('')
-        : `<option value="${esc(dagRaw)}">${esc(dagRaw)||'—'}</option>`;
+      // DAG select — agrupa DAGs propios vs platform compartidos.
+      function renderDagOptions(opts, selected) {
+        if (!opts.length) return `<option value="${esc(selected)}">${esc(selected) || '—'}</option>`;
+        const dagOwners = new Map((state._currentCartridge?.dags || []).map(d => [d.dag_id, d.cartridge_id || cartridge]));
+        const own = [];
+        const shared = [];
+        for (const id of opts) (dagOwners.get(id) === cartridge || id.startsWith(cartridge + '_') ? own : shared).push(id);
+        const opt = id => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(id)}</option>`;
+        let html = '';
+        if (own.length) html += `<optgroup label="Propios (${esc(cartridge)})">${own.map(opt).join('')}</optgroup>`;
+        if (shared.length) html += `<optgroup label="Compartidos (platform)">${shared.map(opt).join('')}</optgroup>`;
+        return html;
+      }
       const dagInput = `
         <select style="width:100%;height:22px;font-size:10px;padding:0 4px;font-family:var(--font-mono);color:var(--green)"
                 onchange="patchEntityField(${escJsArg(cartridge)},${escJsArg(rawName)},'dag_id',this.value,this)">
-          ${dagOpts}
+          ${renderDagOptions(dagOptions, dagRaw)}
         </select>`;
 
-      // Schedule button
+      // Schedule editor — cron por entidad. Vacío = manual.
+      const schedTip = "Cron por entidad. Vacío = manual. Ejemplos: */5 * * * * / 0 6 * * * / 0 9 * * MON";
       const schedBtn = `
-        <button class="btn btn-sm ${isScheduled?'btn-active':''}"
-                style="${isScheduled?'color:var(--green);border-color:var(--green)':''}"
-                title="${isScheduled?'Programado: '+cronRaw:'Manual'}"
-                onclick="toggleEntitySchedule(${escJsArg(cartridge)},${escJsArg(rawName)},${escJsArg(triggerType)},${escJsArg(cronRaw)})">
-          ${isScheduled ? '⏱ '+esc(cronRaw) : '⏱ manual'}
-        </button>`;
+        <input type="text" value="${esc(cronRaw)}" placeholder="manual"
+               title="${esc(schedTip)}"
+               style="width:108px;height:22px;font-size:10px;padding:0 6px;font-family:var(--font-mono);
+                      background:var(--bg2);color:${isScheduled?'var(--green)':'var(--text3)'};
+                      border:1px solid ${isScheduled?'var(--green)':'var(--border)'};box-sizing:border-box"
+               onkeydown="if(event.key==='Enter'){this.blur();}"
+               onchange="patchEntityCron(${escJsArg(cartridge)},${escJsArg(rawName)},this.value,this)">`;
 
-      const extractBtnId = `ebtn-${rawName.replace(/\W/g,'_')}`;
+      const safeEntityId = entityDomId(rawName);
+      const extractBtnId = `ebtn-${safeEntityId}`;
       const extractBtn = isExtracting
         ? `<button class="btn btn-sm" id="${extractBtnId}" disabled style="color:var(--cyan)">⟳ ...</button>`
         : `<button class="btn btn-sm" id="${extractBtnId}"
+                   data-studio-action="extract"
+                   data-cartridge="${esc(cartridge)}"
+                   data-entity="${esc(rawName)}"
+                   data-mode="${esc(modeRaw)}"
+                   data-dag-id="${esc(dagRaw)}"
                    onclick="extractNow(${escJsArg(cartridge)},${escJsArg(rawName)},${escJsArg(modeRaw)},${escJsArg(dagRaw)})">► Extraer</button>`;
+      const dagParamsObj = (e.dag_params && typeof e.dag_params === 'object') ? e.dag_params : {};
+      const hasParams = Object.keys(dagParamsObj).length > 0;
+      const dagParamsBtn = `
+        <button class="btn btn-sm" title="dag_params (JSON pasado a dag_run.conf)"
+                style="${hasParams?'color:var(--amber);border-color:var(--amber)':''}"
+                onclick='openDagParamsEditor(${JSON.stringify(cartridge)},${JSON.stringify(rawName)},${JSON.stringify(dagParamsObj)})'>⚙</button>`;
 
       return `
-        <div class="et-row" id="erow-${rawName.replace(/\W/g,'_')}">
+        <div class="et-row" id="erow-${safeEntityId}">
           <span>
             <span class="et-name">${esc(name)}
               <button class="btn-sm" title="Renombrar entidad"
@@ -544,20 +618,148 @@ import { state } from './legacy-state.js';
           <span style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
             ${extractBtn}
             ${schedBtn}
+            ${dagParamsBtn}
             <button class="btn btn-sm" title="Vista Previa Bronze"
+                    data-studio-action="entity-preview"
+                    data-cartridge="${esc(cartridge)}"
+                    data-entity="${esc(rawName)}"
                     onclick="toggleEntityPreview(${escJsArg(cartridge)},${escJsArg(rawName)},this)">◉</button>
+            <button class="btn btn-sm" title="Re-indexar schema al RAG"
+                    style="color:var(--cyan);border-color:var(--cyan)"
+                    onclick="reindexSource('raw',${escJsArg(rawName)},${escJsArg(cartridge)},this)">↻ RAG</button>
             ${dagRaw ? `<button class="btn btn-sm" title="Editar DAG: ${esc(dagRaw)}"
                     style="color:var(--amber);border-color:var(--amber)"
+                    data-studio-action="open-dag-editor"
+                    data-dag-id="${esc(dagRaw)}"
                     onclick="openDagEditor(${escJsArg(dagRaw)})">✏ DAG</button>` : ''}
             ${run ? `<button class="btn btn-sm" title="Ver logs"
-                    style="${run.status!=='success'?'color:#ff2d55;border-color:#ff2d55':''}"
+                    style="${run.status!=='success'?'color:var(--red);border-color:var(--red)':''}"
+                    data-studio-action="entity-logs"
+                    data-cartridge="${esc(cartridge)}"
+                    data-entity="${esc(rawName)}"
                     onclick="toggleEntityLogs(${escJsArg(cartridge)},${escJsArg(rawName)},this)">
                       ⬡ Logs
                     </button>` : ''}
           </span>
         </div>
-        <div class="et-preview" id="eprev-${rawName.replace(/\W/g,'_')}" style="display:none"></div>
-        <div class="et-preview" id="elogs-${rawName.replace(/\W/g,'_')}" style="display:none"></div>`;
+        <div class="et-preview" id="eprev-${safeEntityId}" style="display:none"></div>
+        <div class="et-preview" id="elogs-${safeEntityId}" style="display:none"></div>`;
+    }
+
+    export async function reindexSource(kind, name, cartridge, btn) {
+      const original = btn ? btn.innerHTML : '';
+      if (btn) { btn.innerHTML = '⟳ ...'; btn.disabled = true; }
+      try {
+        const body = { kind, name };
+        if (cartridge) body.cartridge = cartridge;
+        const r = await fetch('/api/rag/reindex', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify(body),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
+        if (btn) {
+          btn.innerHTML = '✓ RAG';
+          setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1500);
+        }
+      } catch (e) {
+        alert('Error re-indexando: ' + e.message);
+        if (btn) { btn.innerHTML = original; btn.disabled = false; }
+      }
+    }
+
+    function _collectDagParamsTemplates() {
+      const out = {};
+      for (const d of (state._currentCartridge?.dags || [])) {
+        const ex = d.dag_params_example;
+        if (ex && typeof ex === 'object' && Object.keys(ex).length > 0) out[d.dag_id] = ex;
+      }
+      return out;
+    }
+
+    export function openDagParamsEditor(cartridge, entity, current) {
+      const templatesByDag = _collectDagParamsTemplates();
+      let effective = current || {};
+      if (Object.keys(effective).length === 0) {
+        const ent = (state._currentCartridge?.entities || []).find(e => (e.id || e.entity) === entity);
+        const dagId = ent?.dag_id;
+        if (dagId && templatesByDag[dagId]) effective = templatesByDag[dagId];
+      }
+      const back = document.createElement('div');
+      back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:200';
+      const templates = Object.keys(templatesByDag).length
+        ? Object.keys(templatesByDag).map(name =>
+            `<button class="btn btn-sm dpe-tpl" data-tpl="${esc(name)}">${esc(name)}</button>`
+          ).join('')
+        : '<span style="font-size:11px;color:var(--text3)">Sin plantillas registradas.</span>';
+      back.innerHTML = `
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;width:min(620px,92vw);max-height:90vh;overflow:auto">
+          <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center">
+            <strong style="color:var(--amber)">DAG_PARAMS · ${esc(entity)}</strong>
+            <span style="margin-left:auto;color:var(--text3);font-size:10px">se mezcla en dag_run.conf</span>
+          </div>
+          <div style="padding:16px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${templates}</div>
+            <textarea id="dpe-text" spellcheck="false" style="width:100%;min-height:220px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:10px;font-family:var(--font-mono);font-size:12px;border-radius:6px;box-sizing:border-box">${esc(JSON.stringify(effective, null, 2))}</textarea>
+            <div id="dpe-err" style="font-size:11px;color:var(--red);margin-top:8px;min-height:16px"></div>
+          </div>
+          <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-sm" id="dpe-cancel">Cancelar</button>
+            <button class="btn btn-sm btn-amber" id="dpe-save">Guardar</button>
+          </div>
+        </div>`;
+      document.body.appendChild(back);
+      back.querySelector('#dpe-cancel').addEventListener('click', () => back.remove());
+      back.addEventListener('click', (event) => { if (event.target === back) back.remove(); });
+      back.querySelectorAll('.dpe-tpl').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tpl = templatesByDag[btn.dataset.tpl];
+          if (tpl !== undefined) back.querySelector('#dpe-text').value = JSON.stringify(tpl, null, 2);
+        });
+      });
+      back.querySelector('#dpe-save').addEventListener('click', async () => {
+        const text = back.querySelector('#dpe-text').value;
+        const err = back.querySelector('#dpe-err');
+        let obj;
+        try { obj = JSON.parse(text); } catch (e) { err.textContent = 'JSON invalido: ' + e.message; return; }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+          err.textContent = 'Debe ser un objeto JSON.';
+          return;
+        }
+        const r = await fetch(
+          `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
+          { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ dag_params: obj }) },
+        );
+        if (!r.ok) { err.textContent = 'Error del servidor (' + r.status + ')'; return; }
+        if (state._currentCartridge?.entities) {
+          const ent = state._currentCartridge.entities.find(e => (e.id || e.entity) === entity);
+          if (ent) ent.dag_params = obj;
+        }
+        back.remove();
+        renderEntities();
+      });
+    }
+
+    export async function patchEntityCron(cartridge, entity, value, el) {
+      const cron = (value || '').trim();
+      const triggerType = cron ? 'scheduled' : 'manual';
+      el.style.borderColor = 'var(--cyan)';
+      try {
+        const r = await fetch(
+          `/studio/cartridges/${encodeURIComponent(cartridge)}/entities/${encodeURIComponent(entity)}`,
+          {
+            method: 'PATCH',
+            headers: jsonHeaders(),
+            body: JSON.stringify({ cron_expression: cron || null, trigger_type: triggerType }),
+          },
+        );
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        el.style.borderColor = cron ? 'var(--green)' : '';
+        el.style.color = cron ? 'var(--green)' : 'var(--text3)';
+      } catch (e) {
+        el.style.borderColor = 'var(--red)';
+      }
     }
 
     export async function patchEntityField(cartridge, entity, field, value, el) {
@@ -582,11 +784,11 @@ import { state } from './legacy-state.js';
           }
         } else {
           if (el.tagName === 'SELECT') el.value = prev; else el.value = prev;
-          el.style.borderColor = '#ff2d55';
+          el.style.borderColor = 'var(--red)';
         }
       } catch(e) {
         if (el.tagName === 'SELECT') el.value = prev; else el.value = prev;
-        el.style.borderColor = '#ff2d55';
+        el.style.borderColor = 'var(--red)';
       }
     }
 
@@ -694,7 +896,7 @@ import { state } from './legacy-state.js';
         <input id="ne-name" type="text" placeholder="NombreEntidad"
                style="height:22px;font-size:10px;font-family:var(--font-mono);background:var(--bg2);color:var(--amber);border:1px solid var(--border);padding:0 4px;width:100%;box-sizing:border-box">
         <input id="ne-display" type="text" placeholder="Nombre legible"
-               style="height:20px;font-size:9px;font-family:var(--font-mono);background:var(--bg2);color:var(--text1);border:1px solid var(--border);padding:0 4px;width:100%;box-sizing:border-box">
+               style="height:20px;font-size:9px;font-family:var(--font-mono);background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:0 4px;width:100%;box-sizing:border-box">
         <select id="ne-mode" style="width:100%;height:22px;font-size:10px;padding:0 4px">
           <option value="full">full</option>
           <option value="incremental">incremental</option>
@@ -705,11 +907,11 @@ import { state } from './legacy-state.js';
         <span style="display:flex;gap:5px">
           <button class="btn btn-sm" style="color:var(--green);border-color:var(--green)"
                   onclick="saveNewEntity(${escJsArg(cartridge)})">✓ Guardar</button>
-          <button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55"
+          <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
                   onclick="cancelNewEntity()">✕</button>
         </span>
         <textarea id="ne-spec" spellcheck="false"
-          style="grid-column:1/-1;min-height:84px;font-size:10px;font-family:var(--font-mono);background:var(--bg2);color:var(--text1);border:1px solid var(--border);padding:8px;box-sizing:border-box"
+          style="grid-column:1/-1;min-height:84px;font-size:10px;font-family:var(--font-mono);background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:8px;box-sizing:border-box"
           placeholder='{"fields":[{"name":"id","type":"string","primary_key":true}]}'></textarea>`;
 
       area.appendChild(row);
@@ -728,14 +930,10 @@ import { state } from './legacy-state.js';
       const sel = document.getElementById(selectId);
       if (!sel) return;
       try {
-        const r = await fetch('/api/mcp/invoke', {
-          method: 'POST',
-          headers: jsonHeaders(),
-          body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
-        });
+        const r = await fetch(`/api/studio/dags?cartridge=${encodeURIComponent(cartridge)}`);
         if (!r.ok) throw new Error();
         const data = await r.json();
-        const dags = (data.result?.dags || [])
+        const dags = (data.dags || [])
           .map(d => d.dag_id)
           .filter(id => id.startsWith(cartridge + '_'))
           .sort();
@@ -750,7 +948,7 @@ import { state } from './legacy-state.js';
     export async function saveNewEntity(cartridge) {
       const name = document.getElementById('ne-name')?.value?.trim();
       if (!name) {
-        document.getElementById('ne-name').style.borderColor = '#ff2d55';
+        document.getElementById('ne-name').style.borderColor = 'var(--red)';
         return;
       }
       const display = document.getElementById('ne-display')?.value?.trim() || null;
@@ -763,7 +961,7 @@ import { state } from './legacy-state.js';
           spec = JSON.parse(specRaw);
         } catch (e) {
           const specEl = document.getElementById('ne-spec');
-          if (specEl) specEl.style.borderColor = '#ff2d55';
+          if (specEl) specEl.style.borderColor = 'var(--red)';
           alert(`Spec JSON inválido: ${e.message}`);
           return;
         }
@@ -796,11 +994,11 @@ import { state } from './legacy-state.js';
           loadEntityList();   // refresh the full list
         } else {
           const msg = await r.text();
-          if (btn) { btn.textContent = '✓ Guardar'; btn.style.borderColor = '#ff2d55'; }
+          if (btn) { btn.textContent = '✓ Guardar'; btn.style.borderColor = 'var(--red)'; }
           alert(`Error al guardar: ${msg}`);
         }
       } catch(e) {
-        if (btn) { btn.textContent = '✓ Guardar'; btn.style.borderColor = '#ff2d55'; }
+        if (btn) { btn.textContent = '✓ Guardar'; btn.style.borderColor = 'var(--red)'; }
         alert(`Error: ${e.message}`);
       }
     }
@@ -812,7 +1010,7 @@ import { state } from './legacy-state.js';
 
     export async function extractNow(cartridge, entity, mode, dagId) {
       dagId = dagId || `${cartridge}_extract`;  // fallback if none assigned
-      const safeId = entity.replace(/\W/g,'_');
+      const safeId = entityDomId(entity);
       const btn    = document.getElementById(`ebtn-${safeId}`);
       const row    = document.getElementById(`erow-${safeId}`);
 
@@ -821,15 +1019,14 @@ import { state } from './legacy-state.js';
       _updateRunBadge(row, entity, 'extracting');
 
       try {
-        const r = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({
-            server: 'infra', tool: 'airflow_trigger_dag',
-            args: { dag_id: dagId, conf: { entity, mode: mode || 'incremental' } },
-          }),
+        const r = await fetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/extract`, {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ mode: mode || 'incremental', dag_id: dagId }),
         });
-        const d    = await r.json();
-        const runId = (d.result || d).dag_run_id || (d.result || d).run_id;
+        const d = await jsonOrThrow(r);
+        dagId = d.dag_id || dagId;
+        const runId = d.dag_run_id || d.run_id;
         if (!runId) throw new Error(JSON.stringify(d));
 
         // Poll pipeline_runs + Airflow run state in parallel
@@ -857,28 +1054,8 @@ import { state } from './legacy-state.js';
         await new Promise(res => setTimeout(res, 5000));
 
         // ── Check Airflow run state (fast path for failures) ──────────────────
-        if (dagId && runId) {
-          try {
-            const ar = await fetch('/api/mcp/invoke', {
-              method: 'POST', headers: jsonHeaders(),
-              body: JSON.stringify({ server: 'infra', tool: 'airflow_get_run_status',
-                                     args: { dag_id: dagId, dag_run_id: runId } }),
-            });
-            if (ar.ok) {
-              const ad = await ar.json();
-              const state = (ad.result || ad).state;
-              if (state === 'failed') {
-                _resetBtn();
-                _updateRunBadge(row, entity, 'fail', { error_message: 'DAG failed — ver logs ↓' });
-                await _showAirflowErrorLogs(safeId, dagId, runId, entity, cartridge);
-                return;
-              }
-              if (state === 'success') {
-                // Pipeline_run record may not yet be written — wait one more cycle
-              }
-            }
-          } catch(_) {}
-        }
+        // Status is refreshed through the pipeline run endpoints; this keeps
+        // Studio away from the admin-only generic MCP proxy.
 
         // ── Check pipeline_runs table ────────────────────────────────────────
         try {
@@ -886,7 +1063,12 @@ import { state } from './legacy-state.js';
           if (!r.ok) continue;
           const d   = await r.json();
           const run = (d.runs || [])[0];
-          const isNew = run && run.status !== 'running' && (
+          const status = String(run?.status || '').toLowerCase();
+          if (['queued', 'scheduled', 'running'].includes(status)) {
+            _updateRunBadge(row, entity, 'extracting');
+            continue;
+          }
+          const isNew = run && (
             !run.started_at ||
             run.started_at >= since ||
             run.run_id !== (state._runsByEntity[entity]?.run_id)
@@ -911,27 +1093,15 @@ import { state } from './legacy-state.js';
       panel.innerHTML = `<div class="et-preview-inner" style="color:var(--text3);font-size:11px">Cargando logs de Airflow...</div>`;
 
       try {
-        // List task instances to find the failed one
-        const ti = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({ server: 'infra', tool: 'airflow_list_task_instances',
-                                 args: { dag_id: dagId, dag_run_id: runId } }),
-        });
-        const tid = await ti.json();
-        const tasks = (tid.result || tid).task_instances || [];
-        const failed = tasks.find(t => t.state === 'failed') || tasks[0];
-        const taskId = failed?.task_id || 'ingest';
+        const lr = await fetch(
+          `/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/runs/${encodeURIComponent(runId)}/logs`
+        );
+        const ld = await jsonOrThrow(lr);
+        const failed = (ld.tasks || []).find(t => t.state === 'failed') || (ld.tasks || [])[0] || {};
+        const taskId = failed.task_id || ld.logs?.[0]?.task_id || 'extract';
+        const logs = (ld.logs || []).map(item => item.logs || item.error || '').filter(Boolean).join('\n\n') || ld.error || '';
 
-        // Get logs for the failed task
-        const lr = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({ server: 'infra', tool: 'airflow_get_task_logs',
-                                 args: { dag_id: dagId, dag_run_id: runId, task_id: taskId } }),
-        });
-        const ld = await lr.json();
-        const logs = (ld.result || ld).content || ld.logs || JSON.stringify(ld);
-
-        const airflowUrl = `http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid`;
+        const airflowUrl = airflowDagUrl(dagId);
         const prompt = [
           `Analiza el fallo del DAG **${dagId}** para la entidad **${entity}** del cartucho **${cartridge}**.`,
           ``,
@@ -944,7 +1114,7 @@ import { state } from './legacy-state.js';
 
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-stats">
-            <div class="preview-stat">Estado: <span style="color:#ff2d55">failed</span></div>
+            <div class="preview-stat">Estado: <span style="color:var(--red)">failed</span></div>
             <div class="preview-stat">DAG: <span>${esc(dagId)}</span></div>
             <div class="preview-stat">Tarea: <span>${esc(taskId)}</span></div>
             <div class="preview-stat">Run ID: <span style="font-size:9px">${esc(runId)}</span></div>
@@ -971,7 +1141,7 @@ import { state } from './legacy-state.js';
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-err">No se pudieron cargar los logs: ${esc(e.message)}</div>
-          <a href="http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid" target="_blank"
+          <a href="${esc(airflowDagUrl(dagId))}" target="_blank"
              class="btn btn-sm" style="color:var(--amber);border-color:var(--amber);text-decoration:none;margin-top:8px">
             ◈ Ver en Airflow
           </a>
@@ -991,20 +1161,20 @@ import { state } from './legacy-state.js';
         badgeEl.outerHTML = `<div class="run-badge"><span class="run-dot-ok">✓</span><span style="color:var(--text3)">${esc(date)}${recs}</span></div>`;
       } else if (state === 'fail' && data) {
         const err = typeof data === 'string' ? data : (data.error_message || 'failed');
-        const safeId = entity.replace(/\W/g,'_');
+        const safeId = entityDomId(entity);
         badgeEl.outerHTML = `<div class="run-badge" title="${esc(err)}" style="cursor:pointer"
           onclick="document.getElementById('elogs-${safeId}').style.display === 'none' ? document.getElementById('elogs-${safeId}').style.display='' : document.getElementById('elogs-${safeId}').style.display='none'">
-          <span class="run-dot-fail">✗</span><span style="color:#ff2d55">error ↕</span></div>`;
+          <span class="run-dot-fail">✗</span><span style="color:var(--red)">error ↕</span></div>`;
       } else if (state === 'error') {
         const msg = typeof data === 'string' ? data : 'error al disparar';
-        badgeEl.outerHTML = `<div class="run-badge" title="${esc(msg)}"><span class="run-dot-fail">✗</span><span style="color:#ff2d55">no iniciado</span></div>`;
+        badgeEl.outerHTML = `<div class="run-badge" title="${esc(msg)}"><span class="run-dot-fail">✗</span><span style="color:var(--red)">no iniciado</span></div>`;
       }
     }
 
     // ── Bronze preview ─────────────────────────────────────────────────────────
 
     export async function toggleEntityPreview(cartridge, entity, btn) {
-      const safeId  = entity.replace(/\W/g,'_');
+      const safeId  = entityDomId(entity);
       const panel   = document.getElementById(`eprev-${safeId}`);
       if (!panel) return;
 
@@ -1086,7 +1256,7 @@ import { state } from './legacy-state.js';
     // ── Entity logs panel ─────────────────────────────────────────────────────
 
     export async function toggleEntityLogs(cartridge, entity, btn) {
-      const safeId = entity.replace(/\W/g,'_');
+      const safeId = entityDomId(entity);
       const panel  = document.getElementById(`elogs-${safeId}`);
       if (!panel) return;
 
@@ -1134,17 +1304,17 @@ import { state } from './legacy-state.js';
           `Identifica la causa raíz y propón la corrección.`,
         ].filter(Boolean).join('\n');
 
-        const airflowUrl = `http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid`;
+        const airflowUrl = airflowDagUrl(dagId);
 
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-stats">
-            <div class="preview-stat">Estado: <span style="color:${isOk?'var(--green)':'#ff2d55'}">${esc(status)}</span></div>
+            <div class="preview-stat">Estado: <span style="color:${isOk?'var(--green)':'var(--red)'}">${esc(status)}</span></div>
             <div class="preview-stat">DAG: <span>${esc(dagId)}</span></div>
             <div class="preview-stat">Fecha: <span>${esc(startedAt)}</span></div>
             ${runId ? `<div class="preview-stat">Run ID: <span style="font-size:9px">${esc(runId)}</span></div>` : ''}
           </div>
-          ${errText ? `<div style="background:rgba(255,45,85,.08);border:1px solid #ff2d55;border-radius:3px;padding:8px 10px;margin-bottom:10px">
-            <div style="font-size:9px;color:#ff2d55;font-family:var(--font-ui);font-weight:600;margin-bottom:4px">ERROR</div>
+          ${errText ? `<div style="background:var(--danger-soft);border:1px solid var(--red);border-radius:3px;padding:8px 10px;margin-bottom:10px">
+            <div style="font-size:9px;color:var(--red);font-family:var(--font-ui);font-weight:600;margin-bottom:4px">ERROR</div>
             <pre style="margin:0;font-family:var(--font-mono);font-size:10px;color:#ff9999;white-space:pre-wrap;word-break:break-word">${esc(errText)}</pre>
           </div>` : ''}
           ${afLogs && afLogs !== '(sin logs)' ? `<div style="margin-bottom:10px">
@@ -1202,7 +1372,6 @@ import { state } from './legacy-state.js';
             <div class="tab-bar" style="flex-shrink:0;margin:0;display:flex;align-items:center">
               <div class="tab active" onclick="filterDS('bronze')">Bronze</div>
               <div class="tab" onclick="filterDS('silver')">Silver</div>
-              <div class="tab" onclick="filterDS('master')">Master</div>
               <div class="tab" onclick="filterDS('gold')">Gold</div>
             </div>
             <div id="ds-list-area" class="${state._activeLayer}-content empty-state"
@@ -1228,7 +1397,6 @@ import { state } from './legacy-state.js';
       const _visDS = _cart ? state._allDatasets.filter(d => d.cartridge === _cart) : state._allDatasets;
       const counts = {
         silver: _visDS.filter(d => d.layer === 'silver').length,
-        master: _visDS.filter(d => d.layer === 'master').length,
         gold:   _visDS.filter(d => d.layer === 'gold').length,
       };
 
@@ -1244,8 +1412,9 @@ import { state } from './legacy-state.js';
           <div class="step-title" style="flex-shrink:0;padding:14px 20px 10px;margin:0">
             <div>
               <h2 style="margin:0 0 2px">Refinamiento de Datos</h2>
-              <p class="step-desc" style="margin:0">Capas de refinamiento con snapshots, maestros y agregaciones listas para revisar.</p>
+              <p class="step-desc" style="margin:0">Capas raw, silver y gold listas para revisar.</p>
             </div>
+            <a class="btn btn-sm" href="/viewer/lineage${state._currentCartridge?.id ? '?cartridge='+encodeURIComponent(state._currentCartridge.id) : ''}" target="_blank" rel="noopener">Ver linaje</a>
           </div>
 
           <!-- Tab bar (shrinks to content) -->
@@ -1255,9 +1424,6 @@ import { state } from './legacy-state.js';
             </div>
             <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">
               SILVER <span style="opacity:.6">(${counts.silver})</span>
-            </div>
-            <div class="tab ${state._activeLayer==='master'?'active':''}" onclick="filterDS('master')">
-              MASTER <span style="opacity:.6">(${counts.master})</span>
             </div>
             <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">
               GOLD <span style="opacity:.6">(${counts.gold})</span>
@@ -1282,9 +1448,10 @@ import { state } from './legacy-state.js';
 
 
     export function filterDS(layer) {
+      if (layer === 'master') layer = 'gold';
       state._activeLayer = layer;
       document.querySelectorAll('#step-content .tab').forEach((t, i) => {
-        t.classList.toggle('active', ['bronze','silver','master','gold'][i] === layer);
+        t.classList.toggle('active', ['bronze','silver','gold'][i] === layer);
       });
       const btnNew = document.getElementById('btn-new-ds');
       if (btnNew) btnNew.style.display = layer === 'bronze' ? 'none' : '';
@@ -1400,6 +1567,7 @@ import { state } from './legacy-state.js';
     export function _dsEditorHtml({ name, layer, cartridge, entity, description, sql, isNew,
                               rowCount, lastRefresh }) {
       const bronzeSources = state._bronzeSources.filter(s => !cartridge || s.cartridge === cartridge);
+      const editorCartridge = cartridge || currentCartridgeId();
       const entityOpts = bronzeSources.map(s =>
         `<option value="${esc(s.entity)}" ${s.entity===entity?'selected':''}>${esc(s.entity)}</option>`
       ).join('');
@@ -1433,6 +1601,7 @@ import { state } from './legacy-state.js';
               ${esc(String(layer).toUpperCase())}
             </span>
             <input type="hidden" id="ds-ed-layer" value="${esc(layer)}">
+            <input type="hidden" id="ds-ed-cart" value="${esc(editorCartridge)}">
           </div>
 
           <!-- Meta row -->
@@ -1487,7 +1656,7 @@ import { state } from './legacy-state.js';
             <button class="btn" onclick="saveDS()">✓ Guardar</button>
             <button class="btn btn-amber" onclick="saveThenMaterialize()">✓⟳ Guardar y Materializar</button>
             ${!isNew ? `<button class="btn btn-sm" onclick="materializeDS(${escJsArg(name)})">⟳ Re-materializar</button>` : ''}
-            ${!isNew ? `<button class="btn btn-sm" style="color:#ff2d55;border-color:#ff2d55" onclick="deleteDS(${escJsArg(name)})">✕ Eliminar</button>` : ''}
+            ${!isNew ? `<button class="btn btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deleteDS(${escJsArg(name)})">✕ Eliminar</button>` : ''}
             <button class="btn btn-sm" style="margin-left:auto" onclick="sendDSToAI()">◈ Pedir ayuda a IA</button>
             <span id="ds-ed-status" style="font-size:10px;color:var(--text3)"></span>
           </div>
@@ -1601,10 +1770,8 @@ FROM silver_${entity || 'entity'}`;
       if (status) status.textContent = '⟳ ejecutando...';
       area.innerHTML = '';
       const t0 = Date.now();
-      // Resolve sources from the entity selector so {latest_date} can be injected
-      const entity  = _currentEditorEntity();
-      const cart    = document.getElementById('ds-ed-cart')?.value.trim();
-      const sources = entity && cart ? [`raw/${cart}/${entity}`] : [];
+      // Resolve sources from the entity selector so {latest_date} can be injected.
+      const sources = currentEditorSources();
       try {
         const r = await fetch('/api/bronze/query', {
           method: 'POST', headers: jsonHeaders(),
@@ -1615,7 +1782,7 @@ FROM silver_${entity || 'entity'}`;
         const result  = d.result || d;
         if (result.error) {
           if (status) status.textContent = '✗ error';
-          area.innerHTML = `<div style="color:#ff2d55;white-space:pre-wrap;font-size:11px;padding:8px 0">${esc(result.error)}</div>`;
+          area.innerHTML = `<div style="color:var(--red);white-space:pre-wrap;font-size:11px;padding:8px 0">${esc(result.error)}</div>`;
           return;
         }
         const rows   = result.data   || [];
@@ -1624,7 +1791,7 @@ FROM silver_${entity || 'entity'}`;
         area.innerHTML = _renderQueryTable(schema, rows, 300);
       } catch(e) {
         if (status) status.textContent = '✗ error de red';
-        area.innerHTML = `<div style="color:#ff2d55;font-size:11px;padding:8px 0">${esc(e.message)}</div>`;
+        area.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">${esc(e.message)}</div>`;
       }
     }
 
@@ -1649,10 +1816,10 @@ FROM silver_${entity || 'entity'}`;
       const desc    = document.getElementById('ds-ed-desc')?.value.trim() || '';
       const sql     = document.getElementById('ds-ed-sql')?.value.trim() || '';
       const status  = document.getElementById('ds-ed-status');
-      const cart    = state._currentCartridge?.id || '';
+      const cart    = currentCartridgeId();
 
-      if (!name) { if (status) status.innerHTML = '<span style="color:#ff2d55">Nombre requerido</span>'; return; }
-      if (!sql)  { if (status) status.innerHTML = '<span style="color:#ff2d55">SQL requerido</span>';    return; }
+      if (!name) { if (status) status.innerHTML = '<span style="color:var(--red)">Nombre requerido</span>'; return; }
+      if (!sql)  { if (status) status.innerHTML = '<span style="color:var(--red)">SQL requerido</span>';    return; }
 
       if (status) status.textContent = '⟳ guardando...';
       try {
@@ -1672,7 +1839,7 @@ FROM silver_${entity || 'entity'}`;
         selectDS(name);
         return name;   // for saveThenMaterialize
       } catch(e) {
-        if (status) status.innerHTML = `<span style="color:#ff2d55">✗ ${esc(e.message)}</span>`;
+        if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
         return null;
       }
     }
@@ -1698,12 +1865,12 @@ FROM silver_${entity || 'entity'}`;
         // Reload dataset data preview
         await loadDSDataPreview(name);
       } catch(e) {
-        if (status) status.innerHTML = `<span style="color:#ff2d55">✗ ${esc(e.message)}</span>`;
+        if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
       }
     }
 
     export async function deleteDS(name) {
-      if (!confirm(`¿Eliminar el dataset "${name}"?\n\nEsto borra el registro en Postgres, el Parquet en MinIO (silver/master) y la tabla en Postgres (master/gold). Esta acción no se puede deshacer.`)) return;
+      if (!confirm(`¿Eliminar el dataset "${name}"?\n\nEsto borra el registro en Postgres, el Parquet en MinIO (silver/gold) y la tabla en Postgres gold. Esta acción no se puede deshacer.`)) return;
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ eliminando...';
       try {
@@ -1712,7 +1879,7 @@ FROM silver_${entity || 'entity'}`;
           const txt = await r.text().catch(() => '');
           const err = (() => { try { return JSON.parse(txt); } catch { return {}; } })();
           const msg = err.detail || err.error || txt || `HTTP ${r.status}`;
-          if (status) status.innerHTML = `<span style="color:#ff2d55">✗ ${esc(msg)}</span>`;
+          if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(msg)}</span>`;
           console.error('deleteDS', r.status, txt);
           return;
         }
@@ -1722,7 +1889,7 @@ FROM silver_${entity || 'entity'}`;
         const panel = document.getElementById('ds-workspace-panel');
         if (panel) panel.innerHTML = `<div style="color:var(--text3);padding:20px;font-size:12px">Dataset <strong>${esc(name)}</strong> eliminado.</div>`;
       } catch(e) {
-        if (status) status.innerHTML = `<span style="color:#ff2d55">✗ ${esc(e.message)}</span>`;
+        if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
       }
     }
 
@@ -1860,7 +2027,7 @@ FROM silver_${entity || 'entity'}`;
         const result  = d.result || d;
         if (result.error) {
           if (statusEl) statusEl.textContent = `✗ error`;
-          if (resultsEl) resultsEl.innerHTML = `<div style="color:#ff2d55;white-space:pre-wrap;font-size:11px">${esc(result.error)}</div>`;
+          if (resultsEl) resultsEl.innerHTML = `<div style="color:var(--red);white-space:pre-wrap;font-size:11px">${esc(result.error)}</div>`;
           return;
         }
         const schema = result.schema || [];
@@ -1873,7 +2040,7 @@ FROM silver_${entity || 'entity'}`;
         resultsEl.innerHTML = _renderQueryTable(schema, rows, 320);
       } catch(e) {
         if (statusEl)  statusEl.textContent = '✗ error de red';
-        if (resultsEl) resultsEl.innerHTML  = `<div style="color:#ff2d55">${esc(e.message)}</div>`;
+        if (resultsEl) resultsEl.innerHTML  = `<div style="color:var(--red)">${esc(e.message)}</div>`;
       }
     }
 
@@ -1896,7 +2063,7 @@ FROM silver_${entity || 'entity'}`;
       const desc   = document.getElementById('ds-desc')?.value.trim() || '';
       const sql    = document.getElementById('ds-sql')?.value.trim() || '';
       if (!name) {
-        document.getElementById('new-ds-msg').innerHTML = '<span style="color:#ff2d55">El nombre es obligatorio</span>';
+        document.getElementById('new-ds-msg').innerHTML = '<span style="color:var(--red)">El nombre es obligatorio</span>';
         return;
       }
       const msg = `Crea un dataset ${layer.toUpperCase()} con los siguientes parámetros:\n`
@@ -1927,7 +2094,7 @@ FROM silver_${entity || 'entity'}`;
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
               Describe los KPIs que necesitas y el asistente los configura por ti.</p>
           </div>
-          <a class="btn btn-sm btn-amber" href="http://localhost:8088" target="_blank">Abrir Superset ↗</a>
+          <a class="btn btn-sm btn-amber" href="${esc(supersetUrl())}" target="_blank">Abrir Superset ↗</a>
         </div>
 
         <div class="card">
@@ -1937,8 +2104,8 @@ FROM silver_${entity || 'entity'}`;
           <div id="gold-list"><div class="loading">Cargando...</div></div>
         </div>
 
-        <div class="card" style="border-color:#7c9fff">
-          <div class="card-title" style="color:#7c9fff">▦ APPS ANALÍTICAS</div>
+        <div class="card" style="border-color:var(--cyan)">
+          <div class="card-title" style="color:var(--cyan)">▦ APPS ANALÍTICAS</div>
           <p style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.7">
             Aplicaciones interactivas generadas por IA sobre los datos Gold. Pídele al asistente que cree una nueva.
           </p>
@@ -1981,6 +2148,9 @@ FROM silver_${entity || 'entity'}`;
               <div class="ds-row-meta">${ds.row_count != null ? Number(ds.row_count).toLocaleString('es') + ' rows · ' : ''}${ds.updated_at ? esc(fmt(ds.updated_at)) : '—'}</div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="btn btn-sm" title="Re-indexar SQL + descripcion al RAG"
+                      style="color:var(--cyan);border-color:var(--cyan)"
+                      onclick="reindexSource('dataset',${escJsArg(ds.name)},'',this)">↻ RAG</button>
               <button class="btn btn-sm btn-amber" onclick="createSupersetDataset(${escJsArg(ds.name)})">
                 + Crear en Superset
               </button>
@@ -2023,24 +2193,24 @@ FROM silver_${entity || 'entity'}`;
         el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
           ${apps.map(app => `
           <div class="studio-app-card" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s"
-               onmouseover="this.style.borderColor='#7c9fff'" onmouseout="this.style.borderColor='var(--border)'">
-            <div style="font-size:18px;color:#7c9fff">▦</div>
-            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text1)">${esc(app.title)}</div>
+               onmouseover="this.style.borderColor='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)'">
+            <div style="font-size:18px;color:var(--cyan)">▦</div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text)">${esc(app.title)}</div>
             <div style="font-size:10px;color:var(--text2);line-height:1.6;flex:1">${esc(app.description || '—')}</div>
             <div style="font-size:9px;color:var(--text3);font-family:var(--font-mono)">
               ${app.updated_at ? esc(app.updated_at.slice(0,16).replace('T',' ')) : '—'}
             </div>
             <div style="display:flex;gap:6px">
               <a href="/apps/${encodeURIComponent(app.name || '')}" target="_blank"
-                 style="flex:1;display:inline-block;padding:5px 12px;border:1px solid #7c9fff;border-radius:3px;
-                        color:#7c9fff;font-size:10px;font-family:var(--font-mono);text-decoration:none;
+                 style="flex:1;display:inline-block;padding:5px 12px;border:1px solid var(--cyan);border-radius:3px;
+                        color:var(--cyan);font-size:10px;font-family:var(--font-mono);text-decoration:none;
                         text-align:center;transition:background .15s"
-                 onmouseover="this.style.background='rgba(124,159,255,.12)'"
+                 onmouseover="this.style.background='var(--info-soft)'"
                  onmouseout="this.style.background='transparent'">→ ABRIR APP</a>
               <button onclick="deleteAnalyticApp(${escJsArg(app.name)}, ${escJsArg(app.title)})" title="Eliminar"
-                      style="padding:5px 10px;border:1px solid #c44;border-radius:3px;background:transparent;
-                             color:#c44;font-size:11px;font-family:var(--font-mono);cursor:pointer;transition:background .15s"
-                      onmouseover="this.style.background='rgba(204,68,68,.12)'"
+                      style="padding:5px 10px;border:1px solid var(--red);border-radius:3px;background:transparent;
+                             color:var(--red);font-size:11px;font-family:var(--font-mono);cursor:pointer;transition:background .15s"
+                      onmouseover="this.style.background='var(--danger-soft)'"
                       onmouseout="this.style.background='transparent'">🗑</button>
             </div>
           </div>`).join('')}
@@ -2086,7 +2256,11 @@ FROM silver_${entity || 'entity'}`;
         const d = await r.json();
         const status = document.querySelector('.superset-status');
         if (!r.ok || d.error) {
-          if (status) status.innerHTML = `<span style="color:#ff2d55">No se pudo crear: ${esc(d.error || d.detail || `HTTP ${r.status}`)}</span>`;
+          if (status) status.innerHTML = `<span style="color:var(--red)">No se pudo crear: ${esc(d.error || d.detail || `HTTP ${r.status}`)}</span>`;
+          return;
+        }
+        if (d.needs_materialization) {
+          if (status) status.innerHTML = `<span style="color:var(--amber)">${esc(d.message || 'Materializa primero el dataset Gold y vuelve a intentar.')}</span>`;
           return;
         }
         if (status) {
@@ -2096,7 +2270,7 @@ FROM silver_${entity || 'entity'}`;
         }
       } catch(e) {
         const status = document.querySelector('.superset-status');
-        if (status) status.innerHTML = `<span style="color:#ff2d55">Error: ${esc(e.message)}</span>`;
+        if (status) status.innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
       }
     }
 
@@ -2127,6 +2301,11 @@ FROM silver_${entity || 'entity'}`;
                      style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font-mono);font-size:11px">
               <input id="rag-desc" placeholder="Descripción corta (opcional)"
                      style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font-mono);font-size:11px">
+              <select id="rag-ingest-kind"
+                     style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font-mono);font-size:11px">
+                <option value="document" selected>document</option>
+                <option value="schema">schema</option>
+              </select>
               <textarea id="rag-text" rows="6" placeholder="Pega texto, o usa el botón para subir un PDF"
                         style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font-mono);font-size:11px;resize:vertical"></textarea>
               <div style="display:flex;gap:6px">
@@ -2142,6 +2321,12 @@ FROM silver_${entity || 'entity'}`;
             <div style="display:flex;gap:6px;margin-top:10px">
               <input id="rag-query" placeholder="Pregunta o frase a buscar..." onkeydown="if(event.key==='Enter')ragAsk()"
                      style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font-mono);font-size:11px">
+              <select id="rag-kind-filter"
+                     style="width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text2);padding:6px 8px;font-family:var(--font-mono);font-size:11px">
+                <option value="">todo</option>
+                <option value="document">document</option>
+                <option value="schema">schema</option>
+              </select>
               <button class="btn" onclick="ragAsk()" title="Pregunta + síntesis con LLM">▶ Preguntar</button>
               <button class="btn" onclick="ragSearch()" title="Solo extractos, sin síntesis">⌕</button>
             </div>
@@ -2165,7 +2350,7 @@ FROM silver_${entity || 'entity'}`;
         list.innerHTML = sources.map(s => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
             <div>
-              <div style="color:var(--text)">${esc(s.name)}</div>
+              <div style="color:var(--text)">${esc(s.name)} <span style="color:var(--cyan);font-size:9px">[${esc(s.kind || 'document')}]</span></div>
               <div style="color:var(--text2);font-size:10px">${esc(s.description || '')} · ${Number(s.size_chars || 0).toLocaleString('es')} chars · ${Number(s.chunk_count || 0).toLocaleString('es')} chunks</div>
             </div>
             <button class="btn-sm" onclick="ragDeleteSource(${Number(s.id)})" title="Borrar">🗑</button>
@@ -2177,13 +2362,19 @@ FROM silver_${entity || 'entity'}`;
 
     export async function ragDeleteSource(id) {
       if (!confirm('¿Borrar esta fuente del RAG?')) return;
-      await fetch(`/api/rag/sources/${id}`, {method: 'DELETE'});
-      await ragLoadSources();
+      try {
+        const r = await fetch(`/api/rag/sources/${id}`, {method: 'DELETE', headers: csrfHeaders()});
+        await jsonOrThrow(r);
+        await ragLoadSources();
+      } catch(e) {
+        alert(`No se pudo borrar: ${e.message || e}`);
+      }
     }
 
     export async function ragIngest() {
       const name = document.getElementById('rag-name').value.trim();
       const desc = document.getElementById('rag-desc').value.trim();
+      const kind = document.getElementById('rag-ingest-kind')?.value || 'document';
       const text = document.getElementById('rag-text').value;
       const pdf  = document.getElementById('rag-pdf').files[0];
       const msg  = document.getElementById('rag-ingest-msg');
@@ -2194,7 +2385,7 @@ FROM silver_${entity || 'entity'}`;
       msg.innerHTML = '<span style="color:var(--cyan)">⟳ Procesando…</span>';
 
       try {
-        let body = {name, description: desc};
+        let body = {name, description: desc, kind};
         if (pdf) {
           body.content = await fileToBase64(pdf);
           body.mime_type = 'application/pdf';
@@ -2203,17 +2394,13 @@ FROM silver_${entity || 'entity'}`;
         }
 
         const r = await fetch('/api/rag/ingest', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body)});
-        const d = await r.json();
-        if (d.error) {
-          msg.innerHTML = `<span style="color:var(--red)">${esc(d.error)}</span>`;
-        } else {
-          msg.innerHTML = `<span style="color:var(--green)">✓ Ingerido — ${Number(d.chunk_count || 0).toLocaleString('es')} chunks</span>`;
-          document.getElementById('rag-name').value = '';
-          document.getElementById('rag-desc').value = '';
-          document.getElementById('rag-text').value = '';
-          document.getElementById('rag-pdf').value = '';
-          await ragLoadSources();
-        }
+        const d = await jsonOrThrow(r);
+        msg.innerHTML = `<span style="color:var(--green)">✓ Ingerido — ${Number(d.children || d.chunk_count || 0).toLocaleString('es')} chunks</span>`;
+        document.getElementById('rag-name').value = '';
+        document.getElementById('rag-desc').value = '';
+        document.getElementById('rag-text').value = '';
+        document.getElementById('rag-pdf').value = '';
+        await ragLoadSources();
       } catch(e) {
         msg.innerHTML = `<span style="color:var(--red)">${esc(e.message || e)}</span>`;
       }
@@ -2238,12 +2425,11 @@ FROM silver_${entity || 'entity'}`;
       if (!q) return;
       ul.innerHTML = '<div style="color:var(--text2)">⟳ Recuperando contexto y sintetizando respuesta…</div>';
       try {
-        const r = await fetch('/api/rag/ask', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify({query: q, top_k: 5})});
-        const d = await r.json();
-        if (d.detail || d.error) {
-          ul.innerHTML = `<div style="color:var(--red)">${esc(d.detail || d.error)}</div>`;
-          return;
-        }
+        const body = {query: q, top_k: 5};
+        const kinds = ragSelectedKinds();
+        if (kinds) body.kinds = kinds;
+        const r = await fetch('/api/rag/ask', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body)});
+        const d = await jsonOrThrow(r);
         const answer = d.answer || '(sin respuesta)';
         const res = d.results || [];
         const answerHtml = `
@@ -2257,7 +2443,7 @@ FROM silver_${entity || 'entity'}`;
           return `
           <div style="border:1px solid var(--border);padding:10px;margin-bottom:8px;border-radius:2px">
             <div style="color:var(--cyan);font-size:10px;margin-bottom:6px">
-              [${i+1}] · ${esc(x.source_name || '?')} · score=${score.toFixed(3)}
+              [${i+1}] · ${esc(x.source_name || '?')}${x.source_kind ? ' · ' + esc(x.source_kind) : ''} · score=${score.toFixed(3)}
             </div>
             <div style="white-space:pre-wrap;color:var(--text2)">${esc(body.slice(0, 500))}${body.length > 500 ? '…' : ''}</div>
           </div>`;
@@ -2277,8 +2463,11 @@ FROM silver_${entity || 'entity'}`;
       if (!q) return;
       ul.innerHTML = '<div style="color:var(--text2)">⟳ Buscando…</div>';
       try {
-        const r = await fetch('/api/rag/search', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify({query: q, top_k: 5})});
-        const d = await r.json();
+        const body = {query: q, top_k: 5};
+        const kinds = ragSelectedKinds();
+        if (kinds) body.kinds = kinds;
+        const r = await fetch('/api/rag/search', {method: 'POST', headers: jsonHeaders(), body: JSON.stringify(body)});
+        const d = await jsonOrThrow(r);
         const res = d.results || [];
         if (!res.length) { ul.innerHTML = '<div style="color:var(--text2)">Sin resultados.</div>'; return; }
         ul.innerHTML = res.map((r, i) => {
@@ -2287,7 +2476,7 @@ FROM silver_${entity || 'entity'}`;
           return `
           <div style="border:1px solid var(--border);padding:10px;margin-bottom:8px;border-radius:2px">
             <div style="color:var(--cyan);font-size:10px;margin-bottom:6px">
-              #${i+1} · ${esc(r.source_name || '?')} · score=${score.toFixed(3)}
+              #${i+1} · ${esc(r.source_name || '?')}${r.source_kind ? ' · ' + esc(r.source_kind) : ''} · score=${score.toFixed(3)}
             </div>
             <div style="white-space:pre-wrap;color:var(--text)">${esc(body.slice(0, 800))}${body.length > 800 ? '…' : ''}</div>
           </div>`;
@@ -2315,14 +2504,13 @@ FROM silver_${entity || 'entity'}`;
             </div>
             <input id="cat-search" type="text" placeholder="Buscar dataset o columna…"
               style="flex:1;min-width:160px;background:var(--bg2);border:1px solid var(--border);
-                     color:var(--text1);padding:4px 8px;font-size:11px;border-radius:3px"
+                     color:var(--text);padding:4px 8px;font-size:11px;border-radius:3px"
               oninput="state._catFilter.search=this.value;catRender()">
             <select id="cat-layer" onchange="state._catFilter.layer=this.value;catReload()"
               style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);
                      padding:4px 6px;font-size:10px;border-radius:3px">
               <option value="">Todas las capas</option>
               <option value="silver">silver</option>
-              <option value="master">master</option>
               <option value="gold">gold</option>
             </select>
             <button class="btn btn-sm" onclick="catReload()" title="Recargar">↺</button>
@@ -2404,10 +2592,10 @@ FROM silver_${entity || 'entity'}`;
         s.textContent = `
           .btn-tab { background:none;border:none;color:var(--text3);padding:5px 12px;
                      font-size:9px;letter-spacing:1px;cursor:pointer;transition:.15s }
-          .btn-tab.active { background:var(--amber);color:#000;font-weight:700 }
-          .btn-tab:hover:not(.active) { color:var(--text1) }
+          .btn-tab.active { background:var(--amber);color:var(--text-inverse);font-weight:700 }
+          .btn-tab:hover:not(.active) { color:var(--text) }
           .cat-inp { width:100%;background:var(--bg2);border:1px solid var(--border);
-                     color:var(--text1);padding:5px 8px;font-size:11px;border-radius:3px;box-sizing:border-box }
+                     color:var(--text);padding:5px 8px;font-size:11px;border-radius:3px;box-sizing:border-box }
           .cat-inp:focus { outline:none;border-color:var(--amber) }
           .cat-table { width:100%;border-collapse:collapse;font-size:10px }
           .cat-table th { background:var(--bg2);color:var(--text3);font-size:8px;letter-spacing:1px;
@@ -2419,15 +2607,15 @@ FROM silver_${entity || 'entity'}`;
           .cat-ds-row td { background:var(--bg2)!important;color:var(--amber);font-family:var(--font-mono);
                            font-size:10px;letter-spacing:.5px }
           .cat-tag { display:inline-block;padding:1px 6px;border-radius:2px;font-size:8px;margin:1px;
-                     background:rgba(255,170,0,.15);color:var(--amber);border:1px solid rgba(255,170,0,.3) }
+                     background:var(--warning-soft);color:var(--amber);border:1px solid var(--amber) }
           .cat-flag { width:14px;height:14px;border-radius:2px;border:1px solid var(--border);
                       cursor:pointer;display:inline-block;text-align:center;line-height:13px;font-size:9px }
-          .cat-flag.on { background:var(--amber);border-color:var(--amber);color:#000 }
-          .cat-edit-desc { background:var(--bg2);border:1px solid var(--amber);color:var(--text1);
+          .cat-flag.on { background:var(--amber);border-color:var(--amber);color:var(--text-inverse) }
+          .cat-edit-desc { background:var(--bg2);border:1px solid var(--amber);color:var(--text);
                            padding:3px 6px;font-size:10px;width:100%;box-sizing:border-box;border-radius:2px }
           .cat-rel-row td { color:var(--text2);font-size:10px }
           .cat-rel-from { color:var(--cyan);font-family:var(--font-mono) }
-          .cat-rel-to   { color:var(--green,#39ff14);font-family:var(--font-mono) }
+          .cat-rel-to   { color:var(--green);font-family:var(--font-mono) }
         `;
         document.head.appendChild(s);
       }
@@ -2509,7 +2697,7 @@ FROM silver_${entity || 'entity'}`;
                      value="${esc(col.description||'')}"
                      onblur="catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)})"
                      onkeydown="if(event.key==='Enter')catSaveDesc(${escJsArg(dsName)},${escJsArg(col.name)});if(event.key==='Escape')catCancelEdit()">`
-                : `<span style="cursor:pointer;color:${col.description?'var(--text1)':'var(--text3)'}"
+                : `<span style="cursor:pointer;color:${col.description?'var(--text)':'var(--text3)'}"
                        onclick="catStartEdit(${escJsArg(dsName)},${escJsArg(col.name)})"
                        title="Click para editar">${esc(col.description||'— agregar descripción')}</span>`}
             </td>
@@ -2606,25 +2794,41 @@ FROM silver_${entity || 'entity'}`;
       // Optimistic update
       const ds = state._catData?.datasets?.[dataset];
       const c  = ds?.columns?.find(x => x.name === col);
+      const prev = c ? c.description : '';
       if (c) c.description = desc;
       catRenderCols();
 
-      await fetch('/api/catalog/entries', {
-        method:'POST', headers: jsonHeaders(),
-        body: JSON.stringify({ entries:[{ dataset, column_name:col, description:desc }] })
-      });
+      try {
+        const r = await fetch('/api/catalog/entries', {
+          method:'POST', headers: jsonHeaders(),
+          body: JSON.stringify({ entries:[{ dataset, column_name:col, description:desc }] })
+        });
+        await jsonOrThrow(r);
+      } catch(e) {
+        if (c) c.description = prev;
+        catRenderCols();
+        alert(`No se pudo guardar: ${e.message || e}`);
+      }
     }
 
     export async function catToggleFlag(dataset, col, flag, value) {
       const ds = state._catData?.datasets?.[dataset];
       const c  = ds?.columns?.find(x => x.name === col);
+      const prev = c ? c[flag] : undefined;
       if (c) c[flag] = value;
       catRenderCols();
 
-      await fetch('/api/catalog/entries', {
-        method:'POST', headers: jsonHeaders(),
-        body: JSON.stringify({ entries:[{ dataset, column_name:col, [flag]:value }] })
-      });
+      try {
+        const r = await fetch('/api/catalog/entries', {
+          method:'POST', headers: jsonHeaders(),
+          body: JSON.stringify({ entries:[{ dataset, column_name:col, [flag]:value }] })
+        });
+        await jsonOrThrow(r);
+      } catch(e) {
+        if (c) c[flag] = prev;
+        catRenderCols();
+        alert(`No se pudo guardar: ${e.message || e}`);
+      }
     }
 
     export async function catAddTagPrompt(dataset, col) {
@@ -2632,13 +2836,21 @@ FROM silver_${entity || 'entity'}`;
       if (!tag) return;
       const ds = state._catData?.datasets?.[dataset];
       const c  = ds?.columns?.find(x => x.name === col);
+      const prev = c ? [...(c.tags || [])] : [];
       if (c) { c.tags = [...new Set([...(c.tags||[]), tag.trim()])]; }
       catRenderCols();
 
-      await fetch('/api/catalog/entries', {
-        method:'POST', headers: jsonHeaders(),
-        body: JSON.stringify({ entries:[{ dataset, column_name:col, tags: c?.tags||[tag.trim()] }] })
-      });
+      try {
+        const r = await fetch('/api/catalog/entries', {
+          method:'POST', headers: jsonHeaders(),
+          body: JSON.stringify({ entries:[{ dataset, column_name:col, tags: c?.tags||[tag.trim()] }] })
+        });
+        await jsonOrThrow(r);
+      } catch(e) {
+        if (c) c.tags = prev;
+        catRenderCols();
+        alert(`No se pudo guardar: ${e.message || e}`);
+      }
     }
 
     export function catAddRelModal() {
@@ -2659,10 +2871,16 @@ FROM silver_${entity || 'entity'}`;
       if (!body.from_dataset || !body.from_column || !body.to_dataset || !body.to_column) {
         alert('Completa los 4 campos de dataset y columna'); return;
       }
-      await fetch('/api/catalog/relationships', {
-        method:'POST', headers: jsonHeaders(),
-        body: JSON.stringify(body)
-      });
+      try {
+        const r = await fetch('/api/catalog/relationships', {
+          method:'POST', headers: jsonHeaders(),
+          body: JSON.stringify(body)
+        });
+        await jsonOrThrow(r);
+      } catch(e) {
+        alert(`No se pudo guardar la relación: ${e.message || e}`);
+        return;
+      }
       document.getElementById('cat-rel-modal').style.display = 'none';
       await catReload();
       catSwitchTab('rels');
@@ -3072,7 +3290,7 @@ FROM silver_${entity || 'entity'}`;
                           onclick="sendDagToAssistantStudio()" title="Enviar al asistente">✎ Asistente</button>
                   <button class="btn btn-sm" id="btn-dag-rename" style="color:var(--amber);border-color:var(--amber)"
                           title="Renombrar DAG">✎ Renombrar</button>
-                  <button class="btn btn-sm" id="btn-dag-delete" style="color:#ff2d55;border-color:#ff2d55"
+                  <button class="btn btn-sm" id="btn-dag-delete" style="color:var(--red);border-color:var(--red)"
                           title="Eliminar DAG">✕ Eliminar</button>
                   <span class="deploy-msg" id="deploy-msg"></span>
                 </div>
@@ -3089,7 +3307,7 @@ FROM silver_${entity || 'entity'}`;
       const afLink = document.getElementById('dag-airflow-link');
       if (nameEl) nameEl.textContent = state._selectedDag;
       if (badgeEl) badgeEl.innerHTML = '<span class="dag-badge dag-paused">preview</span>';
-      if (afLink) afLink.href = `http://localhost:8082/dags/${encodeURIComponent(state._selectedDag)}/grid`;
+      if (afLink) afLink.href = airflowDagUrl(state._selectedDag);
       dagSetEditorCode(
         `from airflow import DAG\n` +
         `from airflow.operators.empty import EmptyOperator\n\n` +
@@ -3114,15 +3332,10 @@ FROM silver_${entity || 'entity'}`;
       list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>';
       const cartridge = _dagCartridge();
       try {
-        const r = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({ server: 'infra', tool: 'airflow_list_dags', args: {} }),
-        });
-        const d = await r.json();
-        const allDags = (d.result?.dags || []).sort((a, b) => a.dag_id.localeCompare(b.dag_id));
-        state._dagsCache = cartridge
-          ? allDags.filter(dag => dag.dag_id.startsWith(cartridge + '_'))
-          : allDags;
+        const r = await fetch(`/api/studio/dags${cartridge ? '?cartridge=' + encodeURIComponent(cartridge) : ''}`);
+        const d = await jsonOrThrow(r);
+        const allDags = (d.dags || []).sort((a, b) => a.dag_id.localeCompare(b.dag_id));
+        state._dagsCache = allDags;
 
         if (!state._dagsCache.length) {
           list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">
@@ -3151,7 +3364,7 @@ FROM silver_${entity || 'entity'}`;
           ? state._selectedDag : state._dagsCache[0]?.dag_id;
         if (toSelect) await selectDag(toSelect);
       } catch(e) {
-        list.innerHTML = `<div style="padding:16px;color:#ff2d55;font-size:11px">Error: ${esc(e.message)}</div>`;
+        list.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Error: ${esc(e.message)}</div>`;
       }
     }
 
@@ -3170,7 +3383,7 @@ FROM silver_${entity || 'entity'}`;
       if (!textarea || !nameEl) return;
 
       nameEl.textContent = dagId;
-      if (afLink) afLink.href = `http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid`;
+      if (afLink) afLink.href = airflowDagUrl(dagId);
 
       const dag = state._dagsCache.find(d => d.dag_id === dagId);
       if (dag && badgeEl) {
@@ -3183,16 +3396,10 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('', '');
 
       try {
-        const r = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({
-            server: 'infra', tool: 'dag_get_source',
-            args: { cartridge_id: _dagCartridge(), dag_id: dagId },
-          }),
-        });
-        const d = await r.json();
-        if (d.result?.found && d.result?.source_code) {
-          dagSetEditorCode(d.result.source_code);
+        const r = await fetch(`/api/studio/dags/${encodeURIComponent(dagId)}/source?cartridge=${encodeURIComponent(_dagCartridge())}`);
+        const d = await jsonOrThrow(r);
+        if (d.found && d.source_code) {
+          dagSetEditorCode(d.source_code);
           return;
         }
       } catch(_) {}
@@ -3242,16 +3449,23 @@ FROM silver_${entity || 'entity'}`;
     // Pre-R3, an HTTP-level error (401, 5xx) returned False without
     // setting _devModeCache, so every subsequent click would refetch.
     // Functionally fail-closed but defeated the cache contract.
-    let _devModeCache = null;
-    async function _isDevMode() {
-      if (_devModeCache !== null) return _devModeCache;
+    let _systemInfoCache = null;
+    async function _systemInfo() {
+      if (_systemInfoCache !== null) return _systemInfoCache;
       try {
         const r = await fetch('/api/system/info', {credentials: 'same-origin'});
-        if (!r.ok) { _devModeCache = false; return false; }
-        const info = await r.json();
-        _devModeCache = !!info.dev_mode;
-      } catch { _devModeCache = false; }
-      return _devModeCache;
+        if (!r.ok) { _systemInfoCache = {}; return _systemInfoCache; }
+        _systemInfoCache = await r.json();
+      } catch { _systemInfoCache = {}; }
+      return _systemInfoCache;
+    }
+    async function _isDevMode() {
+      const info = await _systemInfo();
+      return !!info.dev_mode;
+    }
+    async function _isDagDeployEnabled() {
+      const info = await _systemInfo();
+      return !!(info.dev_mode && (info.dag_deploy_enabled ?? info.rce_tools_enabled ?? true));
     }
 
     // v1.43.2 (Frontend R3 hardening): factored gate. Every action that
@@ -3259,25 +3473,27 @@ FROM silver_${entity || 'entity'}`;
     // airflow_delete_dag, etc) must short-circuit with this in
     // production. Returns true when the call should proceed.
     async function _gateDevOnlyAction(messageEs) {
-      if (await _isDevMode()) return true;
-      setDeployMsg(messageEs, 'err');
+      if (await _isDagDeployEnabled()) return true;
+      const info = await _systemInfo();
+      setDeployMsg(info.dev_mode
+        ? 'Acción bloqueada: falta ALLOW_RCE_TOOLS=true en el entorno local.'
+        : messageEs, 'err');
       return false;
     }
 
     export async function deployDag() {
       // R2 gate: refuse early with a clear, actionable message in
       // production so the user never sees a raw mcp-infra error.
-      if (!(await _isDevMode())) {
+      if (!(await _isDagDeployEnabled())) {
         const btn = document.getElementById('btn-deploy');
         if (btn) {
-          btn.disabled = true;
           btn.title = 'Deploy disabled outside development';
-          btn.style.opacity = '0.5';
-          btn.style.cursor = 'not-allowed';
         }
+        const info = await _systemInfo();
         setDeployMsg(
-          'Deploy a Airflow está deshabilitado fuera de desarrollo. ' +
-          'Usa el pipeline de despliegue o la UI de Airflow.',
+          info.dev_mode
+            ? 'Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.'
+            : 'Deploy a Airflow está deshabilitado fuera de desarrollo. Usa el pipeline de despliegue o la UI de Airflow.',
           'err',
         );
         return;
@@ -3306,8 +3522,10 @@ FROM silver_${entity || 'entity'}`;
             description: `DAG del cartucho ${_dagCartridge()}`,
           }),
         });
-        const d = await r.json();
-        if (d.status === 'deployed' || d.result?.created || d.result?.dag_id) {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.status === 'failed' || d.error || d.detail) {
+          setDeployMsg(`Error: ${esc(friendlyError(d, `HTTP ${r.status}`))}`, 'err');
+        } else if (d.status === 'deployed' || d.result?.created || d.result?.dag_id) {
           setDeployMsg(`✓ Desplegado: ${esc(d.result?.created || d.dag_id || dagId)}`, 'ok');
           state._deployedCode = code;
           dagMarkDirty();
@@ -3329,7 +3547,7 @@ FROM silver_${entity || 'entity'}`;
           // Sync with Airflow after scheduler picks up the file (typically 5-30s)
           setTimeout(loadDags, 8000);
         } else {
-          setDeployMsg(`Error: ${esc(JSON.stringify(d.result || d))}`, 'err');
+          setDeployMsg(`Error: ${esc(friendlyError(d.result || d, 'No se pudo desplegar el DAG'))}`, 'err');
         }
       } catch(e) {
         setDeployMsg(`Error: ${esc(e.message)}`, 'err');
@@ -3393,25 +3611,24 @@ FROM silver_${entity || 'entity'}`;
       setDeployMsg('Renombrando…', '');
       try {
         // Deploy with new dag_id
-        const r1 = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
+        const r1 = await fetch('/api/studio/dag-deploy', {
+          method: 'POST',
+          headers: jsonHeaders(),
           body: JSON.stringify({
-            server: 'infra', tool: 'airflow_create_dag',
-            args: { dag_id: newId, code: newCode, cartridge_id: _dagCartridge(),
-                    description: `DAG del cartucho ${_dagCartridge()}` },
+            dag_id: newId,
+            code: newCode,
+            cartridge_id: _dagCartridge(),
+            description: `DAG del cartucho ${_dagCartridge()}`,
           }),
         });
-        const d1 = await r1.json();
-        if (!d1.result?.created && !d1.result?.dag_id) {
-          setDeployMsg(`Error al crear: ${esc(JSON.stringify(d1.result || d1))}`, 'err'); return;
+        const d1 = await r1.json().catch(() => ({}));
+        if (!r1.ok || d1.status === 'failed' || (!d1.result?.created && !d1.result?.dag_id && d1.status !== 'deployed')) {
+          setDeployMsg(`Error al crear: ${esc(friendlyError(d1.result || d1, `HTTP ${r1.status}`))}`, 'err'); return;
         }
         // Delete old dag_id
-        await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({
-            server: 'infra', tool: 'airflow_delete_dag',
-            args: { dag_id: oldId },
-          }),
+        await fetch(`/api/studio/dags/${encodeURIComponent(oldId)}?cartridge=${encodeURIComponent(_dagCartridge())}`, {
+          method: 'DELETE',
+          headers: jsonHeaders(),
         });
         setDeployMsg(`✓ Renombrado a ${esc(newId)}`, 'ok');
         state._selectedDag = newId;
@@ -3473,7 +3690,7 @@ FROM silver_${entity || 'entity'}`;
           <p style="margin:0 0 16px;color:var(--text2);line-height:1.5">¿Eliminar el DAG <b>${esc(dagId)}</b>? Esto borra el archivo y lo elimina de Airflow.</p>
           <div style="display:flex;justify-content:flex-end;gap:8px">
             <button class="btn btn-sm" type="button" id="dag-delete-cancel">Cancelar</button>
-            <button class="btn btn-sm" type="button" id="dag-delete-confirm" style="color:#ff2d55;border-color:#ff2d55">Eliminar</button>
+            <button class="btn btn-sm" type="button" id="dag-delete-confirm" style="color:var(--red);border-color:var(--red)">Eliminar</button>
           </div>
         </div>`;
       document.body.appendChild(dialog);
@@ -3497,22 +3714,19 @@ FROM silver_${entity || 'entity'}`;
 
       setDeployMsg('Eliminando…', '');
       try {
-        const r = await fetch('/api/mcp/invoke', {
-          method: 'POST', headers: jsonHeaders(),
-          body: JSON.stringify({
-            server: 'infra', tool: 'airflow_delete_dag',
-            args: { dag_id: dagId },
-          }),
+        const r = await fetch(`/api/studio/dags/${encodeURIComponent(dagId)}?cartridge=${encodeURIComponent(_dagCartridge())}`, {
+          method: 'DELETE',
+          headers: jsonHeaders(),
         });
-        const d = await r.json();
-        if (d.result?.deleted_file || d.result?.deleted_db) {
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && (d.deleted || d.result?.deleted_file || d.result?.deleted_db)) {
           setDeployMsg(`✓ Eliminado: ${esc(dagId)}`, 'ok');
           state._selectedDag = null;
           document.getElementById('dag-delete-dialog')?.remove();
           document.getElementById('dag-editor-body')?.style && (_hideDagEditor());
           setTimeout(loadDags, 1200);
         } else {
-          setDeployMsg(`No se pudo eliminar: ${esc(JSON.stringify(d.result || d))}`, 'err');
+          setDeployMsg(`No se pudo eliminar: ${esc(friendlyError(d.result || d, `HTTP ${r.status}`))}`, 'err');
         }
       } catch(e) {
         setDeployMsg(`Error: ${esc(e.message)}`, 'err');
@@ -3826,11 +4040,11 @@ FROM silver_${entity || 'entity'}`;
           body: JSON.stringify({ source: code }),
         });
         const d = await r.json();
-        if (d.error) { panel.innerHTML = `<div style="padding:16px;color:#ff2d55;font-size:11px">Syntax error: ${esc(d.error)}</div>`; return; }
+        if (d.error) { panel.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Syntax error: ${esc(d.error)}</div>`; return; }
         tasks = d.tasks || [];
         edges = d.edges || [];
       } catch(e) {
-        panel.innerHTML = `<div style="padding:16px;color:#ff2d55;font-size:11px">Error: ${esc(e.message)}</div>`; return;
+        panel.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Error: ${esc(e.message)}</div>`; return;
       }
 
       if (!tasks.length) {
@@ -4096,7 +4310,7 @@ FROM silver_${entity || 'entity'}`;
             <div class="tpl-tags">${(t.tags||[]).map(tag => `<span class="tpl-tag">${esc(tag)}</span>`).join('')}</div>
           </div>`).join('');
       } catch(e) {
-        list.innerHTML = `<div style="padding:12px;color:#ff2d55;font-size:10px">Error: ${esc(e.message)}</div>`;
+        list.innerHTML = `<div style="padding:12px;color:var(--red);font-size:10px">Error: ${esc(e.message)}</div>`;
       }
     }
 
@@ -4150,12 +4364,23 @@ FROM silver_${entity || 'entity'}`;
     // ── Init ───────────────────────────────────────────────────────────────────
     (async () => {
       await loadCartridges();
-      // Auto-select first cartridge if any
+      const savedCartridge = (() => {
+        try { return localStorage.getItem('studio.selectedCartridge') || ''; }
+        catch(_) { return ''; }
+      })();
+      const preferredCartridge =
+        state._cartridges.find(c => c.id === savedCartridge)?.id ||
+        state._cartridges.find(c => c.id === 'replicon')?.id ||
+        state._cartridges.find(c => c.id !== 'platform')?.id ||
+        state._cartridges[0]?.id ||
+        '';
       if (state._cartridges.length > 0) {
-        document.getElementById('cartridge-sel').value = state._cartridges[0].id;
-        await selectCartridge(state._cartridges[0].id);
+        document.getElementById('cartridge-sel').value = preferredCartridge;
+        await selectCartridge(preferredCartridge);
       }
-      goStep(1);
+      if (!state.currentStep && !document.body.dataset.studioStep) {
+        goStep(1);
+      }
 
       // Check if we arrived from Pipeline with a DAG to edit
       const pending = sessionStorage.getItem('studio_pending');

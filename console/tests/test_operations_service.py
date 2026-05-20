@@ -91,7 +91,7 @@ async def test_probe_one_marks_console_up_on_401():
     async def fake_get(self, url): return mock_resp
     with patch("httpx.AsyncClient.get", new=fake_get):
         result = await operations_service._probe_one(
-            "console", "http://localhost:8000/api/system/info"
+            "console", "http://console:8000/api/system/info"
         )
     assert result["status"] == "up"
     assert result["code"] == 401

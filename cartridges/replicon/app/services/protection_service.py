@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 from pathlib import Path
@@ -40,32 +41,23 @@ def _shadow(value: Any) -> Any:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
-# Sprint v1.40 (audit B1 P0 patch carried over from v1.33):
-# FIELD_ENCRYPTION_KEY is required at import time. The original ZIP
-# fell back to a hardcoded placeholder seed if the operator forgot
-# to set it, which would have encrypted PII fields with a publicly
-# known key. The cartridge now refuses to start instead.
-_FIELD_ENCRYPTION_KEY = os.environ.get("FIELD_ENCRYPTION_KEY", "").strip()
-if not _FIELD_ENCRYPTION_KEY:
-    raise RuntimeError(
-        "FIELD_ENCRYPTION_KEY is required for Replicon protection_service. "
-        "Refusing to start with a hardcoded fallback that would expose PII. "
-        "Generate one with: python3 -c 'from cryptography.fernet import "
-        "Fernet; print(Fernet.generate_key().decode())'"
-    )
-try:
-    _FERNET = Fernet(_FIELD_ENCRYPTION_KEY.encode("utf-8"))
-except Exception as exc:
-    raise RuntimeError(
-        f"FIELD_ENCRYPTION_KEY invalid for Replicon: {exc}. "
-        "Must be a Fernet key (base64-urlsafe 32-byte)."
-    ) from exc
+def _build_fernet() -> Fernet:
+    from app.core.vault_client import get_secret
+    key_str = (
+        get_secret("field_encryption_key", default=None)
+        or os.environ.get("FIELD_ENCRYPTION_KEY")
+        or ""
+    ).strip()
+    if not key_str:
+        raise RuntimeError("FIELD_ENCRYPTION_KEY is required for Replicon field encryption")
+    raw_key = hashlib.sha256(key_str.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(raw_key))
 
 
 def _encrypt(value: Any) -> Any:
     if value is None:
         return value
-    return _FERNET.encrypt(str(value).encode("utf-8")).decode("utf-8")
+    return _build_fernet().encrypt(str(value).encode("utf-8")).decode("utf-8")
 
 
 def apply_protection_for_entity(entity_name: str, rows: list[dict]) -> list[dict]:

@@ -27,6 +27,7 @@ REQUIRED_SECRET_NAMES = {
     "OMEGA_AIRFLOW_META_PASSWORD",
     "AIRFLOW_SECRET_KEY",
     "AIRFLOW_ADMIN_PASSWORD",
+    "AGENT_RUNNER_TOKEN",
     "SUPERSET_SECRET_KEY",
     "SUPERSET_ADMIN_PASSWORD",
     "GITHUB_DEPLOY_KEY",
@@ -73,6 +74,9 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     assert "IMAGE_TAG" in src
     assert "CONSOLE_URL" in src
     assert "WORKSPACE_PUBLIC_URL" in src
+    assert "AIRFLOW_PUBLIC_URL" in src
+    assert "SUPERSET_PUBLIC_URL" in src
+    assert "must not point to localhost in production" in src
     assert 'printf \'%s="%s' in src
 
 

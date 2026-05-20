@@ -44,6 +44,19 @@ _google_client: google_genai.Client | None = None
 _ollama: AsyncOpenAI | None = None
 
 
+def _resolve_chat_model(model: str | None) -> str:
+    value = (model or "").strip()
+    if not value or value == "default":
+        return CHAT_MODEL
+    if CHAT_PROVIDER == "gemini" and not value.startswith("gemini-"):
+        return CHAT_MODEL
+    if CHAT_PROVIDER == "anthropic" and value.startswith(("gemini-", "llama")):
+        return CHAT_MODEL
+    if CHAT_PROVIDER == "ollama" and value.startswith(("claude-", "gemini-")):
+        return CHAT_MODEL
+    return value
+
+
 def _anthropic_client() -> anthropic.AsyncAnthropic:
     global _ant
     if _ant is None:
@@ -72,16 +85,28 @@ async def chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     on_event: Callable | None = None,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     """If `on_event` is provided, it is awaited with dicts describing every
     tool invocation and its result, plus a final {'type':'text', 'text': reply}.
     The function still returns the same (reply, viewer_urls, messages) tuple
     so callers that ignore on_event keep working unchanged."""
     if CHAT_PROVIDER == "gemini":
-        return await _gemini_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
+        return await _gemini_chat(
+            system, messages, tools, invoke_tool, tool_server_map, on_event,
+            model=model, max_tokens=max_tokens, temperature=temperature,
+        )
     if CHAT_PROVIDER == "ollama":
-        return await _openai_compat_chat(system, messages, tools, invoke_tool, tool_server_map, _ollama_client())
-    return await _anthropic_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
+        return await _openai_compat_chat(
+            system, messages, tools, invoke_tool, tool_server_map, _ollama_client(),
+            model=model, max_tokens=max_tokens, temperature=temperature,
+        )
+    return await _anthropic_chat(
+        system, messages, tools, invoke_tool, tool_server_map, on_event,
+        model=model, max_tokens=max_tokens, temperature=temperature,
+    )
 
 
 # ── Result summarizer (for tool_result events) ────────────────────────────────
@@ -220,7 +245,13 @@ async def _anthropic_chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     on_event: Callable | None = None,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
+    chat_model = _resolve_chat_model(model)
+    chat_max_tokens = int(max_tokens or 32000)
     ant_tools = [
         {
             "name":         t["name"],
@@ -247,19 +278,22 @@ async def _anthropic_chat(
         # Stream the SDK call (Anthropic recommends it for max_tokens >8k or
         # operations that may exceed 10 min). We still accumulate the final
         # message and use it the same way as a non-streamed response.
-        async with _anthropic_client().messages.stream(
-            model=CHAT_MODEL,
-            max_tokens=32000,
-            system=system_blocks,
-            tools=ant_tools or [],
-            messages=msgs,
-        ) as stream:
+        kwargs = {
+            "model": chat_model,
+            "max_tokens": chat_max_tokens,
+            "system": system_blocks,
+            "tools": ant_tools or [],
+            "messages": msgs,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        async with _anthropic_client().messages.stream(**kwargs) as stream:
             response = await stream.get_final_message()
         usage = response.usage
         cache_read   = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
         await token_store.record(
-            "anthropic", CHAT_MODEL,
+            "anthropic", chat_model,
             usage.input_tokens, usage.output_tokens,
             cache_create, cache_read,
         )
@@ -403,9 +437,9 @@ def _gemini_cached_content_is_stale(exc: Exception) -> bool:
     )
 
 
-def _gemini_cache_signature(system: str, tools: list[dict]) -> str:
+def _gemini_cache_signature(system: str, tools: list[dict], model: str | None = None) -> str:
     import hashlib
-    blob = system + "|" + "|".join(sorted(t["name"] for t in tools))
+    blob = (model or CHAT_MODEL) + "|" + system + "|" + "|".join(sorted(t["name"] for t in tools))
     # v1.43.2 (DevOps R1 follow-up): MD5 is used only as a cache-key
     # fingerprint for the Gemini cached-content resource — never for
     # authentication or integrity. ``usedforsecurity=False`` is the
@@ -415,15 +449,15 @@ def _gemini_cache_signature(system: str, tools: list[dict]) -> str:
 
 
 async def _get_or_create_gemini_cache(
-    system: str, tools: list[dict], gemini_tools: list | None,
+    system: str, tools: list[dict], gemini_tools: list | None, model: str,
 ) -> str | None:
     """Return a cached_content resource name, or None if caching unavailable."""
-    sig = _gemini_cache_signature(system, tools)
+    sig = _gemini_cache_signature(system, tools, model)
     if sig in _gemini_cache_by_sig:
         return _gemini_cache_by_sig[sig]
     try:
         cache = await _gemini_client().aio.caches.create(
-            model=CHAT_MODEL,
+            model=model,
             config=gtypes.CreateCachedContentConfig(
                 system_instruction=system,
                 tools=gemini_tools,
@@ -436,11 +470,22 @@ async def _get_or_create_gemini_cache(
         return None  # too few tokens, model unsupported, or quota — fall back
 
 
-def _gemini_inline_config(system: str, gemini_tools: list | None):
-    return gtypes.GenerateContentConfig(
+def _gemini_inline_config(
+    system: str,
+    gemini_tools: list | None,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+):
+    kwargs: dict[str, Any] = dict(
         system_instruction=system,
         tools=gemini_tools,
     )
+    if max_tokens is not None:
+        kwargs["max_output_tokens"] = int(max_tokens)
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    return gtypes.GenerateContentConfig(**kwargs)
 
 
 def _proto_args_to_plain_dict(args) -> dict:
@@ -483,7 +528,12 @@ async def _gemini_chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     on_event: Callable | None = None,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
+    chat_model = _resolve_chat_model(model)
     fn_decls = [
         gtypes.FunctionDeclaration(
             name=t["name"],
@@ -495,15 +545,22 @@ async def _gemini_chat(
     gemini_tools = [gtypes.Tool(function_declarations=fn_decls)] if fn_decls else None
 
     # Try to use prompt cache (system + tools); fall back to inline if unavailable.
-    cache_sig = _gemini_cache_signature(system, tools) if GEMINI_CACHE_ENABLED else None
+    cache_sig = _gemini_cache_signature(system, tools, chat_model) if GEMINI_CACHE_ENABLED else None
     cache_name = (
-        await _get_or_create_gemini_cache(system, tools, gemini_tools)
+        await _get_or_create_gemini_cache(system, tools, gemini_tools, chat_model)
         if GEMINI_CACHE_ENABLED else None
     )
     if cache_name:
-        gen_config = gtypes.GenerateContentConfig(cached_content=cache_name)
+        cfg_kwargs: dict[str, Any] = {"cached_content": cache_name}
+        if max_tokens is not None:
+            cfg_kwargs["max_output_tokens"] = int(max_tokens)
+        if temperature is not None:
+            cfg_kwargs["temperature"] = temperature
+        gen_config = gtypes.GenerateContentConfig(**cfg_kwargs)
     else:
-        gen_config = _gemini_inline_config(system, gemini_tools)
+        gen_config = _gemini_inline_config(
+            system, gemini_tools, max_tokens=max_tokens, temperature=temperature,
+        )
 
     # v1.43.1 R1 LLM-F1: walk every message, NOT just string-content
     # ones. _load_history rehydrates prior turns as Anthropic-shape
@@ -570,7 +627,7 @@ async def _gemini_chat(
     for _i in range(20):
         try:
             response = await _gemini_generate_with_retry(
-                model=CHAT_MODEL,
+                model=chat_model,
                 contents=contents,
                 config=gen_config,
             )
@@ -578,9 +635,11 @@ async def _gemini_chat(
             if cache_name and cache_sig and _gemini_cached_content_is_stale(exc):
                 _gemini_cache_by_sig.pop(cache_sig, None)
                 cache_name = None
-                gen_config = _gemini_inline_config(system, gemini_tools)
+                gen_config = _gemini_inline_config(
+                    system, gemini_tools, max_tokens=max_tokens, temperature=temperature,
+                )
                 response = await _gemini_generate_with_retry(
-                    model=CHAT_MODEL,
+                    model=chat_model,
                     contents=contents,
                     config=gen_config,
                 )
@@ -593,7 +652,7 @@ async def _gemini_chat(
             # prompt_token_count includes the cached portion — split them so cost is correct
             non_cached_input = max((um.prompt_token_count or 0) - cached, 0)
             await token_store.record(
-                "gemini", CHAT_MODEL,
+                "gemini", chat_model,
                 non_cached_input,
                 um.candidates_token_count or 0,
                 0,        # cache_creation tokens (Gemini bills creation only when calling caches.create)
@@ -713,7 +772,12 @@ async def _openai_compat_chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     client: AsyncOpenAI,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
+    chat_model = _resolve_chat_model(model)
     oai_tools = _to_oai_tools(tools) if tools else []
     msgs: list[dict] = [{"role": "system", "content": system}]
     for m in messages:
@@ -724,9 +788,13 @@ async def _openai_compat_chat(
     viewer_urls: list[dict] = []
 
     for _i in range(20):
-        kwargs: dict[str, Any] = {"model": CHAT_MODEL, "messages": msgs}
+        kwargs: dict[str, Any] = {"model": chat_model, "messages": msgs}
         if oai_tools:
             kwargs["tools"] = oai_tools
+        if max_tokens is not None:
+            kwargs["max_tokens"] = int(max_tokens)
+        if temperature is not None:
+            kwargs["temperature"] = temperature
 
         response = await client.chat.completions.create(**kwargs)
         choice = response.choices[0]
@@ -735,7 +803,7 @@ async def _openai_compat_chat(
 
         if response.usage:
             await token_store.record(
-                CHAT_PROVIDER, CHAT_MODEL,
+                CHAT_PROVIDER, chat_model,
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
             )

@@ -20,6 +20,7 @@ export function actionGroups() {
   return {
     crear: [
       action('Nueva conexión Vault', '/viewer/vault', 'vault.connections.write', 'Credenciales de cartuchos.'),
+      action('Nuevo agente', '/agents', 'studio.write', 'Agentes configurables por cartucho.'),
       action('Importar ZIP', '/studio', 'studio.write', 'Se importa desde Studio.'),
       action('Invitar usuario', '/iam', 'iam.users.write', 'Se gestiona desde IAM.'),
     ],
@@ -40,6 +41,7 @@ export function actionGroups() {
     configurar: [
       action('IAM', '/iam', 'iam.users.read'),
       action('Usuarios IAM', '/iam?tab=users', 'iam.users.read'),
+      action('Agentes', '/agents', 'studio.write'),
       action('Vault', '/viewer/vault', 'vault.connections.read'),
       action('Security Center', '/security', 'security.audit.read'),
     ],
@@ -52,6 +54,7 @@ export function quickActions() {
     action('Abrir Copiloto', '/copilot', 'copilot.use'),
     action('Configurar credenciales', '/viewer/vault', 'vault.connections.write'),
     action('Abrir Studio', '/studio', 'studio.read'),
+    action('Administrar agentes', '/agents', 'studio.write'),
     action('Ver Operaciones', '/operations', 'operations.read'),
     action('Gestionar IAM', '/iam', 'iam.users.read'),
   ];

@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Decisiones — OMEGA</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
     body { padding: 0; margin: 0; overflow: auto; }
@@ -48,7 +46,7 @@
       color: var(--red); font-family: var(--font-mono); font-size: 10px;
       letter-spacing: 1px; padding: 6px 12px; border-radius: 4px; cursor: pointer;
     }
-    .btn-danger:hover { background: rgba(248,81,73,.08); }
+    .btn-danger:hover { background: var(--danger-soft); }
 
     /* List table */
     .dec-table {
@@ -66,18 +64,18 @@
     }
     .dec-table tbody tr { cursor: pointer; transition: background .12s; }
     .dec-table tbody tr:hover { background: var(--bg3); }
-    .dec-table tbody tr.selected { background: rgba(210,153,34,.08); }
+    .dec-table tbody tr.selected { background: var(--warning-soft); }
     .dec-table td:last-child, .dec-table th:last-child { text-align: right; }
 
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 3px;
       font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
     }
-    .b-open    { background: rgba(63,185,80,.12); color: var(--green); }
-    .b-closed  { background: rgba(110,118,129,.18); color: var(--text2); }
-    .b-overdue { background: rgba(248,81,73,.12); color: var(--red); }
-    .b-ok      { background: rgba(63,185,80,.18); color: var(--green); }
-    .b-fail    { background: rgba(248,81,73,.12); color: var(--red); }
+    .b-open    { background: var(--success-soft); color: var(--green); }
+    .b-closed  { background: var(--surface-soft); color: var(--text2); }
+    .b-overdue { background: var(--danger-soft); color: var(--red); }
+    .b-ok      { background: var(--success-soft); color: var(--green); }
+    .b-fail    { background: var(--danger-soft); color: var(--red); }
 
     /* Detail panel */
     .detail {
@@ -232,5 +230,6 @@
   <div id="modal-new" style="display:none"></div>
 
   <script src="/static/js/decisions.js"></script>
+  <script src="/static/js/theme-switch.js" defer></script>
 </body>
 </html>

@@ -1,8 +1,5 @@
 // ── MODecissions PaaS — Console UI ───────────────────────────────────────────
 
-// Apply saved theme synchronously (script at end of body — DOM already parsed)
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-
 let _history = [];
 let _busy = false;
 
@@ -10,9 +7,9 @@ let _busy = false;
 
 window.addEventListener('DOMContentLoaded', async () => {
   // Sync button label with saved theme
-  const saved = localStorage.getItem('mod-theme') || 'dark';
+  const saved = localStorage.getItem('mod-theme') || 'light';
   const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = saved === 'light' ? '☀ LIGHT' : '☾ DARK';
+  if (btn) btn.textContent = saved === 'system' ? '◐ SYSTEM' : saved === 'light' ? '☀ LIGHT' : '☾ DARK';
   await bootSequence();
 });
 
@@ -261,7 +258,7 @@ async function loadDatasets() {
   }
 
   body.innerHTML = `
-    <div style="display:grid;grid-template-columns:180px 70px 1fr 120px;gap:10px;padding:6px 10px;font-size:9px;color:var(--text3);font-family:var(--font-pixel);letter-spacing:1px">
+    <div style="display:grid;grid-template-columns:180px 70px 1fr 120px;gap:10px;padding:6px 10px;font-size:9px;color:var(--text3);font-family:var(--font-mono);letter-spacing:1px">
       <span>NAME</span><span>LAYER</span><span>DESCRIPTION</span><span style="text-align:right">LAST REFRESH</span>
     </div>
     ${datasets.map(d => {
@@ -523,11 +520,13 @@ function _showViewerPanel() {
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
 function cycleTheme() {
-  const current = document.documentElement.dataset.theme || 'dark';
-  const next    = current === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
+  const current = localStorage.getItem('mod-theme') || 'light';
+  const next = current === 'light' ? 'dark' : current === 'dark' ? 'system' : 'light';
   localStorage.setItem('mod-theme', next);
+  const resolved = next === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : next === 'system' ? 'light' : next;
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themePreference = next;
   const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = next === 'light' ? '☀ LIGHT' : '☾ DARK';
+  if (btn) btn.textContent = next === 'system' ? '◐ SYSTEM' : next === 'light' ? '☀ LIGHT' : '☾ DARK';
   log('info', `Theme: ${next}`);
 }

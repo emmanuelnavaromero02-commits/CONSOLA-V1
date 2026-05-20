@@ -18,6 +18,7 @@ import { LogoutButton } from "@/components/auth/LogoutButton";
 import { cn } from "@/lib/utils";
 
 const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
+const THEME_STORAGE_KEY = "mod-theme";
 
 interface NavItem {
   href:  string;
@@ -51,6 +52,14 @@ function isActive(pathname: string, href: string): boolean {
   // A nested route under the nav target counts as active so
   // /operations/users highlights "Operaciones".
   return pathname.startsWith(href + "/");
+}
+
+function resolveThemePreference(value: string | null): "light" | "dark" {
+  if (value === "dark") return "dark";
+  if (value === "system") {
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return "light";
 }
 
 export function AppChrome({ children }: { children: ReactNode }) {
@@ -94,7 +103,17 @@ export function AppChrome({ children }: { children: ReactNode }) {
         .catch(() => null);
     }
 
-    setDark(document.documentElement.classList.contains("dark"));
+    let themePreference = "light";
+    try {
+      themePreference = window.localStorage.getItem(THEME_STORAGE_KEY) || "light";
+    } catch {
+      themePreference = "light";
+    }
+    const resolvedTheme = resolveThemePreference(themePreference);
+    document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.dataset.themePreference = themePreference;
+    setDark(resolvedTheme === "dark");
   }, []);
 
   // Mobile drawer accessibility — focus the close button on
@@ -129,6 +148,13 @@ export function AppChrome({ children }: { children: ReactNode }) {
     setDark((current) => {
       const next = !current;
       document.documentElement.classList.toggle("dark", next);
+      document.documentElement.dataset.theme = next ? "dark" : "light";
+      document.documentElement.dataset.themePreference = next ? "dark" : "light";
+      try {
+        window.localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
+      } catch {
+        /* best-effort persistence */
+      }
       return next;
     });
   }

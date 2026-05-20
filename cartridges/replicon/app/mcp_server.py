@@ -9,6 +9,7 @@ Mount path: /mcp  (configured in main.py)
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from fastmcp import FastMCP
 
@@ -278,23 +279,20 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/replicon/TimeEntry/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
-    import re
     limit = min(limit, 5000)
-    resolved = sql.replace("{bucket}", settings.minio_bucket)
-    # v1.41.0 guardrails: only SELECT / WITH statements may execute. DuckDB
-    # honours INSTALL/LOAD/ATTACH/COPY which would otherwise allow reading
-    # the filesystem or rewriting tables under the cartridge role.
-    stripped = resolved.strip()
-    if not re.match(r"^\s*(SELECT|WITH)\b", stripped, re.IGNORECASE):
-        return {"error": "Only SELECT/WITH queries allowed in query_kb"}
-    forbidden = (
-        "ATTACH", "COPY", "INSTALL", "LOAD", "PRAGMA", "CREATE", "DROP",
-        "DELETE", "INSERT", "UPDATE", "TRUNCATE", "ALTER", "GRANT",
-        "REVOKE", "EXPORT", "IMPORT", "CALL",
+    stripped = (sql or "").strip()
+    if not re.match(r"^(select|with)\b", stripped, flags=re.IGNORECASE):
+        return {"error": "Only SELECT/WITH statements are allowed"}
+    forbidden = re.search(
+        r"\b(attach|copy|create|delete|drop|insert|install|load|pragma|update|alter|truncate)\b",
+        stripped,
+        flags=re.IGNORECASE,
     )
-    for kw in forbidden:
-        if re.search(rf"\b{kw}\b", stripped, re.IGNORECASE):
-            return {"error": f"Forbidden DuckDB keyword in query_kb: {kw}"}
+    if forbidden:
+        return {"error": f"Forbidden SQL keyword: {forbidden.group(1).upper()}"}
+    if ";" in stripped.rstrip(";"):
+        return {"error": "Forbidden SQL statement separator"}
+    resolved = sql.replace("{bucket}", settings.minio_bucket)
     # Inject LIMIT if the query doesn't already have one
     if "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"

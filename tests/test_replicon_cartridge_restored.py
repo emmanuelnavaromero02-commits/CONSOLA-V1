@@ -66,7 +66,7 @@ def test_replicon_cartridge_has_canonical_layout():
         "app/services/watermark_service.py",
         "config/seed.sql",
         "dags/replicon_extract.py",
-        "dags/replicon_extract_all.py",
+        "dags/replicon_ses_inbox_import.py",
     )
     for rel in must_exist:
         assert (CART_DIR / rel).is_file(), f"missing {rel} in restored cartridge"
@@ -113,12 +113,6 @@ def test_replicon_extract_does_not_use_airflow_basehook():
     )
 
 
-def test_replicon_extract_all_get_connection_reads_vault():
-    src = (CART_DIR / "dags" / "replicon_extract_all.py").read_text(encoding="utf-8")
-    assert "/api/vault/connections/replicon/" in src
-    assert "INTERNAL_API_KEY_REPLICON_TO_CONSOLE" in src
-
-
 # ── 3. Mock + zombie DAGs are gone ─────────────────────────────────────────
 
 def test_replicon_mock_directory_is_gone():
@@ -145,15 +139,18 @@ def test_replicon_mock_not_in_compose_services():
 
 
 def test_replicon_zombie_dags_are_removed():
-    """The six replicon_*.py DAGs that lived in airflow/dags/ since
-    v1.32 must be gone — the live DAGs now ship inside the cartridge."""
+    """Old per-project Replicon DAGs are gone. MEJORAS keeps root inbox
+    import DAGs and mirrors SES inside the cartridge."""
     airflow_dags = REPO_ROOT / "airflow" / "dags"
     if airflow_dags.is_dir():
-        leftovers = list(airflow_dags.glob("replicon_*.py"))
+        allowed = {
+            "replicon_ses_inbox_import.py",
+            "replicon_outlook_audit_report_import.py",
+        }
+        leftovers = [p for p in airflow_dags.glob("replicon_*.py") if p.name not in allowed]
         assert not leftovers, (
             f"zombie Replicon DAGs still in airflow/dags/: "
-            f"{[p.name for p in leftovers]}. They were superseded by "
-            f"cartridges/replicon/dags/."
+            f"{[p.name for p in leftovers]}."
         )
 
 

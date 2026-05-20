@@ -142,7 +142,7 @@ function renderOperational() {
     card({
         title: 'Studio',
         icon: 'S',
-        description: 'Studio clásico Bronze→Silver→Master→Gold, entidades, transformaciones y ejecuciones.',
+        description: 'Studio para raw, silver y gold: entidades, transformaciones y ejecuciones.',
         href: '/studio',
         primary: 'Abrir Studio',
         permission: 'studio.read',
@@ -226,6 +226,17 @@ function renderAdministration() {
         { label: 'Agregar conexión', href: '/viewer/vault', permission: 'vault.connections.write' },
         { label: 'Ver secretos', href: '/viewer/vault', permission: 'vault.secrets.read_masked' },
       ],
+    }),
+    card({
+      title: 'Agentes',
+      icon: 'G',
+      description: 'Configura agentes especializados por cartucho con prompt, tools permitidas, modelo, personalidad, RAG y agenda.',
+      href: '/agents',
+      primary: 'Administrar agentes',
+      permission: 'studio.write',
+      kind: 'admin',
+      meta: [{ text: 'Prompt' }, { text: 'Tools' }, { text: 'Runs' }],
+      secondary: [{ label: 'Crear agente', href: '/agents', permission: 'studio.write' }],
     }),
     card({
       title: 'Configuración',

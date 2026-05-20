@@ -4,8 +4,6 @@
 // are migrated to data-action / data-* attributes and dispatched through a
 // single body-level delegated listener at the bottom of this file.
 
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-
 const OPS = ['>=', '>', '<=', '<', '=', '!='];
 let CURRENT_FILTER = 'all';
 let SELECTED_ID = null;
@@ -149,8 +147,8 @@ function rowHtml(r){
     ? escHtml(responsableLabel)
     : `<span style="color:var(--text3)">—</span>`;
   const visBadge = r.visibility === 'shared'
-    ? `<span class="badge" style="background:rgba(88,166,255,.12);color:var(--cyan)" title="Visible para todo el equipo">EQUIPO</span>`
-    : `<span class="badge" style="background:rgba(110,118,129,.18);color:var(--text2)" title="Solo creador, responsable y admins">PRIVADA</span>`;
+    ? `<span class="badge" style="background:var(--info-soft);color:var(--cyan)" title="Visible para todo el equipo">EQUIPO</span>`
+    : `<span class="badge" style="background:var(--surface-soft);color:var(--text2)" title="Solo creador, responsable y admins">PRIVADA</span>`;
   return `<tr data-id="${Number(r.id)}" class="${SELECTED_ID === r.id ? 'selected' : ''}">
     <td style="color:var(--text)"><strong>${escHtml(r.title)}</strong></td>
     <td style="color:var(--text2)">${responsable}</td>

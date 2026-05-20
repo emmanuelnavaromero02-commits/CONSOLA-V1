@@ -7,7 +7,7 @@ import os
 
 SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
 
-SQLALCHEMY_DATABASE_URI = (
+SQLALCHEMY_DATABASE_URI = os.environ.get("SQLALCHEMY_DATABASE_URI") or (
     "postgresql+psycopg2://postgres:"
     f"{os.environ['POSTGRES_PASSWORD']}@postgres:5432/superset"
 )

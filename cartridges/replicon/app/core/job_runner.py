@@ -33,14 +33,7 @@ _tasks: dict[str, asyncio.Task] = {}
 async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        # Sprint v1.40.2: settings.asyncpg_dsn already strips the
-        # ``+psycopg2`` driver hint and honours the DATABASE_URL env
-        # override, so this code path no longer hand-rolls the
-        # transform locally (which used to mask the v1.40 wiring bug
-        # that defaulted pg_user/pg_password to ``postgres``).
-        _pool = await asyncpg.create_pool(
-            settings.asyncpg_dsn, min_size=1, max_size=3
-        )
+        _pool = await asyncpg.create_pool(settings.asyncpg_dsn, min_size=1, max_size=3)
     return _pool
 
 

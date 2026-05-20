@@ -45,6 +45,20 @@ function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function csrfHeaders(base = {}) {
+  const token = csrfToken();
+  return token ? { ...base, 'X-CSRF-Token': token } : base;
+}
+
+function jsonHeaders() {
+  return csrfHeaders({ 'Content-Type': 'application/json' });
+}
+
 async function readError(resp) {
   try {
     const d = await resp.json();
@@ -257,6 +271,21 @@ function buildRow(u) {
     } else if (u.is_active) {
       tdActions.appendChild(actionBtn('reset',    '🔑 RESET',   'btn-ghost'));
     }
+    if (u.role === 'admin' && u.is_active) {
+      const escalationBtn = actionBtn(
+        'escalation',
+        u.escalation_notify ? 'ESC ON' : 'ESC OFF',
+        'btn-ghost',
+        u.escalation_notify
+          ? 'Recibe solicitudes escaladas del asistente'
+          : 'No recibe solicitudes escaladas del asistente',
+      );
+      if (u.escalation_notify) {
+        escalationBtn.style.color = 'var(--amber)';
+        escalationBtn.style.borderColor = 'var(--amber)';
+      }
+      tdActions.appendChild(escalationBtn);
+    }
     if (!isMe) {
       tdActions.appendChild(actionBtn('delete',   '×',          'btn-danger', 'Eliminar usuario'));
     }
@@ -294,6 +323,7 @@ function onRowAction(e) {
     case 'edit':     openEditModal(u); break;
     case 'reinvite': askReinvite(u, btn); break;
     case 'reset':    askSendReset(u, btn); break;
+    case 'escalation': toggleEscalation(u, btn); break;
     case 'delete':   askDeleteUser(u, btn); break;
   }
 }
@@ -350,7 +380,7 @@ async function submitInvite() {
       r = await fetch('/api/admin/users/invite', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify({ email, name: name || null, role }),
       });
     } catch (e) {
@@ -409,7 +439,7 @@ async function submitEdit() {
       r = await fetch(`/api/admin/users/${id}`, {
         method: 'PATCH',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: jsonHeaders(),
         body: JSON.stringify(body),
       });
     } catch (e) { setModalError(err, 'Error de red: ' + e.message); return; }
@@ -449,7 +479,11 @@ function askReinvite(u) {
     onConfirm: async () => {
       let r;
       try {
-        r = await fetch(`/api/admin/users/${u.id}/reinvite`, { method: 'POST', credentials: 'same-origin' });
+        r = await fetch(`/api/admin/users/${u.id}/reinvite`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: csrfHeaders(),
+        });
       } catch (e) { toast('Error de red: ' + e.message, 'error'); return; }
       if (r.status === 400) { toast('El usuario ya está activo; usa "RESET" en su lugar.', 'warning'); closeAllModals(); return; }
       if (r.status === 401 || r.status === 403) { toast('Sin permiso para reenviar', 'error'); closeAllModals(); return; }
@@ -470,7 +504,11 @@ function askSendReset(u) {
     onConfirm: async () => {
       let r;
       try {
-        r = await fetch(`/api/admin/users/${u.id}/send-reset`, { method: 'POST', credentials: 'same-origin' });
+        r = await fetch(`/api/admin/users/${u.id}/send-reset`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: csrfHeaders(),
+        });
       } catch (e) { toast('Error de red: ' + e.message, 'error'); return; }
       if (r.status === 404) { toast('Usuario no encontrado o inactivo', 'warning'); closeAllModals(); return; }
       if (r.status === 401 || r.status === 403) { toast('Sin permiso para enviar reset', 'error'); closeAllModals(); return; }
@@ -483,6 +521,34 @@ function askSendReset(u) {
   });
 }
 
+async function toggleEscalation(u, btn) {
+  if (!state.canWrite) return;
+  await withLoading(btn, '...', async () => {
+    let r;
+    try {
+      r = await fetch(`/api/admin/users/${u.id}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ escalation_notify: !u.escalation_notify }),
+      });
+    } catch (e) {
+      toast('Error de red: ' + e.message, 'error');
+      return;
+    }
+    if (r.status === 401 || r.status === 403) {
+      toast('Sin permiso para cambiar escalaciones', 'error');
+      return;
+    }
+    if (!r.ok) {
+      toast('Error: ' + await readError(r), 'error');
+      return;
+    }
+    toast(!u.escalation_notify ? 'Escalaciones activadas' : 'Escalaciones desactivadas', 'success');
+    await loadUsers();
+  });
+}
+
 function askDeleteUser(u) {
   askConfirm({
     title: 'Eliminar usuario',
@@ -492,7 +558,11 @@ function askDeleteUser(u) {
     onConfirm: async () => {
       let r;
       try {
-        r = await fetch(`/api/admin/users/${u.id}`, { method: 'DELETE', credentials: 'same-origin' });
+        r = await fetch(`/api/admin/users/${u.id}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: csrfHeaders(),
+        });
       } catch (e) { toast('Error de red: ' + e.message, 'error'); return; }
       if (r.status === 400) { toast('No puedes eliminar tu propia cuenta.', 'warning'); closeAllModals(); return; }
       if (r.status === 401 || r.status === 403) { toast('Sin permiso para eliminar', 'error'); closeAllModals(); return; }

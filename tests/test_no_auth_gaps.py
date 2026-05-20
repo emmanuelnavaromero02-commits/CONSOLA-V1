@@ -55,6 +55,9 @@ PUBLIC_ROUTE_ALLOWLIST = {
     # CSRF token endpoint — needs to be reachable before any
     # state-changing form posts, so it can't itself require auth.
     ("/api/csrf",            "GET"),
+    # VPN config download is token-protected: the random one-time token in
+    # the path is the auth factor sent in the invitation email.
+    ("/vpn-config/{token}",   "GET"),
 }
 
 

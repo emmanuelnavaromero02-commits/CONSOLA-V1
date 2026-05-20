@@ -5,8 +5,6 @@
 // strings rendered into the DOM go through escHtml() to prevent XSS — every
 // other dynamic field passes through textContent assignment.
 
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-
 const CARTRIDGE_META = {
   replicon: {
     name: 'Replicon',

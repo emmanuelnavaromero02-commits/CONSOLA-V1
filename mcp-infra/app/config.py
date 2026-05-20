@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     pg_gold_host: str = "postgres_gold"
     pg_gold_port: int = 5433
     pg_gold_db:   str = "modecissions_gold"
+    pg_gold_user: str = ""
+    pg_gold_password: str = ""
 
     # ── Vault ──────────────────────────────────────────────────────────────────
     vault_url: str = "http://vault:8300"

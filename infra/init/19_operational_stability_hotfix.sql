@@ -56,8 +56,7 @@ CREATE TABLE IF NOT EXISTS data_relationships (
     PRIMARY KEY (from_dataset, from_column, to_dataset, to_column)
 );
 
--- Replicon Analytics entities must use the generic extraction DAG.
--- ProjectDetail remains on the Services-specific DAG.
+-- Replicon entities must point to DAGs that are actually mounted in Airflow.
 UPDATE entity_config
 SET connection_id = 'analytics',
     dag_id = 'replicon_extract'
@@ -66,6 +65,6 @@ WHERE cartridge_id = 'replicon'
 
 UPDATE entity_config
 SET connection_id = 'services',
-    dag_id = 'replicon_projects_detail'
+    dag_id = 'replicon_extract'
 WHERE cartridge_id = 'replicon'
   AND entity = 'ProjectDetail';

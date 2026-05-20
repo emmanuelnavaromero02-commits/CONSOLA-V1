@@ -22,8 +22,8 @@ from app.rag.store import (
     name="search_rag",
     description=(
         "Semantic search over the RAG knowledge base. Returns parent-context "
-        "chunks ranked by ANN similarity. Use before answering questions about "
-        "ingested documents or reports."
+        "chunks ranked by ANN similarity. Use `kinds` to scope: ['schema'] for "
+        "dataset/column metadata, ['document'] for user-uploaded reports."
     ),
     input_schema={
         "type": "object",
@@ -32,13 +32,20 @@ from app.rag.store import (
             "top_k":      {"type": "integer", "description": "Results to return (default 5)", "default": 5},
             "source_ids": {"type": "array", "items": {"type": "integer"},
                            "description": "Filter by source IDs (optional)"},
+            "kinds":      {"type": "array", "items": {"type": "string"},
+                           "description": "Filter by source kind: 'schema' or 'document'. Omit for all."},
         },
         "required": ["query"],
     },
 )
-async def search_rag(query: str, top_k: int = 5, source_ids: list[int] | None = None) -> dict:
+async def search_rag(
+    query: str,
+    top_k: int = 5,
+    source_ids: list[int] | None = None,
+    kinds: list[str] | None = None,
+) -> dict:
     query_vec = await embed_query(query)
-    results = await _search(query_vec, top_k=top_k, source_ids=source_ids)
+    results = await _search(query_vec, top_k=top_k, source_ids=source_ids, kinds=kinds)
     return {"results": results}
 
 
@@ -67,17 +74,30 @@ async def list_rag_sources() -> dict:
             "name":        {"type": "string", "description": "Unique document name"},
             "content":     {"type": "string", "description": "Full text content"},
             "description": {"type": "string", "description": "Optional description"},
+            "kind":        {"type": "string", "description": "'document' (default) or 'schema'", "default": "document"},
         },
         "required": ["name", "content"],
     },
 )
-async def ingest_document(name: str, content: str, description: str = "") -> dict:
-    return await _do_ingest(name=name, content=content, description=description, mime_type="text/plain")
+async def ingest_document(name: str, content: str, description: str = "", kind: str = "document") -> dict:
+    return await _do_ingest(
+        name=name,
+        content=content,
+        description=description,
+        mime_type="text/plain",
+        kind=kind,
+    )
 
 
 # ── Helpers (also imported by REST endpoints in main.py) ─────────────────────
 
-async def _do_ingest(name: str, content: str, description: str = "", mime_type: str = "text/plain") -> dict:
+async def _do_ingest(
+    name: str,
+    content: str,
+    description: str = "",
+    mime_type: str = "text/plain",
+    kind: str = "document",
+) -> dict:
     chunks = chunk_document(
         content,
         parent_size=rag_config.PARENT_CHUNK_SIZE,
@@ -99,9 +119,15 @@ async def _do_ingest(name: str, content: str, description: str = "", mime_type: 
         size_chars=len(content),
         chunks=chunks,
         embeddings=embeddings,
+        kind=kind,
     )
 
 
-async def _do_search(query: str, top_k: int = 5, source_ids: list[int] | None = None) -> list[dict]:
+async def _do_search(
+    query: str,
+    top_k: int = 5,
+    source_ids: list[int] | None = None,
+    kinds: list[str] | None = None,
+) -> list[dict]:
     query_vec = await embed_query(query)
-    return await _search(query_vec, top_k=top_k, source_ids=source_ids)
+    return await _search(query_vec, top_k=top_k, source_ids=source_ids, kinds=kinds)

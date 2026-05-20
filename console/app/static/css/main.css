@@ -1,4 +1,4 @@
-/* tokens.css must come first so every legacy --color-*/--bg2/--cyan/...
+/* tokens.css must come first so every legacy color/bg/cyan token
    reference below resolves to a value (and re-maps in dark mode). */
 @import url("./tokens.css");
 
@@ -186,7 +186,7 @@ html, body {
   border-radius: 3px;
   transition: all .1s;
 }
-.viewer-tab-close:hover { color: var(--color-error); background: rgba(248,81,73,.12); }
+.viewer-tab-close:hover { color: var(--color-error); background: var(--danger-soft); }
 
 .viewer-panel-actions {
   display: flex;
@@ -536,10 +536,7 @@ html, body {
 .qbtn:hover {
   border-color: var(--color-accent);
   color: var(--color-accent);
-  background: rgba(88,166,255,.06);
-}
-html[data-theme="light"] .qbtn:hover {
-  background: rgba(9,105,218,.06);
+  background: var(--primary-soft);
 }
 
 /* ── ACTIVITY LOG ────────────────────────────────────────────────────────── */
@@ -780,25 +777,25 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   padding: 4px 8px;
-  background: #f4f4f5;
-  color: #52525b;
+  background: var(--surface-soft);
+  color: var(--color-text-secondary);
   border-radius: 4px;
-  border: 1px solid #e4e4e7;
+  border: 1px solid var(--color-border);
   z-index: 100;
 }
 
 .version-badge--ok {
-  background: #d1fae5;
-  color: #065f46;
-  border-color: #6ee7b7;
+  background: var(--success-soft);
+  color: var(--color-success);
+  border-color: var(--color-success);
 }
 .version-badge--warn {
-  background: #fef3c7;
-  color: #92400e;
-  border-color: #fcd34d;
+  background: var(--warning-soft);
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 .version-badge--crit {
-  background: #fee2e2;
-  color: #991b1b;
-  border-color: #fca5a5;
+  background: var(--danger-soft);
+  color: var(--color-error);
+  border-color: var(--color-error);
 }

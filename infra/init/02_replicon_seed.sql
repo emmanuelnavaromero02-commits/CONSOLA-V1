@@ -34,9 +34,7 @@ ON CONFLICT (cartridge_id, conn_id) DO NOTHING;
 -- ── DAGs ──────────────────────────────────────────────────────────────────────
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
-    ('replicon', 'replicon_extract',          'replicon_extract.py',          'Extrae una entidad vía Analytics API (async)',       'on-demand', '["entity","mode","from_date","to_date"]'),
-    ('replicon', 'replicon_extract_all',      'replicon_extract_all.py',      'Extrae todas las entidades Analytics en secuencia',  'on-demand', '["mode","entities"]'),
-    ('replicon', 'replicon_projects_detail',  'replicon_projects_detail.py',  'Extrae ProjectDetail vía Services API (GET síncrono)', 'on-demand', '["mode"]')
+    ('replicon', 'replicon_extract',          'replicon_extract.py',          'Extrae una entidad vía Analytics API (async)',       'on-demand', '["entity","mode","from_date","to_date"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
 -- ── Entities ──────────────────────────────────────────────────────────────────
@@ -50,9 +48,7 @@ VALUES
     ('replicon',   'InvoiceItem',        'incremental', 'last_modified',  'invoice_item_id',  'analytics',   'replicon_extract',  'Items de factura con monto, horas y tarifa',                    TRUE),
     ('replicon',   'CostItem',           'incremental', 'last_modified',  'cost_item_id',     'analytics',   'replicon_extract',  'Items de costo por proyecto',                                   TRUE),
     ('replicon',   'ProfitItem',         'incremental', 'last_modified',  'profit_item_id',   'analytics',   'replicon_extract',  'Items de ganancia por proyecto',                                TRUE),
-    -- Analytics API — ruta estable para extracciones Bronze. ProjectDetail queda
-    -- separado porque usa Services API síncrona y un DAG específico.
-    ('replicon',   'ProjectDetail',      'incremental', 'lastUpdated',    'project_id',       'services',    'replicon_projects_detail', 'Detalle completo de proyectos: budget, estado, fechas, equipo', TRUE),
+    ('replicon',   'ProjectDetail',      'incremental', 'lastUpdated',    'project_id',       'services',    'replicon_extract',  'Detalle completo de proyectos: budget, estado, fechas, equipo', TRUE),
     ('replicon',   'User',               'full',        'last_modified',  'user_id',          'analytics',   'replicon_extract',  'Usuarios del sistema con costos y tarifas',                     TRUE),
     ('replicon',   'Client',             'full',        'last_modified',  'client_id',        'analytics',   'replicon_extract',  'Clientes con moneda y tarifa de facturación',                   TRUE),
     ('replicon',   'Task',               'full',        'last_modified',  'task_id',          'analytics',   'replicon_extract',  'Tareas de proyectos con horas estimadas',                       TRUE),
