@@ -104,6 +104,24 @@ echo ""
 EXIT=0
 npx playwright test || EXIT=$?
 
+if [ "${EXIT}" -ne 0 ]; then
+    echo ""
+    echo "E2E failure summary:"
+    SUMMARY="$(bash "${ROOT}/scripts/e2e-report-summary.sh" 2>/dev/null || true)"
+    if [ -n "${SUMMARY}" ]; then
+        echo "${SUMMARY}"
+        if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+            ANNOTATION="$(printf '%s' "${SUMMARY}" | head -n 20 | tr '\n' ' ')"
+            ANNOTATION="${ANNOTATION//'%'/'%25'}"
+            ANNOTATION="${ANNOTATION//$'\r'/'%0D'}"
+            ANNOTATION="${ANNOTATION//$'\n'/'%0A'}"
+            echo "::error title=Playwright E2E failed::${ANNOTATION}"
+        fi
+    else
+        echo "  (No JSON summary available; inspect playwright-report artifact.)"
+    fi
+fi
+
 echo ""
 echo "📊 Report: ${E2E_DIR}/playwright-report/index.html"
 echo ""

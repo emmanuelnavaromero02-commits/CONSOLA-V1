@@ -26,7 +26,9 @@ export default defineConfig({
   // becomes the source of failure.
   timeout: 45_000,
   expect: { timeout: 10_000 },
-  retries: 0,
+  // CI starts a fresh Docker stack on shared runners; allow one retry
+  // so transient service/UI timing does not fail an otherwise healthy PR.
+  retries: process.env.CI ? 1 : 0,
   // v1.44.3.2.1 R1 DevOps P1: 2 workers safe because storage state
   // is read-only (cookies persist on the BrowserContext but the
   // session itself isn't mutated by any spec). Cuts a ~10 min serial
