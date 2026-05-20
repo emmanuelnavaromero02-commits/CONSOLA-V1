@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     parent_id   BIGINT REFERENCES rag_chunks(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
     content     TEXT NOT NULL,
-    embedding   vector(768),   -- text-embedding-004 (Gemini); change EMBED_DIM env if needed
+    embedding   vector(768),   -- legacy base type; 71_rag_embedding_dim_1024.sql upgrades to Titan v2
     metadata    JSONB DEFAULT '{}',
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );

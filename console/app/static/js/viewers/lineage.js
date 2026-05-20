@@ -207,6 +207,7 @@ function renderSvgGraph(nodes) {
     role: 'img',
     'aria-label': 'Grafo de linaje de datasets',
   });
+  svg.dataset.defaultViewBox = `0 0 ${width} ${height}`;
   const defs = svgEl('defs');
   const marker = svgEl('marker', {
     id: 'lineage-arrow',
@@ -455,7 +456,12 @@ async function reload() {
 
 $('refresh-btn').addEventListener('click', reload);
 $('fit-btn').addEventListener('click', () => {
-  if (cy) cy.fit(undefined, 32);
+  if (cy) {
+    cy.fit(undefined, 32);
+    return;
+  }
+  const svg = $('graph').querySelector('svg.lineage-svg');
+  if (svg?.dataset.defaultViewBox) svg.setAttribute('viewBox', svg.dataset.defaultViewBox);
 });
 $('cartridge-filter').addEventListener('change', reload);
 $('layer-filter').addEventListener('change', renderGraph);
