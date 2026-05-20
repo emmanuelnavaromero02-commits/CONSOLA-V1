@@ -826,9 +826,9 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         return {"saved": True, "name": args["name"]}
 
     if tool == "delete_dataset":
-        _require_security_permission(body, "datasets.delete")
-        ds_name = args["name"]
+        ds_name = args.get("name") or ""
         _validate_dataset_name(ds_name)
+        _require_security_permission(body, "datasets.delete")
         ds_existing = store.get_dataset(ds_name)
         if not ds_existing:
             raise HTTPException(404, f"Dataset '{ds_name}' not found")
