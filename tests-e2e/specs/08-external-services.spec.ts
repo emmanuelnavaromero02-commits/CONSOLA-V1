@@ -59,25 +59,35 @@ async function fetchOrSkip(
   url: string,
   { timeout = 10_000 } = {},
 ) {
-  try {
-    return await ctx.fetch(url, { timeout });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    // v1.44.3.3 R-Mac-Round-3 DevOps review P2: narrowed the
-    // skip regex to TRUE mid-handshake transients only.
-    // ECONNREFUSED + "fetch failed" mean "port not bound" /
-    // "DNS broken" — those are real ops issues that should
-    // still SURFACE as failures, not silently skip. The
-    // Superset symptom is specifically ECONNRESET (container
-    // accepts the SYN, then resets mid-handshake), which is
-    // what we want to forgive.
-    const transient =
-      /econnreset|socket hang up|other side closed/i.test(message);
-    if (transient) {
-      test.skip(true, `${url} unreachable at TCP level: ${message.slice(0, 200)}`);
+  let lastMessage = "";
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await ctx.fetch(url, { timeout });
+    } catch (err: unknown) {
+      lastMessage = err instanceof Error ? err.message : String(err);
+      const retryable =
+        /timeout|timed out|econnreset|socket hang up|other side closed/i.test(lastMessage);
+      if (retryable && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+      // v1.44.3.3 R-Mac-Round-3 DevOps review P2: narrowed the
+      // skip regex to TRUE mid-handshake transients only.
+      // ECONNREFUSED + "fetch failed" mean "port not bound" /
+      // "DNS broken" — those are real ops issues that should
+      // still SURFACE as failures, not silently skip. The
+      // Superset symptom is specifically ECONNRESET (container
+      // accepts the SYN, then resets mid-handshake), which is
+      // what we want to forgive.
+      const skippable =
+        /econnreset|socket hang up|other side closed/i.test(lastMessage);
+      if (skippable) {
+        test.skip(true, `${url} unreachable at TCP level: ${lastMessage.slice(0, 200)}`);
+      }
+      throw err;
     }
-    throw err;
   }
+  throw new Error(`Unable to fetch ${url}: ${lastMessage}`);
 }
 
 test.describe("External services — root reachability", () => {
