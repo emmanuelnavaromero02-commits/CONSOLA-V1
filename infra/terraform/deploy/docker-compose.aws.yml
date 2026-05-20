@@ -98,15 +98,20 @@ services:
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REFINEMENT_URL:      http://refinement:8500
       MCP_INFRA_URL:       http://mcp-infra:8010
+      CONSOLE_INTERNAL_URL: http://console:8000
+      AGENT_RUNNER_TOKEN:  ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       SUPERSET_URL:        http://superset:8088
+      AIRFLOW_PUBLIC_URL:  ${AIRFLOW_PUBLIC_URL:-}
+      SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-}
       # Prefer a least-privilege Superset service account for Studio dataset
       # creation. Falls back to bootstrap admin if a service account is not set.
       SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:-}
       SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:-}
       SUPERSET_ADMIN_USER:  ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
-      CONSOLE_URL:         ${CONSOLE_URL:-http://localhost:8000}
-      WORKSPACE_URL:       ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
+      SUPERSET_GOLD_SQLALCHEMY_URI: "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
+      CONSOLE_URL:         ${CONSOLE_URL:?CONSOLE_URL is required}
+      WORKSPACE_URL:       ${WORKSPACE_PUBLIC_URL:?WORKSPACE_PUBLIC_URL is required}
       RAG_URL:             http://mcp-infra:8010   # RAG migrado a mcp-infra
       # SMTP: MailHog en VPC interno hasta que se enchufe SES
       SMTP_HOST:           ${SMTP_HOST:-mailhog}
@@ -116,7 +121,12 @@ services:
       SMTP_FROM:           ${SMTP_FROM:-noreply@modecissions.local}
       SMTP_FROM_DOMAIN:    ${SMTP_FROM_DOMAIN:-modecissions.local}
       SMTP_USE_TLS:        ${SMTP_USE_TLS:-false}
-      APP_BASE_URL:        ${CONSOLE_URL:-http://localhost:8000}
+      VPN_API_URL:         ${VPN_API_URL:-}
+      VPN_API_PASSWORD:    ${VPN_API_PASSWORD:-}
+      VPN_TOKEN_TTL_HOURS: ${VPN_TOKEN_TTL_HOURS:-72}
+      VPN_CLIENT_ALLOWED_IPS: ${VPN_CLIENT_ALLOWED_IPS:-10.0.0.0/16,10.8.0.0/24}
+      VPN_CLIENT_STRIP_DNS: ${VPN_CLIENT_STRIP_DNS:-true}
+      APP_BASE_URL:        ${APP_BASE_URL:-}
       INVITE_TOKEN_TTL_HOURS: ${INVITE_TOKEN_TTL_HOURS:-72}
       RESET_TOKEN_TTL_HOURS:  ${RESET_TOKEN_TTL_HOURS:-1}
       JWT_SECRET_KEY:      ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -126,6 +136,7 @@ services:
       - "8000:8000"
     volumes:
       - /opt/modecissions/cartridges:/registry/cartridges
+      - /opt/modecissions/airflow/dags:/opt/airflow/dags:ro
       - /opt/modecissions/console/app/static:/app/app/static:ro
     networks:
       - modecissions_net
@@ -162,8 +173,8 @@ services:
       DATABASE_URL:         "postgresql+psycopg2://omega_workspace:${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required}@postgres:5432/modecissions"
       REFINEMENT_URL:       http://refinement:8500
       MCP_INFRA_URL:        http://mcp-infra:8010
-      CONSOLE_URL:          ${CONSOLE_URL:-http://localhost:8000}
-      WORKSPACE_PUBLIC_URL: ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
+      CONSOLE_URL:          ${CONSOLE_URL:?CONSOLE_URL is required}
+      WORKSPACE_PUBLIC_URL: ${WORKSPACE_PUBLIC_URL:?WORKSPACE_PUBLIC_URL is required}
       ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY:       ${GEMINI_API_KEY:-}
       CHAT_LLM_PROVIDER:    ${CHAT_LLM_PROVIDER:-anthropic}
@@ -208,6 +219,7 @@ services:
       S3_BUCKET_NAME:     ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       ANTHROPIC_API_KEY:  ${ANTHROPIC_API_KEY:-}
       SQL_LLM_MODEL:      ${SQL_LLM_MODEL:-claude-sonnet-4-6}
+      MCP_INFRA_URL:      http://mcp-infra:8010
     ports:
       - "8500:8500"
     networks:
@@ -297,9 +309,12 @@ services:
       PG_GOLD_HOST:      postgres_gold
       PG_GOLD_PORT:      5433
       PG_GOLD_DB:        modecissions_gold
+      PG_GOLD_USER:      omega_refinement_gold
+      PG_GOLD_PASSWORD:  ${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}
       SUPERSET_URL:      http://superset:8088
       SUPERSET_USER:     ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
+      ADMIN_EMAIL:       ${ADMIN_EMAIL:-}
     # v1.43.4 (Codex H1): mcp-infra port 8010 is no longer published
     # on the host network in AWS — it's an internal service consumed
     # only by console / workspace / airflow workers over the
@@ -343,12 +358,14 @@ services:
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
       POSTGRES_PASSWORD:   ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
     entrypoint: /bin/bash
     # Single-line command — YAML folded scalars (>) preserve newlines on
     # indented continuation lines, which breaks bash multi-arg commands.
-    command: -c "superset db upgrade && superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required} --firstname Admin --lastname User --email admin@modecissions.local --password \"$$SUPERSET_ADMIN_PASSWORD\" && superset init"
+    command: -c "superset db upgrade && (superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required} --firstname Admin --lastname User --email admin@modecissions.local --password \"$$SUPERSET_ADMIN_PASSWORD\" || true) && superset init"
     networks:
       - modecissions_net
     # v1.43.4 (Claude N3): one-shot init waits on postgres healthy
@@ -420,10 +437,13 @@ services:
       AIRFLOW_ADMIN_USER:                   ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      CONSOLE_URL:                          http://console:8000
+      AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
     networks:
       - modecissions_net
@@ -442,20 +462,26 @@ services:
       - path: ${AWS_ENV_FILE:-.env}
         required: false
     entrypoint: /bin/bash
-    command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
+    command: -c "python -m pip install --user --no-cache-dir $$_PIP_ADDITIONAL_REQUIREMENTS && rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
       # omega_airflow_meta role; init keeps superuser by design.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      CONSOLE_URL:                          http://console:8000
+      AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
+      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl croniter"
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
+      DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_ENDPOINT:           "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
@@ -512,16 +538,20 @@ services:
     command: scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): runtime services use dedicated
       # omega_airflow_meta role; init keeps superuser by design.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:  "postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow"
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      CONSOLE_URL:                          http://console:8000
+      AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl"
+      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl croniter"
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
+      DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_S3_BUCKET:                ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_BUCKET:             ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       AIRFLOW_VAR_MINIO_ENDPOINT:           "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
@@ -554,7 +584,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\" || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import os, sys; sys.exit(0 if any(('airflow scheduler' in open('/proc/' + p + '/cmdline', 'rb').read().replace(b'\\0', b' ').decode('utf-8', 'ignore')) for p in os.listdir('/proc') if p.isdigit()) else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 5

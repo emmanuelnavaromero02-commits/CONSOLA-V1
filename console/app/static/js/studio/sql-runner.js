@@ -2,6 +2,35 @@
     import { state } from './legacy-state.js';
     import { esc, _renderQueryTable, _currentEditorEntity } from './legacy.js';
 
+    function readCookie(name) {
+      const prefix = `${name}=`;
+      for (const raw of document.cookie.split(';')) {
+        const c = raw.trim();
+        if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
+      }
+      return null;
+    }
+
+    function jsonHeaders() {
+      const headers = {'Content-Type': 'application/json'};
+      const csrf = readCookie('csrf_token');
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      return headers;
+    }
+
+    function currentCartridgeId() {
+      return state._currentCartridge?.id
+        || document.getElementById('ds-ed-cart')?.value.trim()
+        || document.getElementById('cartridge-sel')?.value
+        || '';
+    }
+
+    function currentEditorSources() {
+      const entity = _currentEditorEntity();
+      const cart = currentCartridgeId();
+      return entity && cart ? [`raw/${cart}/${entity}`] : [];
+    }
+
     export function openSqlRunner(sql, label, sources) {
       const ta = document.getElementById('sql-runner-ta');
       const ov = document.getElementById('sql-runner-overlay');
@@ -37,7 +66,9 @@
       const t0 = Date.now();
       try {
         const r = await fetch('/api/bronze/query', {
-          method: 'POST', headers: {'Content-Type':'application/json'},
+          method: 'POST',
+          credentials: 'include',
+          headers: jsonHeaders(),
           body: JSON.stringify({ sql: sel, limit: 200, sources: state._sqlRunnerSources }),
         });
         const d      = await r.json();
@@ -45,7 +76,7 @@
         const result = d.result || d;
         if (result.error) {
           status.textContent = '✗ error';
-          results.innerHTML = `<pre style="color:#ff2d55;font-size:11px;
+          results.innerHTML = `<pre style="color:var(--red);font-size:11px;
             font-family:var(--font-mono);white-space:pre-wrap">${esc(result.error)}</pre>`;
           return;
         }
@@ -57,7 +88,7 @@
           : `<div style="color:var(--text3);font-style:italic;padding:8px">Sin resultados</div>`;
       } catch(e) {
         status.textContent = '✗ error de red';
-        results.innerHTML = `<div style="color:#ff2d55;font-size:11px">${esc(e.message)}</div>`;
+        results.innerHTML = `<div style="color:var(--red);font-size:11px">${esc(e.message)}</div>`;
       }
     }
 
@@ -75,10 +106,8 @@
       const sel    = ta.selectionStart !== ta.selectionEnd
         ? ta.value.slice(ta.selectionStart, ta.selectionEnd).trim()
         : ta.value.trim();
-      const entity = _currentEditorEntity();
-      const cart   = document.getElementById('ds-ed-cart')?.value.trim();
       const label  = document.getElementById('ds-ed-name')?.value || '';
-      const sources = entity && cart ? [`raw/${cart}/${entity}`] : [];
+      const sources = currentEditorSources();
       openSqlRunner(sel, label, sources);
     }
 
@@ -93,11 +122,9 @@
         const sel = focused.selectionStart !== focused.selectionEnd
           ? focused.value.slice(focused.selectionStart, focused.selectionEnd).trim()
           : focused.value.trim();
-        const entity = _currentEditorEntity();
-        const cart   = document.getElementById('ds-ed-cart')?.value.trim();
         sql     = sel;
         label   = document.getElementById('ds-ed-name')?.value || '';
-        sources = entity && cart ? [`raw/${cart}/${entity}`] : [];
+        sources = currentEditorSources();
       } else if (id === 'bronze-sql') {
         sql   = focused.value.trim();
         label = 'Bronze query';

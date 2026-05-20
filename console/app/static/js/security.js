@@ -1,7 +1,5 @@
 // Sprint v1.11 phase 3 — extracted from security.html for strict CSP.
 
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'light';
-
 const state = {
   sessions: [],
   audit: []

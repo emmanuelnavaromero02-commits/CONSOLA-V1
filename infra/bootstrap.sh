@@ -24,6 +24,7 @@ POSTGRES_PASSWORD="$(openssl rand -hex 16)"
 MINIO_SECRET_KEY="$(openssl rand -hex 16)"
 SUPERSET_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 AIRFLOW_ADMIN_PASSWORD="$(openssl rand -hex 16)"
+AGENT_RUNNER_TOKEN="$(openssl rand -hex 32)"
 
 # Sprint v1.19: per-service Postgres roles (least-privilege). Each
 # service gets its own login role and its own password so a compromise
@@ -86,6 +87,7 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD}
 AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
+AGENT_RUNNER_TOKEN=${AGENT_RUNNER_TOKEN}
 
 # === Service-specific Postgres roles (v1.19) ===
 # Each service connects with its own login role / password instead of
@@ -144,6 +146,8 @@ SMTP_USE_TLS=false
 ALLOWED_ORIGINS=http://localhost:8000,http://localhost:8001
 CONSOLE_URL=http://localhost:8000
 WORKSPACE_PUBLIC_URL=http://localhost:8001
+AIRFLOW_PUBLIC_URL=http://localhost:8082
+SUPERSET_PUBLIC_URL=http://localhost:8088
 
 # === Token TTLs ===
 INVITE_TOKEN_TTL_HOURS=72

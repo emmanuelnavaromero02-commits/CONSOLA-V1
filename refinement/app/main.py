@@ -57,6 +57,8 @@ def _migrate_yaml_datasets():
             data = yaml.safe_load(f.read_text(encoding="utf-8"))
             if not data or not data.get("name"):
                 continue
+            if data.get("cartridge") == "unknown" or str(data["name"]).startswith("test_"):
+                continue
             existing = store.get_dataset(data["name"])
             if existing:
                 continue  # already in Postgres
@@ -248,8 +250,7 @@ async def mcp_tools():
             "description": (
                 "Guarda la definición de un dataset Silver o Gold. "
                 "layer='silver': analítico — Parquet en MinIO. "
-                "layer='master': maestro pequeño — Parquet + tabla Postgres. "
-                "layer='gold': agregación — tabla Postgres. "
+                "layer='gold': modelado de negocio y agregación — tabla Postgres. "
                 "Incluye cartridge, source_load_date y column_mapping para trazabilidad."
             ),
             "input_schema": {
@@ -259,7 +260,7 @@ async def mcp_tools():
                                          "description": "Nombre único del dataset, e.g. 'empleados_activos'"},
                     "description":      {"type": "string"},
                     "sql":              {"type": "string"},
-                    "layer":            {"type": "string", "enum": ["silver", "master", "gold"]},
+                    "layer":            {"type": "string", "enum": ["silver", "gold"]},
                     "sources":          {"type": "array", "items": {"type": "string"}},
                     "cartridge":        {"type": "string",
                                          "description": "ID del cartucho origen, e.g. 'replicon'"},
@@ -333,7 +334,7 @@ async def mcp_tools():
         {
             "name": "describe_silver",
             "description": (
-                "Devuelve el schema (columnas y tipos) de un dataset Silver/Master "
+                "Devuelve el schema (columnas y tipos) de un dataset Silver "
                 "ya materializado leyendo su Parquet en MinIO. "
                 "Más rápido que get_schema porque no re-ejecuta el SQL fuente. "
                 "name: nombre del dataset, e.g. 'replicon_timeentry_latest'."
@@ -351,7 +352,7 @@ async def mcp_tools():
         {
             "name": "list_datasets_with_schemas",
             "description": (
-                "Devuelve todos los datasets registrados (silver/master/gold) con sus "
+                "Devuelve todos los datasets registrados (silver/gold) con sus "
                 "columnas. Llama esto primero para entender el modelo de datos completo "
                 "antes de diseñar un dataset Gold o escribir SQL analítico."
             ),
@@ -359,7 +360,7 @@ async def mcp_tools():
                 "type": "object",
                 "properties": {
                     "layer":     {"type": "string",
-                                  "description": "Filtrar por capa: silver|master|gold (vacío=todos)"},
+                                  "description": "Filtrar por capa: silver|gold (vacío=todos)"},
                     "cartridge": {"type": "string",
                                   "description": "Filtrar por cartucho, e.g. 'replicon'"},
                 },
@@ -379,7 +380,7 @@ async def mcp_tools():
                 "type": "object",
                 "properties": {
                     "layer":     {"type": "string",
-                                  "description": "Filtrar por capa: silver|master|gold"},
+                                  "description": "Filtrar por capa: silver|gold"},
                     "cartridge": {"type": "string",
                                   "description": "Filtrar por cartucho, e.g. 'replicon'"},
                     "tags":      {"type": "array", "items": {"type": "string"},
@@ -530,7 +531,7 @@ async def mcp_tools():
             "name": "delete_dataset",
             "description": (
                 "Elimina un dataset: borra su registro de Postgres, el Parquet de MinIO "
-                "(silver/master) y la tabla Postgres correspondiente (master/gold)."
+                "para Silver o la tabla Postgres correspondiente para Gold."
             ),
             "input_schema": {
                 "type": "object",
@@ -616,8 +617,8 @@ async def mcp_invoke(body: dict):
         name      = info["name"]
         _validate_dataset_name(name)
         steps     = []
-        # Delete MinIO Parquet for silver / master
-        if layer in ("silver", "master"):
+        # Delete MinIO Parquet for Silver datasets.
+        if layer == "silver":
             try:
                 from minio import Minio
                 mc = Minio(
@@ -631,10 +632,9 @@ async def mcp_invoke(body: dict):
                 steps.append(f"parquet deleted: s3://{engine.minio_bucket}/{obj_path}")
             except Exception as exc:
                 steps.append(f"parquet not found or already deleted: {exc}")
-        # Drop Postgres table for master / gold (both live in postgres_gold)
-        if layer in ("master", "gold"):
-            prefix = "master" if layer == "master" else "gold"
-            table  = f"{prefix}_{name}"
+        # Drop Postgres table for Gold datasets.
+        if layer == "gold":
+            table  = f"gold_{name}"
             try:
                 import psycopg2
                 dsn  = engine.pg_gold_url.replace("postgresql+psycopg2://", "postgresql://")
@@ -654,6 +654,7 @@ async def mcp_invoke(body: dict):
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         result = engine.materialize(ds)
         store.update_refresh(args["name"], result["row_count"])
+        _reindex_dataset_best_effort(args["name"])
         return result
 
     if tool == "list_datasets":
@@ -1115,7 +1116,7 @@ def _seed_catalog_from_existing() -> int:
             col_map   = ds_full.get("column_mapping", {}) if ds_full else {}
 
             # Get schema
-            if layer in ("silver", "master"):
+            if layer == "silver":
                 parquet = (
                     f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
                 )
@@ -1126,8 +1127,11 @@ def _seed_catalog_from_existing() -> int:
                             f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0"
                         ).fetchall()
                     fields = [{"name": r[0], "type": r[1]} for r in rows]
-                except Exception:
-                    logger.exception("failed inferring schema for %s/%s", layer, name)
+                except Exception as exc:
+                    logger.info(
+                        "schema not materialized yet for %s/%s: %s",
+                        layer, name, exc,
+                    )
                     continue
             elif layer == "gold":
                 try:
@@ -1145,8 +1149,8 @@ def _seed_catalog_from_existing() -> int:
                         """)
                         fields = [{"name": r[0], "type": r[1]} for r in cur.fetchall()]
                     conn.close()
-                except Exception:
-                    logger.exception("failed inferring gold schema for %s", name)
+                except Exception as exc:
+                    logger.info("gold schema not materialized yet for %s: %s", name, exc)
                     continue
             else:
                 continue
@@ -1227,7 +1231,75 @@ def _seed_relationships() -> int:
 
 @app.get("/datasets", dependencies=[Depends(verify_api_key)])
 async def list_datasets():
-    return {"datasets": store.list_datasets()}
+    datasets = store.list_datasets()
+    _annotate_staleness(datasets)
+    return {"datasets": datasets}
+
+
+def _reindex_dataset_best_effort(name: str) -> None:
+    """Keep RAG schema docs fresh without blocking materialization."""
+    try:
+        import httpx as _httpx
+
+        mcp = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010").rstrip("/")
+        key = (
+            os.environ.get("INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA")
+            or os.environ.get("INTERNAL_API_KEY")
+            or ""
+        )
+        headers = {"x-internal-service": "refinement", "x-api-key": key} if key else {}
+        with _httpx.Client(timeout=15, headers=headers) as client:
+            client.post(f"{mcp}/rag/reindex", json={"kind": "dataset", "name": name})
+    except Exception:
+        logger.debug("dataset RAG reindex skipped for %s", name, exc_info=True)
+
+
+def _annotate_staleness(datasets: list[dict]) -> None:
+    """Compute is_stale + staleness_reason from source freshness."""
+    import psycopg2
+
+    by_name = {d["name"]: d for d in datasets}
+    raw_loads: dict[str, str] = {}
+    try:
+        dsn = _postgres_dsn()
+        with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT cartridge_id, entity, MAX(finished_at) "
+                "FROM pipeline_runs WHERE status='success' "
+                "GROUP BY cartridge_id, entity"
+            )
+            for cartridge, entity, ts in cur.fetchall():
+                raw_loads[f"raw/{cartridge}/{entity}".lower()] = ts.isoformat() if ts else None
+    except Exception:
+        raw_loads = {}
+
+    def _src_last(src: str) -> str | None:
+        source = (src or "").strip()
+        source_lower = source.lower()
+        if source_lower.startswith("raw/"):
+            return raw_loads.get(source_lower)
+        candidates = [source, source.replace("silver_", "", 1), source.replace("gold_", "", 1)]
+        if "/" in source:
+            candidates.append(source.rsplit("/", 1)[-1])
+        for candidate in candidates:
+            dataset = by_name.get(candidate)
+            if dataset:
+                return dataset.get("last_refresh")
+        return None
+
+    for dataset in datasets:
+        last_refresh = dataset.get("last_refresh") or ""
+        stale = False
+        reason = None
+        for source in (dataset.get("sources") or []):
+            source_last = _src_last(source)
+            if source_last and (not last_refresh or source_last > last_refresh):
+                stale = True
+                reason = f"{source} actualizado {source_last} (este: {last_refresh or 'nunca'})"
+                break
+        dataset["is_stale"] = stale
+        if reason:
+            dataset["staleness_reason"] = reason
 
 
 @app.get("/datasets/{name}/definition", dependencies=[Depends(verify_api_key)])
@@ -1265,6 +1337,7 @@ async def refresh_dataset(name: str):
         raise HTTPException(404)
     result = engine.materialize(ds)
     store.update_refresh(name, result["row_count"])
+    _reindex_dataset_best_effort(name)
     return result
 
 

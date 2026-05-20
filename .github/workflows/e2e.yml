@@ -21,6 +21,14 @@ jobs:
         run: |
           bash infra/bootstrap.sh
           bash infra/bootstrap-keys.sh infra/.env
+          # This job is an ephemeral dev stack. Enable the explicit
+          # second RCE opt-in so Studio's "Deploy a Airflow" E2E can
+          # exercise /api/studio/dag-deploy instead of the production
+          # safety gate. AWS/prod compose remains default-off.
+          sed -i 's/^APP_ENV=.*/APP_ENV=development/' infra/.env || true
+          sed -i 's/^ALLOW_RCE_TOOLS=.*/ALLOW_RCE_TOOLS=true/' infra/.env || true
+          grep -q '^APP_ENV=' infra/.env || echo 'APP_ENV=development' >> infra/.env
+          grep -q '^ALLOW_RCE_TOOLS=' infra/.env || echo 'ALLOW_RCE_TOOLS=true' >> infra/.env
           mkdir -p data/lakehouse
           mkdir -p airflow/logs/scheduler airflow/logs/dag_processor airflow/logs/webserver
           chmod -R 777 airflow/logs

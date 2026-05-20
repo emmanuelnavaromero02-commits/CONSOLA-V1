@@ -1,5 +1,5 @@
 """
-MODecissionsPaaS — Workspace container (end-user view).
+ΩMEGA by EPIUSE — Workspace container (end-user view).
 
 Standalone FastAPI service that hosts:
   - The consumer assistant (RAG + semantic catalog + GOLD queries)
@@ -33,10 +33,27 @@ from app.logging_config import setup_logging  # noqa: E402
 
 setup_logging(service_name="workspace")
 
+def _app_env() -> str:
+    return os.environ.get("APP_ENV", "production").strip().lower()
+
+
+def _is_production_env() -> bool:
+    return _app_env() in {"production", "prod"}
+
+
+def _public_url(env_name: str, development_default: str = "") -> str:
+    raw = os.environ.get(env_name)
+    if raw:
+        return raw.rstrip("/")
+    if _is_production_env():
+        return ""
+    return development_default.rstrip("/")
+
+
 REFINEMENT_URL       = os.environ.get("REFINEMENT_URL",       "http://refinement:8500")
 MCP_INFRA_URL        = os.environ.get("MCP_INFRA_URL",        "http://mcp-infra:8010")
-CONSOLE_URL          = os.environ.get("CONSOLE_URL",          "http://localhost:8000")
-WORKSPACE_PUBLIC_URL = os.environ.get("WORKSPACE_PUBLIC_URL", "http://localhost:8001")
+CONSOLE_URL          = _public_url("CONSOLE_URL", "http://localhost:8000")
+WORKSPACE_PUBLIC_URL = _public_url("WORKSPACE_PUBLIC_URL", "http://localhost:8001")
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
@@ -59,7 +76,7 @@ def _hdr_for(server: str) -> dict[str, str]:
     return {"x-api-key": _key_for(server), "x-internal-service": "workspace"}
 
 
-app = FastAPI(title="MODecissionsPaaS Workspace")
+app = FastAPI(title="ΩMEGA by EPIUSE Workspace")
 
 # Sprint v1.41.1 / v1.42.1 — correlation IDs. Import here but register
 # at the BOTTOM of this module (after every @app.middleware decorator
@@ -69,7 +86,8 @@ from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000")
+    raw_env = os.environ.get("ALLOWED_ORIGINS")
+    raw = raw_env if raw_env is not None else ("" if _is_production_env() else "http://localhost:8000")
     return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
 
 
@@ -129,7 +147,7 @@ SECURITY_HEADERS = {
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "connect-src 'self'; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -151,7 +169,7 @@ _APPS_RELAXED_CSP = (
     "https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
     "img-src 'self' data: blob: https:; "
     "font-src 'self' data: https://fonts.gstatic.com; "
-    "connect-src 'self' http://localhost:* ws://localhost:*; "
+    "connect-src 'self'; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
     "form-action 'self'"

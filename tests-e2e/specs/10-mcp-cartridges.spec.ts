@@ -78,9 +78,15 @@ for (const c of CARTS) {
     });
 
     test(`/skills/list GET authed → 200 + {service, skills}`, async () => {
+      if (!INTERNAL_KEY) {
+        test.skip(true,
+          "INTERNAL_API_KEY env var not set — export it to exercise authed skill discovery",
+        );
+        return;
+      }
       const ctx = await pwRequest.newContext({
         extraHTTPHeaders: {
-          "X-Api-Key":           process.env.INTERNAL_API_KEY || "",
+          "X-Internal-Api-Key":  INTERNAL_KEY,
           "X-Internal-Service":  "console",
         },
       });

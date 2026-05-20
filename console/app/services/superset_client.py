@@ -26,7 +26,19 @@ class SupersetRequestError(RuntimeError):
 
 def _raise_superset_error(response: httpx.Response, *, action: str) -> None:
     if response.status_code >= 400:
-        raise SupersetRequestError(response.status_code, f"Superset {action} failed with HTTP {response.status_code}")
+        detail = ""
+        try:
+            payload = response.json()
+            detail = payload.get("message") or payload.get("detail") or payload.get("error") or ""
+            if isinstance(detail, (dict, list)):
+                detail = str(detail)
+        except Exception:
+            detail = response.text[:500]
+        suffix = f": {detail}" if detail else ""
+        raise SupersetRequestError(
+            response.status_code,
+            f"Superset {action} failed with HTTP {response.status_code}{suffix}",
+        )
 
 
 @dataclass
@@ -85,7 +97,13 @@ class SupersetClient:
             )
             _raise_superset_error(csrf, action="csrf")
             payload = csrf.json()
-            self._csrf_token = (payload.get("result") or {}).get("csrf_token") or payload.get("csrf_token") or ""
+            result = payload.get("result") if isinstance(payload, dict) else None
+            if isinstance(result, dict):
+                self._csrf_token = result.get("csrf_token") or payload.get("csrf_token") or ""
+            elif isinstance(result, str):
+                self._csrf_token = result
+            else:
+                self._csrf_token = payload.get("csrf_token") if isinstance(payload, dict) else ""
         return {"access_token": self._access_token, "csrf_token": self._csrf_token or ""}
 
     async def _headers(self) -> dict[str, str]:

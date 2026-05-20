@@ -1,0 +1,6 @@
+{
+  "name": "skill_gaps_heatmap",
+  "title": "Skill Gaps por Manager — Heatmap Ejecutivo",
+  "description": "Heatmap ejecutivo de brechas de competencias por Revenue Manager y categoría de skill. Identifica equipos con cobertura crítica, moderada o satisfactoria, con conteo de expertos y mentores por celda.",
+  "datasets_used": ["analytic_skill_gap_by_manager"]
+}

@@ -70,51 +70,39 @@ def _set_watermark(entity: str, field: str, value: str, run_id: str) -> None:
         pass
 
 
-# ── Airflow connection helper ─────────────────────────────────────────────────
-# Conexiones en Airflow UI (Admin > Connections) o env var:
-#   AIRFLOW_CONN_REPLICON_ANALYTICS={"conn_type":"http","host":"https://na5.replicon.com/analyticsapi","password":"TOKEN"}
-#
-# Campos: Conn Id = replicon_<conn_id> | Conn Type = HTTP
-#         Host = URL base completa | Password = Bearer token
+# ── Console Vault connection helper ───────────────────────────────────────────
+# Credentials stay in Console/Vault. Airflow receives only a service key and
+# reveals the Replicon connection at runtime through a narrow internal bypass.
 
 def _get_connection(conn_id: str) -> tuple[str, str]:
-    """Return (base_url, token) from OMEGA Vault.
-
-    Sprint v1.40: cartridge restored from the original ZIP, but
-    credentials no longer come from Airflow Connections. The OMEGA
-    console is the single source of truth — operators configure
-    Replicon credentials there, console writes them to Vault, and
-    every DAG run pulls them on demand via the internal API. That
-    way a leaked Airflow UI session can't see the bearer token, and
-    the cartridge runs the same in dev / prod / multi-tenant.
-    """
+    """Return (base_url, token) from Console Vault connection replicon/<conn_id>."""
     import os
     import requests
 
-    console_url = os.environ.get("CONSOLE_URL", "http://console:8000")
-    internal_key = (
+    console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
+    key = (
         os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE")
-        or os.environ.get("INTERNAL_API_KEY", "")
+        or os.environ.get("INTERNAL_API_KEY")
+        or ""
     )
+    if not key:
+        raise ValueError("Missing INTERNAL_API_KEY_REPLICON_TO_CONSOLE or INTERNAL_API_KEY")
 
-    url = f"{console_url}/api/vault/connections/replicon/{conn_id}/reveal"
-    headers = {
-        "x-api-key": internal_key,
-        "x-internal-service": "replicon",
-    }
-
-    r = requests.get(url, headers=headers, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-
-    base_url = (data.get("base_url") or data.get("host") or "").rstrip("/")
-    token = data.get("token") or data.get("password") or ""
-
-    if not base_url or not token:
-        raise ValueError(
-            f"Replicon connection '{conn_id}' incomplete in Vault. "
-            f"Configure it in OMEGA console at /apps-gallery"
+    try:
+        resp = requests.get(
+            f"{console_url}/api/vault/connections/replicon/{conn_id}/reveal",
+            headers={"x-internal-service": "replicon", "x-api-key": key},
+            timeout=20,
         )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise ValueError(f"No se pudo revelar Vault replicon/{conn_id}: {exc}") from exc
+
+    base_url = data.get("base_url") or data.get("url") or data.get("host") or ""
+    token = data.get("token") or data.get("api_token") or data.get("password") or ""
+    if not base_url or not token:
+        raise ValueError(f"Vault replicon/{conn_id} incompleto — falta base_url/token")
     return base_url, token
 
 
@@ -138,7 +126,7 @@ def _get_entity_config(entity: str) -> dict:
 
 
 def _resolve_connection(entity: str) -> tuple[str, str]:
-    """Return (base_url, token) for the entity's connection via entity_config → Airflow."""
+    """Return (base_url, token) for the entity's connection via entity_config → Vault."""
     cfg     = _get_entity_config(entity)
     conn_id = cfg.get("connection_id") or "analytics"
     return _get_connection(conn_id)
@@ -148,11 +136,14 @@ def _resolve_connection(entity: str) -> tuple[str, str]:
 
 def _minio_client():
     from minio import Minio
+    secure = Variable.get("minio_secure", default_var="false").strip().lower() in {
+        "true", "1", "yes", "on",
+    }
     return Minio(
         endpoint=Variable.get("minio_endpoint"),
         access_key=Variable.get("minio_access_key"),
         secret_key=Variable.get("minio_secret_key"),
-        secure=False,
+        secure=secure,
     )
 
 
@@ -291,8 +282,12 @@ def replicon_extract():
     @task
     def extract(params: dict = None) -> dict:
         import pandas as pd
+        from airflow.operators.python import get_current_context
 
-        conf      = params or {}
+        context   = get_current_context()
+        dag_run   = context.get("dag_run")
+        run_conf  = dag_run.conf if dag_run and dag_run.conf else {}
+        conf      = {**(params or {}), **run_conf}
         entity    = conf.get("entity", "User")
         mode      = conf.get("mode", "incremental")
         from_date = conf.get("from_date") or None
@@ -343,7 +338,50 @@ def replicon_extract():
             "status":               "success",
         }
 
-    extract()
+    @task
+    def trigger_refresh_chain(result: dict) -> dict:
+        """Propaga silver/gold aguas abajo con el meta-DAG dataset_refresh_chain."""
+        import logging
+        import os as _os
+        import requests as _req
+
+        log = logging.getLogger("airflow.task")
+        if result.get("record_count", 0) == 0:
+            log.info("refresh_chain omitido (sin datos nuevos)")
+            return {"triggered": False}
+
+        entity = result["entity"]
+        airflow_url = _os.environ.get("AIRFLOW_URL", "http://airflow:8080").rstrip("/")
+        user = (
+            _os.environ.get("AIRFLOW_USER")
+            or _os.environ.get("AIRFLOW_ADMIN_USER")
+            or "admin"
+        )
+        password = (
+            _os.environ.get("AIRFLOW_PASSWORD")
+            or _os.environ.get("AIRFLOW_ADMIN_PASSWORD")
+            or "admin"
+        )
+        try:
+            response = _req.post(
+                f"{airflow_url}/api/v1/dags/dataset_refresh_chain/dagRuns",
+                auth=(user, password),
+                json={
+                    "conf": {
+                        "seed_raw": f"raw/replicon/{entity}",
+                        "triggered_by": "replicon_extract",
+                    }
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            log.info("refresh_chain disparado: %s", response.status_code)
+            return {"triggered": True, "status": response.status_code}
+        except Exception as exc:
+            log.warning("refresh_chain trigger fallo: %s", exc)
+            return {"triggered": False, "error": str(exc)}
+
+    trigger_refresh_chain(extract())
 
 
 replicon_extract()

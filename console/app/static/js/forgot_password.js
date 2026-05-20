@@ -1,5 +1,4 @@
 // Sprint v1.11 — extracted from forgot_password.html for strict CSP.
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
 
 function getCsrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);

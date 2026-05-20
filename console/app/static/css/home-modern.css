@@ -1,20 +1,20 @@
 :root {
-  --home-navy: #071b4d;
-  --home-navy-2: #082b66;
-  --home-blue: #0057b8;
-  --home-blue-2: #1473e6;
-  --home-red: #c8102e;
-  --home-sky: #38a8e8;
-  --home-bg: #f6f8fb;
-  --home-surface: #ffffff;
-  --home-text: #111827;
-  --home-text-2: #374151;
-  --home-muted: #6b7280;
-  --home-border: #e5e7eb;
-  --home-success: #059669;
-  --home-warning: #d97706;
-  --home-error: #dc2626;
-  --home-shadow: 0 18px 45px rgba(7, 27, 77, 0.08);
+  --home-navy: var(--text);
+  --home-navy-2: var(--primary-dark);
+  --home-blue: var(--primary);
+  --home-blue-2: var(--primary-hover);
+  --home-red: var(--red);
+  --home-sky: var(--info);
+  --home-bg: var(--bg);
+  --home-surface: var(--surface);
+  --home-text: var(--text);
+  --home-text-2: var(--text2);
+  --home-muted: var(--text3);
+  --home-border: var(--border);
+  --home-success: var(--green);
+  --home-warning: var(--amber);
+  --home-error: var(--red);
+  --home-shadow: var(--shadow-md);
   --home-radius: 14px;
   --home-font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -87,7 +87,7 @@ body {
 .home-btn.primary {
   background: var(--home-blue);
   border-color: var(--home-blue);
-  color: #ffffff;
+  color: var(--on-primary);
 }
 
 .home-btn.primary:hover {
@@ -96,8 +96,8 @@ body {
 
 .home-btn.secondary:hover,
 .home-fallback-actions a:hover {
-  border-color: #cbd5e1;
-  background: #f9fafb;
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
 }
 
 .home-btn.disabled {
@@ -109,8 +109,8 @@ body {
 .home-shell {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 88% 0%, rgba(56, 168, 232, 0.16), transparent 32%),
-    linear-gradient(180deg, #ffffff 0%, var(--home-bg) 52%);
+    radial-gradient(circle at 88% 0%, var(--info-soft), transparent 32%),
+    linear-gradient(180deg, var(--home-surface) 0%, var(--home-bg) 52%);
 }
 
 .home-topbar {
@@ -122,8 +122,8 @@ body {
   justify-content: space-between;
   gap: 18px;
   padding: 16px 34px;
-  border-bottom: 1px solid rgba(229, 231, 235, 0.82);
-  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid var(--home-border);
+  background: var(--home-surface);
   backdrop-filter: blur(10px);
 }
 
@@ -142,8 +142,8 @@ body {
   border-radius: 10px;
   display: grid;
   place-items: center;
-  background: var(--home-navy);
-  color: #ffffff;
+  background: var(--home-blue);
+  color: var(--on-primary);
   font-weight: 900;
 }
 
@@ -165,7 +165,7 @@ body {
 }
 
 .home-nav a:hover {
-  background: #eef4ff;
+  background: var(--primary-soft);
   color: var(--home-blue);
 }
 
@@ -177,7 +177,7 @@ body {
 
 .home-role {
   border-radius: 999px;
-  background: #eef4ff;
+  background: var(--primary-soft);
   color: var(--home-blue);
   padding: 5px 9px;
   font-weight: 800;
@@ -189,7 +189,7 @@ body {
   gap: 7px;
   border-radius: 999px;
   border: 1px solid var(--home-border);
-  background: #ffffff;
+  background: var(--home-surface);
   color: var(--home-muted);
   padding: 6px 10px;
   font-weight: 750;
@@ -278,7 +278,7 @@ body {
   gap: 7px;
   border-radius: 999px;
   border: 1px solid var(--home-border);
-  background: #ffffff;
+  background: var(--home-surface);
   color: var(--home-text-2);
   padding: 7px 10px;
   font-size: 13px;
@@ -286,9 +286,9 @@ body {
 }
 
 .home-badge.red {
-  border-color: rgba(200, 16, 46, 0.22);
+  border-color: var(--home-red);
   color: var(--home-red);
-  background: rgba(200, 16, 46, 0.05);
+  background: var(--danger-soft);
 }
 
 .home-panel,
@@ -415,18 +415,18 @@ body {
   display: grid;
   place-items: center;
   border-radius: 12px;
-  background: #eef4ff;
+  background: var(--primary-soft);
   color: var(--home-blue);
   font-weight: 900;
 }
 
 .home-card.admin .home-icon {
-  background: rgba(200, 16, 46, 0.08);
+  background: var(--danger-soft);
   color: var(--home-red);
 }
 
 .home-card.system .home-icon {
-  background: rgba(56, 168, 232, 0.11);
+  background: var(--info-soft);
   color: var(--home-blue);
 }
 
@@ -454,17 +454,17 @@ body {
 .home-mini-chip {
   padding: 5px 8px;
   font-size: 12px;
-  background: #f8fafc;
+  background: var(--surface-soft);
 }
 
 .home-mini-chip.ok {
   color: var(--home-success);
-  border-color: rgba(5, 150, 105, 0.22);
+  border-color: var(--home-success);
 }
 
 .home-mini-chip.warn {
   color: var(--home-warning);
-  border-color: rgba(217, 119, 6, 0.24);
+  border-color: var(--home-warning);
 }
 
 .home-mini-chip.locked {
@@ -492,7 +492,7 @@ body {
 .home-service {
   border: 1px solid var(--home-border);
   border-radius: 12px;
-  background: #fbfcfd;
+  background: var(--surface-soft);
   padding: 12px;
 }
 
@@ -518,7 +518,7 @@ body {
 .home-activity-item {
   border: 1px solid var(--home-border);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--home-surface);
   padding: 14px;
 }
 
@@ -604,14 +604,14 @@ body {
 .home-action-menu > summary::marker { content: ''; }
 
 .home-action-menu > summary:hover {
-  background: #eef4ff;
+  background: var(--primary-soft);
   color: var(--home-blue);
 }
 
 .home-action-menu[open] > summary {
-  background: #eef4ff;
+  background: var(--primary-soft);
   color: var(--home-blue);
-  border-color: rgba(56, 168, 232, 0.4);
+  border-color: var(--home-blue);
 }
 
 .home-menu-panel {
@@ -625,10 +625,10 @@ body {
   flex-direction: column;
   gap: 2px;
   padding: 8px;
-  background: #ffffff;
+  background: var(--home-surface);
   border: 1px solid var(--home-border);
   border-radius: 10px;
-  box-shadow: 0 12px 28px rgba(7, 27, 77, 0.12);
+  box-shadow: var(--home-shadow);
 }
 
 .home-menu-item {
@@ -653,7 +653,7 @@ body {
 }
 
 .home-menu-item:hover {
-  background: #eef4ff;
+  background: var(--primary-soft);
 }
 
 .home-menu-item.disabled {

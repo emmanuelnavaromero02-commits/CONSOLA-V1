@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }, 2200);
 
   // Static buttons — id-targeted.
-  document.getElementById('theme-btn').addEventListener('click', () => cycleTheme());
+  document.getElementById('theme-btn')?.addEventListener('click', () => cycleTheme());
   document.getElementById('chat-input').addEventListener('keydown', (e) => handleKey(e));
   document.getElementById('btn-exec').addEventListener('click', () => sendMessage());
   document.getElementById('btn-jobs-reload').addEventListener('click', () => loadJobs());

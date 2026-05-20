@@ -268,7 +268,8 @@ async def get_user_by_email(email: str) -> dict | None:
 async def get_user_by_id(user_id: int) -> dict | None:
     p = await pool()
     row = await p.fetchrow(
-        "SELECT id, email, name, role, is_active, must_change_password, created_at, last_login "
+        "SELECT id, email, name, role, is_active, must_change_password, "
+        "created_at, last_login, escalation_notify "
         "FROM users WHERE id = $1",
         user_id,
     )
@@ -278,7 +279,7 @@ async def get_user_by_id(user_id: int) -> dict | None:
 async def list_users(active_only: bool = True) -> list[dict]:
     p = await pool()
     sql = ("SELECT id, email, name, role, is_active, must_change_password, "
-           "created_at, last_login FROM users")
+           "created_at, last_login, escalation_notify FROM users")
     if active_only:
         sql += " WHERE is_active = TRUE"
     sql += " ORDER BY email"
@@ -287,12 +288,16 @@ async def list_users(active_only: bool = True) -> list[dict]:
 
 
 async def update_user(user_id: int, *, name: str | None = None, role: str | None = None,
-                      is_active: bool | None = None, password: str | None = None) -> dict | None:
+                      is_active: bool | None = None, password: str | None = None,
+                      escalation_notify: bool | None = None) -> dict | None:
     """Admin update. If password is provided, force the user to change it on next login."""
     sets, params = [], []
     if name is not None:      params.append(name);      sets.append(f"name = ${len(params)}")
     if role is not None:      params.append(role);      sets.append(f"role = ${len(params)}")
     if is_active is not None: params.append(is_active); sets.append(f"is_active = ${len(params)}")
+    if escalation_notify is not None:
+        params.append(bool(escalation_notify))
+        sets.append(f"escalation_notify = ${len(params)}")
     if password is not None:
         params.append(hash_password(password))
         sets.append(f"password_hash = ${len(params)}")
@@ -303,7 +308,8 @@ async def update_user(user_id: int, *, name: str | None = None, role: str | None
     p = await pool()
     row = await p.fetchrow(
         f"UPDATE users SET {', '.join(sets)} WHERE id = ${len(params)} "
-        f"RETURNING id, email, name, role, is_active, must_change_password, created_at, last_login",
+        f"RETURNING id, email, name, role, is_active, must_change_password, "
+        f"created_at, last_login, escalation_notify",
         *params,
     )
     return _user_to_dict(row) if row else None

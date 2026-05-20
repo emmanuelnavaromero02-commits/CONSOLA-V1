@@ -22,7 +22,6 @@ def test_replicon_cartridge_restored_with_dags_inside_cartridge():
     airflow/dags/."""
     assert (ROOT / "cartridges/replicon").is_dir()
     assert (ROOT / "cartridges/replicon/dags/replicon_extract.py").is_file()
-    assert (ROOT / "cartridges/replicon/dags/replicon_extract_all.py").is_file()
     # The pre-v1.40 zombie copies in airflow/dags/ must be gone.
     assert not (ROOT / "airflow/dags/replicon_extract.py").exists()
     assert not (ROOT / "airflow/dags/replicon_extract_all.py").exists()

@@ -1,10 +1,10 @@
-"""Sprint v1.11 phase 3 — strict CSP globally + 6 root HTMLs externalised.
+"""Sprint v1.11 phase 3 — strict CSP globally + root HTMLs externalised.
 
 Verifies:
   * Every root HTML in console/app/static/ has 0 inline event handlers
     and 0 inline <script> blocks with code.
-  * Each of the six refactored HTMLs references its extracted .js
-    (apps_gallery / decisions / iam / monitor / rag / security).
+  * Each refactored HTML references its extracted .js
+    (apps_gallery / decisions / iam / monitor / security).
   * Each extracted .js file exists and calls addEventListener.
   * The global SECURITY_HEADERS now drops 'unsafe-inline' from
     script-src for every non-auth, non-viewer path.
@@ -55,7 +55,6 @@ REFACTORED_PAGES = {
     "decisions.html":    "decisions.js",
     "iam.html":          "iam.js",
     "monitor.html":      "monitor.js",
-    "rag.html":          "rag.js",
     "security.html":     "security.js",
 }
 

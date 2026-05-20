@@ -2,19 +2,15 @@
 DuckDB Engine — Refinement service (transversal, multi-cartridge).
 
 Silver layer:
-  - Analítico (TimeEntry, BillingItem, etc.) → Parquet snapshot en MinIO
+  - Limpieza 1:1 desde raw → Parquet snapshot en MinIO
     s3://lakehouse/silver/{cartridge}/{name}/data.parquet  (sobreescrito en cada refresh)
 
-Master layer (dimensiones pequeñas):
-  - Parquet en MinIO (mismo path que silver) + tabla Postgres en el GOLD DB
-    Tabla: master_{name}  en postgres_gold (modecissions_gold)
-
 Gold layer:
-  - Agregaciones / KPIs → tabla Postgres en el GOLD DB: gold_{name}
+  - Modelado de negocio, dimensiones, hechos, agregaciones y KPIs → tabla Postgres en el GOLD DB: gold_{name}
 
 Postgres aliases dentro de DuckDB:
   - pgdb   → service DB (lineage, datasets, catalog, etc.)
-  - pggold → analytical DB (master_* y gold_*)
+  - pggold → analytical DB (gold_*)
 
 Lineage:
   - Cada materialización escribe una fila en silver_lineage (en el service DB)
@@ -71,7 +67,7 @@ class DuckDBEngine:
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
         self.pg_url         = os.environ.get("DATABASE_URL", "")
-        # Analytical (gold + master) DB. Falls back to service DB if unset, so
+        # Analytical (gold) DB. Falls back to service DB if unset, so
         # local/dev environments without postgres_gold keep working.
         self.pg_gold_url    = os.environ.get("GOLD_DATABASE_URL", "") or self.pg_url
         self._con: duckdb.DuckDBPyConnection | None = None
@@ -605,7 +601,7 @@ class DuckDBEngine:
         ds fields:
           name         — dataset name
           sql_def      — transformation SQL
-          layer        — "silver" | "master" | "gold"
+          layer        — "silver" | "gold"
           cartridge    — source cartridge id (e.g. "replicon")
           sources      — list of bronze source paths
           column_mapping — {src_col: business_term, ...} (optional, for lineage)
@@ -616,6 +612,8 @@ class DuckDBEngine:
         validate_safe_identifier(ds.get("cartridge", "unknown"), "cartridge")
         name        = ds["name"]
         layer       = ds.get("layer", "silver")
+        if layer not in ("silver", "gold"):
+            raise ValueError("Invalid dataset layer")
         sql         = ds["sql_def"]
         self._validate_safe_sql(sql)
         cartridge   = ds.get("cartridge", "unknown")
@@ -636,22 +634,6 @@ class DuckDBEngine:
                 row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
                 storage_uri = f"postgres_gold:{table}"
 
-            elif layer == "master":
-                # ── Master → Parquet único + tabla en postgres_gold (dimensión) ──
-                effective_sql = self._inject_latest_date(sql, sources)
-                parquet_path  = self._silver_path(cartridge, name)
-                con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
-                row_count = con.execute(
-                    f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
-                ).fetchone()[0]
-                storage_uri = parquet_path
-
-                # Dimensión también en postgres_gold para joins con hechos gold
-                self._pg_gold_attach(con)
-                table = f"master_{name}"
-                validate_safe_identifier(table, "table")
-                con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
-
             else:
                 # ── Silver → Parquet único, siempre sobreescrito (última extracción) ──
                 effective_sql = self._inject_latest_date(sql, sources)
@@ -664,7 +646,7 @@ class DuckDBEngine:
 
             # ── Infer schema for catalog & lineage ──────────────────────────────
             try:
-                if layer in ("silver", "master"):
+                if layer == "silver":
                     parquet_path = self._silver_path(cartridge, name)
                     schema_rows  = con.execute(
                         f"DESCRIBE SELECT * FROM read_parquet('{parquet_path}') LIMIT 0"

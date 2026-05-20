@@ -85,6 +85,9 @@ CSRF_EXEMPT_BY_DESIGN = frozenset({
     # Activation accepts a one-time invite token in the body — the
     # token IS the credential, no cookie / no CSRF needed.
     ("/auth/activate",      "POST"),
+    # Airflow scheduled agent invocations do not carry a browser session;
+    # Console authorizes them with X-Agent-Runner-Token instead.
+    ("/api/agents/{agent_id}/invoke/scheduled", "POST"),
 })
 
 
@@ -100,23 +103,15 @@ KNOWN_CSRF_GAPS_FOR_LATER = frozenset({
     ("/api/datasets",                                                       "DELETE"),
     ("/api/apps/{name}",                                                    "DELETE"),
     ("/api/data/{dataset}/query",                                           "POST"),
-    ("/api/pipeline/{cartridge}/{entity}/extract",                          "POST"),
     ("/studio/cartridges/{cartridge_id}/entities/{entity}/rename",          "POST"),
     ("/studio/cartridges/{cartridge_id}/entities/{entity}",                 "PATCH"),
     ("/studio/cartridges",                                                  "POST"),
     ("/studio/cartridges/{cartridge_id}",                                   "PATCH"),
     ("/studio/cartridges/{cartridge_id}/spec",                              "POST"),
-    ("/studio/import",                                                      "POST"),
     ("/api/vault/connections/{cartridge}/{conn_id}",                        "PUT"),
     ("/api/vault/connections/{cartridge}/{conn_id}",                        "DELETE"),
     ("/api/vault/secrets/{scope}/{key}",                                    "PUT"),
     ("/api/vault/secrets/{scope}/{key}",                                    "DELETE"),
-    ("/api/rag/sources/{source_id}",                                        "DELETE"),
-    ("/api/rag/search",                                                     "POST"),
-    ("/api/rag/ingest",                                                     "POST"),
-    ("/api/rag/ask",                                                        "POST"),
-    ("/api/catalog/entries",                                                "POST"),
-    ("/api/catalog/relationships",                                          "POST"),
     ("/monitoring/mcp/invoke",                                              "POST"),
     # v1.21-shipped pages that change session state through the
     # cookie chain — already have CSRF on the form POSTs:

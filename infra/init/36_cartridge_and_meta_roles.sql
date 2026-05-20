@@ -246,7 +246,8 @@ GRANT USAGE ON SCHEMA public TO omega_airflow_dag;
 GRANT SELECT, INSERT, UPDATE ON
     cartridges, cartridge_dags, entity_config,
     entity_watermarks, pipeline_runs, run_logs,
-    datasets, mcp_servers, mcp_custom_tools
+    datasets, mcp_servers, mcp_custom_tools,
+    agents
     TO omega_airflow_dag;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_airflow_dag;
 -- (Hard-line REVOKEs already applied in the DO block above.)

@@ -6,6 +6,8 @@
 export const state = {
   // S3/MinIO bucket — viene de /api/config; default cubre dev local.
   S3_BUCKET: 'lakehouse',
+  AIRFLOW_PUBLIC_URL: '',
+  SUPERSET_PUBLIC_URL: '',
 
   currentStep: 0,
   aiHistory: [],

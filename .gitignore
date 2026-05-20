@@ -59,6 +59,7 @@ Thumbs.db
 
 # Airflow runtime artefacts
 airflow/logs/
+airflow/dags/replicon_extract.py
 
 # Local audit / review artefacts (never committed)
 _audit_out/

@@ -12,6 +12,20 @@ let _autoTimer    = null;
 let _cartridge    = 'replicon';
 let _activeTab    = 'pipeline';
 let _selectedDag  = null;  // currently selected dag_id in editor
+let _airflowPublicUrl = '';
+
+async function loadRuntimeConfig() {
+  try {
+    const r = await fetch('/api/config', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const d = await r.json();
+    _airflowPublicUrl = (d.airflow_url || '').replace(/\/+$/, '');
+  } catch (e) {}
+}
+
+function airflowDagUrl(dagId) {
+  return _airflowPublicUrl ? `${_airflowPublicUrl}/dags/${encodeURIComponent(dagId)}/grid` : '#';
+}
 
 function csrfToken() {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -131,7 +145,7 @@ function renderRow(row) {
       ? `<span style="color:var(--text3);font-size:8px;font-family:var(--font-mono)">airflow</span>`
       : '';
     const errSnippet = lr.error
-      ? `<div style="color:#ff2d55;font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px" title="${esc(lr.error)}">${esc(lr.error.substring(0,80))}</div>`
+      ? `<div style="color:var(--red);font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px" title="${esc(lr.error)}">${esc(lr.error.substring(0,80))}</div>`
       : '';
     jobHtml = `
       <div class="job-status-row">
@@ -169,8 +183,8 @@ function renderRow(row) {
   const bronzeCell = `
     <div class="cell" style="position:relative">
       ${b.status === 'error'
-        ? `<div class="bronze-date" style="color:#ff2d55">${dot('error')} Error</div>
-           <div class="bronze-src" style="color:#ff2d55;font-size:9px;margin-top:2px">${esc((lr?.error||'').substring(0,100))}</div>`
+        ? `<div class="bronze-date" style="color:var(--red)">${dot('error')} Error</div>
+           <div class="bronze-src" style="color:var(--red);font-size:9px;margin-top:2px">${esc((lr?.error||'').substring(0,100))}</div>`
         : b.status !== 'never'
         ? `<div class="bronze-date">${dot(b.status)} ${b.latest_date || '—'}</div>
            <div class="bronze-count">${fmtCount(b.record_count)} rows</div>
@@ -411,7 +425,7 @@ async function loadDags() {
       : _dagsCache[0]?.dag_id;
     if (toSelect) await selectDag(toSelect, false);
   } catch(e) {
-    list.innerHTML = `<div style="padding:16px;color:#ff2d55;font-size:11px">Error: ${esc(e.message)}</div>`;
+    list.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Error: ${esc(e.message)}</div>`;
   }
 }
 
@@ -431,7 +445,7 @@ async function selectDag(dagId, reloadList = true) {
   const afLink   = document.getElementById('dag-airflow-link');
 
   nameEl.textContent = dagId;
-  afLink.href = `http://localhost:8082/dags/${encodeURIComponent(dagId)}/grid`;
+  afLink.href = airflowDagUrl(dagId);
 
   const dag = _dagsCache.find(d => d.dag_id === dagId);
   if (dag) {
@@ -689,7 +703,7 @@ async function loadTemplates() {
         <div class="tpl-tags">${(t.tags||[]).map(tag => `<span class="tpl-tag">${esc(tag)}</span>`).join('')}</div>
       </div>`).join('');
   } catch(e) {
-    list.innerHTML = `<div style="padding:12px;color:#ff2d55;font-size:10px">Error: ${esc(e.message)}</div>`;
+    list.innerHTML = `<div style="padding:12px;color:var(--red);font-size:10px">Error: ${esc(e.message)}</div>`;
   }
 }
 
@@ -823,14 +837,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const p   = new URLSearchParams(location.search);
   const tab = p.get('tab');
   const dag = p.get('dag');
-  if (tab === 'dags') {
-    if (dag) _selectedDag = dag;
-    loadCartridgeSelector().then(() => {
-      load();
-      switchTab('dags');
-    });
-  } else {
-    loadCartridgeSelector().then(() => { load(); });
-  }
+  loadRuntimeConfig().finally(() => {
+    if (tab === 'dags') {
+      if (dag) _selectedDag = dag;
+      loadCartridgeSelector().then(() => {
+        load();
+        switchTab('dags');
+      });
+    } else {
+      loadCartridgeSelector().then(() => { load(); });
+    }
+  });
   startAutoRefresh();
 });

@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agentes — OMEGA by EPIUSE</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    html, body {
+      min-height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: var(--color-bg);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+    }
+
+    .agents-page {
+      min-height: 100vh;
+      padding: 28px 22px 44px;
+      background: var(--color-bg);
+    }
+
+    .agents-page .shell {
+      width: min(1320px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .agents-page .rail,
+    .agents-page .agents-panel,
+    .agents-page .metric-card,
+    .testchat {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .agents-page .rail {
+      position: sticky;
+      top: 28px;
+      padding: 22px 18px;
+      min-height: calc(100vh - 72px);
+    }
+
+    .agents-page .brand {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .02em;
+      margin-bottom: 12px;
+    }
+
+    .agents-page .rail-title {
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 26px;
+    }
+
+    .agents-page .nav {
+      display: grid;
+      gap: 7px;
+    }
+
+    .agents-page .nav a,
+    .agents-page .nav .nav-current {
+      display: flex;
+      align-items: center;
+      min-height: 42px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 0;
+      background: transparent;
+      color: var(--color-text-primary);
+      font: 700 14px/1.2 var(--font-sans);
+      text-decoration: none;
+    }
+
+    .agents-page .nav .nav-current {
+      background: var(--primary-soft);
+    }
+
+    .agents-page .nav a:hover {
+      background: var(--surface-soft);
+    }
+
+    .agents-page .rail-user {
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .agents-page .user-bar {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--color-text-secondary);
+    }
+
+    .agents-page .user-bar strong {
+      color: var(--color-text-primary);
+      word-break: break-word;
+    }
+
+    .agents-page .user-bar a {
+      color: var(--color-text-primary);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .agents-page .user-bar a:hover {
+      color: var(--primary);
+    }
+
+    .agents-page .main {
+      min-width: 0;
+    }
+
+    .agents-page .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-start;
+      margin-bottom: 26px;
+    }
+
+    .agents-page .eyebrow {
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 8px;
+    }
+
+    .agents-page h1 {
+      font-size: clamp(38px, 5vw, 52px);
+      line-height: .96;
+      letter-spacing: 0;
+      margin: 0 0 14px;
+      font-weight: 900;
+    }
+
+    .agents-page .sub {
+      max-width: 760px;
+      color: var(--color-text-primary);
+      font-size: 18px;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .agents-page .actions,
+    .agents-page .panel-actions,
+    .agents-page .runs-toolbar,
+    .agents-page .footer-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .agents-page .btn {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 14px;
+      border-radius: 8px;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-text-primary);
+      cursor: pointer;
+      font: 800 13px/1 var(--font-sans);
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease;
+    }
+
+    .agents-page .btn:hover:not(:disabled) {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .agents-page .btn:disabled {
+      cursor: not-allowed;
+      opacity: .45;
+    }
+
+    .agents-page .btn-primary,
+    .agents-page .btn.btn-primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--on-primary);
+    }
+
+    .agents-page .btn-primary:hover:not(:disabled),
+    .agents-page .btn.btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+      color: var(--on-primary);
+    }
+
+    .agents-page .btn-success {
+      border-color: var(--success);
+      color: var(--success);
+    }
+
+    .agents-page .btn-danger {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    .agents-page .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+
+    .agents-page .metric-card {
+      padding: 16px 16px 18px;
+      min-height: 116px;
+    }
+
+    .agents-page .metric-card h2 {
+      font-size: 14px;
+      font-weight: 800;
+      margin: 0 0 22px;
+    }
+
+    .agents-page .metric-value {
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 900;
+      margin-bottom: 14px;
+    }
+
+    .agents-page .metric-card p {
+      margin: 0;
+      color: var(--color-text-primary);
+      font-size: 13px;
+    }
+
+    .agents-page .layout {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      min-height: 0;
+      overflow: visible;
+    }
+
+    .agents-page .agents-panel {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .agents-page .catalog-panel {
+      position: sticky;
+      top: 28px;
+    }
+
+    .agents-page .pane-head {
+      min-height: 66px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .agents-page .pane-title {
+      font-size: 16px;
+      font-weight: 900;
+      color: var(--color-text-primary);
+    }
+
+    .agents-page .pane-subtitle {
+      margin-top: 3px;
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .agents-page .pane-body {
+      min-height: 0;
+    }
+
+    .agents-page .catalog-body {
+      max-height: calc(100vh - 236px);
+      overflow: auto;
+    }
+
+    .agents-page .agent-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    .agents-page .cart-group {
+      padding: 12px 16px 8px;
+      background: var(--surface-soft);
+      border-bottom: 1px solid var(--color-border);
+      color: var(--color-text-secondary);
+      font: 800 12px/1.2 var(--font-sans);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .agents-page .agent-item {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--color-border);
+      cursor: pointer;
+      background: var(--color-surface);
+      transition: background .15s ease, border-color .15s ease;
+    }
+
+    .agents-page .agent-item:hover {
+      background: var(--surface-soft);
+    }
+
+    .agents-page .agent-item.selected {
+      background: var(--primary-soft);
+      box-shadow: inset 3px 0 0 var(--primary);
+    }
+
+    .agents-page .agent-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      min-width: 0;
+    }
+
+    .agents-page .agent-name {
+      min-width: 0;
+      color: var(--color-text-primary);
+      font-size: 14px;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .agents-page .agent-slug {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .agents-page .agent-desc {
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      line-height: 1.35;
+      margin-top: 6px;
+    }
+
+    .agents-page .agent-meta {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .agents-page .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--color-text-secondary);
+      font: 800 12px/1 var(--font-sans);
+    }
+
+    .agents-page .b-inactive {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .agents-page .editor {
+      padding: 18px 22px 22px;
+    }
+
+    .agents-page .empty-edit {
+      min-height: 430px;
+      display: grid;
+      place-items: center;
+      padding: 46px 20px;
+      color: var(--color-text-secondary);
+      font-size: 16px;
+      text-align: center;
+    }
+
+    .agents-page .tabs {
+      display: flex;
+      gap: 6px;
+      padding-bottom: 10px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--color-border);
+      overflow-x: auto;
+    }
+
+    .agents-page .tab {
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 12px;
+      border-radius: 8px;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      font: 800 13px/1 var(--font-sans);
+      white-space: nowrap;
+    }
+
+    .agents-page .tab:hover {
+      color: var(--color-text-primary);
+      background: var(--surface-soft);
+    }
+
+    .agents-page .tab.active {
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .agents-page .tab-panel {
+      display: none;
+    }
+
+    .agents-page .tab-panel.active {
+      display: block;
+    }
+
+    .agents-page .field {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      margin-bottom: 16px;
+    }
+
+    .agents-page .field label {
+      color: var(--color-text-primary);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .agents-page input[type="text"],
+    .agents-page input[type="number"],
+    .agents-page select,
+    .agents-page textarea,
+    .testchat-foot input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--input-bg);
+      color: var(--color-text-primary);
+      padding: 9px 11px;
+      font: 14px/1.35 var(--font-sans);
+      outline: none;
+    }
+
+    .agents-page textarea {
+      min-height: 210px;
+      resize: vertical;
+    }
+
+    .agents-page input:focus,
+    .agents-page select:focus,
+    .agents-page textarea:focus,
+    .testchat-foot input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    .agents-page .hint {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .agents-page code {
+      font-family: var(--font-mono);
+      font-size: .92em;
+    }
+
+    .agents-page .row2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .agents-page .row3 {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr;
+      gap: 14px;
+    }
+
+    .agents-page .chk-row {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .agents-page .chk-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--color-text-primary);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .agents-page input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+    }
+
+    .agents-page .tools-grid {
+      max-height: 390px;
+      overflow: auto;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--surface-soft);
+    }
+
+    .agents-page .tool-server {
+      margin: 12px 4px 6px;
+      color: var(--color-text-primary);
+      font: 900 13px/1.2 var(--font-sans);
+    }
+
+    .agents-page .tool-server:first-child {
+      margin-top: 0;
+    }
+
+    .agents-page .tool-item {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 9px 10px;
+      border-radius: 8px;
+    }
+
+    .agents-page .tool-item:hover {
+      background: var(--color-surface);
+    }
+
+    .agents-page .tool-item label {
+      flex: 1;
+      color: var(--color-text-primary);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .agents-page .tdesc {
+      margin-top: 3px;
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.35;
+    }
+
+    .agents-page .kv-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .agents-page .kv-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 38px;
+      gap: 8px;
+    }
+
+    .agents-page .kv-rm {
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-surface);
+      color: var(--danger);
+      cursor: pointer;
+      font: 900 18px/1 var(--font-sans);
+    }
+
+    .agents-page .kv-add {
+      align-self: flex-start;
+      margin-top: 8px;
+    }
+
+    .agents-page .footer-bar {
+      min-height: 68px;
+      padding: 14px 22px;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .agents-page .spacer {
+      flex: 1;
+    }
+
+    .agents-page .save-status {
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      margin-left: 4px;
+    }
+
+    .agents-page .runs-toolbar {
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+
+    .agents-page .runs-status {
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      padding: 10px 0;
+    }
+
+    .agents-page .runs-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--color-surface);
+    }
+
+    .agents-page .runs-table th,
+    .agents-page .runs-table td {
+      border-bottom: 1px solid var(--color-border);
+      padding: 10px 12px;
+      text-align: left;
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    .agents-page .runs-table th {
+      background: var(--surface-soft);
+      color: var(--color-text-secondary);
+      font-weight: 900;
+    }
+
+    .agents-page .runs-table td {
+      color: var(--color-text-primary);
+    }
+
+    .agents-page .run-link {
+      color: var(--primary);
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 800;
+    }
+
+    .agents-page .run-link:hover {
+      text-decoration: underline;
+    }
+
+    .agents-page .run-detail {
+      margin-top: 14px;
+      border: 1px solid var(--color-border);
+      background: var(--surface-soft);
+      border-radius: 8px;
+      padding: 14px;
+    }
+
+    .agents-page .run-detail pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--color-text-primary);
+      font-size: 12px;
+      line-height: 1.5;
+      margin-top: 10px;
+    }
+
+    .testchat-backdrop {
+      position: fixed;
+      inset: 0;
+      background: var(--backdrop);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: var(--z-modal, 1000);
+      padding: 20px;
+    }
+
+    .testchat {
+      width: min(760px, 94vw);
+      height: min(80vh, 700px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .testchat-head {
+      min-height: 58px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .testchat-head .name {
+      color: var(--color-text-primary);
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .testchat-head .close {
+      margin-left: auto;
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-surface);
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .testchat-body {
+      flex: 1;
+      overflow: auto;
+      padding: 16px 18px;
+      background: var(--surface-soft);
+    }
+
+    .msg {
+      margin-bottom: 14px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .msg .role {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      font-weight: 900;
+      margin-bottom: 5px;
+    }
+
+    .msg.user .body,
+    .msg.agent .body {
+      color: var(--color-text-primary);
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: 10px 12px;
+      border-radius: 8px;
+      white-space: pre-wrap;
+    }
+
+    .msg.tool {
+      color: var(--color-text-secondary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 4px 0;
+    }
+
+    .testchat-foot {
+      padding: 14px 18px;
+      border-top: 1px solid var(--color-border);
+      display: flex;
+      gap: 10px;
+      background: var(--color-surface);
+    }
+
+    .testchat-foot input {
+      flex: 1;
+    }
+
+    @media (max-width: 1080px) {
+      .agents-page .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .agents-page .rail {
+        position: static;
+        min-height: auto;
+      }
+
+      .agents-page .nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .agents-page .layout,
+      .agents-page .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .agents-page .catalog-panel {
+        position: static;
+      }
+
+      .agents-page .catalog-body {
+        max-height: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .agents-page {
+        padding: 18px 14px 34px;
+      }
+
+      .agents-page .hero,
+      .agents-page .row2,
+      .agents-page .row3,
+      .agents-page .kv-row {
+        grid-template-columns: 1fr;
+      }
+
+      .agents-page .hero {
+        display: grid;
+      }
+
+      .agents-page .actions,
+      .agents-page .panel-actions,
+      .agents-page .footer-bar,
+      .testchat-foot {
+        align-items: stretch;
+      }
+
+      .agents-page .btn,
+      .testchat-foot .btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="agents-page">
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">OMEGA</div>
+        <div class="rail-title">Agentes</div>
+        <nav class="nav" aria-label="Navegación de agentes">
+          <a href="/">Inicio</a>
+          <span class="nav-current">Catálogo</span>
+          <a href="/iam">IAM / Accesos</a>
+          <a href="/settings">Configuración</a>
+          <a href="/monitor">Monitor</a>
+        </nav>
+        <div class="rail-user">
+          <div class="user-bar" id="user-bar"></div>
+        </div>
+      </aside>
+
+      <section class="main">
+        <header class="hero">
+          <div>
+            <div class="eyebrow">Automatización</div>
+            <h1>Agentes</h1>
+            <p class="sub">Configura agentes por cartucho con herramientas, modelo, contexto, ejecución manual, programación y trazabilidad de runs.</p>
+          </div>
+          <div class="actions">
+            <button class="btn" id="btn-refresh-agents" type="button" title="Recargar agentes">Actualizar</button>
+            <button class="btn btn-primary" id="btn-new-agent" type="button">Nuevo agente</button>
+          </div>
+        </header>
+
+        <section class="metrics" aria-label="Resumen de agentes">
+          <article class="metric-card">
+            <h2>Catálogo</h2>
+            <div class="metric-value">CRUD</div>
+            <p>Crear, editar, activar y eliminar agentes.</p>
+          </article>
+          <article class="metric-card">
+            <h2>Tools</h2>
+            <div class="metric-value">MCP</div>
+            <p>Catálogo vivo desde los servidores internos.</p>
+          </article>
+          <article class="metric-card">
+            <h2>Programación</h2>
+            <div class="metric-value">Cron</div>
+            <p>Ejecuciones desde agent_runner.</p>
+          </article>
+          <article class="metric-card">
+            <h2>Historial</h2>
+            <div class="metric-value">Runs</div>
+            <p>Detalle de salida, tools y errores.</p>
+          </article>
+        </section>
+
+        <div class="layout">
+          <section class="agents-panel catalog-panel">
+            <div class="pane-head">
+              <div>
+                <div class="pane-title">Catálogo</div>
+                <div class="pane-subtitle">Agentes agrupados por cartucho.</div>
+              </div>
+            </div>
+            <div class="pane-body catalog-body" id="agent-list"></div>
+          </section>
+
+          <section class="agents-panel editor-panel">
+            <div class="pane-head">
+              <div>
+                <div class="pane-title" id="editor-title">Editor</div>
+                <div class="pane-subtitle">Identidad, instrucciones, herramientas, modelo y agenda.</div>
+              </div>
+              <div class="spacer"></div>
+              <div class="panel-actions">
+                <button class="btn btn-success" id="btn-test" type="button" disabled>Probar</button>
+              </div>
+            </div>
+
+            <div class="pane-body">
+              <div id="editor-empty" class="empty-edit">
+                Selecciona un agente de la lista o crea uno nuevo.
+              </div>
+
+              <div id="editor" class="editor" style="display:none">
+                <div class="tabs">
+                  <div class="tab active" data-tab="identity">Identidad</div>
+                  <div class="tab" data-tab="mind">Instrucciones</div>
+                  <div class="tab" data-tab="tools">Tools</div>
+                  <div class="tab" data-tab="model">Modelo</div>
+                  <div class="tab" data-tab="context">Contexto</div>
+                  <div class="tab" data-tab="extra">Adicional</div>
+                  <div class="tab" data-tab="runs">Ejecuciones</div>
+                </div>
+
+                <div class="tab-panel active" data-panel="identity">
+                  <div class="row2">
+                    <div class="field">
+                      <label for="f-cartridge">Cartridge</label>
+                      <select id="f-cartridge"></select>
+                      <div class="hint">El cartucho es la mente del agente: datos, hints y vocabulario.</div>
+                    </div>
+                    <div class="field">
+                      <label for="f-slug">Slug</label>
+                      <input type="text" id="f-slug" placeholder="ej: missing_timesheets">
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="f-name">Nombre</label>
+                    <input type="text" id="f-name" placeholder="Vigilante de Reporteo">
+                  </div>
+                  <div class="field">
+                    <label for="f-description">Descripción</label>
+                    <input type="text" id="f-description" placeholder="Una línea breve sobre lo que hace">
+                  </div>
+                  <div class="chk-row">
+                    <label><input type="checkbox" id="f-active"> Activo</label>
+                  </div>
+                </div>
+
+                <div class="tab-panel" data-panel="mind">
+                  <div class="field">
+                    <label for="f-instructions">Instrucciones</label>
+                    <textarea id="f-instructions" placeholder="Qué hace el agente, cuándo escala, cómo formatea la respuesta..."></textarea>
+                    <div class="hint">Markdown soportado. Variables: <code>{{nombre_var}}</code> se reemplazan al ejecutar.</div>
+                  </div>
+                  <div class="field">
+                    <label for="f-personality">Personalidad</label>
+                    <textarea id="f-personality" style="min-height:80px" placeholder="Tono, estilo, idioma por defecto..."></textarea>
+                  </div>
+                </div>
+
+                <div class="tab-panel" data-panel="tools">
+                  <div class="field">
+                    <label>Herramientas permitidas</label>
+                    <div class="tools-grid" id="tools-grid">Cargando catálogo de tools...</div>
+                    <div class="hint">El agente solo puede llamar a estas herramientas. Pueden venir de cualquier cartucho o servidor MCP.</div>
+                  </div>
+                </div>
+
+                <div class="tab-panel" data-panel="model">
+                  <div class="row3">
+                    <div class="field">
+                      <label for="f-model">Modelo</label>
+                      <select id="f-model">
+                        <option value="claude-haiku-4-5-20251001">Haiku 4.5 (rápido, barato)</option>
+                        <option value="claude-sonnet-4-6">Sonnet 4.6 (balanceado)</option>
+                        <option value="claude-opus-4-7">Opus 4.7 (máxima calidad)</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="f-maxtok">Max tokens</label>
+                      <input type="number" id="f-maxtok" value="8192" min="256" max="32000">
+                    </div>
+                    <div class="field">
+                      <label for="f-temp">Temperature</label>
+                      <input type="number" id="f-temp" value="0.4" min="0" max="1" step="0.05">
+                    </div>
+                  </div>
+                  <div class="hint">Cada agente paga su modelo. Usa Haiku para tareas mecánicas, Sonnet para análisis y Opus solo cuando el razonamiento lo justifique.</div>
+                </div>
+
+                <div class="tab-panel" data-panel="context">
+                  <div class="field">
+                    <label>RAG · filtro por tipo de fuente</label>
+                    <div class="chk-row">
+                      <label><input type="checkbox" class="rag-kind" value="document"> Document (políticas, manuales, reportes)</label>
+                      <label><input type="checkbox" class="rag-kind" value="schema"> Schema (metadatos de datasets)</label>
+                    </div>
+                    <div class="hint">Si no marcas ninguno, search_rag busca en todo.</div>
+                  </div>
+                </div>
+
+                <div class="tab-panel" data-panel="extra">
+                  <div class="field">
+                    <label>Variables</label>
+                    <div class="hint">Se sustituyen como <code>&#123;&#123;clave&#125;&#125;</code> en el prompt.</div>
+                    <div class="kv-list" id="vars-list"></div>
+                    <button class="btn kv-add" id="btn-add-var" type="button">Agregar variable</button>
+                  </div>
+                  <div class="row2">
+                    <div class="field">
+                      <label for="f-cron">Cron</label>
+                      <input type="text" id="f-cron" placeholder="0 9 * * MON">
+                    </div>
+                    <div class="field">
+                      <label for="f-tz">Timezone</label>
+                      <input type="text" id="f-tz" placeholder="America/Mexico_City">
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="f-schedule-prompt">Prompt programado</label>
+                    <textarea id="f-schedule-prompt" style="min-height:86px" placeholder="Instrucción que enviará agent_runner cuando dispare el cron."></textarea>
+                  </div>
+                  <div class="chk-row">
+                    <label><input type="checkbox" id="f-schedule-enabled"> Schedule activo</label>
+                  </div>
+                  <div class="hint">El DAG <code>agent_runner</code> revisa <code>extra.schedule</code> cada 5 minutos.</div>
+                </div>
+
+                <div class="tab-panel" data-panel="runs">
+                  <div class="runs-toolbar">
+                    <button class="btn" id="btn-refresh-runs" type="button">Recargar</button>
+                  </div>
+                  <div id="runs-status" class="runs-status">Selecciona un agente guardado para ver ejecuciones.</div>
+                  <table class="runs-table" id="runs-table" hidden>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Estado</th>
+                        <th>Inicio</th>
+                        <th>Fin</th>
+                        <th>Tools</th>
+                        <th>Salida</th>
+                      </tr>
+                    </thead>
+                    <tbody id="runs-body"></tbody>
+                  </table>
+                  <div id="run-detail" class="run-detail" hidden></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="footer-bar" id="footer-bar" style="display:none">
+              <button class="btn btn-danger" id="btn-del" type="button">Eliminar</button>
+              <div class="spacer"></div>
+              <span class="save-status" id="save-status"></span>
+              <button class="btn" id="btn-cancel" type="button">Cancelar</button>
+              <button class="btn btn-primary" id="btn-save" type="button">Guardar</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/static/js/agents.js" defer></script>
+  <script src="/static/js/theme-switch.js" defer></script>
+</body>
+</html>

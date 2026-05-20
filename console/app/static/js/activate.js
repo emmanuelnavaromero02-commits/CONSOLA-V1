@@ -1,5 +1,4 @@
 // Sprint v1.11 — extracted from activate.html for strict CSP.
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
 async function loadInfo() {

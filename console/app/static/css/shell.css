@@ -1,5 +1,8 @@
 :root {
-  --shell-sidebar-bg: #1e2433;
+  --shell-sidebar-bg: var(--color-surface);
+  --shell-sidebar-text: var(--color-text-primary);
+  --shell-sidebar-muted: var(--color-text-secondary);
+  --shell-sidebar-hover: var(--primary-soft);
   --shell-sidebar-width: 240px;
   --shell-topbar-bg: var(--color-surface);
   --shell-topbar-border: var(--color-border);
@@ -9,9 +12,9 @@
 
 html[data-theme="dark"] {
   --shell-topbar-bg: var(--color-bg-dark);
-  --shell-topbar-border: rgba(255, 255, 255, 0.12);
-  --shell-topbar-text: #ffffff;
-  --shell-topbar-text-muted: rgba(255, 255, 255, 0.72);
+  --shell-topbar-border: var(--color-border);
+  --shell-topbar-text: var(--color-text-primary);
+  --shell-topbar-text-muted: var(--color-text-secondary);
 }
 
 .ent-shell {
@@ -38,8 +41,8 @@ html[data-theme="dark"] {
   padding: 16px 20px;
   font-weight: 700;
   font-size: 18px;
-  color: #ffffff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--shell-sidebar-text);
+  border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
 }
@@ -57,7 +60,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   padding: 10px 20px;
-  color: #a0aec0;
+  color: var(--shell-sidebar-muted);
   text-decoration: none;
   font-size: 14px;
   transition: background 0.2s, color 0.2s;
@@ -65,13 +68,13 @@ html[data-theme="dark"] {
 }
 
 .ent-nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #ffffff;
+  background: var(--shell-sidebar-hover);
+  color: var(--shell-sidebar-text);
 }
 
 .ent-nav-item.active {
   color: var(--color-accent);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--primary-soft);
   border-left: 3px solid var(--color-accent);
 }
 
@@ -172,7 +175,7 @@ html[data-theme="dark"] {
   height: 32px;
   border-radius: 50%;
   background: var(--color-accent);
-  color: #ffffff;
+  color: var(--on-primary);
   display: flex;
   align-items: center;
   justify-content: center;

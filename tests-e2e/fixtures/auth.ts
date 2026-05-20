@@ -128,9 +128,9 @@ export async function loginViaApi(request: APIRequestContext) {
 }
 
 /**
- * UI login via the Next.js /login form. Used by global-setup to
- * mint the BrowserContext storage state every spec downstream
- * inherits.
+ * UI login via the Next.js /login form. Kept for specs that need
+ * to exercise the visible login screen; global setup uses
+ * loginViaApi so suite auth does not depend on page-load timing.
  */
 export async function loginViaBrowser(
   context: BrowserContext,
@@ -138,7 +138,10 @@ export async function loginViaBrowser(
 ): Promise<void> {
   const page = await context.newPage();
   try {
-    await page.goto(`${baseURL}/login`);
+    await page.goto(`${baseURL}/login`, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
     await page.fill(
       'input[type="email"], input[name="email"], input#email',
       TEST_EMAIL,

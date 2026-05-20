@@ -32,6 +32,7 @@ required_secrets=(
   OMEGA_AIRFLOW_META_PASSWORD
   AIRFLOW_SECRET_KEY
   AIRFLOW_ADMIN_PASSWORD
+  AGENT_RUNNER_TOKEN
   SUPERSET_SECRET_KEY
   SUPERSET_ADMIN_PASSWORD
 )
@@ -85,12 +86,25 @@ fetch_secret() {
   done
 }
 
+derive_public_url() {
+  local base="$1"
+  local port="$2"
+  local scheme rest hostport host
+  scheme="${base%%://*}"
+  rest="${base#*://}"
+  hostport="${rest%%/*}"
+  host="${hostport%%:*}"
+  printf '%s://%s:%s' "$scheme" "$host" "$port"
+}
+
 echo "[aws-entrypoint] writing runtime env to $ENV_FILE"
 required_config=(
   AWS_REGION
   S3_BUCKET_NAME
   AIRFLOW_ADMIN_USER
   SUPERSET_ADMIN_USER
+  CONSOLE_URL
+  WORKSPACE_PUBLIC_URL
 )
 
 AIRFLOW_ADMIN_USER="${AIRFLOW_ADMIN_USER:-admin}"
@@ -98,22 +112,24 @@ SUPERSET_ADMIN_USER="${SUPERSET_ADMIN_USER:-admin}"
 SUPERSET_SERVICE_USER="${SUPERSET_SERVICE_USER:-}"
 GHCR_OWNER="${GHCR_OWNER:-emmanuelnavaromero02-commits}"
 IMAGE_TAG="${IMAGE_TAG:-v1.44.5}"
-CONSOLE_URL="${CONSOLE_URL:-http://localhost:8000}"
-WORKSPACE_PUBLIC_URL="${WORKSPACE_PUBLIC_URL:-http://localhost:8001}"
+APP_ENV="${APP_ENV:-production}"
+CONSOLE_URL="${CONSOLE_URL:-}"
+WORKSPACE_PUBLIC_URL="${WORKSPACE_PUBLIC_URL:-}"
 APP_BASE_URL="${APP_BASE_URL:-$CONSOLE_URL}"
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-$CONSOLE_URL,$WORKSPACE_PUBLIC_URL}"
+AIRFLOW_PUBLIC_URL="${AIRFLOW_PUBLIC_URL:-$(derive_public_url "$CONSOLE_URL" 8082)}"
+SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-$(derive_public_url "$CONSOLE_URL" 8088)}"
 SMTP_HOST="${SMTP_HOST:-mailhog}"
 SMTP_PORT="${SMTP_PORT:-1025}"
 SMTP_USER="${SMTP_USER:-}"
 SMTP_FROM="${SMTP_FROM:-noreply@modecissions.local}"
 SMTP_USE_TLS="${SMTP_USE_TLS:-false}"
-APP_ENV="${APP_ENV:-production}"
 CHAT_LLM_PROVIDER="${CHAT_LLM_PROVIDER:-anthropic}"
 CHAT_LLM_MODEL="${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}"
 SQL_LLM_MODEL="${SQL_LLM_MODEL:-claude-sonnet-4-6}"
 GEMINI_CACHE_ENABLED="${GEMINI_CACHE_ENABLED:-true}"
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
+OLLAMA_URL="${OLLAMA_URL:-http://host.docker.internal:11434}"
+EMBED_MODEL="${EMBED_MODEL:-gemini-embedding-001}"
 EMBED_DIM="${EMBED_DIM:-768}"
 INVITE_TOKEN_TTL_HOURS="${INVITE_TOKEN_TTL_HOURS:-72}"
 RESET_TOKEN_TTL_HOURS="${RESET_TOKEN_TTL_HOURS:-1}"
@@ -127,8 +143,19 @@ for config_name in "${required_config[@]}"; do
   write_env "$config_name" "$value"
 done
 
+if [[ "$APP_ENV" =~ ^(production|prod)$ ]]; then
+  for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL; do
+    value="${!url_var:-}"
+    if [[ "$value" == *"localhost"* || "$value" == *"127.0.0.1"* ]]; then
+      echo "[aws-entrypoint] $url_var must not point to localhost in production: $value" >&2
+      exit 1
+    fi
+  done
+fi
+
 for config_name in \
-  GHCR_OWNER IMAGE_TAG CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL ALLOWED_ORIGINS \
+  GHCR_OWNER IMAGE_TAG APP_BASE_URL ALLOWED_ORIGINS \
+  AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL \
   SUPERSET_SERVICE_USER \
   SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_USE_TLS APP_ENV \
   CHAT_LLM_PROVIDER CHAT_LLM_MODEL SQL_LLM_MODEL GEMINI_CACHE_ENABLED \

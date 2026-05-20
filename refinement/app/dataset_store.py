@@ -22,6 +22,12 @@ def _conn():
     return psycopg2.connect(_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
 
 
+def _default_workspace_id(cur):
+    cur.execute("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
 class DatasetStore:
     def __init__(self, datasets_dir=None):
         # datasets_dir kept for API compatibility but ignored
@@ -75,11 +81,12 @@ class DatasetStore:
         sources        = ds.get("sources") or []
         column_mapping = ds.get("column_mapping") or {}
         with _conn() as conn, conn.cursor() as cur:
+            workspace_id = ds.get("workspace_id") or _default_workspace_id(cur)
             cur.execute("""
                 INSERT INTO datasets
                   (name, layer, cartridge, sources, sql_def, description,
-                   column_mapping, schedule, created_by_id, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                   column_mapping, schedule, created_by_id, workspace_id, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (name) DO UPDATE SET
                   layer          = EXCLUDED.layer,
                   cartridge      = EXCLUDED.cartridge,
@@ -89,6 +96,7 @@ class DatasetStore:
                   column_mapping = EXCLUDED.column_mapping,
                   schedule       = EXCLUDED.schedule,
                   created_by_id  = COALESCE(EXCLUDED.created_by_id, datasets.created_by_id),
+                  workspace_id   = COALESCE(EXCLUDED.workspace_id, datasets.workspace_id),
                   updated_at     = NOW()
             """, (
                 ds["name"],
@@ -100,6 +108,7 @@ class DatasetStore:
                 json.dumps(column_mapping),
                 ds.get("schedule"),
                 ds.get("created_by_id"),
+                workspace_id,
             ))
             conn.commit()
 

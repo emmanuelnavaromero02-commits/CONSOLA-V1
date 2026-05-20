@@ -106,7 +106,7 @@ async def close_pool() -> None:
 
 async def startup():
     """Register built-in servers from environment at app startup."""
-    console_url = os.environ.get("CONSOLE_URL", "http://console:8000")
+    console_url = os.environ.get("CONSOLE_INTERNAL_URL", "http://console:8000").rstrip("/")
     builtin = [
         {
             "id":          "refinement",

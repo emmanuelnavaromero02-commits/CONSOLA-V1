@@ -4,7 +4,7 @@ function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 let allDatasets = [];
 
 function layerBadge(layer) {
-  const cls = { silver: 'layer-silver', master: 'layer-master', gold: 'layer-gold' }[layer] || 'layer-silver';
+  const cls = { silver: 'layer-silver', gold: 'layer-gold' }[layer] || 'layer-silver';
   return `<span class="layer-badge ${cls}">${(layer || 'silver').toUpperCase()}</span>`;
 }
 
@@ -37,14 +37,12 @@ function render() {
 
 function renderStats() {
   const silver = allDatasets.filter(d => (d.layer || 'silver') === 'silver').length;
-  const master = allDatasets.filter(d => d.layer === 'master').length;
   const gold   = allDatasets.filter(d => d.layer === 'gold').length;
   const cartridges = [...new Set(allDatasets.map(d => d.cartridge).filter(Boolean))];
 
   document.getElementById('stats').innerHTML = `
     <div class="stat"><div class="stat-val">${allDatasets.length}</div><div class="stat-lbl">TOTAL</div></div>
     <div class="stat"><div class="stat-val" style="color:#00e5ff">${silver}</div><div class="stat-lbl">SILVER</div></div>
-    <div class="stat"><div class="stat-val" style="color:#ffb000">${master}</div><div class="stat-lbl">MASTER</div></div>
     <div class="stat"><div class="stat-val" style="color:#ffd700">${gold}</div><div class="stat-lbl">GOLD</div></div>
     <div class="stat"><div class="stat-val">${cartridges.length}</div><div class="stat-lbl">CARTUCHOS</div></div>
   `;

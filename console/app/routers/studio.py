@@ -25,7 +25,6 @@ from app.services import (
     mcp_registry,
     studio_assistant,
     studio_entities,
-    studio_preview,
     superset_client,
 )
 from app.services.csrf import require_csrf
@@ -39,6 +38,7 @@ require_studio_write = require_permission("studio.write")
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_SAFE_DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _MAX_SPEC_BYTES = 2 * 1024 * 1024
 
@@ -81,6 +81,28 @@ def _clean_identifier(value: str, *, label: str) -> str:
 def _clean_filename(value: str) -> str:
     name = _SAFE_FILENAME_RE.sub("_", os.path.basename(value or "spec.yaml")).strip("._")
     return name or "spec.yaml"
+
+
+def _clean_dag_id(value: str) -> str:
+    dag_id = (value or "").strip()
+    if not _SAFE_DAG_ID_RE.fullmatch(dag_id):
+        raise HTTPException(400, "Invalid dag_id: use letters, numbers and underscores only")
+    return dag_id
+
+
+def _manifest_dag_ids(manifest: dict | None) -> set[str]:
+    ids: set[str] = set()
+    if not manifest:
+        return ids
+    for dag in manifest.get("dags") or []:
+        if isinstance(dag, dict) and dag.get("dag_id"):
+            ids.add(str(dag["dag_id"]))
+        elif isinstance(dag, str):
+            ids.add(dag)
+    for entity in manifest.get("entities") or []:
+        if isinstance(entity, dict) and entity.get("dag_id"):
+            ids.add(str(entity["dag_id"]))
+    return ids
 
 
 def _downstream_error(service: str, status_code: int) -> HTTPException:
@@ -173,7 +195,7 @@ def _svg_for_graph(nodes: list[dict], edges: list[dict]) -> str:
 def _dataset_table_name(ds: dict) -> str:
     layer = (ds.get("layer") or "").strip().lower()
     name = _clean_identifier(str(ds.get("name") or ""), label="dataset name")
-    if layer in {"gold", "master"}:
+    if layer == "gold" and not name.startswith("gold_"):
         return f"{layer}_{name}"
     return name
 
@@ -221,7 +243,7 @@ def _extract_entities_from_spec(content: str) -> list[dict]:
     seen: set[str] = set()
     out: list[dict] = []
     for item in entities:
-        entity = _clean_identifier(str(item.get("entity") or item.get("name") or ""), label="entity")
+        entity = _clean_identifier(str(item.get("entity") or item.get("name") or item.get("id") or ""), label="entity")
         if entity in seen:
             continue
         seen.add(entity)
@@ -251,8 +273,12 @@ async def dag_graph(
     nodes = [{"id": f"cartridge:{cartridge}", "kind": "cartridge", "label": manifest["name"]}]
     edges: list[dict] = []
     for entity in manifest.get("entities") or []:
-        entity_id = f"entity:{entity['entity']}"
-        nodes.append({"id": entity_id, "kind": "entity", "label": entity.get("display_name") or entity["entity"]})
+        entity_name = entity.get("entity") or entity.get("id") or entity.get("name")
+        if not entity_name:
+            continue
+        entity_name = _clean_identifier(str(entity_name), label="entity")
+        entity_id = f"entity:{entity_name}"
+        nodes.append({"id": entity_id, "kind": "entity", "label": entity.get("display_name") or entity_name})
         edges.append({"source": f"cartridge:{cartridge}", "target": entity_id})
         if entity.get("dag_id"):
             dag_id = f"dag:{entity['dag_id']}"
@@ -274,6 +300,116 @@ async def dag_graph(
         pass
 
     return {"format": "svg", "svg": _svg_for_graph(nodes, edges), "nodes": nodes, "edges": edges}
+
+
+@router.get("/dags", dependencies=[Depends(require_studio_read)])
+async def dags_list(
+    cartridge: str | None = None,
+    user: dict = Depends(require_authenticated),
+):
+    manifest = await cartridge_service.get_cartridge(cartridge) if cartridge else None
+    registered = _manifest_dag_ids(manifest)
+    result = await mcp_registry.invoke("infra", "airflow_list_dags", {})
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(502, f"Airflow DAG list failed: {result['error']}")
+    raw_dags = result.get("dags") if isinstance(result, dict) else result
+    if not isinstance(raw_dags, list):
+        raw_dags = []
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_dags:
+        dag = item if isinstance(item, dict) else {"dag_id": str(item)}
+        dag_id = str(dag.get("dag_id") or dag.get("id") or "").strip()
+        if not dag_id:
+            continue
+        if cartridge and not (
+            dag_id.startswith(f"{cartridge}_")
+            or dag_id in registered
+            or dag.get("cartridge_id") == cartridge
+        ):
+            continue
+        seen.add(dag_id)
+        normalized.append({
+            "dag_id": dag_id,
+            "id": dag_id,
+            "is_paused": bool(dag.get("is_paused", dag.get("paused", False))),
+            "is_active": bool(dag.get("is_active", dag.get("active", True))),
+            "tags": dag.get("tags") or [],
+            "cartridge_id": dag.get("cartridge_id") or cartridge,
+        })
+
+    for dag_id in sorted(registered - seen):
+        normalized.append({
+            "dag_id": dag_id,
+            "id": dag_id,
+            "is_paused": False,
+            "is_active": True,
+            "tags": [],
+            "cartridge_id": cartridge,
+            "registered_only": True,
+        })
+
+    normalized.sort(key=lambda dag: dag["dag_id"])
+    return {"cartridge": cartridge, "dags": normalized, "total": len(normalized)}
+
+
+@router.get("/dags/{dag_id}/source", dependencies=[Depends(require_studio_read)])
+async def dag_source(
+    dag_id: str,
+    cartridge: str = "replicon",
+    user: dict = Depends(require_authenticated),
+):
+    safe_dag_id = _clean_dag_id(dag_id)
+    result = await mcp_registry.invoke("infra", "dag_get_source", {
+        "cartridge_id": cartridge,
+        "dag_id": safe_dag_id,
+    })
+    if isinstance(result, dict) and result.get("error"):
+        return {"dag_id": safe_dag_id, "found": False, "source_code": "", "error": result["error"]}
+    return {
+        "dag_id": safe_dag_id,
+        "found": bool(result.get("found")) if isinstance(result, dict) else False,
+        "source_code": result.get("source_code") if isinstance(result, dict) else "",
+        "path": result.get("path") if isinstance(result, dict) else None,
+    }
+
+
+@router.delete("/dags/{dag_id}", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
+async def dag_delete(
+    dag_id: str,
+    cartridge: str = "replicon",
+    user: dict = Depends(require_authenticated),
+):
+    safe_dag_id = _clean_dag_id(dag_id)
+    safe_cartridge = _clean_identifier(cartridge, label="cartridge")
+    manifest = await cartridge_service.get_cartridge(safe_cartridge)
+    if not manifest:
+        raise HTTPException(404, f"Cartridge '{safe_cartridge}' not found")
+    registered = _manifest_dag_ids(manifest)
+    if safe_dag_id not in registered and not safe_dag_id.startswith(f"{safe_cartridge}_"):
+        raise HTTPException(403, f"DAG '{safe_dag_id}' does not belong to cartridge '{safe_cartridge}'")
+    result = await mcp_registry.invoke("infra", "airflow_delete_dag", {
+        "dag_id": safe_dag_id,
+        "cartridge_id": safe_cartridge,
+    })
+    if isinstance(result, dict) and result.get("error"):
+        if "ALLOW_RCE_TOOLS" in str(result.get("error")):
+            raise HTTPException(
+                403,
+                "Eliminar DAG requiere ALLOW_RCE_TOOLS=true en el entorno local.",
+            )
+        raise HTTPException(502, f"Airflow delete failed: {result['error']}")
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="studio.dag.delete",
+        resource_type="airflow_dag",
+        resource_id=safe_dag_id,
+        status="success",
+        metadata={"cartridge": safe_cartridge},
+    )
+    return {"deleted": True, "dag_id": safe_dag_id, "result": result}
 
 
 @router.post("/dag-deploy", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
@@ -308,6 +444,11 @@ async def dag_deploy(request: Request, user: dict = Depends(require_authenticate
             status="failed",
             metadata={"cartridge": cartridge, "entity": entity, "error": result.get("error")},
         )
+        if "ALLOW_RCE_TOOLS" in str(result.get("error")):
+            raise HTTPException(
+                403,
+                "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.",
+            )
         return {"status": "failed", "dag_id": dag_id, "error": result["error"]}
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -470,15 +611,9 @@ async def gold_preview(request: Request, user: dict = Depends(require_authentica
 
 @router.get("/master/preview", dependencies=[Depends(require_studio_read)])
 async def master_preview(request: Request, user: dict = Depends(require_authenticated)):
-    limit = _limit_param(request)
-    return await studio_preview.preview_master(
-        entity=request.query_params.get("entity") or request.query_params.get("dataset"),
-        cartridge=request.query_params.get("cartridge") or "replicon",
-        limit=limit,
-        user_context=_rls_user_context(user),
-        list_datasets=_refinement_datasets,
-        invoke_refinement=lambda tool, args: _refinement_invoke(tool, args, timeout=60),
-    )
+    """Backward-compatible URL. The platform now serves this from Gold;
+    serve the equivalent Gold preview for callers that still hit this path."""
+    return await _layer_preview("gold", request, user)
 
 
 @router.post("/superset/dataset", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
@@ -503,11 +638,11 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
         raise HTTPException(400, "Only schema 'public' is allowed for Studio-created Superset datasets")
     datasets = [
         ds for ds in await _refinement_datasets()
-        if (ds.get("layer") or "").lower() in {"gold", "master"}
+        if (ds.get("layer") or "").lower() == "gold"
     ]
     allowed_tables = {_dataset_table_name(ds) for ds in datasets}
     if table_name not in allowed_tables:
-        raise HTTPException(400, f"Table '{table_name}' is not a registered Gold/Master dataset")
+        raise HTTPException(400, f"Table '{table_name}' is not a registered Gold dataset")
 
     try:
         dbs = await client.list_databases()
@@ -518,12 +653,25 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
             match = next((db for db in dbs if db.get("name") in {"modecissions_gold", "Postgres Gold"}), None)
             match = match or (dbs[0] if dbs else None)
             if not match:
-                raise HTTPException(503, "No Superset database connection registered")
+                gold_uri = os.environ.get("SUPERSET_GOLD_SQLALCHEMY_URI", "").strip()
+                if not gold_uri:
+                    raise HTTPException(503, "No Superset database connection registered")
+                match = await client.create_database("modecissions_gold", gold_uri)
             database_id = match["id"]
         result = await client.create_dataset(int(database_id), table_name, schema=schema)
     except superset_client.SupersetConfigError as exc:
         raise HTTPException(503, str(exc)) from exc
     except superset_client.SupersetRequestError as exc:
+        message = str(exc)
+        if exc.status_code == 422 and "could not be found" in message.lower():
+            return {
+                "created": False,
+                "available": False,
+                "needs_materialization": True,
+                "table": table_name,
+                "schema": schema,
+                "message": f"Materializa primero el dataset Gold '{table_name}' y vuelve a crear el dataset en Superset.",
+            }
         raise HTTPException(exc.status_code, str(exc)) from exc
     await audit_service.record_event(
         user_id=user.get("id"),

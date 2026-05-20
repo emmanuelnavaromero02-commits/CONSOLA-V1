@@ -77,6 +77,8 @@ GRANT INSERT, UPDATE ON datasets, run_logs, pipeline_runs, silver_lineage,
        data_catalog, data_relationships, analytic_apps
        TO omega_refinement;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_refinement;
+GRANT USAGE, SELECT ON SEQUENCE data_catalog_id_seq TO omega_refinement;
+GRANT USAGE, SELECT ON SEQUENCE data_relationships_id_seq TO omega_refinement;
 -- Refinement NUNCA debe tocar:
 --   vault_entries          (secretos)
 --   users                  (password hashes)
@@ -188,7 +190,7 @@ GRANT SELECT ON
     semantic_terms, mcp_servers, mcp_custom_tools,
     rag_sources, rag_chunks, entity_config, entity_watermarks,
     pipeline_runs, run_logs, datasets, system_settings,
-    analytic_apps, data_catalog, kb_config
+    analytic_apps, data_catalog, kb_config, agents
     TO omega_mcp_infra;
 -- Write surface: solo tablas que las tools de mcp-infra escriben hoy.
 -- (cartridge_dags y mcp_* via airflow.* tools; rag_* via rag.store.
@@ -196,7 +198,7 @@ GRANT SELECT ON
 -- tools advance watermarks and write pipeline run rows from DAG callbacks.)
 GRANT INSERT, UPDATE, DELETE ON
     cartridge_dags, mcp_servers, mcp_custom_tools,
-    rag_sources, rag_chunks, entity_watermarks, pipeline_runs
+    rag_sources, rag_chunks, entity_watermarks, pipeline_runs, agents
     TO omega_mcp_infra;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_mcp_infra;
 -- Hard lines (defense-in-depth):

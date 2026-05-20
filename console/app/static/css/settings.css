@@ -2,31 +2,31 @@
   max-width: 980px;
   margin: 0 auto;
   padding: 32px 24px 80px;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: #1f2937;
+  font-family: var(--font-ui);
+  color: var(--text);
 }
 
 .settings-header { margin-bottom: 24px; }
 .settings-back {
   display: inline-block;
   margin-bottom: 12px;
-  color: #2563eb;
+  color: var(--primary);
   text-decoration: none;
   font-size: 14px;
 }
 .settings-back:hover { text-decoration: underline; }
 .settings-header h1 { margin: 0 0 4px; font-size: 28px; }
-.settings-subtitle { margin: 0; color: #6b7280; font-size: 14px; }
+.settings-subtitle { margin: 0; color: var(--text3); font-size: 14px; }
 
-.settings-status { padding: 16px; color: #6b7280; font-style: italic; }
+.settings-status { padding: 16px; color: var(--text3); font-style: italic; }
 
 .settings-vault-callout {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  background: #f8fafc;
-  border: 1px solid #dbe4f0;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px 20px;
   margin-bottom: 16px;
@@ -34,25 +34,25 @@
 .settings-vault-callout h2 {
   margin: 0 0 4px;
   font-size: 16px;
-  color: #1f2937;
+  color: var(--text);
 }
 .settings-vault-callout p {
   margin: 0;
-  color: #64748b;
+  color: var(--text3);
   font-size: 13px;
 }
 .settings-vault-link {
   white-space: nowrap;
   text-decoration: none;
-  border: 1px solid #2563eb;
+  border: 1px solid var(--primary);
   border-radius: 4px;
   padding: 8px 12px;
   font-size: 13px;
 }
 
 .settings-section {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 16px;
@@ -62,7 +62,7 @@
   font-size: 16px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #374151;
+  color: var(--text2);
 }
 
 .settings-item {
@@ -71,19 +71,19 @@
   gap: 16px;
   align-items: center;
   padding: 12px 0;
-  border-top: 1px solid #f3f4f6;
+  border-top: 1px solid var(--border);
 }
 .settings-item:first-of-type { border-top: 0; }
 
 .settings-item-label strong { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-.settings-item-desc { display: block; color: #6b7280; font-size: 12px; margin-top: 2px; }
+.settings-item-desc { display: block; color: var(--text3); font-size: 12px; margin-top: 2px; }
 
 .settings-item-text {
   display: inline-block;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 13px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 8px;
   word-break: break-all;
@@ -94,7 +94,9 @@
   font-family: ui-monospace, Menlo, monospace;
   font-size: 13px;
   padding: 6px 8px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
   border-radius: 4px;
 }
 
@@ -106,18 +108,18 @@
   cursor: pointer;
   border: 1px solid;
 }
-.btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
-.btn-primary:hover { background: #1d4ed8; }
-.btn-secondary { background: #fff; color: #374151; border-color: #d1d5db; }
-.btn-secondary:hover { background: #f3f4f6; }
-.btn-danger { background: #fff; color: #b91c1c; border-color: #fecaca; }
-.btn-danger:hover { background: #fef2f2; }
+.btn-primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-secondary { background: var(--surface); color: var(--text2); border-color: var(--border); }
+.btn-secondary:hover { background: var(--surface-soft); }
+.btn-danger { background: var(--surface); color: var(--red); border-color: var(--red); }
+.btn-danger:hover { background: var(--danger-soft); }
 
-.settings-empty { color: #6b7280; font-style: italic; }
+.settings-empty { color: var(--text3); font-style: italic; }
 .settings-error {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #991b1b;
+  background: var(--danger-soft);
+  border: 1px solid var(--red);
+  color: var(--red);
   padding: 12px;
   border-radius: 6px;
 }

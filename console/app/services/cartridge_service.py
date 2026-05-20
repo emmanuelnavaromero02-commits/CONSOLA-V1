@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-from app.security import required_secret
+from app.security import get_internal_api_key, required_secret
 
 _DATABASE_URL = (
     os.environ.get("DATABASE_URL", "")
@@ -36,6 +36,13 @@ _MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
 _MINIO_SECRET_KEY = required_secret("MINIO_SECRET_KEY", dev_default="minioadmin")
 _MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
 _MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+
+
+def _mcp_infra_headers() -> dict[str, str]:
+    return {
+        "x-api-key": os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA") or get_internal_api_key(),
+        "x-internal-service": "console",
+    }
 
 
 # ── DB connection ─────────────────────────────────────────────────────────────
@@ -101,7 +108,8 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
     conn = await _pg()
     try:
         row = await conn.fetchrow(
-            "SELECT id, name, version, description, pattern, category, bronze_path "
+            "SELECT id, name, version, description, pattern, category, bronze_path, "
+            "       COALESCE(assistant_hints, '') AS assistant_hints "
             "FROM cartridges WHERE id=$1",
             cartridge_id,
         )
@@ -113,14 +121,22 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
             "FROM cartridge_connections WHERE cartridge_id=$1 ORDER BY conn_id",
             cartridge_id,
         )
+        # DAGs del cartucho + DAGs compartidos del cartucho 'platform'
+        # (file_ingest, entity_scheduler, agent_runner). dag_role discrimina
+        # worker (asignable a entidad) vs orchestrator / utility.
         dags = await conn.fetch(
-            "SELECT dag_id, file, description, trigger, params "
-            "FROM cartridge_dags WHERE cartridge_id=$1 ORDER BY dag_id",
+            "SELECT cartridge_id, dag_id, file, description, trigger, params, "
+            "       COALESCE(dag_params_example, '{}'::jsonb) AS dag_params_example, "
+            "       COALESCE(dag_role, 'worker') AS dag_role "
+            "FROM cartridge_dags "
+            "WHERE cartridge_id = $1 OR (cartridge_id = 'platform' AND $1 <> 'platform') "
+            "ORDER BY (cartridge_id = 'platform'), dag_id",
             cartridge_id,
         )
         entities = await conn.fetch(
             "SELECT entity, display_name, mode, primary_key, dag_id, "
-            "       trigger_type, cron_expression, description, enabled "
+            "       trigger_type, cron_expression, description, enabled, "
+            "       COALESCE(dag_params, '{}'::jsonb) AS dag_params "
             "FROM entity_config WHERE cartridge_id=$1 AND enabled=TRUE ORDER BY entity",
             cartridge_id,
         )
@@ -139,9 +155,16 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
         "description": row["description"] or "",
         "pattern":     row["pattern"],
         "category":    row["category"],
-        "bronze_path": row["bronze_path"] or "",
+        "bronze_path":     row["bronze_path"] or "",
+        "assistant_hints": row["assistant_hints"] or "",
         "connections": [dict(r) for r in connections],
-        "dags":        [dict(r) for r in dags],
+        "dags": [
+            {
+                **{k: v for k, v in dict(r).items() if k != "dag_params_example"},
+                "dag_params_example": _entity_dag_params(r["dag_params_example"]),
+            }
+            for r in dags
+        ],
         "entities": [
             {
                 "entity":          r["entity"],
@@ -153,6 +176,7 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
                 "cron_expression": r["cron_expression"] or "",
                 "description":     r["description"] or "",
                 "enabled":         r["enabled"],
+                "dag_params":      _entity_dag_params(r["dag_params"]),
             }
             for r in entities
         ],
@@ -234,14 +258,24 @@ async def update_cartridge(cartridge_id: str, updates: dict) -> dict:
 
 async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
     """
-    Add or update fields in entity_config.
-    Only the kwargs provided are written; existing columns not in kwargs are preserved.
+    Add or update fields in entity_config. `cron_expression`/`trigger_type`
+    here are the source of truth per entity — the `entity_scheduler` DAG
+    reads them and fires the entity's DAG via Airflow's REST API. The DAG
+    source's `schedule_interval` only matters when it isn't None; in that
+    case `airflow_create_dag` mirrors it onto every entity that points at
+    the DAG.
     """
+    import json as _json
     allowed = {"display_name", "mode", "primary_key", "dag_id",
-               "trigger_type", "cron_expression", "description", "enabled"}
+               "trigger_type", "cron_expression", "description", "enabled",
+               "dag_params"}
     fields  = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
+
+    # dag_params is jsonb — accept dict and serialize, or pass string through
+    if "dag_params" in fields and not isinstance(fields["dag_params"], str):
+        fields["dag_params"] = _json.dumps(fields["dag_params"] or {})
 
     conn = await _pg()
     try:
@@ -250,11 +284,14 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
             cartridge_id, entity,
         )
         if exists:
-            set_parts  = [f"{k}=${i+3}" for i, k in enumerate(fields)]
-            set_clause = ", ".join(set_parts)
-            values     = list(fields.values())
+            set_parts = []
+            values    = []
+            for i, (k, v) in enumerate(fields.items()):
+                cast = "::jsonb" if k == "dag_params" else ""
+                set_parts.append(f"{k}=${i+3}{cast}")
+                values.append(v)
             await conn.execute(
-                f"UPDATE entity_config SET {set_clause} "
+                f"UPDATE entity_config SET {', '.join(set_parts)} "
                 f"WHERE cartridge_id=$1 AND entity=$2",
                 cartridge_id, entity, *values,
             )
@@ -263,8 +300,9 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                 """
                 INSERT INTO entity_config
                     (cartridge_id, entity, display_name, mode, primary_key,
-                     dag_id, trigger_type, cron_expression, description, enabled)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                     dag_id, trigger_type, cron_expression, description, enabled,
+                     dag_params)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
                 """,
                 cartridge_id, entity,
                 fields.get("display_name"),
@@ -275,6 +313,7 @@ async def upsert_entity(cartridge_id: str, entity: str, **kwargs) -> None:
                 fields.get("cron_expression"),
                 fields.get("description", ""),
                 fields.get("enabled", True),
+                fields.get("dag_params", "{}"),
             )
     finally:
         await conn.close()
@@ -406,15 +445,38 @@ async def export_cartridge(cartridge_id: str) -> bytes:
             "WHERE cartridge_id=$1 AND source_code IS NOT NULL ORDER BY dag_id",
             cartridge_id,
         )
+        hints_row = await conn.fetchrow(
+            "SELECT assistant_hints FROM cartridges WHERE id=$1",
+            cartridge_id,
+        )
+        agent_rows = await conn.fetch(
+            "SELECT slug, name, description, instructions, personality, "
+            "       allowed_tools, rag_filter, extra, model, max_tokens, "
+            "       temperature, is_active "
+            "FROM agents WHERE cartridge_id=$1 ORDER BY slug",
+            cartridge_id,
+        )
     finally:
         await conn.close()
 
-    manifest["knowledge_bits"] = [dict(r) for r in kb_rows]
-    manifest["custom_tools"]   = [dict(r) for r in custom_rows]
-    manifest["analytic_apps"]  = [dict(r) for r in app_rows]
+    manifest["knowledge_bits"]  = [dict(r) for r in kb_rows]
+    manifest["custom_tools"]    = [dict(r) for r in custom_rows]
+    manifest["analytic_apps"]   = [dict(r) for r in app_rows]
+    manifest["assistant_hints"] = (hints_row["assistant_hints"] if hints_row else None) or ""
+    manifest["agents"]          = [dict(r) for r in agent_rows]
 
     files: dict[str, bytes] = {}
     files["config/seed.sql"] = _generate_seed_sql(manifest).encode("utf-8")
+
+    # ── Hints (cartridge-specific instructions surfaced to the assistant) ──
+    if manifest["assistant_hints"].strip():
+        files["hints/assistant.md"] = manifest["assistant_hints"].encode("utf-8")
+
+    # ── Agents: emit one YAML per agent for human inspection. The SQL block
+    #    in seed.sql is what actually loads them on import; YAMLs are docs.
+    for a in manifest.get("agents") or []:
+        slug = a.get("slug", "agent")
+        files[f"agents/{slug}.yaml"] = _agent_to_yaml(a).encode("utf-8")
 
     # ── DAG sources: prefer cartridge_dags.source_code (DB) ───────────────
     seen_dag_files: set[str] = set()
@@ -488,12 +550,24 @@ async def import_cartridge(zip_bytes: bytes) -> dict:
         finally:
             await conn.close()
 
+        # 1b · Cartridge-specific assistant hints (optional file)
+        if "hints/assistant.md" in names:
+            hints = z.read("hints/assistant.md").decode("utf-8")
+            conn = await _pg()
+            try:
+                await conn.execute(
+                    "UPDATE cartridges SET assistant_hints=$2 WHERE id=$1",
+                    cartridge_id, hints,
+                )
+            finally:
+                await conn.close()
+
         # 2 · DAG files → Airflow dags directory (via mcp-infra, which has the mount)
         import httpx
         mcp_infra_url = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
         dag_files_written: list[str] = []
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(headers=_mcp_infra_headers(), timeout=30) as client:
                 for name in names:
                     if not name.startswith("dags/") or not name.endswith(".py"):
                         continue
@@ -534,6 +608,83 @@ async def import_cartridge(zip_bytes: bytes) -> dict:
     return result
 
 
+def _entity_dag_params(v) -> dict:
+    """Normalize JSON-ish DAG params to a dict for the JSON API."""
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    import json as _json
+    try:
+        return _json.loads(v)
+    except Exception:
+        return {}
+
+
+# ── Agent YAML emitter (human-readable companion to the SQL block) ───────────
+
+def _agent_to_yaml(a: dict) -> str:
+    import json as _json
+
+    def _scalar(v) -> str:
+        if v is None:
+            return "null"
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return str(v)
+        s = str(v)
+        # Quote unless safe bare scalar
+        if s == "" or any(c in s for c in ":#\n\"'\\") or s[0] in " -?":
+            return _json.dumps(s, ensure_ascii=False)
+        return s
+
+    def _multiline(field: str, text: str) -> list[str]:
+        if not text:
+            return [f"{field}: \"\""]
+        out = [f"{field}: |"]
+        for line in text.splitlines() or [""]:
+            out.append(f"  {line}")
+        return out
+
+    lines = [
+        f"# Agent: {a.get('name','')}",
+        f"slug: {_scalar(a.get('slug',''))}",
+        f"name: {_scalar(a.get('name',''))}",
+        f"description: {_scalar(a.get('description',''))}",
+        f"model: {_scalar(a.get('model','claude-sonnet-4-6'))}",
+        f"max_tokens: {int(a.get('max_tokens') or 8192)}",
+        f"temperature: {float(a.get('temperature') if a.get('temperature') is not None else 0.4)}",
+        f"is_active: {'true' if a.get('is_active', True) else 'false'}",
+    ]
+    lines += _multiline("instructions", a.get("instructions") or "")
+    lines += _multiline("personality",  a.get("personality")  or "")
+    at = a.get("allowed_tools") or []
+    if isinstance(at, str):
+        try:
+            at = _json.loads(at)
+        except Exception:
+            at = []
+    lines.append("allowed_tools:")
+    for t in at:
+        lines.append(f"  - {t}")
+    rf = a.get("rag_filter") or {}
+    if isinstance(rf, str):
+        try:
+            rf = _json.loads(rf)
+        except Exception:
+            rf = {}
+    lines.append("rag_filter: " + _json.dumps(rf, ensure_ascii=False))
+    ex = a.get("extra") or {}
+    if isinstance(ex, str):
+        try:
+            ex = _json.loads(ex)
+        except Exception:
+            ex = {}
+    lines.append("extra: " + _json.dumps(ex, ensure_ascii=False))
+    return "\n".join(lines) + "\n"
+
+
 # ── SQL generator ─────────────────────────────────────────────────────────────
 
 def _q(v) -> str:
@@ -548,6 +699,8 @@ def _q(v) -> str:
 
 
 def _generate_seed_sql(manifest: dict) -> str:
+    import json as _json
+
     cid  = manifest["id"]
     now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
@@ -572,6 +725,14 @@ def _generate_seed_sql(manifest: dict) -> str:
         "",
     ]
 
+    hints = (manifest.get("assistant_hints") or "").strip()
+    if hints:
+        lines += [
+            "-- ── Assistant hints ─────────────────────────────────────────────────────────",
+            f"UPDATE cartridges SET assistant_hints = {_q(hints)} WHERE id = {_q(cid)};",
+            "",
+        ]
+
     if manifest.get("connections"):
         lines += [
             "-- ── Connections ──────────────────────────────────────────────────────────────",
@@ -590,38 +751,57 @@ def _generate_seed_sql(manifest: dict) -> str:
     if manifest.get("dags"):
         lines += [
             "-- ── DAGs ────────────────────────────────────────────────────────────────────",
-            "INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)",
+            "INSERT INTO cartridge_dags",
+            "    (cartridge_id, dag_id, file, description, trigger, params, dag_params_example)",
             "VALUES",
         ]
         rows = manifest["dags"]
         for i, d in enumerate(rows):
             sep = "," if i < len(rows) - 1 else ""
             params = str(d.get("params") or "[]")
+            dag_params_example = _json.dumps(d.get("dag_params_example") or {}, ensure_ascii=False)
             lines.append(
                 f"    ({_q(cid)}, {_q(d['dag_id'])}, {_q(d.get('file'))}, "
                 f"{_q(d.get('description'))}, {_q(d.get('trigger','on-demand'))}, "
-                f"'{params.replace(chr(39), chr(39)+chr(39))}'){sep}"
+                f"'{params.replace(chr(39), chr(39)+chr(39))}', "
+                f"{_q(dag_params_example)}::jsonb){sep}"
             )
-        lines += ["ON CONFLICT (cartridge_id, dag_id) DO NOTHING;", ""]
+        lines += [
+            "ON CONFLICT (cartridge_id, dag_id) DO UPDATE",
+            "    SET file=EXCLUDED.file, description=EXCLUDED.description,",
+            "        trigger=EXCLUDED.trigger, params=EXCLUDED.params,",
+            "        dag_params_example=EXCLUDED.dag_params_example;",
+            "",
+        ]
 
     if manifest.get("entities"):
         lines += [
             "-- ── Entities ────────────────────────────────────────────────────────────────",
             "INSERT INTO entity_config",
             "    (cartridge_id, entity, display_name, mode, primary_key, dag_id,",
-            "     trigger_type, cron_expression, description, enabled)",
+            "     trigger_type, cron_expression, description, enabled, dag_params)",
             "VALUES",
         ]
         rows = manifest["entities"]
         for i, e in enumerate(rows):
             sep = "," if i < len(rows) - 1 else ""
+            dag_params = _json.dumps(e.get("dag_params") or {}, ensure_ascii=False)
             lines.append(
                 f"    ({_q(cid)}, {_q(e['entity'])}, {_q(e.get('display_name',''))}, "
                 f"{_q(e.get('mode','full'))}, {_q(e.get('primary_key'))}, "
                 f"{_q(e.get('dag_id'))}, {_q(e.get('trigger_type','manual'))}, "
-                f"{_q(e.get('cron_expression'))}, {_q(e.get('description',''))}, TRUE){sep}"
+                f"{_q(e.get('cron_expression'))}, {_q(e.get('description',''))}, TRUE, "
+                f"{_q(dag_params)}::jsonb){sep}"
             )
-        lines += ["ON CONFLICT (cartridge_id, entity) DO NOTHING;", ""]
+        lines += [
+            "ON CONFLICT (cartridge_id, entity) DO UPDATE",
+            "    SET display_name=EXCLUDED.display_name, mode=EXCLUDED.mode,",
+            "        primary_key=EXCLUDED.primary_key, dag_id=EXCLUDED.dag_id,",
+            "        trigger_type=EXCLUDED.trigger_type, cron_expression=EXCLUDED.cron_expression,",
+            "        description=EXCLUDED.description, enabled=EXCLUDED.enabled,",
+            "        dag_params=EXCLUDED.dag_params;",
+            "",
+        ]
 
     vocab = (manifest.get("semantic_model") or {}).get("vocabulary") or []
     if vocab:
@@ -693,6 +873,44 @@ def _generate_seed_sql(manifest: dict) -> str:
             "    SET title=EXCLUDED.title, html=EXCLUDED.html,",
             "        description=EXCLUDED.description, cartridge_id=EXCLUDED.cartridge_id,",
             "        updated_at=NOW();",
+            "",
+        ]
+
+    if manifest.get("agents"):
+        import json as _json
+        lines += [
+            "-- ── Agents (mind=cartridge, body=platform) ─────────────────────────────────",
+            "INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,",
+            "                    allowed_tools, rag_filter, extra, model, max_tokens, temperature,",
+            "                    is_active)",
+            "VALUES",
+        ]
+        rows = manifest["agents"]
+        for i, a in enumerate(rows):
+            sep = "," if i < len(rows) - 1 else ""
+            at = a.get("allowed_tools") or []
+            rf = a.get("rag_filter")    or {}
+            ex = a.get("extra")         or {}
+            at_s = at if isinstance(at, str) else _json.dumps(at)
+            rf_s = rf if isinstance(rf, str) else _json.dumps(rf)
+            ex_s = ex if isinstance(ex, str) else _json.dumps(ex)
+            lines.append(
+                f"    ({_q(cid)}, {_q(a['slug'])}, {_q(a['name'])}, "
+                f"{_q(a.get('description',''))}, {_q(a.get('instructions',''))}, "
+                f"{_q(a.get('personality',''))}, {_q(at_s)}::jsonb, "
+                f"{_q(rf_s)}::jsonb, {_q(ex_s)}::jsonb, {_q(a.get('model','claude-sonnet-4-6'))}, "
+                f"{int(a.get('max_tokens') or 8192)}, "
+                f"{float(a.get('temperature') if a.get('temperature') is not None else 0.4)}, "
+                f"{'TRUE' if a.get('is_active', True) else 'FALSE'}){sep}"
+            )
+        lines += [
+            "ON CONFLICT (cartridge_id, slug) DO UPDATE",
+            "    SET name=EXCLUDED.name, description=EXCLUDED.description,",
+            "        instructions=EXCLUDED.instructions, personality=EXCLUDED.personality,",
+            "        allowed_tools=EXCLUDED.allowed_tools, rag_filter=EXCLUDED.rag_filter,",
+            "        extra=EXCLUDED.extra, model=EXCLUDED.model,",
+            "        max_tokens=EXCLUDED.max_tokens, temperature=EXCLUDED.temperature,",
+            "        is_active=EXCLUDED.is_active, updated_at=NOW();",
             "",
         ]
 

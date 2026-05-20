@@ -270,6 +270,7 @@ aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_dag_p
 aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_meta_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/airflow_secret_key --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/airflow_admin_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/agent_runner_token --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/superset_secret_key --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/superset_admin_password --secret-string '<password-seguro>'
 aws secretsmanager put-secret-value --secret-id modecissions/github_deploy_key --secret-string "$(cat ../modecissions-deploy-key)"
@@ -291,7 +292,7 @@ aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --sec
 | `CHAT_LLM_PROVIDER`     | `anthropic`                                              | fijo                                   |
 | `CHAT_LLM_MODEL`        | `claude-haiku-4-5-20251001`                              | fijo (ajustable)                       |
 | `SQL_LLM_MODEL`         | `claude-sonnet-4-6`                                      | fijo                                   |
-| `OLLAMA_URL`            | `http://localhost:11434`                                 | si usas Ollama local                   |
+| `OLLAMA_URL`            | `http://host.docker.internal:11434`                      | si usas Ollama en el host Docker       |
 | `EMBED_MODEL`           | `nomic-embed-text`                                       | fijo si usas Ollama                    |
 | `EMBED_DIM`             | `768`                                                    | debe coincidir con `EMBED_MODEL`       |
 | `SUPERSET_SECRET_KEY`   | hex de 32 bytes                                          | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
@@ -411,13 +412,13 @@ Resultado esperado:
 ```
 Servicio    Puerto  URL                              HTTP  Status
 --------    ------  ---                              ----  ------
-console     8000    http://localhost:8000/login      200   [OK]
-workspace   8001    http://localhost:8001/healthz    200   [OK]
-superset    8088    http://localhost:8088/health     200   [OK]
-airflow     8082    http://localhost:8082/health     200   [OK]
-refinement  8500    http://localhost:8500/health     200   [OK]
-mcp-infra   8010    http://localhost:8010/health     200   [OK]
-mailhog UI  8025    http://localhost:8025/           200   [OK]
+console     8000    http://<APP_PRIVATE_IP>:8000/login      200   [OK]
+workspace   8001    http://<APP_PRIVATE_IP>:8001/healthz    200   [OK]
+superset    8088    http://<APP_PRIVATE_IP>:8088/health     200   [OK]
+airflow     8082    http://<APP_PRIVATE_IP>:8082/health     200   [OK]
+refinement  8500    http://<APP_PRIVATE_IP>:8500/health     200   [OK]
+mcp-infra   8010    http://<APP_PRIVATE_IP>:8010/healthz    200   [OK]
+mailhog UI  8025    http://<APP_PRIVATE_IP>:8025/           200   [OK]
 
 7/7 servicios operativos
 ```

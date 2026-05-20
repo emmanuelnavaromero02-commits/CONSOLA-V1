@@ -130,6 +130,7 @@ services:
       # APP_ENV default in console/app/security.py is "production",
       # so an unset/empty value fails CLOSED.
       APP_ENV: ${APP_ENV:-development}
+      ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
       # v1.44.3.3 Task A + R-Mac Mini-fix: hardcoded "false" so
       # the limiter is OFF on the dev stack. The earlier
       # ``${RATE_LIMIT_ENABLED:-}`` form produced an EMPTY string
@@ -164,13 +165,18 @@ services:
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REFINEMENT_URL:    http://refinement:8500
       MCP_INFRA_URL:     http://mcp-infra:8010
+      CONSOLE_INTERNAL_URL: http://console:8000
+      AGENT_RUNNER_TOKEN: ${AGENT_RUNNER_TOKEN:-}
       SUPERSET_URL:      http://superset:8088
+      AIRFLOW_PUBLIC_URL: ${AIRFLOW_PUBLIC_URL:-http://localhost:8082}
+      SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-http://localhost:8088}
       # Prefer a least-privilege Superset service account for Studio dataset
       # creation. Local dev falls back to the bootstrap admin until one exists.
       SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:-}
       SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:-}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
+      SUPERSET_GOLD_SQLALCHEMY_URI: "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:-}@postgres_gold:5433/modecissions_gold"
       CONSOLE_URL:       ${CONSOLE_URL:-http://localhost:8000}
       WORKSPACE_URL:     ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
       RAG_URL:           http://mcp-infra:8010   # RAG migrado a mcp-infra
@@ -182,6 +188,11 @@ services:
       SMTP_FROM:         ${SMTP_FROM:-noreply@modecissions.local}
       SMTP_FROM_DOMAIN:  ${SMTP_FROM_DOMAIN:-modecissions.local}
       SMTP_USE_TLS:      ${SMTP_USE_TLS:-false}
+      VPN_API_URL:       ${VPN_API_URL:-}
+      VPN_API_PASSWORD:  ${VPN_API_PASSWORD:-}
+      VPN_TOKEN_TTL_HOURS: ${VPN_TOKEN_TTL_HOURS:-72}
+      VPN_CLIENT_ALLOWED_IPS: ${VPN_CLIENT_ALLOWED_IPS:-10.0.0.0/16,10.8.0.0/24}
+      VPN_CLIENT_STRIP_DNS: ${VPN_CLIENT_STRIP_DNS:-true}
       APP_BASE_URL:      ${CONSOLE_URL:-http://localhost:8000}
       INVITE_TOKEN_TTL_HOURS: ${INVITE_TOKEN_TTL_HOURS:-72}
       RESET_TOKEN_TTL_HOURS:  ${RESET_TOKEN_TTL_HOURS:-1}
@@ -204,6 +215,7 @@ services:
       # callers (cartridge_service.export_cartridge fallback) are also
       # read-only, so the tightening is safe.
       - ../cartridges:/registry/cartridges:ro
+      - ../airflow/dags:/opt/airflow/dags:ro
       - ../console/app/static:/app/app/static:ro
       - ../VERSION:/app/VERSION:ro
     depends_on:
@@ -253,6 +265,7 @@ services:
       # any one-off scripts that may grep for it in the meantime.
       BACKEND_INTERNAL_URL: http://console:8000
       API_INTERNAL_URL: http://console:8000
+      NEXT_PUBLIC_LEGACY_CONSOLE_URL: ${CONSOLE_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:
@@ -275,6 +288,7 @@ services:
     environment:
       # v1.43.2 (Codex P1-2): see console block above.
       APP_ENV: ${APP_ENV:-development}
+      ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
@@ -329,6 +343,7 @@ services:
       INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT: ${INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT:-}
       INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA: ${INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA:-}
       # Sprint v1.26 (audit F11): provisioned for the day refinement
       # starts calling vault. Until then it's an unused env var here;
       # vault recognizes the value via its own _ALLOWED_SERVICES map.
@@ -345,6 +360,7 @@ services:
       MINIO_SECURE:      "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SQL_LLM_MODEL:     ${SQL_LLM_MODEL:-claude-sonnet-4-6}
+      MCP_INFRA_URL:     http://mcp-infra:8010
     ports:
       - "8500:8500"
     depends_on:
@@ -458,6 +474,9 @@ services:
       CONSOLE_URL: http://console:8000
       MCP_INFRA_URL: http://mcp-infra:8010
       REFINEMENT_URL: http://refinement:8500
+      REPLICON_API_TOKEN: ${REPLICON_API_TOKEN:-}
+      REPLICON_TOKEN: ${REPLICON_TOKEN:-}
+      REPLICON_BASE_URL: ${REPLICON_BASE_URL:-https://na5.replicon.com/analytics}
       # Sprint v1.40 (audit B6 pattern): least-privilege DB role.
       # See infra/init/37_replicon_role_and_tables.sql.
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_replicon:${OMEGA_CARTRIDGE_REPLICON_PASSWORD:?OMEGA_CARTRIDGE_REPLICON_PASSWORD is required}@postgres:5432/modecissions"
@@ -637,6 +656,7 @@ services:
       # _is_development() and would have run unrestricted if APP_ENV
       # was simply unset. Default flipped, explicit opt-in here.
       APP_ENV: ${APP_ENV:-development}
+      ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA: ${INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA: ${INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA:-}
@@ -662,12 +682,15 @@ services:
       PG_GOLD_HOST:     postgres_gold
       PG_GOLD_PORT:     5433
       PG_GOLD_DB:       modecissions_gold
+      PG_GOLD_USER:     omega_refinement_gold
+      PG_GOLD_PASSWORD: ${OMEGA_REFINEMENT_GOLD_PASSWORD:-}
       SUPERSET_URL:     http://superset:8088
       SUPERSET_USER:    ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       GEMINI_API_KEY:   ${GEMINI_API_KEY:-}
       EMBED_MODEL:      ${EMBED_MODEL:-gemini-embedding-001}
       EMBED_DIM:        ${EMBED_DIM:-768}
+      ADMIN_EMAIL:      ${ADMIN_EMAIL:-}
     ports:
       - "8010:8010"
     volumes:
@@ -710,19 +733,20 @@ services:
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       OMEGA_SUPERSET_META_PASSWORD: ${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
+    volumes:
+      - ./terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
     entrypoint: /bin/bash
-    command: >
-      -c "
+    command:
+      - -c
+      - >-
         superset db upgrade &&
-        superset fab create-admin
-          --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
-          --firstname Admin
-          --lastname User
-          --email admin@modecissions.local
-          --password ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required} &&
+        (superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
+        --firstname Admin --lastname User --email admin@modecissions.local
+        --password "$$SUPERSET_ADMIN_PASSWORD" || true) &&
         superset init &&
-        python3 -c \"import os, psycopg2; c = psycopg2.connect(host='postgres', port=5432, dbname='superset', user='postgres', password=os.environ['POSTGRES_PASSWORD']); c.autocommit = True; cur = c.cursor(); [cur.execute(s) for s in ['GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON SCHEMA public TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_superset_meta']]; print('omega_superset_meta: grants applied to superset DB'); cur.close(); c.close()\"
-      "
+        python3 -c "import os, psycopg2; c = psycopg2.connect(host='postgres', port=5432, dbname='superset', user='postgres', password=os.environ['POSTGRES_PASSWORD']); c.autocommit = True; cur = c.cursor(); [cur.execute(s) for s in ['GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON SCHEMA public TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_superset_meta']]; print('omega_superset_meta: grants applied to superset DB'); cur.close(); c.close()"
     depends_on:
       postgres:
         condition: service_healthy
@@ -733,15 +757,20 @@ services:
     container_name: mode_superset
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       # Sprint v1.38 (audit B6 P0.5): runtime uses the dedicated
       # omega_superset_meta role created by 36_cartridge_and_meta_roles.sql.
       # superset-init grants ALL on the public schema of the
       # superset DB to this role after `superset db upgrade`.
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://omega_superset_meta:${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}@postgres:5432/superset
       SUPERSET_WEBSERVER_PORT: 8088
+      SUPERSET_ADMIN_USER:     ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       TALISMAN_ENABLED:        "false"
       WTF_CSRF_ENABLED:        "false"
-    command: superset run -p 8088 --with-threads --reload
+    volumes:
+      - ./terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
+    command: superset run -h 0.0.0.0 -p 8088 --with-threads --reload
     ports:
       - "8088:8088"
     depends_on:
@@ -821,7 +850,10 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:-}
+      CONSOLE_URL: http://console:8000
+      AGENT_RUNNER_TOKEN: ${AGENT_RUNNER_TOKEN:-}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): the webserver runtime uses the
       # dedicated omega_airflow_meta role. airflow-init grants ALL
       # on the public schema of the `airflow` DB to this role after
@@ -834,6 +866,8 @@ services:
       # begins. Keep the UI available with a single worker by default,
       # while allowing operators to raise it locally/prod via env.
       AIRFLOW__WEBSERVER__WORKERS: ${AIRFLOW_WEBSERVER_WORKERS:-1}
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
       # Variables disponibles en los DAGs via Variable.get(). Sprint
       # v1.38: scoped to the operational omega_airflow_dag role
@@ -842,6 +876,7 @@ services:
       # consuming this variable, the blast radius is the operational
       # tables, not superuser.
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
+      DATABASE_URL: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
@@ -910,18 +945,22 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:-}
       INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:-}
+      CONSOLE_URL:                          http://console:8000
+      AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:-}
 
       AIRFLOW_ADMIN_USER:                   ${AIRFLOW_ADMIN_USER:?AIRFLOW_ADMIN_USER is required}
       AIRFLOW_ADMIN_PASSWORD:               ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
 
       VAULT_URL:                            http://vault:8300
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       # Sprint v1.38 (audit B6 P0.5): see comment on the airflow
       # webserver service above.
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://omega_airflow_meta:${OMEGA_AIRFLOW_META_PASSWORD:?OMEGA_AIRFLOW_META_PASSWORD is required}@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       AIRFLOW_VAR_POSTGRES_CONN: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
+      DATABASE_URL: "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       AIRFLOW_VAR_MINIO_ENDPOINT: "minio:9000"
       AIRFLOW_VAR_MINIO_ACCESS_KEY: "minio"
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
@@ -963,11 +1002,11 @@ services:
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-    # Sprint v1.41.1: scheduler doesn't expose HTTP; use `airflow jobs
-    # check` against itself. Generous start_period — scheduler boot
-    # also waits on DAG parsing.
+    # Scheduler does not expose HTTP. Keep the healthcheck lightweight:
+    # `airflow jobs check` can hang under DAG parsing load and pile up
+    # healthcheck processes, making an otherwise live scheduler look dead.
     healthcheck:
-      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\" || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import os, sys; sys.exit(0 if any(('airflow scheduler' in open('/proc/' + p + '/cmdline', 'rb').read().replace(b'\\0', b' ').decode('utf-8', 'ignore')) for p in os.listdir('/proc') if p.isdigit()) else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 5

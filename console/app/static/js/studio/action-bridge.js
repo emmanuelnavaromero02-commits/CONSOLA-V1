@@ -23,12 +23,17 @@ function readCookie(name) {
 }
 
 function currentCartridge() {
-  return state._currentCartridge?.id || document.getElementById("cartridge-sel")?.value || "replicon";
+  return state._currentCartridge?.id
+    || document.getElementById("cartridge-sel")?.value
+    || state._cartridges?.[0]?.id
+    || "";
 }
 
 function withCartridge(path) {
+  const cartridge = currentCartridge();
+  if (!cartridge) return null;
   const sep = path.includes("?") ? "&" : "?";
-  return `${path}${sep}cartridge=${encodeURIComponent(currentCartridge())}`;
+  return `${path}${sep}cartridge=${encodeURIComponent(cartridge)}`;
 }
 
 export async function studioAction(path, { method = "GET", body = null, render = null } = {}) {
@@ -95,17 +100,12 @@ const CLICK_ACTIONS = [
     before: openEntityForm,
   },
   {
-    match: /^silver$/i,
+    match: /^silver(?:\s*\(\d+\))?$/i,
     path: "/api/studio/silver/preview",
     render: data => renderLayerPreview("silver", data),
   },
   {
-    match: /^master$/i,
-    path: "/api/studio/master/preview",
-    render: data => renderLayerPreview("master", data),
-  },
-  {
-    match: /^gold$/i,
+    match: /^gold(?:\s*\(\d+\))?$/i,
     path: "/api/studio/gold/preview",
     render: data => renderLayerPreview("gold", data),
   },
@@ -114,7 +114,9 @@ const CLICK_ACTIONS = [
 function fireActionsForStep(n) {
   const actions = STEP_ACTIONS[Number(n)] || [];
   for (const action of actions) {
-    studioAction(withCartridge(action.path), {
+    const path = withCartridge(action.path);
+    if (!path) continue;
+    studioAction(path, {
       method: action.method || "GET",
       body: typeof action.body === "function" ? action.body() : action.body,
       render: action.render,
@@ -210,7 +212,9 @@ function renderSupersetStatus(payload, response, button) {
   const box = document.createElement("div");
   box.className = "superset-status empty-card";
   if (!response.ok || payload?.error || payload?.detail) {
-    box.innerHTML = `<span style="color:#ff2d55">No se pudo crear: ${escapeHtml(payload?.error || payload?.detail || `HTTP ${response.status}`)}</span>`;
+    box.innerHTML = `<span style="color:var(--red)">No se pudo crear: ${escapeHtml(payload?.error || payload?.detail || `HTTP ${response.status}`)}</span>`;
+  } else if (payload?.needs_materialization) {
+    box.innerHTML = `<span style="color:var(--amber)">${escapeHtml(payload?.message || "Materializa primero el dataset Gold y vuelve a intentar.")}</span>`;
   } else {
     const table = payload?.table || payload?.table_name || payload?.dataset_name || "dataset";
     box.textContent = payload?.existing
@@ -262,17 +266,14 @@ function hookGoStep() {
   const original = window.goStep;
   if (typeof original === "function" && !original.__studioActionBridgeInstalled) {
     window.goStep = function patchedGoStep(n) {
-      fireActionsForStep(n);
-      return original.apply(this, arguments);
+      if (window.__studioActionBridgePassthrough) {
+        return original.apply(this, arguments);
+      }
+      const result = original.apply(this, arguments);
+      Promise.resolve(result).finally(() => fireActionsForStep(n));
+      return result;
     };
     window.goStep.__studioActionBridgeInstalled = true;
-  }
-
-  for (let i = 1; i <= 7; i++) {
-    const el = document.getElementById(`si-${i}`);
-    if (!el || el.__studioActionBridgeInstalled) continue;
-    el.addEventListener("click", () => fireActionsForStep(i), true);
-    el.__studioActionBridgeInstalled = true;
   }
 }
 
@@ -288,7 +289,9 @@ function hookClicks() {
     for (const action of CLICK_ACTIONS) {
       if (!action.match.test(text)) continue;
       if (action.before) action.before(target);
-      studioAction(withCartridge(action.path), {
+      const path = withCartridge(action.path);
+      if (!path) return;
+      studioAction(path, {
         method: action.method || "GET",
         body: typeof action.body === "function" ? action.body() : action.body,
         render: action.render,
@@ -375,6 +378,36 @@ function hookRuntimeActions() {
   document.addEventListener("click", event => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
+
+    const actionEl = target.closest("[data-studio-action]");
+    if (actionEl) {
+      const action = actionEl.getAttribute("data-studio-action");
+      const cartridge = actionEl.getAttribute("data-cartridge") || currentCartridge();
+      const entity = actionEl.getAttribute("data-entity") || "";
+      if (action === "extract" && typeof window.extractNow === "function") {
+        stopInlineHandler(event);
+        const mode = actionEl.getAttribute("data-mode") || "";
+        const dagId = actionEl.getAttribute("data-dag-id") || "";
+        window.extractNow(cartridge, entity, mode, dagId);
+        return;
+      }
+      if (action === "entity-preview" && typeof window.toggleEntityPreview === "function") {
+        stopInlineHandler(event);
+        window.toggleEntityPreview(cartridge, entity, actionEl);
+        return;
+      }
+      if (action === "entity-logs" && typeof window.toggleEntityLogs === "function") {
+        stopInlineHandler(event);
+        window.toggleEntityLogs(cartridge, entity, actionEl);
+        return;
+      }
+      if (action === "open-dag-editor" && typeof window.openDagEditor === "function") {
+        stopInlineHandler(event);
+        const dagId = actionEl.getAttribute("data-dag-id") || "";
+        if (dagId) window.openDagEditor(dagId);
+        return;
+      }
+    }
 
     const template = target.closest("[data-template-id]");
     if (template) {

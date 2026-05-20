@@ -26,12 +26,9 @@
 .cartridges-header a:hover { color: var(--green); }
 
 .cartridges-title {
-  /* v1.42 fix: --font-pixel was never declared in tokens.css. Fall
-     back to the monospace token so the title doesn't collapse to the
-     UA serif default. */
   font-family: var(--font-mono);
   font-size: 13px;
-  color: #7c9fff;
+  color: var(--color-accent);
   letter-spacing: 3px;
 }
 
@@ -62,7 +59,6 @@
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 1px;
-  /* v1.42 fix: --text1 doesn't exist; use the primary text token. */
   color: var(--text);
 }
 
@@ -89,23 +85,23 @@
 .cart-btn {
   padding: 6px 12px;
   background: transparent;
-  border: 1px solid #7c9fff;
+  border: 1px solid var(--color-accent);
   border-radius: 4px;
-  color: #7c9fff;
+  color: var(--color-accent);
   font-size: 10px;
   font-family: var(--font-mono);
   cursor: pointer;
   letter-spacing: 1px;
 }
 
-.cart-btn:hover { background: rgba(124,159,255,.1); }
+.cart-btn:hover { background: var(--primary-soft); }
 .cart-btn:disabled { opacity: .5; cursor: progress; }
-.cart-btn-primary { background: rgba(124,159,255,.14); }
+.cart-btn-primary { background: var(--primary-soft); }
 .cart-btn-danger {
-  border-color: #c44;
-  color: #c44;
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
-.cart-btn-danger:hover { background: rgba(204,68,68,.1); }
+.cart-btn-danger:hover { background: var(--danger-soft); }
 
 .loading-line {
   font-size: 10px;

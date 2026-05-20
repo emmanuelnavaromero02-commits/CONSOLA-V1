@@ -1,5 +1,5 @@
 """
-MODecissionsPaaS — Console
+ΩMEGA by EPIUSE — Console
 MCP-first: descubre y orquesta MCP servers registrados.
 UI minimalista: chat con asistente + estado de servidores MCP.
 """
@@ -36,11 +36,40 @@ from fastapi.staticfiles import StaticFiles
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
+
+def _app_env() -> str:
+    return os.environ.get("APP_ENV", "production").strip().lower()
+
+
+def _is_production_env() -> bool:
+    return _app_env() in {"production", "prod"}
+
+
+def _public_url(
+    env_name: str,
+    *,
+    fallback_env: str | None = None,
+    development_default: str = "",
+) -> str:
+    raw = os.environ.get(env_name)
+    if not raw and fallback_env:
+        raw = os.environ.get(fallback_env)
+    if raw:
+        return raw.rstrip("/")
+    if _is_production_env():
+        logger.warning("%s is not configured in production; omitting localhost fallback", env_name)
+        return ""
+    return development_default.rstrip("/")
+
+
 from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service
 from app.services import cartridge_service
+from app.services import agent_service as _agents
+from app.services import agent_runtime as _agent_runtime
 from app.services import auth as _auth
 from app.services import tokens as _tokens
 from app.services import email_service as _email
+from app.services import vpn_service as _vpn
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token, verify_access_token_async
 from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie, clear_csrf_cookie
 from app.security import get_internal_api_key, required_secret
@@ -54,6 +83,7 @@ from app.dependencies import (
     require_authenticated,
     require_role,
 )
+from app.services.auth import verify_internal_api_key
 from app.services import audit_service as _audit
 from app.services.permissions import ROLE_DEFINITIONS, require_permission
 
@@ -124,6 +154,30 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "[startup] dag source seeding failed (non-fatal): %s", e, exc_info=True,
         )
+    try:
+        from app.services.seed_packaged_datasets import seed_packaged_datasets
+        pool = await _get_db_pool()
+        await seed_packaged_datasets(pool)
+    except Exception as e:
+        logger.warning(
+            "[startup] packaged dataset seeding failed (non-fatal): %s", e, exc_info=True,
+        )
+    try:
+        from app.services.seed_packaged_hints import seed_packaged_hints
+        pool = await _get_db_pool()
+        await seed_packaged_hints(pool)
+    except Exception as e:
+        logger.warning(
+            "[startup] packaged hint seeding failed (non-fatal): %s", e, exc_info=True,
+        )
+    try:
+        from app.services.seed_packaged_apps import seed_packaged_apps
+        pool = await _get_db_pool()
+        await seed_packaged_apps(pool)
+    except Exception as e:
+        logger.warning(
+            "[startup] packaged app seeding failed (non-fatal): %s", e, exc_info=True,
+        )
     task = asyncio.create_task(_periodic_health_check())
     try:
         yield
@@ -179,6 +233,31 @@ def _is_internal_request(request: Request) -> bool:
     return secrets.compare_digest(str(supplied), str(INTERNAL_API_KEY))
 
 
+def _is_replicon_vault_reveal_request(request: Request) -> bool:
+    """Allow Replicon DAGs to reveal their own Vault connection at runtime."""
+    if request.method != "GET":
+        return False
+    if not re.fullmatch(r"/api/vault/connections/replicon/[^/]+/reveal", request.url.path):
+        return False
+
+    service = (request.headers.get("x-internal-service") or "").strip().lower()
+    if service != "replicon":
+        return False
+    supplied = (
+        request.headers.get("x-api-key")
+        or request.headers.get("x-internal-api-key")
+        or ""
+    )
+    if not supplied:
+        return False
+
+    accepted = [
+        os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", ""),
+        INTERNAL_API_KEY,
+    ]
+    return any(secrets.compare_digest(str(supplied), key) for key in accepted if key)
+
+
 def _internal_service_user() -> dict:
     return {
         "id": 0,
@@ -195,7 +274,7 @@ async def _internal_or_authenticated(request: Request) -> dict:
     return await require_authenticated(request)
 
 
-app = FastAPI(title="MODecissionsPaaS Console", lifespan=lifespan)
+app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
 
 
 def _allowed_origins() -> list[str]:
@@ -524,7 +603,7 @@ SECURITY_HEADERS = {
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "connect-src 'self'; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -548,7 +627,7 @@ VIEWER_SECURITY_HEADERS = {
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "connect-src 'self'; "
         "frame-ancestors 'self'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -566,7 +645,7 @@ STRICT_AUTH_SECURITY_HEADERS = {
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' http://localhost:* ws://localhost:*; "
+        "connect-src 'self'; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -579,6 +658,72 @@ _STRICT_CSP_PATHS = frozenset({
     "/reset-password",
     "/activate",
 })
+
+APP_EMBED_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'self'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+APP_THEME_SHIM = """
+<style id="omega-app-theme-shim">
+:root,
+:root[data-theme="light"] {
+  --bg: #f5f7fa;
+  --bg2: #ffffff;
+  --bg3: #eef2f7;
+  --border: #d8dee8;
+  --text: #0f172a;
+  --text1: #0f172a;
+  --text2: #334155;
+  --text3: #64748b;
+  --green: #117a3d;
+  --blue: #0a6ed1;
+  --cyan: #0a6ed1;
+  --amber: #b06d00;
+  --red: #b3261e;
+  --purple: #6d5bd0;
+  --primary: #0a6ed1;
+  --primary-hover: #085caf;
+  --primary-soft: rgba(10, 110, 209, 0.10);
+  --success-soft: rgba(17, 122, 61, 0.10);
+  --warning-soft: rgba(176, 109, 0, 0.12);
+  --danger-soft: rgba(179, 38, 30, 0.08);
+  --info-soft: rgba(10, 110, 209, 0.10);
+  --on-primary: #ffffff;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:root[data-theme="dark"] {
+  --bg: #0f1822;
+  --bg2: #182331;
+  --bg3: #1f2c3d;
+  --border: rgba(226, 232, 240, 0.14);
+  --text: #e6edf6;
+  --text1: #e6edf6;
+  --text2: #c5cfdc;
+  --text3: #8a96a8;
+  --green: #4cb27b;
+  --blue: #4ea3e0;
+  --cyan: #4ea3e0;
+  --amber: #d4a042;
+  --red: #e0716b;
+  --purple: #b8a7f5;
+  --primary: #4ea3e0;
+  --primary-hover: #74b8e8;
+  --primary-soft: rgba(78, 163, 224, 0.16);
+  --success-soft: rgba(76, 178, 123, 0.16);
+  --warning-soft: rgba(212, 160, 66, 0.18);
+  --danger-soft: rgba(224, 113, 107, 0.14);
+  --info-soft: rgba(78, 163, 224, 0.16);
+  --on-primary: #0f172a;
+}
+</style>
+"""
+APP_THEME_SCRIPT = '<script src="/static/js/theme-switch.js" defer></script>'
 
 RATE_LIMIT_WINDOW_SECONDS = 300
 RATE_LIMITS = {
@@ -699,6 +844,25 @@ def _apply_security_headers(response: Response, path: str = "") -> Response:
     return response
 
 
+def _inject_published_app_theme(html: str) -> str:
+    patched = html
+    if "omega-app-theme-shim" not in patched:
+        lower = patched.lower()
+        idx = lower.rfind("</head>")
+        if idx >= 0:
+            patched = patched[:idx] + APP_THEME_SHIM + patched[idx:]
+        else:
+            patched = APP_THEME_SHIM + patched
+    if "/static/js/theme-switch.js" not in patched:
+        lower = patched.lower()
+        idx = lower.rfind("</body>")
+        if idx >= 0:
+            patched = patched[:idx] + APP_THEME_SCRIPT + patched[idx:]
+        else:
+            patched += APP_THEME_SCRIPT
+    return patched
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -722,7 +886,7 @@ _AUTH_PUBLIC_EXACT = {
     # outlier.
     "/healthz",
 }
-_AUTH_PUBLIC_PREFIX = ("/static/",)
+_AUTH_PUBLIC_PREFIX = ("/static/", "/vpn-config/")
 _AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/internal/", "/datasets", "/jobs", "/tokens",
                          "/studio/", "/studio_ops/", "/monitoring/", "/auth/")
 _AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
@@ -771,6 +935,15 @@ def _uses_rbac_dependency(path: str) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in _RBAC_DEPENDENCY_PREFIXES)
 
 
+def _is_agent_runner_request(request: Request) -> bool:
+    path = request.url.path
+    if not (path.startswith("/api/agents/") and path.endswith("/invoke/scheduled")):
+        return False
+    expected = os.environ.get("AGENT_RUNNER_TOKEN", "")
+    supplied = request.headers.get("X-Agent-Runner-Token", "")
+    return bool(expected and supplied == expected)
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -782,6 +955,15 @@ async def auth_middleware(request: Request, call_next):
 
     if path.startswith(_AUTH_INTERNAL_SERVICE_PREFIX) and _is_internal_request(request):
         request.state.user = _internal_service_user()
+        return await call_next(request)
+
+    if _is_replicon_vault_reveal_request(request):
+        request.state.user = _internal_service_user()
+        return await call_next(request)
+
+    # Airflow scheduled agent runs authenticate with X-Agent-Runner-Token;
+    # the route re-checks the same token before executing the agent.
+    if _is_agent_runner_request(request):
         return await call_next(request)
 
     is_public = path in _AUTH_PUBLIC_EXACT or any(path.startswith(p) for p in _AUTH_PUBLIC_PREFIX)
@@ -1016,9 +1198,14 @@ async def auth_me_current(user: dict = Depends(get_current_user_dependency)):
 
 # ── Activation ────────────────────────────────────────────────────────────────
 
-APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8000")
+APP_BASE_URL = _public_url(
+    "APP_BASE_URL",
+    fallback_env="CONSOLE_URL",
+    development_default="http://localhost:8000",
+)
 INVITE_TTL_HOURS = int(os.environ.get("INVITE_TOKEN_TTL_HOURS", "72"))
 RESET_TTL_HOURS  = int(os.environ.get("RESET_TOKEN_TTL_HOURS",  "1"))
+VPN_TTL_HOURS    = int(os.environ.get("VPN_TOKEN_TTL_HOURS",   "72"))
 
 
 def _activation_link(token: str) -> str:
@@ -1027,6 +1214,10 @@ def _activation_link(token: str) -> str:
 
 def _reset_link(token: str) -> str:
     return f"{APP_BASE_URL}/reset-password?token={token}"
+
+
+def _vpn_link(token: str) -> str:
+    return f"{APP_BASE_URL}/vpn-config/{token}"
 
 
 def _set_session_cookie(resp: JSONResponse, token: str, expires) -> None:
@@ -1150,8 +1341,14 @@ async def healthz():
 async def api_config(request: Request):
     """Runtime config (URLs only, no secrets)."""
     return {
-        "workspace_url": os.environ.get("WORKSPACE_URL", "http://localhost:8001"),
-        "console_url":   os.environ.get("CONSOLE_URL",   "http://localhost:8000"),
+        "workspace_url": _public_url(
+            "WORKSPACE_URL",
+            fallback_env="WORKSPACE_PUBLIC_URL",
+            development_default="http://localhost:8001",
+        ),
+        "console_url": _public_url("CONSOLE_URL", development_default="http://localhost:8000"),
+        "airflow_url": _public_url("AIRFLOW_PUBLIC_URL", development_default="http://localhost:8082"),
+        "superset_url": _public_url("SUPERSET_PUBLIC_URL", development_default="http://localhost:8088"),
         "s3_bucket":     os.environ.get("S3_BUCKET_NAME") or os.environ.get("MINIO_BUCKET", "lakehouse"),
     }
 
@@ -1177,12 +1374,16 @@ async def system_info(user: dict = Depends(require_authenticated)):
     # a PermissionError from airflow_create_dag — which is correct but
     # confusing. The button is hidden by checking this flag.
     app_env = os.environ.get("APP_ENV", "production").lower()
+    rce_tools_enabled = os.environ.get("ALLOW_RCE_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
+    dev_mode = app_env in {"development", "dev", "local", "test"}
     return {
         "version": version,
         "env": os.environ.get("MODE", "local"),
         "service": "console",
         "app_env": app_env,
-        "dev_mode": app_env in {"development", "dev", "local", "test"},
+        "dev_mode": dev_mode,
+        "rce_tools_enabled": rce_tools_enabled,
+        "dag_deploy_enabled": dev_mode and rce_tools_enabled,
     }
 
 
@@ -1418,6 +1619,181 @@ async def api_dataset_lineage(name: str):
     return r.json()
 
 
+# ── Object explorer (S3/MinIO listing + presigned downloads) ─────────────────
+
+_EXPLORER_DEFAULT_BUCKETS = [
+    {"id": "lakehouse", "label": "Lakehouse", "name": os.environ.get("MINIO_BUCKET", "lakehouse")},
+    {"id": "ses_inbox", "label": "SES Inbox", "name": os.environ.get("SES_INBOX_BUCKET", "modecissions-mail-inbound-36243c")},
+]
+
+_EXPLORER_QUICKLINKS = [
+    {"label": "SES inbox (incoming)", "bucket": "ses_inbox", "prefix": "inbound/"},
+    {"label": "SES inbox (processed)", "bucket": "ses_inbox", "prefix": "inbound-processed/"},
+    {"label": "Replicon uploads", "bucket": "lakehouse", "prefix": "uploads/replicon/in/"},
+    {"label": "Raw - replicon", "bucket": "lakehouse", "prefix": "raw/replicon/"},
+    {"label": "Silver - replicon", "bucket": "lakehouse", "prefix": "silver/replicon/"},
+]
+
+
+def _s3_client():
+    import boto3
+    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_S3_ENDPOINT_URL")
+    if not endpoint_url and os.environ.get("MINIO_ENDPOINT"):
+        scheme = "https" if os.environ.get("MINIO_SECURE", "false").lower() == "true" else "http"
+        endpoint_url = f"{scheme}://{os.environ.get('MINIO_ENDPOINT')}"
+    kwargs: dict = {
+        "region_name": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1",
+    }
+    if endpoint_url:
+        kwargs["endpoint_url"] = endpoint_url
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
+    if access_key and secret_key:
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+    return boto3.client("s3", **kwargs)
+
+
+def _resolve_explorer_bucket(bucket: str) -> str:
+    allowed: dict[str, str] = {}
+    for item in _EXPLORER_DEFAULT_BUCKETS:
+        name = item.get("name") or ""
+        bid = item.get("id") or ""
+        if bid and name:
+            allowed[bid] = name
+            allowed[name] = name
+    resolved = allowed.get(bucket)
+    if not resolved:
+        raise HTTPException(403, "bucket not allowed")
+    return resolved
+
+
+@app.get("/api/explorer/buckets", dependencies=[Depends(require_permission("pipelines.read"))])
+async def api_explorer_buckets():
+    return {"buckets": _EXPLORER_DEFAULT_BUCKETS, "quicklinks": _EXPLORER_QUICKLINKS}
+
+
+@app.get("/api/explorer/list", dependencies=[Depends(require_permission("pipelines.read"))])
+async def api_explorer_list(
+    bucket: str,
+    prefix: str = "",
+    max_keys: int = 200,
+    continuation_token: str | None = None,
+):
+    s3 = _s3_client()
+    bucket_name = _resolve_explorer_bucket(bucket)
+    kwargs = {
+        "Bucket": bucket_name,
+        "Prefix": prefix,
+        "MaxKeys": min(max(max_keys, 1), 1000),
+        "Delimiter": "/",
+    }
+    if continuation_token:
+        kwargs["ContinuationToken"] = continuation_token
+    try:
+        resp = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
+    except Exception as exc:
+        raise HTTPException(502, f"object storage list failed: {exc}") from exc
+    objects = [
+        {"key": o["Key"], "size": o["Size"], "last_modified": o["LastModified"].isoformat()}
+        for o in resp.get("Contents", [])
+        if o.get("Key") != prefix
+    ]
+    folders = [p["Prefix"] for p in resp.get("CommonPrefixes", [])]
+    return {
+        "bucket": bucket_name,
+        "prefix": prefix,
+        "folders": folders,
+        "objects": objects,
+        "next_token": resp.get("NextContinuationToken"),
+        "is_truncated": bool(resp.get("IsTruncated", False)),
+    }
+
+
+@app.get("/api/explorer/download", dependencies=[Depends(require_permission("pipelines.read"))])
+async def api_explorer_download(bucket: str, key: str, expires: int = 300):
+    s3 = _s3_client()
+    bucket_name = _resolve_explorer_bucket(bucket)
+    expires_in = min(max(int(expires), 60), 3600)
+    try:
+        url = await asyncio.to_thread(
+            s3.generate_presigned_url,
+            "get_object",
+            Params={"Bucket": bucket_name, "Key": key},
+            ExpiresIn=expires_in,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"object storage download failed: {exc}") from exc
+    return {"url": url, "expires_in": expires_in}
+
+
+@app.delete(
+    "/api/explorer/object",
+    dependencies=[Depends(require_csrf), Depends(require_permission("pipelines.write"))],
+)
+async def api_explorer_delete(bucket: str, key: str):
+    s3 = _s3_client()
+    bucket_name = _resolve_explorer_bucket(bucket)
+    try:
+        await asyncio.to_thread(s3.delete_object, Bucket=bucket_name, Key=key)
+    except Exception as exc:
+        raise HTTPException(502, f"object storage delete failed: {exc}") from exc
+    return {"deleted": True, "bucket": bucket_name, "key": key}
+
+
+@app.get("/api/lineage", dependencies=[Depends(require_authenticated)])
+async def api_lineage(cartridge: str | None = None):
+    """Global lineage graph across raw sources and silver/gold datasets."""
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
+        r = await c.get(f"{REFINEMENT_URL}/datasets")
+        r.raise_for_status()
+        datasets = (r.json() or {}).get("datasets") or []
+    if cartridge:
+        datasets = [d for d in datasets if d.get("cartridge") == cartridge]
+
+    by_name = {d["name"]: d for d in datasets if d.get("name")}
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
+
+    for d in datasets:
+        name = d.get("name")
+        if not name:
+            continue
+        nid = f"ds:{name}"
+        nodes[nid] = {
+            "id": nid,
+            "label": name,
+            "type": d.get("layer", "silver"),
+            "cartridge": d.get("cartridge", ""),
+            "is_stale": bool(d.get("is_stale")),
+            "row_count": d.get("row_count"),
+            "last_refresh": d.get("last_refresh"),
+        }
+        for src in (d.get("sources") or []):
+            source = (src or "").strip()
+            source_lower = source.lower()
+            if source_lower.startswith("raw/"):
+                rid = f"raw:{source[4:]}"
+                if rid not in nodes:
+                    parts = source[4:].split("/", 1)
+                    nodes[rid] = {
+                        "id": rid,
+                        "label": parts[-1] if parts else source,
+                        "type": "raw",
+                        "cartridge": parts[0] if len(parts) > 1 else "",
+                    }
+                edges.append({"from": rid, "to": nid})
+                continue
+            candidates = [source, source.replace("silver_", "", 1), source.replace("gold_", "", 1)]
+            if "/" in source:
+                candidates.append(source.rsplit("/", 1)[-1])
+            matched = next((candidate for candidate in candidates if candidate in by_name), None)
+            if matched:
+                edges.append({"from": f"ds:{matched}", "to": nid})
+
+    return {"nodes": list(nodes.values()), "edges": edges}
+
+
 # ── Analytic Apps ─────────────────────────────────────────────────────────────
 
 @app.get("/apps/{name}")
@@ -1435,7 +1811,14 @@ async def serve_app(name: str, user: dict = Depends(require_authenticated)):
         raise HTTPException(503, "Database unavailable")
     if not row:
         raise HTTPException(404, f"App '{name}' not found")
-    return Response(content=row["html"], media_type="text/html")
+    return Response(
+        content=_inject_published_app_theme(row["html"]),
+        media_type="text/html",
+        headers={
+            "Content-Security-Policy": APP_EMBED_CSP,
+            "X-Frame-Options": "SAMEORIGIN",
+        },
+    )
 
 
 @app.get("/api/apps", dependencies=[Depends(require_authenticated)])
@@ -1693,7 +2076,7 @@ async def api_pipeline(cartridge: str = "replicon"):
             continue
         jobs_by_entity[entity] = j
 
-    # 3. Silver/Master datasets from refinement
+    # 3. Silver datasets from refinement
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
         try:
             r = await c.get(f"{REFINEMENT_URL}/datasets")
@@ -1701,7 +2084,7 @@ async def api_pipeline(cartridge: str = "replicon"):
         except Exception:
             all_datasets = []
 
-    silver_ds = [d for d in all_datasets if d.get("layer") in ("silver", "master")]
+    silver_ds = [d for d in all_datasets if d.get("layer") == "silver"]
     gold_ds   = [d for d in all_datasets if d.get("layer") == "gold"]
 
     silver_by_source: dict[str, list[dict]] = {}
@@ -2016,7 +2399,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
         return response
 
 
-@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_permission("pipelines.run"))])
+@app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)])
 async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
@@ -2199,7 +2582,8 @@ async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
 async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
     """Update entity_config fields."""
     allowed = {"display_name", "mode", "primary_key", "dag_id",
-               "trigger_type", "cron_expression", "description", "enabled"}
+               "trigger_type", "cron_expression", "description", "enabled",
+               "dag_params", "connection_id"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(400, "No valid fields to update")
@@ -2344,7 +2728,7 @@ async def studio_export_cartridge(cartridge_id: str):
     )
 
 
-@app.post("/studio/import", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/studio/import", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_import_cartridge(file: UploadFile = File(...)):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
@@ -2435,12 +2819,190 @@ async def viewer_pipeline():
 async def viewer_vault():
     return FileResponse(STATIC / "viewers" / "vault.html")
 
+@app.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
+async def explorer_page():
+    return FileResponse(STATIC / "explorer.html")
+
+@app.get("/viewer/lineage", dependencies=[Depends(require_authenticated)])
+async def viewer_lineage():
+    return FileResponse(STATIC / "viewers" / "lineage.html")
+
 @app.get("/rag", dependencies=[Depends(require_admin)])
 async def rag_page():
-    # Sprint v1.22: RAG console is admin tooling. Anonymous access
-    # served the page (the API calls behind it WERE gated, so this is
-    # mostly UX hygiene, but a logged-out user shouldn't see the surface).
-    return FileResponse(STATIC / "rag.html")
+    # MEJORAS moved RAG operation into Studio step 7; keep /rag as a
+    # compatibility entrypoint without serving the removed standalone page.
+    return RedirectResponse(url="/studio")
+
+
+# ── Agents — CRUD + invoke ────────────────────────────────────────────────────
+# Admin-only writes; any authenticated user can list/invoke (visibility/permissions
+# can be layered later via cartridge ACLs).
+
+@app.get("/agents", dependencies=[Depends(require_admin)])
+async def viewer_agents(request: Request):
+    require_admin(request)
+    return FileResponse(STATIC / "agents.html")
+
+
+@app.get("/api/agents", dependencies=[Depends(require_authenticated)])
+async def api_agents_list(
+    request: Request,
+    cartridge_id: str | None = None,
+    include_inactive: bool = False,
+):
+    require_user(request)
+    return {"agents": await _agents.list_agents(cartridge_id, include_inactive)}
+
+
+@app.get("/api/agents/_tool-catalog", dependencies=[Depends(require_admin)])
+async def api_agents_tool_catalog(request: Request):
+    """Aggregate of tools exposed by every MCP server — used by the agent
+    editor UI to populate the 'allowed_tools' multi-select."""
+    require_admin(request)
+    out: dict[str, list] = {}
+    async with httpx.AsyncClient(timeout=10) as c:
+        for srv_id, base in _agent_runtime.SERVER_URLS.items():
+            try:
+                server_key = "MCP_INFRA" if srv_id == "mcp-infra" else srv_id.upper()
+                r = await c.get(f"{base}/mcp/tools", headers=_hdr_for(server_key))
+                r.raise_for_status()
+                out[srv_id] = [
+                    {"name": t["name"], "description": t.get("description", "")}
+                    for t in (r.json().get("tools") or [])
+                ]
+            except Exception:
+                out[srv_id] = []
+    return {"servers": out}
+
+
+@app.get("/api/agents/{agent_id}", dependencies=[Depends(require_authenticated)])
+async def api_agents_get(request: Request, agent_id: str):
+    require_user(request)
+    a = await _agents.get_agent(agent_id)
+    if not a:
+        raise HTTPException(404, "agent not found")
+    return a
+
+
+@app.post("/api/agents", dependencies=[Depends(require_csrf)])
+async def api_agents_create(request: Request, body: dict):
+    user = require_admin(request)
+    try:
+        return await _agents.create_agent(body, owner_user_id=user.get("id"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf)])
+async def api_agents_update(request: Request, agent_id: str, body: dict):
+    require_admin(request)
+    try:
+        a = await _agents.update_agent(agent_id, body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not a:
+        raise HTTPException(404, "agent not found")
+    return a
+
+
+@app.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf)])
+async def api_agents_delete(request: Request, agent_id: str):
+    require_admin(request)
+    ok = await _agents.delete_agent(agent_id)
+    if not ok:
+        raise HTTPException(404, "agent not found")
+    return {"deleted": True}
+
+
+@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf)])
+async def api_agents_invoke(request: Request, agent_id: str, body: dict):
+    user  = require_user(request)
+    agent = await _agent_runtime.load_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "agent not found")
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+    history = body.get("history") or []
+    result = await _agent_runtime.run(agent, message, history=history, user=user)
+    return result
+
+
+_AGENT_RUNNER_TOKEN = os.environ.get("AGENT_RUNNER_TOKEN", "")
+
+
+@app.post("/api/agents/{agent_id}/invoke/scheduled", dependencies=[Depends(verify_internal_api_key)])
+async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dict):
+    """Cron-driven invocation from the airflow `agent_runner` DAG. Uses a
+    shared token so it can run without a user session. The agent_runs row
+    is logged with user_id=NULL."""
+    token = request.headers.get("X-Agent-Runner-Token", "")
+    if not _AGENT_RUNNER_TOKEN or token != _AGENT_RUNNER_TOKEN:
+        raise HTTPException(401, "invalid runner token")
+    agent = await _agent_runtime.load_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "agent not found")
+    message = (body.get("message") or "").strip() or "Ejecuta tu tarea programada."
+    result = await _agent_runtime.run(agent, message, history=[], user=None)
+    return result
+
+
+@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf)])
+async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
+    """Server-Sent Events stream of tool_use / tool_result / text events."""
+    user  = require_user(request)
+    agent = await _agent_runtime.load_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "agent not found")
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+    history = body.get("history") or []
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_event(ev: dict):
+        await queue.put(ev)
+
+    async def runner():
+        try:
+            result = await _agent_runtime.run(agent, message, history=history,
+                                              user=user, on_event=on_event)
+            await queue.put({"type": "done", "run_id": result.get("run_id")})
+        except Exception as exc:                                # noqa: BLE001
+            await queue.put({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(runner())
+
+    async def gen():
+        try:
+            while True:
+                ev = await queue.get()
+                if ev is None:
+                    break
+                yield f"data: {json.dumps(ev)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_authenticated)])
+async def api_agents_runs(request: Request, agent_id: str, limit: int = 20):
+    require_user(request)
+    return {"runs": await _agents.list_runs(agent_id, limit=limit)}
+
+
+@app.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_authenticated)])
+async def api_agent_run_detail(request: Request, run_id: int):
+    require_user(request)
+    run = await _agents.get_run(run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    return run
 
 
 # ── Vault proxy ───────────────────────────────────────────────────────────────
@@ -2529,13 +3091,14 @@ async def api_vault_delete_secret(scope: str, key: str):
 # ── RAG proxy ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/rag/sources", dependencies=[Depends(require_authenticated)])
-async def api_rag_sources():
+async def api_rag_sources(kinds: str = ""):
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as c:
-        r = await c.get(f"{_RAG_URL}/rag/sources")
+        params = {"kinds": kinds} if kinds else None
+        r = await c.get(f"{_RAG_URL}/rag/sources", params=params)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_delete_source(source_id: int):
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
@@ -2544,14 +3107,26 @@ async def api_rag_delete_source(source_id: int):
         r.raise_for_status()
         return r.json()
 
-@app.post("/api/rag/search", dependencies=[Depends(require_authenticated)])
+@app.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_authenticated)])
 async def api_rag_search(body: dict):
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(f"{_RAG_URL}/rag/search", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.post("/api/rag/ingest", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/api/rag/reindex", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+async def api_rag_reindex(body: dict):
+    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
+        r = await c.post(f"{_RAG_URL}/rag/reindex", json=body)
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail") or "RAG reindex failed"
+            except ValueError:
+                detail = r.text or "RAG reindex failed"
+            raise HTTPException(r.status_code, detail)
+        return r.json()
+
+@app.post("/api/rag/ingest", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_rag_ingest(body: dict):
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
@@ -2559,7 +3134,7 @@ async def api_rag_ingest(body: dict):
         return r.json()
 
 
-@app.post("/api/rag/ask", dependencies=[Depends(require_authenticated)])
+@app.post("/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_authenticated)])
 async def api_rag_ask(body: dict):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
@@ -2570,11 +3145,12 @@ async def api_rag_ask(body: dict):
         raise HTTPException(400, "Missing 'query'")
     top_k       = int(body.get("top_k") or 5)
     source_ids  = body.get("source_ids") or None
+    kinds       = body.get("kinds") or None
 
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(
             f"{_RAG_URL}/rag/search",
-            json={"query": query, "top_k": top_k, "source_ids": source_ids},
+            json={"query": query, "top_k": top_k, "source_ids": source_ids, "kinds": kinds},
         )
         r.raise_for_status()
         results = (r.json().get("results") or [])
@@ -2652,12 +3228,12 @@ async def api_catalog_get(layer: str = "", cartridge: str = "", tags: str = "", 
     return result
 
 
-@app.post("/api/catalog/entries", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/api/catalog/entries", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_catalog_upsert(body: dict):
     return await _refinement_invoke("upsert_catalog_entries", body)
 
 
-@app.post("/api/catalog/relationships", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/api/catalog/relationships", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_catalog_relationship(body: dict):
     return await _refinement_invoke("register_relationship", body)
 
@@ -2795,6 +3371,7 @@ async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
                     "display_name": {"type": "string"},
                     "mode":         {"type": "string", "enum": ["full", "incremental"]},
                     "dag_id":       {"type": "string"},
+                    "connection_id": {"type": "string"},
                     "trigger_type": {"type": "string", "enum": ["manual", "scheduled"]},
                     "cron_expression": {"type": "string"},
                     "description":  {"type": "string"},
@@ -2964,7 +3541,7 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
 
 # ── Monitoring MCP server (deeplinks para el asistente) ───────────────────────
 
-CONSOLE_URL = os.environ.get("CONSOLE_URL", "http://localhost:8000")
+CONSOLE_URL = _public_url("CONSOLE_URL", development_default="http://localhost:8000")
 
 @app.get("/monitoring/tools", dependencies=[Depends(require_authenticated)])
 async def monitoring_tools(user: dict = Depends(require_authenticated)):
@@ -3650,6 +4227,7 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
         role=_assignable_role(body.get("role")) if body.get("role") else None,
         is_active=body.get("is_active"),
         password=body.get("password"),
+        escalation_notify=body.get("escalation_notify") if "escalation_notify" in body else None,
     )
     if not target_user:
         raise HTTPException(404, "user not found")
@@ -3701,6 +4279,103 @@ async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(requir
     return {"deleted": True, "id": user_id}
 
 
+def _vpn_configured() -> bool:
+    return bool(os.environ.get("VPN_API_URL") and os.environ.get("VPN_API_PASSWORD"))
+
+
+def _pack_vpn_conf(conf_text: str, email: str) -> tuple[bytes, str]:
+    import io as _io
+    import secrets as _secrets
+    import pyzipper
+    password = _secrets.token_urlsafe(9)
+    buf = _io.BytesIO()
+    with pyzipper.AESZipFile(
+        buf,
+        "w",
+        compression=pyzipper.ZIP_DEFLATED,
+        encryption=pyzipper.WZ_AES,
+    ) as zf:
+        zf.setpassword(password.encode("utf-8"))
+        zf.writestr(f"{_safe_filename(email)}.conf", conf_text)
+    return buf.getvalue(), password
+
+
+def _safe_filename(email: str) -> str:
+    return email.replace("@", "_").replace("/", "_").replace("..", "_")
+
+
+async def _create_vpn_config_link(user_id: int, email: str) -> dict:
+    try:
+        if not _vpn_configured():
+            return {"issued": False, "error": "VPN_API_URL / VPN_API_PASSWORD no configurados"}
+        wg_id = await _vpn.create_client(email)
+        vpn_tok, _ = await _tokens.create(user_id, "vpn", wg_client_id=wg_id)
+        try:
+            conf_text = await _vpn.get_config(wg_id)
+        except Exception:
+            conf_text = None
+        return {
+            "issued": True,
+            "link": _vpn_link(vpn_tok),
+            "wg_client_id": wg_id,
+            "conf_text": conf_text,
+        }
+    except _vpn.VPNError as exc:
+        return {"issued": False, "error": str(exc)}
+    except Exception as exc:
+        return {"issued": False, "error": f"unexpected: {exc}"}
+
+
+async def _issue_vpn_for_user(user_id: int, email: str, name: str | None) -> dict:
+    res = await _create_vpn_config_link(user_id, email)
+    if not res.get("issued"):
+        return res
+    subject, html = _email.render_vpn_config(name, res["link"], VPN_TTL_HOURS)
+    sent = await _email.send_email(email, subject, html)
+    return {"issued": True, "email_sent": sent, "wg_client_id": res["wg_client_id"]}
+
+
+@app.get("/vpn-config/{token}")
+async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
+    info = await _tokens.lookup(token, "vpn")
+    if not info or not info.get("wg_client_id"):
+        raise HTTPException(404, "Link invalido o ya utilizado")
+    try:
+        cfg = await _vpn.get_config(info["wg_client_id"])
+    except _vpn.VPNError as exc:
+        raise HTTPException(502, f"No se pudo obtener la configuracion VPN: {exc}") from exc
+    await _tokens.consume(token)
+    safe = _safe_filename(info.get("email") or "user")
+    return Response(
+        content=cfg,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.conf"'},
+    )
+
+
+@app.post("/api/admin/users/{user_id}/vpn-reissue", dependencies=[Depends(require_csrf)])
+async def api_admin_users_vpn_reissue(
+    user_id: int,
+    request: Request,
+    admin_user: dict = Depends(require_permission("iam.users.write")),
+):
+    target_user = await _auth.get_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(404, "user not found")
+    res = await _issue_vpn_for_user(user_id, target_user["email"], target_user.get("name"))
+    await _audit.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "vpn.reissued",
+        "user",
+        str(user_id),
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        metadata={"issued": bool(res.get("issued")), "email_sent": res.get("email_sent")},
+    )
+    return {"reissued": res.get("issued", False), **res}
+
+
 @app.post("/api/admin/users/invite", dependencies=[Depends(require_csrf)])
 async def api_admin_users_invite(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Invite a new user by email. Creates an inactive user with no password,
@@ -3714,18 +4389,47 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
     role = _assignable_role(body.get("role"))
     target_user = await _auth.create_invited_user(email=email, name=body.get("name"), role=role)
     tok, _ = await _tokens.create(target_user["id"], "invite")
-    subject, html = _email.render_invitation(target_user.get("name"), email, _activation_link(tok), INVITE_TTL_HOURS)
-    sent = await _email.send_email(email, subject, html)
+    activation_link = _activation_link(tok)
+
+    vpn_result: dict = {"issued": False}
+    if body.get("with_vpn", True):
+        vpn_result = await _create_vpn_config_link(target_user["id"], email)
+
+    attachments: list[tuple[str, bytes, str]] = []
+    vpn_password: str | None = None
+    if vpn_result.get("issued") and vpn_result.get("conf_text"):
+        zip_bytes, vpn_password = _pack_vpn_conf(vpn_result["conf_text"], email)
+        attachments.append((f"{_safe_filename(email)}.zip", zip_bytes, "application/zip"))
+
+    if vpn_result.get("issued"):
+        subject, html = _email.render_invitation_with_vpn(
+            target_user.get("name"),
+            email,
+            activation_link,
+            vpn_result["link"],
+            INVITE_TTL_HOURS,
+            VPN_TTL_HOURS,
+            vpn_password,
+        )
+        sent = await _email.send_email(email, subject, html, attachments=attachments)
+        vpn_result["email_sent"] = sent
+    else:
+        subject, html = _email.render_invitation(target_user.get("name"), email, activation_link, INVITE_TTL_HOURS)
+        sent = await _email.send_email(email, subject, html)
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.invited", "user", str(target_user["id"]),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
-        metadata={"role": role, "email_sent": sent},
+        metadata={"role": role, "email_sent": sent, "vpn": vpn_result},
     )
-    return {"invited": True, "user": target_user, "email_sent": sent}
+    return {"invited": True, "user": target_user, "email_sent": sent, "vpn": vpn_result}
 
 
 @app.post("/api/admin/users/{user_id}/reinvite", dependencies=[Depends(require_csrf)])
-async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(require_permission("iam.users.write"))):
+async def api_admin_users_reinvite(
+    user_id: int,
+    body: dict | None = None,
+    admin_user: dict = Depends(require_permission("iam.users.write")),
+):
     """Re-issue an invitation email (only for users that have not activated yet)."""
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user:
@@ -3733,11 +4437,36 @@ async def api_admin_users_reinvite(user_id: int, admin_user: dict = Depends(requ
     if target_user.get("is_active"):
         raise HTTPException(400, "user already active; use password reset instead")
     tok, _ = await _tokens.create(user_id, "invite")
-    subject, html = _email.render_invitation(
-        target_user.get("name"), target_user["email"], _activation_link(tok), INVITE_TTL_HOURS,
-    )
-    sent = await _email.send_email(target_user["email"], subject, html)
-    return {"reinvited": True, "email_sent": sent}
+    activation_link = _activation_link(tok)
+    payload = body or {}
+    vpn_result: dict = {"issued": False}
+    if payload.get("with_vpn", True):
+        vpn_result = await _create_vpn_config_link(user_id, target_user["email"])
+
+    attachments: list[tuple[str, bytes, str]] = []
+    vpn_password: str | None = None
+    if vpn_result.get("issued") and vpn_result.get("conf_text"):
+        zip_bytes, vpn_password = _pack_vpn_conf(vpn_result["conf_text"], target_user["email"])
+        attachments.append((f"{_safe_filename(target_user['email'])}.zip", zip_bytes, "application/zip"))
+
+    if vpn_result.get("issued"):
+        subject, html = _email.render_invitation_with_vpn(
+            target_user.get("name"),
+            target_user["email"],
+            activation_link,
+            vpn_result["link"],
+            INVITE_TTL_HOURS,
+            VPN_TTL_HOURS,
+            vpn_password,
+        )
+        sent = await _email.send_email(target_user["email"], subject, html, attachments=attachments)
+        vpn_result["email_sent"] = sent
+    else:
+        subject, html = _email.render_invitation(
+            target_user.get("name"), target_user["email"], activation_link, INVITE_TTL_HOURS,
+        )
+        sent = await _email.send_email(target_user["email"], subject, html)
+    return {"reinvited": True, "email_sent": sent, "vpn": vpn_result}
 
 
 @app.post("/api/admin/users/{user_id}/send-reset", dependencies=[Depends(require_csrf)])

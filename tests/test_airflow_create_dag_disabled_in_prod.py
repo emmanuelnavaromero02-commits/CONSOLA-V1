@@ -116,6 +116,17 @@ async def test_airflow_create_dag_blocked_when_only_app_env_set(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_airflow_delete_dag_blocked_when_only_app_env_set(monkeypatch):
+    airflow = _load_airflow_tools(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("ALLOW_RCE_TOOLS", raising=False)
+
+    with pytest.raises(PermissionError) as exc:
+        await airflow.airflow_delete_dag(dag_id="x_should_fail")
+    assert "ALLOW_RCE_TOOLS" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_airflow_create_dag_blocked_when_only_allow_rce_tools_set(monkeypatch):
     """The reverse direction: ALLOW_RCE_TOOLS=true on a production
     APP_ENV must still refuse. Two locks; neither alone opens."""

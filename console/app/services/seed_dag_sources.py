@@ -49,10 +49,12 @@ def _find_dag_source(cartridge_id: str, file_name: str) -> str | None:
     # Two layouts we expect to find:
     #   <root>/<cartridge_id>/dags/<file_name>   ← cartridge source tree
     #   <root>/<cartridge_id>/<file_name>        ← airflow's mount layout
+    #   <root>/<file_name>                       ← platform/shared DAGs
     for root in _DAG_SEARCH_PATHS:
         for candidate in (
             root / cartridge_id / "dags" / file_name,
             root / cartridge_id / file_name,
+            root / file_name,
         ):
             if candidate.is_file():
                 try:

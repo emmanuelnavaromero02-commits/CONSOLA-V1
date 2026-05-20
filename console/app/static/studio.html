@@ -3,9 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OMEGA · Studio</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <title>ΩMEGA by EPIUSE · Studio</title>
   <link rel="stylesheet" href="/static/css/main.css">
   <link rel="stylesheet" href="/static/css/viewer.css">
   <link rel="stylesheet" href="/static/css/studio.css">
@@ -19,11 +17,13 @@
 
     <!-- Header -->
     <div class="studio-header">
-      <span class="studio-logo">OMEGA</span>
+      <span class="studio-logo">ΩMEGA</span>
       <span class="studio-badge">STUDIO</span>
       <div class="studio-hdr-nav">
         <a href="/monitor" class="hdr-lnk monitor">◈ Monitor</a>
-        <a href="/rag" class="hdr-lnk" style="color:var(--cyan);border-color:var(--cyan)">◈ Knowledge</a>
+        <a href="/agents" class="hdr-lnk agents">◈ Agentes</a>
+        <a href="/explorer" class="hdr-lnk explorer">◈ Explorer</a>
+        <a href="/viewer/lineage" class="hdr-lnk lineage">◈ Lineage</a>
         <a href="/" class="hdr-lnk">⌂ Inicio</a>
       </div>
     </div>
@@ -34,7 +34,7 @@
         <span class="step-num">1</span> Resumen
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-2" style="color:var(--amber)">
+      <div class="step-item step-warning" id="si-2">
         <span class="step-num">2</span> DAGs
       </div>
       <div class="step-arrow">›</div>
@@ -54,7 +54,7 @@
         <span class="step-num">6</span> IA Semántica
       </div>
       <div class="step-arrow">›</div>
-      <div class="step-item" id="si-7" style="color:var(--cyan)">
+      <div class="step-item step-info" id="si-7">
         <span class="step-num">7</span> RAG
       </div>
     </div>
@@ -115,14 +115,15 @@
        connected to the real /api/studio/* endpoints while the older
        inline handlers are gradually retired. -->
   <script type="module" src="/static/js/studio/action-bridge.js"></script>
+  <script src="/static/js/theme-switch.js" defer></script>
 
   <!-- ── SQL Runner Modal ──────────────────────────────────────────────── -->
   <div id="sql-runner-overlay"
-       style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
+       style="display:none;position:fixed;inset:0;background:var(--backdrop);
               z-index:9000;align-items:center;justify-content:center">
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;
                 width:90vw;max-width:1100px;height:85vh;display:flex;flex-direction:column;
-                box-shadow:0 8px 40px #000a">
+                box-shadow:var(--shadow-lg)">
 
       <!-- Header -->
       <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;

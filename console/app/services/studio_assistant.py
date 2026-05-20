@@ -311,7 +311,6 @@ FLUJO:
    - save_dataset(name, sql, layer, sources, cartridge, description)
      · silver → Parquet (s3://lakehouse/silver/{cartridge}/{name})
      · gold   → tabla en postgres_gold: gold_{name} (alias DuckDB: pggold; visible en Superset)
-     · master → Parquet + tabla en postgres_gold: master_{name} (alias DuckDB: pggold)
    - materialize(name) ejecuta y escribe.
 5. VERIFICAR: get_schema(name), query_dataset(name), get_lineage(name).
 
@@ -537,6 +536,17 @@ async def chat(
     messages.append({"role": "user", "content": f"{context}\n\n---\n\n{message}"})
 
     system = _build_system_static()
+    hints = (manifest or {}).get("assistant_hints", "").strip()
+    if hints:
+        system = (
+            f"{system}\n\n"
+            f"<hints_cartucho>\n"
+            f"Instrucciones específicas del cartucho `{manifest.get('id', '?')}`. "
+            f"Tómalas como complemento de las reglas globales; si entran en conflicto, "
+            f"ganan las globales.\n\n"
+            f"{hints}\n"
+            f"</hints_cartucho>"
+        )
 
     async def _invoke_tool(srv: str, tool: str, args: dict):
         full_name = f"{srv}__{tool}"

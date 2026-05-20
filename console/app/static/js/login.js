@@ -3,8 +3,6 @@
 // previous inline block: theme bootstrap, next-URL whitelist, CSRF token
 // reader and the form submit handler.
 
-document.documentElement.dataset.theme = localStorage.getItem('mod-theme') || 'dark';
-
 function nextUrl() {
   const p = new URLSearchParams(location.search);
   const n = p.get('next');

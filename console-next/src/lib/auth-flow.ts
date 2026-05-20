@@ -52,7 +52,7 @@ function sleep(ms: number) {
 
 function timeoutSignal(): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 2_000);
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
   return {
     signal: controller.signal,
     clear: () => window.clearTimeout(timeout),

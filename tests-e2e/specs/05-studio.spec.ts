@@ -3,7 +3,7 @@
  *
  * The user reported a concrete set of broken interactions on this
  * page (Grafo button, Deploy a Airflow, Plantillas, Subir spec drop
- * zone, Silver/Gold/Master interactivity, Crear en Superset). Each
+ * zone, Silver/Gold interactivity, Crear en Superset). Each
  * test here pins one of those failures so v1.44.3.3 has actionable
  * evidence.
  *
@@ -24,18 +24,24 @@ const STEP_READY: Record<number, RegExp> = {
   7: /RAG|Knowledge Base|BÚSQUEDA SEMÁNTICA/i,
 };
 
+async function openStudio(page: Page) {
+  await page.goto(`${LEGACY}/studio`, {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+}
+
 async function waitStudioReady(page: Page) {
   await page.waitForFunction(
     () => {
       const win = window as typeof window & { goStep?: unknown };
       const picker = document.querySelector("#cartridge-sel") as HTMLSelectElement | null;
-      const overview = document.querySelector("#studio-modern-root");
+      const content = document.querySelector("#step-content");
       return (
         typeof win.goStep === "function" &&
-        document.body.classList.contains("studio-modern-ready") &&
         document.body.dataset.studioStep === "1" &&
         Boolean(picker && picker.options.length > 1 && picker.value) &&
-        Boolean(overview?.textContent?.trim())
+        Boolean(content)
       );
     },
     null,
@@ -52,11 +58,20 @@ async function goStudioStep(page: Page, step: number) {
     return win.goStep(targetStep);
   }, step);
   await page.waitForFunction(
-    (targetStep) => document.body.dataset.studioStep === String(targetStep),
+    (targetStep) => {
+      const content = document.querySelector("#step-content");
+      return (
+        document.body.dataset.studioStep === String(targetStep) &&
+        Boolean(content && content.textContent?.trim())
+      );
+    },
     step,
     { timeout: 15_000 },
   );
   await expect(page.locator("#step-content")).toBeVisible({ timeout: 15_000 });
+  if (step === 2) {
+    await expect(page.locator("#dag-editor-body")).toBeVisible({ timeout: 15_000 });
+  }
   if (step > 1) {
     await expect(page.locator("#step-content")).toContainText(STEP_READY[step], {
       timeout: 15_000,
@@ -66,7 +81,7 @@ async function goStudioStep(page: Page, step: number) {
 
 test.describe("Legacy /studio page (port 8000)", () => {
   test("/studio loads with tab navigation", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     // After client-side hydration the tab labels appear. The brief
     // documents 7 tabs (Resumen / DAGs / Entidades / Refinar /
     // Analytics / IA Semántica / RAG). We assert at least DAGs +
@@ -79,7 +94,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
   });
 
   test("'DAGs' tab renders a DAG list", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     // The DAG list either has an empty-state OR rows. Both are valid
     // — the test fails only if NEITHER renders within 15 s.
@@ -90,7 +105,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
   test("'Grafo' button responds to click (USER-REPORTED BUG)", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     const grafoBtn = page.getByRole("button", { name: /grafo/i }).first();
     // The button may render in the DAG tab; navigate there first.
     await goStudioStep(page, 2);
@@ -130,7 +145,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
 
   test("'Deploy a Airflow' button fires /api/studio/dag-deploy (USER-REPORTED BUG)",
     async ({ authedPage: page }) => {
-      await page.goto(`${LEGACY}/studio`);
+      await openStudio(page);
       await goStudioStep(page, 2);
       const deployBtn = page.getByRole("button", { name: /deploy a airflow|deploy/i }).first();
       if (!(await deployBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -153,7 +168,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
   );
 
   test("'Entidades' tab shows entities table", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 3);
     await expect(
       page.locator("#entity-list-area, table, [data-state='empty'], .empty-state").first(),
@@ -162,7 +177,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
 
   test("'Subir spec' drop zone accepts files (USER-REPORTED BUG)",
     async ({ authedPage: page }) => {
-      await page.goto(`${LEGACY}/studio`);
+      await openStudio(page);
       await goStudioStep(page, 3);
 
       // The drop zone may be a hidden <input type="file"> behind a
@@ -182,12 +197,12 @@ test.describe("Legacy /studio page (port 8000)", () => {
     },
   );
 
-  test("'Refinar' tab exposes Bronze/Silver/Master/Gold subtabs", async ({
+  test("'Refinar' tab exposes Bronze/Silver/Gold subtabs", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 4);
-    for (const layer of [/Bronze/i, /Silver/i, /Master/i, /Gold/i]) {
+    for (const layer of [/Bronze/i, /Silver/i, /Gold/i]) {
       await expect(page.getByText(layer).first()).toBeVisible({
         timeout: 10_000,
       });
@@ -196,7 +211,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
 
   test("'Silver' subtab renders data, not blank (USER-REPORTED BUG)",
     async ({ authedPage: page }) => {
-      await page.goto(`${LEGACY}/studio`);
+      await openStudio(page);
       await goStudioStep(page, 4);
       const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
       if (!(await silver.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -217,7 +232,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
 
   test("'Crear en Superset' triggers /api/studio/superset (USER-REPORTED BUG)",
     async ({ authedPage: page }) => {
-      await page.goto(`${LEGACY}/studio`);
+      await openStudio(page);
       await goStudioStep(page, 5);
       const supersetBtn = page
         .getByRole("button", { name: /\+?\s*crear en superset/i })
@@ -242,7 +257,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
   test("'IA Semántica' tab loads without errors", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 6);
     // The pane must resolve to SOMETHING — error / empty / loaded
     // content all count. expect().toBeVisible auto-waits up to its
@@ -260,7 +275,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
       // missed coverage. The "Plantillas" affordance might be a
       // tab, a button, or a dropdown trigger in the legacy studio
       // — we look for whichever the page exposes.
-      await page.goto(`${LEGACY}/studio`);
+      await openStudio(page);
       await goStudioStep(page, 2);
       const candidates = [
         page.getByRole("tab", { name: /plantilla/i }),

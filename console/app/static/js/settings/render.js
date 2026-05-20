@@ -62,6 +62,26 @@ function buildVaultCallout(hiddenCount) {
   return callout;
 }
 
+function buildAgentsCallout() {
+  const callout = document.createElement('section');
+  callout.className = 'settings-vault-callout';
+
+  const copy = document.createElement('div');
+  const title = document.createElement('h2');
+  title.textContent = 'Agentes por cartucho';
+  const body = document.createElement('p');
+  body.textContent = 'La configuración de agentes vive en su propio módulo: prompt, tools, modelo, RAG, ejecuciones y programación.';
+  copy.append(title, body);
+
+  const link = document.createElement('a');
+  link.className = 'btn-primary settings-vault-link';
+  link.href = '/agents';
+  link.textContent = 'Abrir Agentes';
+
+  callout.append(copy, link);
+  return callout;
+}
+
 function buildItem(item, onChange) {
   const row = document.createElement('div');
   row.className = 'settings-item';
@@ -182,6 +202,7 @@ export function renderSettings(container, settings, onChange) {
   if (hiddenVaultCount > 0) {
     container.appendChild(buildVaultCallout(hiddenVaultCount));
   }
+  container.appendChild(buildAgentsCallout());
 
   if (!visibleSettings || visibleSettings.length === 0) {
     const empty = document.createElement('p');

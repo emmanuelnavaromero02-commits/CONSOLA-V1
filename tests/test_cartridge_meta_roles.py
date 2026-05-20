@@ -194,6 +194,23 @@ def test_local_compose_superset_runtime_uses_dedicated_role():
     )
 
 
+def test_local_console_can_register_superset_gold_database():
+    with LOCAL_COMPOSE.open("r", encoding="utf-8") as f:
+        compose = yaml.safe_load(f)
+    env = compose["services"]["console"]["environment"]
+    uri = env.get("SUPERSET_GOLD_SQLALCHEMY_URI", "")
+    assert "://omega_refinement_gold:" in uri
+    assert "@postgres_gold:5433/modecissions_gold" in uri
+
+
+def test_superset_config_honors_runtime_sqlalchemy_uri_env():
+    config = (
+        Path(__file__).resolve().parents[1]
+        / "infra/terraform/deploy/superset_config/superset_config.py"
+    ).read_text(encoding="utf-8")
+    assert 'os.environ.get("SQLALCHEMY_DATABASE_URI")' in config
+
+
 def test_local_compose_pgoptions_carries_six_new_passwords():
     """The postgres container must forward all six new GUC passwords
     so the migration can read them via ``current_setting``."""
@@ -223,6 +240,15 @@ def test_aws_compose_airflow_runtime_uses_dedicated_roles():
         assert "://omega_airflow_dag:" in dag, (
             f"AWS {svc_name} AIRFLOW_VAR_POSTGRES_CONN must use omega_airflow_dag"
         )
+
+
+def test_aws_console_can_register_superset_gold_database():
+    with AWS_COMPOSE.open("r", encoding="utf-8") as f:
+        compose = yaml.safe_load(f)
+    env = compose["services"]["console"]["environment"]
+    uri = env.get("SUPERSET_GOLD_SQLALCHEMY_URI", "")
+    assert "://omega_refinement_gold:" in uri
+    assert "@postgres_gold:5433/modecissions_gold" in uri
 
 
 def test_aws_compose_airflow_init_keeps_superuser_for_bootstrap():

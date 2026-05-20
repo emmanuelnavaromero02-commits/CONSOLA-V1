@@ -1,4 +1,4 @@
-"""Single-use email tokens (invite | reset)."""
+"""Single-use email tokens (invite | reset | vpn)."""
 from __future__ import annotations
 
 import os
@@ -9,6 +9,7 @@ import asyncpg
 
 INVITE_TTL = timedelta(hours=int(os.environ.get("INVITE_TOKEN_TTL_HOURS", "72")))
 RESET_TTL  = timedelta(hours=int(os.environ.get("RESET_TOKEN_TTL_HOURS",  "1")))
+VPN_TTL    = timedelta(hours=int(os.environ.get("VPN_TOKEN_TTL_HOURS",   "72")))
 
 
 _POOL: asyncpg.Pool | None = None
@@ -30,12 +31,16 @@ async def close_pool() -> None:
 
 
 def _ttl_for(kind: str) -> timedelta:
-    return INVITE_TTL if kind == "invite" else RESET_TTL
+    if kind == "invite":
+        return INVITE_TTL
+    if kind == "vpn":
+        return VPN_TTL
+    return RESET_TTL
 
 
-async def create(user_id: int, kind: str) -> tuple[str, datetime]:
+async def create(user_id: int, kind: str, wg_client_id: str | None = None) -> tuple[str, datetime]:
     """Generate and persist a single-use token. Returns (token, expires_at)."""
-    if kind not in ("invite", "reset"):
+    if kind not in ("invite", "reset", "vpn"):
         raise ValueError(f"unknown token kind: {kind}")
     token   = secrets.token_hex(32)
     expires = datetime.now(timezone.utc) + _ttl_for(kind)
@@ -46,10 +51,17 @@ async def create(user_id: int, kind: str) -> tuple[str, datetime]:
         "WHERE user_id = $1 AND kind = $2 AND used_at IS NULL",
         user_id, kind,
     )
-    await p.execute(
-        "INSERT INTO user_tokens (token, user_id, kind, expires_at) VALUES ($1, $2, $3, $4)",
-        token, user_id, kind, expires,
-    )
+    if kind == "vpn":
+        await p.execute(
+            "INSERT INTO user_tokens (token, user_id, kind, expires_at, wg_client_id) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            token, user_id, kind, expires, wg_client_id,
+        )
+    else:
+        await p.execute(
+            "INSERT INTO user_tokens (token, user_id, kind, expires_at) VALUES ($1, $2, $3, $4)",
+            token, user_id, kind, expires,
+        )
     return token, expires
 
 
@@ -60,7 +72,8 @@ async def lookup(token: str, kind: str) -> dict | None:
         return None
     p = await _pool()
     row = await p.fetchrow(
-        """SELECT t.user_id, t.expires_at, u.email, u.name, u.role, u.is_active
+        """SELECT t.user_id, t.expires_at, t.wg_client_id,
+                  u.email, u.name, u.role, u.is_active
              FROM user_tokens t
              JOIN users u ON u.id = t.user_id
             WHERE t.token = $1 AND t.kind = $2

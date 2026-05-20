@@ -51,12 +51,17 @@ export function renderTopbar() {
     navLink('Copiloto', '/copilot'),
     navLink('Vault', '/viewer/vault'),
     navLink('Studio', '/studio'),
+    navLink('Explorer', '/explorer'),
+    navLink('Lineage', '/viewer/lineage'),
     navLink('Monitor', '/monitor'),
     navLink('Datos', '/viewer/datasets'),
     navLink('Operaciones', '/operations'),
     navLink('Seguridad', '/security'),
     navLink('Administración', '/iam')
   );
+  if (state.user?.role === 'admin') {
+    nav.append(navLink('Agentes', '/agents'));
+  }
 
   // Action menus block (Crear / Ejecutar / Revisar / Configurar) removed in
   // sprint v1.2-pr1: the four home cards already expose those flows and the

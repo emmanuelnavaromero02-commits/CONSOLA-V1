@@ -5,6 +5,32 @@ let sources = [];
 let selectedSourceIds = [];  // empty = all
 let lastResults = [];
 
+function readCookie(name) {
+  const prefix = `${name}=`;
+  for (const raw of document.cookie.split(';')) {
+    const c = raw.trim();
+    if (c.startsWith(prefix)) return decodeURIComponent(c.slice(prefix.length));
+  }
+  return '';
+}
+
+function jsonHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  const csrf = readCookie('csrf_token');
+  if (csrf) headers['X-CSRF-Token'] = csrf;
+  return headers;
+}
+
+function csrfHeaders() {
+  const csrf = readCookie('csrf_token');
+  return csrf ? { 'X-CSRF-Token': csrf } : {};
+}
+
+function selectedKinds() {
+  const value = document.getElementById('kindFilter')?.value || '';
+  return value ? [value] : null;
+}
+
 // ── Sources ───────────────────────────────────────────────────────────────────
 async function loadSources() {
   try {
@@ -37,9 +63,10 @@ function renderSources() {
     const sourceId = Number(s.id);
     const chunks = s.chunk_count ? `${Number(s.chunk_count).toLocaleString()} chunks` : '';
     const date   = (s.created_at || '').slice(0, 10);
+    const kind   = s.kind || 'document';
     return `<div class="source-item ${active}" data-action="toggle-source" data-id="${sourceId}">
       <div class="source-info">
-        <div class="source-name" title="${esc(s.name)}">${esc(s.name)}</div>
+        <div class="source-name" title="${esc(s.name)}">${esc(s.name)} <span class="source-meta">[${esc(kind)}]</span></div>
         <div class="source-meta">${esc(chunks)}${chunks && date ? ' · ' : ''}${esc(date)}</div>
         ${s.description ? `<div class="source-meta" style="color:var(--text2)">${esc(s.description)}</div>` : ''}
       </div>
@@ -63,6 +90,7 @@ function updateFilterLabel() {
     .filter(s => selectedSourceIds.includes(s.id))
     .map(s => s.name).join(', ');
   el.textContent = `Filter: ${names}`;
+  el.title = names;
 }
 
 async function delSource(e, id) {
@@ -70,7 +98,8 @@ async function delSource(e, id) {
   const src = sources.find(s => s.id === id);
   if (!confirm(`Delete "${src?.name}"? All chunks will be removed.`)) return;
   try {
-    await fetch(`/api/rag/sources/${id}`, { method: 'DELETE' });
+    const r = await fetch(`/api/rag/sources/${id}`, { method: 'DELETE', headers: csrfHeaders() });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
     selectedSourceIds = selectedSourceIds.filter(x => x !== id);
     await loadSources();
   } catch(err) {
@@ -97,7 +126,12 @@ async function onFileChange(e) {
   const mime = file.type || 'text/plain';
   if (mime === 'application/pdf' || file.name.endsWith('.pdf')) {
     const buf = await file.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    let binary = '';
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    const b64 = btoa(binary);
     pendingFileData = { content: b64, mime_type: 'application/pdf' };
     document.getElementById('inContent').value = '[PDF — will be extracted server-side]';
     document.getElementById('inContent').disabled = true;
@@ -113,6 +147,7 @@ async function onFileChange(e) {
 async function doIngest() {
   const name    = document.getElementById('inName').value.trim();
   const desc    = document.getElementById('inDesc').value.trim();
+  const kind    = document.getElementById('inKind')?.value || 'document';
   const content = document.getElementById('inContent').value.trim();
   const status  = document.getElementById('ingestStatus');
   const btn     = document.getElementById('ingestBtn');
@@ -125,12 +160,12 @@ async function doIngest() {
 
   try {
     const body = pendingFileData
-      ? { name, description: desc, ...pendingFileData }
-      : { name, description: desc, content, mime_type: 'text/plain' };
+      ? { name, description: desc, kind, ...pendingFileData }
+      : { name, description: desc, kind, content, mime_type: 'text/plain' };
 
     const r = await fetch('/api/rag/ingest', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
     });
     if (!r.ok) {
@@ -169,10 +204,12 @@ async function doSearch() {
   try {
     const body = { query, top_k: topK };
     if (selectedSourceIds.length) body.source_ids = selectedSourceIds;
+    const kinds = selectedKinds();
+    if (kinds) body.kinds = kinds;
 
     const r = await fetch('/api/rag/search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
@@ -203,7 +240,7 @@ function renderResults(results, query) {
     return `<div class="result-card" id="rc${i}">
       <div class="result-card-hdr" data-action="toggle-card" data-idx="${i}">
         <span class="result-rank">${i + 1}</span>
-        <span class="result-source">${esc(r.source_name)}</span>
+        <span class="result-source">${esc(r.source_name)}${r.source_kind ? ` · ${esc(r.source_kind)}` : ''}</span>
         <span class="result-score" style="color:${scoreColor}">${pct}% match</span>
         <span class="result-toggle">▼</span>
       </div>
@@ -269,6 +306,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
   document.getElementById('searchBtn').addEventListener('click', doSearch);
   document.getElementById('copyAllBtn').addEventListener('click', copyAllContext);
+  document.getElementById('kindFilter').addEventListener('change', () => {
+    if (searchInput.value.trim()) doSearch();
+  });
 
   // Delegated handlers for dynamic content (sources list + result cards).
   document.body.addEventListener('click', (ev) => {
