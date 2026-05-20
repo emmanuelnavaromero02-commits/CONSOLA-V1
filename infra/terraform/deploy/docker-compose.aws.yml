@@ -300,6 +300,11 @@ services:
       MINIO_SECRET_KEY:  ${AWS_SECRET_ACCESS_KEY:-}
       MINIO_SECURE:      "true"
       AWS_DEFAULT_REGION: ${AWS_REGION:?AWS_REGION is required}
+      AWS_REGION:        ${AWS_REGION:?AWS_REGION is required}
+      BEDROCK_REGION:    ${BEDROCK_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       S3_BUCKET_NAME:    ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       PG_HOST:           postgres
       PG_PORT:           5432
@@ -314,6 +319,8 @@ services:
       SUPERSET_URL:      http://superset:8088
       SUPERSET_USER:     ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
+      EMBED_MODEL:       ${EMBED_MODEL:-amazon.titan-embed-text-v2:0}
+      EMBED_DIM:         ${EMBED_DIM:-1024}
       ADMIN_EMAIL:       ${ADMIN_EMAIL:-}
     # v1.43.4 (Codex H1): mcp-infra port 8010 is no longer published
     # on the host network in AWS — it's an internal service consumed

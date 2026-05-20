@@ -7,6 +7,9 @@ const state = {
   initialCartridge: new URLSearchParams(location.search).get('cartridge') || '',
 };
 
+let cy = null;
+let dagreRegistered = false;
+
 function esc(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -81,6 +84,22 @@ function filteredNodes() {
   );
 }
 
+function colorFor(node) {
+  if (node.is_stale) return '#ff8e3c';
+  switch (node.type) {
+    case 'raw': return '#6e7681';
+    case 'silver': return '#7c9fff';
+    case 'gold': return '#d29922';
+    default: return '#8b949e';
+  }
+}
+
+function registerDagre() {
+  if (dagreRegistered || !window.cytoscape || !window.cytoscapeDagre) return;
+  window.cytoscape.use(window.cytoscapeDagre);
+  dagreRegistered = true;
+}
+
 function nodeCard(node) {
   const stale = node.is_stale ? '<span class="pill warn">Stale</span>' : '';
   const rows = [
@@ -109,6 +128,18 @@ function renderLane(title, type, nodes) {
 
 function renderGraph() {
   const nodes = filteredNodes();
+  if (window.cytoscape && nodes.length) {
+    renderCyGraph(nodes);
+    renderMetrics(nodes);
+    return;
+  }
+  if (nodes.length) {
+    renderSvgGraph(nodes);
+    renderMetrics(nodes);
+    return;
+  }
+  cy = null;
+  $('graph').classList.remove('cy-graph', 'svg-graph');
   const lanes = {
     raw: nodes.filter((node) => node.type === 'raw'),
     silver: nodes.filter((node) => node.type === 'silver'),
@@ -124,6 +155,244 @@ function renderGraph() {
     state.selectedId = null;
     renderDetails(null);
   }
+}
+
+function svgEl(name, attrs = {}) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, String(value)));
+  return el;
+}
+
+function shortLabel(value, max = 24) {
+  const text = String(value || '');
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function renderSvgGraph(nodes) {
+  cy = null;
+  const host = $('graph');
+  host.classList.remove('cy-graph');
+  host.classList.add('svg-graph');
+  host.replaceChildren();
+
+  const laneOrder = ['raw', 'silver', 'gold'];
+  const grouped = Object.fromEntries(laneOrder.map((lane) => [lane, []]));
+  nodes.forEach((node) => {
+    const lane = laneOrder.includes(node.type) ? node.type : 'silver';
+    grouped[lane].push(node);
+  });
+
+  const nodeW = 190;
+  const nodeH = 58;
+  const laneW = 300;
+  const top = 72;
+  const left = 54;
+  const gap = 26;
+  const maxRows = Math.max(1, ...laneOrder.map((lane) => grouped[lane].length));
+  const width = left * 2 + laneW * (laneOrder.length - 1) + nodeW + 40;
+  const height = Math.max(520, top * 2 + maxRows * (nodeH + gap));
+  const positions = new Map();
+  laneOrder.forEach((lane, laneIndex) => {
+    grouped[lane].forEach((node, rowIndex) => {
+      positions.set(node.id, {
+        x: left + laneIndex * laneW,
+        y: top + rowIndex * (nodeH + gap),
+      });
+    });
+  });
+
+  const svg = svgEl('svg', {
+    class: 'lineage-svg',
+    viewBox: `0 0 ${width} ${height}`,
+    role: 'img',
+    'aria-label': 'Grafo de linaje de datasets',
+  });
+  const defs = svgEl('defs');
+  const marker = svgEl('marker', {
+    id: 'lineage-arrow',
+    viewBox: '0 0 10 10',
+    refX: 9,
+    refY: 5,
+    markerWidth: 6,
+    markerHeight: 6,
+    orient: 'auto-start-reverse',
+  });
+  marker.appendChild(svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: 'currentColor' }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  laneOrder.forEach((lane, laneIndex) => {
+    const x = left + laneIndex * laneW;
+    const label = svgEl('text', {
+      x,
+      y: 30,
+      fill: 'currentColor',
+      'font-family': 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      'font-size': 12,
+      'font-weight': 800,
+    });
+    label.textContent = lane.toUpperCase();
+    svg.appendChild(label);
+  });
+
+  const selectedEdges = new Set([
+    ...incoming(state.selectedId || '').map((edge) => `${edge.from}->${edge.to}`),
+    ...outgoing(state.selectedId || '').map((edge) => `${edge.from}->${edge.to}`),
+  ]);
+  state.edges
+    .filter((edge) => positions.has(edge.from) && positions.has(edge.to))
+    .forEach((edge) => {
+      const from = positions.get(edge.from);
+      const to = positions.get(edge.to);
+      const startX = from.x + nodeW;
+      const startY = from.y + nodeH / 2;
+      const endX = to.x;
+      const endY = to.y + nodeH / 2;
+      const mid = Math.max(40, (endX - startX) / 2);
+      const path = svgEl('path', {
+        d: `M ${startX} ${startY} C ${startX + mid} ${startY}, ${endX - mid} ${endY}, ${endX} ${endY}`,
+        class: `lineage-edge ${selectedEdges.has(`${edge.from}->${edge.to}`) ? 'related' : ''}`.trim(),
+        'marker-end': 'url(#lineage-arrow)',
+      });
+      svg.appendChild(path);
+    });
+
+  nodes.forEach((node) => {
+    const pos = positions.get(node.id);
+    if (!pos) return;
+    const group = svgEl('g', {
+      class: `lineage-node ${node.id === state.selectedId ? 'active' : ''} ${node.is_stale ? 'stale' : ''}`.trim(),
+      'data-node': node.id,
+      tabindex: 0,
+    });
+    group.appendChild(svgEl('rect', {
+      x: pos.x,
+      y: pos.y,
+      width: nodeW,
+      height: nodeH,
+      fill: colorFor(node),
+      opacity: 0.92,
+    }));
+    const title = svgEl('text', { x: pos.x + 12, y: pos.y + 24 });
+    title.textContent = shortLabel(node.label || node.id);
+    const meta = svgEl('text', { x: pos.x + 12, y: pos.y + 43, class: 'meta' });
+    meta.textContent = shortLabel(node.cartridge || node.type || 'dataset', 28);
+    group.append(title, meta);
+    svg.appendChild(group);
+  });
+
+  host.appendChild(svg);
+}
+
+function renderCyGraph(nodes) {
+  registerDagre();
+  const host = $('graph');
+  host.classList.add('cy-graph');
+  host.replaceChildren();
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const elements = [
+    ...nodes.map((node) => ({
+      classes: node.is_stale ? 'stale' : '',
+      data: {
+        id: node.id,
+        label: node.label || node.id,
+        type: node.type || 'dataset',
+        color: colorFor(node),
+      },
+    })),
+    ...state.edges
+      .filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to))
+      .map((edge, index) => ({
+        data: {
+          id: `${edge.from}->${edge.to}-${index}`,
+          source: edge.from,
+          target: edge.to,
+        },
+      })),
+  ];
+  cy = window.cytoscape({
+    container: host,
+    elements,
+    layout: {
+      name: window.cytoscapeDagre ? 'dagre' : 'breadthfirst',
+      rankDir: 'LR',
+      nodeSep: 34,
+      edgeSep: 10,
+      rankSep: 92,
+      fit: true,
+      padding: 34,
+    },
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': 'data(color)',
+          'border-width': 1,
+          'border-color': '#d0d7de',
+          color: '#f0f6fc',
+          label: 'data(label)',
+          'font-size': 11,
+          'font-family': 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'text-wrap': 'wrap',
+          'text-max-width': 130,
+          width: 150,
+          height: 46,
+          shape: 'round-rectangle',
+        },
+      },
+      {
+        selector: 'node.stale',
+        style: {
+          'border-width': 3,
+          'border-color': '#ff8e3c',
+        },
+      },
+      {
+        selector: 'edge',
+        style: {
+          width: 2,
+          'line-color': '#4b5563',
+          'target-arrow-color': '#4b5563',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+        },
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          'border-width': 4,
+          'border-color': '#58a6ff',
+        },
+      },
+      {
+        selector: '.related',
+        style: {
+          'line-color': '#58a6ff',
+          'target-arrow-color': '#58a6ff',
+          width: 3,
+        },
+      },
+    ],
+  });
+  cy.on('tap', 'node', (event) => {
+    state.selectedId = event.target.id();
+    const node = state.nodes.find((item) => item.id === state.selectedId);
+    renderDetails(node || null);
+    highlightRelated();
+  });
+  highlightRelated();
+}
+
+function highlightRelated() {
+  if (!cy) return;
+  cy.elements().removeClass('related');
+  if (!state.selectedId) return;
+  const node = cy.getElementById(state.selectedId);
+  if (!node || node.empty()) return;
+  node.select();
+  node.connectedEdges().addClass('related');
 }
 
 function renderMetrics(nodes = state.nodes) {
@@ -185,6 +454,9 @@ async function reload() {
 }
 
 $('refresh-btn').addEventListener('click', reload);
+$('fit-btn').addEventListener('click', () => {
+  if (cy) cy.fit(undefined, 32);
+});
 $('cartridge-filter').addEventListener('change', reload);
 $('layer-filter').addEventListener('change', renderGraph);
 $('graph').addEventListener('click', (event) => {

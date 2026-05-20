@@ -18,6 +18,6 @@ pgvector==0.3.2
 # v1.43.2 (DevOps R1 follow-up): pypdf 4.3.1 had 13+ CVEs (parser DoS,
 # loop bombs, unbounded recursion); 6.10.2 closes the full chain.
 # Public API used by mcp-infra (PdfReader, page extraction) is
-# unchanged across the 4 → 6 major bump per pypdf's stability policy.
+# unchanged across the 4 -> 6 major bump per pypdf's stability policy.
 pypdf==6.10.2
-google-genai==1.2.0
+boto3>=1.34.0
