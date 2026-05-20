@@ -25,6 +25,13 @@ const STEP_READY: Record<number, RegExp> = {
   7: /RAG|Knowledge Base|BÚSQUEDA SEMÁNTICA/i,
 };
 
+async function openStudio(page: Page) {
+  await page.goto(`${LEGACY}/studio`, {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+}
+
 async function waitStudioReady(page: Page) {
   await page.waitForFunction(
     () => {
@@ -82,7 +89,7 @@ test.describe("Studio — 7 tabs render", () => {
     test(`tab '${tab.source}' is visible after hydration`, async ({
       authedPage: page,
     }) => {
-      await page.goto(`${LEGACY}/studio`);
+      await openStudio(page);
       await expect(page.getByText(tab).first()).toBeVisible({
         timeout: 15_000,
       });
@@ -90,7 +97,7 @@ test.describe("Studio — 7 tabs render", () => {
 
     test(`tab '${tab.source}' renders SOMETHING when clicked`,
       async ({ authedPage: page }) => {
-        await page.goto(`${LEGACY}/studio`);
+        await openStudio(page);
         const trigger = page.getByText(tab).first();
         if (!(await trigger.isVisible({ timeout: 10_000 }).catch(() => false))) {
           test.skip(true, `tab ${tab.source} not present`);
@@ -108,7 +115,7 @@ test.describe("Studio — 7 tabs render", () => {
 
 test.describe("Studio — Resumen tab", () => {
   test("renders cartridge selector dropdown", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     // Allow a few seconds for the JS to wire the cartridge picker.
     await page.waitForTimeout(2_000);
     const picker = page.locator(
@@ -122,7 +129,7 @@ test.describe("Studio — Resumen tab", () => {
   test("switching cartridge refreshes the summary", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await page.waitForTimeout(2_000);
     const picker = page.locator('select[name*="cartridge"], select#cartridge').first();
     if (!(await picker.isVisible({ timeout: 5_000 }).catch(() => false))) {
@@ -146,7 +153,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   test("DAG list shows ≥ 1 DAG or an empty state", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const surface = page.locator("#step-content #dag-list, #step-content .empty-state").first();
     await expect(surface).toBeVisible({ timeout: 15_000 });
@@ -155,7 +162,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   test("'Copiar' button (if present) is clickable", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const copy = page.locator("#dag-editor-body").getByRole("button", { name: /copiar/i }).first();
     if (!(await copy.isVisible({ timeout: 5_000 }).catch(() => false))) {
@@ -174,7 +181,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   test("'Renombrar' button opens an input field", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const renombrar = page.locator("#dag-editor-body").getByRole("button", { name: /renombrar/i }).first();
     if (!(await renombrar.isVisible({ timeout: 5_000 }).catch(() => false))) {
@@ -190,7 +197,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   test("'Eliminar' button opens a confirmation", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const eliminar = page.getByRole("button", { name: /eliminar|borrar/i }).first();
     if (!(await eliminar.isVisible({ timeout: 5_000 }).catch(() => false))) {
@@ -206,7 +213,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   test("DAG editor area (code mirror / textarea) exists", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const editor = page.locator(
       "textarea.code-editor, .CodeMirror, .monaco-editor, textarea[name='code']",
@@ -217,7 +224,7 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
   });
 
   test("Plantillas sidebar lists templates", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const sidebar = page.locator(
       ".templates-list, .plantillas, [data-testid='templates']",
@@ -232,7 +239,7 @@ test.describe("Studio — Entidades tab", () => {
   test("'+ Entidad' button opens new-entity form", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 3);
     const addBtn = page.getByRole("button", { name: /\+ entidad|nueva entidad/i }).first();
     await expect(addBtn).toBeVisible({ timeout: 10_000 });
@@ -244,7 +251,7 @@ test.describe("Studio — Entidades tab", () => {
   test("entity 'Extraer' button issues a POST", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 3);
     const extraer = page.getByRole("button", { name: /^extraer$/i }).first();
     if (!(await extraer.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -262,7 +269,7 @@ test.describe("Studio — Entidades tab", () => {
   test("mode dropdown has full + incremental options", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 3);
     const select = page.locator(
       'select[name*="mode"], select#mode',
@@ -280,7 +287,7 @@ test.describe("Studio — Refinar subtabs", () => {
   for (const layer of [/Bronze/i, /Silver/i, /Gold/i]) {
     test(`Refinar > ${layer.source} subtab clicks render content`,
       async ({ authedPage: page }) => {
-        await page.goto(`${LEGACY}/studio`);
+        await openStudio(page);
         await goStudioStep(page, 4);
         const sub = page.getByText(layer).first();
         if (!(await sub.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -296,7 +303,7 @@ test.describe("Studio — Refinar subtabs", () => {
   }
 
   test("Silver query editor is editable", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 4);
     const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
     if (!(await silver.isVisible({ timeout: 5_000 }).catch(() => false))) {
@@ -312,7 +319,7 @@ test.describe("Studio — Refinar subtabs", () => {
   test("Silver 'Ejecutar' button fires a query", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 4);
     const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
     if (!(await silver.isVisible({ timeout: 5_000 }).catch(() => false))) {
@@ -335,7 +342,7 @@ test.describe("Studio — Refinar subtabs", () => {
 
 test.describe("Studio — Analytics tab", () => {
   test("'Ver SQL' button surfaces the SQL", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 5);
     const verSql = page.getByRole("button", { name: /ver sql|view sql/i }).first();
     if (!(await verSql.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -350,7 +357,7 @@ test.describe("Studio — Analytics tab", () => {
     authedPage: page,
     context,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 5);
     const abrir = page.getByRole("button", { name: /abrir superset/i }).first();
     if (!(await abrir.isVisible({ timeout: 10_000 }).catch(() => false))) {
@@ -374,14 +381,14 @@ test.describe("Studio — Analytics tab", () => {
 
 test.describe("Studio — IA Semántica + RAG tabs", () => {
   test("IA Semántica metrics list renders", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 6);
     const list = page.locator("table, ul, .metrics-list, .empty-state").first();
     await expect(list).toBeVisible({ timeout: 10_000 });
   });
 
   test("RAG tab config panel renders", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 7);
     const panel = page.locator(
       [
@@ -406,7 +413,7 @@ test.describe.skip("Studio — Lateral assistant", () => {
   test("assistant panel exists (right sidebar)", async ({
     authedPage: page,
   }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const aside = page.locator(
       "aside:visible, .assistant-panel:visible, .copilot-panel:visible, [data-testid='assistant']:visible",
@@ -417,7 +424,7 @@ test.describe.skip("Studio — Lateral assistant", () => {
   });
 
   test("assistant input accepts text", async ({ authedPage: page }) => {
-    await page.goto(`${LEGACY}/studio`);
+    await openStudio(page);
     await goStudioStep(page, 2);
     const input = page.locator(
       'aside:visible textarea, aside:visible input[type="text"], .assistant-panel:visible textarea',
