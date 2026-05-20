@@ -43,13 +43,23 @@ from airflow.models import Variable
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
 
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key(env_name: str) -> str:
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+
+
 def _mcp_headers() -> dict[str, str]:
-    key = (
-        os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
-        or os.environ.get("INTERNAL_API_KEY")
-        or ""
-    )
-    return {"X-Internal-Service": "airflow", "X-API-Key": key}
+    return {"X-Internal-Service": "airflow", "X-API-Key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")}
 
 
 # ── MinIO / S3 helpers ───────────────────────────────────────────────────────

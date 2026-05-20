@@ -582,7 +582,7 @@ async def chat(
             )
             return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
         risk = classify_tool(bare_name)["risk_level"]
-        result = await mcp_registry.invoke(srv, tool, args)
+        result = await mcp_registry.invoke(srv, tool, args, user=actor_user)
         status = "error" if isinstance(result, dict) and result.get("error") else "success"
         await audit_service.record_event(
             user_id=(actor_user or {}).get("id"),

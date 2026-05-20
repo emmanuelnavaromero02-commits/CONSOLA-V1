@@ -26,17 +26,24 @@ MCP_INFRA_URL  = "http://mcp-infra:8010"
 REFINEMENT_URL = "http://refinement:8500"
 import os
 
-# Sprint v1.12: prefer the per-pair INTERNAL_API_KEY_AIRFLOW_TO_* keys,
-# falling back to the shared legacy INTERNAL_API_KEY during the migration
-# window. The trigger_silver task below picks the refinement key instead.
-INTERNAL_API_KEY_MCP_INFRA = (
-    os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
-    or os.environ.get("INTERNAL_API_KEY", "")
-)
-INTERNAL_API_KEY_REFINEMENT = (
-    os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT")
-    or os.environ.get("INTERNAL_API_KEY", "")
-)
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key(env_name: str) -> str:
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+
+
+INTERNAL_API_KEY_MCP_INFRA = _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
+INTERNAL_API_KEY_REFINEMENT = _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT")
 
 
 def _get_connection(conn_id: str, cartridge_id: str = "{cartridge}") -> tuple[str, str]:
@@ -169,10 +176,23 @@ _TRIGGER_SILVER_TASK = '''\
             log.info("  trigger_silver omitido (sin filas nuevas)")
             return {{"refreshed": 0}}
         source = f"raw/{{CARTRIDGE_ID}}/{{result.get(\'entity\', ENTITY)}}"
+        security_context = {{
+            "trusted": True,
+            "source": "airflow",
+            "role": "admin",
+            "permissions": ["datasets.read", "datasets.write", "pipelines.run"],
+            "allowed_buckets": ["lakehouse"],
+            "allowed_prefixes": [
+                f"raw/{{CARTRIDGE_ID}}/",
+                f"silver/{{CARTRIDGE_ID}}/",
+                f"gold/{{CARTRIDGE_ID}}/",
+            ],
+            "_trusted_admin": True,
+        }}
         resp   = requests.post(f"{{REFINEMENT_URL}}/refresh-by-source",
                                headers={{"x-api-key": INTERNAL_API_KEY_REFINEMENT,
                                          "x-internal-service": "airflow"}},
-                               json={{"source": source}}, timeout=300)
+                               json={{"source": source, "security_context": security_context}}, timeout=300)
         resp.raise_for_status()
         data = resp.json()
         log.info("  silver refresh: %d datasets actualizados", data.get("refreshed", 0))

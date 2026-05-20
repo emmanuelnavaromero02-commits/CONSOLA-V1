@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 import time
-import httpx
 
 from app.services import mcp_registry, llm_client
 
@@ -71,7 +70,7 @@ Responde siempre en el idioma del usuario."""
 # ── Data Catalog cache ────────────────────────────────────────────────────────
 
 _CATALOG_TTL   = int(os.environ.get("CATALOG_TTL_SECONDS", "3600"))  # 1 hour default
-_catalog_text  : str   = ""
+_catalog_text_by_scope: dict[str, str] = {}
 _catalog_ts    : float = 0.0
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
@@ -122,33 +121,39 @@ def _format_catalog(data: dict) -> str:
     return "\n".join(lines)
 
 
-async def _get_catalog_context() -> str:
-    """Return cached catalog context, refreshing if stale."""
-    global _catalog_text, _catalog_ts
+def _scope_cache_key(user: dict | None) -> str:
+    if not user:
+        return "anonymous"
+    return "|".join([
+        str(user.get("id") or ""),
+        str(user.get("active_workspace_id") or user.get("workspace_id") or ""),
+        ",".join(user.get("allowed_cartridges") or user.get("cartridges") or []),
+    ])
 
-    if _catalog_text and (time.time() - _catalog_ts) < _CATALOG_TTL:
-        return _catalog_text
+
+async def _get_catalog_context(user: dict | None = None) -> str:
+    """Return cached catalog context, refreshing if stale."""
+    global _catalog_ts
+
+    key = _scope_cache_key(user)
+    if key in _catalog_text_by_scope and (time.time() - _catalog_ts) < _CATALOG_TTL:
+        return _catalog_text_by_scope[key]
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(
-                f"{REFINEMENT_URL}/mcp/invoke",
-                json={"tool": "get_data_catalog", "args": {}},
-            )
-            r.raise_for_status()
-            _catalog_text = _format_catalog(r.json())
-            _catalog_ts   = time.time()
+        payload = await mcp_registry.invoke("refinement", "get_data_catalog", {}, user=user)
+        _catalog_text_by_scope[key] = _format_catalog(payload if isinstance(payload, dict) else {})
+        _catalog_ts   = time.time()
     except Exception:
         # On failure keep stale cache (or empty if first load)
         pass
 
-    return _catalog_text
+    return _catalog_text_by_scope.get(key, "")
 
 
 # ── Main chat handler ─────────────────────────────────────────────────────────
 
-async def chat(message: str, history: list[dict]) -> dict:
-    catalog_ctx = await _get_catalog_context()
+async def chat(message: str, history: list[dict], user: dict | None = None) -> dict:
+    catalog_ctx = await _get_catalog_context(user)
     system = SYSTEM_BASE + ("\n\n" + catalog_ctx if catalog_ctx else "")
 
     servers = await mcp_registry.list_servers()
@@ -174,7 +179,7 @@ async def chat(message: str, history: list[dict]) -> dict:
         system=system,
         messages=messages,
         tools=tools,
-        invoke_tool=lambda srv, tool, a: mcp_registry.invoke(srv, tool, a),
+        invoke_tool=lambda srv, tool, a: mcp_registry.invoke(srv, tool, a, user=user),
         tool_server_map=tool_server_map,
     )
 

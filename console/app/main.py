@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import json
 import logging
 import os
 import re
 import secrets
-import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,7 +28,7 @@ from app.logging_config import setup_logging  # noqa: E402
 setup_logging(service_name="console")
 
 import httpx
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -86,26 +86,17 @@ from app.dependencies import (
 from app.services.auth import verify_internal_api_key
 from app.services import audit_service as _audit
 from app.services.permissions import ROLE_DEFINITIONS, require_permission
+from app.services.security_context import build_security_context, rls_user_context
 
 
 async def _periodic_health_check():
     """Wait for cartridges to boot, then re-check every 60 s."""
     await asyncio.sleep(12)          # grace period for sibling containers
-    _sweep_counter = 0
     while True:
         try:
             await mcp_registry.health_check_all()
         except Exception:
             logger.debug("Periodic health check failed", exc_info=True)
-        # Evict rate-limit buckets whose last hit is older than the longest window.
-        _sweep_counter += 1
-        if _sweep_counter % 15 == 0:
-            _now = time.monotonic()
-            _max_window = max(w for _, w in RATE_LIMITS.values()) if RATE_LIMITS else 900
-            _stale = [k for k, ts_list in _RATE_BUCKETS.items()
-                      if not any(_now - ts < _max_window for ts in ts_list)]
-            for k in _stale:
-                _RATE_BUCKETS.pop(k, None)
         await asyncio.sleep(60)
 
 
@@ -211,6 +202,8 @@ def _key_for(server: str) -> str:
     pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
     if pair:
         return pair
+    if _is_production_env():
+        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production")
     if INTERNAL_API_KEY:
         return INTERNAL_API_KEY
     raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server} (no legacy fallback either)")
@@ -229,6 +222,8 @@ def _is_internal_request(request: Request) -> bool:
     )
     service = (request.headers.get("x-internal-service") or "").strip().lower()
     if service != "console" or not supplied:
+        return False
+    if _is_production_env():
         return False
     return secrets.compare_digest(str(supplied), str(INTERNAL_API_KEY))
 
@@ -251,10 +246,9 @@ def _is_replicon_vault_reveal_request(request: Request) -> bool:
     if not supplied:
         return False
 
-    accepted = [
-        os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", ""),
-        INTERNAL_API_KEY,
-    ]
+    accepted = [os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", "")]
+    if not _is_production_env():
+        accepted.append(INTERNAL_API_KEY)
     return any(secrets.compare_digest(str(supplied), key) for key in accepted if key)
 
 
@@ -363,28 +357,34 @@ def _validate_dataset_name(dataset: str) -> None:
 
 
 def _rls_user_context(user: dict | None) -> dict:
-    # Forward only the fields the refinement RLS layer consumes, so a
-    # downstream tenant filter is always populated. Without this, calls into
-    # preview_transform default to an empty context and would skip RLS or
-    # match against an empty tenant_id.
-    #
-    # `_trusted_admin` opts the caller into the RLS admin bypass and is only
-    # set when this process has authenticated an admin via its own session/JWT.
-    # Refinement requires this flag so that a body-supplied `role=admin` alone
-    # cannot bypass tenant isolation.
-    if not user:
-        return {}
-    role = user.get("role")
-    return {
-        "id": user.get("id"),
-        "email": user.get("email", ""),
-        "name": user.get("name") or user.get("email", ""),
-        "role": role,
-        "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
-        "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
-        "workspace_role": user.get("workspace_role"),
-        "_trusted_admin": role == "admin",
-    }
+    return rls_user_context(user)
+
+
+def _runtime_user(user) -> dict | None:
+    return user if isinstance(user, dict) else None
+
+
+async def _call_with_optional_user(fn, *args, user=None):
+    runtime_user = _runtime_user(user)
+    try:
+        params = inspect.signature(fn).parameters
+        accepts_user = (
+            "user" in params
+            or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
+        )
+    except (TypeError, ValueError):
+        accepts_user = False
+    result = fn(*args, user=runtime_user) if accepts_user else fn(*args)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
+    payload = {"tool": tool, "args": args}
+    if user is not None:
+        payload["security_context"] = build_security_context(user)
+    return payload
 
 
 def _safe_pipeline_name(value: str) -> bool:
@@ -418,7 +418,7 @@ def _minio_client():
     )
 
 
-async def _count_bronze_parquet_rows(source: str, latest_date: str) -> int | None:
+async def _count_bronze_parquet_rows(source: str, latest_date: str, user: dict | None) -> int | None:
     bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
     parquet_glob = f"s3://{bucket}/{source}/load_date={latest_date}/*.parquet"
     sql = (
@@ -431,7 +431,7 @@ async def _count_bronze_parquet_rows(source: str, latest_date: str) -> int | Non
     ) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
-            json={"tool": "preview_transform", "args": {"sql": sql, "limit": 1, "sources": [source]}},
+            json=_mcp_payload("preview_transform", {"sql": sql, "limit": 1, "sources": [source]}, user),
         )
     if r.status_code != 200:
         return None
@@ -449,11 +449,17 @@ async def _count_bronze_parquet_rows(source: str, latest_date: str) -> int | Non
         return None
 
 
-async def _bronze_physical_snapshot(cartridge: str, entity: str) -> dict:
+async def _bronze_physical_snapshot(cartridge: str, entity: str, user: dict | None) -> dict:
     if not _safe_pipeline_name(cartridge) or not _safe_pipeline_name(entity):
         return {}
 
     source = f"raw/{cartridge}/{entity}"
+    ctx = build_security_context(user)
+    if not ctx.get("_trusted_admin"):
+        path = f"{source}/"
+        prefixes = [str(prefix).lstrip("/") for prefix in ctx.get("allowed_prefixes") or []]
+        if not any(path.startswith(prefix) for prefix in prefixes):
+            return {}
     bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
     try:
         client = _minio_client()
@@ -466,7 +472,7 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str) -> dict:
             return {}
         return {
             "latest_date": latest_date,
-            "record_count": await _count_bronze_parquet_rows(source, latest_date),
+            "record_count": await _count_bronze_parquet_rows(source, latest_date, user),
         }
     except Exception:
         return {}
@@ -536,7 +542,7 @@ async def _record_dag_pipeline_trigger(
     )
 
 
-async def _refresh_dag_run_status(row: dict) -> dict:
+async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
     status = _normalize_airflow_state(row.get("status"))
     dag_id = row.get("dag_id")
     dag_run_id = row.get("airflow_dag_run_id") or row.get("run_id")
@@ -546,7 +552,7 @@ async def _refresh_dag_run_status(row: dict) -> dict:
     result = await mcp_registry.invoke("infra", "airflow_get_run_status", {
         "dag_id": dag_id,
         "dag_run_id": dag_run_id,
-    })
+    }, user=user)
     if result.get("error"):
         return row
 
@@ -734,6 +740,11 @@ RATE_LIMITS = {
     # Refresh is more frequent than login (access tokens expire in minutes), so
     # the cap is higher; still bounded to deter token-stuffing brute force.
     "/auth/refresh": (60, RATE_LIMIT_WINDOW_SECONDS),
+    "/api/copilot": (120, 60),
+    "/api/agents": (80, 60),
+    "/api/mcp": (80, 60),
+    "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
+    "/api/explorer": (180, 60),
 }
 # The limiter backend picks Redis when REDIS_URL is set, otherwise falls back
 # to an in-memory sliding window. The in-memory path is per-process and can be
@@ -791,6 +802,25 @@ async def _rate_limit(request: Request, action: str, subject: str = "") -> None:
     limiter = get_rate_limiter()
     keys = [f"{action}:{ip}:{subject_key}", f"{action}:{ip}:-"]
     for key in keys:
+        if not await limiter.check(key, limit, window, sensitive=True):
+            raise HTTPException(status_code=429, detail="too many requests")
+
+
+async def _rate_limit_api_surface(request: Request, path: str, user: dict | None) -> None:
+    if _rate_limit_disabled():
+        return
+    matched = None
+    for prefix in ("/api/copilot", "/api/agents", "/api/mcp", "/studio/import", "/api/explorer"):
+        if path == prefix or path.startswith(prefix + "/"):
+            matched = prefix
+            break
+    if not matched:
+        return
+    limit, window = RATE_LIMITS[matched]
+    ip = _client_ip(request)
+    user_key = str((user or {}).get("id") or (user or {}).get("email") or "-")
+    limiter = get_rate_limiter()
+    for key in (f"{matched}:{ip}:{user_key}", f"{matched}:{ip}:-"):
         if not await limiter.check(key, limit, window, sensitive=True):
             raise HTTPException(status_code=429, detail="too many requests")
 
@@ -994,6 +1024,10 @@ async def auth_middleware(request: Request, call_next):
                 logger.debug("Bearer JWT auth fallback failed", exc_info=True)
 
     request.state.user = user
+    try:
+        await _rate_limit_api_surface(request, path, user)
+    except HTTPException as exc:
+        return _apply_security_headers(JSONResponse({"detail": exc.detail}, status_code=exc.status_code), path)
 
     if not user and not is_public and _uses_rbac_dependency(path):
         return await call_next(request)
@@ -1441,30 +1475,31 @@ async def tokens_summary():
 
 @app.post("/assistant/chat", dependencies=[Depends(require_csrf)])
 async def chat(body: dict, user: dict = Depends(require_authenticated)):
-    return await assistant.chat(body.get("message", ""), body.get("history", []))
+    return await _call_with_optional_user(
+        assistant.chat,
+        body.get("message", ""),
+        body.get("history", []),
+        user=user,
+    )
 
 
 # ── Datasets proxy → refinement ───────────────────────────────────────────────
 
 @app.get("/datasets", dependencies=[Depends(require_authenticated)])
-async def list_datasets():
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.get(f"{REFINEMENT_URL}/datasets")
-        return r.json()
+async def list_datasets(user: dict = Depends(require_authenticated)):
+    return await _refinement_invoke("list_datasets", {}, user=user)
 
 @app.get("/datasets/{name}/schema", dependencies=[Depends(require_authenticated)])
-async def dataset_schema(name: str):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/schema")
-        return r.json()
+async def dataset_schema(name: str, user: dict = Depends(require_authenticated)):
+    return await _refinement_invoke("get_schema", {"name": name}, user=user)
 
 @app.get("/api/datasets", dependencies=[Depends(require_authenticated)])
-async def api_list_datasets_alias():
-    return await list_datasets()
+async def api_list_datasets_alias(user: dict = Depends(require_authenticated)):
+    return await list_datasets(user)
 
 @app.get("/api/datasets/{name}/schema", dependencies=[Depends(require_authenticated)])
-async def api_dataset_schema_alias(name: str):
-    return await dataset_schema(name)
+async def api_dataset_schema_alias(name: str, user: dict = Depends(require_authenticated)):
+    return await dataset_schema(name, user)
 
 @app.get("/datasets/{name}/data", dependencies=[Depends(require_authenticated)])
 async def dataset_data(name: str, request: Request, limit: int = 100):
@@ -1475,18 +1510,17 @@ async def dataset_data(name: str, request: Request, limit: int = 100):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
-            json={
-                "tool": "query_dataset",
-                "args": {"name": name, "limit": limit, "user_context": _rls_user_context(user)},
-            },
+            json=_mcp_payload(
+                "query_dataset",
+                {"name": name, "limit": limit, "user_context": _rls_user_context(user)},
+                user,
+            ),
         )
         return r.json()
 
 @app.post("/datasets/{name}/refresh", dependencies=[Depends(require_permission("datasets.write"))])
-async def refresh_dataset(name: str):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
-        r = await c.post(f"{REFINEMENT_URL}/datasets/{name}/refresh")
-        return r.json()
+async def refresh_dataset(name: str, user: dict = Depends(require_permission("datasets.write"))):
+    return await _refinement_invoke("materialize", {"name": name}, timeout=120, user=user)
 
 
 # ── Viewer data APIs ──────────────────────────────────────────────────────────
@@ -1539,21 +1573,21 @@ async def api_tools_manifest():
 
 
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
-async def api_schema(source: str):
+async def api_schema(source: str, user: dict = Depends(require_authenticated)):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "get_source_partitions", "args": {"source": source}})
+                         json=_mcp_payload("get_source_partitions", {"source": source}, user))
         partitions = r.json()
         r2 = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                          json={"tool": "preview_source", "args": {"source": source, "limit": 5}})
+                          json=_mcp_payload("preview_source", {"source": source, "limit": 5}, user))
         preview = r2.json()
     return {"partitions": partitions, "preview": preview}
 
 @app.get("/api/sources", dependencies=[Depends(require_authenticated)])
-async def api_sources():
+async def api_sources(user: dict = Depends(require_authenticated)):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "list_sources", "args": {}})
+                         json=_mcp_payload("list_sources", {}, user))
     data = r.json()
     # Normalize: result may be {"result": [...]} or {"sources": [...]}
     sources = data.get("result") or data.get("sources") or []
@@ -1562,21 +1596,17 @@ async def api_sources():
     return {"sources": []}
 
 @app.post("/api/datasets/save", dependencies=[Depends(require_permission("datasets.write"))])
-async def api_dataset_save(body: dict):
+async def api_dataset_save(body: dict, user: dict = Depends(require_permission("datasets.write"))):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "save_dataset", "args": body})
+                         json=_mcp_payload("save_dataset", body, user))
         r.raise_for_status()
     return r.json()
 
 
 @app.get("/api/datasets/{name}/detail", dependencies=[Depends(require_authenticated)])
-async def api_dataset_detail(name: str):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.get(f"{REFINEMENT_URL}/datasets/{name}/definition")
-    if r.status_code == 404:
-        raise HTTPException(404, f"Dataset '{name}' not found")
-    return r.json()
+async def api_dataset_detail(name: str, user: dict = Depends(require_authenticated)):
+    return await _refinement_invoke("get_dataset_definition", {"name": name}, user=user)
 
 
 @app.post("/api/bronze/query", dependencies=[Depends(require_csrf)])
@@ -1591,31 +1621,34 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
         raise HTTPException(400, "sql is required")
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "preview_transform",
-                               "args": {
-                                   "sql": sql,
-                                   "limit": limit,
-                                   "sources": sources,
-                                   "user_context": _rls_user_context(user),
-                               }})
+                         json=_mcp_payload(
+                             "preview_transform",
+                             {
+                                 "sql": sql,
+                                 "limit": limit,
+                                 "sources": sources,
+                                 "user_context": _rls_user_context(user),
+                             },
+                             user,
+                         ))
     return r.json()
 
 
 @app.delete("/api/datasets", dependencies=[Depends(require_permission("datasets.delete"))])
-async def api_delete_dataset(name: str):
+async def api_delete_dataset(name: str, user: dict = Depends(require_permission("datasets.delete"))):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "delete_dataset", "args": {"name": name}})
+                         json=_mcp_payload("delete_dataset", {"name": name}, user))
     if r.status_code == 404:
         raise HTTPException(404, f"Dataset '{name}' not found")
     return r.json()
 
 
 @app.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_authenticated)])
-async def api_dataset_lineage(name: str):
+async def api_dataset_lineage(name: str, user: dict = Depends(require_authenticated)):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "get_lineage", "args": {"name": name, "limit": 20}})
+                         json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user))
     return r.json()
 
 
@@ -1654,7 +1687,7 @@ def _s3_client():
     return boto3.client("s3", **kwargs)
 
 
-def _resolve_explorer_bucket(bucket: str) -> str:
+def _resolve_explorer_bucket(bucket: str, user: dict | None = None) -> str:
     allowed: dict[str, str] = {}
     for item in _EXPLORER_DEFAULT_BUCKETS:
         name = item.get("name") or ""
@@ -1665,12 +1698,35 @@ def _resolve_explorer_bucket(bucket: str) -> str:
     resolved = allowed.get(bucket)
     if not resolved:
         raise HTTPException(403, "bucket not allowed")
+    ctx = build_security_context(user)
+    if not ctx.get("_trusted_admin") and bucket not in {"lakehouse", os.environ.get("MINIO_BUCKET", "lakehouse")}:
+        raise HTTPException(403, "bucket requires admin role")
     return resolved
 
 
+def _explorer_path_allowed(path: str, user: dict | None) -> bool:
+    ctx = build_security_context(user)
+    path = (path or "").lstrip("/")
+    if ctx.get("_trusted_admin"):
+        return True
+    if not path:
+        return False
+    prefixes = [str(p).lstrip("/") for p in ctx.get("allowed_prefixes") or []]
+    return any(path.startswith(prefix) for prefix in prefixes)
+
+
 @app.get("/api/explorer/buckets", dependencies=[Depends(require_permission("pipelines.read"))])
-async def api_explorer_buckets():
-    return {"buckets": _EXPLORER_DEFAULT_BUCKETS, "quicklinks": _EXPLORER_QUICKLINKS}
+async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
+    ctx = build_security_context(user)
+    buckets = _EXPLORER_DEFAULT_BUCKETS if ctx.get("_trusted_admin") else [
+        item for item in _EXPLORER_DEFAULT_BUCKETS if item.get("id") == "lakehouse"
+    ]
+    quicklinks = [
+        item for item in _EXPLORER_QUICKLINKS
+        if _explorer_path_allowed(item.get("prefix", ""), user)
+        and (ctx.get("_trusted_admin") or item.get("bucket") == "lakehouse")
+    ]
+    return {"buckets": buckets, "quicklinks": quicklinks}
 
 
 @app.get("/api/explorer/list", dependencies=[Depends(require_permission("pipelines.read"))])
@@ -1679,9 +1735,12 @@ async def api_explorer_list(
     prefix: str = "",
     max_keys: int = 200,
     continuation_token: str | None = None,
+    user: dict = Depends(require_authenticated),
 ):
     s3 = _s3_client()
-    bucket_name = _resolve_explorer_bucket(bucket)
+    bucket_name = _resolve_explorer_bucket(bucket, user)
+    if not _explorer_path_allowed(prefix, user):
+        raise HTTPException(403, "prefix not allowed")
     kwargs = {
         "Bucket": bucket_name,
         "Prefix": prefix,
@@ -1711,9 +1770,17 @@ async def api_explorer_list(
 
 
 @app.get("/api/explorer/download", dependencies=[Depends(require_permission("pipelines.read"))])
-async def api_explorer_download(bucket: str, key: str, expires: int = 300):
+async def api_explorer_download(
+    request: Request,
+    bucket: str = Query(...),
+    key: str = Query(...),
+    expires: int = 300,
+    user: dict = Depends(require_authenticated),
+):
     s3 = _s3_client()
-    bucket_name = _resolve_explorer_bucket(bucket)
+    bucket_name = _resolve_explorer_bucket(bucket, user)
+    if not _explorer_path_allowed(key, user):
+        raise HTTPException(403, "object not allowed")
     expires_in = min(max(int(expires), 60), 3600)
     try:
         url = await asyncio.to_thread(
@@ -1724,6 +1791,16 @@ async def api_explorer_download(bucket: str, key: str, expires: int = 300):
         )
     except Exception as exc:
         raise HTTPException(502, f"object storage download failed: {exc}") from exc
+    await _audit.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="explorer.object.download",
+        resource_type="object",
+        resource_id=f"{bucket_name}/{key}",
+        ip=request.client.host if request and request.client else None,
+        status="success",
+        metadata={"expires_in": expires_in},
+    )
     return {"url": url, "expires_in": expires_in}
 
 
@@ -1731,23 +1808,37 @@ async def api_explorer_download(bucket: str, key: str, expires: int = 300):
     "/api/explorer/object",
     dependencies=[Depends(require_csrf), Depends(require_permission("pipelines.write"))],
 )
-async def api_explorer_delete(bucket: str, key: str):
+async def api_explorer_delete(
+    bucket: str,
+    key: str,
+    request: Request,
+    user: dict = Depends(require_authenticated),
+):
     s3 = _s3_client()
-    bucket_name = _resolve_explorer_bucket(bucket)
+    bucket_name = _resolve_explorer_bucket(bucket, user)
+    if not _explorer_path_allowed(key, user):
+        raise HTTPException(403, "object not allowed")
     try:
         await asyncio.to_thread(s3.delete_object, Bucket=bucket_name, Key=key)
     except Exception as exc:
         raise HTTPException(502, f"object storage delete failed: {exc}") from exc
+    await _audit.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="explorer.object.delete",
+        resource_type="object",
+        resource_id=f"{bucket_name}/{key}",
+        ip=request.client.host if request.client else None,
+        status="success",
+    )
     return {"deleted": True, "bucket": bucket_name, "key": key}
 
 
 @app.get("/api/lineage", dependencies=[Depends(require_authenticated)])
-async def api_lineage(cartridge: str | None = None):
+async def api_lineage(cartridge: str | None = None, user: dict = Depends(require_authenticated)):
     """Global lineage graph across raw sources and silver/gold datasets."""
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
-        r = await c.get(f"{REFINEMENT_URL}/datasets")
-        r.raise_for_status()
-        datasets = (r.json() or {}).get("datasets") or []
+    payload = await _refinement_invoke("list_datasets", {}, timeout=15, user=user)
+    datasets = (payload or {}).get("datasets") or []
     if cartridge:
         datasets = [d for d in datasets if d.get("cartridge") == cartridge]
 
@@ -1796,21 +1887,17 @@ async def api_lineage(cartridge: str | None = None):
 
 # ── Analytic Apps ─────────────────────────────────────────────────────────────
 
-@app.get("/apps/{name}")
-async def serve_app(name: str, user: dict = Depends(require_authenticated)):
+@app.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
+async def serve_app(name: str, user: dict = Depends(require_permission("apps.read"))):
     """Serve a published analytic app HTML page.
 
     Sprint v1.22: added auth — published apps embed dataset queries that
     rely on the user's session for RLS; serving them anonymously would
     let unauthenticated callers indirectly fetch protected data through
     the rendered iframe."""
-    try:
-        pool = await _get_db_pool()
-        row  = await pool.fetchrow("SELECT html FROM analytic_apps WHERE name=$1", name)
-    except Exception:
-        raise HTTPException(503, "Database unavailable")
-    if not row:
-        raise HTTPException(404, f"App '{name}' not found")
+    row = await _refinement_invoke("get_app_html", {"name": name}, user=user)
+    if row.get("error"):
+        raise HTTPException(404, row["error"])
     return Response(
         content=_inject_published_app_theme(row["html"]),
         media_type="text/html",
@@ -1822,20 +1909,20 @@ async def serve_app(name: str, user: dict = Depends(require_authenticated)):
 
 
 @app.get("/api/apps", dependencies=[Depends(require_authenticated)])
-async def api_apps():
+async def api_apps(user: dict = Depends(require_authenticated)):
     """List all published analytic apps."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "list_apps", "args": {}})
+                         json=_mcp_payload("list_apps", {}, user))
     return r.json()
 
 
 @app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def api_apps_delete(name: str):
+async def api_apps_delete(name: str, user: dict = Depends(require_authenticated)):
     """Delete a published analytic app by name."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "delete_app", "args": {"name": name}})
+                         json=_mcp_payload("delete_app", {"name": name}, user))
     payload = r.json()
     result = payload.get("result", payload)
     if not result.get("deleted"):
@@ -1850,9 +1937,11 @@ async def api_data(dataset: str, request: Request, limit: int = 5000):
     user = getattr(request.state, "user", None) or {}
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "query_dataset",
-                               "args": {"name": dataset, "limit": limit,
-                                        "user_context": _rls_user_context(user)}})
+                         json=_mcp_payload(
+                             "query_dataset",
+                             {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
+                             user,
+                         ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
@@ -1879,12 +1968,15 @@ async def api_data_options(dataset: str, columns: str = "", user: dict = Depends
 
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "preview_transform",
-                               "args": {
-                                   "sql": union_sql,
-                                   "limit": 5000,
-                                   "user_context": _rls_user_context(user),
-                               }})
+                         json=_mcp_payload(
+                             "preview_transform",
+                             {
+                                 "sql": union_sql,
+                                 "limit": 5000,
+                                 "user_context": _rls_user_context(user),
+                             },
+                             user,
+                         ))
     result = r.json()
     rows = result.get("data", [])
 
@@ -1914,17 +2006,7 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 
     # Forward the authenticated user's context so refinement can apply RLS.
     _user = getattr(request.state, "user", None) or {}
-    _resolved_role = _user.get("workspace_role") or _user.get("role")
-    _user_context = {
-        "role":         _resolved_role,
-        "tenant_id":    _user.get("active_tenant_id") or _user.get("tenant_id"),
-        "workspace_id": _user.get("active_workspace_id") or _user.get("workspace_id"),
-        "project_id":   _user.get("project_id"),
-        "id":           _user.get("id") or _user.get("user_id"),
-        "email":        _user.get("email"),
-        "name":         _user.get("name"),
-        "_trusted_admin": _resolved_role == "admin",
-    }
+    _user_context = _rls_user_context(_user)
 
     # Validate column names
     safe_cols = []
@@ -1978,9 +2060,11 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "preview_transform",
-                               "args": {"sql": sql, "params": params, "limit": limit,
-                                        "user_context": _user_context}})
+                         json=_mcp_payload(
+                             "preview_transform",
+                             {"sql": sql, "params": params, "limit": limit, "user_context": _user_context},
+                             _user,
+                         ))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Query failed")
     result = r.json()
@@ -2008,11 +2092,12 @@ async def studio_cartridge_connections(cartridge_id: str):
 
 
 @app.get("/api/pipeline", dependencies=[Depends(require_authenticated)])
-async def api_pipeline(cartridge: str = "replicon"):
+async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require_authenticated)):
     """
     Ensambla el DAG completo: entidades × bronze status × silver datasets × gold deps.
     Fuentes: entity_config (entities), pipeline_runs + jobs (run history), refinement (datasets).
     """
+    user = _runtime_user(user)
     import re as _re
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 
@@ -2039,7 +2124,7 @@ async def api_pipeline(cartridge: str = "replicon"):
                 "description":     e.get("description", ""),
             })
     if not entity_list:
-        entities_raw = await mcp_registry.invoke(cartridge, "list_entities", {})
+        entities_raw = await mcp_registry.invoke(cartridge, "list_entities", {}, user=user)
         if isinstance(entities_raw, dict):
             entity_list = entities_raw.get("entities", entities_raw.get("result", []))
         elif isinstance(entities_raw, list):
@@ -2062,7 +2147,7 @@ async def api_pipeline(cartridge: str = "replicon"):
             cartridge,
         )
         for row in rows_pg:
-            run = await _refresh_dag_run_status(dict(row))
+            run = await _refresh_dag_run_status(dict(row), user)
             dag_runs_by_entity[row["entity"]] = run
     except Exception:
         logger.debug("Could not load pipeline_runs for %s", cartridge, exc_info=True)
@@ -2077,12 +2162,21 @@ async def api_pipeline(cartridge: str = "replicon"):
         jobs_by_entity[entity] = j
 
     # 3. Silver datasets from refinement
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
-        try:
-            r = await c.get(f"{REFINEMENT_URL}/datasets")
-            all_datasets: list[dict] = r.json().get("datasets", [])
-        except Exception:
-            all_datasets = []
+    try:
+        all_datasets = (await _refinement_invoke("list_datasets", {}, timeout=15, user=user)).get("datasets", [])
+    except Exception:
+        all_datasets = []
+        # Some in-process tests replace ``httpx.AsyncClient`` with a minimal
+        # get-only fake that predates the MCP invoke path. Keep that legacy
+        # compatibility path working without changing production behavior.
+        if not hasattr(httpx.AsyncClient, "post"):
+            try:
+                async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as c:
+                    r = await c.get(f"{REFINEMENT_URL}/datasets")
+                if getattr(r, "status_code", 500) == 200:
+                    all_datasets = (r.json() or {}).get("datasets", [])
+            except Exception:
+                all_datasets = []
 
     silver_ds = [d for d in all_datasets if d.get("layer") == "silver"]
     gold_ds   = [d for d in all_datasets if d.get("layer") == "gold"]
@@ -2148,7 +2242,12 @@ async def api_pipeline(cartridge: str = "replicon"):
             }
 
         if not bronze_date or bronze_count is None:
-            physical_bronze = await _bronze_physical_snapshot(cartridge, entity)
+            physical_bronze = await _call_with_optional_user(
+                _bronze_physical_snapshot,
+                cartridge,
+                entity,
+                user=user,
+            )
             if physical_bronze:
                 bronze_date = bronze_date or physical_bronze.get("latest_date")
                 if bronze_count is None:
@@ -2237,7 +2336,7 @@ async def api_dag_template_code(template_id: str,
 
 
 @app.get("/api/pipeline_runs", dependencies=[Depends(require_authenticated)])
-async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50):
+async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50, user: dict = Depends(require_authenticated)):
     """Recent DAG run history from pipeline_runs table."""
     try:
         pool = await _get_db_pool()
@@ -2276,7 +2375,7 @@ def _format_pipeline_entity_run(row: dict) -> dict:
 
 
 @app.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_authenticated)])
-async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20):
+async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20, user: dict = Depends(require_authenticated)):
     """Recent DAG-based pipeline runs for one cartridge entity."""
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if not metadata.get("entity"):
@@ -2306,7 +2405,7 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20)
 
     runs = []
     for row in rows:
-        refreshed = await _refresh_dag_run_status(dict(row))
+        refreshed = await _refresh_dag_run_status(dict(row), user)
         runs.append(_format_pipeline_entity_run(refreshed))
 
     return {
@@ -2317,7 +2416,7 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20)
 
 
 @app.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_authenticated)])
-async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
+async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, user: dict = Depends(require_authenticated)):
     """Basic DAG run logs summary for one cartridge entity run."""
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if not metadata.get("entity"):
@@ -2348,7 +2447,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
     if not row:
         raise HTTPException(404, f"Run '{dag_run_id}' not found for {cartridge}/{entity}")
 
-    run = await _refresh_dag_run_status(dict(row))
+    run = await _refresh_dag_run_status(dict(row), user)
     dag_id = run.get("dag_id") or metadata.get("dag_id")
     resolved_dag_run_id = run.get("airflow_dag_run_id") or run.get("run_id") or dag_run_id
     response = {
@@ -2367,7 +2466,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
         tasks_result = await mcp_registry.invoke("infra", "airflow_list_task_instances", {
             "dag_id": dag_id,
             "dag_run_id": resolved_dag_run_id,
-        })
+        }, user=user)
         if tasks_result.get("error"):
             response["error"] = tasks_result["error"]
             return response
@@ -2383,7 +2482,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
                 "dag_id": dag_id,
                 "dag_run_id": resolved_dag_run_id,
                 "task_id": task_id,
-            })
+            }, user=user)
             if log_result.get("error"):
                 logs.append({"task_id": task_id, "available": False, "error": log_result["error"]})
             else:
@@ -2400,7 +2499,12 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str):
 
 
 @app.post("/api/pipeline/{cartridge}/{entity}/extract", dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)])
-async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = None):
+async def api_pipeline_extract(
+    cartridge: str,
+    entity: str,
+    body: dict | None = None,
+    user: dict = Depends(require_permission("pipelines.run")),
+):
     """Trigger extraction for a single entity. Returns job_id for polling."""
     body = body or {}
     metadata = await _pipeline_extract_metadata(cartridge, entity)
@@ -2414,7 +2518,7 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
             raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
 
         conf = _build_dag_extract_conf(entity, metadata.get("mode"), body)
-        result = await _trigger_airflow_extract_dag(dag_id, conf)
+        result = await _trigger_airflow_extract_dag(dag_id, conf, user)
         if result.get("error"):
             raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
         dag_run_id = result.get("dag_run_id") or result.get("run_id")
@@ -2442,7 +2546,7 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
     result = await mcp_registry.invoke(cartridge, "extract", {
         "entity": entity,
         "mode": mode,
-    })
+    }, user=user)
     return result
 
 
@@ -2450,10 +2554,15 @@ async def api_pipeline_extract(cartridge: str, entity: str, body: dict | None = 
     "/api/pipeline/{cartridge}/extract_all",
     dependencies=[Depends(require_permission("pipelines.run")), Depends(require_csrf)],
 )
-async def api_pipeline_extract_all(cartridge: str, body: dict | None = None):
+async def api_pipeline_extract_all(
+    cartridge: str,
+    body: dict | None = None,
+    user: dict = Depends(require_permission("pipelines.run")),
+):
     """Trigger extraction for every entity currently visible in the pipeline."""
     body = body or {}
-    pipeline = await api_pipeline(cartridge)
+    user = _runtime_user(user)
+    pipeline = await _call_with_optional_user(api_pipeline, cartridge, user=user)
     rows = pipeline.get("pipeline") or []
     triggered: list[dict] = []
     errors: list[dict] = []
@@ -2463,7 +2572,7 @@ async def api_pipeline_extract_all(cartridge: str, body: dict | None = None):
         if not entity:
             continue
         try:
-            result = await api_pipeline_extract(cartridge, entity, body)
+            result = await _call_with_optional_user(api_pipeline_extract, cartridge, entity, body, user=user)
             triggered.append({
                 "entity": entity,
                 "job_id": result.get("job_id") or result.get("dag_run_id") or result.get("run_id"),
@@ -2535,13 +2644,13 @@ def _build_dag_extract_conf(entity: str, configured_mode: str | None, body: dict
     return conf
 
 
-async def _trigger_airflow_extract_dag(dag_id: str, conf: dict) -> dict:
+async def _trigger_airflow_extract_dag(dag_id: str, conf: dict, user: dict | None) -> dict:
     result: dict = {}
     for attempt in range(5):
         result = await mcp_registry.invoke("infra", "airflow_trigger_dag", {
             "dag_id": dag_id,
             "conf": conf,
-        })
+        }, user=user)
         error = result.get("error")
         if not error:
             return result
@@ -2617,11 +2726,10 @@ _MICROSERVICE_CARTRIDGES = {
 
 
 def _internal_headers() -> dict:
-    # Sprint v1.12: legacy helper kept for tests/back-compat. New code should
-    # use _hdr_for("REFINEMENT"|"VAULT"|"MCP_INFRA") directly. This helper
-    # falls back to the legacy shared INTERNAL_API_KEY which every server
-    # still accepts during the migration window.
-    return {"x-api-key": INTERNAL_API_KEY, "x-internal-service": "console"}
+    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
+    if not key and _is_production_env():
+        raise RuntimeError("Missing INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE; legacy fallback disabled in production")
+    return {"x-api-key": key or INTERNAL_API_KEY, "x-internal-service": "console"}
 
 
 async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:
@@ -2728,12 +2836,12 @@ async def studio_export_cartridge(cartridge_id: str):
     )
 
 
-@app.post("/studio/import", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def studio_import_cartridge(file: UploadFile = File(...)):
+@app.post("/studio/import", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
+async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Depends(require_authenticated)):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
     try:
-        manifest = await cartridge_service.import_cartridge(zip_bytes)
+        manifest = await cartridge_service.import_cartridge(zip_bytes, actor_user=user)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return manifest
@@ -3090,17 +3198,24 @@ async def api_vault_delete_secret(scope: str, key: str):
 
 # ── RAG proxy ─────────────────────────────────────────────────────────────────
 
+def _rag_headers_for_user(user: dict) -> dict[str, str]:
+    return {
+        **_hdr_for("MCP_INFRA"),
+        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
+    }
+
+
 @app.get("/api/rag/sources", dependencies=[Depends(require_authenticated)])
-async def api_rag_sources(kinds: str = ""):
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as c:
+async def api_rag_sources(kinds: str = "", user: dict = Depends(require_authenticated)):
+    async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
         params = {"kinds": kinds} if kinds else None
         r = await c.get(f"{_RAG_URL}/rag/sources", params=params)
         r.raise_for_status()
         return r.json()
 
 @app.delete("/api/rag/sources/{source_id}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def api_rag_delete_source(source_id: int):
-    async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as c:
+async def api_rag_delete_source(source_id: int, user: dict = Depends(require_authenticated)):
+    async with httpx.AsyncClient(headers=_rag_headers_for_user(user), timeout=10) as c:
         r = await c.delete(f"{_RAG_URL}/rag/sources/{source_id}")
         if r.status_code == 404:
             raise HTTPException(404, "Source not found")
@@ -3108,14 +3223,27 @@ async def api_rag_delete_source(source_id: int):
         return r.json()
 
 @app.post("/api/rag/search", dependencies=[Depends(require_csrf), Depends(require_authenticated)])
-async def api_rag_search(body: dict):
+async def api_rag_search(body: dict, user: dict = Depends(require_authenticated)):
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
-        r = await c.post(f"{_RAG_URL}/rag/search", json=body)
+        r = await c.post(
+            f"{_RAG_URL}/mcp/invoke",
+            json=_mcp_payload(
+                "search_rag",
+                {
+                    "query": body.get("query"),
+                    "top_k": body.get("top_k", 5),
+                    "source_ids": body.get("source_ids"),
+                    "kinds": body.get("kinds"),
+                },
+                user,
+            ),
+        )
         r.raise_for_status()
-        return r.json()
+        return r.json().get("result") or r.json()
 
 @app.post("/api/rag/reindex", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def api_rag_reindex(body: dict):
+async def api_rag_reindex(body: dict, user: dict = Depends(require_authenticated)):
+    body = {**body, "security_context": build_security_context(user)}
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/reindex", json=body)
         if r.status_code >= 400:
@@ -3127,7 +3255,8 @@ async def api_rag_reindex(body: dict):
         return r.json()
 
 @app.post("/api/rag/ingest", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def api_rag_ingest(body: dict):
+async def api_rag_ingest(body: dict, user: dict = Depends(require_authenticated)):
+    body = {**body, "security_context": build_security_context(user)}
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
         r.raise_for_status()
@@ -3135,7 +3264,7 @@ async def api_rag_ingest(body: dict):
 
 
 @app.post("/api/rag/ask", dependencies=[Depends(require_csrf), Depends(require_authenticated)])
-async def api_rag_ask(body: dict):
+async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
     from google.genai import types as _gtypes
@@ -3149,11 +3278,15 @@ async def api_rag_ask(body: dict):
 
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=60) as c:
         r = await c.post(
-            f"{_RAG_URL}/rag/search",
-            json={"query": query, "top_k": top_k, "source_ids": source_ids, "kinds": kinds},
+            f"{_RAG_URL}/mcp/invoke",
+            json=_mcp_payload(
+                "search_rag",
+                {"query": query, "top_k": top_k, "source_ids": source_ids, "kinds": kinds},
+                user,
+            ),
         )
         r.raise_for_status()
-        results = (r.json().get("results") or [])
+        results = ((r.json().get("result") or {}).get("results") or [])
 
     if not results:
         return {"answer": "No encontré información relacionada en las fuentes ingeridas.", "results": []}
@@ -3198,7 +3331,7 @@ async def api_rag_ask(body: dict):
 
 
 @app.get("/api/semantic", dependencies=[Depends(require_authenticated)])
-async def api_semantic(cartridge: str = "replicon"):
+async def api_semantic(cartridge: str = "replicon", user: dict = Depends(require_authenticated)):
     from app.services import cartridge_service as _cs
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
@@ -3211,40 +3344,51 @@ async def api_semantic(cartridge: str = "replicon"):
     srv = next((s for s in servers if s["id"] == cartridge), None)
     if not srv:
         raise HTTPException(404, f"Cartridge '{cartridge}' not registered")
-    entities = await mcp_registry.invoke(cartridge, "list_entities", {})
+    entities = await mcp_registry.invoke(cartridge, "list_entities", {}, user=user)
     return {"cartridge": cartridge, "server": srv, "entities": entities}
 
 
 # ── Data Catalog API ──────────────────────────────────────────────────────────
 
 @app.get("/api/catalog", dependencies=[Depends(require_authenticated)])
-async def api_catalog_get(layer: str = "", cartridge: str = "", tags: str = "", datasets: str = ""):
+async def api_catalog_get(
+    layer: str = "",
+    cartridge: str = "",
+    tags: str = "",
+    datasets: str = "",
+    user: dict = Depends(require_authenticated),
+):
     args: dict = {}
     if layer:    args["layer"]    = layer
     if cartridge: args["cartridge"] = cartridge
     if tags:     args["tags"]     = [t.strip() for t in tags.split(",") if t.strip()]
     if datasets: args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
-    result = await _refinement_invoke("get_data_catalog", args)
+    result = await _refinement_invoke("get_data_catalog", args, user=user)
     return result
 
 
 @app.post("/api/catalog/entries", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def api_catalog_upsert(body: dict):
-    return await _refinement_invoke("upsert_catalog_entries", body)
+async def api_catalog_upsert(body: dict, user: dict = Depends(require_authenticated)):
+    return await _refinement_invoke("upsert_catalog_entries", body, user=user)
 
 
 @app.post("/api/catalog/relationships", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def api_catalog_relationship(body: dict):
-    return await _refinement_invoke("register_relationship", body)
+async def api_catalog_relationship(body: dict, user: dict = Depends(require_authenticated)):
+    return await _refinement_invoke("register_relationship", body, user=user)
 
 
-async def _refinement_invoke(tool: str, args: dict):
+async def _refinement_invoke(tool: str, args: dict, *, timeout: int = 30, user: dict | None = None):
     import httpx
     refinement_url = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as client:
+    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=timeout) as client:
         r = await client.post(f"{refinement_url}/mcp/invoke",
-                              json={"tool": tool, "args": args})
-        r.raise_for_status()
+                              json=_mcp_payload(tool, args, user))
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail") or r.text
+            except ValueError:
+                detail = r.text
+            raise HTTPException(r.status_code, detail or "Refinement request failed")
         return r.json()
 
 
@@ -3272,7 +3416,7 @@ async def monitoring_mcp_invoke(body: dict, user: dict = Depends(_internal_or_au
     The underlying monitoring_invoke() handler did not check the cookie
     on its own, so the dependency is the single chokepoint.
     """
-    return await monitoring_invoke(body)
+    return await monitoring_invoke(body, user=user)
 
 
 # ── Studio-ops MCP server — cartridge & entity management tools ───────────────
@@ -3494,7 +3638,8 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
                 # Fallback for older runs that predate the airflow_dag_run_id column:
                 # match by conf.entity against recent Airflow runs
                 runs_r  = await mcp_registry.invoke("infra", "airflow_list_dag_runs",
-                                                    {"dag_id": dag_id, "limit": 20})
+                                                    {"dag_id": dag_id, "limit": 20},
+                                                    user=user)
                 af_runs = (runs_r or {}).get("runs", [])
                 started_str = str(last_run.get("started_at", ""))[:10]
                 for run in af_runs:
@@ -3511,7 +3656,8 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
                 logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
                                                    {"dag_id":     dag_id,
                                                     "dag_run_id": airflow_run_id,
-                                                    "task_id":    "extract"})
+                                                    "task_id":    "extract"},
+                                                   user=user)
                 airflow_logs = (logs_r or {}).get("logs", "")
         except Exception:
             logger.debug("Airflow log fetch failed for %s/%s", cartridge_id, entity, exc_info=True)

@@ -132,7 +132,7 @@ async def test_dag_based_cartridge_triggers_airflow_dag(console_main, monkeypatc
 
     calls = []
 
-    async def invoke(server, tool, args):
+    async def invoke(server, tool, args, **_kwargs):
         calls.append((server, tool, args))
         return {"dag_run_id": "manual__test", "state": "queued"}
 
@@ -180,7 +180,7 @@ async def test_dag_based_incremental_conf_preserves_dates(console_main, monkeypa
 
     calls = []
 
-    async def invoke(server, tool, args):
+    async def invoke(server, tool, args, **_kwargs):
         calls.append((server, tool, args))
         return {"dag_run_id": "manual__incremental", "state": "queued"}
 
@@ -208,7 +208,7 @@ async def test_mcp_based_cartridge_keeps_mcp_invoke_fallback(console_main, monke
 
     calls = []
 
-    async def invoke(server, tool, args):
+    async def invoke(server, tool, args, **_kwargs):
         calls.append((server, tool, args))
         return {"job_id": "job-1"}
 
@@ -389,7 +389,7 @@ async def test_api_pipeline_returns_dag_last_run_and_last_job(console_main, monk
     async def physical_snapshot(cartridge, entity):
         return {"latest_date": "2026-05-09", "record_count": 3}
 
-    async def invoke(server, tool, args):
+    async def invoke(server, tool, args, **_kwargs):
         assert server == "infra"
         assert tool == "airflow_get_run_status"
         assert args == {"dag_id": "replicon_extract", "dag_run_id": "manual__test"}
@@ -517,7 +517,7 @@ async def test_api_pipeline_run_logs_returns_summary(console_main, monkeypatch):
 
     calls = []
 
-    async def invoke(server, tool, args):
+    async def invoke(server, tool, args, **_kwargs):
         calls.append((server, tool, args))
         if tool == "airflow_list_task_instances":
             return {"tasks": [{"task_id": "extract", "state": "success", "duration": 1.5}]}

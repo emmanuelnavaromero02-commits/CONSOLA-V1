@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# infra/bootstrap-keys.sh — generate the 13 per-pair INTERNAL_API_KEY_* secrets.
+# infra/bootstrap-keys.sh — generate the per-pair INTERNAL_API_KEY_* secrets.
 #
 # Sprint v1.12: the platform used to share one INTERNAL_API_KEY across 11
 # services; a compromise in any one of them meant every internal call could
@@ -18,11 +18,17 @@ KEYS=(
   "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT"
   "INTERNAL_API_KEY_CONSOLE_TO_VAULT"
   "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA"
+  "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE"
   "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE"
   "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT"
   "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA"
   "INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"
   "INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT"
+  "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE"
+  "INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA"
+  "INTERNAL_API_KEY_REPLICON_TO_CONSOLE"
+  "INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA"
+  "INTERNAL_API_KEY_REPLICON_TO_REFINEMENT"
   "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT"
   "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE"
   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT"
@@ -72,4 +78,4 @@ for key in "${DB_KEYS[@]}"; do
   fi
 done
 
-echo "[bootstrap-keys] Done. 14 keys ensured in ${ENV_FILE} (${added} new)"
+echo "[bootstrap-keys] Done. 20 keys ensured in ${ENV_FILE} (${added} new)"

@@ -7,17 +7,20 @@ import os
 
 SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
 
-SQLALCHEMY_DATABASE_URI = os.environ.get("SQLALCHEMY_DATABASE_URI") or (
-    "postgresql+psycopg2://postgres:"
-    f"{os.environ['POSTGRES_PASSWORD']}@postgres:5432/superset"
+SQLALCHEMY_DATABASE_URI = os.environ.get("SQLALCHEMY_DATABASE_URI")
+if not SQLALCHEMY_DATABASE_URI:
+    raise RuntimeError("SQLALCHEMY_DATABASE_URI is required; refusing superuser fallback")
+
+# Security defaults are production-safe. Local/dev can explicitly opt out with
+# SUPERSET_TALISMAN_ENABLED=false / SUPERSET_CSRF_ENABLED=false.
+TALISMAN_ENABLED  = os.environ.get("SUPERSET_TALISMAN_ENABLED", "true").lower() == "true"
+WTF_CSRF_ENABLED  = os.environ.get("SUPERSET_CSRF_ENABLED", "true").lower() == "true"
+RATELIMIT_ENABLED = os.environ.get("SUPERSET_RATELIMIT_ENABLED", "true").lower() == "true"
+RATELIMIT_STORAGE_URI = (
+    os.environ.get("SUPERSET_RATELIMIT_STORAGE_URI")
+    or os.environ.get("REDIS_URL")
+    or "redis://redis:6379/1"
 )
-
-# Internal-only deployment behind VPN — relax CSP/CSRF that block local devs.
-TALISMAN_ENABLED  = False
-WTF_CSRF_ENABLED  = False
-
-# Avoid the in-memory rate-limiter warning. Redis would be ideal long-term.
-RATELIMIT_ENABLED = False
 
 FEATURE_FLAGS = {
     "EMBEDDED_SUPERSET": True,

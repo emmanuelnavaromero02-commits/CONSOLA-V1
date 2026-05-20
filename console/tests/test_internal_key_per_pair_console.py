@@ -70,6 +70,13 @@ def test_legacy_key_still_accepted(auth_module):
     auth_module.verify_internal_api_key(x_api_key=LEGACY, x_internal_service="cartridge-replicon")
 
 
+def test_legacy_key_rejected_in_production(auth_module, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(HTTPException) as exc:
+        auth_module.verify_internal_api_key(x_api_key=LEGACY, x_internal_service="workspace")
+    assert exc.value.status_code == 403
+
+
 def test_wrong_key_rejected(auth_module):
     with pytest.raises(HTTPException) as exc:
         auth_module.verify_internal_api_key(x_api_key="garbage", x_internal_service="workspace")

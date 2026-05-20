@@ -33,7 +33,7 @@ def _run(coro):
 def test_first_attempt_success_no_retry(copilot_module, monkeypatch):
     """If the underlying invoke succeeds first time, no sleep, no retry."""
     calls = []
-    async def fake(server, tool, args):
+    async def fake(server, tool, args, **_kwargs):
         calls.append((server, tool))
         return {"ok": True}
     monkeypatch.setattr(copilot_module.mcp_registry, "invoke", fake)
@@ -46,7 +46,7 @@ def test_first_attempt_success_no_retry(copilot_module, monkeypatch):
 def test_retry_on_transient_failure_then_success(copilot_module, monkeypatch):
     """Two transient exceptions, third attempt succeeds → real result."""
     attempts = []
-    async def fake(server, tool, args):
+    async def fake(server, tool, args, **_kwargs):
         attempts.append(1)
         if len(attempts) < 3:
             raise ConnectionError("transient")
@@ -117,7 +117,7 @@ def test_error_envelope_propagates_to_llm_as_tool_result(copilot_module, monkeyp
     seen_results = []
 
     # The retry helper inside copilot_service.invoke_tool will hit this.
-    async def fake_invoke(server, tool, args):
+    async def fake_invoke(server, tool, args, **_kwargs):
         raise ConnectionError("upstream down")
     monkeypatch.setattr(copilot_module.mcp_registry, "invoke", fake_invoke)
     async def fake_sleep(_d): pass

@@ -16,6 +16,7 @@ El conf de cada run puede sobreescribir parámetros:
 from __future__ import annotations
 
 import io
+import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -74,19 +75,28 @@ def _set_watermark(entity: str, field: str, value: str, run_id: str) -> None:
 # Credentials stay in Console/Vault. Airflow receives only a service key and
 # reveals the Replicon connection at runtime through a narrow internal bypass.
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key(env_name: str) -> str:
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+
+
 def _get_connection(conn_id: str) -> tuple[str, str]:
     """Return (base_url, token) from Console Vault connection replicon/<conn_id>."""
     import os
     import requests
 
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
-    key = (
-        os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE")
-        or os.environ.get("INTERNAL_API_KEY")
-        or ""
-    )
-    if not key:
-        raise ValueError("Missing INTERNAL_API_KEY_REPLICON_TO_CONSOLE or INTERNAL_API_KEY")
+    key = _internal_key("INTERNAL_API_KEY_REPLICON_TO_CONSOLE")
 
     try:
         resp = requests.get(

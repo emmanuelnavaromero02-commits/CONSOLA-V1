@@ -6,6 +6,7 @@ transforma a Silver/Gold con términos de negocio y trazabilidad de lineage.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import secrets
@@ -94,6 +95,10 @@ async def lifespan(app: FastAPI):
 
 INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
 
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
 # Sprint v1.12: refinement is called by console, workspace, airflow and the
 # four cartridges. Each pair now has its own INTERNAL_API_KEY_*_TO_REFINEMENT
 # (the 4 cartridges share INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT). The
@@ -116,6 +121,212 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "mcp-infra":  None,
 }
 
+_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+_SECURITY_SOURCE_BY_SERVICE = {
+    "console": {"console", "agent_runner"},
+    "workspace": {"workspace"},
+    "airflow": {"airflow", "agent_runner"},
+    "refinement": {"refinement"},
+    "mcp-infra": {"mcp-infra"},
+}
+_SQL_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+_SQL_FORBIDDEN_RE = re.compile(
+    r"\b(attach|call|copy|create|delete|drop|export|import|insert|install|load|pragma|set|truncate|update|alter)\b",
+    re.IGNORECASE,
+)
+_SQL_COMMENT_RE = re.compile(r"(--|/\*)")
+_SQL_READER_CALL_RE = re.compile(
+    r"\b(read_parquet|read_csv|read_json|read_ndjson|parquet_scan|csv_scan|csv_auto|json_scan|read_blob)\s*\(",
+    re.IGNORECASE,
+)
+_SCOPED_READER_RE = re.compile(
+    r"\b(read_parquet|read_csv)\s*\(\s*(['\"])(.*?)\2",
+    re.IGNORECASE | re.DOTALL,
+)
+_SQL_STORAGE_LITERAL_RE = re.compile(r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
+_DIRECT_STORAGE_SCAN_RE = re.compile(
+    r"\b(?:from|join|table)\s+(['\"])(.*?)\1",
+    re.IGNORECASE | re.DOTALL,
+)
+_SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
+_PGDB_SCHEMA_RE = re.compile(r'(?<![A-Za-z0-9_])"?pgdb"?\s*\.', re.IGNORECASE)
+_PGGOLD_SCHEMA_TABLE_RE = re.compile(
+    r'(?<![A-Za-z0-9_])"?pggold"?\s*\.\s*"?([A-Za-z_][A-Za-z0-9_]*)"?',
+    re.IGNORECASE,
+)
+_PGGOLD_TABLE_RE = re.compile(
+    r'\b(?:from|join)\s+(?:(?:"?pggold"?\s*\.\s*)?)"?([A-Za-z_][A-Za-z0-9_]*)"?',
+    re.IGNORECASE,
+)
+
+
+def _trusted_user_context(body: dict, args: dict) -> dict:
+    """Return the only RLS context refinement should trust.
+
+    Preferred path: console/workspace sends a top-level security_context built
+    from its authenticated session. Legacy callers may still pass
+    args.user_context, but any admin-bypass flag is stripped unless the
+    top-level server-owned context is present.
+    """
+    sec = body.get("security_context") or {}
+    if isinstance(sec, dict) and sec.get("trusted"):
+        role = str(sec.get("role") or "").lower()
+        return {
+            "id": sec.get("user_id"),
+            "email": sec.get("email", ""),
+            "role": role,
+            "tenant_id": sec.get("tenant_id"),
+            "workspace_id": sec.get("workspace_id"),
+            "workspace_role": sec.get("workspace_role"),
+            "_trusted_admin": role in _ADMIN_ROLES,
+            "_server_trusted_context": True,
+        }
+
+    return {
+        "id": None,
+        "email": "",
+        "role": "anonymous",
+        "tenant_id": None,
+        "workspace_id": None,
+        "workspace_role": None,
+        "_trusted_admin": False,
+        "_server_trusted_context": False,
+    }
+
+
+def _security_context(body: dict) -> dict:
+    sec = body.get("security_context") or {}
+    if not isinstance(sec, dict):
+        return {}
+    if sec.get("trusted"):
+        service = body.get("_verified_internal_service")
+        allowed_sources = _SECURITY_SOURCE_BY_SERVICE.get(str(service or ""))
+        if not allowed_sources or str(sec.get("source") or "") not in allowed_sources:
+            return {}
+    return sec
+
+
+def _body_from_security_header(internal_service: str, header_value: str | None) -> dict:
+    sec = {}
+    if header_value:
+        try:
+            sec = json.loads(header_value)
+        except Exception:
+            sec = {}
+    return {"security_context": sec, "_verified_internal_service": internal_service}
+
+
+def _require_security_permission(body: dict, permission: str) -> dict:
+    sec = _security_context(body)
+    if not sec.get("trusted"):
+        raise HTTPException(403, "trusted security_context required")
+    if permission not in set(sec.get("permissions") or []):
+        raise HTTPException(403, f"permission required: {permission}")
+    return sec
+
+
+def _prefix_allowed(sec: dict, value: str) -> bool:
+    value = (value or "").lstrip("/")
+    prefixes = [str(p).lstrip("/") for p in (sec.get("allowed_prefixes") or [])]
+    return bool(value) and any(value.startswith(prefix) for prefix in prefixes)
+
+
+def _require_source_scope(body: dict, source: str) -> dict:
+    sec = _require_security_permission(body, "datasets.read")
+    if not _prefix_allowed(sec, source):
+        raise HTTPException(403, "source prefix not allowed")
+    return sec
+
+
+def _dataset_allowed(sec: dict, ds: dict) -> bool:
+    if sec.get("_trusted_admin"):
+        return True
+    workspace_id = str(ds.get("workspace_id") or "")
+    sec_workspace = str(sec.get("workspace_id") or "")
+    if workspace_id and workspace_id != sec_workspace:
+        return False
+    cartridge = str(ds.get("cartridge") or "").strip()
+    layer = str(ds.get("layer") or "").strip().lower()
+    name = str(ds.get("name") or "").strip()
+    return bool(cartridge and layer and name and _prefix_allowed(sec, f"{layer}/{cartridge}/{name}/"))
+
+
+def _require_dataset_scope(body: dict, ds: dict, permission: str = "datasets.read") -> dict:
+    sec = _require_security_permission(body, permission)
+    if not _dataset_allowed(sec, ds):
+        raise HTTPException(403, "dataset not allowed")
+    return sec
+
+
+def _s3_path_to_key(path: str) -> str:
+    path = (path or "").strip()
+    if not path.startswith("s3://"):
+        return ""
+    rest = path[5:]
+    return rest.split("/", 1)[1] if "/" in rest else ""
+
+
+def _mask_single_quoted(sql: str) -> str:
+    return _SINGLE_QUOTED_RE.sub("''", sql or "")
+
+
+def _reader_storage_key(path: str) -> str:
+    path = (path or "").strip()
+    if not path.startswith("s3://"):
+        raise HTTPException(403, "SQL storage readers must use s3:// paths")
+    key = _s3_path_to_key(path)
+    if not key or ".." in key.split("/"):
+        raise HTTPException(403, "SQL storage path is not allowed")
+    return key
+
+
+def _require_sql_path_scope(sec: dict, path: str) -> None:
+    key = _reader_storage_key(path)
+    if not _prefix_allowed(sec, key):
+        raise HTTPException(403, "SQL storage path not allowed")
+
+
+def _require_sql_storage_scope(body: dict, sql: str, sources: list[str] | None = None) -> None:
+    sec = _require_security_permission(body, "datasets.read")
+    sql = sql or ""
+    masked = _mask_single_quoted(sql)
+    if not _SQL_START_RE.search(masked):
+        raise HTTPException(403, "SQL must be a read-only SELECT/WITH statement")
+    if ";" in masked or _SQL_COMMENT_RE.search(masked) or _SQL_FORBIDDEN_RE.search(masked):
+        raise HTTPException(403, "SQL contains unsafe statements or comments")
+    if _PGDB_SCHEMA_RE.search(masked):
+        raise HTTPException(403, "pgdb schema is not readable through refinement")
+
+    for source in sources or []:
+        if not _prefix_allowed(sec, str(source)):
+            raise HTTPException(403, "source prefix not allowed")
+
+    reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
+    direct_readers = list(_SCOPED_READER_RE.finditer(sql))
+    if len(reader_calls) != len(direct_readers):
+        raise HTTPException(403, "SQL readers must use a direct string literal path")
+    for match in direct_readers:
+        _require_sql_path_scope(sec, match.group(3))
+    for match in _SQL_STORAGE_LITERAL_RE.finditer(sql):
+        _require_sql_path_scope(sec, match.group(2))
+    for match in _DIRECT_STORAGE_SCAN_RE.finditer(sql):
+        _require_sql_path_scope(sec, match.group(2))
+
+    scoped_tables = {m.group(1) for m in _PGGOLD_SCHEMA_TABLE_RE.finditer(sql or "")}
+    scoped_tables.update(m.group(1) for m in _PGGOLD_TABLE_RE.finditer(sql or ""))
+    for table in scoped_tables:
+        if not table.lower().startswith("gold_"):
+            continue
+        ds = None
+        for candidate in (table[5:], table):
+            ds = store.get_dataset(candidate)
+            if ds:
+                break
+        if not ds:
+            raise HTTPException(403, "pggold table is not registered as an allowed dataset")
+        if not _dataset_allowed(sec, ds):
+            raise HTTPException(403, "dataset scope not allowed")
+
 
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
     if not x_internal_service or x_internal_service not in _ALLOWED_SERVICES_TO_KEY_ENV:
@@ -130,11 +341,12 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
         if pair_key:
             accepted.append(pair_key)
     # Legacy shared key, still honored during migration.
-    if INTERNAL_API_KEY:
+    if INTERNAL_API_KEY and not _is_production():
         accepted.append(INTERNAL_API_KEY)
 
     if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
         raise HTTPException(status_code=403, detail="Forbidden")
+    return x_internal_service
 
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
 
@@ -289,6 +501,15 @@ async def mcp_tools():
             "name": "list_datasets",
             "description": "Lista todos los datasets Silver/Gold definidos con su estado.",
             "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_dataset_definition",
+            "description": "Devuelve la definicion completa de un dataset, incluyendo SQL y lineage declarado.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
         },
         {
             "name": "get_schema",
@@ -559,39 +780,59 @@ async def mcp_tools():
     ]}
 
 
-@app.post("/mcp/invoke", dependencies=[Depends(verify_api_key)])
-async def mcp_invoke(body: dict):
+@app.post("/mcp/invoke")
+async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)):
+    body = {**body, "_verified_internal_service": internal_service}
     tool = body.get("tool")
     args = body.get("args", {})
 
     if tool == "list_sources":
+        _require_security_permission(body, "datasets.read")
         return {"sources": engine.list_sources()}
 
     if tool == "get_source_partitions":
+        _require_source_scope(body, args["source"])
         return engine.get_source_partitions(args["source"])
 
     if tool == "preview_source":
+        _require_source_scope(body, args["source"])
         return engine.preview_source(args["source"], args.get("limit", 5))
 
     if tool == "generate_transform":
+        for source in args["sources"]:
+            _require_source_scope(body, source)
         schemas = {s: engine.get_source_schema(s) for s in args["sources"]}
         sql, explanation = await generate_sql(args["description"], schemas)
         return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
 
     if tool == "preview_transform":
+        _require_sql_storage_scope(body, args["sql"], args.get("sources") or [])
         # params: externally-supplied positional parameters (? placeholders) from callers
         # that build parameterized SQL (e.g. api_data_query_filtered).  When params is
         # provided, preview_sql skips internal RLS filter injection.
         caller_params = args.get("params")  # None → apply RLS; list → use as-is
-        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"), args.get("user_context"), caller_params)
+        return engine.preview_sql(args["sql"], args.get("limit", 20), args.get("sources"), _trusted_user_context(body, args), caller_params)
 
     if tool == "save_dataset":
+        sec = _require_security_permission(body, "datasets.write")
+        args = {**args, "created_by_id": sec.get("user_id"), "workspace_id": sec.get("workspace_id")}
+        existing = store.get_dataset(args["name"])
+        if existing:
+            _require_dataset_scope(body, existing, "datasets.write")
+        for source in args.get("sources") or []:
+            _require_source_scope(body, source)
+        _require_sql_storage_scope(body, args.get("sql") or args.get("sql_def") or "", args.get("sources") or [])
         store.save_dataset(args)
         return {"saved": True, "name": args["name"]}
 
     if tool == "delete_dataset":
-        ds_name = args["name"]
+        ds_name = args.get("name") or ""
         _validate_dataset_name(ds_name)
+        _require_security_permission(body, "datasets.delete")
+        ds_existing = store.get_dataset(ds_name)
+        if not ds_existing:
+            raise HTTPException(404, f"Dataset '{ds_name}' not found")
+        _require_dataset_scope(body, ds_existing, "datasets.delete")
         # Block deletion if any published app references this dataset (best-effort
         # via substring scan of the HTML — apps fetch via /api/data/<dataset>).
         try:
@@ -652,31 +893,48 @@ async def mcp_invoke(body: dict):
         ds = store.get_dataset(args["name"])
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
+        _require_dataset_scope(body, ds, "datasets.write")
         result = engine.materialize(ds)
         store.update_refresh(args["name"], result["row_count"])
         _reindex_dataset_best_effort(args["name"])
         return result
 
     if tool == "list_datasets":
-        return {"datasets": store.list_datasets()}
+        sec = _require_security_permission(body, "datasets.read")
+        return {"datasets": [ds for ds in store.list_datasets() if _dataset_allowed(sec, ds)]}
+
+    if tool == "get_dataset_definition":
+        ds = store.get_dataset(args["name"])
+        if not ds:
+            raise HTTPException(404, f"Dataset '{args['name']}' not found")
+        _require_dataset_scope(body, ds)
+        return ds
 
     if tool == "get_schema":
         ds = store.get_dataset(args["name"])
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
+        _require_dataset_scope(body, ds)
         return engine.get_dataset_schema(ds)
 
     if tool == "query_dataset":
         ds = store.get_dataset(args["name"])
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
-        return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100), args.get("user_context"))
+        _require_dataset_scope(body, ds)
+        return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100), _trusted_user_context(body, args))
 
     if tool == "get_lineage":
+        ds = store.get_dataset(args["name"])
+        if ds:
+            _require_dataset_scope(body, ds)
+        else:
+            _require_security_permission(body, "datasets.read")
         return _get_lineage(args["name"], args.get("limit", 10))
 
     if tool == "describe_source":
         source = args["source"]
+        _require_source_scope(body, source)
         limit  = args.get("limit", 3)
         schema = engine.get_source_schema(source)
         preview = engine.preview_source(source, limit)
@@ -694,6 +952,7 @@ async def mcp_invoke(body: dict):
         ds    = store.get_dataset(name)
         if not ds:
             raise HTTPException(404, f"Dataset '{name}' not found")
+        _require_dataset_scope(body, ds)
         cartridge = ds.get("cartridge", "unknown")
         _validate_dataset_name(cartridge)
         parquet   = f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
@@ -718,11 +977,14 @@ async def mcp_invoke(body: dict):
                     "hint": "Dataset might not be materialized yet — run materialize first"}
 
     if tool == "list_datasets_with_schemas":
+        sec = _require_security_permission(body, "datasets.read")
         layer_filter     = args.get("layer")
         cartridge_filter = args.get("cartridge")
         all_ds = store.list_datasets()
         result = []
         for ds_meta in all_ds:
+            if not _dataset_allowed(sec, ds_meta):
+                continue
             if layer_filter and ds_meta["layer"] != layer_filter:
                 continue
             if cartridge_filter and ds_meta["cartridge"] != cartridge_filter:
@@ -745,32 +1007,50 @@ async def mcp_invoke(body: dict):
         return {"datasets": result}
 
     if tool == "get_data_catalog":
+        sec = _require_security_permission(body, "datasets.read")
         return _get_data_catalog(
             layer=args.get("layer"),
             cartridge=args.get("cartridge"),
             tags=args.get("tags"),
             datasets=args.get("datasets"),
+            security_context=sec,
         )
 
     if tool == "upsert_catalog_entries":
+        _require_security_permission(body, "datasets.write")
+        for entry in args["entries"]:
+            ds = store.get_dataset(entry["dataset"])
+            if ds:
+                _require_dataset_scope(body, ds, "datasets.write")
         return _upsert_catalog_entries(args["entries"])
 
     if tool == "register_relationship":
+        _require_security_permission(body, "datasets.write")
+        for dataset_name in (args["from_dataset"], args["to_dataset"]):
+            ds = store.get_dataset(dataset_name)
+            if ds:
+                _require_dataset_scope(body, ds, "datasets.write")
         return _register_relationship(args)
 
     if tool == "publish_app":
+        sec = _require_security_permission(body, "apps.write")
+        args = {**args, "created_by_id": sec.get("user_id")}
         return _publish_app(args)
 
     if tool == "list_apps":
+        _require_security_permission(body, "apps.read")
         return _list_apps()
 
     if tool == "get_app_details":
+        _require_security_permission(body, "apps.read")
         return _get_app_details(args)
 
     if tool == "get_app_html":
+        _require_security_permission(body, "apps.read")
         return _get_app_html(args)
 
     if tool == "delete_app":
+        _require_security_permission(body, "apps.write")
         return _delete_app(args)
 
     raise HTTPException(400, f"Unknown tool: {tool}")
@@ -843,6 +1123,7 @@ def _get_data_catalog(
     cartridge: str | None = None,
     tags: list[str] | None = None,
     datasets: list[str] | None = None,
+    security_context: dict | None = None,
 ) -> dict:
     import json as _json
     conditions = ["1=1"]
@@ -872,6 +1153,14 @@ def _get_data_catalog(
     ds_names: set = set()
     for row in cols:
         dn = row["dataset"]
+        if security_context:
+            ds_meta = store.get_dataset(dn) or {
+                "name": dn,
+                "layer": row["layer"],
+                "cartridge": row["cartridge"],
+            }
+            if not _dataset_allowed(security_context, ds_meta):
+                continue
         ds_names.add(dn)
         if dn not in datasets_out:
             # get dataset description from store
@@ -1229,9 +1518,14 @@ def _seed_relationships() -> int:
 
 # ── REST API ──────────────────────────────────────────────────────────────────
 
-@app.get("/datasets", dependencies=[Depends(verify_api_key)])
-async def list_datasets():
-    datasets = store.list_datasets()
+@app.get("/datasets")
+async def list_datasets(
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+    internal_service: str = Depends(verify_api_key),
+):
+    body = _body_from_security_header(internal_service, x_security_context)
+    sec = _require_security_permission(body, "datasets.read")
+    datasets = [d for d in store.list_datasets() if _dataset_allowed(sec, d)]
     _annotate_staleness(datasets)
     return {"datasets": datasets}
 
@@ -1242,11 +1536,9 @@ def _reindex_dataset_best_effort(name: str) -> None:
         import httpx as _httpx
 
         mcp = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010").rstrip("/")
-        key = (
-            os.environ.get("INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA")
-            or os.environ.get("INTERNAL_API_KEY")
-            or ""
-        )
+        key = os.environ.get("INTERNAL_API_KEY_REFINEMENT_TO_MCP_INFRA") or ""
+        if not key and not _is_production():
+            key = os.environ.get("INTERNAL_API_KEY") or ""
         headers = {"x-internal-service": "refinement", "x-api-key": key} if key else {}
         with _httpx.Client(timeout=15, headers=headers) as client:
             client.post(f"{mcp}/rag/reindex", json={"kind": "dataset", "name": name})
@@ -1302,19 +1594,29 @@ def _annotate_staleness(datasets: list[dict]) -> None:
             dataset["staleness_reason"] = reason
 
 
-@app.get("/datasets/{name}/definition", dependencies=[Depends(verify_api_key)])
-async def dataset_definition(name: str):
+@app.get("/datasets/{name}/definition")
+async def dataset_definition(
+    name: str,
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+    internal_service: str = Depends(verify_api_key),
+):
     ds = store.get_dataset(name)
     if not ds:
         raise HTTPException(404)
+    _require_dataset_scope(_body_from_security_header(internal_service, x_security_context), ds)
     return ds
 
 
-@app.get("/datasets/{name}/schema", dependencies=[Depends(verify_api_key)])
-async def dataset_schema(name: str):
+@app.get("/datasets/{name}/schema")
+async def dataset_schema(
+    name: str,
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+    internal_service: str = Depends(verify_api_key),
+):
     ds = store.get_dataset(name)
     if not ds:
         raise HTTPException(404)
+    _require_dataset_scope(_body_from_security_header(internal_service, x_security_context), ds)
     return engine.get_dataset_schema(ds)
 
 
@@ -1330,19 +1632,27 @@ async def dataset_data(name: str, limit: int = 100):
     )
 
 
-@app.post("/datasets/{name}/refresh", dependencies=[Depends(verify_api_key)])
-async def refresh_dataset(name: str):
+@app.post("/datasets/{name}/refresh")
+async def refresh_dataset(
+    name: str,
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+    internal_service: str = Depends(verify_api_key),
+):
     ds = store.get_dataset(name)
     if not ds:
         raise HTTPException(404)
+    _require_dataset_scope(_body_from_security_header(internal_service, x_security_context), ds, "datasets.write")
     result = engine.materialize(ds)
     store.update_refresh(name, result["row_count"])
     _reindex_dataset_best_effort(name)
     return result
 
 
-@app.post("/refresh-by-source", dependencies=[Depends(verify_api_key)])
-async def refresh_by_source(body: dict):
+@app.post("/refresh-by-source")
+async def refresh_by_source(
+    body: dict,
+    internal_service: str = Depends(verify_api_key),
+):
     """
     Re-materializa todos los datasets Silver/Master cuyas fuentes incluyen
     la ruta Bronze indicada. Llamado automáticamente por el job_runner
@@ -1353,9 +1663,12 @@ async def refresh_by_source(body: dict):
     source = body.get("source", "").strip()
     if not source:
         raise HTTPException(400, "source is required")
+    auth_body = {**body, "_verified_internal_service": internal_service}
+    _require_source_scope(auth_body, source)
 
     all_ds   = store.list_datasets()
-    matched  = [d for d in all_ds if source in (d.get("sources") or [])]
+    sec = _require_security_permission(auth_body, "datasets.read")
+    matched  = [d for d in all_ds if source in (d.get("sources") or []) and _dataset_allowed(sec, d)]
     results  = []
 
     for meta in matched:

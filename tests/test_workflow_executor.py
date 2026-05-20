@@ -202,7 +202,7 @@ def user(fake_pool):
 def test_executor_runs_read_only_workflow_end_to_end(executor_module, fake_pool, user, monkeypatch):
     fake_pool.add_step(0, "infra.airflow_list_dags")
 
-    async def invoke(server, tool, args):
+    async def invoke(server, tool, args, **_kwargs):
         return {"dags": ["daily"]}
 
     monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)

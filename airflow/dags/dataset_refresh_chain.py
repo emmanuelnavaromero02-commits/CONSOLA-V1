@@ -72,12 +72,26 @@ def _pg():
     return psycopg2.connect(POSTGRES_DSN)
 
 
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key(env_name: str) -> str:
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+
+
 def _internal_headers(target: str) -> dict[str, str]:
     env_name = f"INTERNAL_API_KEY_AIRFLOW_TO_{target}"
-    key = os.environ.get(env_name) or os.environ.get("INTERNAL_API_KEY") or ""
     return {
         "X-Internal-Service": "airflow",
-        "X-API-Key": key,
+        "X-API-Key": _internal_key(env_name),
     }
 
 

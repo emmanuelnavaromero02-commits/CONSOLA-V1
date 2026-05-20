@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.security import get_internal_api_key
 from app.services import audit_service
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
@@ -42,8 +43,13 @@ def _cartridge_url(cartridge: str, path: str) -> str:
 
 
 def _cartridge_internal_headers() -> dict[str, str]:
+    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
+    if not key and os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+        raise RuntimeError("Missing INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE; legacy fallback disabled in production")
+    if not key:
+        key = get_internal_api_key()
     return {
-        "X-Api-Key": os.environ.get("INTERNAL_API_KEY", ""),
+        "X-Api-Key": key,
         "X-Internal-Service": "console",
     }
 
@@ -57,10 +63,11 @@ _VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
 
 
 def _vault_headers() -> dict[str, str]:
-    key = (
-        os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_VAULT")
-        or os.environ.get("INTERNAL_API_KEY", "")
-    )
+    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_VAULT")
+    if not key and os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+        raise RuntimeError("Missing INTERNAL_API_KEY_CONSOLE_TO_VAULT; legacy fallback disabled in production")
+    if not key:
+        key = get_internal_api_key()
     return {"x-api-key": key, "x-internal-service": "console"}
 
 

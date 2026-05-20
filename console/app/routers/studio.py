@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
 from app.security import get_internal_api_key
+from app.services.security_context import build_security_context, rls_user_context
 from app.services import (
     audit_service,
     cartridge_service,
@@ -47,6 +48,8 @@ def _key_for(server: str) -> str:
     pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
     if pair:
         return pair
+    if os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+        raise RuntimeError(f"Missing INTERNAL_API_KEY_CONSOLE_TO_{server}; legacy fallback disabled in production")
     return get_internal_api_key()
 
 
@@ -55,20 +58,14 @@ def _hdr_for(server: str) -> dict[str, str]:
 
 
 def _rls_user_context(user: dict | None) -> dict[str, Any]:
-    if not user:
-        return {}
-    role = user.get("role")
-    workspace_role = user.get("workspace_role")
-    return {
-        "id": user.get("id"),
-        "email": user.get("email", ""),
-        "name": user.get("name") or user.get("email", ""),
-        "role": role,
-        "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
-        "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
-        "workspace_role": workspace_role,
-        "_trusted_admin": workspace_role in {"admin", "owner", "super_admin"},
-    }
+    return rls_user_context(user)
+
+
+def _mcp_payload(tool: str, args: dict[str, Any], user: dict | None = None) -> dict[str, Any]:
+    payload = {"tool": tool, "args": args}
+    if user is not None:
+        payload["security_context"] = build_security_context(user)
+    return payload
 
 
 def _clean_identifier(value: str, *, label: str) -> str:
@@ -126,20 +123,23 @@ async def _optional_json(request: Request) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-async def _refinement_invoke(tool: str, args: dict[str, Any], *, timeout: int = 60) -> dict:
+async def _refinement_invoke(tool: str, args: dict[str, Any], *, timeout: int = 60, user: dict | None = None) -> dict:
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=timeout) as client:
         response = await client.post(
             f"{REFINEMENT_URL}/mcp/invoke",
-            json={"tool": tool, "args": args},
+            json=_mcp_payload(tool, args, user),
         )
     if response.status_code >= 400:
         raise _downstream_error("Refinement", response.status_code)
     return response.json()
 
 
-async def _refinement_datasets() -> list[dict]:
+async def _refinement_datasets(user: dict | None) -> list[dict]:
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=15) as client:
-        response = await client.get(f"{REFINEMENT_URL}/datasets")
+        response = await client.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json=_mcp_payload("list_datasets", {}, user),
+        )
     if response.status_code >= 400:
         raise _downstream_error("Refinement", response.status_code)
     payload = response.json()
@@ -147,13 +147,18 @@ async def _refinement_datasets() -> list[dict]:
     return datasets if isinstance(datasets, list) else []
 
 
-async def _rag_sources() -> list[dict]:
+async def _rag_sources(user: dict | None) -> list[dict]:
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=10) as client:
-        response = await client.get(f"{MCP_INFRA_URL.rstrip('/')}/rag/sources")
+        response = await client.post(
+            f"{MCP_INFRA_URL.rstrip('/')}/mcp/invoke",
+            json=_mcp_payload("list_rag_sources", {}, user),
+        )
     if response.status_code >= 400:
         raise _downstream_error("MCP infra", response.status_code)
     payload = response.json()
-    sources = payload.get("sources") or payload.get("results") or []
+    result = payload.get("result") if isinstance(payload, dict) else None
+    source_payload = result if isinstance(result, dict) else payload
+    sources = source_payload.get("sources") or source_payload.get("results") or []
     return sources if isinstance(sources, list) else []
 
 
@@ -287,7 +292,7 @@ async def dag_graph(
             edges.append({"source": entity_id, "target": dag_id})
 
     try:
-        for ds in await _refinement_datasets():
+        for ds in await _refinement_datasets(user):
             if ds.get("cartridge") and ds.get("cartridge") != cartridge:
                 continue
             ds_id = f"dataset:{ds.get('layer')}:{ds.get('name')}"
@@ -309,7 +314,7 @@ async def dags_list(
 ):
     manifest = await cartridge_service.get_cartridge(cartridge) if cartridge else None
     registered = _manifest_dag_ids(manifest)
-    result = await mcp_registry.invoke("infra", "airflow_list_dags", {})
+    result = await mcp_registry.invoke("infra", "airflow_list_dags", {}, user=user)
     if isinstance(result, dict) and result.get("error"):
         raise HTTPException(502, f"Airflow DAG list failed: {result['error']}")
     raw_dags = result.get("dags") if isinstance(result, dict) else result
@@ -364,7 +369,7 @@ async def dag_source(
     result = await mcp_registry.invoke("infra", "dag_get_source", {
         "cartridge_id": cartridge,
         "dag_id": safe_dag_id,
-    })
+    }, user=user)
     if isinstance(result, dict) and result.get("error"):
         return {"dag_id": safe_dag_id, "found": False, "source_code": "", "error": result["error"]}
     return {
@@ -392,7 +397,7 @@ async def dag_delete(
     result = await mcp_registry.invoke("infra", "airflow_delete_dag", {
         "dag_id": safe_dag_id,
         "cartridge_id": safe_cartridge,
-    })
+    }, user=user)
     if isinstance(result, dict) and result.get("error"):
         if "ALLOW_RCE_TOOLS" in str(result.get("error")):
             raise HTTPException(
@@ -433,7 +438,7 @@ async def dag_deploy(request: Request, user: dict = Depends(require_authenticate
         "code": code,
         "cartridge_id": cartridge,
         "description": body.get("description"),
-    })
+    }, user=user)
     if isinstance(result, dict) and result.get("error"):
         await audit_service.record_event(
             user_id=user.get("id"),
@@ -560,7 +565,7 @@ async def _layer_preview(layer: str, request: Request, user: dict) -> dict:
     limit = _limit_param(request)
     cartridge = request.query_params.get("cartridge") or "replicon"
     requested = request.query_params.get("dataset")
-    datasets = await _refinement_datasets()
+    datasets = await _refinement_datasets(user)
     candidates = [
         ds for ds in datasets
         if (ds.get("layer") or "").lower() == layer
@@ -582,12 +587,13 @@ async def _layer_preview(layer: str, request: Request, user: dict) -> dict:
         "query_dataset",
         {"name": ds["name"], "limit": limit, "user_context": _rls_user_context(user)},
         timeout=60,
+        user=user,
     )
     rows = result.get("data") or result.get("rows") or []
     if isinstance(rows, list) and rows and isinstance(rows[0], dict):
         columns = list(rows[0].keys())
     else:
-        schema = await _refinement_invoke("get_schema", {"name": ds["name"]}, timeout=30)
+        schema = await _refinement_invoke("get_schema", {"name": ds["name"]}, timeout=30, user=user)
         columns = [f.get("name") for f in schema.get("fields", []) if f.get("name")]
     return {
         "layer": layer,
@@ -624,7 +630,7 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
     schema = body.get("schema") or "public"
 
     if not table_name:
-        gold = [ds for ds in await _refinement_datasets() if (ds.get("layer") or "").lower() == "gold"]
+        gold = [ds for ds in await _refinement_datasets(user) if (ds.get("layer") or "").lower() == "gold"]
         if not gold:
             return {"created": False, "available": False, "error": "No Gold datasets available for Superset"}
         table_name = _dataset_table_name(gold[0])
@@ -637,7 +643,7 @@ async def superset_dataset(request: Request, user: dict = Depends(require_authen
     if schema != "public":
         raise HTTPException(400, "Only schema 'public' is allowed for Studio-created Superset datasets")
     datasets = [
-        ds for ds in await _refinement_datasets()
+        ds for ds in await _refinement_datasets(user)
         if (ds.get("layer") or "").lower() == "gold"
     ]
     allowed_tables = {_dataset_table_name(ds) for ds in datasets}
@@ -704,7 +710,7 @@ async def semantic(
 
 @router.get("/rag", dependencies=[Depends(require_studio_read)])
 async def rag(user: dict = Depends(require_authenticated)):
-    sources = await _rag_sources()
+    sources = await _rag_sources(user)
     return {"sources": sources, "corpus": sources, "docs_indexed": len(sources) if isinstance(sources, list) else 0}
 
 
