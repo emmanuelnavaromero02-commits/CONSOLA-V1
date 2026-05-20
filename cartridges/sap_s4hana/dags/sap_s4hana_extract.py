@@ -50,9 +50,18 @@ def sap_s4hana_extract():
         }
 
         with httpx.Client(timeout=300) as client:
+            params = {
+                k: v for k, v in {
+                    "mode": conf.get("mode") or "incremental",
+                    "from_date": conf.get("from_date") or None,
+                    "to_date": conf.get("to_date") or None,
+                    "job_id": conf.get("job_id") or None,
+                }.items() if v
+            }
             res = client.post(
                 f"{CARTRIDGE_URL}/entities/{entity}/extract",
-                json=conf,
+                params=params,
+                json={},
                 headers=headers,
             )
             res.raise_for_status()

@@ -222,6 +222,7 @@ export function ChatLayout() {
     switch (cmd.kind) {
       case "open-palette":
         setPaletteQuery("");
+        setPaletteOpen(true);
         return;
       case "open-memory":
         setMemoryOpen(true);
@@ -235,8 +236,10 @@ export function ChatLayout() {
         return;
       case "show-history":
         // Sidebar already shows history; open the mobile
-        // sidebar so phone users see it.
+        // sidebar so phone users see it, and give desktop users
+        // visible feedback instead of a no-op.
         setMobileSidebarOpen(true);
+        toast.info("El historial está visible en la barra lateral.");
         return;
       case "send-prompt":
         if (cmd.prompt) void handleSend(cmd.prompt);

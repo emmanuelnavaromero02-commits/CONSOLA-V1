@@ -22,6 +22,6 @@ echo "GHCR_OWNER=${GHCR_OWNER:-emmanuelnavaromero02-commits}"
 echo "IMAGE_TAG=${IMAGE_TAG:-v1.44.5}"
 
 docker compose -f docker-compose.aws.yml pull \
-  console workspace refinement vault mcp-infra
+  console console_next workspace refinement vault mcp-infra airflow airflow-scheduler
 
 echo "=== Release images ready ==="

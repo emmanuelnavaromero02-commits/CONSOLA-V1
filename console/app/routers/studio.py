@@ -17,6 +17,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
+from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
 from app.services import (
@@ -54,7 +55,11 @@ def _key_for(server: str) -> str:
 
 
 def _hdr_for(server: str) -> dict[str, str]:
-    return {"x-api-key": _key_for(server), "x-internal-service": "console"}
+    headers = {"x-api-key": _key_for(server), "x-internal-service": "console"}
+    rid = request_id_var.get()
+    if rid:
+        headers["x-request-id"] = rid
+    return headers
 
 
 def _rls_user_context(user: dict | None) -> dict[str, Any]:

@@ -23,6 +23,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from app.config import settings
+from app.middleware.request_id import request_id_var
 from app.registry import tool
 from app.tools._validators import validate_bounded_int, validate_identifier
 from app.tools.postgres import _conn
@@ -58,6 +59,11 @@ def _bronze_path(cartridge_id: str, entity: str) -> str:
 
 def _airflow_auth() -> tuple[str, str]:
     return (settings.airflow_user, settings.airflow_password)
+
+
+def _request_headers() -> dict[str, str] | None:
+    rid = request_id_var.get()
+    return {"X-Request-ID": rid} if rid else None
 
 
 # ── Tool · get_semantic ───────────────────────────────────────────────────────
@@ -578,13 +584,15 @@ async def cartridge_extract(
     dag_id = row[0]
     run_id = uuid.uuid4().hex[:8]
 
-    conf = {"run_id": run_id, "entity": entity, "mode": mode}
+    conf = {"job_id": run_id, "run_id": run_id, "entity": entity, "mode": mode}
     if from_date:
         conf["from_date"] = from_date
     if to_date:
         conf["to_date"] = to_date
 
-    async with httpx.AsyncClient(auth=_airflow_auth(), timeout=30) as client:
+    async with httpx.AsyncClient(
+        auth=_airflow_auth(), timeout=30, headers=_request_headers()
+    ) as client:
         r = await client.post(
             f"{settings.airflow_url.rstrip('/')}/api/v1/dags/{dag_id}/dagRuns",
             json={"conf": conf},
@@ -633,13 +641,22 @@ async def cartridge_extract_all(cartridge_id: str, mode: str = "incremental") ->
         return {"error": f"No entities with dag_id configured for '{cartridge_id}'"}
 
     results: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(auth=_airflow_auth(), timeout=30) as client:
+    async with httpx.AsyncClient(
+        auth=_airflow_auth(), timeout=30, headers=_request_headers()
+    ) as client:
         for entity, dag_id in rows:
             run_id = uuid.uuid4().hex[:8]
             try:
                 r = await client.post(
                     f"{settings.airflow_url.rstrip('/')}/api/v1/dags/{dag_id}/dagRuns",
-                    json={"conf": {"run_id": run_id, "entity": entity, "mode": mode}},
+                    json={
+                        "conf": {
+                            "job_id": run_id,
+                            "run_id": run_id,
+                            "entity": entity,
+                            "mode": mode,
+                        }
+                    },
                 )
                 r.raise_for_status()
                 results.append({

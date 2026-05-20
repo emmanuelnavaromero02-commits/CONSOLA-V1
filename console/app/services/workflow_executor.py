@@ -287,12 +287,14 @@ async def _invoke_with_retry(
     tool: str,
     args: dict[str, Any],
     timeout_seconds: int,
+    *,
+    user: dict[str, Any],
 ) -> tuple[bool, Any, str | None]:
     last_error: str | None = None
     for attempt in range(MAX_ATTEMPTS):
         try:
             result = await asyncio.wait_for(
-                mcp_registry.invoke(server_id, tool, args),
+                mcp_registry.invoke(server_id, tool, args, user=user),
                 timeout=timeout_seconds,
             )
             if isinstance(result, dict) and (result.get("_error") or result.get("error")):
@@ -302,6 +304,9 @@ async def _invoke_with_retry(
                 last_error = _safe_error(result.get("error_message") or result.get("error"))
                 return False, None, last_error
             return True, result, None
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            return False, None, _safe_error(detail)
         except Exception as exc:  # noqa: BLE001
             last_error = _safe_error(exc)
             if attempt < MAX_ATTEMPTS - 1:
@@ -492,7 +497,13 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
             results = await _refresh_step_results(pool, workflow_id)
             return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
 
-        ok, result, error = await _invoke_with_retry(server_id, bare_tool, args, _step_timeout(args))
+        ok, result, error = await _invoke_with_retry(
+            server_id,
+            bare_tool,
+            args,
+            _step_timeout(args),
+            user=user,
+        )
         if ok:
             row = await pool.fetchrow(
                 """

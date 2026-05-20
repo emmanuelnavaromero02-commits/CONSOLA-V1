@@ -50,6 +50,9 @@ PUBLIC_ROUTE_ALLOWLIST = {
     ("/activate",            "GET"),
     # Liveness / runtime config — non-sensitive.
     ("/healthz",             "GET"),
+    # Readiness is public by deploy design: load balancers and wait
+    # scripts need dependency state before any user session exists.
+    ("/readyz",              "GET"),
     ("/api/config",          "GET"),
     ("/favicon.ico",         "GET"),
     # CSRF token endpoint — needs to be reachable before any

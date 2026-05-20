@@ -11,17 +11,28 @@ from pathlib import Path
 import httpx
 
 from app.config import settings
+from app.middleware.request_id import request_id_var
 from app.registry import tool
 
 _AUTH = (settings.airflow_user, settings.airflow_password)
 _BASE = settings.airflow_url.rstrip("/")
 _DAG_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
+_DAG_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.:+-]{1,250}$")
 _CARTRIDGE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(auth=_AUTH, timeout=30)
+    headers = _request_headers()
+    return httpx.AsyncClient(auth=_AUTH, timeout=30, headers=headers or None)
+
+
+def _request_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = dict(extra or {})
+    rid = request_id_var.get()
+    if rid:
+        headers["X-Request-ID"] = rid
+    return headers
 
 
 def _validate_dag_id(dag_id: str) -> str:
@@ -29,6 +40,15 @@ def _validate_dag_id(dag_id: str) -> str:
     if not _DAG_ID_RE.fullmatch(dag_id):
         raise ValueError("Invalid dag_id: use letters, numbers and underscores only, starting with a letter")
     return dag_id
+
+
+def _validate_dag_run_id(dag_run_id: str | None) -> str | None:
+    if dag_run_id is None:
+        return None
+    dag_run_id = dag_run_id.strip()
+    if not _DAG_RUN_ID_RE.fullmatch(dag_run_id):
+        raise ValueError("Invalid dag_run_id")
+    return dag_run_id
 
 
 def _validate_cartridge_id(cartridge_id: str) -> str:
@@ -102,17 +122,40 @@ async def airflow_list_dags() -> dict:
         "properties": {
             "dag_id": {"type": "string", "description": "DAG ID to trigger"},
             "conf":   {"type": "object", "description": "Optional run configuration dict"},
+            "dag_run_id": {
+                "type": "string",
+                "description": "Optional idempotency key for the Airflow DAG run.",
+            },
         },
         "required": ["dag_id"],
     },
 )
-async def airflow_trigger_dag(dag_id: str, conf: dict | None = None) -> dict:
+async def airflow_trigger_dag(
+    dag_id: str,
+    conf: dict | None = None,
+    dag_run_id: str | None = None,
+) -> dict:
     dag_id = _validate_dag_id(dag_id)
+    dag_run_id = _validate_dag_run_id(dag_run_id)
+    payload = {"conf": conf or {}}
+    if dag_run_id:
+        payload["dag_run_id"] = dag_run_id
     async with _client() as c:
         r = await c.post(
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
-            json={"conf": conf or {}},
+            json=payload,
         )
+        if r.status_code == 409 and dag_run_id:
+            existing = await c.get(f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}")
+            existing.raise_for_status()
+            data = existing.json()
+            return {
+                "dag_id": dag_id,
+                "dag_run_id": data["dag_run_id"],
+                "state": data["state"],
+                "start_date": data.get("start_date"),
+                "idempotent_replay": True,
+            }
         r.raise_for_status()
         data = r.json()
     return {
@@ -163,11 +206,11 @@ async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
 )
 async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
-    async with httpx.AsyncClient(auth=_AUTH, timeout=60) as c:
+    async with httpx.AsyncClient(auth=_AUTH, timeout=60, headers=_request_headers()) as c:
         r = await c.get(
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
             f"/taskInstances/{task_id}/logs/1",
-            headers={"Accept": "text/plain"},
+            headers=_request_headers({"Accept": "text/plain"}),
         )
         r.raise_for_status()
     # Trim to last 6 000 chars so it fits in context

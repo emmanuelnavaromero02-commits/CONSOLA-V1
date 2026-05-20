@@ -51,21 +51,19 @@ def test_package_json_present_and_parseable():
         assert dep in pkg["dependencies"], (
             f"v1.44.2 brief deps: missing {dep!r}"
         )
-    # next must pin a 14.x release; the brief says Next 14+.
-    # v1.44.2 R-Mac-2: lower bound is 14.2.21 — earlier 14.2.x
-    # carries the moderate + critical advisories Codex's Mac audit
-    # flagged. Accept caret (^) or tilde (~) ranges as long as the
-    # floor is ≥ 14.2.21.
+    # next must pin a vetted production release. v1.44.2 started on
+    # Next 14; the go-live security audit moved the frontend to 16.2.6
+    # because npm audit no longer provided a safe patched 14.x floor.
     next_pin = pkg["dependencies"]["next"]
-    assert next_pin.lstrip("^~").startswith("14."), (
-        f"next pin should be 14.x; got {next_pin}"
+    assert next_pin.lstrip("^~").startswith("16."), (
+        f"next pin should be 16.x; got {next_pin}"
     )
-    m = re.match(r"[\^~]?14\.(\d+)\.(\d+)", next_pin)
+    m = re.match(r"[\^~]?16\.(\d+)\.(\d+)", next_pin)
     assert m, f"unparseable next pin: {next_pin}"
     minor, patch = int(m.group(1)), int(m.group(2))
-    assert (minor, patch) >= (2, 21), (
-        f"next pin must be >= 14.2.21 (Codex Mac audit R-Mac-2 — "
-        f"14.2.15 had moderate + critical CVEs). Got {next_pin}"
+    assert (minor, patch) >= (2, 6), (
+        f"next pin must be >= 16.2.6 (go-live npm audit hardening). "
+        f"Got {next_pin}"
     )
 
 
@@ -149,11 +147,11 @@ def test_tailwind_config_uses_class_dark_mode():
     )
 
 
-# ── Middleware ───────────────────────────────────────────────────────────
+# ── Proxy ────────────────────────────────────────────────────────────────
 
 
-def test_middleware_redirects_unauthenticated_to_login():
-    src = _read(SRC / "middleware.ts")
+def test_proxy_redirects_unauthenticated_to_login():
+    src = _read(SRC / "proxy.ts")
     assert "NextResponse.redirect" in src
     assert "/login" in src
     # The redirect target must include the original path as `?next=`
@@ -161,18 +159,18 @@ def test_middleware_redirects_unauthenticated_to_login():
     assert "next" in src and "searchParams.set" in src
 
 
-def test_middleware_treats_login_and_health_as_public():
-    src = _read(SRC / "middleware.ts")
+def test_proxy_treats_login_and_health_as_public():
+    src = _read(SRC / "proxy.ts")
     # Both routes must be in the public allowlist or skipped via prefix.
     assert '"/login"' in src
     assert "/api/health" in src
 
 
-def test_middleware_checks_for_auth_cookie_not_jwt_decode():
-    """Middleware runs at the edge and shouldn't decode JWT signing
+def test_proxy_checks_for_auth_cookie_not_jwt_decode():
+    """The Next proxy runs at the edge and shouldn't decode JWT signing
     keys. Cookie presence is enough — full verification happens
     server-side in route handlers / RSC fetches."""
-    src = _read(SRC / "middleware.ts")
+    src = _read(SRC / "proxy.ts")
     # Reads cookies …
     assert "req.cookies.get" in src
     # … and does NOT import a JWT library at the edge.
@@ -432,13 +430,8 @@ def test_login_page_uses_suspense_for_useSearchParams():
 
 
 def test_existing_aws_compose_consistency_still_passes():
-    """The v1.43.4 sanity guard (test_aws_compose_consistency) asserts
-    that local and AWS compose agree on Airflow / Postgres / Superset
-    versions. v1.44.2 added a service to LOCAL compose — verify we
-    didn't accidentally diff AWS in the same edit. (The new service
-    is intentionally local-only until the v1.45 deploy sprint.)"""
+    """The Next console is part of release/deploy now, not local-only."""
     src = _read(REPO / "infra/terraform/deploy/docker-compose.aws.yml")
-    assert "console_next" not in src, (
-        "console_next must NOT appear in the AWS compose yet; that's a "
-        "v1.45 deploy sprint."
-    )
+    assert "console_next:" in src
+    assert "ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next" in src
+    assert "BACKEND_INTERNAL_URL: http://console:8000" in src

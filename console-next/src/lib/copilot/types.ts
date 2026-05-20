@@ -249,7 +249,7 @@ export type DraftTone = "formal" | "neutral" | "friendly" | "urgent";
 
 /**
  * Body accepted by POST /api/copilot/drafts/generate. ``kind``
- * is required ('email' | 'message' | 'note' typically — the
+ * is required ('email' | 'memo' | 'note' | 'report' — the
  * backend enforces the allowlist). ``about`` is the
  * free-form prompt; ``audience`` is who it's directed at;
  * ``title`` seeds the subject line if relevant.

@@ -48,7 +48,8 @@ def sap_successfactors_extract_all():
         with httpx.Client(timeout=300) as client:
             res = client.post(
                 f"{CARTRIDGE_URL}/extract-all",
-                json=conf,
+                params={"mode": conf.get("mode") or "incremental"},
+                json={},
                 headers=headers,
             )
             res.raise_for_status()

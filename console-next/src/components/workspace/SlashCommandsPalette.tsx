@@ -89,8 +89,8 @@ export function SlashCommandsPalette({
   function pick(idx: number) {
     const cmd = filtered[idx];
     if (!cmd) return;
-    cmd.onSelect();
     onClose();
+    cmd.onSelect();
   }
 
   function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -164,14 +164,15 @@ export function SlashCommandsPalette({
                 <ul>
                   {list.map((cmd) => {
                     flatIdx += 1;
-                    const isActive = flatIdx === activeIdx;
+                    const currentIdx = flatIdx;
+                    const isActive = currentIdx === activeIdx;
                     return (
                       <li
                         key={cmd.id}
                         role="option"
                         aria-selected={isActive}
-                        onMouseEnter={() => setActiveIdx(flatIdx)}
-                        onClick={() => pick(flatIdx)}
+                        onMouseEnter={() => setActiveIdx(currentIdx)}
+                        onClick={() => pick(currentIdx)}
                         className={
                           "cursor-pointer rounded-md px-3 py-2 text-sm " +
                           (isActive ? "bg-accent/10" : "")

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from fastapi import HTTPException
+
 from app.services import audit_service, mcp_registry, llm_client
 from app.services.tool_manifest import classify_tool
 
@@ -582,7 +584,24 @@ async def chat(
             )
             return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
         risk = classify_tool(bare_name)["risk_level"]
-        result = await mcp_registry.invoke(srv, tool, args, user=actor_user)
+        try:
+            result = await mcp_registry.invoke(srv, tool, args, user=actor_user)
+        except HTTPException as exc:
+            message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            await audit_service.record_event(
+                user_id=(actor_user or {}).get("id"),
+                email=(actor_user or {}).get("email"),
+                action="studio.assistant.tool_call",
+                resource_type="mcp_tool",
+                resource_id=full_name,
+                status="error",
+                metadata={"server": srv, "tool": tool, "status_code": exc.status_code},
+                tool_name=full_name,
+                tool_args=_scrub_tool_args(args or {}),
+                tool_result_status="error",
+                risk_level=risk,
+            )
+            return {"error": str(message), "status_code": exc.status_code}
         status = "error" if isinstance(result, dict) and result.get("error") else "success"
         await audit_service.record_event(
             user_id=(actor_user or {}).get("id"),

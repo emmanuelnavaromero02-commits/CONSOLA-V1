@@ -50,7 +50,13 @@ def test_airflow_version_matches_local():
     # to just the upstream version it derives from.
     local_upstream = {v.split("-")[0] for v in local_versions}
 
-    assert aws_versions, "AWS compose must reference apache/airflow"
+    if not aws_versions:
+        aws_src = AWS.read_text(encoding="utf-8")
+        dockerfile = (REPO / "infra/airflow/Dockerfile").read_text(encoding="utf-8")
+        assert "/airflow:" in aws_src, "AWS compose must reference the packaged airflow image"
+        assert f"FROM apache/airflow:{next(iter(local_upstream))}" in dockerfile
+        aws_versions = local_upstream
+    assert aws_versions, "AWS compose must reference airflow"
     assert aws_versions == local_upstream, (
         f"Airflow drift: local={local_upstream}, AWS={aws_versions}. "
         f"Either bump AWS to match or update this test to reflect the "

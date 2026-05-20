@@ -24,6 +24,16 @@ def test_mcp_invoke_enforces_trusted_security_context_before_data_tools():
     assert "direct gold SQL requires admin context" in source
     assert "cartridge SQL must stay inside its cartridge prefix" in source
     assert "sensitive internal tables are not readable through MCP" in source
+    assert "_AGENT_READ_TOOLS" in source
+    assert "_AGENT_WRITE_TOOLS" in source
+    assert "_AGENT_DESTRUCTIVE_TOOLS" in source
+    assert "scheduled agents cannot manage agents" in source
+    assert "agent management requires admin context" in source
+    assert "_VAULT_READ_TOOLS" in source
+    assert "_VAULT_WRITE_TOOLS" in source
+    assert "vault writes require admin context" in source
+    assert "vault.connections.read" in source
+    assert "vault.connections.write" in source
 
 
 def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
@@ -69,3 +79,7 @@ def test_console_registry_scopes_direct_cartridge_mcp_calls():
     assert "trusted security_context required" in source
     assert "cartridge SQL cannot read service database schemas" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source
+    assert "except HTTPException" in source
+    assert "MCP transport failed" in source
+    assert "MCP invoke failed" in source
+    assert 'return {"error": str(exc)}' not in source

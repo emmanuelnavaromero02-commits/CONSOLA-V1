@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from app.middleware.request_id import request_id_var
 from app.services import llm_client
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
@@ -66,7 +67,11 @@ def _headers_for(server_id: str) -> dict[str, str]:
             raise RuntimeError(f"Missing {key_env}; legacy fallback disabled in production")
     if not key and not _is_production():
         key = os.environ.get("INTERNAL_API_KEY", "")
-    return {"x-api-key": key, "x-internal-service": "workspace"} if key else {}
+    headers = {"x-api-key": key, "x-internal-service": "workspace"} if key else {}
+    rid = request_id_var.get()
+    if rid:
+        headers["x-request-id"] = rid
+    return headers
 
 
 def _security_context(user: dict | None) -> dict:

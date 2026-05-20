@@ -19,6 +19,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.security import get_internal_api_key
+from app.middleware.request_id import request_id_var
 from app.services.security_context import build_security_context
 
 _pool: asyncpg.Pool | None = None
@@ -391,10 +392,14 @@ def _headers_for(server_id: str, url: str) -> dict[str, str]:
     pair_key = os.environ.get(key_env) if key_env else None
     if key_env and os.environ.get("APP_ENV", "production").lower() in {"production", "prod"} and not pair_key:
         raise RuntimeError(f"Missing {key_env}; legacy fallback disabled in production")
-    return {
+    headers = {
         "x-api-key": pair_key or get_internal_api_key(),
         "x-internal-service": "console",
     }
+    rid = request_id_var.get()
+    if rid:
+        headers["x-request-id"] = rid
+    return headers
 
 
 async def invoke(
@@ -408,11 +413,11 @@ async def invoke(
     pool = await _get_pool()
     row = await pool.fetchrow("SELECT url, category FROM mcp_servers WHERE id=$1", server_id)
     if not row:
-        return {"error": f"Server '{server_id}' not found"}
+        raise HTTPException(404, f"Server '{server_id}' not found")
     try:
         _validate_mcp_url(row["url"])
     except ValueError as exc:
-        return {"error": "mcp_host_not_allowlisted", "detail": str(exc)}
+        raise HTTPException(403, f"mcp_host_not_allowlisted: {exc}") from exc
     try:
         payload = {"tool": tool, "args": args or {}}
         ctx = security_context if security_context is not None else build_security_context(user)
@@ -428,8 +433,22 @@ async def invoke(
             data = r.json()
             # Unwrap {result: ...} envelope if present
             return data.get("result", data)
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, f"MCP tool timeout: {server_id}/{tool}") from exc
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        try:
+            detail = response.json().get("detail") or response.text
+        except Exception:
+            detail = response.text
+        status = response.status_code if response.status_code < 500 else 502
+        raise HTTPException(status, detail or f"MCP tool failed: {server_id}/{tool}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"MCP transport failed: {server_id}/{tool}") from exc
     except Exception as exc:
-        return {"error": str(exc)}
+        raise HTTPException(502, f"MCP invoke failed: {server_id}/{tool} ({type(exc).__name__})") from exc
 
 
 async def health_check_all() -> int:

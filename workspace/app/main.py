@@ -30,6 +30,7 @@ from app.services import session as _session, consumer_assistant as _ca
 from app.security import get_internal_api_key
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
+from app.middleware.request_id import request_id_var  # noqa: E402
 
 setup_logging(service_name="workspace")
 
@@ -76,7 +77,11 @@ def _key_for(server: str) -> str:
 
 
 def _hdr_for(server: str) -> dict[str, str]:
-    return {"x-api-key": _key_for(server), "x-internal-service": "workspace"}
+    headers = {"x-api-key": _key_for(server), "x-internal-service": "workspace"}
+    rid = request_id_var.get()
+    if rid:
+        headers["x-request-id"] = rid
+    return headers
 
 
 app = FastAPI(title="ΩMEGA by EPIUSE Workspace")

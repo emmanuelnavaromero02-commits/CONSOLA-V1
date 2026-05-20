@@ -444,6 +444,21 @@ async def _invoke_tool_with_retry(
     for attempt in range(_TOOL_RETRY_MAX_ATTEMPTS):
         try:
             return await mcp_registry.invoke(server_id, tool, args, user=user)
+        except HTTPException as exc:
+            message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            return {
+                "_error": True,
+                "error_type": f"HTTPException:{exc.status_code}",
+                "error_message": (_sanitise_error(str(message)) or "")[:200],
+                "tool": tool,
+                "server": server_id,
+                "_meta": {
+                    "user_facing": (
+                        f"No pude ejecutar {tool}: "
+                        f"{_sanitise_error(str(message)) or 'permiso o servicio no disponible'}"
+                    )[:300],
+                },
+            }
         except Exception as exc:                     # noqa: BLE001
             last_exc = exc
             if attempt < _TOOL_RETRY_MAX_ATTEMPTS - 1:

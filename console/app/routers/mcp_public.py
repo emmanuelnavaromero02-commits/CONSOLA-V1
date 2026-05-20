@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.services import mcp_registry
 from app.dependencies import require_admin
@@ -78,8 +78,24 @@ async def list_tools(server_id: str):
 async def invoke_tool(server_id: str, body: dict, user: dict = Depends(require_admin)):
     tool = body.get("tool")
     args = body.get("args", {})
-    result = await mcp_registry.invoke(server_id, tool, args, user=user)
     risk = classify_tool(tool or "")["risk_level"]
+    try:
+        result = await mcp_registry.invoke(server_id, tool, args, user=user)
+    except HTTPException as exc:
+        await audit_service.record_event(
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="mcp.tool.invoke",
+            resource_type="mcp_tool",
+            resource_id=f"{server_id}__{tool}",
+            status="error",
+            metadata={"server": server_id, "tool": tool, "status_code": exc.status_code},
+            tool_name=f"{server_id}__{tool}",
+            tool_args=_scrub_args(args),
+            tool_result_status="error",
+            risk_level=risk,
+        )
+        raise
     status = "error" if isinstance(result, dict) and result.get("error") else "success"
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -103,8 +119,24 @@ async def invoke_tool_generic(body: dict, user: dict = Depends(require_admin)):
     server_id = body.get("server", "")
     tool = body.get("tool", "")
     args = body.get("args", {})
-    result = await mcp_registry.invoke(server_id, tool, args, user=user)
     risk = classify_tool(tool)["risk_level"]
+    try:
+        result = await mcp_registry.invoke(server_id, tool, args, user=user)
+    except HTTPException as exc:
+        await audit_service.record_event(
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="mcp.tool.invoke",
+            resource_type="mcp_tool",
+            resource_id=f"{server_id}__{tool}",
+            status="error",
+            metadata={"server": server_id, "tool": tool, "status_code": exc.status_code},
+            tool_name=f"{server_id}__{tool}",
+            tool_args=_scrub_args(args),
+            tool_result_status="error",
+            risk_level=risk,
+        )
+        raise
     status = "error" if isinstance(result, dict) and result.get("error") else "success"
     await audit_service.record_event(
         user_id=user.get("id"),

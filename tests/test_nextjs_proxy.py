@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 import socket
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,7 @@ PROXY_LIB    = REPO / "console-next/src/lib/proxy.ts"
 API_ROUTE    = REPO / "console-next/src/app/api/[...path]/route.ts"
 AUTH_ROUTE   = REPO / "console-next/src/app/auth/[...path]/route.ts"
 LOGIN_PROXY  = REPO / "console-next/src/app/login-proxy/route.ts"
-MIDDLEWARE   = REPO / "console-next/src/middleware.ts"
+NEXT_PROXY   = REPO / "console-next/src/proxy.ts"
 API_TS       = REPO / "console-next/src/lib/api.ts"
 AUTH_FLOW    = REPO / "console-next/src/lib/auth-flow.ts"
 
@@ -127,16 +128,16 @@ def test_login_proxy_route_exists_and_is_get_only():
     assert "${BACKEND_URL}/login" in src
 
 
-def test_middleware_allows_proxy_paths_without_session_cookie():
-    """The auth-cookie middleware must NOT redirect /auth/*
+def test_next_proxy_allows_proxy_paths_without_session_cookie():
+    """The auth-cookie proxy must NOT redirect /auth/*
     or /login-proxy to /login — those paths are literally how
     you GET a session cookie."""
-    src = _read(MIDDLEWARE)
+    src = _read(NEXT_PROXY)
     assert '"/login-proxy"' in src, (
-        "middleware.ts PUBLIC_PATHS must include /login-proxy"
+        "proxy.ts PUBLIC_PATHS must include /login-proxy"
     )
     assert '"/auth/"' in src, (
-        "middleware.ts PUBLIC_PREFIXES must include /auth/ so the "
+        "proxy.ts PUBLIC_PREFIXES must include /auth/ so the "
         "proxy catch-all can answer POST /auth/login without an "
         "existing session"
     )
@@ -169,12 +170,15 @@ FRONTEND_URL = "http://localhost:3000"
 
 
 def _next_is_up() -> bool:
-    """Best-effort liveness probe. We TCP-connect to :3000 rather
-    than HTTP-probing /api/health so the check stays fast (50 ms
-    timeout) and doesn't depend on the proxy itself working."""
+    """Best-effort liveness probe.
+
+    A stale Docker port can accept TCP while the Next.js process behind it
+    is wedged. Probe the lightweight health route so local optional live
+    tests skip unless the stack is actually responsive.
+    """
     try:
-        with socket.create_connection(("localhost", 3000), timeout=0.5):
-            return True
+        with urllib.request.urlopen(f"{FRONTEND_URL}/api/health", timeout=1) as r:
+            return r.status == 200
     except (OSError, socket.timeout):
         return False
 
@@ -194,8 +198,6 @@ def test_proxy_forwards_get():
     """GET /api/health proxies to the Next.js healthcheck (NOT
     through the catch-all — Next picks the static segment). Any
     200 from a known endpoint proves the runtime is up."""
-    import urllib.request
-
     with urllib.request.urlopen(f"{FRONTEND_URL}/api/health", timeout=5) as r:
         assert r.status == 200
 

@@ -1665,6 +1665,7 @@ async def refresh_by_source(
         raise HTTPException(400, "source is required")
     auth_body = {**body, "_verified_internal_service": internal_service}
     _require_source_scope(auth_body, source)
+    _require_security_permission(auth_body, "datasets.write")
 
     all_ds   = store.list_datasets()
     sec = _require_security_permission(auth_body, "datasets.read")
@@ -1683,5 +1684,16 @@ async def refresh_by_source(
                              "storage_uri": result["storage_uri"]})
         except Exception as exc:
             results.append({"name": meta["name"], "status": "error", "error": str(exc)})
+
+    errors = [r for r in results if r.get("status") == "error"]
+    if errors and not body.get("allow_partial"):
+        raise HTTPException(
+            502,
+            {
+                "source": source,
+                "error": "refresh-by-source failed",
+                "results": results,
+            },
+        )
 
     return {"source": source, "refreshed": len(results), "results": results}

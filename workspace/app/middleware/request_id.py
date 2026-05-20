@@ -14,17 +14,26 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import uuid
 
 from starlette.datastructures import State
 
 
 _log = logging.getLogger(__name__)
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
 )
+
+
+def normalise_request_id(value: str | None) -> str:
+    value = (value or "").strip()
+    if _REQUEST_ID_RE.fullmatch(value):
+        return value
+    return str(uuid.uuid4())
 
 
 class RequestIDMiddleware:
@@ -53,8 +62,8 @@ class RequestIDMiddleware:
             if name == b"x-request-id":
                 incoming = value.decode("latin1", errors="replace")
                 break
-        rid = incoming or str(uuid.uuid4())
-        rid_bytes = rid.encode("latin1")
+        rid = normalise_request_id(incoming)
+        rid_bytes = rid.encode("ascii")
 
         # Expose via contextvar (for structured logs) and request.state
         # (for handlers that prefer the explicit attribute).

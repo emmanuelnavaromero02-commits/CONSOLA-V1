@@ -154,14 +154,14 @@ def test_backend_logout_deletes_session_cookies():
     assert "resp.delete_cookie(_auth.REFRESH_COOKIE_NAME" in main_py
 
 
-def test_next_middleware_recognizes_mod_session():
+def test_next_proxy_recognizes_mod_session():
     """R-Mac-4 added mod_session + refresh_token to the
-    AUTH_COOKIE_CANDIDATES list. Without it the middleware
+    AUTH_COOKIE_CANDIDATES list. Without it the Next proxy
     silently redirects authenticated users back to /login."""
-    mw = (REPO / "console-next/src/middleware.ts").read_text(encoding="utf-8")
-    assert '"mod_session"' in mw, (
-        "console-next/src/middleware.ts must include mod_session in "
+    proxy = (REPO / "console-next/src/proxy.ts").read_text(encoding="utf-8")
+    assert '"mod_session"' in proxy, (
+        "console-next/src/proxy.ts must include mod_session in "
         "AUTH_COOKIE_CANDIDATES — without it authenticated users "
         "loop back to /login because the cookie isn't recognised."
     )
-    assert '"refresh_token"' in mw
+    assert '"refresh_token"' in proxy

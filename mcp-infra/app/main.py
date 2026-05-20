@@ -168,6 +168,12 @@ _AIRFLOW_RUN_TOOLS = {"airflow_trigger_dag"}
 _AIRFLOW_WRITE_TOOLS = {"airflow_create_dag", "airflow_delete_dag", "airflow_set_variable"}
 _PIPELINE_READ_TOOLS = {"dag_get_source", "watermark_get"}
 _PIPELINE_WRITE_TOOLS = {"dag_save_source", "watermark_set"}
+_VAULT_READ_TOOLS = {"vault_list_connections", "vault_get_connection", "vault_list_secrets"}
+_VAULT_WRITE_TOOLS = {"vault_set_connection", "vault_set_secret"}
+_VAULT_DESTRUCTIVE_TOOLS = {"vault_delete_connection"}
+_AGENT_READ_TOOLS = {"agent_list", "agent_get"}
+_AGENT_WRITE_TOOLS = {"agent_create", "agent_update"}
+_AGENT_DESTRUCTIVE_TOOLS = {"agent_delete"}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
@@ -434,8 +440,39 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "pipelines.read", internal_service)
     elif tool in _PIPELINE_WRITE_TOOLS:
         ctx = _require_context_permission(req, "pipelines.write", internal_service)
+    elif tool in {"vault_list_connections", "vault_get_connection"}:
+        ctx = _require_context_permission(req, "vault.connections.read", internal_service)
+    elif tool == "vault_list_secrets":
+        ctx = _require_context_permission(req, "vault.secrets.read_masked", internal_service)
+    elif tool in {"vault_set_connection", "vault_delete_connection", "vault_set_secret"}:
+        ctx = _require_context_permission(req, "vault.connections.write", internal_service)
+    elif tool in _AGENT_READ_TOOLS:
+        ctx = _require_context_permission(req, "studio.read", internal_service)
+    elif tool in _AGENT_WRITE_TOOLS:
+        ctx = _require_context_permission(req, "studio.write", internal_service)
+    elif tool in _AGENT_DESTRUCTIVE_TOOLS:
+        ctx = _require_context_permission(req, "copilot.execute", internal_service)
     else:
         return None
+
+    if tool in _AGENT_READ_TOOLS | _AGENT_WRITE_TOOLS | _AGENT_DESTRUCTIVE_TOOLS:
+        source = str(ctx.get("source") or "")
+        if source == "agent_runner":
+            raise HTTPException(403, detail="scheduled agents cannot manage agents")
+        if tool in _AGENT_WRITE_TOOLS | _AGENT_DESTRUCTIVE_TOOLS and not _is_admin_context(ctx):
+            raise HTTPException(403, detail="agent management requires admin context")
+        if tool in _AGENT_READ_TOOLS and not _is_admin_context(ctx):
+            cartridge_id = str(args.get("cartridge_id") or "").strip()
+            if not cartridge_id:
+                raise HTTPException(403, detail="agent reads require cartridge_id outside admin context")
+            _require_cartridge_scope(ctx, cartridge_id)
+
+    if tool in _VAULT_READ_TOOLS | _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS:
+        if tool in _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS and not _is_admin_context(ctx):
+            raise HTTPException(403, detail="vault writes require admin context")
+        vault_scope = str(args.get("cartridge_id") or args.get("scope") or "").strip()
+        if not _is_admin_context(ctx):
+            _require_cartridge_scope(ctx, vault_scope)
 
     if tool.startswith("postgres_") and not _is_admin_context(ctx):
         gold = bool(args.get("gold"))
@@ -501,11 +538,12 @@ async def invoke_tool(req: InvokeRequest, internal_service: str = Depends(verify
         if req.tool in _RAG_READ_TOOLS and ctx is not None:
             result = _filter_rag_payload(result, ctx)
         return {"result": result}
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
-        # Return structured error so the LLM can reason about it
-        return {"error": str(exc), "tool": req.tool}
+        raise HTTPException(status_code=500, detail=f"tool invocation failed: {type(exc).__name__}") from exc
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────

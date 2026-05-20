@@ -33,12 +33,30 @@ def _fix_mixed_type_columns(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
+def _empty_schema_columns(expected_columns: list[str] | None = None) -> list[str]:
+    columns: list[str] = []
+    for col in expected_columns or []:
+        if isinstance(col, str) and col and col not in columns:
+            columns.append(col)
+    for col in (
+        "_extracted_at",
+        "_run_id",
+        "_source_entity",
+        "_load_type",
+        "_watermark_value",
+    ):
+        if col not in columns:
+            columns.append(col)
+    return columns
+
+
 def write_parquet_and_upload(
     entity: str,
     rows: list[dict[str, Any]],
     run_id: str,
     load_type: str,
     watermark_field: str | None = None,
+    expected_columns: list[str] | None = None,
 ) -> str:
     extracted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -56,7 +74,13 @@ def write_parquet_and_upload(
         enriched["_watermark_value"] = row.get(watermark_field) if watermark_field else None
         enriched_rows.append(enriched)
 
-    df = _fix_mixed_type_columns(pd.DataFrame(enriched_rows))
+    if enriched_rows:
+        df = _fix_mixed_type_columns(pd.DataFrame(enriched_rows))
+        for col in _empty_schema_columns(expected_columns):
+            if col not in df.columns:
+                df[col] = None
+    else:
+        df = pd.DataFrame(columns=_empty_schema_columns(expected_columns))
 
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = Path(tmpdir) / f"{entity}.parquet"

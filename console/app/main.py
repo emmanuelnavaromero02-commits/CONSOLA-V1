@@ -62,7 +62,7 @@ def _public_url(
     return development_default.rstrip("/")
 
 
-from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service
+from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest
 from app.services import cartridge_service
 from app.services import agent_service as _agents
 from app.services import agent_runtime as _agent_runtime
@@ -87,6 +87,7 @@ from app.services.auth import verify_internal_api_key
 from app.services import audit_service as _audit
 from app.services.permissions import ROLE_DEFINITIONS, require_permission
 from app.services.security_context import build_security_context, rls_user_context
+from app.middleware.request_id import request_id_var
 
 
 async def _periodic_health_check():
@@ -211,7 +212,11 @@ def _key_for(server: str) -> str:
 
 def _hdr_for(server: str) -> dict[str, str]:
     """Headers for an outbound internal call from console to ``server``."""
-    return {"x-api-key": _key_for(server), "x-internal-service": "console"}
+    headers = {"x-api-key": _key_for(server), "x-internal-service": "console"}
+    rid = request_id_var.get()
+    if rid:
+        headers["x-request-id"] = rid
+    return headers
 
 
 def _is_internal_request(request: Request) -> bool:
@@ -914,7 +919,7 @@ _AUTH_PUBLIC_EXACT = {
     # `(unhealthy)` even when it's fine. Workspace and vault already
     # handle /healthz via their own public-path sets; console was the
     # outlier.
-    "/healthz",
+    "/healthz", "/readyz",
 }
 _AUTH_PUBLIC_PREFIX = ("/static/", "/vpn-config/")
 _AUTH_API_LIKE_PREFIX = ("/api/", "/mcp/", "/internal/", "/datasets", "/jobs", "/tokens",
@@ -1371,6 +1376,53 @@ async def healthz():
     return {"ok": True, "service": "console"}
 
 
+async def _dependency_health(name: str, url: str, server: str | None = None) -> dict:
+    if not url:
+        return {"status": "down", "error": "missing_url"}
+    try:
+        headers = _hdr_for(server) if server else {}
+        async with httpx.AsyncClient(headers=headers, timeout=2.5) as c:
+            r = await c.get(url)
+        status = "up" if r.status_code < 500 else "down"
+        return {"status": status, "code": r.status_code}
+    except Exception as exc:
+        logger.warning("readiness probe failed for %s", name, exc_info=True)
+        return {"status": "down", "error": type(exc).__name__}
+
+
+@app.get("/readyz")
+async def readyz():
+    """Dependency-aware readiness probe.
+
+    `/healthz` only proves the process can answer. `/readyz` is stricter:
+    it verifies Postgres and core sibling services so deploy/proxy layers can
+    keep traffic away from a half-started console.
+    """
+    checks: dict[str, dict] = {}
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        checks["postgres"] = {"status": "up"}
+    except Exception as exc:
+        logger.warning("readiness probe failed for postgres", exc_info=True)
+        checks["postgres"] = {"status": "down", "error": type(exc).__name__}
+
+    deps = {
+        "refinement": (f"{REFINEMENT_URL.rstrip('/')}/healthz", "REFINEMENT"),
+        "mcp-infra": (f"{os.environ.get('MCP_INFRA_URL', 'http://mcp-infra:8010').rstrip('/')}/healthz", "MCP_INFRA"),
+        "vault": (f"{os.environ.get('VAULT_URL', 'http://vault:8300').rstrip('/')}/healthz", "VAULT"),
+    }
+    for name, (url, server) in deps.items():
+        checks[name] = await _dependency_health(name, url, server)
+
+    ok = all(check.get("status") == "up" for check in checks.values())
+    return JSONResponse(
+        {"ok": ok, "service": "console", "checks": checks},
+        status_code=200 if ok else 503,
+    )
+
+
 @app.get("/api/config")
 async def api_config(request: Request):
     """Runtime config (URLs only, no secrets)."""
@@ -1518,7 +1570,7 @@ async def dataset_data(name: str, request: Request, limit: int = 100):
         )
         return r.json()
 
-@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_permission("datasets.write"))])
+@app.post("/datasets/{name}/refresh", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
 async def refresh_dataset(name: str, user: dict = Depends(require_permission("datasets.write"))):
     return await _refinement_invoke("materialize", {"name": name}, timeout=120, user=user)
 
@@ -1595,7 +1647,7 @@ async def api_sources(user: dict = Depends(require_authenticated)):
         return {"sources": sources}
     return {"sources": []}
 
-@app.post("/api/datasets/save", dependencies=[Depends(require_permission("datasets.write"))])
+@app.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
 async def api_dataset_save(body: dict, user: dict = Depends(require_permission("datasets.write"))):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -1634,7 +1686,7 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
     return r.json()
 
 
-@app.delete("/api/datasets", dependencies=[Depends(require_permission("datasets.delete"))])
+@app.delete("/api/datasets", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.delete"))])
 async def api_delete_dataset(name: str, user: dict = Depends(require_permission("datasets.delete"))):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
@@ -1917,7 +1969,7 @@ async def api_apps(user: dict = Depends(require_authenticated)):
     return r.json()
 
 
-@app.delete("/api/apps/{name}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_apps_delete(name: str, user: dict = Depends(require_authenticated)):
     """Delete a published analytic app by name."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
@@ -2518,7 +2570,11 @@ async def api_pipeline_extract(
             raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
 
         conf = _build_dag_extract_conf(entity, metadata.get("mode"), body)
-        result = await _trigger_airflow_extract_dag(dag_id, conf, user)
+        requested_dag_run_id = _dag_run_id_from_idempotency_key(
+            dag_id,
+            body.get("idempotency_key") or body.get("request_id"),
+        )
+        result = await _trigger_airflow_extract_dag(dag_id, conf, user, requested_dag_run_id)
         if result.get("error"):
             raise HTTPException(502, f"Airflow trigger failed: {result['error']}")
         dag_run_id = result.get("dag_run_id") or result.get("run_id")
@@ -2644,13 +2700,32 @@ def _build_dag_extract_conf(entity: str, configured_mode: str | None, body: dict
     return conf
 
 
-async def _trigger_airflow_extract_dag(dag_id: str, conf: dict, user: dict | None) -> dict:
+def _dag_run_id_from_idempotency_key(dag_id: str, idempotency_key: object | None) -> str | None:
+    if idempotency_key is None:
+        return None
+    key = str(idempotency_key).strip()
+    if not key:
+        return None
+    if len(key) > 160:
+        raise HTTPException(400, "idempotency_key is too long")
+    return f"console__{dag_id}__{uuid.uuid5(uuid.NAMESPACE_URL, f'{dag_id}:{key}').hex}"
+
+
+async def _trigger_airflow_extract_dag(
+    dag_id: str,
+    conf: dict,
+    user: dict | None,
+    dag_run_id: str | None = None,
+) -> dict:
     result: dict = {}
     for attempt in range(5):
-        result = await mcp_registry.invoke("infra", "airflow_trigger_dag", {
+        args = {
             "dag_id": dag_id,
             "conf": conf,
-        }, user=user)
+        }
+        if dag_run_id:
+            args["dag_run_id"] = dag_run_id
+        result = await mcp_registry.invoke("infra", "airflow_trigger_dag", args, user=user)
         error = result.get("error")
         if not error:
             return result
@@ -2667,7 +2742,7 @@ def _is_transient_airflow_trigger_error(error: str) -> bool:
 
 # ── Studio — Entity config ───────────────────────────────────────────────────
 
-@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     new_name = (body.get("new_name") or "").strip()
     if not new_name:
@@ -2687,7 +2762,7 @@ async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
 
-@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
     """Update entity_config fields."""
     allowed = {"display_name", "mode", "primary_key", "dag_id",
@@ -2785,7 +2860,7 @@ async def studio_cartridge_status(cartridge_id: str):
     return {"cartridge_id": cartridge_id, **probe}
 
 
-@app.post("/studio/cartridges", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/studio/cartridges", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
     name = body.get("name", "").strip()
@@ -2806,14 +2881,14 @@ async def studio_get_cartridge(cartridge_id: str):
     return manifest
 
 
-@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_update_cartridge(cartridge_id: str, body: dict):
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return await cartridge_service.update_cartridge(cartridge_id, body)
 
 
-@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
     """Upload a spec file (OpenAPI YAML, WSDL, OData $metadata) for the cartridge."""
     if not await cartridge_service.get_cartridge(cartridge_id):
@@ -2943,8 +3018,8 @@ async def rag_page():
 
 
 # ── Agents — CRUD + invoke ────────────────────────────────────────────────────
-# Admin-only writes; any authenticated user can list/invoke (visibility/permissions
-# can be layered later via cartridge ACLs).
+# Agent definitions include prompts, tool allowlists and execution traces. Keep
+# the detailed API on admin/workspace-admin surfaces until per-agent ACLs land.
 
 @app.get("/agents", dependencies=[Depends(require_admin)])
 async def viewer_agents(request: Request):
@@ -2952,7 +3027,7 @@ async def viewer_agents(request: Request):
     return FileResponse(STATIC / "agents.html")
 
 
-@app.get("/api/agents", dependencies=[Depends(require_authenticated)])
+@app.get("/api/agents", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_agents_list(
     request: Request,
     cartridge_id: str | None = None,
@@ -2975,7 +3050,11 @@ async def api_agents_tool_catalog(request: Request):
                 r = await c.get(f"{base}/mcp/tools", headers=_hdr_for(server_key))
                 r.raise_for_status()
                 out[srv_id] = [
-                    {"name": t["name"], "description": t.get("description", "")}
+                    {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        **tool_manifest.classify_tool(t["name"]),
+                    }
                     for t in (r.json().get("tools") or [])
                 ]
             except Exception:
@@ -2983,7 +3062,7 @@ async def api_agents_tool_catalog(request: Request):
     return {"servers": out}
 
 
-@app.get("/api/agents/{agent_id}", dependencies=[Depends(require_authenticated)])
+@app.get("/api/agents/{agent_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_agents_get(request: Request, agent_id: str):
     require_user(request)
     a = await _agents.get_agent(agent_id)
@@ -2992,7 +3071,7 @@ async def api_agents_get(request: Request, agent_id: str):
     return a
 
 
-@app.post("/api/agents", dependencies=[Depends(require_csrf)])
+@app.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
 async def api_agents_create(request: Request, body: dict):
     user = require_admin(request)
     try:
@@ -3001,7 +3080,7 @@ async def api_agents_create(request: Request, body: dict):
         raise HTTPException(400, str(exc))
 
 
-@app.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf)])
+@app.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
 async def api_agents_update(request: Request, agent_id: str, body: dict):
     require_admin(request)
     try:
@@ -3013,7 +3092,7 @@ async def api_agents_update(request: Request, agent_id: str, body: dict):
     return a
 
 
-@app.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf)])
+@app.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
 async def api_agents_delete(request: Request, agent_id: str):
     require_admin(request)
     ok = await _agents.delete_agent(agent_id)
@@ -3022,7 +3101,7 @@ async def api_agents_delete(request: Request, agent_id: str):
     return {"deleted": True}
 
 
-@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf)])
+@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_agents_invoke(request: Request, agent_id: str, body: dict):
     user  = require_user(request)
     agent = await _agent_runtime.load_agent(agent_id)
@@ -3055,7 +3134,7 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     return result
 
 
-@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf)])
+@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
     """Server-Sent Events stream of tool_use / tool_result / text events."""
     user  = require_user(request)
@@ -3098,13 +3177,13 @@ async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_authenticated)])
+@app.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_agents_runs(request: Request, agent_id: str, limit: int = 20):
     require_user(request)
     return {"runs": await _agents.list_runs(agent_id, limit=limit)}
 
 
-@app.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_authenticated)])
+@app.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
 async def api_agent_run_detail(request: Request, run_id: int):
     require_user(request)
     run = await _agents.get_run(run_id)
@@ -3147,14 +3226,14 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_permission("vault.connections.write"))])
+@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict):
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_permission("vault.connections.write"))])
+@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_connection(cartridge: str, conn_id: str):
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
@@ -3179,14 +3258,14 @@ async def api_vault_reveal_secret(scope: str, key: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_permission("vault.connections.write"))])
+@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_secret(scope: str, key: str, body: dict):
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_permission("vault.connections.write"))])
+@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_secret(scope: str, key: str):
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")

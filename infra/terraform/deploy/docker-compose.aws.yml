@@ -175,11 +175,38 @@ services:
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  console_next:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next:${IMAGE_TAG:-v1.44.5}
+    container_name: mode_console_next
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      NODE_ENV: production
+      BACKEND_INTERNAL_URL: http://console:8000
+      API_INTERNAL_URL: http://console:8000
+      NEXT_PUBLIC_LEGACY_CONSOLE_URL: ${CONSOLE_URL:?CONSOLE_URL is required}
+    ports:
+      - "3000:3000"
+    networks:
+      - modecissions_net
+    depends_on:
+      console:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   workspace:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:-v1.44.5}
@@ -489,7 +516,7 @@ services:
     # DESIGN — `airflow db migrate` has to CREATE the metastore
     # tables, then we transfer GRANTs to omega_airflow_meta so the
     # runtime services (next two) can use the dedicated role.
-    image: apache/airflow:2.10.5
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:-v1.44.5}
     container_name: mode_airflow_init
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -526,13 +553,13 @@ services:
     logging: *default-logging
 
   airflow:
-    image: apache/airflow:2.10.5
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:-v1.44.5}
     container_name: mode_airflow
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
         required: false
     entrypoint: /bin/bash
-    command: -c "python -m pip install --user --no-cache-dir $$_PIP_ADDITIONAL_REQUIREMENTS && rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
+    command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
@@ -548,7 +575,6 @@ services:
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl croniter"
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
@@ -600,7 +626,7 @@ services:
       start_period: 60s
 
   airflow-scheduler:
-    image: apache/airflow:2.10.5
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:-v1.44.5}
     container_name: mode_airflow_scheduler
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -618,7 +644,6 @@ services:
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl croniter"
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"

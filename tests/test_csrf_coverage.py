@@ -98,20 +98,7 @@ CSRF_EXEMPT_BY_DESIGN = frozenset({
 # operator sign-off; removing an entry (because someone added CSRF to
 # the route) is always welcome.
 KNOWN_CSRF_GAPS_FOR_LATER = frozenset({
-    ("/datasets/{name}/refresh",                                            "POST"),
-    ("/api/datasets/save",                                                  "POST"),
-    ("/api/datasets",                                                       "DELETE"),
-    ("/api/apps/{name}",                                                    "DELETE"),
     ("/api/data/{dataset}/query",                                           "POST"),
-    ("/studio/cartridges/{cartridge_id}/entities/{entity}/rename",          "POST"),
-    ("/studio/cartridges/{cartridge_id}/entities/{entity}",                 "PATCH"),
-    ("/studio/cartridges",                                                  "POST"),
-    ("/studio/cartridges/{cartridge_id}",                                   "PATCH"),
-    ("/studio/cartridges/{cartridge_id}/spec",                              "POST"),
-    ("/api/vault/connections/{cartridge}/{conn_id}",                        "PUT"),
-    ("/api/vault/connections/{cartridge}/{conn_id}",                        "DELETE"),
-    ("/api/vault/secrets/{scope}/{key}",                                    "PUT"),
-    ("/api/vault/secrets/{scope}/{key}",                                    "DELETE"),
     ("/monitoring/mcp/invoke",                                              "POST"),
     # v1.21-shipped pages that change session state through the
     # cookie chain — already have CSRF on the form POSTs:

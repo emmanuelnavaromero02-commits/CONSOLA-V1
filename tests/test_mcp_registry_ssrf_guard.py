@@ -82,9 +82,11 @@ def test_invoke_refuses_malicious_stored_url(registry_module, monkeypatch):
         return Pool()
 
     monkeypatch.setattr(registry_module, "_get_pool", fake_pool)
-    result = _run(registry_module.invoke("evil", "list", {}))
-    assert result["error"] == "mcp_host_not_allowlisted"
-    assert "blocked" in result["detail"]
+    with pytest.raises(HTTPException) as exc:
+        _run(registry_module.invoke("evil", "list", {}))
+    assert exc.value.status_code == 403
+    assert "mcp_host_not_allowlisted" in str(exc.value.detail)
+    assert "blocked" in str(exc.value.detail)
 
 
 def test_mcp_registry_allows_operator_configured_private_cidr(registry_module, monkeypatch):
