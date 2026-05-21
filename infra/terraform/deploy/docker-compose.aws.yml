@@ -119,10 +119,10 @@ services:
       SUPERSET_URL:        http://superset:8088
       AIRFLOW_PUBLIC_URL:  ${AIRFLOW_PUBLIC_URL:-}
       SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-}
-      # Prefer a least-privilege Superset service account for Studio dataset
-      # creation. Falls back to bootstrap admin if a service account is not set.
-      SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:-}
-      SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:-}
+      # Least-privilege Superset service account for Studio dataset creation.
+      # Production refuses admin fallback.
+      SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:?SUPERSET_SERVICE_USER is required}
+      SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:?SUPERSET_SERVICE_PASSWORD is required}
       SUPERSET_ADMIN_USER:  ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       SUPERSET_GOLD_SQLALCHEMY_URI: "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
@@ -295,6 +295,10 @@ services:
       APP_ENV:           ${APP_ENV:-production}
       DATABASE_URL:      "postgresql+psycopg2://omega_vault:${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required}@postgres:5432/modecissions"
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:?INTERNAL_API_KEY_CONSOLE_TO_VAULT is required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_VAULT: ${INTERNAL_API_KEY_MCP_INFRA_TO_VAULT:?INTERNAL_API_KEY_MCP_INFRA_TO_VAULT is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_VAULT: ${INTERNAL_API_KEY_WORKSPACE_TO_VAULT:?INTERNAL_API_KEY_WORKSPACE_TO_VAULT is required}
+      INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:?INTERNAL_API_KEY_REFINEMENT_TO_VAULT is required}
     networks:
       - modecissions_net
     depends_on:
@@ -417,6 +421,10 @@ services:
       SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
       SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
       SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
+      SUPERSET_ENABLE_PROXY_FIX: ${SUPERSET_ENABLE_PROXY_FIX:-true}
+      SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-true}
+      SUPERSET_SESSION_COOKIE_SAMESITE: ${SUPERSET_SESSION_COOKIE_SAMESITE:-Lax}
+      SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-true}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
     volumes:
@@ -480,15 +488,18 @@ services:
       SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
       SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
       SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
+      SUPERSET_ENABLE_PROXY_FIX: ${SUPERSET_ENABLE_PROXY_FIX:-true}
+      SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-true}
+      SUPERSET_SESSION_COOKIE_SAMESITE: ${SUPERSET_SESSION_COOKIE_SAMESITE:-Lax}
+      SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-true}
       SUPERSET_WEBSERVER_PORT: 8088
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
-    # -h 0.0.0.0: bindear en todas las interfaces, NO solo 127.0.0.1, para que
-    # docker-proxy pueda forwardear desde el host al contenedor. Sin esto,
-    # "Up (healthy)" pero curl desde host devuelve 000.
+    # El contenedor escucha internamente en 0.0.0.0, pero el puerto del host se
+    # limita a loopback. Produccion debe exponer Superset por proxy/TLS/auth.
     command: superset run -h 0.0.0.0 -p 8088 --with-threads --reload
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     networks:
       - modecissions_net
     depends_on:

@@ -749,6 +749,10 @@ services:
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
+      SUPERSET_ENABLE_PROXY_FIX: ${SUPERSET_ENABLE_PROXY_FIX:-true}
+      SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-false}
+      SUPERSET_SESSION_COOKIE_SAMESITE: ${SUPERSET_SESSION_COOKIE_SAMESITE:-Lax}
+      SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-false}
     volumes:
       - ./terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
     entrypoint: /bin/bash
@@ -786,6 +790,10 @@ services:
       SUPERSET_CSRF_ENABLED:     ${SUPERSET_CSRF_ENABLED:-true}
       SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
       SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
+      SUPERSET_ENABLE_PROXY_FIX: ${SUPERSET_ENABLE_PROXY_FIX:-true}
+      SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-false}
+      SUPERSET_SESSION_COOKIE_SAMESITE: ${SUPERSET_SESSION_COOKIE_SAMESITE:-Lax}
+      SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-false}
     volumes:
       - ./terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
     command: superset run -h 0.0.0.0 -p 8088 --with-threads --reload

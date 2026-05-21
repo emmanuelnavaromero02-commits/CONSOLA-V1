@@ -1864,12 +1864,15 @@ async def api_explorer_delete(
     bucket: str,
     key: str,
     request: Request,
+    confirm: str = Query(...),
     user: dict = Depends(require_authenticated),
 ):
     s3 = _s3_client()
     bucket_name = _resolve_explorer_bucket(bucket, user)
     if not _explorer_path_allowed(key, user):
         raise HTTPException(403, "object not allowed")
+    if confirm != key:
+        raise HTTPException(400, "strong confirmation required")
     try:
         await asyncio.to_thread(s3.delete_object, Bucket=bucket_name, Key=key)
     except Exception as exc:

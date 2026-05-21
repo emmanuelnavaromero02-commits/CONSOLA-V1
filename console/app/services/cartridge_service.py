@@ -63,6 +63,22 @@ _FORBIDDEN_SEED_SQL = re.compile(
     r"foreign\s+server|foreign\s+table)\b|\\",
     re.IGNORECASE,
 )
+_SAFE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
+_SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _validate_cartridge_id(value: str) -> str:
+    value = (value or "").strip()
+    if not _SAFE_ID_RE.fullmatch(value):
+        raise ValueError("invalid cartridge_id")
+    return value
+
+
+def _validate_plain_filename(value: str) -> str:
+    value = (value or "").strip()
+    if not _SAFE_FILENAME_RE.fullmatch(value):
+        raise ValueError("invalid filename")
+    return value
 
 
 def _mcp_infra_headers() -> dict[str, str]:
@@ -417,10 +433,14 @@ async def delete_entity(cartridge_id: str, entity: str) -> None:
 # ── Supplementary files (MinIO) ────────────────────────────────────────────────
 
 def upload_spec(cartridge_id: str, filename: str, content: str) -> str:
+    cartridge_id = _validate_cartridge_id(cartridge_id)
+    filename = _validate_plain_filename(filename)
     c   = _minio()
     _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/specs/{filename}"
     raw = content.encode("utf-8")
+    if len(raw) > _MAX_IMPORT_MEMBER_BYTES:
+        raise ValueError("spec upload too large")
     c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain")
     return key
 
@@ -587,6 +607,7 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
         cartridge_id = m.group(1) if m else None
         if not cartridge_id:
             raise ValueError("Could not parse cartridge_id from seed.sql")
+        cartridge_id = _validate_cartridge_id(cartridge_id)
 
         allow_dag_import = (
             os.environ.get("ALLOW_CARTRIDGE_DAG_IMPORT", "").strip().lower() in {"1", "true", "yes"}
@@ -707,8 +728,12 @@ def _validate_seed_sql(sql: str) -> None:
             table = insert_match.group(1)
             if table not in _ALLOWED_SEED_TABLES:
                 raise ValueError(f"seed.sql cannot insert into {table}")
+            if re.search(r"\bselect\b", lower):
+                raise ValueError("seed.sql INSERT must use literal VALUES, not SELECT")
             continue
         if re.match(r"update\s+cartridges\s+set\s+assistant_hints\s*=", lower):
+            if not re.search(r"\bwhere\s+id\s*=", lower):
+                raise ValueError("assistant_hints update must target a single cartridge id")
             continue
         if re.match(r"alter\s+table\s+analytic_apps\s+add\s+column\s+if\s+not\s+exists\s+cartridge_id\s+text$", lower):
             continue

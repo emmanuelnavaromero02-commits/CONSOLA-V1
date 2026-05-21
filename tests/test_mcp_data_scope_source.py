@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MCP_MAIN = ROOT / "mcp-infra" / "app" / "main.py"
+MINIO_TOOLS = ROOT / "mcp-infra" / "app" / "tools" / "minio.py"
 REFINEMENT_MAIN = ROOT / "refinement" / "app" / "main.py"
 MCP_REGISTRY = ROOT / "console" / "app" / "services" / "mcp_registry.py"
 
@@ -53,6 +54,10 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "pggold table is not registered as an allowed dataset" in source
     assert "existing = store.get_dataset(args[\"name\"])" in source
     assert "_require_dataset_scope(body, existing, \"datasets.write\")" in source
+    assert "SQL storage bucket not allowed" in source
+    assert 'return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}' in source
+    assert '_require_sql_storage_scope(body, ds.get("sql") or ds.get("sql_def") or "", ds.get("sources") or [])' in source
+    assert "sec = _security_context(body)" in source
 
 
 def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
@@ -66,6 +71,13 @@ def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     assert "cartridge SQL cannot read service database schemas" in source
     assert "RAG source is outside caller scope" in source
     assert "source = next((s for s in sources" in source
+
+
+def test_minio_sample_rows_are_capped():
+    source = MINIO_TOOLS.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    assert "n = min(max(int(n or 10), 1), 100)" in source
 
 
 def test_console_registry_scopes_direct_cartridge_mcp_calls():

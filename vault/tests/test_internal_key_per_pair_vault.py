@@ -1,8 +1,8 @@
-"""Sprint v1.12 — vault: verify_api_key accepts per-pair keys + legacy.
+"""Sprint v1.12 — vault: verify_api_key accepts per-pair keys + dev legacy.
 
 Vault is called by console and mcp-infra. Each pair has its own
 INTERNAL_API_KEY_*_TO_VAULT secret; the legacy shared INTERNAL_API_KEY
-still works during the migration window.
+only works outside production.
 """
 from __future__ import annotations
 
@@ -30,8 +30,9 @@ def _module(**attrs):
 @pytest.fixture()
 def vault_main(monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
+    sys.path[:] = [p for p in sys.path if p != str(root)]
+    sys.path.insert(0, str(root))
+    monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT",   CONSOLE_KEY)
     monkeypatch.setenv("INTERNAL_API_KEY_MCP_INFRA_TO_VAULT", MCP_KEY)
@@ -44,10 +45,14 @@ def vault_main(monkeypatch):
         "app.security",
         _module(get_internal_api_key=lambda: LEGACY),
     )
-    sys.modules.pop("app.main", None)
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
     main = importlib.import_module("app.main")
     yield main
-    sys.modules.pop("app.main", None)
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
 
 
 def test_console_pair_key_accepted(vault_main):
@@ -68,6 +73,38 @@ def test_legacy_key_accepted_for_any_whitelisted_caller(vault_main):
     vault_main.verify_api_key(x_api_key=LEGACY, x_internal_service="console")
     vault_main.verify_api_key(x_api_key=LEGACY, x_internal_service="workspace")
     vault_main.verify_api_key(x_api_key=LEGACY, x_internal_service="mcp-infra")
+
+
+def test_legacy_key_rejected_in_production(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    sys.path[:] = [p for p in sys.path if p != str(root)]
+    sys.path.insert(0, str(root))
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", CONSOLE_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_MCP_INFRA_TO_VAULT", MCP_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_WORKSPACE_TO_VAULT", "workspace_to_vault_key_64_chars_zzzzzzzzzzzzzzzzzzzzzzzz")
+    monkeypatch.setenv("INTERNAL_API_KEY_REFINEMENT_TO_VAULT", "refinement_to_vault_key_64_chars_zzzzzzzzzzzzzzzzzzzz")
+    monkeypatch.setitem(sys.modules, "psycopg2", _module())
+    monkeypatch.setitem(sys.modules, "yaml", _module(safe_load=lambda *a, **kw: {}))
+    monkeypatch.setitem(
+        sys.modules,
+        "app.security",
+        _module(get_internal_api_key=lambda: LEGACY),
+    )
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
+    main = importlib.import_module("app.main")
+
+    with pytest.raises(HTTPException) as exc:
+        main.verify_api_key(x_api_key=LEGACY, x_internal_service="console")
+
+    assert exc.value.status_code == 403
+    main.verify_api_key(x_api_key=CONSOLE_KEY, x_internal_service="console")
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
 
 
 def test_wrong_key_rejected(vault_main):

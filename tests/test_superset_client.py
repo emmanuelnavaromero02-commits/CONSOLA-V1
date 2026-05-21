@@ -40,6 +40,18 @@ def _auth_transport(extra_handler=None):
     return httpx.MockTransport(handler)
 
 
+def test_superset_client_requires_service_account_in_production(superset_client_module, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SUPERSET_URL", "https://superset.internal")
+    monkeypatch.delenv("SUPERSET_SERVICE_USER", raising=False)
+    monkeypatch.delenv("SUPERSET_SERVICE_PASSWORD", raising=False)
+    monkeypatch.setenv("SUPERSET_ADMIN_USER", "admin")
+    monkeypatch.setenv("SUPERSET_ADMIN_PASSWORD", "admin-password")
+
+    with pytest.raises(superset_client_module.SupersetConfigError, match="SERVICE_USER"):
+        superset_client_module.SupersetClient()
+
+
 @pytest.mark.asyncio
 async def test_superset_login_returns_token(superset_client_module):
     client = superset_client_module.SupersetClient(

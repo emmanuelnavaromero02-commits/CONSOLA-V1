@@ -93,6 +93,7 @@ def minio_get_sample_rows(object_path: str, n: int = 10, bucket: str | None = No
     import pyarrow.parquet as pq
     c   = _client()
     bkt = bucket or settings.minio_bucket
+    n = min(max(int(n or 10), 1), 100)
     raw = c.get_object(bkt, object_path).read()
     df  = pq.read_table(io.BytesIO(raw)).to_pandas().head(n)
     return {

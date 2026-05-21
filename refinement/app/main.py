@@ -168,8 +168,8 @@ def _trusted_user_context(body: dict, args: dict) -> dict:
     args.user_context, but any admin-bypass flag is stripped unless the
     top-level server-owned context is present.
     """
-    sec = body.get("security_context") or {}
-    if isinstance(sec, dict) and sec.get("trusted"):
+    sec = _security_context(body)
+    if sec.get("trusted"):
         role = str(sec.get("role") or "").lower()
         return {
             "id": sec.get("user_id"),
@@ -258,12 +258,19 @@ def _require_dataset_scope(body: dict, ds: dict, permission: str = "datasets.rea
     return sec
 
 
-def _s3_path_to_key(path: str) -> str:
+def _s3_path_to_bucket_key(path: str) -> tuple[str, str]:
     path = (path or "").strip()
     if not path.startswith("s3://"):
-        return ""
+        return "", ""
     rest = path[5:]
-    return rest.split("/", 1)[1] if "/" in rest else ""
+    bucket, sep, key = rest.partition("/")
+    if not sep:
+        return bucket, ""
+    return bucket, key
+
+
+def _s3_path_to_key(path: str) -> str:
+    return _s3_path_to_bucket_key(path)[1]
 
 
 def _mask_single_quoted(sql: str) -> str:
@@ -281,7 +288,13 @@ def _reader_storage_key(path: str) -> str:
 
 
 def _require_sql_path_scope(sec: dict, path: str) -> None:
+    bucket, _key = _s3_path_to_bucket_key(path)
     key = _reader_storage_key(path)
+    allowed_buckets = {str(b) for b in (sec.get("allowed_buckets") or []) if b}
+    if allowed_buckets and bucket not in allowed_buckets:
+        raise HTTPException(403, "SQL storage bucket not allowed")
+    if not allowed_buckets and not sec.get("_trusted_admin") and bucket != engine.minio_bucket:
+        raise HTTPException(403, "SQL storage bucket not allowed")
     if not _prefix_allowed(sec, key):
         raise HTTPException(403, "SQL storage path not allowed")
 
@@ -787,8 +800,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
     args = body.get("args", {})
 
     if tool == "list_sources":
-        _require_security_permission(body, "datasets.read")
-        return {"sources": engine.list_sources()}
+        sec = _require_security_permission(body, "datasets.read")
+        return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}
 
     if tool == "get_source_partitions":
         _require_source_scope(body, args["source"])
@@ -922,6 +935,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
+        _require_sql_storage_scope(body, ds.get("sql") or ds.get("sql_def") or "", ds.get("sources") or [])
         return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100), _trusted_user_context(body, args))
 
     if tool == "get_lineage":

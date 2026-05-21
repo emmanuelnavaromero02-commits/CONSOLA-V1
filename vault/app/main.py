@@ -284,11 +284,11 @@ def _mask(d: dict) -> dict:
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
-INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
+INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, dev/test only
 
 # Sprint v1.12: vault is called by console and mcp-infra. Each pair has its
-# own INTERNAL_API_KEY_*_TO_VAULT secret. The legacy shared key still works
-# during the migration window — it gets dropped in a follow-up sprint.
+# own INTERNAL_API_KEY_*_TO_VAULT secret. The legacy shared key is refused in
+# production so one leaked credential cannot open every internal hop.
 _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "console":    "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
     "mcp-infra":  "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
@@ -301,7 +301,7 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     # can spot the dependency.
     "workspace":  "INTERNAL_API_KEY_WORKSPACE_TO_VAULT",
     "refinement": "INTERNAL_API_KEY_REFINEMENT_TO_VAULT",
-    "airflow":    None,  # airflow doesn't call vault directly — legacy-only
+    "airflow":    None,  # airflow doesn't call vault directly
 }
 
 
@@ -362,7 +362,7 @@ def verify_api_key(
     # used. Order: dedicated pair key first, legacy shared key second.
     if pair_key and secrets.compare_digest(x_api_key, pair_key):
         return
-    if INTERNAL_API_KEY and secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
+    if INTERNAL_API_KEY and not _is_production() and secrets.compare_digest(x_api_key, INTERNAL_API_KEY):
         # Sprint v1.26 (audit F11): warn when a service that HAS a
         # dedicated key is still using the legacy shared one. This is
         # the migration trail — operators grep for this line to find
