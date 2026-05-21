@@ -20,6 +20,12 @@ import { loginUser, type LoginError } from "@/lib/auth-flow";
 export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
+      <a
+        href="#email"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow"
+      >
+        Ir al formulario
+      </a>
       <Suspense fallback={<LoginCardFallback />}>
         <LoginCard />
       </Suspense>

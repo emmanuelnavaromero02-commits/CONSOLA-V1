@@ -3,16 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  BarChart3,
-  Boxes,
-  Menu,
-  MessageSquareText,
-  Settings2,
-  Wrench,
-  X,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { cn } from "@/lib/utils";
@@ -23,7 +13,7 @@ const THEME_STORAGE_KEY = "mod-theme";
 interface NavItem {
   href:  string;
   label: string;
-  icon:  LucideIcon;
+  icon:  string;
 }
 
 /**
@@ -34,11 +24,11 @@ interface NavItem {
  * never offers a dead link.
  */
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",  label: "Panel",       icon: BarChart3 },
-  { href: "/copilot",    label: "Copiloto",    icon: MessageSquareText },
-  { href: "/cartridges", label: "Cartuchos",   icon: Boxes },
-  { href: "/studio",     label: "Studio",      icon: Wrench },
-  { href: "/operations", label: "Operaciones", icon: Settings2 },
+  { href: "/dashboard",  label: "Panel",       icon: "▦" },
+  { href: "/copilot",    label: "Copiloto",    icon: "◈" },
+  { href: "/cartridges", label: "Cartuchos",   icon: "□" },
+  { href: "/studio",     label: "Studio",      icon: "◇" },
+  { href: "/operations", label: "Operaciones", icon: "⚙" },
 ];
 
 function userLabel(email: string): string {
@@ -105,9 +95,12 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
     let themePreference = "light";
     try {
-      themePreference = window.localStorage.getItem(THEME_STORAGE_KEY) || "light";
+      themePreference = (
+        window.localStorage.getItem(THEME_STORAGE_KEY)
+        || (document.documentElement.classList.contains("dark") ? "dark" : "light")
+      );
     } catch {
-      themePreference = "light";
+      themePreference = document.documentElement.classList.contains("dark") ? "dark" : "light";
     }
     const resolvedTheme = resolveThemePreference(themePreference);
     document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
@@ -182,7 +175,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
             aria-expanded={mobileOpen}
             className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
           >
-            <Menu aria-hidden className="h-5 w-5" />
+            <span aria-hidden className="text-lg leading-none">☰</span>
           </button>
 
           <Link
@@ -205,7 +198,6 @@ export function AppChrome({ children }: { children: ReactNode }) {
           >
             <ul className="flex items-center gap-0.5">
               {NAV_ITEMS.map((item) => {
-                const Icon   = item.icon;
                 const active = isActive(pathname, item.href);
                 return (
                   <li key={item.href}>
@@ -220,7 +212,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
                           : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
                       )}
                     >
-                      <Icon aria-hidden className="h-4 w-4" />
+                      <span aria-hidden className="text-sm leading-none">{item.icon}</span>
                       {item.label}
                     </Link>
                   </li>
@@ -279,7 +271,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
                 aria-label="Cerrar navegación"
                 className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <X aria-hidden className="h-5 w-5" />
+                <span aria-hidden className="text-lg leading-none">×</span>
               </button>
             </header>
             <nav
@@ -288,7 +280,6 @@ export function AppChrome({ children }: { children: ReactNode }) {
             >
               <ul className="space-y-1">
                 {NAV_ITEMS.map((item) => {
-                  const Icon   = item.icon;
                   const active = isActive(pathname, item.href);
                   return (
                     <li key={item.href}>
@@ -304,7 +295,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
                             : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
                         )}
                       >
-                        <Icon aria-hidden className="h-4 w-4" />
+                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
                         {item.label}
                       </Link>
                     </li>

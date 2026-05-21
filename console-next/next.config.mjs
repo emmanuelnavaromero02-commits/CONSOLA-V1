@@ -14,14 +14,15 @@ const nextConfig = {
   // v1.44.3.2.2+ hardening (R-Mac CSP hotfix + R-Mac-4 proxy pivot):
   //
   // R-Mac: the v1.44.2 CSP set ``script-src 'self'`` which
-  // blocked Next.js 14's hydration inline bootstrap script. Symptom reproduced
+  // blocked Next.js hydration/bootstrap runtime. Symptom reproduced
   // on the Mac:
   //   - /login renders a skeleton forever
   //   - DevTools console: "Executing inline script violates
   //     Content Security Policy directive 'script-src 'self''"
   //   - 0/319 E2E tests pass because the form never mounts
-  // Fix: allow 'unsafe-inline' for hydration, but keep 'unsafe-eval'
-  // and localhost websocket origins out of production.
+  // Fix: allow the App Router runtime directives required by the
+  // current Next build, but keep localhost websocket origins out of
+  // production.
   //
   // R-Mac-4: connect-src used to list the public backend origin
   // (NEXT_PUBLIC_API_BASE → http://localhost:8000) because the
@@ -47,7 +48,7 @@ const nextConfig = {
             key: "Content-Security-Policy",
             value:
               "default-src 'self'; " +
-              "script-src 'self' 'unsafe-inline'; " +
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
               "style-src 'self' 'unsafe-inline'; " +
               "img-src 'self' data: blob:; " +
               "font-src 'self' data:; " +
