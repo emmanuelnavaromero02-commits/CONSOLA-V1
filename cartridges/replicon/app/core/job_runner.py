@@ -210,30 +210,35 @@ async def list_jobs(limit: int = 10) -> list[dict]:
 
 # ── Silver refresh trigger ────────────────────────────────────────────────────
 
-async def _trigger_silver_refresh(entity: str) -> None:
+async def _trigger_silver_refresh(entity: str) -> dict:
     """
     Notifica al refinement engine que hay nuevos datos Bronze para esta entidad.
     El engine re-materializa todos los datasets Silver que dependen de esa fuente.
-    Fire-and-forget — los errores no bloquean el job.
+    Fail-closed: si el refresh no confirma, el job queda fallido o parcial.
     """
     source = f"raw/replicon/{entity}"
-    try:
-        api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
-        if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
-            api_key = os.environ.get("INTERNAL_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("Missing INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
-        async with httpx.AsyncClient(timeout=300) as client:
-            await client.post(
-                f"{REFINEMENT_URL}/refresh-by-source",
-                headers={
-                    "x-api-key": api_key,
-                    "x-internal-service": "cartridge-replicon",
-                },
-                json={"source": source},
-            )
-    except Exception:
-        pass  # Silver refresh es best-effort
+    api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
+    if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
+        api_key = os.environ.get("INTERNAL_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("Missing INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
+    async with httpx.AsyncClient(timeout=300) as client:
+        response = await client.post(
+            f"{REFINEMENT_URL}/refresh-by-source",
+            headers={
+                "x-api-key": api_key,
+                "x-internal-service": "cartridge-replicon",
+            },
+            json={"source": source},
+        )
+        response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError:
+            body = {"raw": response.text}
+        if isinstance(body, dict) and body.get("error"):
+            raise RuntimeError(f"Silver refresh failed for {source}: {body.get('error')}")
+        return {"source": source, "status_code": response.status_code, "result": body}
 
 
 # ── Airflow trigger ───────────────────────────────────────────────────────────
@@ -299,15 +304,19 @@ async def _run_extract_all(job_id: str, mode: str) -> None:
                     None, lambda c=overridden: run_entity(c)
                 )
                 count = result.get("record_count", 0)
+                refresh = await _trigger_silver_refresh(entity)
                 completed += 1
                 await _log(
                     job_id, entity, "INFO",
                     f"Completado — {count:,} registros",
-                    {"record_count": count, "storage_uri": result.get("storage_uri")},
+                    {
+                        "record_count": count,
+                        "storage_uri": result.get("storage_uri"),
+                        "silver_refresh": refresh,
+                    },
                 )
                 results.append({"entity": entity, "status": "success",
-                                 "record_count": count})
-                await _trigger_silver_refresh(entity)
+                                 "record_count": count, "silver_refresh": refresh})
             except Exception as exc:
                 failed += 1
                 await _log(job_id, entity, "ERROR", f"Error: {exc}",
@@ -358,12 +367,13 @@ async def _run_extract(
             lambda: run_entity(config, from_date=from_date, to_date=to_date),
         )
         count = result.get("record_count", 0)
+        refresh = await _trigger_silver_refresh(entity)
+        result = {**result, "silver_refresh": refresh}
         await _update(
             job_id, "done",
             message=f"Completed — {count:,} records",
             result=result,
         )
-        await _trigger_silver_refresh(entity)
     except Exception as exc:
         await _update(
             job_id, "failed",

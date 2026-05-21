@@ -100,7 +100,7 @@ def test_rls_admin_bypass(engine):
     e, mock_conn = engine
     mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
     sql = "SELECT * FROM pggold.gold_sales"
-    ctx = {"role": "admin", "_trusted_admin": True}
+    ctx = {"role": "admin", "_server_trusted_context": True}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
     assert rls_sql == sql
@@ -109,14 +109,14 @@ def test_rls_admin_bypass(engine):
 
 def test_rls_admin_role_alone_does_not_bypass(engine):
     """Defense in depth: a body that just claims `role=admin` (without the
-    upstream-only `_trusted_admin` flag) must still be filtered. This blocks
+    backend-only `_server_trusted_context` flag) must still be filtered. This blocks
     a peer service or compromised caller from forging admin via the request
     body alone — admin bypass requires the upstream service to opt in
     explicitly after authenticating its own user."""
     e, mock_conn = engine
     mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
     sql = "SELECT * FROM pggold.gold_sales"
-    ctx = {"role": "admin"}  # no _trusted_admin
+    ctx = {"role": "admin"}  # no server trust marker
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
     assert "tenant_id = ?" in rls_sql, f"forged admin bypassed RLS: {rls_sql!r}"
@@ -129,7 +129,7 @@ def test_preview_sql_returns_schema_dicts(engine):
     cursor.fetchall.return_value = [('cust-1', 12.5)]
     mock_conn.execute.return_value = cursor
 
-    result = e.preview_sql("SELECT customer_id, amount FROM pggold.gold_sales", user_context={"role": "admin", "_trusted_admin": True})
+    result = e.preview_sql("SELECT customer_id, amount FROM pggold.gold_sales", user_context={"role": "admin", "_server_trusted_context": True})
 
     assert result["schema"] == [
         {"name": "customer_id", "type": "VARCHAR"},
@@ -142,7 +142,7 @@ def test_preview_sql_rejects_dangerous_local_read(engine):
     e = DuckDBEngine()
 
     with pytest.raises(ValueError):
-        e.preview_sql("SELECT * FROM read_csv('/etc/passwd')", user_context={"role": "admin", "_trusted_admin": True})
+        e.preview_sql("SELECT * FROM read_csv('/etc/passwd')", user_context={"role": "admin", "_server_trusted_context": True})
 
 def test_valid_dataset_name_passes():
     validate_safe_identifier("gold_sales_2025", "dataset")
@@ -213,7 +213,7 @@ def test_preview_sql_uses_duckdb_lock(engine):
     lock = CountingLock()
     e._duckdb_lock = lock
 
-    result = e.preview_sql("SELECT customer_id FROM pggold.gold_sales", user_context={"role": "admin", "_trusted_admin": True})
+    result = e.preview_sql("SELECT customer_id FROM pggold.gold_sales", user_context={"role": "admin", "_server_trusted_context": True})
 
     assert result["row_count"] == 1
     assert lock.entered == 1
@@ -281,7 +281,7 @@ def test_preview_sql_admin_with_caller_params_skips_rls_injection(engine):
     mock_conn.execute.return_value = cursor
 
     sql = "SELECT col FROM pggold.gold_sales WHERE col = ?"
-    e.preview_sql(sql, params=["admin_value"], user_context={"role": "admin", "_trusted_admin": True})
+    e.preview_sql(sql, params=["admin_value"], user_context={"role": "admin", "_server_trusted_context": True})
 
     actual_call = mock_conn.execute.call_args_list[-1]
     _, combined_params = actual_call[0]

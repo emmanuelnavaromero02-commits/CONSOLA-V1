@@ -706,16 +706,7 @@
         body: JSON.stringify({ intent }),
       });
       const workflow = created.workflow || {};
-      if (workflow.id) {
-        try {
-          await api("/api/copilot/workflow/" + encodeURIComponent(workflow.id) + "/plan", {
-            method: "POST",
-          });
-          toast("Workflow creado y planeado.", "info");
-        } catch (planErr) {
-          toast("Workflow creado, pero el plan fallo: " + planErr.message, "error");
-        }
-      }
+      toast(workflow.id ? "Workflow creado. Planear requiere permiso de ejecucion." : "Workflow creado.", "info");
       input.value = "";
       await loadWorkflows();
     } catch (err) {

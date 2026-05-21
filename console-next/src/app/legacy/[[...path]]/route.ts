@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-type Ctx = { params: { path?: string[] } };
+type Ctx = { params: Promise<{ path?: string[] }> };
 
 function configuredLegacyBase(): string | null {
   const raw =
@@ -41,8 +41,12 @@ function requestDerivedLegacyBase(request: NextRequest): string {
   return `${proto}://${host}:${port}`;
 }
 
-export function GET(request: NextRequest, { params }: Ctx) {
-  const subpath = (params.path || []).join("/");
+export async function GET(request: NextRequest, { params }: Ctx) {
+  const { path } = await params;
+  const subpath = (path || [])
+    .filter((segment) => !segment.includes(":") && segment !== "..")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
   const base = configuredLegacyBase() || requestDerivedLegacyBase(request);
   const target = new URL(`/${subpath}${request.nextUrl.search}`, base);
   return NextResponse.redirect(target);

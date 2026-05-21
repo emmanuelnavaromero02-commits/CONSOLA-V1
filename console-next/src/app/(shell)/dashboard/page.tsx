@@ -68,7 +68,7 @@ export default function DashboardPage() {
             className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span aria-hidden className="mr-1.5">💬</span>
-            Ir al copiloto
+            Ir al workspace
           </Link>
           {/* v1.44.3.3 Task E — logout affordance the 01-login-deep
               spec was flagging as a known v1.44.4 deficit. */}

@@ -524,7 +524,7 @@ def test_cartridges_grid_drops_redundant_lg_breakpoint():
     """R1 Frontend P2: lg:grid-cols-2 was identical to md:grid-cols-2
     — dead code. Confirm it's removed from the className (a comment
     referencing the old class is fine for code-history readability)."""
-    src = _read(REPO / "console-next/src/app/cartridges/page.tsx")
+    src = _read(REPO / "console-next/src/app/(shell)/cartridges/page.tsx")
     # Strip JSX comments so the rationale-line ("dropped the
     # redundant lg:grid-cols-2 — it was identical…") doesn't trip
     # the test; only real className occurrences count.

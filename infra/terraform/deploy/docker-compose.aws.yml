@@ -92,7 +92,7 @@ services:
   # ── Application services ──────────────────────────────────────────────────
 
   console:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_console
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -116,13 +116,14 @@ services:
       MCP_INFRA_URL:       http://mcp-infra:8010
       CONSOLE_INTERNAL_URL: http://console:8000
       AGENT_RUNNER_TOKEN:  ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CONSOLE: ${INTERNAL_API_KEY_CONSOLE_TO_CONSOLE:?INTERNAL_API_KEY_CONSOLE_TO_CONSOLE is required}
       SUPERSET_URL:        http://superset:8088
       AIRFLOW_PUBLIC_URL:  ${AIRFLOW_PUBLIC_URL:-}
       SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-}
-      # Prefer a least-privilege Superset service account for Studio dataset
-      # creation. Falls back to bootstrap admin if a service account is not set.
-      SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:-}
-      SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:-}
+      # Least-privilege Superset service account for Studio dataset creation.
+      # Production refuses admin fallback.
+      SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:?SUPERSET_SERVICE_USER is required}
+      SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:?SUPERSET_SERVICE_PASSWORD is required}
       SUPERSET_ADMIN_USER:  ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
       SUPERSET_GOLD_SQLALCHEMY_URI: "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
@@ -175,14 +176,41 @@ services:
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
 
+  console_next:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next:${IMAGE_TAG:?IMAGE_TAG is required}
+    container_name: mode_console_next
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      NODE_ENV: production
+      BACKEND_INTERNAL_URL: http://console:8000
+      API_INTERNAL_URL: http://console:8000
+      NEXT_PUBLIC_LEGACY_CONSOLE_URL: ${CONSOLE_URL:?CONSOLE_URL is required}
+    ports:
+      - "3000:3000"
+    networks:
+      - modecissions_net
+    depends_on:
+      console:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
   workspace:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_workspace
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -199,6 +227,7 @@ services:
       CHAT_LLM_PROVIDER:    ${CHAT_LLM_PROVIDER:-anthropic}
       CHAT_LLM_MODEL:       ${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
+      REDIS_URL:            ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8001:8001"
     networks:
@@ -210,6 +239,8 @@ services:
         condition: service_healthy
       mcp-infra:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
@@ -220,7 +251,7 @@ services:
       start_period: 30s
 
   refinement:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_refinement
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -259,7 +290,7 @@ services:
 
 
   vault:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/vault:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/vault:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_vault
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -268,6 +299,10 @@ services:
       APP_ENV:           ${APP_ENV:-production}
       DATABASE_URL:      "postgresql+psycopg2://omega_vault:${OMEGA_VAULT_PASSWORD:?OMEGA_VAULT_PASSWORD is required}@postgres:5432/modecissions"
       INTERNAL_API_KEY:  ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_CONSOLE_TO_VAULT: ${INTERNAL_API_KEY_CONSOLE_TO_VAULT:?INTERNAL_API_KEY_CONSOLE_TO_VAULT is required}
+      INTERNAL_API_KEY_MCP_INFRA_TO_VAULT: ${INTERNAL_API_KEY_MCP_INFRA_TO_VAULT:?INTERNAL_API_KEY_MCP_INFRA_TO_VAULT is required}
+      INTERNAL_API_KEY_WORKSPACE_TO_VAULT: ${INTERNAL_API_KEY_WORKSPACE_TO_VAULT:?INTERNAL_API_KEY_WORKSPACE_TO_VAULT is required}
+      INTERNAL_API_KEY_REFINEMENT_TO_VAULT: ${INTERNAL_API_KEY_REFINEMENT_TO_VAULT:?INTERNAL_API_KEY_REFINEMENT_TO_VAULT is required}
     networks:
       - modecissions_net
     depends_on:
@@ -302,7 +337,7 @@ services:
   # ── MCP Infrastructure ────────────────────────────────────────────────────
 
   mcp-infra:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_mcp_infra
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -390,6 +425,10 @@ services:
       SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
       SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
       SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
+      SUPERSET_ENABLE_PROXY_FIX: ${SUPERSET_ENABLE_PROXY_FIX:-true}
+      SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-true}
+      SUPERSET_SESSION_COOKIE_SAMESITE: ${SUPERSET_SESSION_COOKIE_SAMESITE:-Lax}
+      SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-true}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
     volumes:
@@ -453,15 +492,18 @@ services:
       SUPERSET_CSRF_ENABLED: ${SUPERSET_CSRF_ENABLED:-true}
       SUPERSET_RATELIMIT_ENABLED: ${SUPERSET_RATELIMIT_ENABLED:-true}
       SUPERSET_RATELIMIT_STORAGE_URI: ${SUPERSET_RATELIMIT_STORAGE_URI:-redis://redis:6379/1}
+      SUPERSET_ENABLE_PROXY_FIX: ${SUPERSET_ENABLE_PROXY_FIX:-true}
+      SUPERSET_SESSION_COOKIE_SECURE: ${SUPERSET_SESSION_COOKIE_SECURE:-true}
+      SUPERSET_SESSION_COOKIE_SAMESITE: ${SUPERSET_SESSION_COOKIE_SAMESITE:-Lax}
+      SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-true}
       SUPERSET_WEBSERVER_PORT: 8088
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
-    # -h 0.0.0.0: bindear en todas las interfaces, NO solo 127.0.0.1, para que
-    # docker-proxy pueda forwardear desde el host al contenedor. Sin esto,
-    # "Up (healthy)" pero curl desde host devuelve 000.
+    # El contenedor escucha internamente en 0.0.0.0, pero el puerto del host se
+    # limita a loopback. Produccion debe exponer Superset por proxy/TLS/auth.
     command: superset run -h 0.0.0.0 -p 8088 --with-threads --reload
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     networks:
       - modecissions_net
     depends_on:
@@ -489,7 +531,7 @@ services:
     # DESIGN — `airflow db migrate` has to CREATE the metastore
     # tables, then we transfer GRANTs to omega_airflow_meta so the
     # runtime services (next two) can use the dedicated role.
-    image: apache/airflow:2.10.5
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_init
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -512,6 +554,10 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:  ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
@@ -526,13 +572,13 @@ services:
     logging: *default-logging
 
   airflow:
-    image: apache/airflow:2.10.5
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
         required: false
     entrypoint: /bin/bash
-    command: -c "python -m pip install --user --no-cache-dir $$_PIP_ADDITIONAL_REQUIREMENTS && rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
+    command: -c "rm -f /opt/airflow/airflow-webserver.pid && exec airflow webserver"
     environment:
       AIRFLOW__CORE__EXECUTOR:              LocalExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
@@ -542,13 +588,16 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:  ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
       AIRFLOW__API__AUTH_BACKENDS:          "airflow.api.auth.backend.basic_auth"
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: ${AIRFLOW_WEBSERVER_MASTER_TIMEOUT:-300}
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: ${AIRFLOW_WEBSERVER_WORKER_TIMEOUT:-300}
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl croniter"
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
@@ -600,7 +649,7 @@ services:
       start_period: 60s
 
   airflow-scheduler:
-    image: apache/airflow:2.10.5
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_scheduler
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -615,10 +664,13 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:  ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
-      _PIP_ADDITIONAL_REQUIREMENTS: "requests pandas pyarrow boto3 minio psycopg2-binary openpyxl croniter"
       # Sprint v1.38: scoped operational role; see local compose comment.
       AIRFLOW_VAR_POSTGRES_CONN:            "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"
       DATABASE_URL:                         "postgresql://omega_airflow_dag:${OMEGA_AIRFLOW_DAG_PASSWORD:?OMEGA_AIRFLOW_DAG_PASSWORD is required}@postgres:5432/modecissions"

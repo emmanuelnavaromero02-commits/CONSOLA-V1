@@ -55,13 +55,24 @@ def run_entity(
     entity = config["entity"]
     watermark_field = config.get("watermark_field")
     page_size = config.get("page_size", 200)
-    select_fields = config.get("select_fields", [])
+    raw_select_fields = config.get("select_fields", [])
+    if isinstance(raw_select_fields, (list, tuple)):
+        select_fields = list(raw_select_fields)
+    elif isinstance(raw_select_fields, str) and raw_select_fields:
+        select_fields = [raw_select_fields]
+    else:
+        select_fields = []
     date_field = config.get("date_field")
 
     if from_date or to_date:
         mode = "historical"
     else:
         mode = config.get("mode", "full")
+    expected_columns = list(dict.fromkeys([
+        *(select_fields or []),
+        *([watermark_field] if watermark_field else []),
+        *([date_field] if date_field else []),
+    ]))
 
     run_id = create_run(
         cartridge_id=CARTRIDGE_ID,
@@ -86,17 +97,18 @@ def run_entity(
         total_records = 0
         max_wm: str | None = None
 
-        def _flush_buffer() -> None:
+        def _flush_buffer(allow_empty: bool = False) -> None:
             nonlocal buffer, batch_num, storage_uri
-            if not buffer:
+            if not buffer and not allow_empty:
                 return
             batch_run_id = run_id if batch_num == 0 else f"{run_id}-b{batch_num}"
             storage_uri = write_parquet_and_upload(
                 entity=entity,
-                rows=buffer,
+                rows=buffer if buffer else [],
                 run_id=batch_run_id,
                 load_type=mode,
                 watermark_field=watermark_field,
+                expected_columns=expected_columns,
             )
             batch_num += 1
             buffer = []
@@ -118,7 +130,7 @@ def run_entity(
 
             # Belt-and-suspenders client-side filters (the OData server
             # MIGHT have ignored $filter — re-apply locally).
-            if mode == "incremental" and watermark and watermark_field and not filter_expr:
+            if mode == "incremental" and watermark and watermark_field:
                 page = _apply_watermark_filter(page, watermark_field, watermark)
             page = _apply_date_range_filter(page, date_field, from_date, to_date)
 
@@ -136,7 +148,7 @@ def run_entity(
         # Drain any remainder. If we never received any rows, write an empty
         # parquet so consumers can still observe a (zero-row) Bronze artifact.
         if buffer or total_records == 0:
-            _flush_buffer()
+            _flush_buffer(allow_empty=total_records == 0)
 
         if mode == "incremental" and watermark_field and max_wm:
             safe_watermark = max_wm

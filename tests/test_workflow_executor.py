@@ -191,6 +191,22 @@ class FakePool:
 def fake_pool(executor_module, monkeypatch):
     pool = FakePool()
     monkeypatch.setattr(executor_module.auth, "pool", AsyncMock(return_value=pool))
+    async def record_event(**_kwargs):
+        return None
+    async def list_tools(server_id: str):
+        return [
+            {
+                "name": name,
+                "input_schema": {"type": "object", "properties": {}},
+            }
+            for name in (
+                "airflow_list_dags",
+                "airflow_get_run_status",
+                "unknown_write_tool",
+            )
+        ]
+    monkeypatch.setattr(executor_module.audit_service, "record_event", record_event)
+    monkeypatch.setattr(executor_module.mcp_registry, "list_tools", list_tools)
     return pool
 
 
@@ -213,11 +229,26 @@ def test_executor_runs_read_only_workflow_end_to_end(executor_module, fake_pool,
     assert fake_pool.steps[0]["result"] == {"dags": ["daily"]}
 
 
+def test_executor_passes_user_context_to_mcp_registry(executor_module, fake_pool, user, monkeypatch):
+    fake_pool.add_step(0, "infra.airflow_list_dags")
+    seen = {}
+
+    async def invoke(server, tool, args, **kwargs):
+        seen["user"] = kwargs.get("user")
+        return {"ok": True}
+
+    monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+
+    assert out["status"] == "completed"
+    assert seen["user"] == user
+
+
 def test_executor_pauses_on_write_step_waiting_approval(executor_module, fake_pool, user, monkeypatch):
     fake_pool.add_step(0, "infra.unknown_write_tool", {"x": 1})
     invoked = False
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         nonlocal invoked
         invoked = True
         return {"ok": True}
@@ -235,7 +266,7 @@ def test_executor_retries_transient_failures(executor_module, fake_pool, user, m
     fake_pool.add_step(0, "infra.airflow_list_dags")
     calls = 0
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         nonlocal calls
         calls += 1
         if calls < 3:
@@ -254,7 +285,7 @@ def test_executor_fails_fast_after_3_retries(executor_module, fake_pool, user, m
     fake_pool.add_step(1, "infra.airflow_get_run_status")
     calls = 0
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         nonlocal calls
         calls += 1
         raise RuntimeError("down")
@@ -272,7 +303,7 @@ def test_executor_does_not_retry_semantic_tool_errors(executor_module, fake_pool
     fake_pool.add_step(0, "infra.airflow_list_dags")
     calls = 0
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         nonlocal calls
         calls += 1
         return {"error": "permission denied"}
@@ -284,12 +315,29 @@ def test_executor_does_not_retry_semantic_tool_errors(executor_module, fake_pool
     assert out["status"] == "failed"
 
 
+def test_executor_does_not_retry_http_exceptions(executor_module, fake_pool, user, monkeypatch):
+    fake_pool.add_step(0, "infra.airflow_list_dags")
+    calls = 0
+
+    async def invoke(*_, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise executor_module.HTTPException(403, "permission denied")
+
+    monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+
+    assert calls == 1
+    assert out["status"] == "failed"
+    assert fake_pool.workflow["error"] == "permission denied"
+
+
 def test_executor_does_not_run_later_step_while_previous_is_running(executor_module, fake_pool, user, monkeypatch):
     fake_pool.add_step(0, "infra.airflow_list_dags", status="running")
     fake_pool.add_step(1, "infra.airflow_get_run_status")
     invoked = False
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         nonlocal invoked
         invoked = True
         return {"ok": True}
@@ -306,7 +354,7 @@ def test_executor_does_not_trust_plan_args_approved(executor_module, fake_pool, 
     fake_pool.add_step(0, "infra.unknown_write_tool", {"approved": True})
     invoked = False
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         nonlocal invoked
         invoked = True
         return {"ok": True}
@@ -355,7 +403,7 @@ def test_executor_audit_trail_per_step(executor_module, fake_pool, user, monkeyp
     async def record_event(**kwargs):
         audit_calls.append(kwargs)
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         return {"ok": True}
 
     monkeypatch.setattr(executor_module.audit_service, "record_event", record_event)
@@ -367,6 +415,26 @@ def test_executor_audit_trail_per_step(executor_module, fake_pool, user, monkeyp
     assert audit_calls[0]["action"] == "copilot.workflow.step"
     assert audit_calls[0]["metadata"]["step_index"] == 0
     assert audit_calls[0]["status"] == "success"
+    assert audit_calls[0]["critical"] is True
+
+
+def test_executor_fails_closed_when_live_tool_schema_missing(executor_module, fake_pool, user, monkeypatch):
+    fake_pool.add_step(0, "infra.airflow_list_dags")
+
+    async def list_tools(_server_id: str):
+        return []
+
+    async def invoke(*_, **_kwargs):
+        raise AssertionError("tool must not invoke without live schema")
+
+    monkeypatch.setattr(executor_module.mcp_registry, "list_tools", list_tools)
+    monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)
+
+    out = run(executor_module.execute_workflow(fake_pool.workflow_id, user))
+
+    assert out["status"] == "failed"
+    assert fake_pool.steps[0]["status"] == "failed"
+    assert fake_pool.steps[0]["result"]["error"] == "live tool schema unavailable"
 
 
 def test_executor_skipped_steps_after_failure(executor_module, fake_pool, user, monkeypatch):
@@ -374,7 +442,7 @@ def test_executor_skipped_steps_after_failure(executor_module, fake_pool, user, 
     fake_pool.add_step(1, "infra.airflow_get_run_status")
     fake_pool.add_step(2, "infra.airflow_list_dags")
 
-    async def invoke(*_):
+    async def invoke(*_, **_kwargs):
         return {"error": "still down"}
 
     monkeypatch.setattr(executor_module.mcp_registry, "invoke", invoke)

@@ -9,6 +9,7 @@ lives in console/UI, since it carries a user session and streams results.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -25,6 +26,84 @@ _FIELDS = (
     "model", "max_tokens", "temperature",
     "owner_user_id", "is_active", "created_at", "updated_at",
 )
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+$")
+_TEXT_LIMITS = {
+    "name": 160,
+    "description": 2000,
+    "instructions": 32000,
+    "personality": 8000,
+    "model": 160,
+}
+
+
+def _validate_json_object(value: Any, field: str) -> dict:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _validate_allowed_tools(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("allowed_tools must be a list")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not _TOOL_NAME_RE.fullmatch(item):
+            raise ValueError("allowed_tools must contain fully-qualified '<server>__<tool>' names")
+        if item not in out:
+            out.append(item)
+    if len(out) > 100:
+        raise ValueError("allowed_tools cannot exceed 100 entries")
+    return out
+
+
+def _validate_agent_payload(payload: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    required = {"cartridge_id", "slug", "name", "instructions"}
+    if not partial:
+        missing = [k for k in required if not payload.get(k)]
+        if missing:
+            raise ValueError(f"missing required fields: {', '.join(missing)}")
+
+    for key, value in payload.items():
+        if key not in _UPDATABLE and key != "cartridge_id":
+            continue
+        if value is None:
+            continue
+        if key == "slug":
+            value = str(value).strip()
+            if not _SLUG_RE.fullmatch(value):
+                raise ValueError("slug must be lowercase alphanumeric, '-' or '_' and max 80 chars")
+        elif key == "cartridge_id":
+            value = str(value).strip()
+            if not _SLUG_RE.fullmatch(value):
+                raise ValueError("cartridge_id must be lowercase alphanumeric, '-' or '_' and max 80 chars")
+        elif key in _TEXT_LIMITS:
+            value = str(value).strip()
+            if key in {"name", "instructions"} and not value:
+                raise ValueError(f"{key} cannot be empty")
+            if len(value) > _TEXT_LIMITS[key]:
+                raise ValueError(f"{key} exceeds {_TEXT_LIMITS[key]} characters")
+        elif key == "allowed_tools":
+            value = _validate_allowed_tools(value)
+        elif key in {"rag_filter", "extra"}:
+            value = _validate_json_object(value, key)
+        elif key == "max_tokens":
+            value = int(value)
+            if value < 256 or value > 64000:
+                raise ValueError("max_tokens must be between 256 and 64000")
+        elif key == "temperature":
+            value = float(value)
+            if value < 0 or value > 2:
+                raise ValueError("temperature must be between 0 and 2")
+        elif key == "is_active":
+            value = bool(value)
+        clean[key] = value
+    return clean
 
 
 def _row_to_dict(row: dict | None) -> dict | None:
@@ -174,6 +253,26 @@ async def agent_create(
     max_tokens: int = 8192, temperature: float = 0.4,
     extra: dict | None = None, is_active: bool = True,
 ) -> dict:
+    try:
+        payload = _validate_agent_payload(
+            {
+                "cartridge_id": cartridge_id,
+                "slug": slug,
+                "name": name,
+                "description": description,
+                "instructions": instructions,
+                "personality": personality,
+                "allowed_tools": allowed_tools,
+                "rag_filter": rag_filter,
+                "model": model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "extra": extra,
+                "is_active": is_active,
+            }
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
     new_id = str(uuid.uuid4())
     conn = _conn()
     try:
@@ -191,12 +290,15 @@ async def agent_create(
                 ) RETURNING *
                 """,
                 (
-                    new_id, cartridge_id, slug.strip(), name.strip(), (description or "").strip(),
-                    instructions, personality or "",
-                    json.dumps(allowed_tools or []),
-                    json.dumps(rag_filter or {}),
-                    json.dumps(extra or {}),
-                    model, int(max_tokens), float(temperature), bool(is_active),
+                    new_id, payload["cartridge_id"], payload["slug"], payload["name"], payload.get("description", ""),
+                    payload["instructions"], payload.get("personality", ""),
+                    json.dumps(payload.get("allowed_tools") or []),
+                    json.dumps(payload.get("rag_filter") or {}),
+                    json.dumps(payload.get("extra") or {}),
+                    payload.get("model", "claude-sonnet-4-6"),
+                    payload.get("max_tokens", 8192),
+                    payload.get("temperature", 0.4),
+                    payload.get("is_active", True),
                 ),
             )
             row = cur.fetchone()
@@ -250,6 +352,11 @@ _JSON_FIELDS = {"allowed_tools", "rag_filter", "extra"}
     },
 )
 async def agent_update(agent_id: str, **patch) -> dict:
+    try:
+        uuid.UUID(str(agent_id))
+        patch = _validate_agent_payload(patch, partial=True)
+    except ValueError as exc:
+        return {"error": str(exc)}
     sets, params = [], []
     for k, v in patch.items():
         if k not in _UPDATABLE:

@@ -47,6 +47,16 @@ _ALLOWED_TONES = {"formal", "neutral", "friendly", "urgent"}
 _MAX_BODY_LEN = 50_000
 
 
+def _normalise_kind(kind: object) -> str:
+    """Accept the legacy UI's "message" label as a memo-style draft.
+
+    The public contract remains email/memo/note/report; this shim only keeps
+    the older static Copilot form from failing with an opaque validation error.
+    """
+    raw = str(kind or "").strip().lower()
+    return "memo" if raw == "message" else raw
+
+
 def _serialize(row: dict) -> dict:
     """Render an asyncpg Record-as-dict into JSON-friendly shape."""
     out = dict(row)
@@ -78,7 +88,7 @@ async def create_draft(
     output via this same shape.
     """
     payload = body or {}
-    kind  = payload.get("kind",  "")
+    kind  = _normalise_kind(payload.get("kind", ""))
     text  = payload.get("body",  "")
     title = payload.get("title", "")
     tone  = payload.get("tone",  "neutral")
@@ -268,7 +278,7 @@ async def generate_draft(
     memory_service so the draft can reference recorded facts.
     """
     payload = body or {}
-    kind     = payload.get("kind", "")
+    kind     = _normalise_kind(payload.get("kind", ""))
     about    = (payload.get("about") or "").strip()
     tone     = payload.get("tone", "neutral")
     audience = (payload.get("audience") or "").strip() or None

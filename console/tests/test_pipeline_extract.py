@@ -147,7 +147,7 @@ async def test_dag_based_cartridge_triggers_airflow_dag(console_main, monkeypatc
             "airflow_trigger_dag",
             {
                 "dag_id": "replicon_extract",
-                "conf": {"entity": "Department", "mode": "full"},
+                "conf": {"cartridge_id": "replicon", "entity": "Department", "mode": "full"},
             },
         )
     ]
@@ -194,6 +194,7 @@ async def test_dag_based_incremental_conf_preserves_dates(console_main, monkeypa
     )
 
     assert calls[0][2]["conf"] == {
+        "cartridge_id": "replicon",
         "entity": "TimeEntry",
         "mode": "incremental",
         "from_date": "2026-01-01",

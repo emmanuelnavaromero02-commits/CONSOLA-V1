@@ -16,10 +16,16 @@ Errors:
 """
 from __future__ import annotations
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
+from app.core.job_runner import (
+    _trigger_silver_refresh,
+    fail_external_job,
+    finish_external_job,
+)
 from app.core.sap_client import SAPClientError
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
@@ -42,6 +48,13 @@ def _get_entity_or_404(entity_id: str) -> dict:
 
 def _degraded_503(report: dict) -> JSONResponse:
     return JSONResponse(report, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+def _mark_external_job(func, *args) -> None:
+    try:
+        anyio.from_thread.run(func, *args)
+    except RuntimeError:
+        anyio.run(func, *args)
 
 
 # ── Catalogue ────────────────────────────────────────────────────────────────
@@ -108,6 +121,7 @@ def entity_extract(
     mode: str = Query("incremental", pattern="^(full|incremental|historical)$"),
     from_date: str | None = None,
     to_date: str | None = None,
+    job_id: str | None = None,
 ):
     """Trigger an extraction for one entity (synchronous, returns when done).
 
@@ -126,13 +140,20 @@ def entity_extract(
         return _degraded_503(report)
 
     try:
-        return run_entity({**config, "mode": mode}, from_date=from_date, to_date=to_date)
+        result = run_entity({**config, "mode": mode}, from_date=from_date, to_date=to_date)
+        _mark_external_job(_trigger_silver_refresh, entity_id)
+        _mark_external_job(finish_external_job, job_id, result)
+        return result
     except SAPClientError as exc:
+        _mark_external_job(fail_external_job, job_id, str(exc))
         return _degraded_503({
             "status": "degraded",
             "configured": True,
             "error": str(exc),
         })
+    except Exception as exc:
+        _mark_external_job(fail_external_job, job_id, str(exc))
+        raise
 
 
 @router.post("/extract-all")
@@ -148,7 +169,9 @@ def extract_all(
     for config in get_all_entities():
         effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
         try:
-            results.append(run_entity({**config, "mode": effective_mode}))
+            result = run_entity({**config, "mode": effective_mode})
+            _mark_external_job(_trigger_silver_refresh, config.get("entity"))
+            results.append(result)
         except SAPClientError as exc:
             results.append({
                 "entity": config.get("entity"),

@@ -10,6 +10,7 @@ import os
 import httpx
 
 from app.config import settings
+from app.middleware.request_id import request_id_var
 from app.registry import tool
 
 _BASE = settings.superset_url.rstrip("/")
@@ -20,10 +21,18 @@ def _is_development() -> bool:
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
+def _request_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = dict(extra or {})
+    rid = request_id_var.get()
+    if rid:
+        headers["X-Request-ID"] = rid
+    return headers
+
+
 # ── Auth ───────────────────────────────────────────────────────────────────────
 
 async def _token() -> str:
-    async with httpx.AsyncClient(timeout=30) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_request_headers()) as c:
         r = await c.post(
             f"{_BASE}/api/v1/security/login",
             json={
@@ -39,7 +48,10 @@ async def _token() -> str:
 
 async def _hdrs() -> dict:
     tok = await _token()
-    return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+    return _request_headers({
+        "Authorization": f"Bearer {tok}",
+        "Content-Type": "application/json",
+    })
 
 
 # ── Database connections ───────────────────────────────────────────────────────
@@ -336,7 +348,7 @@ async def superset_import_dashboard(
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(
             f"{_BASE}/api/v1/dashboard/import/",
-            headers={"Authorization": f"Bearer {tok}"},
+            headers=_request_headers({"Authorization": f"Bearer {tok}"}),
             files={"formData": ("dashboard.zip", buf, "application/zip")},
             data={"passwords": json.dumps(passwords or {})},
         )

@@ -19,7 +19,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.dependencies import require_authenticated
-from app.services import audit_service, auth
+from app.services import audit_service, auth, tool_manifest, tool_policy
 from app.services import workflow_executor
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
@@ -368,6 +368,50 @@ def _parse_plan_json(raw: str) -> list[dict]:
     return out
 
 
+def _validate_planned_steps(plan: list[dict], tool_meta: dict[str, dict]) -> list[dict]:
+    """Server-side enforcement for LLM-authored workflow plans.
+
+    The prompt asks the model to use only listed tools, but execution cannot
+    depend on prompt obedience. Unknown tools become a hard planner failure;
+    unsafe/destructive tools become human-review steps; args are validated
+    with the same policy used at execution time.
+    """
+    validated: list[dict] = []
+    for idx, step in enumerate(plan[:8], start=1):
+        tool = step.get("tool")
+        args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        if not tool:
+            validated.append({**step, "tool": None, "args": args})
+            continue
+        tool = str(tool)
+        meta = tool_meta.get(tool)
+        if not meta:
+            raise HTTPException(502, f"planner emitted unavailable tool: {tool}")
+        bare_name = tool.split(".", 1)[1] if "." in tool else tool
+        classification = tool_manifest.classify_tool(bare_name)
+        risk = str(classification.get("risk_level") or "write")
+        if classification.get("requires_approval") or risk in {"write", "destructive"}:
+            validated.append({
+                **step,
+                "step": step.get("step", idx),
+                "tool": None,
+                "args": {},
+                "description": f"{step.get('description', '').strip()} (requiere aprobacion humana)",
+            })
+            continue
+        try:
+            clean_args = tool_policy.validate_tool_args(
+                bare_name,
+                args,
+                meta.get("input_schema") or {"type": "object", "properties": {}},
+                risk_level=risk,
+            )
+        except tool_policy.ToolPolicyError as exc:
+            raise HTTPException(502, f"planner emitted invalid args for {tool}: {exc}") from exc
+        validated.append({**step, "tool": tool, "args": clean_args})
+    return validated
+
+
 async def _llm_plan(intent: str, available_tools: list[str]) -> list[dict]:
     """Call the LLM with the planning prompt + the intent.
 
@@ -435,6 +479,7 @@ async def plan_workflow(
         # a single name list so the planner can reference them.
         servers = await mcp_registry.list_servers()
         all_tools: list[str] = []
+        tool_meta: dict[str, dict] = {}
         for server in servers:
             try:
                 tools = await mcp_registry.list_tools(server["id"])
@@ -443,9 +488,12 @@ async def plan_workflow(
             for t in tools:
                 name = t.get("name") if isinstance(t, dict) else None
                 if name:
-                    all_tools.append(f"{server['id']}.{name}")
+                    full_name = f"{server['id']}.{name}"
+                    all_tools.append(full_name)
+                    tool_meta[full_name] = t
     except Exception:                              # noqa: BLE001
         all_tools = []
+        tool_meta = {}
 
     try:
         plan = await _llm_plan(run["intent"], all_tools)
@@ -456,6 +504,7 @@ async def plan_workflow(
 
     if not plan:
         raise HTTPException(502, "planner returned empty plan")
+    plan = _validate_planned_steps(plan, tool_meta)
 
     # Persist the plan + the per-step rows. Status flips to 'running'
     # so the (next-session) executor loop knows it can start.

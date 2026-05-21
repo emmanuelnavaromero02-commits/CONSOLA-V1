@@ -132,6 +132,8 @@ jobs:
         include:
           - service: console
             context: ./console
+          - service: console-next
+            context: ./console-next
           - service: workspace
             context: ./workspace
           - service: refinement
@@ -140,6 +142,8 @@ jobs:
             context: ./vault
           - service: mcp-infra
             context: ./mcp-infra
+          - service: airflow
+            context: ./infra/airflow
           - service: replicon
             context: ./cartridges/replicon
           - service: sap_hcm

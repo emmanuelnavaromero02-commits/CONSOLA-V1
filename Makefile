@@ -6,7 +6,8 @@ help:
 	@echo "MODecissionsPaaS — targets:"
 	@echo "  make up           bootstrap secrets and start the stack"
 	@echo "  make down         stop the stack"
-	@echo "  make nuke         wipe stack, volumes, dangling containers"
+	@echo "  make nuke CONFIRM=NUKE"
+	@echo "                    wipe this stack and volumes only"
 	@echo "  make logs         follow service logs"
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
@@ -22,7 +23,11 @@ down:
 	docker compose -f infra/docker-compose.yml down
 
 nuke:
-	docker compose -f infra/docker-compose.yml down -v --remove-orphans && docker ps -aq | xargs -r docker rm -f
+	@if [ "$(CONFIRM)" != "NUKE" ]; then \
+		echo "Refusing to remove volumes. Re-run: make nuke CONFIRM=NUKE"; \
+		exit 2; \
+	fi
+	docker compose -f infra/docker-compose.yml down -v --remove-orphans
 
 logs:
 	docker compose -f infra/docker-compose.yml logs -f --tail=50

@@ -1,6 +1,11 @@
 // Sprint v1.11 — extracted from activate.html for strict CSP.
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 async function loadInfo() {
   try {
     const r = await fetch('/auth/activate/info?token=' + encodeURIComponent(TOKEN));
@@ -18,12 +23,13 @@ async function doActivate(ev) {
   const err = document.getElementById('err');
   err.textContent = '';
   if (pw !== p2)     { err.textContent = 'Los passwords no coinciden'; return false; }
-  if (pw.length < 8) { err.textContent = 'Mínimo 8 caracteres'; return false; }
+  if (pw.length < 12) { err.textContent = 'Mínimo 12 caracteres'; return false; }
   const btn = document.getElementById('btn');
   btn.disabled = true;
   try {
     const r = await fetch('/auth/activate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
       body: JSON.stringify({ token: TOKEN, new_password: pw }),
     });
     if (!r.ok) {

@@ -53,11 +53,45 @@ export async function studioAction(path, { method = "GET", body = null, render =
     });
     const payload = await r.json().catch(() => ({}));
     if (typeof render === "function") render(payload, r);
-    return r.ok ? payload : null;
+    if (!r.ok) {
+      showStudioError(payload?.detail || payload?.error || `Error HTTP ${r.status}`, path);
+      return null;
+    }
+    return payload;
   } catch (err) {
     console.warn("Studio action failed", path, err);
+    showStudioError(err instanceof Error ? err.message : "Accion de Studio fallida", path);
     return null;
   }
+}
+
+function showStudioError(message, path) {
+  let box = document.getElementById("studio-action-error");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "studio-action-error";
+    box.setAttribute("role", "alert");
+    box.style.cssText = [
+      "position:fixed",
+      "right:24px",
+      "bottom:96px",
+      "z-index:10010",
+      "max-width:min(520px,calc(100vw - 48px))",
+      "padding:12px 14px",
+      "border:1px solid var(--red,#ef4444)",
+      "border-radius:8px",
+      "background:rgba(127,29,29,.94)",
+      "color:#fff",
+      "font:12px/1.45 var(--font-sans,system-ui)",
+      "box-shadow:0 12px 32px rgba(0,0,0,.35)",
+    ].join(";");
+    document.body.appendChild(box);
+  }
+  box.innerHTML = `<strong>Accion fallida</strong><br>${escapeHtml(message)}<br><small>${escapeHtml(path || "")}</small>`;
+  window.clearTimeout(box.__hideTimer);
+  box.__hideTimer = window.setTimeout(() => {
+    if (box?.parentElement) box.remove();
+  }, 9000);
 }
 
 const STEP_ACTIONS = {
@@ -288,6 +322,7 @@ function hookClicks() {
     const text = (target.innerText || target.textContent || "").trim();
     for (const action of CLICK_ACTIONS) {
       if (!action.match.test(text)) continue;
+      stopInlineHandler(event);
       if (action.before) action.before(target);
       const path = withCartridge(action.path);
       if (!path) return;

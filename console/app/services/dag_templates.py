@@ -187,7 +187,6 @@ _TRIGGER_SILVER_TASK = '''\
                 f"silver/{{CARTRIDGE_ID}}/",
                 f"gold/{{CARTRIDGE_ID}}/",
             ],
-            "_trusted_admin": True,
         }}
         resp   = requests.post(f"{{REFINEMENT_URL}}/refresh-by-source",
                                headers={{"x-api-key": INTERNAL_API_KEY_REFINEMENT,

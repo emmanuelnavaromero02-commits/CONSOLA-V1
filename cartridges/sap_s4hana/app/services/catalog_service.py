@@ -55,6 +55,19 @@ def _yaml_kbs() -> list[dict[str, Any]]:
         return (yaml.safe_load(f) or {}).get("knowledge_bits", [])
 
 
+def _yaml_entity_map() -> dict[str, dict[str, Any]]:
+    return {str(e.get("entity")): e for e in _yaml_entities() if e.get("entity")}
+
+
+def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
+    for key in ("odata_entity", "service_path"):
+        if yaml_entity.get(key) and not data.get(key):
+            data[key] = yaml_entity[key]
+    return data
+
+
 # ── Seed on startup ───────────────────────────────────────────────────────────
 
 def _dag_id_for_entity(entity: dict[str, Any]) -> str:
@@ -157,7 +170,7 @@ def get_all_entities() -> list[dict[str, Any]]:
                 WHERE cartridge_id = :cid AND enabled = TRUE
                 ORDER BY entity
             """), {"cid": CARTRIDGE_ID}).mappings().all()
-        return [dict(r) for r in rows]
+        return [_merge_yaml_runtime_fields(dict(r)) for r in rows]
     except Exception:
         return _yaml_entities()
 
@@ -170,7 +183,12 @@ def get_entity_config(entity_name: str) -> dict[str, Any] | None:
                 SELECT * FROM entity_config
                 WHERE cartridge_id = :cid AND entity = :e
             """), {"cid": CARTRIDGE_ID, "e": entity_name}).mappings().first()
-        return dict(row) if row else None
+        if row:
+            return _merge_yaml_runtime_fields(dict(row))
+        for e in _yaml_entities():
+            if e.get("entity") == entity_name:
+                return e
+        return None
     except Exception:
         for e in _yaml_entities():
             if e.get("entity") == entity_name:

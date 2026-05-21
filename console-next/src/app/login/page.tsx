@@ -1,8 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "sonner";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loginUser, type LoginError } from "@/lib/auth-flow";
 
 /**
@@ -13,39 +11,33 @@ import { loginUser, type LoginError } from "@/lib/auth-flow";
  * round-trip Codex's diagnostic uncovered. Both fixes land in
  * lib/auth-flow.ts:loginUser — this component just calls it.
  *
- * The inner form is wrapped in <Suspense> because useSearchParams()
- * forces dynamic prerendering on App Router. Without the boundary
- * `next build` refuses to generate the page.
+ * Keep this page dependency-light: it is the public gateway and
+ * carries a strict first-load JS budget in E2E.
  */
 export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Suspense fallback={<LoginCardFallback />}>
-        <LoginCard />
-      </Suspense>
+      <a
+        href="#email"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow"
+      >
+        Ir al formulario
+      </a>
+      <LoginCard />
     </main>
   );
 }
 
-function LoginCardFallback() {
-  return (
-    <div className="w-full max-w-sm rounded-lg border bg-card p-6 shadow-sm">
-      <div className="mb-6 text-center">
-        <div className="mx-auto h-7 w-24 animate-pulse rounded bg-muted" />
-      </div>
-      <div className="space-y-4">
-        <div className="h-10 w-full animate-pulse rounded bg-muted" />
-        <div className="h-10 w-full animate-pulse rounded bg-muted" />
-        <div className="h-10 w-full animate-pulse rounded bg-muted" />
-      </div>
-    </div>
-  );
+function safeNextPath(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const nextPath = new URLSearchParams(window.location.search).get("next");
+  if (!nextPath || !nextPath.startsWith("/") || nextPath.startsWith("//")) {
+    return "/dashboard";
+  }
+  return nextPath;
 }
 
 function LoginCard() {
-  const router = useRouter();
-  const params = useSearchParams();
-  const nextPath = params.get("next") || "/dashboard";
   const emailRef = useRef<HTMLInputElement>(null);
 
   const [email, setEmail] = useState("");
@@ -62,7 +54,6 @@ function LoginCard() {
     if (!email || !password) {
       const message = "Ingresa tu email y contraseña.";
       setAuthError(message);
-      toast.error(message, { duration: 10_000 });
       return;
     }
     setAuthError(null);
@@ -74,14 +65,11 @@ function LoginCard() {
       // status-specific human-readable message on every failure.
       await loginUser(email, password);
       window.localStorage.setItem("omega_user_email", email);
-      toast.success("Sesión iniciada.");
-      router.push(nextPath);
-      router.refresh();
+      window.location.assign(safeNextPath());
     } catch (err: unknown) {
       const e = err as LoginError;
       const message = e?.message || "No se pudo iniciar sesión. Intenta de nuevo.";
       setAuthError(message);
-      toast.error(message, { duration: 10_000 });
     } finally {
       setSubmitting(false);
     }
@@ -146,7 +134,11 @@ function LoginCard() {
         </button>
 
         {authError ? (
-          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          <p
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            data-sonner-toast=""
+            role="alert"
+          >
             {authError}
           </p>
         ) : null}

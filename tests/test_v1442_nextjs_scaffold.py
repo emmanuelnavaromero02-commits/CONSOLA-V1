@@ -51,21 +51,19 @@ def test_package_json_present_and_parseable():
         assert dep in pkg["dependencies"], (
             f"v1.44.2 brief deps: missing {dep!r}"
         )
-    # next must pin a 14.x release; the brief says Next 14+.
-    # v1.44.2 R-Mac-2: lower bound is 14.2.21 — earlier 14.2.x
-    # carries the moderate + critical advisories Codex's Mac audit
-    # flagged. Accept caret (^) or tilde (~) ranges as long as the
-    # floor is ≥ 14.2.21.
+    # next must pin a vetted production release. v1.44.2 started on
+    # Next 14; the go-live security audit moved the frontend to 16.2.6
+    # because npm audit no longer provided a safe patched 14.x floor.
     next_pin = pkg["dependencies"]["next"]
-    assert next_pin.lstrip("^~").startswith("14."), (
-        f"next pin should be 14.x; got {next_pin}"
+    assert next_pin.lstrip("^~").startswith("16."), (
+        f"next pin should be 16.x; got {next_pin}"
     )
-    m = re.match(r"[\^~]?14\.(\d+)\.(\d+)", next_pin)
+    m = re.match(r"[\^~]?16\.(\d+)\.(\d+)", next_pin)
     assert m, f"unparseable next pin: {next_pin}"
     minor, patch = int(m.group(1)), int(m.group(2))
-    assert (minor, patch) >= (2, 21), (
-        f"next pin must be >= 14.2.21 (Codex Mac audit R-Mac-2 — "
-        f"14.2.15 had moderate + critical CVEs). Got {next_pin}"
+    assert (minor, patch) >= (2, 6), (
+        f"next pin must be >= 16.2.6 (go-live npm audit hardening). "
+        f"Got {next_pin}"
     )
 
 
@@ -95,19 +93,9 @@ def test_next_config_disables_powered_by_header():
 
 
 def test_next_config_emits_csp_with_defenses_intact():
-    """v1.44.3.2.2 reversal of v1.44.2 R1's "no unsafe-eval" stance.
-
-    Codex's Mac validation surfaced that ``script-src 'self'`` blocks
-    Next.js 14's hydration inline-script bootstrap + App Router
-    eval-based runtime — /login renders a skeleton forever and every
-    E2E test fails (0/319 in v1.44.3.2.1 runs). For v1.0 we accept
-    'unsafe-inline' + 'unsafe-eval' on script-src; the v1.45 sprint
-    re-introduces nonces so these can come back off.
-
-    The DEFENSES that actually matter against the audit's concerns
-    (clickjacking, form-hijacking, base-tag injection) stay in
-    place — that's what this test pins.
-    """
+    """Production CSP keeps the enterprise defenses and only allows the script
+    relaxations the current Next App Router runtime needs until nonce middleware
+    lands."""
     src = _read(NEXT_ROOT / "next.config.mjs")
     assert "Content-Security-Policy" in src
     code = re.sub(r"//.*?$|/\*.*?\*/", "", src, flags=re.MULTILINE | re.DOTALL)
@@ -118,11 +106,16 @@ def test_next_config_emits_csp_with_defenses_intact():
         "base-uri 'self'",
         "form-action 'self'",
         "default-src 'self'",
+        "connect-src 'self'",
     ):
         assert directive in code, (
             f"next.config.mjs CSP must declare {directive!r} — that's the "
             "real audit-relevant defense, not script-src strictness."
         )
+    assert "'unsafe-inline'" in code
+    assert "'unsafe-eval'" in code
+    assert "ws://localhost" not in code
+    assert "wss://localhost" not in code
 
 
 # ── Tailwind / styles ────────────────────────────────────────────────────
@@ -149,35 +142,50 @@ def test_tailwind_config_uses_class_dark_mode():
     )
 
 
-# ── Middleware ───────────────────────────────────────────────────────────
+# ── Proxy ────────────────────────────────────────────────────────────────
 
 
-def test_middleware_redirects_unauthenticated_to_login():
-    src = _read(SRC / "middleware.ts")
+def test_proxy_redirects_unauthenticated_to_login():
+    src = _read(SRC / "proxy.ts")
     assert "NextResponse.redirect" in src
     assert "/login" in src
     # The redirect target must include the original path as `?next=`
     # so the post-login bounce is correct.
     assert "next" in src and "searchParams.set" in src
+    assert "`${pathname}${req.nextUrl.search}`" in src
 
 
-def test_middleware_treats_login_and_health_as_public():
-    src = _read(SRC / "middleware.ts")
+def test_proxy_treats_login_and_health_as_public():
+    src = _read(SRC / "proxy.ts")
     # Both routes must be in the public allowlist or skipped via prefix.
     assert '"/login"' in src
     assert "/api/health" in src
 
 
-def test_middleware_checks_for_auth_cookie_not_jwt_decode():
-    """Middleware runs at the edge and shouldn't decode JWT signing
+def test_proxy_checks_for_auth_cookie_not_jwt_decode():
+    """The Next proxy runs at the edge and shouldn't decode JWT signing
     keys. Cookie presence is enough — full verification happens
     server-side in route handlers / RSC fetches."""
-    src = _read(SRC / "middleware.ts")
+    src = _read(SRC / "proxy.ts")
     # Reads cookies …
     assert "req.cookies.get" in src
     # … and does NOT import a JWT library at the edge.
     assert "jsonwebtoken" not in src
     assert "jose" not in src or "import * as jose" not in src
+
+
+def test_legacy_redirector_sanitizes_path_segments():
+    src = _read(SRC / "app/legacy/[[...path]]/route.ts")
+    assert "encodeURIComponent(segment)" in src
+    assert 'segment !== ".."' in src
+    assert '!segment.includes(":")' in src
+
+
+def test_copilot_initial_prompt_is_visible_and_sendable():
+    src = _read(SRC / "components/workspace/ChatLayout.tsx")
+    assert "preparedPrompt" in src
+    assert "Prompt preparado" in src
+    assert "Enviar al copiloto" in src
 
 
 # ── lib/api.ts — server vs browser base URL ──────────────────────────────
@@ -408,7 +416,7 @@ def test_use_kpis_hook_matches_backend_shape():
 
 
 def test_dashboard_page_renders_kpi_grid():
-    src = _read(SRC / "app/dashboard/page.tsx")
+    src = _read(SRC / "app/(shell)/dashboard/page.tsx")
     assert "useKpis" in src
     # Loading + error states present.
     assert "isLoading" in src
@@ -417,28 +425,23 @@ def test_dashboard_page_renders_kpi_grid():
     assert "FreshnessTable" in src
 
 
-def test_login_page_uses_suspense_for_useSearchParams():
-    """next build fails the page generation if useSearchParams() isn't
-    inside a Suspense boundary — the v1.44.2 scaffold hit this on the
-    first attempt. Lock the fix."""
+def test_login_page_avoids_next_navigation_bundle():
+    """Login is public and carries a strict first-load JS budget.
+    It must parse ?next= without next/navigation so it does not pull
+    route-shell chunks into the gateway page."""
     src = _read(SRC / "app/login/page.tsx")
-    assert "Suspense" in src
-    assert "useSearchParams" in src
-    # The fallback element must be a real React element, not null.
-    assert "fallback=" in src
+    assert "next/navigation" not in src
+    assert "useSearchParams" not in src
+    assert "new URLSearchParams" in src
+    assert "startsWith(\"//\")" in src
 
 
 # ── Compose tests this branch doesn't break existing parity ──────────────
 
 
 def test_existing_aws_compose_consistency_still_passes():
-    """The v1.43.4 sanity guard (test_aws_compose_consistency) asserts
-    that local and AWS compose agree on Airflow / Postgres / Superset
-    versions. v1.44.2 added a service to LOCAL compose — verify we
-    didn't accidentally diff AWS in the same edit. (The new service
-    is intentionally local-only until the v1.45 deploy sprint.)"""
+    """The Next console is part of release/deploy now, not local-only."""
     src = _read(REPO / "infra/terraform/deploy/docker-compose.aws.yml")
-    assert "console_next" not in src, (
-        "console_next must NOT appear in the AWS compose yet; that's a "
-        "v1.45 deploy sprint."
-    )
+    assert "console_next:" in src
+    assert "ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next" in src
+    assert "BACKEND_INTERNAL_URL: http://console:8000" in src

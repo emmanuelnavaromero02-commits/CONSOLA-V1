@@ -20,10 +20,11 @@ import re
 import textwrap
 import zipfile
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import asyncpg
 
-from app.security import get_internal_api_key, required_secret
+from app.security import get_internal_api_key
 from app.services.security_context import build_security_context
 
 _DATABASE_URL = (
@@ -35,7 +36,7 @@ _POOL: asyncpg.Pool | None = None
 
 _MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "minio:9000")
 _MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
-_MINIO_SECRET_KEY = required_secret("MINIO_SECRET_KEY", dev_default="minioadmin")
+_MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 _MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
 _MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
 _MAX_IMPORT_ZIP_BYTES = int(os.environ.get("CARTRIDGE_IMPORT_MAX_BYTES", str(25 * 1024 * 1024)))
@@ -63,6 +64,22 @@ _FORBIDDEN_SEED_SQL = re.compile(
     r"foreign\s+server|foreign\s+table)\b|\\",
     re.IGNORECASE,
 )
+_SAFE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
+_SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _validate_cartridge_id(value: str) -> str:
+    value = (value or "").strip()
+    if not _SAFE_ID_RE.fullmatch(value):
+        raise ValueError("invalid cartridge_id")
+    return value
+
+
+def _validate_plain_filename(value: str) -> str:
+    value = (value or "").strip()
+    if not _SAFE_FILENAME_RE.fullmatch(value):
+        raise ValueError("invalid filename")
+    return value
 
 
 def _mcp_infra_headers() -> dict[str, str]:
@@ -123,6 +140,8 @@ async def _pg():
 # ── MinIO ─────────────────────────────────────────────────────────────────────
 
 def _minio():
+    if _MINIO_SECURE and "amazonaws.com" in _MINIO_ENDPOINT and not _MINIO_SECRET_KEY:
+        return _BotoS3ObjectStore(_MINIO_BUCKET)
     from minio import Minio
     return Minio(
         _MINIO_ENDPOINT,
@@ -130,6 +149,47 @@ def _minio():
         secret_key=_MINIO_SECRET_KEY,
         secure=_MINIO_SECURE,
     )
+
+
+class _BotoS3ObjectStore:
+    """Small adapter for AWS S3 with instance-profile credentials.
+
+    The rest of this service uses the MinIO client's tiny object-store surface;
+    this adapter keeps production AWS from requiring static access keys.
+    """
+
+    def __init__(self, default_bucket: str):
+        import boto3
+        self._default_bucket = default_bucket
+        self._client = boto3.client("s3")
+
+    def bucket_exists(self, bucket: str) -> bool:
+        try:
+            self._client.head_bucket(Bucket=bucket)
+            return True
+        except Exception:
+            return False
+
+    def make_bucket(self, bucket: str) -> None:
+        self._client.create_bucket(Bucket=bucket)
+
+    def put_object(self, bucket: str, key: str, data, length: int, content_type: str | None = None):
+        extra = {"ContentType": content_type} if content_type else {}
+        self._client.put_object(Bucket=bucket, Key=key, Body=data.read(length), **extra)
+
+    def list_objects(self, bucket: str, prefix: str = "", recursive: bool = True):
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                yield SimpleNamespace(
+                    object_name=obj["Key"],
+                    size=obj.get("Size", 0),
+                    last_modified=obj.get("LastModified"),
+                )
+
+    def get_object(self, bucket: str, key: str):
+        obj = self._client.get_object(Bucket=bucket, Key=key)
+        return obj["Body"]
 
 
 def _ensure_bucket(c) -> None:
@@ -417,10 +477,14 @@ async def delete_entity(cartridge_id: str, entity: str) -> None:
 # ── Supplementary files (MinIO) ────────────────────────────────────────────────
 
 def upload_spec(cartridge_id: str, filename: str, content: str) -> str:
+    cartridge_id = _validate_cartridge_id(cartridge_id)
+    filename = _validate_plain_filename(filename)
     c   = _minio()
     _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/specs/{filename}"
     raw = content.encode("utf-8")
+    if len(raw) > _MAX_IMPORT_MEMBER_BYTES:
+        raise ValueError("spec upload too large")
     c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain")
     return key
 
@@ -587,6 +651,7 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
         cartridge_id = m.group(1) if m else None
         if not cartridge_id:
             raise ValueError("Could not parse cartridge_id from seed.sql")
+        cartridge_id = _validate_cartridge_id(cartridge_id)
 
         allow_dag_import = (
             os.environ.get("ALLOW_CARTRIDGE_DAG_IMPORT", "").strip().lower() in {"1", "true", "yes"}
@@ -707,8 +772,12 @@ def _validate_seed_sql(sql: str) -> None:
             table = insert_match.group(1)
             if table not in _ALLOWED_SEED_TABLES:
                 raise ValueError(f"seed.sql cannot insert into {table}")
+            if re.search(r"\bselect\b", lower):
+                raise ValueError("seed.sql INSERT must use literal VALUES, not SELECT")
             continue
         if re.match(r"update\s+cartridges\s+set\s+assistant_hints\s*=", lower):
+            if not re.search(r"\bwhere\s+id\s*=", lower):
+                raise ValueError("assistant_hints update must target a single cartridge id")
             continue
         if re.match(r"alter\s+table\s+analytic_apps\s+add\s+column\s+if\s+not\s+exists\s+cartridge_id\s+text$", lower):
             continue

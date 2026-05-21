@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MCP_MAIN = ROOT / "mcp-infra" / "app" / "main.py"
+MINIO_TOOLS = ROOT / "mcp-infra" / "app" / "tools" / "minio.py"
 REFINEMENT_MAIN = ROOT / "refinement" / "app" / "main.py"
 MCP_REGISTRY = ROOT / "console" / "app" / "services" / "mcp_registry.py"
 
@@ -24,6 +25,25 @@ def test_mcp_invoke_enforces_trusted_security_context_before_data_tools():
     assert "direct gold SQL requires admin context" in source
     assert "cartridge SQL must stay inside its cartridge prefix" in source
     assert "sensitive internal tables are not readable through MCP" in source
+    assert "_AGENT_READ_TOOLS" in source
+    assert "_AGENT_WRITE_TOOLS" in source
+    assert "_AGENT_DESTRUCTIVE_TOOLS" in source
+    assert "scheduled agents cannot manage agents" in source
+    assert "agent management requires admin context" in source
+    assert "_VAULT_READ_TOOLS" in source
+    assert "_VAULT_WRITE_TOOLS" in source
+    assert "vault writes require admin context" in source
+    assert "vault.connections.read" in source
+    assert "vault.connections.write" in source
+    assert "_SUPERSET_TOOLS" in source
+    assert "superset tools require admin studio.write context" in source
+    assert "_validate_airflow_trigger_scope" in source
+    assert "_require_dag_registered_for_cartridge" in source
+    assert "DAG is not registered for cartridge" in source
+    assert "shared DAG trigger requires cartridge_id outside admin context" in source
+    assert "DAG trigger requires cartridge_id outside admin context" in source
+    trigger_block = source.split("def _validate_airflow_trigger_scope", 1)[1].split("def _extract_s3_keys", 1)[0]
+    assert "startswith(tuple" not in trigger_block
 
 
 def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
@@ -43,6 +63,10 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "pggold table is not registered as an allowed dataset" in source
     assert "existing = store.get_dataset(args[\"name\"])" in source
     assert "_require_dataset_scope(body, existing, \"datasets.write\")" in source
+    assert "SQL storage bucket not allowed" in source
+    assert 'return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}' in source
+    assert '_require_sql_storage_scope(body, ds.get("sql") or ds.get("sql_def") or "", ds.get("sources") or [])' in source
+    assert "sec = _security_context(body)" in source
 
 
 def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
@@ -58,6 +82,15 @@ def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     assert "source = next((s for s in sources" in source
 
 
+def test_minio_sample_rows_are_capped():
+    source = MINIO_TOOLS.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    assert "n = min(max(int(n or 10), 1), 100)" in source
+    assert "_safe_filename" in source
+    assert "MAX_SPEC_BYTES" in source
+
+
 def test_console_registry_scopes_direct_cartridge_mcp_calls():
     source = MCP_REGISTRY.read_text(encoding="utf-8")
     ast.parse(source)
@@ -69,3 +102,7 @@ def test_console_registry_scopes_direct_cartridge_mcp_calls():
     assert "trusted security_context required" in source
     assert "cartridge SQL cannot read service database schemas" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source
+    assert "except HTTPException" in source
+    assert "MCP transport failed" in source
+    assert "MCP invoke failed" in source
+    assert 'return {"error": str(exc)}' not in source

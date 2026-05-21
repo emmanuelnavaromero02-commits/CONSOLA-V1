@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services import audit_service, auth, mcp_registry, permissions, tool_manifest
+from app.services import audit_service, auth, mcp_registry, permissions, tool_manifest, tool_policy
 
 MAX_ATTEMPTS = 3
 BASE_BACKOFF_SECONDS = 1.0
@@ -97,6 +97,21 @@ def _safe_error(error: Any) -> str:
     return text
 
 
+async def _live_tool_schema(server_id: str, tool: str) -> dict[str, Any] | None:
+    try:
+        tools = await mcp_registry.list_tools(server_id)
+    except Exception:
+        return None
+    for item in tools:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if name == tool or name.endswith(f"__{tool}") or name.endswith(f".{tool}"):
+            schema = item.get("input_schema")
+            return schema if isinstance(schema, dict) else {}
+    return None
+
+
 async def _record_step_audit(
     *,
     user: dict[str, Any],
@@ -120,6 +135,7 @@ async def _record_step_audit(
         tool_args=_scrub_args(args or {}),
         tool_result_status=status,
         risk_level=risk_level,
+        critical=True,
     )
 
 
@@ -287,12 +303,23 @@ async def _invoke_with_retry(
     tool: str,
     args: dict[str, Any],
     timeout_seconds: int,
+    *,
+    user: dict[str, Any],
 ) -> tuple[bool, Any, str | None]:
+    meta = tool_manifest.classify_tool(tool)
+    risk = str(meta.get("risk_level") or "write")
+    input_schema = await _live_tool_schema(server_id, tool)
+    if input_schema is None:
+        return False, None, "live tool schema unavailable"
+    try:
+        args = tool_policy.validate_tool_args(tool, args, input_schema, risk_level=risk)
+    except tool_policy.ToolPolicyError as exc:
+        return False, None, _safe_error(exc)
     last_error: str | None = None
     for attempt in range(MAX_ATTEMPTS):
         try:
             result = await asyncio.wait_for(
-                mcp_registry.invoke(server_id, tool, args),
+                mcp_registry.invoke(server_id, tool, args, user=user),
                 timeout=timeout_seconds,
             )
             if isinstance(result, dict) and (result.get("_error") or result.get("error")):
@@ -302,6 +329,9 @@ async def _invoke_with_retry(
                 last_error = _safe_error(result.get("error_message") or result.get("error"))
                 return False, None, last_error
             return True, result, None
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            return False, None, _safe_error(detail)
         except Exception as exc:  # noqa: BLE001
             last_error = _safe_error(exc)
             if attempt < MAX_ATTEMPTS - 1:
@@ -492,7 +522,13 @@ async def execute_workflow(workflow_id: str, user: dict[str, Any]) -> dict[str, 
             results = await _refresh_step_results(pool, workflow_id)
             return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
 
-        ok, result, error = await _invoke_with_retry(server_id, bare_tool, args, _step_timeout(args))
+        ok, result, error = await _invoke_with_retry(
+            server_id,
+            bare_tool,
+            args,
+            _step_timeout(args),
+            user=user,
+        )
         if ok:
             row = await pool.fetchrow(
                 """
@@ -642,6 +678,19 @@ async def approve_step(workflow_id: str, step_idx: int, user: dict[str, Any]) ->
         raise HTTPException(403, "permission required: copilot.execute")
     pool = await auth.pool()
     await _load_workflow(pool, workflow_id, user)
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="copilot.workflow.step.approve",
+        resource_type="workflow_run",
+        resource_id=str(workflow_id),
+        status="approved",
+        metadata={
+            "step_index": step_idx,
+            "state_transition": "waiting_approval_to_pending",
+        },
+        critical=True,
+    )
     row = await pool.fetchrow(
         """
         UPDATE workflow_steps
@@ -675,13 +724,4 @@ async def approve_step(workflow_id: str, step_idx: int, user: dict[str, Any]) ->
     if run_row is None:
         results = await _refresh_step_results(pool, workflow_id)
         return {"ok": True, "workflow_id": workflow_id, "status": "cancelled", "step_results": results}
-    await audit_service.record_event(
-        user_id=user.get("id"),
-        email=user.get("email"),
-        action="copilot.workflow.step.approve",
-        resource_type="workflow_run",
-        resource_id=str(workflow_id),
-        status="success",
-        metadata={"step_index": step_idx},
-    )
     return await execute_workflow(workflow_id, user)

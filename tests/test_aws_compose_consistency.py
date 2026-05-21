@@ -21,6 +21,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 LOCAL = REPO / "infra/docker-compose.yml"
 AWS = REPO / "infra/terraform/deploy/docker-compose.aws.yml"
+AWS_CARTRIDGES = REPO / "infra/terraform/deploy/docker-compose.cartridges.yml"
+AWS_START = REPO / "infra/terraform/deploy/start.sh"
+AWS_UPDATE = REPO / "infra/terraform/deploy/update.sh"
+AWS_ENTRYPOINT = REPO / "scripts/aws-entrypoint.sh"
+AWS_USERDATA = REPO / "infra/terraform/infra/user_data/app.sh.tpl"
+RELEASE_WORKFLOW = REPO / ".github/workflows/release.yml"
 
 
 def _images(path: Path) -> list[str]:
@@ -50,7 +56,13 @@ def test_airflow_version_matches_local():
     # to just the upstream version it derives from.
     local_upstream = {v.split("-")[0] for v in local_versions}
 
-    assert aws_versions, "AWS compose must reference apache/airflow"
+    if not aws_versions:
+        aws_src = AWS.read_text(encoding="utf-8")
+        dockerfile = (REPO / "infra/airflow/Dockerfile").read_text(encoding="utf-8")
+        assert "/airflow:" in aws_src, "AWS compose must reference the packaged airflow image"
+        assert f"FROM apache/airflow:{next(iter(local_upstream))}" in dockerfile
+        aws_versions = local_upstream
+    assert aws_versions, "AWS compose must reference airflow"
     assert aws_versions == local_upstream, (
         f"Airflow drift: local={local_upstream}, AWS={aws_versions}. "
         f"Either bump AWS to match or update this test to reflect the "
@@ -102,8 +114,77 @@ def test_aws_application_images_use_ghcr_release_tags():
     modecissions/*:latest builds."""
     src = AWS.read_text(encoding="utf-8")
     assert "modecissions/console:latest" not in src
+    assert "${IMAGE_TAG:-v1.44.5}" not in src
     for service in ("console", "workspace", "refinement", "vault", "mcp-infra"):
-        assert f"ghcr.io/${{GHCR_OWNER:-emmanuelnavaromero02-commits}}/{service}:${{IMAGE_TAG:-v1.44.5}}" in src
+        assert f"ghcr.io/${{GHCR_OWNER:-emmanuelnavaromero02-commits}}/{service}:${{IMAGE_TAG:?IMAGE_TAG is required}}" in src
+
+
+def test_aws_cartridge_overlay_ships_release_images():
+    """The same-host cartridge deploy path must be real, not a runbook-only
+    reference. It also uses the same immutable IMAGE_TAG guard as core."""
+    src = AWS_CARTRIDGES.read_text(encoding="utf-8")
+    assert "${IMAGE_TAG:-v1.44.5}" not in src
+    expected = {
+        "replicon": "replicon",
+        "sap-hcm": "sap_hcm",
+        "sap-s4hana": "sap_s4hana",
+        "sap-successfactors": "sap_successfactors",
+    }
+    for service, image in expected.items():
+        assert f"{service}:" in src
+        assert f"ghcr.io/${{GHCR_OWNER:-emmanuelnavaromero02-commits}}/{image}:${{IMAGE_TAG:?IMAGE_TAG is required}}" in src
+
+
+def test_userdata_checks_out_requested_deploy_ref_before_start():
+    src = AWS_USERDATA.read_text(encoding="utf-8")
+    assert "git -C /opt/modecissions fetch --tags --force --prune origin" in src
+    assert "git -C /opt/modecissions checkout --detach ${deploy_ref}" in src
+
+
+def test_deploy_scripts_reject_mismatched_release_tag_refs():
+    for path in (AWS_START, AWS_UPDATE, AWS_ENTRYPOINT):
+        src = path.read_text(encoding="utf-8")
+        assert "assert_release_refs_coherent" in src
+        assert "must match IMAGE_TAG" in src
+        assert "is_release_tag" in src
+
+
+def test_start_script_requires_service_account_passwords():
+    src = AWS_START.read_text(encoding="utf-8")
+    assert "check_var SUPERSET_SERVICE_PASSWORD" in src
+
+
+def test_update_script_uses_cartridge_overlay_for_service_updates():
+    src = AWS_UPDATE.read_text(encoding="utf-8")
+    assert "COMPOSE_FILES=(-f docker-compose.aws.yml)" in src
+    assert "COMPOSE_FILES+=(-f docker-compose.cartridges.yml)" in src
+    assert 'docker compose "${COMPOSE_FILES[@]}" pull "$1"' in src
+    assert 'docker compose "${COMPOSE_FILES[@]}" up -d --force-recreate "$1"' in src
+
+
+def test_release_workflow_validates_before_publishing_images():
+    src = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    assert "validate-release:" in src
+    assert "needs: validate-release" in src
+    assert "python -m pytest -q" in src
+    assert "docker compose --env-file infra/.env.example" in src
+    assert "docker-compose.cartridges.yml" in src
+    assert "npm --prefix console-next run typecheck" in src
+
+
+def test_start_script_honors_cartridge_overlay_flag():
+    src = AWS_START.read_text(encoding="utf-8")
+    assert "COMPOSE_FILES=(-f docker-compose.aws.yml)" in src
+    assert 'DEPLOY_CARTRIDGES_SAME_HOST:-false' in src
+    assert "docker-compose.cartridges.yml" in src
+    assert 'docker compose "${COMPOSE_FILES[@]}" up -d' in src
+
+
+def test_release_workflow_does_not_publish_latest_tags():
+    """Prod deploys should point at immutable release tags. Publishing
+    :latest invites accidental mutable deploys even if compose is strict."""
+    src = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert ":latest" not in src
 
 
 def test_aws_env_file_defaults_to_documented_deploy_env():
@@ -340,6 +421,7 @@ def test_no_healthcheck_uses_localhost_string():
     for path in (
         REPO / "infra/docker-compose.yml",
         REPO / "infra/terraform/deploy/docker-compose.aws.yml",
+        REPO / "infra/terraform/deploy/docker-compose.cartridges.yml",
     ):
         svcs = _services_from(path)
         for name, joined in _healthcheck_test_strings(svcs):

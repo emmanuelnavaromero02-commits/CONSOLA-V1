@@ -212,8 +212,9 @@ async function downloadObject(key) {
 async function deleteObject(key) {
   const bucket = selectedBucket();
   if (!bucket) return;
-  if (!confirm(`Borrar definitivamente?\n${key}`)) return;
-  const params = new URLSearchParams({ bucket: bucket.name, key });
+  const typed = prompt(`Escribe la ruta completa para borrar definitivamente:\n${key}`);
+  if (typed !== key) return;
+  const params = new URLSearchParams({ bucket: bucket.name, key, confirm: typed });
   await fetchJson(`/api/explorer/object?${params.toString()}`, { method: 'DELETE' });
   toast('Objeto eliminado.', 'success');
   await listObjects();

@@ -39,6 +39,10 @@ def verify_api_key(
         pair = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
         if pair:
             accepted.append(pair)
+    if x_internal_service == "airflow":
+        pair = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE")
+        if pair:
+            accepted.append(pair)
     if os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
         accepted.append(get_internal_api_key())
 

@@ -1,4 +1,4 @@
-# v1.44.2 — Next.js 14 standalone build, multi-stage.
+# v1.44.2 — Next.js standalone build, multi-stage.
 #
 # Stage 1 (deps):   resolves package-lock.json — cached unless deps change.
 # Stage 2 (build):  next build with output:"standalone" → minimal server.
@@ -13,12 +13,12 @@ WORKDIR /app
 # arrives in the build stage. That way a code-only change re-runs only
 # the build stage, not npm ci.
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN npm ci --omit=dev
 
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build

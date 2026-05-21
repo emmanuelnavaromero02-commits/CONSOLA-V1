@@ -18,10 +18,11 @@
 import { type NextRequest } from "next/server";
 import { BACKEND_URL, proxyTo } from "@/lib/proxy";
 
-type Ctx = { params: { path: string[] } };
+type Ctx = { params: Promise<{ path: string[] }> };
 
 async function handler(request: NextRequest, { params }: Ctx) {
-  const subpath = params.path.join("/");
+  const { path } = await params;
+  const subpath = path.join("/");
   const search  = request.nextUrl.search;
   const targetUrl = `${BACKEND_URL}/security/${subpath}${search}`;
   return proxyTo(request, { targetUrl });

@@ -180,13 +180,13 @@ def test_rls_default_deny_when_no_tenancy_column(engine):
 
 
 def test_rls_admin_trusted_bypasses_ast(engine):
-    """Admin bypass with _trusted_admin must short-circuit before AST
+    """Backend-trusted admin bypass must short-circuit before AST
     rewriting — protects legitimate admin queries from any sqlglot
     quirks."""
     e, _ = engine
     sql = "SELECT * FROM pggold.gold_sales"
     rls_sql, params = e.get_rls_filters(
-        sql, {"role": "admin", "_trusted_admin": True}
+        sql, {"role": "admin", "_server_trusted_context": True}
     )
     assert rls_sql == sql
     assert params == []

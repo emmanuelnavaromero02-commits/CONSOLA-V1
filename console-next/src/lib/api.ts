@@ -31,6 +31,7 @@
  * tests/test_v1442_nextjs_scaffold.py.
  */
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
+import { readCookie } from "@/lib/cookies";
 
 const isServer = typeof window === "undefined";
 
@@ -50,26 +51,7 @@ export const api: AxiosInstance = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-/**
- * Read a browser cookie by name. Returns null when:
- *   - we're on the server (no document)
- *   - the cookie isn't present
- *
- * The CSRF cookie is set by FastAPI on GET /login (the page render
- * AND the auth.cookie middleware seed). Helper used by both the
- * interceptor below and the explicit loginUser flow.
- */
-export function readCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-  const prefix = `${name}=`;
-  for (const raw of document.cookie.split(";")) {
-    const c = raw.trim();
-    if (c.startsWith(prefix)) {
-      return decodeURIComponent(c.slice(prefix.length));
-    }
-  }
-  return null;
-}
+export { readCookie };
 
 // v1.44.3.2.2 R-Mac: every non-GET request that goes through this
 // axios instance carries the X-CSRF-Token header. The backend's

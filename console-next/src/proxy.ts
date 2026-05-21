@@ -1,10 +1,10 @@
 /**
- * v1.44.2 — middleware that enforces "must be authenticated" on every
+ * v1.44.2 — proxy that enforces "must be authenticated" on every
  * page except the login screen and a handful of public assets.
  *
  * The auth signal is the presence of the FastAPI-issued JWT cookie.
  * Verification of the JWT itself stays server-side (route handlers
- * + RSC fetches); the middleware only checks for cookie presence so
+ * + RSC fetches); the proxy only checks for cookie presence so
  * we never decode keys at the edge.
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -37,7 +37,7 @@ const PUBLIC_PREFIXES = [
 // v1.44.3.2.2 R-Mac-4: the FastAPI backend (post-R-Mac CSRF
 // dance) sets ``mod_session`` and ``refresh_token`` on a
 // successful POST /auth/login. Without these names in the
-// candidate list, the middleware redirects an authenticated
+// candidate list, the proxy redirects an authenticated
 // user straight back to /login on the next navigation —
 // silent infinite-loop bug.
 const AUTH_COOKIE_CANDIDATES = [
@@ -58,7 +58,7 @@ function hasAuthCookie(req: NextRequest): boolean {
   return AUTH_COOKIE_CANDIDATES.some((name) => Boolean(req.cookies.get(name)?.value));
 }
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (isPublic(pathname)) return NextResponse.next();
@@ -66,7 +66,7 @@ export function middleware(req: NextRequest) {
   if (!hasAuthCookie(req)) {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("next", pathname);
+    loginUrl.searchParams.set("next", `${pathname}${req.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
   return NextResponse.next();

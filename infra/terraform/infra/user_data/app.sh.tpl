@@ -49,7 +49,9 @@ echo "[userdata] deploy key configured: $(date -Iseconds)"
 mkdir -p /opt/modecissions
 chown ubuntu:ubuntu /opt/modecissions
 sudo -u ubuntu git clone ${github_repo_url} /opt/modecissions
-echo "[userdata] repo cloned: $(date -Iseconds)"
+sudo -u ubuntu git -C /opt/modecissions fetch --tags --force --prune origin
+sudo -u ubuntu git -C /opt/modecissions checkout --detach ${deploy_ref}
+echo "[userdata] repo cloned and checked out at ${deploy_ref}: $(date -Iseconds)"
 
 mkdir -p /etc/modecissions
 IMDS_TOKEN="$(curl -fsS -X PUT http://169.254.169.254/latest/api/token \
@@ -63,7 +65,8 @@ S3_BUCKET_NAME=${s3_bucket_name}
 AIRFLOW_ADMIN_USER=admin
 SUPERSET_ADMIN_USER=admin
 GHCR_OWNER=emmanuelnavaromero02-commits
-IMAGE_TAG=v1.44.5
+IMAGE_TAG=${image_tag}
+DEPLOY_REF=${deploy_ref}
 CONSOLE_URL=http://$APP_PRIVATE_IP:8000
 WORKSPACE_PUBLIC_URL=http://$APP_PRIVATE_IP:8001
 APP_BASE_URL=http://$APP_PRIVATE_IP:8000

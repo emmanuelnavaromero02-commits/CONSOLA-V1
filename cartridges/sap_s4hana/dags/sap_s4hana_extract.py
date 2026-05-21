@@ -16,13 +16,19 @@ import httpx
 from airflow.decorators import dag, task
 
 
-_INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
-if not _INTERNAL_API_KEY:
-    raise RuntimeError(
-        "INTERNAL_API_KEY missing — sap_s4hana_extract DAG cannot "
-        "authenticate to the cartridge. Set the env var in the "
-        "Airflow worker / scheduler."
-    )
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _internal_key() -> str:
+    key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE", "")
+    if key:
+        return key
+    if not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            return legacy
+    raise RuntimeError("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE missing; legacy fallback disabled in production")
 
 CARTRIDGE_URL = os.environ.get("SAP_S4HANA_URL", "http://sap-s4hana:8204")
 
@@ -45,14 +51,23 @@ def sap_s4hana_extract():
             raise ValueError("entity parameter is required")
 
         headers = {
-            "X-Api-Key": _INTERNAL_API_KEY,
+            "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
 
         with httpx.Client(timeout=300) as client:
+            params = {
+                k: v for k, v in {
+                    "mode": conf.get("mode") or "incremental",
+                    "from_date": conf.get("from_date") or None,
+                    "to_date": conf.get("to_date") or None,
+                    "job_id": conf.get("job_id") or None,
+                }.items() if v
+            }
             res = client.post(
                 f"{CARTRIDGE_URL}/entities/{entity}/extract",
-                json=conf,
+                params=params,
+                json={},
                 headers=headers,
             )
             res.raise_for_status()

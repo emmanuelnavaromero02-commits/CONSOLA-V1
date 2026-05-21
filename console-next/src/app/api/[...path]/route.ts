@@ -16,13 +16,14 @@
 import { type NextRequest } from "next/server";
 import { BACKEND_URL, proxyTo } from "@/lib/proxy";
 
-type Ctx = { params: { path: string[] } };
+type Ctx = { params: Promise<{ path: string[] }> };
 
 async function handler(request: NextRequest, { params }: Ctx) {
   // [...path] strips the literal `/api/` segment, so we put it
   // back when targeting the upstream — the FastAPI routes are
   // mounted under `/api/...`.
-  const subpath = params.path.join("/");
+  const { path } = await params;
+  const subpath = path.join("/");
   const search = request.nextUrl.search;
   const targetUrl = `${BACKEND_URL}/api/${subpath}${search}`;
   return proxyTo(request, { targetUrl });

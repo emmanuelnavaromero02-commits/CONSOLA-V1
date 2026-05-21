@@ -51,15 +51,23 @@ class SupersetClient:
 
     def __post_init__(self) -> None:
         self.base_url = (self.base_url or os.environ.get("SUPERSET_URL") or "").rstrip("/")
+        service_user = os.environ.get("SUPERSET_SERVICE_USER")
+        service_password = os.environ.get("SUPERSET_SERVICE_PASSWORD")
+        production = os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+        if production and (not service_user or not service_password):
+            raise SupersetConfigError(
+                "Superset production integration requires SUPERSET_SERVICE_USER/"
+                "SUPERSET_SERVICE_PASSWORD; admin fallback is disabled"
+            )
         self.username = (
             self.username
-            or os.environ.get("SUPERSET_SERVICE_USER")
+            or service_user
             or os.environ.get("SUPERSET_ADMIN_USER")
             or os.environ.get("SUPERSET_USER")
         )
         self.password = (
             self.password
-            or os.environ.get("SUPERSET_SERVICE_PASSWORD")
+            or service_password
             or os.environ.get("SUPERSET_ADMIN_PASSWORD")
             or os.environ.get("SUPERSET_PASSWORD")
         )

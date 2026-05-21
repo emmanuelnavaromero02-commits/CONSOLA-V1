@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.utils.trigger_rule import TriggerRule
 
 
 CARTRIDGE_ID    = "platform"
@@ -87,11 +88,24 @@ def _internal_key(env_name: str) -> str:
     raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
 
 
-def _internal_headers(target: str) -> dict[str, str]:
+def _internal_headers(target: str, ctx: dict | None = None) -> dict[str, str]:
     env_name = f"INTERNAL_API_KEY_AIRFLOW_TO_{target}"
-    return {
+    headers = {
         "X-Internal-Service": "airflow",
         "X-API-Key": _internal_key(env_name),
+    }
+    if ctx:
+        headers["X-Request-ID"] = f"airflow:dataset_refresh_chain:{ctx.get('run_id', 'manual')}"
+    return headers
+
+
+def _airflow_security_context() -> dict:
+    return {
+        "trusted": True,
+        "source": "airflow",
+        "role": "admin",
+        "permissions": ["datasets.read", "datasets.write"],
+        "allowed_prefixes": ["raw/", "silver/", "gold/"],
     }
 
 
@@ -206,6 +220,8 @@ def resolve_chain(**ctx):
 
 def materialize_in_order(**ctx):
     plan = ctx["ti"].xcom_pull(task_ids="resolve_chain", key="plan") or []
+    conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    allow_partial = bool(conf.get("allow_partial"))
     if not plan:
         print("[refresh_chain] nada que materializar")
         return {"materialized": 0, "results": []}
@@ -216,8 +232,12 @@ def materialize_in_order(**ctx):
         try:
             r = requests.post(
                 f"{REFINEMENT_URL}/mcp/invoke",
-                headers=_internal_headers("REFINEMENT"),
-                json={"tool": "materialize", "args": {"name": name}},
+                headers=_internal_headers("REFINEMENT", ctx),
+                json={
+                    "tool": "materialize",
+                    "args": {"name": name},
+                    "security_context": _airflow_security_context(),
+                },
                 timeout=600,
             )
             ok = r.status_code < 400
@@ -230,26 +250,47 @@ def materialize_in_order(**ctx):
             results.append({"name": name, "ok": False, "error": str(exc)})
             print(f"[refresh_chain] ✗ {name}: {exc}")
     ok = sum(1 for r in results if r["ok"])
+    result = {"materialized": ok, "results": results}
     print(f"[refresh_chain] materialized {ok}/{len(results)}")
-    return {"materialized": ok, "results": results}
+    ctx["ti"].xcom_push(key="result", value=result)
+    if ok != len(results) and not allow_partial:
+        failed = [r.get("name") for r in results if not r.get("ok")]
+        raise RuntimeError(f"dataset_refresh_chain failed for: {', '.join(failed)}")
+    return result
 
 
 # ── Task 3 · record_run ──────────────────────────────────────────────────────
 
 def record_run(**ctx):
-    inv     = ctx["ti"].xcom_pull(task_ids="materialize_in_order") or {}
+    conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    allow_partial = bool(conf.get("allow_partial"))
+    inv     = (
+        ctx["ti"].xcom_pull(task_ids="materialize_in_order", key="result")
+        or ctx["ti"].xcom_pull(task_ids="materialize_in_order")
+        or {}
+    )
+    dag_run = ctx.get("dag_run")
+    mat_ti = dag_run.get_task_instance("materialize_in_order") if dag_run else None
+    mat_state = str(getattr(mat_ti, "state", "") or "")
+    materialize_failed = bool(mat_state and mat_state != "success")
+    if not inv and materialize_failed:
+        inv = {
+            "materialized": 0,
+            "results": [],
+            "error": f"materialize_in_order ended with state={mat_state}",
+        }
     started = ctx["logical_date"].isoformat()
     ended   = datetime.now(timezone.utc).isoformat()
     materialized = int(inv.get("materialized") or 0)
     results = inv.get("results") or []
     total = len(results)
     status = "success" if total == materialized else "partial" if materialized else "failed"
-    if total == 0:
+    if total == 0 and not materialize_failed and not inv.get("error"):
         status = "success"
     try:
         r = requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
-            headers=_internal_headers("MCP_INFRA"),
+            headers=_internal_headers("MCP_INFRA", ctx),
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": "dataset_refresh_chain",
                            "cartridge_id": CARTRIDGE_ID,
@@ -270,10 +311,17 @@ def record_run(**ctx):
     except Exception as exc:                                      # noqa: BLE001
         print(f"[refresh_chain] pipeline_run_save fallido: {exc}")
         raise
+    if status != "success" and not allow_partial:
+        raise RuntimeError(f"dataset_refresh_chain recorded {status}: {inv}")
 
 
 t_resolve = PythonOperator(task_id="resolve_chain",          python_callable=resolve_chain,        dag=dag)
 t_mat     = PythonOperator(task_id="materialize_in_order",   python_callable=materialize_in_order, dag=dag)
-t_rec     = PythonOperator(task_id="record_run",             python_callable=record_run,           dag=dag)
+t_rec     = PythonOperator(
+    task_id="record_run",
+    python_callable=record_run,
+    trigger_rule=TriggerRule.ALL_DONE,
+    dag=dag,
+)
 
 t_resolve >> t_mat >> t_rec

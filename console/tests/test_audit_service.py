@@ -41,3 +41,23 @@ async def test_record_event_db_failure_no_exception():
             await asyncio.sleep(0.01)
         except Exception as e:
             pytest.fail(f"record_event raised an exception unexpectedly: {e}")
+
+
+@pytest.mark.asyncio
+async def test_record_event_critical_db_failure_raises():
+    mock_pool = AsyncMock()
+    mock_pool.execute.side_effect = Exception("DB connection failed")
+
+    with patch("app.services.audit_service.auth.pool", return_value=mock_pool):
+        with pytest.raises(Exception, match="DB connection failed"):
+            await record_event(action="copilot.tool.test", critical=True)
+
+
+@pytest.mark.asyncio
+async def test_record_event_critical_missing_table_raises():
+    mock_pool = AsyncMock()
+    mock_pool.fetchval.return_value = None
+
+    with patch("app.services.audit_service.auth.pool", return_value=mock_pool):
+        with pytest.raises(RuntimeError, match="critical audit table"):
+            await record_event(action="copilot.tool.test", critical=True)

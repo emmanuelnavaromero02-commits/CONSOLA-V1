@@ -40,8 +40,9 @@ interface Props {
  */
 const KINDS: { id: string; label: string; description: string }[] = [
   { id: "email",   label: "Email",   description: "Correo formal o casual" },
-  { id: "message", label: "Mensaje", description: "Mensaje corto (chat / interno)" },
+  { id: "memo",    label: "Memo",    description: "Memorando interno breve" },
   { id: "note",    label: "Nota",    description: "Nota interna o memo" },
+  { id: "report",  label: "Reporte", description: "Informe ejecutivo breve" },
 ];
 
 const TONES: { id: DraftTone; label: string }[] = [

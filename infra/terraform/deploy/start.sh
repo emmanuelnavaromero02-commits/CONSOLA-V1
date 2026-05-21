@@ -18,6 +18,17 @@ set -a
 source .env
 set +a
 
+is_release_tag() {
+  [[ "${1:-}" =~ ^v[0-9] ]]
+}
+
+assert_release_refs_coherent() {
+  if is_release_tag "${DEPLOY_REF:-}" && is_release_tag "${IMAGE_TAG:-}" && [[ "${DEPLOY_REF}" != "${IMAGE_TAG}" ]]; then
+    echo "ERROR: DEPLOY_REF (${DEPLOY_REF}) must match IMAGE_TAG (${IMAGE_TAG}) for tag-based production deploys." >&2
+    exit 1
+  fi
+}
+
 check_var() {
   if [ -z "${!1}" ]; then echo "ERROR: $1 no está definida en .env"; exit 1; fi
 }
@@ -26,13 +37,30 @@ check_var POSTGRES_PASSWORD
 check_var S3_BUCKET_NAME
 check_var ANTHROPIC_API_KEY
 check_var SUPERSET_SECRET_KEY
+check_var SUPERSET_SERVICE_PASSWORD
 check_var AIRFLOW_SECRET_KEY
+
+APP_ENV_NORMALISED="$(printf '%s' "${APP_ENV:-production}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${APP_ENV_NORMALISED}" == "production" || "${APP_ENV_NORMALISED}" == "prod" ]]; then
+  check_var DEPLOY_REF
+  check_var IMAGE_TAG
+  if [[ "${IMAGE_TAG}" == "latest" ]]; then
+    echo "ERROR: IMAGE_TAG must be an immutable release tag in production (not latest)." >&2
+    exit 1
+  fi
+  assert_release_refs_coherent
+fi
 
 echo "✓ Variables de entorno OK"
 
+COMPOSE_FILES=(-f docker-compose.aws.yml)
+if [ "${DEPLOY_CARTRIDGES_SAME_HOST:-false}" = "true" ]; then
+  COMPOSE_FILES+=(-f docker-compose.cartridges.yml)
+fi
+
 # Postgres primero (necesita estar listo antes de los init containers)
 echo "--- Iniciando Postgres ---"
-docker compose -f docker-compose.aws.yml up -d postgres postgres_gold
+docker compose "${COMPOSE_FILES[@]}" up -d postgres postgres_gold
 echo "Esperando Postgres listo (30s)..."
 sleep 30
 
@@ -41,13 +69,13 @@ bash apply_db_migrations.sh
 
 # Init containers (DB superset/airflow ya creadas por init/*.sh del contenedor postgres)
 echo "--- Iniciando init containers ---"
-docker compose -f docker-compose.aws.yml up -d superset-init airflow-init
+docker compose "${COMPOSE_FILES[@]}" up -d superset-init airflow-init
 echo "Esperando init containers (60s)..."
 sleep 60
 
 # Levantar resto
 echo "--- Iniciando todos los servicios ---"
-docker compose -f docker-compose.aws.yml up -d
+docker compose "${COMPOSE_FILES[@]}" up -d
 
 echo "--- Estado final ---"
-docker compose -f docker-compose.aws.yml ps
+docker compose "${COMPOSE_FILES[@]}" ps

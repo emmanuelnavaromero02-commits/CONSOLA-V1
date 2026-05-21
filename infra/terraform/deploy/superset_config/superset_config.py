@@ -22,6 +22,26 @@ RATELIMIT_STORAGE_URI = (
     or "redis://redis:6379/1"
 )
 
+ENABLE_PROXY_FIX = os.environ.get("SUPERSET_ENABLE_PROXY_FIX", "true").lower() == "true"
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = os.environ.get("SUPERSET_SESSION_COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_SECURE = os.environ.get("SUPERSET_SESSION_COOKIE_SECURE", "true").lower() == "true"
+PREFERRED_URL_SCHEME = "https" if SESSION_COOKIE_SECURE else "http"
+
+TALISMAN_CONFIG = {
+    "force_https": os.environ.get("SUPERSET_FORCE_HTTPS", "true").lower() == "true",
+    "content_security_policy": {
+        "default-src": ["'self'"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        "connect-src": ["'self'"],
+        "frame-ancestors": ["'self'"],
+    },
+    "session_cookie_secure": SESSION_COOKIE_SECURE,
+    "session_cookie_http_only": True,
+}
+
 FEATURE_FLAGS = {
     "EMBEDDED_SUPERSET": True,
 }

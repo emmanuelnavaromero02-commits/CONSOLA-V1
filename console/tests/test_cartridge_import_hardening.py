@@ -68,6 +68,25 @@ def test_seed_sql_allows_expected_seed_tables():
     )
 
 
+def test_seed_sql_rejects_insert_select_exfiltration():
+    with pytest.raises(ValueError, match="literal VALUES"):
+        _validate_seed_sql(
+            "INSERT INTO analytic_apps (name, html) SELECT email, password_hash FROM users;"
+        )
+
+
+def test_seed_sql_rejects_global_assistant_hint_update():
+    with pytest.raises(ValueError, match="single cartridge"):
+        _validate_seed_sql("UPDATE cartridges SET assistant_hints = 'owned';")
+
+
+def test_upload_spec_rejects_unsafe_names(monkeypatch):
+    with pytest.raises(ValueError, match="invalid cartridge_id"):
+        cartridge_service.upload_spec("../replicon", "openapi.yaml", "ok")
+    with pytest.raises(ValueError, match="invalid filename"):
+        cartridge_service.upload_spec("replicon", "../openapi.yaml", "ok")
+
+
 def test_seed_sql_splitter_preserves_semicolons_inside_literals():
     statements = _split_sql_statements(
         "INSERT INTO analytic_apps (name, html) VALUES ('demo', '<script>a();</script>');"

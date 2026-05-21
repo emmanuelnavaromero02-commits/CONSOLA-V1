@@ -60,6 +60,9 @@ UPLOADS_PREFIX = Variable.get("lakehouse_uploads_prefix",
 PASSTHROUGH_EXTS = {".xlsx", ".xls", ".csv", ".pdf", ".tsv", ".txt"}
 # Filenames produced by SES tooling that are not real mail.
 SKIP_NAMES       = {"AMAZON_SES_SETUP_NOTIFICATION"}
+MAX_ZIP_MEMBERS = int(os.environ.get("SES_IMPORT_MAX_ZIP_MEMBERS", "100"))
+MAX_ZIP_MEMBER_BYTES = int(os.environ.get("SES_IMPORT_MAX_ZIP_MEMBER_BYTES", str(50 * 1024 * 1024)))
+MAX_ZIP_TOTAL_BYTES = int(os.environ.get("SES_IMPORT_MAX_ZIP_TOTAL_BYTES", str(250 * 1024 * 1024)))
 
 
 def _is_production() -> bool:
@@ -124,6 +127,22 @@ def _safe_name(name: str) -> str:
 
 def _is_passthrough(name: str) -> bool:
     return os.path.splitext(name.lower())[1] in PASSTHROUGH_EXTS
+
+
+def _safe_zip_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    infos = [info for info in zf.infolist() if not info.is_dir()]
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise ValueError(f"zip has too many members ({len(infos)} > {MAX_ZIP_MEMBERS})")
+    total = 0
+    safe: list[zipfile.ZipInfo] = []
+    for info in infos:
+        if info.file_size > MAX_ZIP_MEMBER_BYTES:
+            raise ValueError(f"zip member too large: {info.filename}")
+        total += int(info.file_size or 0)
+        if total > MAX_ZIP_TOTAL_BYTES:
+            raise ValueError("zip uncompressed total is too large")
+        safe.append(info)
+    return safe
 
 
 def _pipeline_run_save(**kwargs) -> None:
@@ -214,10 +233,8 @@ def extract_attachments(**context) -> dict:
                 if name.lower().endswith(".zip"):
                     try:
                         with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-                            for member in zf.namelist():
-                                if member.endswith("/"):
-                                    continue
-                                inner_name = _safe_name(member)
+                            for member in _safe_zip_members(zf):
+                                inner_name = _safe_name(member.filename)
                                 if not _is_passthrough(inner_name):
                                     print(f"   skip (zip member, unknown ext): {inner_name}")
                                     continue
@@ -229,6 +246,8 @@ def extract_attachments(**context) -> dict:
                                 print(f"   ✓ {inner_name} ({len(inner)} bytes) → s3://{LAKE_BUCKET}/{target_key}")
                     except zipfile.BadZipFile as exc:
                         print(f"   ✗ corrupt zip {name}: {exc}")
+                    except ValueError as exc:
+                        print(f"   ✗ rejected zip {name}: {exc}")
                     continue
 
                 if not _is_passthrough(name):

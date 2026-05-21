@@ -140,3 +140,28 @@ jobs:
           # without breaking on every transient network error from
           # the OSV service.
           exit $fail
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            console-next/package-lock.json
+            tests-e2e/package-lock.json
+
+      - name: Audit console-next dependencies
+        working-directory: console-next
+        run: |
+          npm ci
+          npm audit --audit-level=high
+
+      - name: Audit E2E dependencies
+        working-directory: tests-e2e
+        run: |
+          npm ci
+          npm audit --audit-level=high

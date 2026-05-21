@@ -35,12 +35,42 @@ def _run(coro):
         "http://mcp-infra:8010/mcp",
         "http://console:8000/studio_ops",
         "http://refinement:8500/mcp",
-        "http://127.0.0.1:8201/health",
-        "http://localhost:8000/monitoring",
     ],
 )
 def test_mcp_registry_allows_internal_hosts(registry_module, url):
     registry_module._validate_mcp_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8201/health",
+        "http://localhost:8000/monitoring",
+    ],
+)
+def test_mcp_registry_allows_loopback_only_in_development(registry_module, monkeypatch, url):
+    monkeypatch.setenv("APP_ENV", "development")
+    registry_module._validate_mcp_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8201/health",
+        "http://localhost:8000/monitoring",
+    ],
+)
+def test_mcp_registry_blocks_loopback_in_production(registry_module, monkeypatch, url):
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(ValueError):
+        registry_module._validate_mcp_url(url)
+
+
+def test_mcp_registry_ignores_loopback_override_in_production(registry_module, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MCP_ALLOW_LOOPBACK", "true")
+    with pytest.raises(ValueError):
+        registry_module._validate_mcp_url("http://127.0.0.1:8201/health")
 
 
 @pytest.mark.parametrize(
@@ -82,9 +112,11 @@ def test_invoke_refuses_malicious_stored_url(registry_module, monkeypatch):
         return Pool()
 
     monkeypatch.setattr(registry_module, "_get_pool", fake_pool)
-    result = _run(registry_module.invoke("evil", "list", {}))
-    assert result["error"] == "mcp_host_not_allowlisted"
-    assert "blocked" in result["detail"]
+    with pytest.raises(HTTPException) as exc:
+        _run(registry_module.invoke("evil", "list", {}))
+    assert exc.value.status_code == 403
+    assert "mcp_host_not_allowlisted" in str(exc.value.detail)
+    assert "blocked" in str(exc.value.detail)
 
 
 def test_mcp_registry_allows_operator_configured_private_cidr(registry_module, monkeypatch):

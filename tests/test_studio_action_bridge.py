@@ -107,6 +107,14 @@ def test_bridge_does_not_await_in_step_handler():
     assert "await studioAction" not in block.group(0)
 
 
+def test_bridge_stops_legacy_inline_click_handlers_for_owned_actions():
+    src = _read(BRIDGE_JS)
+    block = re.search(r"function hookClicks\(\)[\s\S]*?function stopInlineHandler", src)
+    assert block
+    assert "stopInlineHandler(event)" in block.group(0)
+    assert block.group(0).find("stopInlineHandler(event)") < block.group(0).find("studioAction(")
+
+
 def test_spec_upload_zone_is_wired_without_inline_handlers():
     src = _read(LEGACY_JS)
     block = re.search(r"export function makeUploadZone[\s\S]*?`;\n    \}", src)

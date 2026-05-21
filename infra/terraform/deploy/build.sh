@@ -19,9 +19,18 @@ set +a
 
 echo "=== Pulling MODecissions release images ==="
 echo "GHCR_OWNER=${GHCR_OWNER:-emmanuelnavaromero02-commits}"
-echo "IMAGE_TAG=${IMAGE_TAG:-v1.44.5}"
+if [[ -z "${IMAGE_TAG:-}" || "${IMAGE_TAG:-}" == "latest" ]]; then
+  echo "ERROR: IMAGE_TAG must be set to an immutable release tag (not empty/latest)." >&2
+  exit 1
+fi
+echo "IMAGE_TAG=${IMAGE_TAG}"
 
 docker compose -f docker-compose.aws.yml pull \
-  console workspace refinement vault mcp-infra
+  console console_next workspace refinement vault mcp-infra airflow airflow-scheduler
+
+if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-false}" == "true" ]]; then
+  docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml pull \
+    replicon sap-hcm sap-successfactors sap-s4hana
+fi
 
 echo "=== Release images ready ==="

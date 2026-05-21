@@ -43,7 +43,7 @@ from fastapi import HTTPException
 
 from app.services import audit_service, auth, llm_client, mcp_registry, permissions
 from app.services import memory_service  # v1.44.3 Tarea D — memory injection
-from app.services import tool_manifest
+from app.services import tool_manifest, tool_policy
 
 
 SYSTEM_PROMPT = (
@@ -444,6 +444,21 @@ async def _invoke_tool_with_retry(
     for attempt in range(_TOOL_RETRY_MAX_ATTEMPTS):
         try:
             return await mcp_registry.invoke(server_id, tool, args, user=user)
+        except HTTPException as exc:
+            message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            return {
+                "_error": True,
+                "error_type": f"HTTPException:{exc.status_code}",
+                "error_message": (_sanitise_error(str(message)) or "")[:200],
+                "tool": tool,
+                "server": server_id,
+                "_meta": {
+                    "user_facing": (
+                        f"No pude ejecutar {tool}: "
+                        f"{_sanitise_error(str(message)) or 'permiso o servicio no disponible'}"
+                    )[:300],
+                },
+            }
         except Exception as exc:                     # noqa: BLE001
             last_exc = exc
             if attempt < _TOOL_RETRY_MAX_ATTEMPTS - 1:
@@ -673,11 +688,12 @@ async def _build_tools_for_llm() -> tuple[list[dict], dict[str, str], dict[str, 
                 "server": srv_id,
                 "risk_level": t.get("risk_level", "write"),
                 "requires_approval": bool(t.get("requires_approval")),
+                "input_schema": t.get("input_schema") or {"type": "object", "properties": {}},
             }
     return tools, server_map, classifications
 
 
-def _audit(
+async def _audit(
     *,
     user: dict,
     server: str,
@@ -689,8 +705,13 @@ def _audit(
     user_agent: str | None,
     status: str,
     error: str | None = None,
+    critical: bool = True,
 ) -> None:
-    """Fire-and-forget audit. Failures here MUST NOT break the turn."""
+    """Durable audit for Copilot tool execution.
+
+    Critical tool paths fail closed if the audit write fails; otherwise an
+    executed action could leave no forensic trail.
+    """
     metadata: dict[str, Any] = {"server": server}
     if error:
         # R2 security fix: upstream error strings (from MCP servers or
@@ -699,7 +720,7 @@ def _audit(
         # the JSON logger uses before they land in audit_events.
         metadata["error"] = _sanitise_error(error)
     try:
-        asyncio.create_task(audit_service.record_event(
+        await audit_service.record_event(
             user_id=user.get("id"),
             email=user.get("email"),
             action=f"copilot.tool.{bare_name}",
@@ -714,9 +735,11 @@ def _audit(
             tool_result_status=status,
             risk_level=risk_level,
             conversation_id=conversation_id,
-        ))
+            critical=critical,
+        )
     except Exception:
-        pass
+        if critical:
+            raise
 
 
 def _tool_result_content(result: Any) -> str:
@@ -753,6 +776,16 @@ def _normalise_stored_tool_call(call: dict, classifications: dict[str, dict]) ->
     args = call.get("input") or {}
     if not isinstance(args, dict):
         args = {}
+    input_schema = meta.get("input_schema") or {"type": "object", "properties": {}}
+    try:
+        args = tool_policy.validate_tool_args(
+            bare_name,
+            args,
+            input_schema,
+            risk_level=risk,
+        )
+    except tool_policy.ToolPolicyError as exc:
+        raise HTTPException(400, f"pending action args rejected: {exc}") from exc
     return {
         "server": server_id,
         "tool": bare_name,
@@ -760,6 +793,7 @@ def _normalise_stored_tool_call(call: dict, classifications: dict[str, dict]) ->
         "full_name": full,
         "args": args,
         "risk_level": risk,
+        "input_schema": input_schema,
     }
 
 
@@ -835,7 +869,7 @@ async def _execute_approved_tool_calls(
                     "acción con parámetros más pequeños."
                 ),
             }
-            _audit(
+            await _audit(
                 user=user, server=server_id, bare_name=bare_name, args=args,
                 risk_level=risk, conversation_id=conversation_id,
                 ip=ip, user_agent=user_agent, status="error",
@@ -848,7 +882,7 @@ async def _execute_approved_tool_calls(
                 and bool(result.get("_error") or result.get("error"))
             )
             status = "error" if is_error else "success"
-            _audit(
+            await _audit(
                 user=user, server=server_id, bare_name=bare_name, args=args,
                 risk_level=risk, conversation_id=conversation_id,
                 ip=ip, user_agent=user_agent, status=status,
@@ -1056,20 +1090,42 @@ async def _run_loop(
         if risk not in _PERMISSION_BY_RISK:   # unknown literal → escalate
             risk = "destructive"
         needed = _required_permission(risk)
+        inv_ref = {"server": server_id, "tool": bare_name, "bare_name": bare_name,
+                   "risk_level": risk}
+        input_schema = meta.get("input_schema") or {"type": "object", "properties": {}}
+        try:
+            args = tool_policy.validate_tool_args(
+                bare_name,
+                args,
+                input_schema,
+                risk_level=risk,
+            )
+        except tool_policy.ToolPolicyError as exc:
+            scrubbed = _scrub_args(args if isinstance(args, dict) else {})
+            invocations.append({**inv_ref, "args": scrubbed, "status": "denied",
+                                "policy_error": str(exc)})
+            await _audit(user=user, server=server_id, bare_name=bare_name, args=scrubbed,
+                         risk_level=risk, conversation_id=conversation_id,
+                         ip=ip, user_agent=user_agent, status="denied",
+                         error=str(exc))
+            return {
+                "error": "tool_args_rejected",
+                "message": f"Los argumentos de la tool fueron rechazados por politica: {exc}",
+            }
         scrubbed = _scrub_args(args)
         inv_base = {
-            "server": server_id, "tool": bare_name, "bare_name": bare_name,
-            "args": scrubbed, "risk_level": risk,
+            **inv_ref,
+            "args": scrubbed,
         }
 
         # 1. RBAC.
         if not permissions.has_permission(user, needed):
             invocations.append({**inv_base, "status": "denied",
                                 "required_permission": needed})
-            _audit(user=user, server=server_id, bare_name=bare_name, args=args,
-                   risk_level=risk, conversation_id=conversation_id,
-                   ip=ip, user_agent=user_agent, status="denied",
-                   error=f"missing permission {needed}")
+            await _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                         risk_level=risk, conversation_id=conversation_id,
+                         ip=ip, user_agent=user_agent, status="denied",
+                         error=f"missing permission {needed}")
             return {
                 "error": "permission_denied",
                 "required_permission": needed,
@@ -1094,9 +1150,9 @@ async def _run_loop(
                 pending_actions.append({**inv_base, "approval_key": key})
             invocations.append({**inv_base, "status": "pending_approval",
                                 "approval_key": key})
-            _audit(user=user, server=server_id, bare_name=bare_name, args=args,
-                   risk_level=risk, conversation_id=conversation_id,
-                   ip=ip, user_agent=user_agent, status="pending_approval")
+            await _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                         risk_level=risk, conversation_id=conversation_id,
+                         ip=ip, user_agent=user_agent, status="pending_approval")
             return {
                 "error": "approval_required",
                 "message": (
@@ -1116,10 +1172,10 @@ async def _run_loop(
         result_is_dict = isinstance(result, dict)
         if result_is_dict and result.get("_error"):
             invocations.append({**inv_base, "status": "error"})
-            _audit(user=user, server=server_id, bare_name=bare_name, args=args,
-                   risk_level=risk, conversation_id=conversation_id,
-                   ip=ip, user_agent=user_agent, status="error",
-                   error=result.get("error_message"))
+            await _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                         risk_level=risk, conversation_id=conversation_id,
+                         ip=ip, user_agent=user_agent, status="error",
+                         error=result.get("error_message"))
             # Hand the envelope back to the LLM so it can explain the
             # failure to the user in natural language.
             return result
@@ -1135,11 +1191,11 @@ async def _run_loop(
             "status": "error" if is_error else "success",
             "citations": extracted,
         })
-        _audit(user=user, server=server_id, bare_name=bare_name, args=args,
-               risk_level=risk, conversation_id=conversation_id,
-               ip=ip, user_agent=user_agent,
-               status="error" if is_error else "success",
-               error=str(result.get("error")) if is_error else None)
+        await _audit(user=user, server=server_id, bare_name=bare_name, args=args,
+                     risk_level=risk, conversation_id=conversation_id,
+                     ip=ip, user_agent=user_agent,
+                     status="error" if is_error else "success",
+                     error=str(result.get("error")) if is_error else None)
         return result
 
     pool = await auth.pool()

@@ -10,6 +10,7 @@ SLEEP_SECONDS="${WAIT_SLEEP_SECONDS:-5}"
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 ready_streak=0
 required_ready_streak="${WAIT_READY_STREAK:-2}"
+CONSOLE_READY_URL="${CONSOLE_READY_URL:-http://127.0.0.1:8000/readyz}"
 
 echo "[wait_for_health] Waiting up to ${TIMEOUT_SECONDS}s for OMEGA stack..."
 
@@ -22,7 +23,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
     api_ok=0
     next_ok=0
     restarting="$(docker ps --filter 'status=restarting' --format '{{.Names}}' 2>/dev/null || true)"
-    curl -fsS --max-time 5 http://127.0.0.1:8000/healthz >/dev/null 2>&1 && api_ok=1 || true
+    curl -fsS --max-time 5 "${CONSOLE_READY_URL}" >/dev/null 2>&1 && api_ok=1 || true
     curl -fsS --max-time 5 http://127.0.0.1:3000/api/health >/dev/null 2>&1 && next_ok=1 || true
 
     echo "[wait_for_health] console=${console_status} next=${next_status} postgres=${postgres_status} postgres_gold=${postgres_gold_status} api=${api_ok} next_api=${next_ok} restarting=${restarting:-none}"

@@ -110,6 +110,16 @@ async def _update(
     )
 
 
+async def finish_external_job(job_id: str | None, result: Any) -> None:
+    if job_id:
+        await _update(job_id, "done", message="Completed by Airflow", result=result)
+
+
+async def fail_external_job(job_id: str | None, error: str) -> None:
+    if job_id:
+        await _update(job_id, "failed", message="Failed in Airflow", error=error)
+
+
 # ── Central log writer ───────────────────────────────────────────────────────
 
 async def _log(
@@ -216,26 +226,37 @@ async def _trigger_silver_refresh(entity: str) -> None:
     """
     Notifica al refinement engine que hay nuevos datos Bronze para esta entidad.
     El engine re-materializa todos los datasets Silver que dependen de esa fuente.
-    Fire-and-forget — los errores no bloquean el job.
+    Fail-fast: si refresh-by-source falla, el job debe quedar fallido.
     """
     source = f"raw/sap_hcm/{entity}"
-    try:
-        api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
-        if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
-            api_key = os.environ.get("INTERNAL_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("Missing INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
-        async with httpx.AsyncClient(timeout=300) as client:
-            await client.post(
-                f"{REFINEMENT_URL}/refresh-by-source",
-                headers={
-                    "x-api-key": api_key,
-                    "x-internal-service": "cartridge-sap_hcm",
+    api_key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT", "")
+    if not api_key and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
+        api_key = os.environ.get("INTERNAL_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("Missing INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT")
+    async with httpx.AsyncClient(timeout=300) as client:
+        response = await client.post(
+            f"{REFINEMENT_URL}/refresh-by-source",
+            headers={
+                "x-api-key": api_key,
+                "x-internal-service": "cartridge-sap_hcm",
+            },
+            json={
+                "source": source,
+                "security_context": {
+                    "trusted": True,
+                    "source": "cartridge-sap_hcm",
+                    "role": "admin",
+                    "permissions": ["datasets.read", "datasets.write"],
+                    "allowed_prefixes": ["raw/sap_hcm/", "silver/sap_hcm/", "gold/sap_hcm/"],
                 },
-                json={"source": source},
-            )
-    except Exception:
-        pass  # Silver refresh es best-effort
+            },
+        )
+    response.raise_for_status()
+    payload = response.json()
+    errors = [r for r in payload.get("results", []) if r.get("status") == "error"]
+    if errors or payload.get("error"):
+        raise RuntimeError(f"refresh-by-source failed for {source}: {payload}")
 
 
 # ── Airflow trigger ───────────────────────────────────────────────────────────
@@ -300,15 +321,15 @@ async def _run_extract_all(job_id: str, mode: str) -> None:
                     None, lambda c=overridden: run_entity(c)
                 )
                 count = result.get("record_count", 0)
+                await _trigger_silver_refresh(entity)
                 completed += 1
                 await _log(
                     job_id, entity, "INFO",
-                    f"Completado — {count:,} registros",
+                    f"Completado — {count:,} registros y refresh downstream",
                     {"record_count": count, "storage_uri": result.get("storage_uri")},
                 )
                 results.append({"entity": entity, "status": "success",
                                  "record_count": count})
-                await _trigger_silver_refresh(entity)
             except Exception as exc:
                 failed += 1
                 await _log(job_id, entity, "ERROR", f"Error: {exc}",
@@ -332,11 +353,13 @@ async def _run_extract_all(job_id: str, mode: str) -> None:
         f"Completado — {completed}/{total} entidades, "
         f"{total_records:,} registros totales, {failed} errores"
     )
+    final_status = "done" if failed == 0 else "failed"
     await _update(
-        job_id, "done",
+        job_id, final_status,
         message=summary,
         result={"entities": results, "total_records": total_records,
                 "completed": completed, "failed": failed},
+        error="" if failed == 0 else f"{failed} entities failed",
     )
     await _log(job_id, None, level, summary)
     _tasks.pop(job_id, None)
@@ -358,13 +381,13 @@ async def _run_extract(
             None,
             lambda: run_entity(config, from_date=from_date, to_date=to_date),
         )
+        await _trigger_silver_refresh(entity)
         count = result.get("record_count", 0)
         await _update(
             job_id, "done",
             message=f"Completed — {count:,} records",
             result=result,
         )
-        await _trigger_silver_refresh(entity)
     except Exception as exc:
         await _update(
             job_id, "failed",

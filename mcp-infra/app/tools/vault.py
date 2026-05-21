@@ -19,6 +19,7 @@ import os
 import httpx
 
 from app.config import settings
+from app.middleware.request_id import request_id_var
 from app.registry import tool
 
 _VAULT = settings.vault_url.rstrip("/")
@@ -38,10 +39,14 @@ def _auth_headers() -> dict:
     api_key = os.environ.get("INTERNAL_API_KEY_MCP_INFRA_TO_VAULT", "")
     if not api_key and _is_development():
         api_key = os.environ.get("INTERNAL_API_KEY", "")
-    return {
+    headers = {
         "x-api-key": api_key,
         "x-internal-service": "mcp-infra",
     }
+    rid = request_id_var.get()
+    if rid:
+        headers["X-Request-ID"] = rid
+    return headers
 
 
 def _vault_get(path: str) -> dict:

@@ -11,7 +11,7 @@
  * catches /api/* paths, so calls to /security/audit need to go
  * through a different proxy route. For Task D scope we route
  * them through axios directly — the global same-origin proxy
- * at console-next/src/middleware.ts won't redirect /security/*
+ * at console-next/src/proxy.ts won't redirect /security/*
  * because it's an authenticated path with a session cookie.
  */
 import { api } from "@/lib/api";

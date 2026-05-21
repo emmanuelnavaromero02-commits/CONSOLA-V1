@@ -18,17 +18,16 @@ interface Props {
  *   - Facts:        ``{id, fact, source?, confidence?, created_at?}``
  *   - Preferences:  ``{pref_key, pref_value, updated_at?}``
  *
- * POST /memory/fact accepts ``{fact, source?}`` so the add
- * form here only needs ONE input (the fact text) plus an
- * optional source. The earlier "key + value" form did not
- * match the backend and 400'd every submit.
+ * POST /memory/fact accepts ``{fact, source?}`` with source
+ * limited to explicit/extracted. Manual UI writes always use
+ * the backend default (explicit); extracted is reserved for the
+ * LLM memory hook.
  *
  * Security review (Round 1): bounded maxLength on the inputs
  * (200 chars per fact, 64 per source) so an operator can't DOS
  * the storage layer by pasting a megabyte of text.
  */
 const MAX_FACT_CHARS   = 200;
-const MAX_SOURCE_CHARS = 64;
 
 
 export function MemoryDrawer({ open, onClose }: Props) {
@@ -41,7 +40,6 @@ export function MemoryDrawer({ open, onClose }: Props) {
   const preferences = memoryQuery.data?.preferences ?? [];
 
   const [factText, setFactText]     = useState("");
-  const [sourceText, setSourceText] = useState("");
 
   // Capture the previously-focused element so we can restore
   // focus on close (WCAG 2.4.3).
@@ -74,13 +72,11 @@ export function MemoryDrawer({ open, onClose }: Props) {
     e.preventDefault();
     const trimmed = factText.trim();
     if (!trimmed) return;
-    const source  = sourceText.trim() || undefined;
     createFactMutation.mutate(
-      { fact: trimmed, source },
+      { fact: trimmed },
       {
         onSuccess: () => {
           setFactText("");
-          setSourceText("");
         },
         onError: (err) => {
           const msg = err instanceof Error ? err.message : "Error desconocido.";
@@ -242,17 +238,6 @@ export function MemoryDrawer({ open, onClose }: Props) {
               placeholder="Ej. Mi DSO objetivo es 30 días"
               maxLength={MAX_FACT_CHARS}
               className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <label className="sr-only" htmlFor="new-fact-source">
-              Fuente (opcional)
-            </label>
-            <input
-              id="new-fact-source"
-              value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
-              placeholder="Fuente (opcional)"
-              maxLength={MAX_SOURCE_CHARS}
-              className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <button

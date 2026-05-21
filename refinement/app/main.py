@@ -168,8 +168,8 @@ def _trusted_user_context(body: dict, args: dict) -> dict:
     args.user_context, but any admin-bypass flag is stripped unless the
     top-level server-owned context is present.
     """
-    sec = body.get("security_context") or {}
-    if isinstance(sec, dict) and sec.get("trusted"):
+    sec = _security_context(body)
+    if sec.get("trusted"):
         role = str(sec.get("role") or "").lower()
         return {
             "id": sec.get("user_id"),
@@ -178,7 +178,6 @@ def _trusted_user_context(body: dict, args: dict) -> dict:
             "tenant_id": sec.get("tenant_id"),
             "workspace_id": sec.get("workspace_id"),
             "workspace_role": sec.get("workspace_role"),
-            "_trusted_admin": role in _ADMIN_ROLES,
             "_server_trusted_context": True,
         }
 
@@ -189,7 +188,6 @@ def _trusted_user_context(body: dict, args: dict) -> dict:
         "tenant_id": None,
         "workspace_id": None,
         "workspace_role": None,
-        "_trusted_admin": False,
         "_server_trusted_context": False,
     }
 
@@ -225,6 +223,10 @@ def _require_security_permission(body: dict, permission: str) -> dict:
     return sec
 
 
+def _is_admin_security_context(sec: dict) -> bool:
+    return bool(sec.get("trusted")) and str(sec.get("role") or "").lower() in _ADMIN_ROLES
+
+
 def _prefix_allowed(sec: dict, value: str) -> bool:
     value = (value or "").lstrip("/")
     prefixes = [str(p).lstrip("/") for p in (sec.get("allowed_prefixes") or [])]
@@ -239,7 +241,7 @@ def _require_source_scope(body: dict, source: str) -> dict:
 
 
 def _dataset_allowed(sec: dict, ds: dict) -> bool:
-    if sec.get("_trusted_admin"):
+    if _is_admin_security_context(sec):
         return True
     workspace_id = str(ds.get("workspace_id") or "")
     sec_workspace = str(sec.get("workspace_id") or "")
@@ -258,12 +260,19 @@ def _require_dataset_scope(body: dict, ds: dict, permission: str = "datasets.rea
     return sec
 
 
-def _s3_path_to_key(path: str) -> str:
+def _s3_path_to_bucket_key(path: str) -> tuple[str, str]:
     path = (path or "").strip()
     if not path.startswith("s3://"):
-        return ""
+        return "", ""
     rest = path[5:]
-    return rest.split("/", 1)[1] if "/" in rest else ""
+    bucket, sep, key = rest.partition("/")
+    if not sep:
+        return bucket, ""
+    return bucket, key
+
+
+def _s3_path_to_key(path: str) -> str:
+    return _s3_path_to_bucket_key(path)[1]
 
 
 def _mask_single_quoted(sql: str) -> str:
@@ -281,7 +290,13 @@ def _reader_storage_key(path: str) -> str:
 
 
 def _require_sql_path_scope(sec: dict, path: str) -> None:
+    bucket, _key = _s3_path_to_bucket_key(path)
     key = _reader_storage_key(path)
+    allowed_buckets = {str(b) for b in (sec.get("allowed_buckets") or []) if b}
+    if allowed_buckets and bucket not in allowed_buckets:
+        raise HTTPException(403, "SQL storage bucket not allowed")
+    if not allowed_buckets and not _is_admin_security_context(sec) and bucket != engine.minio_bucket:
+        raise HTTPException(403, "SQL storage bucket not allowed")
     if not _prefix_allowed(sec, key):
         raise HTTPException(403, "SQL storage path not allowed")
 
@@ -787,8 +802,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
     args = body.get("args", {})
 
     if tool == "list_sources":
-        _require_security_permission(body, "datasets.read")
-        return {"sources": engine.list_sources()}
+        sec = _require_security_permission(body, "datasets.read")
+        return {"sources": [source for source in engine.list_sources() if _prefix_allowed(sec, source)]}
 
     if tool == "get_source_partitions":
         _require_source_scope(body, args["source"])
@@ -922,6 +937,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
+        _require_sql_storage_scope(body, ds.get("sql") or ds.get("sql_def") or "", ds.get("sources") or [])
         return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100), _trusted_user_context(body, args))
 
     if tool == "get_lineage":
@@ -1038,20 +1054,20 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         return _publish_app(args)
 
     if tool == "list_apps":
-        _require_security_permission(body, "apps.read")
-        return _list_apps()
+        sec = _require_security_permission(body, "apps.read")
+        return _list_apps(sec)
 
     if tool == "get_app_details":
-        _require_security_permission(body, "apps.read")
-        return _get_app_details(args)
+        sec = _require_security_permission(body, "apps.read")
+        return _get_app_details(args, sec)
 
     if tool == "get_app_html":
-        _require_security_permission(body, "apps.read")
-        return _get_app_html(args)
+        sec = _require_security_permission(body, "apps.read")
+        return _get_app_html(args, sec)
 
     if tool == "delete_app":
-        _require_security_permission(body, "apps.write")
-        return _delete_app(args)
+        sec = _require_security_permission(body, "apps.write")
+        return _delete_app(args, sec)
 
     raise HTTPException(400, f"Unknown tool: {tool}")
 
@@ -1322,45 +1338,60 @@ def _publish_app(args: dict) -> dict:
             "url": f"/apps/{name}"}
 
 
-def _get_app_details(args: dict) -> dict:
+def _app_visible(sec: dict, row: dict) -> bool:
+    if _is_admin_security_context(sec):
+        return True
+    visibility = str(row.get("visibility") or "private")
+    if visibility in {"shared", "public"}:
+        return True
+    return row.get("created_by_id") is not None and str(row.get("created_by_id")) == str(sec.get("user_id"))
+
+
+def _get_app_details(args: dict, sec: dict) -> dict:
     name = (args.get("name") or "").strip()
     if not name:
         return {"error": "name is required"}
     rows = _pg_exec(
-        "SELECT name, title, description, cartridge_id, visibility, datasets_used, updated_at "
+        "SELECT name, title, description, cartridge_id, visibility, datasets_used, created_by_id, updated_at "
         "FROM analytic_apps WHERE name = %s",
         (name,), fetch=True,
     ) or []
     if not rows:
         return {"error": f"app '{name}' not found"}
     r = dict(rows[0])
+    if not _app_visible(sec, r):
+        return {"error": f"app '{name}' not found"}
     if r.get("updated_at"):
         r["updated_at"] = r["updated_at"].isoformat()
     r["url"] = f"/apps/{r['name']}"
     return r
 
 
-def _get_app_html(args: dict) -> dict:
+def _get_app_html(args: dict, sec: dict) -> dict:
     name = (args.get("name") or "").strip()
     if not name:
         return {"error": "name is required"}
     rows = _pg_exec(
-        "SELECT name, title, description, cartridge_id, visibility, datasets_used, html "
+        "SELECT name, title, description, cartridge_id, visibility, datasets_used, created_by_id, html "
         "FROM analytic_apps WHERE name = %s",
         (name,), fetch=True,
     ) or []
     if not rows:
         return {"error": f"app '{name}' not found"}
-    return dict(rows[0])
+    row = dict(rows[0])
+    if not _app_visible(sec, row):
+        return {"error": f"app '{name}' not found"}
+    return row
 
 
-def _list_apps() -> dict:
+def _list_apps(sec: dict) -> dict:
     try:
         rows = _pg_exec(
-            "SELECT name, title, description, datasets_used, updated_at "
+            "SELECT name, title, description, datasets_used, visibility, created_by_id, updated_at "
             "FROM analytic_apps ORDER BY updated_at DESC",
             fetch=True,
         ) or []
+        rows = [r for r in rows if _app_visible(sec, r)]
         for r in rows:
             if r.get("updated_at"):
                 r["updated_at"] = r["updated_at"].isoformat()
@@ -1371,8 +1402,17 @@ def _list_apps() -> dict:
         return {"apps": []}
 
 
-def _delete_app(args: dict) -> dict:
+def _delete_app(args: dict, sec: dict) -> dict:
     name = args["name"]
+    existing = _pg_exec(
+        "SELECT name, visibility, created_by_id FROM analytic_apps WHERE name=%s",
+        (name,),
+        fetch=True,
+    ) or []
+    if not existing:
+        return {"deleted": False, "name": name, "error": "App not found"}
+    if not (_is_admin_security_context(sec) or str(existing[0].get("created_by_id")) == str(sec.get("user_id"))):
+        raise HTTPException(403, "app delete requires admin or owner")
     rows = _pg_exec(
         "DELETE FROM analytic_apps WHERE name=%s RETURNING name",
         (name,),
@@ -1665,6 +1705,7 @@ async def refresh_by_source(
         raise HTTPException(400, "source is required")
     auth_body = {**body, "_verified_internal_service": internal_service}
     _require_source_scope(auth_body, source)
+    _require_security_permission(auth_body, "datasets.write")
 
     all_ds   = store.list_datasets()
     sec = _require_security_permission(auth_body, "datasets.read")
@@ -1683,5 +1724,16 @@ async def refresh_by_source(
                              "storage_uri": result["storage_uri"]})
         except Exception as exc:
             results.append({"name": meta["name"], "status": "error", "error": str(exc)})
+
+    errors = [r for r in results if r.get("status") == "error"]
+    if errors and not body.get("allow_partial"):
+        raise HTTPException(
+            502,
+            {
+                "source": source,
+                "error": "refresh-by-source failed",
+                "results": results,
+            },
+        )
 
     return {"source": source, "refreshed": len(results), "results": results}

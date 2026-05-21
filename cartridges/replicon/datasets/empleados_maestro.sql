@@ -19,6 +19,6 @@ SELECT
   currentsupervisorusername AS supervisor,
   isenabled AS activo,
   load_date AS fecha_carga
-FROM read_parquet('s3://modecissions-lakehouse-0baf85/silver/replicon/replicon_user_latest/**/*.parquet')
+FROM read_parquet('s3://{bucket}/silver/replicon/replicon_user_latest/**/*.parquet')
 WHERE isenabled = true
 ORDER BY id_empleado

@@ -116,7 +116,9 @@ aws secretsmanager put-secret-value `
   --secret-string (Get-Content ..\modecissions-deploy-key -Raw)
 
 terraform apply `
-  -var="github_repo_url=git@github.com:ORG/REPO.git"
+  -var="github_repo_url=git@github.com:ORG/REPO.git" `
+  -var="deploy_ref=v1.44.6" `
+  -var="image_tag=v1.44.6"
 ```
 
 > Bash equivalente para la clave privada:
@@ -259,6 +261,7 @@ pasan como variables Terraform para que no queden dentro del state.
 aws secretsmanager put-secret-value --secret-id modecissions/postgres_password --secret-string '<password-seguro>'
 aws secretsmanager put-secret-value --secret-id modecissions/jwt_secret_key --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/internal_api_key --secret-string '<64+ chars>'
+aws secretsmanager put-secret-value --secret-id modecissions/vault_encryption_key --secret-string '<fernet-key>'
 aws secretsmanager put-secret-value --secret-id modecissions/field_encryption_key --secret-string '<fernet-key>'
 aws secretsmanager put-secret-value --secret-id modecissions/omega_console_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/omega_refinement_password --secret-string '<role-password>'
@@ -268,16 +271,26 @@ aws secretsmanager put-secret-value --secret-id modecissions/omega_mcp_infra_pas
 aws secretsmanager put-secret-value --secret-id modecissions/omega_refinement_gold_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_dag_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/omega_airflow_meta_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_superset_meta_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_sap_hcm_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_sap_s4_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_sap_sf_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_replicon_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/airflow_secret_key --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/airflow_admin_password --secret-string '<password-seguro>'
 aws secretsmanager put-secret-value --secret-id modecissions/agent_runner_token --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/superset_secret_key --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/superset_admin_password --secret-string '<password-seguro>'
+aws secretsmanager put-secret-value --secret-id modecissions/superset_service_password --secret-string '<password-seguro>'
 aws secretsmanager put-secret-value --secret-id modecissions/github_deploy_key --secret-string "$(cat ../modecissions-deploy-key)"
 aws secretsmanager put-secret-value --secret-id modecissions/anthropic_api_key --secret-string '<requerido-si-CHAT_LLM_PROVIDER=anthropic>'
 aws secretsmanager put-secret-value --secret-id modecissions/gemini_api_key --secret-string ''
 aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --secret-string ''
 ```
+
+Además, carga todas las llaves direccionales `INTERNAL_API_KEY_*` declaradas
+en `infra/terraform/infra/secretsmanager.tf`. El entrypoint falla cerrado si
+cualquiera de esas llaves obligatorias falta.
 
 | Variable                | Valor                                                    | De dónde sacarlo                       |
 |-------------------------|----------------------------------------------------------|----------------------------------------|
@@ -329,9 +342,10 @@ bash /opt/modecissions/infra/terraform/deploy/build.sh
 ```
 
 Descarga las imágenes versionadas desde GHCR usando `GHCR_OWNER` e
-`IMAGE_TAG` generados por `aws-entrypoint.sh` en `.env`. El compose AWS ya no consume
-`modecissions/*:latest`; si cambias el tag de release, actualiza
-`IMAGE_TAG` y vuelve a ejecutar este paso.
+`IMAGE_TAG` escritos por `aws-entrypoint.sh` en `.env`. En producción
+`IMAGE_TAG` debe ser un tag inmutable de release; `latest` o vacío hacen
+fallar el despliegue. El compose AWS ya no consume `modecissions/*:latest`;
+si cambias el tag de release, actualiza `IMAGE_TAG` y vuelve a ejecutar este paso.
 
 **Monitoreo en otra sesión SSH**:
 
@@ -589,9 +603,11 @@ bash /opt/modecissions/infra/terraform/deploy/logs.sh console     # solo console
 bash /opt/modecissions/infra/terraform/deploy/update.sh console
 ```
 
-**Actualizar todo** (git pull + pull de imágenes + restart):
+**Actualizar todo** (checkout de `DEPLOY_REF` + pull de imágenes + restart):
 
 ```bash
+# En producción DEPLOY_REF e IMAGE_TAG son obligatorios y deben apuntar a
+# la misma release inmutable.
 bash /opt/modecissions/infra/terraform/deploy/update.sh
 ```
 

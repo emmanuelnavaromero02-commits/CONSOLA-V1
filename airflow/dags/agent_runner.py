@@ -56,13 +56,10 @@ def _internal_key(env_name: str) -> str:
     raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
 
 
-MCP_INFRA_KEY = _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")
-
 # Shared token so this DAG can call /invoke/scheduled without a user cookie.
 # Set in the App EC2's .env as AGENT_RUNNER_TOKEN, propagated to mode_airflow
 # and mode_console via docker-compose env.
 RUNNER_TOKEN  = os.environ.get("AGENT_RUNNER_TOKEN", "")
-CONSOLE_INTERNAL_KEY = _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE")
 
 POSTGRES_DSN  = os.environ.get(
     "DATABASE_URL",
@@ -104,7 +101,10 @@ def _pg():
 
 
 def _mcp_headers() -> dict[str, str]:
-    return {"x-api-key": MCP_INFRA_KEY, "x-internal-service": "airflow"}
+    return {
+        "x-api-key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA"),
+        "x-internal-service": "airflow",
+    }
 
 
 def _cron_fires_in_window(cron_expr: str, tz_name: str,
@@ -202,7 +202,7 @@ def invoke_each(**context):
                 url,
                 json={"message": agent["prompt"]},
                 headers={"X-Agent-Runner-Token": RUNNER_TOKEN,
-                         "X-Api-Key": CONSOLE_INTERNAL_KEY,
+                         "X-Api-Key": _internal_key("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE"),
                          "X-Internal-Service": "airflow",
                          "Content-Type": "application/json"},
                 timeout=600,
