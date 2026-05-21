@@ -93,19 +93,9 @@ def test_next_config_disables_powered_by_header():
 
 
 def test_next_config_emits_csp_with_defenses_intact():
-    """v1.44.3.2.2 reversal of v1.44.2 R1's "no unsafe-eval" stance.
-
-    Codex's Mac validation surfaced that ``script-src 'self'`` blocks
-    Next.js 14's hydration inline-script bootstrap + App Router
-    eval-based runtime — /login renders a skeleton forever and every
-    E2E test fails (0/319 in v1.44.3.2.1 runs). For v1.0 we accept
-    'unsafe-inline' + 'unsafe-eval' on script-src; the v1.45 sprint
-    re-introduces nonces so these can come back off.
-
-    The DEFENSES that actually matter against the audit's concerns
-    (clickjacking, form-hijacking, base-tag injection) stay in
-    place — that's what this test pins.
-    """
+    """Production CSP keeps the enterprise defenses and does not allow eval or
+    localhost WebSockets. `unsafe-inline` remains only for Next hydration until
+    nonce middleware lands."""
     src = _read(NEXT_ROOT / "next.config.mjs")
     assert "Content-Security-Policy" in src
     code = re.sub(r"//.*?$|/\*.*?\*/", "", src, flags=re.MULTILINE | re.DOTALL)
@@ -116,11 +106,15 @@ def test_next_config_emits_csp_with_defenses_intact():
         "base-uri 'self'",
         "form-action 'self'",
         "default-src 'self'",
+        "connect-src 'self'",
     ):
         assert directive in code, (
             f"next.config.mjs CSP must declare {directive!r} — that's the "
             "real audit-relevant defense, not script-src strictness."
         )
+    assert "'unsafe-eval'" not in code
+    assert "ws://localhost" not in code
+    assert "wss://localhost" not in code
 
 
 # ── Tailwind / styles ────────────────────────────────────────────────────
@@ -157,6 +151,7 @@ def test_proxy_redirects_unauthenticated_to_login():
     # The redirect target must include the original path as `?next=`
     # so the post-login bounce is correct.
     assert "next" in src and "searchParams.set" in src
+    assert "`${pathname}${req.nextUrl.search}`" in src
 
 
 def test_proxy_treats_login_and_health_as_public():
@@ -176,6 +171,20 @@ def test_proxy_checks_for_auth_cookie_not_jwt_decode():
     # … and does NOT import a JWT library at the edge.
     assert "jsonwebtoken" not in src
     assert "jose" not in src or "import * as jose" not in src
+
+
+def test_legacy_redirector_sanitizes_path_segments():
+    src = _read(SRC / "app/legacy/[[...path]]/route.ts")
+    assert "encodeURIComponent(segment)" in src
+    assert 'segment !== ".."' in src
+    assert '!segment.includes(":")' in src
+
+
+def test_copilot_initial_prompt_is_visible_and_sendable():
+    src = _read(SRC / "components/workspace/ChatLayout.tsx")
+    assert "preparedPrompt" in src
+    assert "Prompt preparado" in src
+    assert "Enviar al copiloto" in src
 
 
 # ── lib/api.ts — server vs browser base URL ──────────────────────────────

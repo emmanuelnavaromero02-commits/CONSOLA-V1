@@ -1,0 +1,133 @@
+# Optional same-host cartridge overlay for AWS/staging.
+#
+# Use together with the core compose:
+#   docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml up -d
+#
+# Production can still run cartridges in ECS/K8s/another EC2 by setting
+# REPLICON_URL / SAP_*_URL in .env and omitting this overlay.
+
+x-cartridge-env: &cartridge-env
+  APP_ENV: ${APP_ENV:-production}
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+  INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:?INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE is required}
+  INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
+  INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:?INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE is required}
+  INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:?INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT is required}
+  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
+  CONSOLE_URL: http://console:8000
+  MCP_INFRA_URL: http://mcp-infra:8010
+  REFINEMENT_URL: http://refinement:8500
+  MINIO_ENDPOINT: s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com
+  MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:-}
+  MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  MINIO_BUCKET: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+  MINIO_SECURE: "true"
+
+services:
+  replicon:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/replicon:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      <<: *cartridge-env
+      INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:?INTERNAL_API_KEY_REPLICON_TO_CONSOLE is required}
+      INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA: ${INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA:?INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_REPLICON_TO_REFINEMENT: ${INTERNAL_API_KEY_REPLICON_TO_REFINEMENT:?INTERNAL_API_KEY_REPLICON_TO_REFINEMENT is required}
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_replicon:${OMEGA_CARTRIDGE_REPLICON_PASSWORD:?OMEGA_CARTRIDGE_REPLICON_PASSWORD is required}@postgres:5432/modecissions"
+      REPLICON_BASE_URL: ${REPLICON_BASE_URL:?REPLICON_BASE_URL is required}
+      REPLICON_API_TOKEN: ${REPLICON_API_TOKEN:-}
+      REPLICON_TOKEN: ${REPLICON_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - modecissions_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8201/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  sap-hcm:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_hcm:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      <<: *cartridge-env
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_hcm:${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:?OMEGA_CARTRIDGE_SAP_HCM_PASSWORD is required}@postgres:5432/modecissions"
+      SAP_HCM_BASE_URL: ${SAP_HCM_BASE_URL:?SAP_HCM_BASE_URL is required}
+      SAP_HCM_USER: ${SAP_HCM_USER:?SAP_HCM_USER is required}
+      SAP_HCM_PASS: ${SAP_HCM_PASS:?SAP_HCM_PASS is required}
+      SAP_HCM_CLIENT_MANDANT: ${SAP_HCM_CLIENT_MANDANT:-100}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - modecissions_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8202/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  sap-successfactors:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_successfactors:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      <<: *cartridge-env
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_sf:${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:?OMEGA_CARTRIDGE_SAP_SF_PASSWORD is required}@postgres:5432/modecissions"
+      SF_BASE_URL: ${SF_BASE_URL:?SF_BASE_URL is required}
+      SF_COMPANY_ID: ${SF_COMPANY_ID:?SF_COMPANY_ID is required}
+      SF_CLIENT_ID: ${SF_CLIENT_ID:?SF_CLIENT_ID is required}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:?SF_CLIENT_SECRET is required}
+      SF_TOKEN_URL: ${SF_TOKEN_URL:?SF_TOKEN_URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - modecissions_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8203/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  sap-s4hana:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_s4hana:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      <<: *cartridge-env
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_s4:${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:?OMEGA_CARTRIDGE_SAP_S4_PASSWORD is required}@postgres:5432/modecissions"
+      SAP_S4_BASE_URL: ${SAP_S4_BASE_URL:?SAP_S4_BASE_URL is required}
+      SAP_S4_USER: ${SAP_S4_USER:?SAP_S4_USER is required}
+      SAP_S4_PASS: ${SAP_S4_PASS:?SAP_S4_PASS is required}
+      SAP_S4_CLIENT_MANDANT: ${SAP_S4_CLIENT_MANDANT:-100}
+      SAP_S4_API_KEY: ${SAP_S4_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - modecissions_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8204/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  modecissions_net:
+    external: false

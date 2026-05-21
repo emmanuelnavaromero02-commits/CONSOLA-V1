@@ -33,9 +33,6 @@ ALLOWED_MCP_HOSTS = {
     "sap-successfactors",
     "console",
     "refinement",
-    "127.0.0.1",
-    "::1",
-    "localhost",
 }
 _BLOCKED_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
@@ -92,6 +89,14 @@ def _configured_allowed_cidrs() -> list[ipaddress.IPv4Network | ipaddress.IPv6Ne
     return networks
 
 
+def _is_production_env() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _loopback_allowed() -> bool:
+    return not _is_production_env()
+
+
 def _validate_mcp_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
@@ -103,11 +108,17 @@ def _validate_mcp_url(url: str) -> None:
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
+        if host in {"localhost"}:
+            if _loopback_allowed():
+                return
+            raise ValueError("loopback MCP hosts are disabled in production")
         if host not in ALLOWED_MCP_HOSTS and host not in _configured_allowed_hosts():
             raise ValueError(f"mcp host not allowlisted: {host}")
         return
 
-    if host in ALLOWED_MCP_HOSTS and ip.is_loopback:
+    if ip.is_loopback:
+        if not _loopback_allowed():
+            raise ValueError("loopback MCP hosts are disabled in production")
         return
     if ip.is_link_local or host.startswith("169.254.") or ip in _BLOCKED_SHARED_ADDRESS_SPACE:
         raise ValueError("metadata/link-local MCP hosts are blocked")

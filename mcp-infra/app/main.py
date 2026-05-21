@@ -52,6 +52,7 @@ async def _lifespan(app: FastAPI):
 
 INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
 _RAG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+_DAG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,250}$")
 
 
 def _is_production() -> bool:
@@ -166,6 +167,18 @@ _CARTRIDGE_EXECUTE_TOOLS = {
 _AIRFLOW_READ_TOOLS = {"airflow_list_dags", "airflow_get_run_status", "airflow_get_task_logs", "airflow_list_task_instances", "airflow_list_dag_runs"}
 _AIRFLOW_RUN_TOOLS = {"airflow_trigger_dag"}
 _AIRFLOW_WRITE_TOOLS = {"airflow_create_dag", "airflow_delete_dag", "airflow_set_variable"}
+_SUPERSET_TOOLS = {
+    "superset_list_databases",
+    "superset_list_datasets",
+    "superset_list_charts",
+    "superset_list_dashboards",
+    "superset_export_dashboard",
+    "superset_create_database",
+    "superset_create_dataset",
+    "superset_create_chart",
+    "superset_create_dashboard",
+    "superset_import_dashboard",
+}
 _PIPELINE_READ_TOOLS = {"dag_get_source", "watermark_get"}
 _PIPELINE_WRITE_TOOLS = {"dag_save_source", "watermark_set"}
 _VAULT_READ_TOOLS = {"vault_list_connections", "vault_get_connection", "vault_list_secrets"}
@@ -279,6 +292,74 @@ def _require_cartridge_scope(ctx: dict[str, Any], cartridge_id: str) -> None:
         or _prefix_allowed(ctx, f"cartridges/{cartridge_id}/")
     ):
         raise HTTPException(403, detail="cartridge not allowed")
+
+
+def _require_dag_registered_for_cartridge(dag_id: str, cartridge_id: str) -> None:
+    if not _DAG_ID_RE.fullmatch(dag_id or ""):
+        raise HTTPException(403, detail="DAG id is not allowed")
+    safe_cartridge = str(cartridge_id or "").strip()
+    normalized = safe_cartridge.replace("-", "_")
+    generated_dags = {
+        f"{normalized}_extract",
+        f"{normalized}_extract_all",
+        f"{normalized}_ses_inbox_import",
+        f"{normalized}_outlook_audit_report_import",
+    }
+    if dag_id in generated_dags:
+        return
+    import psycopg2
+    from app.config import settings as s
+
+    try:
+        conn = psycopg2.connect(
+            host=s.pg_host,
+            port=s.pg_port,
+            dbname=s.pg_db,
+            user=s.pg_user,
+            password=s.pg_password,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                  FROM cartridge_dags
+                 WHERE cartridge_id = %s AND dag_id = %s
+                UNION
+                SELECT 1
+                  FROM entity_config
+                 WHERE cartridge_id = %s AND dag_id = %s
+                LIMIT 1
+                """,
+                (safe_cartridge, dag_id, safe_cartridge, dag_id),
+            )
+            owned = cur.fetchone() is not None
+        conn.close()
+    except Exception as exc:
+        raise HTTPException(503, detail="could not verify DAG cartridge ownership") from exc
+    if not owned:
+        raise HTTPException(403, detail="DAG is not registered for cartridge")
+
+
+def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    dag_id = str(args.get("dag_id") or "").strip()
+    conf = args.get("conf") if isinstance(args.get("conf"), dict) else {}
+    cartridge_id = str(conf.get("cartridge_id") or args.get("cartridge_id") or "").strip()
+
+    shared_platform_dags = {"file_ingest", "entity_scheduler", "dataset_refresh_chain", "agent_runner"}
+    if dag_id in shared_platform_dags and not _is_admin_context(ctx):
+        if not cartridge_id:
+            raise HTTPException(403, detail="shared DAG trigger requires cartridge_id outside admin context")
+        _require_cartridge_scope(ctx, cartridge_id)
+        return
+
+    if cartridge_id:
+        _require_cartridge_scope(ctx, cartridge_id)
+        if not _is_admin_context(ctx):
+            _require_dag_registered_for_cartridge(dag_id, cartridge_id)
+        return
+
+    if not _is_admin_context(ctx):
+        raise HTTPException(403, detail="DAG trigger requires cartridge_id outside admin context")
 
 
 def _extract_s3_keys(sql: str) -> list[str]:
@@ -436,6 +517,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "pipelines.run", internal_service)
     elif tool in _AIRFLOW_WRITE_TOOLS:
         ctx = _require_context_permission(req, "pipelines.write", internal_service)
+    elif tool in _SUPERSET_TOOLS:
+        ctx = _require_context_permission(req, "studio.write", internal_service)
     elif tool in _PIPELINE_READ_TOOLS:
         ctx = _require_context_permission(req, "pipelines.read", internal_service)
     elif tool in _PIPELINE_WRITE_TOOLS:
@@ -454,6 +537,13 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         ctx = _require_context_permission(req, "copilot.execute", internal_service)
     else:
         return None
+
+    if tool in _SUPERSET_TOOLS:
+        if "studio.write" not in set(ctx.get("permissions") or []) or not _is_admin_context(ctx):
+            raise HTTPException(403, detail="superset tools require admin studio.write context")
+
+    if tool == "airflow_trigger_dag":
+        _validate_airflow_trigger_scope(ctx, args)
 
     if tool in _AGENT_READ_TOOLS | _AGENT_WRITE_TOOLS | _AGENT_DESTRUCTIVE_TOOLS:
         source = str(ctx.get("source") or "")
@@ -498,6 +588,12 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         if bucket and allowed_buckets and bucket not in allowed_buckets:
             raise HTTPException(403, detail="bucket not allowed")
         path = args.get("prefix") or args.get("object_path") or ""
+        if tool in {"minio_upload_spec", "minio_read_spec"}:
+            cartridge_id = str(args.get("cartridge_id") or "").strip()
+            filename = str(args.get("filename") or "").strip()
+            if not cartridge_id or not filename or "/" in filename or "\\" in filename or ".." in filename:
+                raise HTTPException(403, detail="invalid cartridge spec path")
+            path = f"cartridges/{cartridge_id}/specs/{filename}"
         if tool == "minio_list_objects" and not path and not _is_admin_context(ctx):
             raise HTTPException(403, detail="object prefix is required")
         if not _prefix_allowed(ctx, str(path)):
@@ -588,7 +684,6 @@ def _rest_security_context(
             "permissions": ["datasets.read", "datasets.write", "cartridges.read"],
             "allowed_buckets": [os.environ.get("MINIO_BUCKET", "lakehouse")],
             "allowed_prefixes": ["raw/", "silver/", "gold/", "cartridges/"],
-            "_trusted_admin": True,
         }
     sec = (body or {}).get("security_context")
     if not isinstance(sec, dict) and header_value:

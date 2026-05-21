@@ -40,7 +40,10 @@ def _psql(sql: str) -> str:
         "docker", "exec", "mode_postgres", "psql",
         "-U", "postgres", "-d", "modecissions", "-At", "-c", sql,
     ]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=10, check=False)
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=10, check=False)
+    except subprocess.TimeoutExpired:
+        pytest.skip("live postgres stack not responsive: psql timed out after 10s")
     if proc.returncode != 0:
         pytest.skip(f"live postgres stack not reachable: {proc.stderr.strip()}")
     return proc.stdout.strip()

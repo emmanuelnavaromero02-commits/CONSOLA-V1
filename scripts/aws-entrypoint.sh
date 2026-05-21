@@ -20,10 +20,12 @@ required_secrets=(
   ANTHROPIC_API_KEY
   JWT_SECRET_KEY
   INTERNAL_API_KEY
+  INTERNAL_API_KEY_CONSOLE_TO_CONSOLE
   INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT
   INTERNAL_API_KEY_CONSOLE_TO_VAULT
   INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA
   INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE
+  INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE
   INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE
   INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT
   INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA
@@ -60,12 +62,12 @@ required_secrets=(
   AGENT_RUNNER_TOKEN
   SUPERSET_SECRET_KEY
   SUPERSET_ADMIN_PASSWORD
+  SUPERSET_SERVICE_PASSWORD
 )
 
 optional_secrets=(
   GEMINI_API_KEY
   SMTP_PASSWORD
-  SUPERSET_SERVICE_PASSWORD
 )
 
 tmp_file="$(mktemp)"
@@ -122,6 +124,17 @@ derive_public_url() {
   printf '%s://%s:%s' "$scheme" "$host" "$port"
 }
 
+is_release_tag() {
+  [[ "${1:-}" =~ ^v[0-9] ]]
+}
+
+assert_release_refs_coherent() {
+  if is_release_tag "${DEPLOY_REF:-}" && is_release_tag "${IMAGE_TAG:-}" && [[ "${DEPLOY_REF}" != "${IMAGE_TAG}" ]]; then
+    echo "[aws-entrypoint] DEPLOY_REF (${DEPLOY_REF}) must match IMAGE_TAG (${IMAGE_TAG}) for tag-based production deploys" >&2
+    exit 1
+  fi
+}
+
 echo "[aws-entrypoint] writing runtime env to $ENV_FILE"
 required_config=(
   AWS_REGION
@@ -134,10 +147,11 @@ required_config=(
 
 AIRFLOW_ADMIN_USER="${AIRFLOW_ADMIN_USER:-admin}"
 SUPERSET_ADMIN_USER="${SUPERSET_ADMIN_USER:-admin}"
-SUPERSET_SERVICE_USER="${SUPERSET_SERVICE_USER:-}"
-GHCR_OWNER="${GHCR_OWNER:-emmanuelnavaromero02-commits}"
-IMAGE_TAG="${IMAGE_TAG:-v1.44.5}"
+SUPERSET_SERVICE_USER="${SUPERSET_SERVICE_USER:-omega_service}"
 APP_ENV="${APP_ENV:-production}"
+GHCR_OWNER="${GHCR_OWNER:-emmanuelnavaromero02-commits}"
+IMAGE_TAG="${IMAGE_TAG:-}"
+DEPLOY_REF="${DEPLOY_REF:-}"
 CONSOLE_URL="${CONSOLE_URL:-}"
 WORKSPACE_PUBLIC_URL="${WORKSPACE_PUBLIC_URL:-}"
 APP_BASE_URL="${APP_BASE_URL:-$CONSOLE_URL}"
@@ -170,6 +184,15 @@ for config_name in "${required_config[@]}"; do
 done
 
 if [[ "$APP_ENV" =~ ^(production|prod)$ ]]; then
+  if [[ -z "$IMAGE_TAG" || "$IMAGE_TAG" == "latest" ]]; then
+    echo "[aws-entrypoint] IMAGE_TAG must be an immutable release tag in production (not empty/latest)" >&2
+    exit 1
+  fi
+  if [[ -z "$DEPLOY_REF" ]]; then
+    echo "[aws-entrypoint] DEPLOY_REF must be an immutable release ref in production" >&2
+    exit 1
+  fi
+  assert_release_refs_coherent
   for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL; do
     value="${!url_var:-}"
     if [[ "$value" == *"localhost"* || "$value" == *"127.0.0.1"* ]]; then
@@ -180,7 +203,7 @@ if [[ "$APP_ENV" =~ ^(production|prod)$ ]]; then
 fi
 
 for config_name in \
-  GHCR_OWNER IMAGE_TAG APP_BASE_URL ALLOWED_ORIGINS \
+  GHCR_OWNER IMAGE_TAG DEPLOY_REF APP_BASE_URL ALLOWED_ORIGINS \
   AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL \
   SUPERSET_SERVICE_USER \
   SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_USE_TLS APP_ENV \

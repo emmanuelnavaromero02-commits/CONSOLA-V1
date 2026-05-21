@@ -26,6 +26,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 COMPOSE_LOCAL = REPO / "infra" / "docker-compose.yml"
 COMPOSE_AWS   = REPO / "infra" / "terraform" / "deploy" / "docker-compose.aws.yml"
+COMPOSE_AWS_CARTRIDGES = REPO / "infra" / "terraform" / "deploy" / "docker-compose.cartridges.yml"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -245,3 +246,24 @@ def test_aws_compose_app_env_defaults_production():
             )
             found += 1
     assert found >= 1, "AWS compose declares APP_ENV on no service"
+
+
+def test_aws_cartridge_overlay_app_env_defaults_production():
+    services = _services(COMPOSE_AWS_CARTRIDGES)
+    for name, svc in services.items():
+        env = (svc or {}).get("environment") or {}
+        if name in {"replicon", "sap-hcm", "sap-s4hana", "sap-successfactors"}:
+            assert isinstance(env, dict)
+            assert "APP_ENV" in env
+            assert "production" in str(env["APP_ENV"])
+
+
+def test_agent_runner_does_not_require_internal_keys_at_parse_time():
+    """Airflow imports DAG modules before runtime secrets are always
+    available. The runner must read pair keys inside task execution, not
+    assign them at module import time."""
+    src = (REPO / "airflow" / "dags" / "agent_runner.py").read_text(encoding="utf-8")
+    assert "MCP_INFRA_KEY =" not in src
+    assert "CONSOLE_INTERNAL_KEY =" not in src
+    assert '_internal_key("INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA")' in src
+    assert '_internal_key("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE")' in src

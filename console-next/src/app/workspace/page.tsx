@@ -1,5 +1,3 @@
-"use client";
-
 import { ChatLayout } from "@/components/workspace/ChatLayout";
 
 /**
@@ -18,6 +16,19 @@ import { ChatLayout } from "@/components/workspace/ChatLayout";
  * shows while sendMutation.isPending covers the perceived-
  * latency gap.
  */
-export default function WorkspacePage() {
-  return <ChatLayout />;
+type SearchParams =
+  | Record<string, string | string[] | undefined>
+  | Promise<Record<string, string | string[] | undefined>>;
+
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function WorkspacePage({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}) {
+  const params = await Promise.resolve(searchParams ?? {});
+  return <ChatLayout initialPrompt={first(params.prompt)} />;
 }

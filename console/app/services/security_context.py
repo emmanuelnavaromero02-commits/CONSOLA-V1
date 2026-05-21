@@ -50,7 +50,6 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
         "allowed_cartridges": allowed_cartridges,
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": _allowed_prefixes(allowed_cartridges, role),
-        "_trusted_admin": role in ADMIN_ROLES,
     }
 
 
@@ -65,7 +64,6 @@ def rls_user_context(user: dict | None) -> dict[str, Any]:
         "workspace_id": ctx.get("workspace_id"),
         "project_id": ctx.get("project_id"),
         "workspace_role": ctx.get("workspace_role"),
-        "_trusted_admin": bool(ctx.get("_trusted_admin")),
         "_server_trusted_context": bool(ctx.get("trusted")),
     }
 

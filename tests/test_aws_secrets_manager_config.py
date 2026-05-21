@@ -14,10 +14,12 @@ REQUIRED_SECRET_NAMES = {
     "GEMINI_API_KEY",
     "JWT_SECRET_KEY",
     "INTERNAL_API_KEY",
+    "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE",
     "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",
     "INTERNAL_API_KEY_CONSOLE_TO_VAULT",
     "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA",
     "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE",
+    "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE",
     "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
     "INTERNAL_API_KEY_WORKSPACE_TO_MCP_INFRA",
@@ -55,6 +57,7 @@ REQUIRED_SECRET_NAMES = {
     "AGENT_RUNNER_TOKEN",
     "SUPERSET_SECRET_KEY",
     "SUPERSET_ADMIN_PASSWORD",
+    "SUPERSET_SERVICE_PASSWORD",
     "GITHUB_DEPLOY_KEY",
 }
 
@@ -95,6 +98,9 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     assert "secretsmanager get-secret-value" in src
     assert "sleep \"$delay\"" in src
     assert "optional_secrets" in src
+    required_block = re.search(r"required_secrets=\(([\s\S]*?)\)\n\noptional_secrets=", src)
+    assert required_block
+    assert "SUPERSET_SERVICE_PASSWORD" in required_block.group(1)
     assert "GHCR_OWNER" in src
     assert "IMAGE_TAG" in src
     assert "CONSOLE_URL" in src
@@ -126,11 +132,28 @@ def test_deploy_key_is_not_passed_through_terraform_state():
     assert "secretsmanager get-secret-value" in userdata
 
 
+def test_terraform_requires_immutable_deploy_ref_and_image_tag():
+    variables = _read(TF / "variables.tf")
+    ec2 = _read(TF / "ec2_app.tf")
+    userdata = _read(TF / "user_data/app.sh.tpl")
+    assert 'variable "deploy_ref"' in variables
+    assert 'variable "image_tag"' in variables
+    assert 'lower(var.image_tag) != "latest"' in variables
+    assert re.search(r"deploy_ref\s+=\s+var\.deploy_ref", ec2)
+    assert re.search(r"image_tag\s+=\s+var\.image_tag", ec2)
+    assert "DEPLOY_REF=${deploy_ref}" in userdata
+    assert "IMAGE_TAG=${image_tag}" in userdata
+    assert "IMAGE_TAG=v1.44.5" not in userdata
+
+
 def test_aws_env_example_does_not_document_static_aws_keys():
     src = _read(DEPLOY / ".env.example")
     assert "AWS_ACCESS_KEY_ID=" not in src
     assert "AWS_SECRET_ACCESS_KEY=" not in src
     assert "instance profile" in src
+    assert "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE=" in src
+    assert "SAP_HCM_BASE_URL=" in src
+    assert "SF_TOKEN_URL=" in src
 
 
 def test_deploy_runbook_mentions_secretsmanager_not_nano_env():

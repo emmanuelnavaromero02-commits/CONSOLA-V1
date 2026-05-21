@@ -4,18 +4,18 @@
 
 WITH users AS (
     SELECT *
-    FROM read_parquet('s3://modecissions-lakehouse-0baf85/raw/replicon/User/**/*.parquet',
+    FROM read_parquet('s3://{bucket}/raw/replicon/User/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date) FROM read_parquet('s3://modecissions-lakehouse-0baf85/raw/replicon/User/**/*.parquet', hive_partitioning = true))
+    WHERE load_date = (SELECT MAX(load_date) FROM read_parquet('s3://{bucket}/raw/replicon/User/**/*.parquet', hive_partitioning = true))
 ),
 
 user_skills AS (
     SELECT *
-    FROM read_parquet('s3://modecissions-lakehouse-0baf85/raw/replicon/UserSkills/**/*.parquet',
+    FROM read_parquet('s3://{bucket}/raw/replicon/UserSkills/**/*.parquet',
                       hive_partitioning = true,
                       union_by_name   = true)
-    WHERE load_date = (SELECT MAX(load_date) FROM read_parquet('s3://modecissions-lakehouse-0baf85/raw/replicon/UserSkills/**/*.parquet', hive_partitioning = true))
+    WHERE load_date = (SELECT MAX(load_date) FROM read_parquet('s3://{bucket}/raw/replicon/UserSkills/**/*.parquet', hive_partitioning = true))
 ),
 
 first_provider_type AS (

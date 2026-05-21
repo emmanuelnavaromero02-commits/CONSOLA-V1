@@ -62,7 +62,7 @@ async function loadApps() {
       return;
     }
     cont.innerHTML = `<div class="apps-grid">${apps.map(a => `
-      <a class="app-card" href="/apps/${escHtml(a.name)}" target="_blank">
+      <a class="app-card" href="/apps/${encodeURIComponent(a.name || '')}" target="_blank">
         <div class="app-icon">▦</div>
         <div class="app-title">${escHtml(a.title || a.name)}</div>
         <div class="app-desc">${escHtml(a.description || '—')}</div>

@@ -1,12 +1,13 @@
 "use client";
 
 import TextareaAutosize from "react-textarea-autosize";
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 
 interface Props {
   onSend:       (text: string) => void;
   disabled?:    boolean;
   placeholder?: string;
+  initialValue?: string;
   /** Called when the user types "/" at the start of an empty
    *  input — opens the slash-command palette. */
   onSlash?:     () => void;
@@ -39,9 +40,16 @@ export function MessageInput({
   onSend,
   disabled,
   placeholder,
+  initialValue,
   onSlash,
 }: Props) {
   const [value, setValue] = useState("");
+
+  useEffect(() => {
+    const seed = initialValue?.trim();
+    if (!seed) return;
+    setValue((current) => (current.trim() ? current : seed.slice(0, MAX_MESSAGE_CHARS)));
+  }, [initialValue]);
 
   function submit() {
     const trimmed = value.trim();

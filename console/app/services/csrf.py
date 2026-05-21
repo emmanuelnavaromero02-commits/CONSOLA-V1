@@ -16,6 +16,7 @@ limit the window for replay if the token leaks via some XSS sink.
 from __future__ import annotations
 
 import secrets
+import os
 from typing import Optional
 
 from fastapi import HTTPException, Request, Response
@@ -96,10 +97,12 @@ def _valid_internal_service_request(request: Request) -> bool:
     )
     if service != "console" or not supplied:
         return False
-    try:
-        expected = get_internal_api_key()
-    except RuntimeError:
-        return False
+    expected = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CONSOLE", "")
+    if not expected:
+        try:
+            expected = get_internal_api_key()
+        except RuntimeError:
+            return False
     return secrets.compare_digest(str(supplied), str(expected))
 
 

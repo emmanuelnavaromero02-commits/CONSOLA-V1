@@ -9,6 +9,24 @@ variable "github_repo_url" {
   type        = string
 }
 
+variable "deploy_ref" {
+  description = "Immutable Git ref to checkout on the App EC2 (release tag or commit SHA)."
+  type        = string
+  validation {
+    condition     = length(trimspace(var.deploy_ref)) > 0
+    error_message = "deploy_ref is required for reproducible production deploys."
+  }
+}
+
+variable "image_tag" {
+  description = "Immutable GHCR image tag to deploy. Must match the release tag; do not use latest."
+  type        = string
+  validation {
+    condition     = length(trimspace(var.image_tag)) > 0 && lower(var.image_tag) != "latest"
+    error_message = "image_tag must be an immutable release tag, not latest."
+  }
+}
+
 variable "key_pair_name" {
   description = "Name of the existing EC2 key pair to attach to both instances"
   type        = string

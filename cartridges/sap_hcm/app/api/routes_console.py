@@ -184,7 +184,13 @@ def extract_all(
                 "status": "failed",
                 "error": str(exc),
             })
-    return {"results": results}
+    failures = [r for r in results if r.get("status") in {"degraded", "failed"}]
+    if failures:
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"status": "failed", "failed": len(failures), "results": results},
+        )
+    return {"status": "success", "results": results}
 
 
 # ── Observability ────────────────────────────────────────────────────────────

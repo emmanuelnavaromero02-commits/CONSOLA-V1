@@ -5,9 +5,9 @@ verify the response-header dispatch directly via _apply_security_headers,
 and assert the static HTML + extracted JS are wired so the strict CSP
 can actually load the page.
 
-The path-based dispatch keeps the legacy `'unsafe-inline'` for /apps/*
-(user-published analytic apps with inline <script> + chart.js CDN); the
-shell paths get the strict policy.
+Published apps are rendered through a sandboxed wrapper: /apps/* serves
+platform-owned chrome/bridge, while /apps/*/content carries user HTML
+with a CSP sandbox and no network access.
 
 Lazy-imports app.main inside the helper so this test module doesn't
 pollute sys.modules for peer tests (same discipline used in
@@ -20,7 +20,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.responses import JSONResponse
@@ -33,11 +32,10 @@ os.environ.setdefault("INTERNAL_API_KEY", "x" * 64)
 
 
 def _main():
-    """Lazy app.main loader; pops any MagicMock stub a peer test left behind."""
-    for name in ("app", "app.main", "app.security", "app.services.session",
-                 "app.services.consumer_assistant"):
-        mod = sys.modules.get(name)
-        if isinstance(mod, MagicMock):
+    """Lazy app.main loader; isolate workspace/app from peer service imports."""
+    sys.path.insert(0, str(REPO_ROOT / "workspace"))
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
             sys.modules.pop(name, None)
     return importlib.import_module("app.main")
 
@@ -81,17 +79,24 @@ def test_workspace_csp_keeps_style_unsafe_inline():
     assert "style-src 'self' 'unsafe-inline'" in csp, csp
 
 
-def test_workspace_apps_paths_keep_relaxed_csp_for_user_html():
-    """Critical: published analytic apps under /apps/* are user-uploaded
-    HTML by design (inline <script>, chart.js CDN, etc.). Locking them
-    down would brick every published app instantly. Path-based
-    dispatch keeps the relaxed CSP here while the shell uses strict."""
+def test_workspace_apps_wrapper_allows_only_same_origin_bridge():
+    """The /apps/* wrapper is platform-owned chrome around the sandboxed
+    iframe. It can keep inline bridge JS, but must not load CDN code."""
     csp = _csp_for("/apps/pnl_ejecutivo")
     script_seg = csp.split("style-src", 1)[0]
-    assert "'unsafe-inline'" in script_seg, (
-        f"/apps/* CSP must KEEP 'unsafe-inline' for user-published apps — {script_seg!r}"
-    )
-    # And it must allow at least one CDN host so chart.js / d3 work.
+    assert "'unsafe-inline'" in script_seg
+    assert "frame-src 'self'" in csp, csp
+    assert "cdn.jsdelivr.net" not in csp and "cdnjs.cloudflare.com" not in csp, csp
+
+
+def test_workspace_apps_content_is_sandboxed_and_cannot_connect():
+    """User app HTML runs with an opaque origin and no network access.
+    CDN scripts/styles remain allowed so existing charts render."""
+    csp = _csp_for("/apps/pnl_ejecutivo/content")
+    assert "sandbox allow-scripts" in csp, csp
+    assert "allow-same-origin" not in csp, csp
+    assert "connect-src 'none'" in csp, csp
+    assert "frame-ancestors 'self'" in csp, csp
     assert "cdn.jsdelivr.net" in csp or "cdnjs.cloudflare.com" in csp, csp
 
 

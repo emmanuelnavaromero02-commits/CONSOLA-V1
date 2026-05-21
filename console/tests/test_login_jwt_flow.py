@@ -464,9 +464,8 @@ def test_api_data_forwards_user_context_to_refinement(console_main, monkeypatch)
     ctx = args["user_context"]
     assert ctx.get("id") == 42
     assert ctx.get("email") == "analyst@example.com"
-    # `_trusted_admin` MUST be False for non-admin users so a downstream
-    # service cannot bypass RLS by trusting role alone.
-    assert ctx.get("_trusted_admin") is False
+    # The old `_trusted_admin` magic flag must never cross service boundaries.
+    assert "_trusted_admin" not in ctx
 
 
 def test_datasets_data_proxy_forwards_user_context(console_main, monkeypatch):

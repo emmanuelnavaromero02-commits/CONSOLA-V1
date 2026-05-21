@@ -92,7 +92,7 @@ services:
   # ── Application services ──────────────────────────────────────────────────
 
   console:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_console
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -116,6 +116,7 @@ services:
       MCP_INFRA_URL:       http://mcp-infra:8010
       CONSOLE_INTERNAL_URL: http://console:8000
       AGENT_RUNNER_TOKEN:  ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CONSOLE: ${INTERNAL_API_KEY_CONSOLE_TO_CONSOLE:?INTERNAL_API_KEY_CONSOLE_TO_CONSOLE is required}
       SUPERSET_URL:        http://superset:8088
       AIRFLOW_PUBLIC_URL:  ${AIRFLOW_PUBLIC_URL:-}
       SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-}
@@ -182,7 +183,7 @@ services:
       start_period: 30s
 
   console_next:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_console_next
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -209,7 +210,7 @@ services:
       start_period: 20s
 
   workspace:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_workspace
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -226,6 +227,7 @@ services:
       CHAT_LLM_PROVIDER:    ${CHAT_LLM_PROVIDER:-anthropic}
       CHAT_LLM_MODEL:       ${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
+      REDIS_URL:            ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8001:8001"
     networks:
@@ -237,6 +239,8 @@ services:
         condition: service_healthy
       mcp-infra:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
@@ -247,7 +251,7 @@ services:
       start_period: 30s
 
   refinement:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/refinement:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_refinement
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -286,7 +290,7 @@ services:
 
 
   vault:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/vault:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/vault:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_vault
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -333,7 +337,7 @@ services:
   # ── MCP Infrastructure ────────────────────────────────────────────────────
 
   mcp-infra:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/mcp-infra:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_mcp_infra
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -527,7 +531,7 @@ services:
     # DESIGN — `airflow db migrate` has to CREATE the metastore
     # tables, then we transfer GRANTs to omega_airflow_meta so the
     # runtime services (next two) can use the dedicated role.
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_init
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -550,6 +554,10 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:  ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
@@ -564,7 +572,7 @@ services:
     logging: *default-logging
 
   airflow:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -580,6 +588,10 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:  ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300
@@ -637,7 +649,7 @@ services:
       start_period: 60s
 
   airflow-scheduler:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:-v1.44.5}
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/airflow:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_airflow_scheduler
     env_file:
       - path: ${AWS_ENV_FILE:-.env}
@@ -652,6 +664,10 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES:         "false"
       AIRFLOW__WEBSERVER__SECRET_KEY:       ${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY is required}
       INTERNAL_API_KEY:                     ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:  ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:?INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA: ${INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA:?INTERNAL_API_KEY_AIRFLOW_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT: ${INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT:?INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:?INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE is required}
       CONSOLE_URL:                          http://console:8000
       AGENT_RUNNER_TOKEN:                   ${AGENT_RUNNER_TOKEN:?AGENT_RUNNER_TOKEN is required}
       VAULT_URL:                            http://vault:8300

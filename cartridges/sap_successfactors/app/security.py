@@ -46,6 +46,10 @@ def _is_valid_internal_request(x_api_key: str | None, x_internal_service: str | 
         pair = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE")
         if pair:
             accepted.append(pair)
+    if x_internal_service == "airflow":
+        pair = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE")
+        if pair:
+            accepted.append(pair)
     if not _is_production():
         accepted.append(get_internal_api_key())
     return bool(x_api_key and any(secrets.compare_digest(x_api_key, k) for k in accepted if k))

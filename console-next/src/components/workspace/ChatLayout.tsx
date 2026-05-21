@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { toast } from "sonner";
 
@@ -120,8 +120,13 @@ const COMMAND_CATALOG: CommandMeta[] = [
  * the leaf components (Message, CitationCard, etc.) stay
  * presentational and the page file stays a one-liner.
  */
-export function ChatLayout() {
+interface ChatLayoutProps {
+  initialPrompt?: string;
+}
+
+export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const preparedPrompt = initialPrompt?.trim();
 
   const {
     listConversationsQuery,
@@ -373,6 +378,21 @@ export function ChatLayout() {
                   enseñarle algo sobre tu operación.
                 </p>
               </div>
+              {preparedPrompt ? (
+                <div className="rounded-lg border bg-card p-4 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Prompt preparado
+                  </p>
+                  <p className="mt-2 text-sm text-foreground">{preparedPrompt}</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleSend(preparedPrompt)}
+                    className="mt-3 inline-flex min-h-[40px] items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Enviar al copiloto
+                  </button>
+                </div>
+              ) : null}
               <SuggestedPrompts onSelect={(p) => void handleSend(p)} />
             </div>
           </div>
@@ -383,6 +403,7 @@ export function ChatLayout() {
         <MessageInput
           onSend={(t) => void handleSend(t)}
           disabled={sendMutation.isPending}
+          initialValue={initialPrompt}
           onSlash={() => {
             setPaletteQuery("");
             setPaletteOpen(true);

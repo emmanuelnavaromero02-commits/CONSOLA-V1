@@ -59,11 +59,6 @@ READ_ONLY_TOOLS = {
     # infra catalog read-only
     "list_cartridges",
 
-    # Superset read-only discovery/export
-    "superset_list_databases", "superset_list_datasets",
-    "superset_list_charts", "superset_list_dashboards",
-    "superset_export_dashboard",
-
     # Vault returns masked values for get/list tools.
     "vault_list_connections", "vault_get_connection", "vault_list_secrets",
 }

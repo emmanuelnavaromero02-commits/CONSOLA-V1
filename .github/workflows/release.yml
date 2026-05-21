@@ -10,7 +10,57 @@ permissions:
   packages: write
 
 jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console-next/package-lock.json
+
+      - name: Install validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+          npm --prefix console-next ci
+
+      - name: Static release tests
+        run: |
+          python -m pytest -q \
+            tests/test_aws_compose_consistency.py \
+            tests/test_aws_secrets_manager_config.py \
+            tests/test_app_env_safe_default.py \
+            tests/test_mcp_data_scope_source.py
+
+      - name: Compose config validation
+        env:
+          AWS_REGION: us-east-1
+          S3_BUCKET_NAME: dummy-lakehouse
+          AWS_ENV_FILE: infra/terraform/deploy/.env.example
+          CONSOLE_URL: http://10.0.0.1:8000
+          WORKSPACE_PUBLIC_URL: http://10.0.0.1:8001
+          AIRFLOW_PUBLIC_URL: http://10.0.0.1:8082
+          SUPERSET_PUBLIC_URL: http://10.0.0.1:8088
+          APP_BASE_URL: http://10.0.0.1:8000
+        run: |
+          docker compose --env-file infra/.env.example -f infra/docker-compose.yml config >/tmp/local-compose.yml
+          docker compose --env-file infra/terraform/deploy/.env.example \
+            -f infra/terraform/deploy/docker-compose.aws.yml \
+            -f infra/terraform/deploy/docker-compose.cartridges.yml \
+            config >/tmp/aws-compose.yml
+
+      - name: Console Next typecheck
+        run: npm --prefix console-next run typecheck
+
   build-and-push:
+    needs: validate-release
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -66,4 +116,3 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.image }}:latest

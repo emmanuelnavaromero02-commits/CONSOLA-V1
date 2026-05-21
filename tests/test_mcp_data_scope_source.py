@@ -35,6 +35,15 @@ def test_mcp_invoke_enforces_trusted_security_context_before_data_tools():
     assert "vault writes require admin context" in source
     assert "vault.connections.read" in source
     assert "vault.connections.write" in source
+    assert "_SUPERSET_TOOLS" in source
+    assert "superset tools require admin studio.write context" in source
+    assert "_validate_airflow_trigger_scope" in source
+    assert "_require_dag_registered_for_cartridge" in source
+    assert "DAG is not registered for cartridge" in source
+    assert "shared DAG trigger requires cartridge_id outside admin context" in source
+    assert "DAG trigger requires cartridge_id outside admin context" in source
+    trigger_block = source.split("def _validate_airflow_trigger_scope", 1)[1].split("def _extract_s3_keys", 1)[0]
+    assert "startswith(tuple" not in trigger_block
 
 
 def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
@@ -78,6 +87,8 @@ def test_minio_sample_rows_are_capped():
     ast.parse(source)
 
     assert "n = min(max(int(n or 10), 1), 100)" in source
+    assert "_safe_filename" in source
+    assert "MAX_SPEC_BYTES" in source
 
 
 def test_console_registry_scopes_direct_cartridge_mcp_calls():

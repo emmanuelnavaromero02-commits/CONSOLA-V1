@@ -274,7 +274,6 @@ def _agent_security_context(agent: Agent, user: dict | None) -> dict:
         "allowed_cartridges": [cartridge] if cartridge else [],
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": prefixes,
-        "_trusted_admin": False,
     }
 
 
@@ -327,6 +326,7 @@ async def _audit_agent_tool(
         tool_result_status=status,
         risk_level=risk_level,
         conversation_id=f"agent_run:{run_id}" if run_id is not None else None,
+        critical=True,
     )
 
 

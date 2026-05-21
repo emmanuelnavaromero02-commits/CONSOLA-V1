@@ -1,7 +1,7 @@
 """Sprint v1.43.1 — Claude B1 + B2 + B3: SAP DAG hardening.
 
 Each of the 6 SAP DAG modules must:
-  * Fail at parse-time if ``INTERNAL_API_KEY`` is missing (B1).
+  * Read a scoped Airflow→cartridge key at task runtime (B1).
   * Read its cartridge URL from an env var (B2).
   * Declare ``default_args`` with retries + exponential backoff (B3).
 
@@ -38,22 +38,22 @@ SAP_DAGS = [
 
 @pytest.mark.parametrize("path,env_var,default_url", SAP_DAGS,
                          ids=lambda v: v.name if isinstance(v, Path) else v)
-def test_sap_dag_fails_fast_on_missing_api_key(path, env_var, default_url):
-    """B1: a parse-time guard with a RuntimeError ensures the scheduler
-    refuses to import the DAG without an API key, instead of silently
-    sending unauthenticated requests."""
+def test_sap_dag_uses_runtime_airflow_pair_key(path, env_var, default_url):
+    """B1: the scheduler must be able to import DAGs even before runtime
+    secrets are present, but task execution must refuse missing scoped keys
+    in production."""
     src = path.read_text(encoding="utf-8")
-    # Guard pattern: get INTERNAL_API_KEY then RuntimeError if falsy.
-    assert "_INTERNAL_API_KEY = os.environ.get(\"INTERNAL_API_KEY\")" in src, (
-        f"{path.name} must read INTERNAL_API_KEY at module scope"
+    assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" in src, (
+        f"{path.name} must use the Airflow→cartridge pair key"
+    )
+    assert "_internal_key()" in src, (
+        f"{path.name} must resolve the pair key at task runtime"
     )
     assert "raise RuntimeError" in src, (
-        f"{path.name} must raise RuntimeError when INTERNAL_API_KEY is missing"
+        f"{path.name} must raise RuntimeError when scoped key is missing in prod"
     )
-    # The fallback empty string is the BUG the audit flagged — it must
-    # not appear anywhere in the source.
-    assert 'os.environ.get("INTERNAL_API_KEY", "")' not in src, (
-        f"{path.name} still has the silent fallback to empty string"
+    assert "_INTERNAL_API_KEY =" not in src, (
+        f"{path.name} must not require API keys at module import/parse time"
     )
 
 

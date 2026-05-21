@@ -18,6 +18,7 @@ import os
 import re
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import asyncpg
 import httpx
@@ -27,6 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from app.services import session as _session, consumer_assistant as _ca
+from app.services.rate_limiter import get_rate_limiter
 from app.security import get_internal_api_key
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
@@ -59,6 +61,12 @@ DATABASE_URL         = os.environ.get("DATABASE_URL", "")
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 INTERNAL_API_KEY = get_internal_api_key()
+WORKSPACE_RATE_LIMITS = {
+    "/workspace/chat": (60, 60),
+    "/workspace/chat/stream": (40, 60),
+    "/api/data": (180, 60),
+    "/api/decisions": (120, 60),
+}
 
 
 def _key_for(server: str) -> str:
@@ -82,6 +90,33 @@ def _hdr_for(server: str) -> dict[str, str]:
     if rid:
         headers["x-request-id"] = rid
     return headers
+
+
+def _rate_limit_disabled() -> bool:
+    return os.environ.get("RATE_LIMIT_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"} or _app_env() == "test"
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+async def _rate_limit_workspace_surface(request: Request, path: str, user: dict | None) -> None:
+    if _rate_limit_disabled():
+        return
+    matched = None
+    for prefix in WORKSPACE_RATE_LIMITS:
+        if path == prefix or path.startswith(prefix + "/"):
+            matched = prefix
+            break
+    if not matched:
+        return
+    limit, window = WORKSPACE_RATE_LIMITS[matched]
+    ip = _client_ip(request)
+    user_key = str((user or {}).get("id") or (user or {}).get("email") or "-")
+    limiter = get_rate_limiter()
+    for key in (f"{matched}:{ip}:{user_key}", f"{matched}:{ip}:-"):
+        if not await limiter.check(key, limit, window, sensitive=True):
+            raise HTTPException(status_code=429, detail="too many requests")
 
 
 app = FastAPI(title="ΩMEGA by EPIUSE Workspace")
@@ -121,9 +156,9 @@ def _rls_user_context(user: dict | None) -> dict:
     # the raw session dict downstream — it may carry fields we don't want the
     # internal API surface to depend on.
     #
-    # `_trusted_admin` is the explicit flag refinement requires before
-    # honouring an admin-role bypass. Setting it only when this process
-    # validated an admin session prevents a forged body from escaping RLS.
+    # Admin bypass is computed downstream from role + server-trusted context;
+    # do not forward a standalone flag that a tool/request body could learn
+    # to depend on.
     if not user:
         return {}
     role = user.get("role")
@@ -135,9 +170,21 @@ def _rls_user_context(user: dict | None) -> dict:
         "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
         "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
         "workspace_role": user.get("workspace_role"),
-        "_trusted_admin": role in {"admin", "owner", "super_admin"},
         "_server_trusted_context": True,
     }
+
+
+async def _assert_dataset_visible(user: dict, dataset: str) -> None:
+    ws_id = user.get("active_workspace_id") or user.get("workspace_id")
+    if not ws_id:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    p = await pg()
+    row = await p.fetchrow(
+        "SELECT name FROM datasets WHERE name = $1 AND workspace_id = $2",
+        dataset, ws_id,
+    )
+    if not row:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
 
 
 def _security_context(user: dict | None) -> dict:
@@ -170,7 +217,6 @@ def _security_context(user: dict | None) -> dict:
         "allowed_cartridges": allowed_cartridges,
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": allowed_prefixes,
-        "_trusted_admin": admin,
     }
 
 
@@ -211,18 +257,31 @@ SECURITY_HEADERS = {
 # script-src 'self' would brick every published app instantly.
 # Path-based dispatch: shell paths get strict CSP; /apps/* keeps the
 # relaxed pre-v1.24 CSP. Same pattern console used in v1.11.
-_APPS_RELAXED_CSP = (
+_APPS_WRAPPER_CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
-    "https://cdnjs.cloudflare.com https://unpkg.com; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
-    "https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
-    "img-src 'self' data: blob: https:; "
-    "font-src 'self' data: https://fonts.gstatic.com; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "frame-src 'self'; "
     "connect-src 'self'; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
-    "form-action 'self'"
+    "form-action 'none'"
+)
+_APPS_CONTENT_CSP = (
+    "default-src 'none'; "
+    "sandbox allow-scripts; "
+    "script-src 'unsafe-inline' https://cdn.jsdelivr.net "
+    "https://cdnjs.cloudflare.com https://unpkg.com; "
+    "style-src 'unsafe-inline' https://cdn.jsdelivr.net "
+    "https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+    "img-src data: blob:; "
+    "font-src data: https://fonts.gstatic.com; "
+    "connect-src 'none'; "
+    "frame-ancestors 'self'; "
+    "base-uri 'none'; "
+    "form-action 'none'; "
+    "navigate-to 'none'"
 )
 
 
@@ -230,7 +289,11 @@ def _apply_security_headers(response: Response, path: str = "") -> Response:
     # Path-based CSP dispatch. The non-CSP headers are uniform.
     headers = dict(SECURITY_HEADERS)
     if path.startswith("/apps/"):
-        headers["Content-Security-Policy"] = _APPS_RELAXED_CSP
+        if path.endswith("/content"):
+            headers["Content-Security-Policy"] = _APPS_CONTENT_CSP
+            headers["X-Frame-Options"] = "SAMEORIGIN"
+        else:
+            headers["Content-Security-Policy"] = _APPS_WRAPPER_CSP
     for name, value in headers.items():
         response.headers.setdefault(name, value)
     return response
@@ -298,6 +361,11 @@ async def auth_middleware(request: Request, call_next):
                 status_code=403,
             ))
         return _apply_security_headers(RedirectResponse(url=f"{CONSOLE_URL}/me"))
+
+    try:
+        await _rate_limit_workspace_surface(request, path, user)
+    except HTTPException as exc:
+        return _apply_security_headers(JSONResponse({"detail": exc.detail}, status_code=exc.status_code))
 
     return await call_next(request)
 
@@ -432,19 +500,22 @@ async def api_apps(request: Request):
     ]}
 
 
-@app.get("/apps/{name}")
-async def serve_app(request: Request, name: str):
-    user = require_user(request)
-    # Built-in static apps (shipped with the workspace image) take precedence
-    # over DB-stored ones. They live in workspace/app/static/apps/<name>.html
-    # and are visible to all authenticated users.
+def _datasets_from_html(html: str) -> list[str]:
+    return sorted(set(re.findall(r"/api/data/([a-zA-Z_][a-zA-Z0-9_]*)", html or "")))
+
+
+async def _load_visible_app(user: dict, name: str) -> dict:
+    """Return app HTML after enforcing the same visibility contract for
+    wrappers and sandboxed content. Published apps are user content; the
+    caller must never receive the raw HTML unless they can view that app."""
     if DATASET_NAME_RE.fullmatch(name or ""):
         static_app = STATIC / "apps" / f"{name}.html"
         if static_app.is_file():
-            return FileResponse(static_app, media_type="text/html")
+            html = static_app.read_text(encoding="utf-8")
+            return {"html": html, "datasets_used": _datasets_from_html(html)}
     p = await pg()
     row = await p.fetchrow(
-        """SELECT html, created_by_id, visibility
+        """SELECT html, created_by_id, visibility, datasets_used
              FROM analytic_apps WHERE name = $1""",
         name,
     )
@@ -456,7 +527,156 @@ async def serve_app(request: Request, name: str):
     is_admin = user.get("role") == "admin"
     if row["visibility"] != "shared" and row["created_by_id"] != user["id"] and not is_admin:
         raise HTTPException(404, f"App '{name}' not found")
-    return Response(content=row["html"], media_type="text/html")
+    datasets_used = row["datasets_used"] or _datasets_from_html(row["html"])
+    return {"html": row["html"], "datasets_used": [str(d) for d in datasets_used]}
+
+
+_APP_BRIDGE_SCRIPT = r"""
+<script>
+(() => {
+  const pending = new Map();
+  let seq = 0;
+  window.fetch = function omegaSandboxFetch(input, init) {
+    const rawUrl = typeof input === "string" ? input : (input && input.url);
+    const opts = init || {};
+    const method = String(opts.method || "GET").toUpperCase();
+    let parsed;
+    try { parsed = new URL(rawUrl, window.location.href); } catch (err) { return Promise.reject(err); }
+    if (!parsed.pathname.startsWith("/api/data/")) {
+      return Promise.reject(new Error("Published apps can only call /api/data/*"));
+    }
+    if (!["GET", "POST"].includes(method)) {
+      return Promise.reject(new Error("Published app data bridge only allows GET/POST"));
+    }
+    const id = "appfetch:" + (++seq);
+    const body = typeof opts.body === "string" ? opts.body : null;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      parent.postMessage({
+        type: "omega-app-fetch",
+        id,
+        method,
+        url: parsed.pathname + parsed.search,
+        body
+      }, "*");
+      window.setTimeout(() => {
+        const item = pending.get(id);
+        if (!item) return;
+        pending.delete(id);
+        item.reject(new Error("Published app data request timed out"));
+      }, 30000);
+    });
+  };
+  window.addEventListener("message", (event) => {
+    const msg = event.data || {};
+    if (event.source !== window.parent) return;
+    if (msg.type !== "omega-app-fetch-result" || !pending.has(msg.id)) return;
+    const item = pending.get(msg.id);
+    pending.delete(msg.id);
+    const headers = new Headers({"Content-Type": msg.contentType || "application/json"});
+    item.resolve(new Response(msg.body || "", {
+      status: Number(msg.status || 500),
+      statusText: msg.ok ? "OK" : "ERROR",
+      headers
+    }));
+  });
+})();
+</script>
+"""
+
+
+def _inject_app_bridge(raw_html: str) -> str:
+    match = re.search(r"<head\b[^>]*>", raw_html, flags=re.IGNORECASE)
+    if match:
+        return raw_html[:match.end()] + _APP_BRIDGE_SCRIPT + raw_html[match.end():]
+    return _APP_BRIDGE_SCRIPT + raw_html
+
+
+def _app_wrapper_html(name: str, datasets_used: list[str]) -> str:
+    content_src = f"/apps/{quote(name, safe='')}/content"
+    content_src_json = json.dumps(content_src)
+    allowed_datasets_json = json.dumps(sorted({
+        d for d in datasets_used if DATASET_NAME_RE.fullmatch(str(d))
+    }))
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>App - OMEGA</title>
+  <style>
+    html, body {{ margin:0; min-height:100%; background:#0f1822; }}
+    iframe {{ display:block; width:100vw; height:100vh; border:0; background:white; }}
+  </style>
+</head>
+<body>
+  <iframe id="omega-app-frame" title="Published app" sandbox="allow-scripts" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
+  <script>
+    (() => {{
+      const frame = document.getElementById("omega-app-frame");
+      const allowedSrc = {content_src_json};
+      const allowedDatasets = new Set({allowed_datasets_json});
+      window.addEventListener("message", async (event) => {{
+        if (!frame || event.source !== frame.contentWindow) return;
+        const msg = event.data || {{}};
+        if (msg.type !== "omega-app-fetch" || !msg.id) return;
+        let status = 500, ok = false, body = "{{}}", contentType = "application/json";
+        try {{
+          const url = new URL(String(msg.url || ""), window.location.origin);
+          const method = String(msg.method || "GET").toUpperCase();
+          if (!url.pathname.startsWith("/api/data/")) throw new Error("blocked app data URL");
+          if (!["GET", "POST"].includes(method)) throw new Error("blocked app data method");
+          const parts = url.pathname.split("/").filter(Boolean);
+          const dataset = parts.length >= 3 && parts[0] === "api" && parts[1] === "data" ? parts[2] : "";
+          if (!allowedDatasets.has(dataset)) throw new Error("dataset not declared by published app");
+          const headers = {{}};
+          let requestBody;
+          if (method === "POST") {{
+            headers["Content-Type"] = "application/json";
+            requestBody = typeof msg.body === "string" ? msg.body : null;
+          }}
+          const response = await fetch(url.pathname + url.search, {{
+            method,
+            headers,
+            body: requestBody,
+            credentials: "same-origin"
+          }});
+          status = response.status;
+          ok = response.ok;
+          contentType = response.headers.get("content-type") || "application/json";
+          body = await response.text();
+        }} catch (err) {{
+          status = 403;
+          ok = false;
+          body = JSON.stringify({{ detail: err instanceof Error ? err.message : "blocked app data request" }});
+        }}
+        frame.contentWindow.postMessage({{
+          type: "omega-app-fetch-result",
+          id: msg.id,
+          ok,
+          status,
+          contentType,
+          body
+        }}, "*");
+      }});
+    }})();
+  </script>
+</body>
+</html>"""
+
+
+@app.get("/apps/{name}/content")
+async def serve_app_content(request: Request, name: str):
+    user = require_user(request)
+    app_info = await _load_visible_app(user, name)
+    return Response(content=_inject_app_bridge(app_info["html"]), media_type="text/html")
+
+
+@app.get("/apps/{name}")
+async def serve_app(request: Request, name: str):
+    user = require_user(request)
+    app_info = await _load_visible_app(user, name)
+    return Response(content=_app_wrapper_html(name, app_info["datasets_used"]), media_type="text/html")
 
 
 # ── Data API consumed by the published apps ────────────────────────────────
@@ -470,16 +690,7 @@ async def api_data(request: Request, dataset: str, limit: int = 5000):
     # caller's workspace before proxying the query downstream. Returning
     # 404 (not 403) so the response cannot be used to enumerate datasets
     # in other tenants.
-    ws_id = user.get("active_workspace_id") or user.get("workspace_id")
-    if not ws_id:
-        raise HTTPException(404, f"Dataset '{dataset}' not found")
-    p = await pg()
-    row = await p.fetchrow(
-        "SELECT name FROM datasets WHERE name = $1 AND workspace_id = $2",
-        dataset, ws_id,
-    )
-    if not row:
-        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    await _assert_dataset_visible(user, dataset)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload(
@@ -498,6 +709,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     """Distinct values per column for filter dropdowns."""
     user = require_user(request)
     _validate_dataset_name(dataset)
+    await _assert_dataset_visible(user, dataset)
     cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else []
     if not cols:
         raise HTTPException(400, "columns param required")
@@ -537,6 +749,7 @@ async def api_data_query(request: Request, dataset: str, body: dict):
     """Filtered query against a gold dataset (mirrors console for app compat)."""
     user = require_user(request)
     _validate_dataset_name(dataset)
+    await _assert_dataset_visible(user, dataset)
     import re as _re
     filters = body.get("filters", {})
     limit   = min(int(body.get("limit", 2000)), 10000)

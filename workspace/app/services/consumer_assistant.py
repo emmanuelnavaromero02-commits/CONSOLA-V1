@@ -104,7 +104,6 @@ def _security_context(user: dict | None) -> dict:
             if admin
             else [f"{layer}/{cart}/" for cart in allowed_cartridges for layer in ("raw", "silver", "gold", "uploads", "cartridges")]
         ),
-        "_trusted_admin": admin,
     }
 
 

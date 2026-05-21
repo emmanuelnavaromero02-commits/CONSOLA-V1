@@ -66,7 +66,7 @@ export function proxy(req: NextRequest) {
   if (!hasAuthCookie(req)) {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("next", pathname);
+    loginUrl.searchParams.set("next", `${pathname}${req.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
   return NextResponse.next();

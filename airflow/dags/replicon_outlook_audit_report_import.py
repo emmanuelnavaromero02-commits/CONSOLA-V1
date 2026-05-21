@@ -37,6 +37,9 @@ MINIO_UPLOAD_PATH = "uploads/replicon/in"
 MINIO_BAK_PATH = "uploads/replicon/bak"
 CARTRIDGE_ID = "replicon"
 ENTITY = "ProjectAudit"
+MAX_ZIP_MEMBERS = int(os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_MEMBERS", "25"))
+MAX_ZIP_MEMBER_BYTES = int(os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_MEMBER_BYTES", str(50 * 1024 * 1024)))
+MAX_ZIP_TOTAL_BYTES = int(os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_TOTAL_BYTES", str(100 * 1024 * 1024)))
 
 
 def _required_variable(name: str) -> str:
@@ -65,6 +68,21 @@ def _minio_client() -> Minio:
         secret_key=settings["secret_key"],
         secure=settings["secure"],
     )
+
+
+def _safe_zip_member(zf: zipfile.ZipFile, expected_name: str) -> zipfile.ZipInfo:
+    infos = [info for info in zf.infolist() if not info.is_dir()]
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise ValueError(f"ZIP has too many members ({len(infos)} > {MAX_ZIP_MEMBERS})")
+    total = sum(int(info.file_size or 0) for info in infos)
+    if total > MAX_ZIP_TOTAL_BYTES:
+        raise ValueError("ZIP uncompressed total is too large")
+    for info in infos:
+        if info.file_size > MAX_ZIP_MEMBER_BYTES:
+            raise ValueError(f"ZIP member too large: {info.filename}")
+        if expected_name in os.path.basename(info.filename):
+            return info
+    raise ValueError(f"CSV not found in ZIP: {expected_name}")
 
 
 def _ensure_bucket() -> str:
@@ -110,10 +128,7 @@ def fetch_outlook_attachment(**context):
 
     csv_content = None
     with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
-        for filename in zf.namelist():
-            if CSV_FILENAME in filename:
-                csv_content = zf.read(filename)
-                break
+        csv_content = zf.read(_safe_zip_member(zf, CSV_FILENAME))
     if not csv_content:
         raise ValueError(f"CSV not found in ZIP: {CSV_FILENAME}")
 

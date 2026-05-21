@@ -35,7 +35,7 @@ interface NavItem {
  */
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard",  label: "Panel",       icon: BarChart3 },
-  { href: "/workspace",  label: "Copiloto",    icon: MessageSquareText },
+  { href: "/copilot",    label: "Copiloto",    icon: MessageSquareText },
   { href: "/cartridges", label: "Cartuchos",   icon: Boxes },
   { href: "/studio",     label: "Studio",      icon: Wrench },
   { href: "/operations", label: "Operaciones", icon: Settings2 },

@@ -524,13 +524,15 @@ class DuckDBEngine:
         return new_tree.sql(dialect='duckdb'), params
 
     def get_rls_filters(self, sql: str, user_context: dict) -> tuple[str, list]:
-        # Admin bypass requires the caller to mark the context as
-        # `_trusted_admin=True`. The upstream service only sets this flag
-        # after authenticating the user from its own session/JWT — it cannot
-        # be forged by a request-body that just claims `role=admin`. This is
-        # defense-in-depth: even a compromised peer holding INTERNAL_API_KEY
-        # cannot escape RLS unless it also forges the trust flag.
-        if user_context and user_context.get("role") == "admin" and user_context.get("_trusted_admin"):
+        # Admin bypass requires a server-built context. A raw body claiming
+        # role=admin is not enough; refinement constructs
+        # _server_trusted_context only after verifying the internal caller and
+        # its security_context source.
+        if (
+            user_context
+            and str(user_context.get("role") or "").lower() in {"admin", "owner", "super_admin"}
+            and user_context.get("_server_trusted_context")
+        ):
             return sql, []
 
         if not user_context:
