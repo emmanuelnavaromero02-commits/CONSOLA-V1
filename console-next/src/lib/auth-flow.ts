@@ -32,7 +32,7 @@
  *     route handlers / SSR transitions; fetch with `credentials:
  *     "include"` is the documented browser-side default.
  */
-import { readCookie } from "@/lib/api";
+import { readCookie } from "@/lib/cookies";
 
 export interface LoginError extends Error {
   status?: number;

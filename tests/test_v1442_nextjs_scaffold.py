@@ -416,7 +416,7 @@ def test_use_kpis_hook_matches_backend_shape():
 
 
 def test_dashboard_page_renders_kpi_grid():
-    src = _read(SRC / "app/dashboard/page.tsx")
+    src = _read(SRC / "app/(shell)/dashboard/page.tsx")
     assert "useKpis" in src
     # Loading + error states present.
     assert "isLoading" in src
@@ -425,15 +425,15 @@ def test_dashboard_page_renders_kpi_grid():
     assert "FreshnessTable" in src
 
 
-def test_login_page_uses_suspense_for_useSearchParams():
-    """next build fails the page generation if useSearchParams() isn't
-    inside a Suspense boundary — the v1.44.2 scaffold hit this on the
-    first attempt. Lock the fix."""
+def test_login_page_avoids_next_navigation_bundle():
+    """Login is public and carries a strict first-load JS budget.
+    It must parse ?next= without next/navigation so it does not pull
+    route-shell chunks into the gateway page."""
     src = _read(SRC / "app/login/page.tsx")
-    assert "Suspense" in src
-    assert "useSearchParams" in src
-    # The fallback element must be a real React element, not null.
-    assert "fallback=" in src
+    assert "next/navigation" not in src
+    assert "useSearchParams" not in src
+    assert "new URLSearchParams" in src
+    assert "startsWith(\"//\")" in src
 
 
 # ── Compose tests this branch doesn't break existing parity ──────────────

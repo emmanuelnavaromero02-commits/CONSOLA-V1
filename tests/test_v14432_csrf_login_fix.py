@@ -129,7 +129,9 @@ def test_login_page_no_longer_posts_to_api_auth_login():
 
 def test_api_ts_has_readCookie_helper():
     src = _read(API_TS)
-    assert "export function readCookie" in src
+    helper = _read(REPO / "console-next/src/lib/cookies.ts")
+    assert "export function readCookie" in helper
+    assert "export { readCookie }" in src
 
 
 def test_api_ts_attaches_csrf_token_on_mutations():

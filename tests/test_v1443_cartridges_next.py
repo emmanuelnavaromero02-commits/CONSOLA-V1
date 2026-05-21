@@ -173,7 +173,7 @@ def test_zod_schema_adapts_to_required_min_length_url_pattern():
 
 
 def test_cartridges_grid_page_exists():
-    page = NEXT_SRC / "app/cartridges/page.tsx"
+    page = NEXT_SRC / "app/(shell)/cartridges/page.tsx"
     assert page.exists()
     src = _read(page)
     assert "useCartridgeList" in src
@@ -184,7 +184,7 @@ def test_cartridges_grid_page_exists():
 
 
 def test_cartridge_detail_page_exists_and_uses_dynamic_param():
-    page = NEXT_SRC / "app/cartridges/[id]/page.tsx"
+    page = NEXT_SRC / "app/(shell)/cartridges/[id]/page.tsx"
     assert page.exists()
     src = _read(page)
     assert "useParams" in src
@@ -199,7 +199,7 @@ def test_grid_derives_status_from_kpi_freshness():
       very_stale → failed
       fresh|stale → connected
     """
-    src = _read(NEXT_SRC / "app/cartridges/page.tsx")
+    src = _read(NEXT_SRC / "app/(shell)/cartridges/page.tsx")
     assert "useKpis" in src
     assert '"unconfigured"' in src
     assert '"failed"' in src
