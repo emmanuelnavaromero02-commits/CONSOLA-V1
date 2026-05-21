@@ -134,7 +134,11 @@ function LoginCard() {
         </button>
 
         {authError ? (
-          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          <p
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            data-sonner-toast=""
+            role="alert"
+          >
             {authError}
           </p>
         ) : null}
