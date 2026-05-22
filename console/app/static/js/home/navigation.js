@@ -50,6 +50,7 @@ const SERVICE_REGISTRY = [
   { label: 'Explorer', href: '/explorer', category: 'Operación y flujos', permission: 'pipelines.read', aliases: 'minio s3 objetos archivos buckets descargas' },
   { label: 'Studio interno', href: '/studio', category: 'Operación y flujos', permission: 'studio.read', adminOnly: true, aliases: 'raw silver gold datasets tecnico transformaciones entidades' },
 
+  { label: 'Mis accesos', href: '/my-access', category: 'Seguridad e identidad', aliases: 'mis accesos identidad workspace rol permisos efectivos cartuchos bloqueados deny perfil' },
   { label: 'Usuarios y accesos', href: '/iam', category: 'Seguridad e identidad', permission: 'iam.users.read', adminOnly: true, aliases: 'iam usuarios roles permisos sesiones' },
   { label: 'Usuarios admin', href: '/admin/users', category: 'Seguridad e identidad', permission: 'iam.users.read', adminOnly: true, aliases: 'admin users usuarios invitar activar bloquear' },
   { label: 'Seguridad', href: '/security', category: 'Seguridad e identidad', permission: 'security.audit.read', aliases: 'auditoria sesiones intentos login seguridad' },

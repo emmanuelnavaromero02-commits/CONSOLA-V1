@@ -337,6 +337,23 @@ def _allowed_origins() -> list[str]:
         )
 
     raw = raw_env if raw_env is not None else "http://localhost:3000,http://localhost:8000"
+    # Phase-0 P1 fix: ALLOWED_ORIGINS="" (env var set but empty) used to be
+    # accepted silently and produced an empty allowlist. That combination
+    # plus allow_credentials=True is exactly the misconfiguration the
+    # production fail-closed guard above is meant to catch. Treat empty
+    # string the same as unset in prod, and warn loudly in dev/test.
+    if raw_env is not None and not raw_env.strip():
+        if app_env in {"production", "prod"}:
+            raise RuntimeError(
+                "ALLOWED_ORIGINS is set to an empty value in production. "
+                "Either unset it (we will refuse to start) or list the "
+                "exact origins allowed for credentialed requests."
+            )
+        logger.warning(
+            "ALLOWED_ORIGINS is set but empty; falling back to the "
+            "localhost default. This is only safe in dev/test."
+        )
+        raw = "http://localhost:3000,http://localhost:8000"
     origins: list[str] = []
     for chunk in raw.split(","):
         origin = chunk.strip()
@@ -1649,6 +1666,146 @@ async def viewer_me(request: Request):
 @app.get("/api/me")
 async def api_me(user: dict = Depends(require_authenticated)):
     return _user_payload(user)
+
+
+@app.get("/api/me/access")
+async def api_me_access(user: dict = Depends(require_authenticated)):
+    """Phase-0 SaaS-controls: a single endpoint that returns the user's
+    *effective* security profile so the front-end can render "Mis accesos"
+    without the user (or operator) inferring permissions from role names.
+
+    The shape is intentionally narrow: the front-end uses these fields to
+    decide what to render and what to disable. The backend is still the
+    source of truth — every action endpoint enforces its own permission.
+    """
+    from app.services import permissions as _perms
+
+    effective = sorted(_perms.get_effective_permissions(user))
+    role_canonical = _perms.canonical_role(user.get("role"))
+    workspace_role_resolved = _perms.workspace_role(user) or None
+
+    cartridges_allowed: list[str] = []
+    cartridges_denied: list[dict[str, str]] = []
+    try:
+        p = await cartridge_service.pool()
+        async with p.acquire() as conn:  # noqa: SIM117 — nested try/except is intentional
+            # Cartridges visible to this caller in their workspace.
+            try:
+                allowed_rows = await conn.fetch(
+                    """
+                    SELECT ci.cartridge_id, ci.status,
+                           COALESCE(p.name, ci.cartridge_id) AS product_name
+                      FROM cartridge_installations ci
+                      LEFT JOIN marketplace_products p ON p.cartridge_id = ci.cartridge_id
+                     WHERE ci.tenant_id = $1
+                       AND ci.workspace_id = $2
+                       AND ci.status IN ('ready', 'active')
+                       AND NOT EXISTS (
+                         SELECT 1
+                           FROM user_cartridge_overrides uco
+                          WHERE uco.tenant_id = ci.tenant_id
+                            AND uco.workspace_id = ci.workspace_id
+                            AND uco.cartridge_id = ci.cartridge_id
+                            AND uco.user_id = $3
+                            AND uco.mode = 'deny'
+                       )
+                    ORDER BY product_name
+                    """,
+                    user.get("tenant_id") or user.get("active_tenant_id"),
+                    user.get("workspace_id") or user.get("active_workspace_id"),
+                    user.get("id"),
+                )
+                cartridges_allowed = [
+                    {"cartridge_id": r["cartridge_id"],
+                     "product_name": r["product_name"],
+                     "status": r["status"]}
+                    for r in allowed_rows
+                ]
+            except Exception:  # noqa: BLE001
+                # Marketplace migrations may not be applied in every env.
+                cartridges_allowed = []
+            try:
+                denied_rows = await conn.fetch(
+                    """
+                    SELECT uco.cartridge_id, uco.mode,
+                           ci.status AS installation_status,
+                           COALESCE(p.name, uco.cartridge_id) AS product_name
+                      FROM user_cartridge_overrides uco
+                      LEFT JOIN cartridge_installations ci
+                        ON ci.tenant_id = uco.tenant_id
+                       AND ci.workspace_id = uco.workspace_id
+                       AND ci.cartridge_id = uco.cartridge_id
+                      LEFT JOIN marketplace_products p
+                        ON p.cartridge_id = uco.cartridge_id
+                     WHERE uco.tenant_id = $1
+                       AND uco.workspace_id = $2
+                       AND uco.user_id = $3
+                       AND uco.mode = 'deny'
+                    ORDER BY product_name
+                    """,
+                    user.get("tenant_id") or user.get("active_tenant_id"),
+                    user.get("workspace_id") or user.get("active_workspace_id"),
+                    user.get("id"),
+                )
+                cartridges_denied = [
+                    {"cartridge_id": r["cartridge_id"],
+                     "product_name": r["product_name"],
+                     "reason": "user_deny",
+                     "installation_status": r["installation_status"]}
+                    for r in denied_rows
+                ]
+            except Exception:  # noqa: BLE001
+                cartridges_denied = []
+    except Exception:  # noqa: BLE001
+        # If the marketplace pool is unavailable we still return the
+        # identity-level info so the page can render in restricted mode.
+        # Log it: silent fallback is intentional for ops resilience but
+        # we must not mask repeated failures from the team.
+        logger.warning("api_me_access: marketplace pool unavailable", exc_info=True)
+
+    return {
+        "user": {
+            "id": user.get("id"),
+            "email": user.get("email"),
+            "name": user.get("name") or user.get("email"),
+        },
+        "role": {
+            "global": role_canonical,
+            "is_platform_admin": role_canonical in {"owner", "super_admin", "admin"},
+        },
+        "workspace": {
+            "tenant_id": user.get("tenant_id") or user.get("active_tenant_id"),
+            "workspace_id": user.get("workspace_id") or user.get("active_workspace_id"),
+            "workspace_role": workspace_role_resolved,
+        },
+        "permissions": effective,
+        "cartridges": {
+            "allowed": cartridges_allowed,
+            "denied": cartridges_denied,
+        },
+        # The front-end uses these flags to decide what to render. They are
+        # *display hints only*; every action endpoint enforces its own gate.
+        # IMPORTANT: each flag must replicate the FULL guard chain of the
+        # target page. /iam, /admin/users, /settings, /operations require
+        # both the permission AND `require_admin` (global admin role).
+        # If we only checked the permission, a security_admin user (who
+        # has iam.users.read but is not a global admin) would see the
+        # link and get a 403 on click. The backend still rejects, but the
+        # UI must not lie.
+        "ui_capabilities": {
+            "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
+            "can_admin_marketplace":   "marketplace.admin" in effective,
+            # `workspace_role()` already normalizes the legacy database
+            # workspace_role values (admin/owner/super_admin/security_admin)
+            # to "workspace_admin" before returning. Comparing only to
+            # "workspace_admin" keeps the intent explicit and prevents a
+            # future copy-paste from re-introducing a global-admin check on
+            # a workspace-scoped flag.
+            "can_admin_workspace":     workspace_role_resolved == "workspace_admin",
+            "can_view_audit":          "security.audit.read" in effective,
+            "can_view_sessions":       "security.sessions.read" in effective,
+        },
+    }
 
 
 @app.post("/api/me/change-password", dependencies=[Depends(require_csrf)])

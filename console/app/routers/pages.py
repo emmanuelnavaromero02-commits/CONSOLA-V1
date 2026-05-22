@@ -106,6 +106,23 @@ async def security_page():
     return FileResponse(STATIC / "security.html")
 
 
+# Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of
+# their own identity, role, workspace, effective permissions and cartridge
+# entitlements. Available to any authenticated user. No admin powers
+# implied; the page renders strictly what /api/me/access returns and the
+# backend continues to enforce every action it offers as a link.
+@router.get("/my-access", dependencies=[Depends(require_authenticated)])
+async def my_access_page():
+    return FileResponse(STATIC / "my_access.html")
+
+
+# Spanish alias for the same page so the navigation copy stays bilingual
+# with the rest of the console.
+@router.get("/mis-accesos", dependencies=[Depends(require_authenticated)])
+async def mis_accesos_page():
+    return FileResponse(STATIC / "my_access.html")
+
+
 # Sprint v1.5 — admin-only gate on the IAM / Settings / Operations panels
 # in addition to the pre-existing permission check. Non-admin users with
 # the permission (e.g. security_admin → iam.users.read) are now also

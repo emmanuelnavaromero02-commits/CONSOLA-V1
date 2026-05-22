@@ -737,7 +737,10 @@ def _rag_source_allowed(ctx: dict[str, Any], name: str) -> bool:
         )
     if name.startswith("dataset:"):
         dataset = name.split(":", 1)[1]
-        cartridge = _cartridge_of(dataset)
+        # Pass ctx so the lookup is forward-compatible with tenant-aware
+        # dataset filtering. Today _cartridge_of treats ctx as a reserved
+        # arg; the cartridge scope is still enforced by _prefix_allowed.
+        cartridge = _cartridge_of(dataset, ctx)
         return bool(cartridge and (
             _prefix_allowed(ctx, f"silver/{cartridge}/{dataset}/")
             or _prefix_allowed(ctx, f"gold/{cartridge}/{dataset}/")
@@ -1200,9 +1203,14 @@ async def rag_rest_rebuild_semantic(body: dict, internal_service: str = Depends(
     return await _rebuild_semantic_doc(cartridge, ctx)
 
 
-def _cartridge_of(dataset_name: str) -> str | None:
+def _cartridge_of(dataset_name: str, ctx: dict[str, Any] | None = None) -> str | None:
+    """Resolve cartridge_id for a dataset. ctx is accepted for forward-compat
+    with scoped callers and reserved for tenant-aware lookups; today the
+    `datasets` table is global per cartridge, so no extra filtering is applied
+    here (callers must enforce `_require_cartridge_scope` after this lookup)."""
     import psycopg2
     from app.config import settings as s
+    _ = ctx  # reserved for future tenant-aware lookups
     try:
         conn = psycopg2.connect(
             host=s.pg_host,
@@ -1307,10 +1315,20 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
         tail = f" [tags: {', '.join(tags)}]" if tags else ""
         return f"- `{col}` ({ty}){': ' + text if text else ''}{tail}\n"
 
+    # IMPORTANT: when the caller is scoped, the glob() pattern must already
+    # restrict file discovery to their tenant/workspace partition. Otherwise
+    # the entity list would include entities that only exist in other tenants'
+    # data — leaking their presence even if their rows aren't read.
+    if scoped_raw_glob:
+        glob_pattern = (
+            f"s3://{bucket}/raw/{cartridge}/*/{scoped_raw_glob}**/*.parquet"
+        )
+    else:
+        glob_pattern = f"s3://{bucket}/raw/{cartridge}/*/**/*.parquet"
     try:
         raw_rows = con.execute(f"""
             SELECT DISTINCT regexp_extract(file, 'raw/{cartridge}/([^/]+)/', 1) AS entity
-            FROM glob('s3://{bucket}/raw/{cartridge}/*/{scoped_raw_glob}**/*.parquet')
+            FROM glob('{glob_pattern}')
             WHERE regexp_extract(file, 'raw/{cartridge}/([^/]+)/', 1) != ''
             ORDER BY entity
         """).fetchall()
@@ -1347,7 +1365,13 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                 if layer == "gold":
                     fields = con.execute(f'DESCRIBE pggold."gold_{name}"').fetchall()
                 else:
-                    parquet = f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
+                    if scoped_raw_read:
+                        parquet = (
+                            f"s3://{bucket}/silver/{cartridge}/{name}/"
+                            f"{scoped_raw_read}data.parquet"
+                        )
+                    else:
+                        parquet = f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
                     fields = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0").fetchall()
             except Exception as exc:                          # noqa: BLE001
                 fields = []
@@ -1375,7 +1399,7 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
     }
 
 
-def _build_raw_doc(cartridge: str, entity: str) -> str:
+def _build_raw_doc(cartridge: str, entity: str, ctx: dict[str, Any] | None = None) -> str:
     import os
     import duckdb
 
@@ -1384,9 +1408,21 @@ def _build_raw_doc(cartridge: str, entity: str) -> str:
     entity = _safe_rag_segment(entity, "entity")
     endpoint = os.environ.get("MINIO_ENDPOINT", "")
     region = os.environ.get("AWS_REGION", "us-east-1")
+    ctx = ctx or {}
+    # When the caller is scoped to a tenant/workspace, read ONLY the partition
+    # that belongs to that tenant. Otherwise the RAG document would index raw
+    # data from every tenant and leak it through semantic search.
+    if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+        tenant_id = _safe_rag_segment(str(ctx.get("tenant_id") or ""), "tenant_id")
+        workspace_id = _safe_rag_segment(str(ctx.get("workspace_id") or ""), "workspace_id")
+        path = (
+            f"s3://{bucket}/raw/{cartridge}/{entity}/"
+            f"tenant_id={tenant_id}/workspace_id={workspace_id}/**/*.parquet"
+        )
+    else:
+        path = f"s3://{bucket}/raw/{cartridge}/{entity}/**/*.parquet"
     con = duckdb.connect()
     _duckdb_s3_settings(con, endpoint, region)
-    path = f"s3://{bucket}/raw/{cartridge}/{entity}/**/*.parquet"
     try:
         rows = con.execute(
             f"DESCRIBE SELECT * FROM read_parquet('{path}', hive_partitioning=true, union_by_name=true) LIMIT 0"
@@ -1400,11 +1436,12 @@ def _build_raw_doc(cartridge: str, entity: str) -> str:
     )
 
 
-def _build_dataset_doc(name: str) -> tuple[str, str]:
+def _build_dataset_doc(name: str, ctx: dict[str, Any] | None = None) -> tuple[str, str]:
     import psycopg2
     from app.config import settings as s
 
     name = _safe_rag_segment(name, "dataset")
+    ctx = ctx or {}
     conn = psycopg2.connect(
         host=s.pg_host,
         port=s.pg_port,
@@ -1425,9 +1462,26 @@ def _build_dataset_doc(name: str) -> tuple[str, str]:
     if not row:
         raise HTTPException(404, f"dataset '{name}' not found")
     layer, cartridge, sql_def, description = row
+    # Reject indexing a dataset whose cartridge is not in the caller's scope.
+    if cartridge and not _is_unscoped_admin_context(ctx):
+        allowed = {
+            str(item).strip()
+            for item in (ctx.get("allowed_cartridges") or [])
+            if str(item).strip()
+        }
+        if allowed and "*" not in allowed and cartridge not in allowed:
+            raise HTTPException(403, f"dataset '{name}' is outside caller cartridge scope")
+    scope_note = ""
+    if _has_tenant_workspace_scope(ctx) and not _is_unscoped_admin_context(ctx):
+        scope_note = (
+            f"\n## Scope\n"
+            f"- tenant_id: `{ctx.get('tenant_id')}`\n"
+            f"- workspace_id: `{ctx.get('workspace_id')}`\n"
+        )
     body = (
         f"# Dataset: {name}\nLayer: {layer}\nCartridge: {cartridge}\n\n"
-        f"## Description\n{description or '(none)'}\n\n"
+        f"## Description\n{description or '(none)'}\n"
+        f"{scope_note}\n"
         f"## SQL\n```sql\n{sql_def}\n```\n"
     )
     return body, f"{layer} dataset {name}"

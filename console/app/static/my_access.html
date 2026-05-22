@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mis accesos — OMEGA</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    body { padding: 0; margin: 0; overflow: auto; }
+    .shell { max-width: 920px; margin: 0 auto; padding: 24px 24px 80px; }
+    .topbar {
+      display: flex; align-items: center; gap: 16px; margin-bottom: 24px;
+      padding-bottom: 14px; border-bottom: 1px solid var(--border);
+    }
+    .topbar a.back {
+      font-size: 10px; color: var(--text3); font-family: var(--font-mono);
+      letter-spacing: 1px; text-decoration: none;
+    }
+    .topbar a.back:hover { color: var(--green); }
+    .title  { font-size: 13px; color: var(--amber); letter-spacing: 3px; font-family: var(--font-mono); }
+    .subtitle { font-size: 10px; color: var(--text3); letter-spacing: 1px; margin-top: 4px; }
+
+    .card {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 20px 24px; margin-bottom: 18px;
+    }
+    .card h2 {
+      margin: 0 0 14px; font-family: var(--font-mono); font-size: 11px;
+      color: var(--amber); letter-spacing: 2px;
+    }
+    .info-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px;
+      font-size: 13px;
+    }
+    .info-grid .lbl {
+      font-family: var(--font-mono); font-size: 10px; color: var(--text3);
+      letter-spacing: 1px;
+    }
+    .info-grid .val { color: var(--text1); }
+    .role-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      background: rgba(176, 109, 0, .15); color: var(--amber);
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
+    }
+    .role-pill.platform { background: rgba(94,179,89,.15); color: var(--green); }
+    .role-pill.muted    { background: rgba(255,255,255,.06); color: var(--text3); }
+
+    .perm-list, .cart-list {
+      list-style: none; padding: 0; margin: 0;
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .perm-list li {
+      font-family: var(--font-mono); font-size: 10px;
+      padding: 3px 8px; border-radius: 3px;
+      background: rgba(255,255,255,.04); color: var(--text2);
+      border: 1px solid var(--border);
+    }
+    .cart-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    .cart-row:last-child { border-bottom: none; }
+    .cart-name { color: var(--text1); font-size: 13px; }
+    .cart-id   { color: var(--text3); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
+    .badge {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
+      padding: 2px 6px; border-radius: 3px;
+    }
+    .badge.allow { background: rgba(94,179,89,.15); color: var(--green); }
+    .badge.deny  { background: rgba(179,38,30,.15); color: var(--red); }
+    .badge.status { background: rgba(255,255,255,.06); color: var(--text3); margin-left: 6px; }
+
+    .muted-note {
+      font-size: 11px; color: var(--text3); font-style: italic;
+      margin-top: 6px;
+    }
+    .empty {
+      font-size: 12px; color: var(--text3);
+      font-family: var(--font-mono); letter-spacing: 1px;
+      padding: 6px 0;
+    }
+    .help-actions {
+      display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap;
+    }
+    .help-actions a {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
+      color: var(--amber); text-decoration: none;
+      padding: 6px 12px; border: 1px solid var(--border); border-radius: 4px;
+    }
+    .help-actions a:hover { background: rgba(176,109,0,.08); }
+    .err {
+      color: var(--red); font-size: 12px; padding: 8px;
+      background: rgba(179,38,30,.08); border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <a class="back" href="/" id="back-link">← INICIO</a>
+      <div>
+        <div class="title">MIS ACCESOS</div>
+        <div class="subtitle">Identidad · workspace · permisos efectivos · cartuchos disponibles</div>
+      </div>
+    </div>
+
+    <div id="err-banner" class="err" style="display:none"></div>
+
+    <section class="card">
+      <h2>IDENTIDAD</h2>
+      <div class="info-grid">
+        <div class="lbl">Email</div>             <div class="val" id="me-email">…</div>
+        <div class="lbl">Nombre</div>            <div class="val" id="me-name">…</div>
+        <div class="lbl">Rol global</div>        <div class="val"><span id="me-role" class="role-pill muted">—</span></div>
+        <div class="lbl">Workspace</div>         <div class="val" id="me-workspace">—</div>
+        <div class="lbl">Rol en workspace</div>  <div class="val"><span id="me-ws-role" class="role-pill muted">—</span></div>
+        <div class="lbl">Tenant</div>            <div class="val" id="me-tenant">—</div>
+      </div>
+      <div class="muted-note" id="ws-role-note"></div>
+    </section>
+
+    <section class="card">
+      <h2>PERMISOS EFECTIVOS</h2>
+      <ul class="perm-list" id="perm-list"></ul>
+      <div class="muted-note">
+        Estos permisos se evalúan server-side en cada llamada. Si una acción
+        no aparece aquí, la consola la bloqueará incluso si llegas por URL.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>CARTUCHOS DISPONIBLES</h2>
+      <div id="cart-allowed"></div>
+    </section>
+
+    <section class="card">
+      <h2>CARTUCHOS BLOQUEADOS PARA MI USUARIO</h2>
+      <div id="cart-denied"></div>
+      <div class="muted-note">
+        Tu usuario tiene un <b>deny</b> explícito para los siguientes
+        cartuchos. Si crees que es un error, contacta al administrador
+        del workspace; solo un administrador puede levantar la restricción.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>SOPORTE</h2>
+      <div class="help-actions">
+        <a href="/me">CAMBIAR PASSWORD</a>
+        <a id="link-sessions" href="/security" style="display:none">VER SESIONES ACTIVAS</a>
+        <a id="link-iam" href="/iam" style="display:none">PANEL IAM</a>
+        <a id="link-marketplace-admin" href="/admin/installations" style="display:none">ADMIN MARKETPLACE</a>
+      </div>
+      <div class="muted-note">
+        El cambio de password está disponible para cualquier usuario
+        autenticado. Los demás enlaces solo aparecen si tu rol tiene
+        permiso para ellos; el backend valida cada acción.
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/js/my_access.js"></script>
+</body>
+</html>

@@ -1036,7 +1036,19 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                     secret_key=engine.minio_secret,
                     secure=engine.minio_secure,
                 )
-                obj_path = f"silver/{cartridge}/{name}/data.parquet"
+                # Scope the physical path to the caller's tenant/workspace.
+                # Without this a scoped user could delete another tenant's
+                # silver parquet (which is also stored under
+                # silver/<cart>/<name>/... but with a different tenant_id=
+                # /workspace_id= partition).
+                user_context = _trusted_user_context(body, args)
+                scoped_path = engine._silver_path(cartridge, name, user_context)
+                prefix = f"s3://{engine.minio_bucket}/"
+                obj_path = (
+                    scoped_path[len(prefix):]
+                    if scoped_path.startswith(prefix)
+                    else f"silver/{cartridge}/{name}/data.parquet"
+                )
                 mc.remove_object(engine.minio_bucket, obj_path)
                 steps.append(f"parquet deleted: s3://{engine.minio_bucket}/{obj_path}")
             except Exception as exc:
