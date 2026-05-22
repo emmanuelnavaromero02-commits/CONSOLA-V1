@@ -537,6 +537,11 @@ async def activate_product(cartridge_id: str, user: dict, *, source: str = "cons
     p = await cartridge_service.pool()
     async with p.acquire() as conn:
         await _ensure_products(conn)
+        # CRITICAL: re-validate marketplace_products.status and internal_only
+        # before approving. Without this an existing installation in
+        # 'requested' state could be force-approved by an admin even after
+        # the product was marked internal_only / paused / revoked.
+        await _assert_product_activatable(conn, cartridge_id)
         installation = await conn.fetchrow(
             """
             SELECT ci.id
@@ -685,6 +690,10 @@ async def approve_installation(installation_id: str, user: dict, *, source: str 
         message="Cartucho aprobado por el administrador y habilitado para el workspace.",
         source=source,
         allowed_installation_statuses={"requested", "pending_connection", "waiting_credentials", "failed", "ready"},
+        # CISO R3 hardening: re-check internal_only/status inside the
+        # transaction so a concurrent metadata flip cannot slip through
+        # between activate_product's pre-validation and the approval.
+        assert_product_activatable=True,
     )
 
 
@@ -715,7 +724,39 @@ async def revoke_installation(installation_id: str, user: dict) -> dict[str, Any
     )
 
 
+async def _assert_product_activatable(conn, cartridge_id: str) -> None:
+    """Reject reactivation/approval if the marketplace product is no longer
+    eligible: archived/disabled status or `internal_only=true`. Without this
+    check an admin could reopen access to a cartridge that has been
+    classified internal-only after the original installation was created."""
+    product = await conn.fetchrow(
+        """
+        SELECT p.status,
+               COALESCE(p.metadata->>'internal_only', 'false') AS internal_only
+          FROM marketplace_products p
+         WHERE p.cartridge_id = $1
+        """,
+        cartridge_id,
+    )
+    if not product:
+        raise MarketplaceError(f"cartridge '{cartridge_id}' is not registered in marketplace")
+    if str(product["status"] or "").lower() != "active":
+        raise MarketplaceError(
+            f"cartridge '{cartridge_id}' is not available (product status: {product['status']})"
+        )
+    if str(product["internal_only"] or "").lower() in {"true", "1", "yes", "on"}:
+        raise MarketplaceError(
+            f"cartridge '{cartridge_id}' is internal-only and cannot be activated"
+        )
+
+
 async def reactivate_installation(installation_id: str, user: dict) -> dict[str, Any]:
+    # Phase-0 P0 + CISO R3 hardening:
+    # 1) Reactivation must NOT bypass internal_only / status checks.
+    # 2) The validation must run INSIDE the same transaction as the state
+    #    change (`_set_installation_state` with `assert_product_activatable
+    #    =True`) so a concurrent admin cannot flip the product metadata in
+    #    the gap between the check and the approval.
     return await _set_installation_state(
         installation_id,
         user,
@@ -725,6 +766,7 @@ async def reactivate_installation(installation_id: str, user: dict) -> dict[str,
         action="cartridge_reactivated",
         message="Acceso reactivado para el workspace.",
         allowed_installation_statuses={"paused", "revoked", "expired", "suspended"},
+        assert_product_activatable=True,
     )
 
 
@@ -998,6 +1040,7 @@ async def _set_installation_state(
     source: str = "console_admin",
     ends_now: bool = False,
     allowed_installation_statuses: set[str] | None = None,
+    assert_product_activatable: bool = False,
 ) -> dict[str, Any]:
     if not _is_platform_admin(user):
         raise MarketplaceError("admin role required")
@@ -1030,6 +1073,38 @@ async def _set_installation_state(
                 raise MarketplaceError("installation not found")
             if allowed_installation_statuses is not None and row["old_installation_status"] not in allowed_installation_statuses:
                 raise MarketplaceError("installation transition not allowed from current status")
+            # CISO Round-3 hardening: TOCTOU between an external
+            # `_assert_product_activatable(conn, ...)` and this transaction
+            # let an admin reactivate an internal_only cartridge if another
+            # admin flipped the metadata in the small window between the
+            # validation and the state change. Re-check here, INSIDE the
+            # same transaction that holds the FOR UPDATE row lock, so the
+            # check-and-set is atomic from the marketplace_products POV.
+            if assert_product_activatable:
+                product = await conn.fetchrow(
+                    """
+                    SELECT p.status,
+                           COALESCE(p.metadata->>'internal_only', 'false') AS internal_only
+                      FROM marketplace_products p
+                     WHERE p.cartridge_id = $1
+                     FOR SHARE
+                    """,
+                    row["cartridge_id"],
+                )
+                if not product:
+                    raise MarketplaceError(
+                        f"cartridge '{row['cartridge_id']}' is not registered in marketplace"
+                    )
+                if str(product["status"] or "").lower() != "active":
+                    raise MarketplaceError(
+                        f"cartridge '{row['cartridge_id']}' is not available "
+                        f"(product status: {product['status']})"
+                    )
+                if str(product["internal_only"] or "").lower() in {"true", "1", "yes", "on"}:
+                    raise MarketplaceError(
+                        f"cartridge '{row['cartridge_id']}' is internal-only "
+                        f"and cannot be activated"
+                    )
 
             await conn.execute(
                 """

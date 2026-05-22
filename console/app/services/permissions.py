@@ -263,8 +263,11 @@ def get_effective_permissions(user: dict | None = None, role: str | None = None)
 def has_permission(user: dict | None, permission: str) -> bool:
     if permission not in PERMISSION_KEYS:
         return False
-    if permission == "marketplace.admin":
-        return canonical_role((user or {}).get("role")) in {"owner", "super_admin", "admin"}
+    # All permissions, including `marketplace.admin`, must flow through the
+    # canonical permission registry (ROLE_PERMISSIONS). The global ``admin``,
+    # ``owner`` and ``super_admin`` roles already include ``marketplace.admin``
+    # via PERMISSION_KEYS; ``workspace_admin`` deliberately does not, so a
+    # workspace-scoped admin cannot administer the global marketplace.
     return permission in get_effective_permissions(user)
 
 
