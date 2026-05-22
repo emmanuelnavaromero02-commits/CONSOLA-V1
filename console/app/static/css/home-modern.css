@@ -780,3 +780,205 @@ body {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* ------------------------------------------------------------------
+ * SaaS-context identity bar — mounted above the hero on the Home,
+ * consumed via the OmegaSecurityContext widget. Three columns:
+ *   left: identity (email + global role)
+ *   mid:  workspace context (workspace_id + tenant + workspace_role)
+ *   right: counters chips + link to /mis-accesos
+ *
+ * Falls back to a single-column stack on narrow screens.
+ * ------------------------------------------------------------------ */
+.home-identity-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px 28px;
+  align-items: center;
+  padding: 16px 22px;
+  margin-bottom: 18px;
+  border: 1px solid var(--home-border, rgba(15, 23, 42, 0.08));
+  border-radius: 12px;
+  background: var(--home-surface, #ffffff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.home-identity-left,
+.home-identity-mid,
+.home-identity-right {
+  min-width: 0;
+}
+
+.home-identity-eyebrow {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--home-muted, #6b7280);
+  margin-bottom: 4px;
+}
+
+.home-identity-email {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--home-navy, #0f172a);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.home-identity-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--home-muted, #6b7280);
+  margin-right: 8px;
+}
+
+.home-identity-roles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.home-identity-workspace {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--home-navy, #0f172a);
+  font-family: var(--font-mono, ui-monospace, "SF Mono", monospace);
+  word-break: break-all;
+  margin-bottom: 6px;
+}
+
+.home-identity-tenant {
+  font-size: 11px;
+  color: var(--home-muted, #6b7280);
+  margin-bottom: 4px;
+}
+
+.home-identity-muted {
+  color: var(--home-muted, #6b7280);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* Inline warning shown inside the identity bar when the user has no
+   workspace assignment. Kept compact so it doesn't blow up the bar
+   height; the copy is the action ("contact admin"). */
+.home-identity-warning {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border-left: 3px solid #f59e0b;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.home-identity-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.home-identity-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.home-identity-cta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  text-decoration: none;
+  padding: 6px 12px;
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.home-identity-cta:hover {
+  background: var(--primary-soft, rgba(37, 99, 235, 0.08));
+}
+
+/* Generic chip primitives used by the widget so they can be reused on
+ * other pages without redefining the look. */
+.omega-sc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--home-navy, #0f172a);
+  white-space: nowrap;
+}
+
+.omega-sc-chip-perms {
+  background: rgba(37, 99, 235, 0.10);
+  color: var(--primary, #2563eb);
+}
+
+.omega-sc-chip-allow {
+  background: rgba(22, 163, 74, 0.10);
+  color: #15803d;
+}
+
+.omega-sc-chip-deny {
+  background: rgba(220, 38, 38, 0.10);
+  color: #b91c1c;
+}
+
+.omega-sc-role {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--home-navy, #0f172a);
+}
+
+.omega-sc-role-platform {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.omega-sc-role-scoped {
+  background: rgba(37, 99, 235, 0.10);
+  color: var(--primary, #2563eb);
+}
+
+.omega-sc-role-workspace {
+  background: rgba(176, 109, 0, 0.15);
+  color: #b06d00;
+}
+
+.omega-sc-role-muted {
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--home-muted, #6b7280);
+  font-weight: 500;
+}
+
+@media (max-width: 880px) {
+  .home-identity-bar {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .home-identity-right {
+    align-items: flex-start;
+  }
+  .home-identity-chips {
+    justify-content: flex-start;
+  }
+}

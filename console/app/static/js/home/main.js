@@ -11,7 +11,7 @@ import {
 } from './api.js';
 import { applyPermissionsFromRole, setState, state } from './state.js';
 import { renderHome, renderVersionBadge } from './render.js';
-import { renderMarketplace, renderMarketplaceAdmin } from '../marketplace.js';
+import { renderMarketplace, renderMarketplaceAdmin, renderCustomerCartridges } from '../marketplace.js';
 import { cycleTheme } from '../theme.js';
 import { humanizeError, humanizeTerm } from '../i18n/labels.js';
 
@@ -56,6 +56,14 @@ async function loadHomeData() {
   const role = user?.workspace_role || user?.role || 'anonymous';
   setState({ user, role });
   applyPermissionsFromRole(role);
+
+  // SaaS context from /api/me/access (single source of truth for the
+  // identity bar shown above the hero). The widget never throws — it
+  // returns an empty snapshot on 401/403/5xx so the home still renders.
+  if (window.OmegaSecurityContext && typeof window.OmegaSecurityContext.load === 'function') {
+    const snapshot = await optional('me access', () => window.OmegaSecurityContext.load(), null);
+    setState({ meAccess: snapshot });
+  }
 
   const config = await optional('config', fetchConfig, {});
   if (config.workspace_url) setState({ workspaceUrl: config.workspace_url });
@@ -103,8 +111,13 @@ export async function initHomeControlPlane() {
   if (!root) return;
   try {
     await loadHomeData();
-    if (window.location.pathname === '/marketplace' || window.location.pathname === '/customer/cartridges') {
+    if (window.location.pathname === '/marketplace') {
       await renderMarketplace(root);
+    } else if (window.location.pathname === '/customer/cartridges') {
+      // Phase-4 — separate view: focused on the workspace's own
+      // installations (status, retry, support), without the commercial
+      // catalog grid that lives on /marketplace.
+      await renderCustomerCartridges(root);
     } else if (window.location.pathname === '/admin/installations' || window.location.pathname === '/admin/licenses') {
       await renderMarketplaceAdmin(root);
     } else {

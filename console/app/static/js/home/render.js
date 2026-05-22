@@ -364,6 +364,24 @@ function renderStatusStrip() {
   return strip;
 }
 
+function renderIdentityBar() {
+  // Compact SaaS-context banner above the hero. Reads from the snapshot
+  // hydrated by home/main.js via window.OmegaSecurityContext.
+  //
+  // We delegate the actual rendering to the widget so /copilot and other
+  // pages can reuse the exact same DOM structure later.
+  if (!window.OmegaSecurityContext || typeof window.OmegaSecurityContext.renderHomeIdentityBar !== 'function') {
+    // Defensive: log so an ops user grepping the console sees why the
+    // banner is missing (R1-Frontend hygiene note). The page still
+    // renders normally without the bar.
+    console.warn('[home] OmegaSecurityContext widget not loaded — identity bar skipped');
+    return null;
+  }
+  const snap = state.meAccess
+    || (window.__omegaSecurityContext || window.OmegaSecurityContext.emptySnapshot('hydrating'));
+  return window.OmegaSecurityContext.renderHomeIdentityBar(snap);
+}
+
 export function renderHome(root) {
   root.replaceChildren();
   const shell = el('div', 'home-shell');
@@ -371,6 +389,8 @@ export function renderHome(root) {
   // The home surface is permission-aware: unavailable actions disappear
   // instead of becoming dead buttons. Admin-only sections stay hidden from
   // customer/workspace users even when the backend would still deny access.
+  const identityBar = renderIdentityBar();
+  if (identityBar) container.append(identityBar);
   container.append(renderHero());
   container.append(renderOperational());
   if (isAdminUser()) {

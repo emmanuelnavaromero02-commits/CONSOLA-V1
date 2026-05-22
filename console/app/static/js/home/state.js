@@ -9,6 +9,11 @@ export const state = {
   activity: {},
   loading: true,
   errors: [],
+  // SaaS context snapshot from GET /api/me/access. Populated by
+  // home/main.js via window.OmegaSecurityContext.load(). Stays null
+  // until the call completes; the banner gracefully handles both null
+  // and an unauthorized snapshot.
+  meAccess: null,
 };
 
 export function setState(patch) {
