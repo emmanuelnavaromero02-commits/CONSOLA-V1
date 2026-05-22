@@ -752,3 +752,152 @@
   font-size: 11px;
   color: var(--text2);
 }
+
+/* ────────────────────────────────────────────────────────────────────
+ * Phase-5 — SaaS context panel mounted in the sidebar between the
+ * conversation list and the footer. Read-only. No actions wired.
+ * Surfaces workspace + workspace_role + cartuchos disponibles/bloqueados
+ * so the user understands the bounded scope the copilot sees.
+ * ──────────────────────────────────────────────────────────────────── */
+.copilot-context-panel {
+  margin: 0 18px 14px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--surface-soft, var(--color-surface));
+  font-size: 12px;
+  color: var(--text2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* The sidebar is sticky and capped by max-height; let this panel
+     shrink with its own scroller if a workspace has many cartridges. */
+  max-height: 38vh;
+  overflow-y: auto;
+}
+
+.copilot-context-eyebrow {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+
+.copilot-context-section-title {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.copilot-context-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.copilot-context-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text3);
+  min-width: 64px;
+}
+
+.copilot-context-value {
+  color: var(--text);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.copilot-context-muted {
+  color: var(--text3);
+  font-style: italic;
+  font-size: 11px;
+  margin: 4px 0 0;
+  line-height: 1.45;
+}
+
+.copilot-context-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.copilot-context-item {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.copilot-context-item-name {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copilot-context-item-id {
+  color: var(--text3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+}
+
+.copilot-context-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text3);
+}
+
+.copilot-context-dot-ok   { background: #15803d; }
+.copilot-context-dot-deny { background: #b91c1c; }
+
+.copilot-context-cta {
+  margin-top: 8px;
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--primary);
+}
+.copilot-context-cta:hover { text-decoration: underline; }
+
+/* R1-UX gap #3 — promote the no-workspace state from muted text to a
+   visible warning block so the user can't miss it. */
+.copilot-context-warning {
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.10);
+  border-radius: 4px;
+  color: #92400e;
+}
+.copilot-context-warning strong {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #92400e;
+  margin-bottom: 4px;
+}
+.copilot-context-warning p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #92400e;
+}

@@ -205,7 +205,11 @@ function renderInstallations() {
   const host = document.getElementById('market-installations');
   if (!host) return;
   if (!view.installations.length) {
-    host.innerHTML = '<div class="empty">Sin cartuchos activos o solicitados para este workspace.</div>';
+    const emptyMsg = view.mode === 'customer'
+      ? 'Tu workspace todavía no tiene cartuchos activos ni solicitados. ' +
+        'Abre el catálogo en Marketplace para pedir uno; un administrador deberá aprobarlo.'
+      : 'Sin cartuchos activos o solicitados para este workspace.';
+    host.innerHTML = `<div class="empty">${esc(emptyMsg)}</div>`;
     return;
   }
   host.innerHTML = view.installations.map((row) => {
@@ -560,6 +564,95 @@ export async function renderMarketplace(root) {
     const host = document.getElementById('market-products');
     if (host) host.innerHTML = `<div class="empty">Error cargando marketplace: ${esc(error.message)}</div>`;
     toast(error.message || 'Error cargando marketplace.', 'error');
+  });
+}
+
+// Phase-4 — /customer/cartridges is the "Mis cartuchos" view.
+// Same backend (`/api/customer/cartridges`) but the shell is focused on
+// the workspace's actual installations: status, last activity, retry,
+// support. The catalog and search are deliberately hidden so the user
+// does not see commercial copy alongside their operational state.
+function renderCustomerShell(root) {
+  root.replaceChildren();
+  view.workspaceId = state.user?.active_workspace_id || view.workspaceId;
+  const shell = el('div', 'home-shell marketplace-view marketplace-customer');
+  const container = el('div', 'home-container market-main');
+
+  const top = el('header', 'market-top');
+  const copy = el('div');
+  copy.append(
+    el('p', 'eyebrow', 'Mis cartuchos'),
+    el('h2', null, 'Cartuchos del workspace'),
+    el(
+      'p',
+      null,
+      'Estos son los cartuchos disponibles para tu workspace. Aquí ves el estado real ' +
+      '(activo, pendiente, pausado, revocado) y puedes reintentar instalaciones fallidas. ' +
+      'Para solicitar un cartucho nuevo, abre Marketplace.'
+    ),
+  );
+  const actions = el('div', 'top-actions');
+  const selector = workspaceSelector();
+  if (selector) actions.appendChild(selector);
+  const catalog = el('a', 'btn secondary', 'Ver catálogo');
+  catalog.href = '/marketplace';
+  const workspace = el('a', 'btn secondary', 'Workspace');
+  workspace.href = '/workspace';
+  const refresh = el('button', 'btn primary', 'Actualizar');
+  refresh.type = 'button';
+  refresh.dataset.marketRefresh = 'true';
+  actions.append(catalog, workspace, refresh);
+  top.append(copy, actions);
+
+  const metrics = el('section', 'metrics');
+  metrics.id = 'market-metrics';
+
+  const installs = el('div', 'install-list');
+  installs.id = 'market-installations';
+  installs.appendChild(el('div', 'empty', 'Cargando cartuchos del workspace...'));
+
+  container.append(
+    top,
+    metrics,
+    panel(
+      'Mis cartuchos',
+      'Estado actual de los cartuchos solicitados o activos para tu workspace. ' +
+      'No es el catálogo comercial — usa “Ver catálogo” para descubrir más.',
+      installs,
+    ),
+  );
+  shell.append(renderTopbar(), container);
+  root.appendChild(shell);
+}
+
+// Customer view — same load function so we share metrics + installations
+// data; the renderer just skips the catalog panel.
+function renderCustomerAll() {
+  renderMetrics();
+  renderInstallations();
+}
+
+async function loadCustomerCartridges() {
+  // We still fetch products so the metrics block (which counts the
+  // catalog size in the header) renders correctly; the catalog grid is
+  // not painted in customer mode.
+  const [productData, installData] = await Promise.all([
+    fetchJson('/api/marketplace/products'),
+    fetchJson('/api/customer/cartridges'),
+  ]);
+  view.products = productData.products || [];
+  view.installations = installData.installations || [];
+  renderCustomerAll();
+}
+
+export async function renderCustomerCartridges(root) {
+  view.mode = 'customer';
+  view.root = root;
+  renderCustomerShell(root);
+  await loadCustomerCartridges().catch((error) => {
+    const host = document.getElementById('market-installations');
+    if (host) host.innerHTML = `<div class="empty">Error cargando tus cartuchos: ${esc(error.message)}</div>`;
+    toast(error.message || 'Error cargando tus cartuchos.', 'error');
   });
 }
 

@@ -55,6 +55,63 @@
       background: rgba(255,255,255,.04); color: var(--text2);
       border: 1px solid var(--border);
     }
+    /* Phase-3 — grouped permissions by domain. */
+    .perm-group { margin-bottom: 14px; }
+    .perm-group:last-child { margin-bottom: 0; }
+    .perm-group-head {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 6px;
+    }
+    .perm-group-title {
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--text2); letter-spacing: 1.5px; text-transform: uppercase;
+    }
+    .perm-group-count {
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--text3);
+      background: rgba(255,255,255,.04);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 1px 6px;
+    }
+
+    .role-hint {
+      font-size: 11px; color: var(--text2);
+      line-height: 1.45; margin: 6px 0 0;
+    }
+    .role-hint strong { color: var(--amber); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; }
+
+    /* Phase-3 cartridge cards (replace previous row layout). */
+    .cart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .cart-card {
+      background: rgba(255,255,255,.02);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .cart-card-allow { border-left: 3px solid var(--green); }
+    .cart-card-deny  { border-left: 3px solid var(--red); opacity: .85; }
+    .cart-card-head { display: flex; flex-direction: column; gap: 2px; }
+    .cart-card-name { color: var(--text1); font-size: 13px; font-weight: 600; }
+    .cart-card-id   { color: var(--text3); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; }
+    .cart-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    .cart-status {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
+      padding: 2px 6px; border-radius: 3px;
+    }
+    .cart-status.ok    { background: rgba(94,179,89,.15); color: var(--green); }
+    .cart-status.warn  { background: rgba(176,109,0,.15); color: var(--amber); }
+    .cart-status.deny  { background: rgba(179,38,30,.15); color: var(--red); }
+    .cart-status.muted { background: rgba(255,255,255,.06); color: var(--text3); }
+    .cart-substatus    { color: var(--text3); font-size: 10px; }
+
+    /* Backwards-compat for any legacy bits that still emit .badge / .cart-row */
     .cart-row {
       display: flex; align-items: center; justify-content: space-between;
       padding: 10px 0; border-bottom: 1px solid var(--border);
@@ -121,10 +178,11 @@
 
     <section class="card">
       <h2>PERMISOS EFECTIVOS</h2>
-      <ul class="perm-list" id="perm-list"></ul>
+      <div id="perm-groups"></div>
       <div class="muted-note">
-        Estos permisos se evalúan server-side en cada llamada. Si una acción
-        no aparece aquí, la consola la bloqueará incluso si llegas por URL.
+        Los permisos se agrupan por dominio. Cada llamada al backend valida
+        el permiso del lado del servidor: si una acción no aparece aquí, la
+        consola la bloqueará incluso si llegas por URL.
       </div>
     </section>
 
@@ -144,21 +202,28 @@
     </section>
 
     <section class="card">
-      <h2>SOPORTE</h2>
+      <h2>ACCIONES DISPONIBLES</h2>
       <div class="help-actions">
         <a href="/me">CAMBIAR PASSWORD</a>
+        <a href="/marketplace">SOLICITAR ACCESO A CARTUCHO</a>
+        <a href="/customer/cartridges">VER MIS CARTUCHOS</a>
         <a id="link-sessions" href="/security" style="display:none">VER SESIONES ACTIVAS</a>
-        <a id="link-iam" href="/iam" style="display:none">PANEL IAM</a>
+        <a id="link-audit" href="/security" style="display:none">VER AUDITORÍA</a>
+        <a id="link-workspace-admin" href="/iam" style="display:none">ADMIN WORKSPACE</a>
+        <a id="link-iam" href="/iam" style="display:none">PANEL IAM GLOBAL</a>
         <a id="link-marketplace-admin" href="/admin/installations" style="display:none">ADMIN MARKETPLACE</a>
       </div>
       <div class="muted-note">
-        El cambio de password está disponible para cualquier usuario
-        autenticado. Los demás enlaces solo aparecen si tu rol tiene
-        permiso para ellos; el backend valida cada acción.
+        Cambio de password, Marketplace y Mis cartuchos están disponibles
+        para cualquier usuario autenticado. Los demás enlaces solo aparecen
+        si tu rol tiene permiso; el backend valida cada acción.
       </div>
     </section>
   </main>
 
+  <!-- Phase-3 — shared SaaS-context client. Must load BEFORE my_access.js
+       so window.OmegaSecurityContext is defined when the page boots. -->
+  <script src="/static/js/security_context_widget.js"></script>
   <script src="/static/js/my_access.js"></script>
 </body>
 </html>

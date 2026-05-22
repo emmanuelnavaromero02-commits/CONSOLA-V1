@@ -758,6 +758,41 @@
     }
   });
 
+  // ------------------------------------------------------------------
+  // Phase-5 — SaaS context panel inside the sidebar.
+  //
+  // We do NOT touch the LLM prompt, the conversation flow, the approval
+  // gates or the backend wiring. The panel is read-only and exists to
+  // remind the user which workspace + cartridges the copilot is bound
+  // to so they stop asking "why no veo X". The panel is rebuilt once
+  // per page load from /api/me/access (single fetch, shared with any
+  // other widget on the page that uses the global widget).
+  // ------------------------------------------------------------------
+  async function mountContextPanel() {
+    if (!window.OmegaSecurityContext || typeof window.OmegaSecurityContext.load !== "function") {
+      return;
+    }
+    const sidebar = document.querySelector(".copilot-sidebar");
+    if (!sidebar) return;
+    const footer = sidebar.querySelector(".copilot-sidebar-footer");
+    let snap;
+    try {
+      snap = await window.OmegaSecurityContext.load();
+    } catch (_) {
+      return;
+    }
+    const panel = window.OmegaSecurityContext.renderCopilotContextPanel(snap);
+    if (!panel) return;
+    // Drop any previous render (defensive, in case this runs twice).
+    sidebar.querySelectorAll("#omega-sc-copilot-panel").forEach((n) => n.remove());
+    if (footer) {
+      sidebar.insertBefore(panel, footer);
+    } else {
+      sidebar.appendChild(panel);
+    }
+  }
+
   // Initial load.
   loadConversations();
+  mountContextPanel();
 })();

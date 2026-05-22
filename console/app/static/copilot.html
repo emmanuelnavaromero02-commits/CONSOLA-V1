@@ -193,6 +193,10 @@
   </div>
 
   <script type="module" src="/static/js/theme.js"></script>
+  <!-- Phase-5 — SaaS context client. Loaded BEFORE copilot.js so the
+       chat client can read window.OmegaSecurityContext to render the
+       compact context panel inside the sidebar. -->
+  <script src="/static/js/security_context_widget.js"></script>
   <script src="/static/js/copilot.js" defer></script>
   <script src="/static/js/theme-switch.js" defer></script>
 </body>
