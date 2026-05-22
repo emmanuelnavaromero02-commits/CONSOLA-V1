@@ -13,6 +13,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import duckdb
 from fastapi import FastAPI, Header, HTTPException, Depends
 
 # Sprint v1.18: structured JSON logs to stdout, with secret redaction.
@@ -227,10 +228,73 @@ def _is_admin_security_context(sec: dict) -> bool:
     return bool(sec.get("trusted")) and str(sec.get("role") or "").lower() in _ADMIN_ROLES
 
 
+def _is_unscoped_admin_security_context(sec: dict) -> bool:
+    if not _is_admin_security_context(sec):
+        return False
+    if sec.get("tenant_id") or sec.get("workspace_id"):
+        return False
+    allowed = {
+        str(item).strip()
+        for item in (sec.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    return "*" in allowed
+
+
 def _prefix_allowed(sec: dict, value: str) -> bool:
     value = (value or "").lstrip("/")
+    if not value:
+        return False
     prefixes = [str(p).lstrip("/") for p in (sec.get("allowed_prefixes") or [])]
-    return bool(value) and any(value.startswith(prefix) for prefix in prefixes)
+    if any(value.startswith(prefix) for prefix in prefixes):
+        return True
+    if _is_unscoped_admin_security_context(sec):
+        return True
+
+    allowed_cartridges = {
+        str(item).strip().strip("/")
+        for item in (sec.get("allowed_cartridges") or [])
+        if str(item).strip().strip("/")
+    }
+    parts = value.split("/")
+    if len(parts) < 2:
+        return False
+    layer, cartridge = parts[0], parts[1]
+    if cartridge not in allowed_cartridges:
+        return False
+    tenant = str(sec.get("tenant_id") or "").strip()
+    workspace = str(sec.get("workspace_id") or "").strip()
+    scoped = bool(tenant and workspace)
+
+    if layer == "cartridges":
+        return True
+    if layer == "uploads":
+        if not scoped:
+            return value.startswith(f"uploads/{cartridge}/")
+        return value.startswith(f"uploads/{cartridge}/tenant_id={tenant}/workspace_id={workspace}/")
+    if layer == "raw":
+        if len(parts) == 3:
+            return True
+        if scoped and len(parts) >= 5:
+            return parts[3] == f"tenant_id={tenant}" and parts[4] == f"workspace_id={workspace}"
+        return not scoped and value.startswith(f"raw/{cartridge}/")
+    if layer in {"silver", "gold"}:
+        if len(parts) == 3:
+            return True
+        if scoped and len(parts) >= 5:
+            return parts[3] == f"tenant_id={tenant}" and parts[4] == f"workspace_id={workspace}"
+        return not scoped and value.startswith(f"{layer}/{cartridge}/")
+    return False
+
+
+def _require_cartridge_scope(sec: dict, cartridge_id: str) -> None:
+    cartridge_id = str(cartridge_id or "").strip()
+    if not cartridge_id:
+        raise HTTPException(403, "cartridge_id is required")
+    if _is_unscoped_admin_security_context(sec):
+        return
+    if not _prefix_allowed(sec, f"cartridges/{cartridge_id}/"):
+        raise HTTPException(403, "cartridge not allowed")
 
 
 def _require_source_scope(body: dict, source: str) -> dict:
@@ -241,7 +305,7 @@ def _require_source_scope(body: dict, source: str) -> dict:
 
 
 def _dataset_allowed(sec: dict, ds: dict) -> bool:
-    if _is_admin_security_context(sec):
+    if _is_unscoped_admin_security_context(sec):
         return True
     workspace_id = str(ds.get("workspace_id") or "")
     sec_workspace = str(sec.get("workspace_id") or "")
@@ -262,6 +326,7 @@ def _require_dataset_scope(body: dict, ds: dict, permission: str = "datasets.rea
 
 def _s3_path_to_bucket_key(path: str) -> tuple[str, str]:
     path = (path or "").strip()
+    path = path.replace("s3://{bucket}/", f"s3://{engine.minio_bucket}/", 1)
     if not path.startswith("s3://"):
         return "", ""
     rest = path[5:]
@@ -277,6 +342,93 @@ def _s3_path_to_key(path: str) -> str:
 
 def _mask_single_quoted(sql: str) -> str:
     return _SINGLE_QUOTED_RE.sub("''", sql or "")
+
+
+def _strip_sql_comments(sql: str) -> str:
+    text = sql or ""
+    out: list[str] = []
+    i = 0
+    quote: str | None = None
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                if nxt == quote:
+                    out.append(nxt)
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in {"'", '"'}:
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "-" and nxt == "-":
+            while i < len(text) and text[i] not in "\r\n":
+                i += 1
+            out.append("\n")
+            continue
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < len(text) and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i = min(i + 2, len(text))
+            out.append(" ")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict]:
+    msg = str(exc)
+    lower = msg.lower()
+    missing_parquet = (
+        ("no files found" in lower and ("read_parquet" in lower or "s3://" in lower))
+        or ("404" in lower and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower))
+    )
+    if missing_parquet:
+        return 409, {
+            "code": "source_files_missing",
+            "message": (
+                f"Dataset '{dataset_name}' no encuentra archivos Parquet para una fuente. "
+                "Ejecuta primero la extracción o materializa la dependencia upstream."
+            ),
+            "detail": msg,
+        }
+    if "404 (not found)" in lower and ("read_parquet" in lower or "lakehouse/" in lower or "s3://" in lower):
+        return 409, {
+            "code": "dependency_not_materialized",
+            "message": (
+                f"Dataset '{dataset_name}' necesita una fuente Silver/Gold que todavía "
+                "no existe. Materializa primero sus dependencias y vuelve a intentar."
+            ),
+            "detail": msg,
+        }
+    if "table with name" in lower and "does not exist" in lower:
+        return 409, {
+            "code": "dependency_table_missing",
+            "message": (
+                f"Dataset '{dataset_name}' referencia una tabla que no existe. "
+                "Selecciona una fuente válida o materializa la tabla upstream."
+            ),
+            "detail": msg,
+        }
+    if "catalog error" in lower:
+        return 422, {
+            "code": "duckdb_catalog_error",
+            "message": f"No se pudo resolver el catálogo para '{dataset_name}'.",
+            "detail": msg,
+        }
+    return 422, {
+        "code": "materialization_failed",
+        "message": f"No se pudo materializar '{dataset_name}'.",
+        "detail": msg,
+    }
 
 
 def _reader_storage_key(path: str) -> str:
@@ -303,7 +455,7 @@ def _require_sql_path_scope(sec: dict, path: str) -> None:
 
 def _require_sql_storage_scope(body: dict, sql: str, sources: list[str] | None = None) -> None:
     sec = _require_security_permission(body, "datasets.read")
-    sql = sql or ""
+    sql = _strip_sql_comments(sql or "")
     masked = _mask_single_quoted(sql)
     if not _SQL_START_RE.search(masked):
         raise HTTPException(403, "SQL must be a read-only SELECT/WITH statement")
@@ -807,16 +959,17 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "get_source_partitions":
         _require_source_scope(body, args["source"])
-        return engine.get_source_partitions(args["source"])
+        return engine.get_source_partitions(args["source"], _trusted_user_context(body, args))
 
     if tool == "preview_source":
         _require_source_scope(body, args["source"])
-        return engine.preview_source(args["source"], args.get("limit", 5))
+        return engine.preview_source(args["source"], args.get("limit", 5), _trusted_user_context(body, args))
 
     if tool == "generate_transform":
         for source in args["sources"]:
             _require_source_scope(body, source)
-        schemas = {s: engine.get_source_schema(s) for s in args["sources"]}
+        ctx = _trusted_user_context(body, args)
+        schemas = {s: engine.get_source_schema(s, ctx) for s in args["sources"]}
         sql, explanation = await generate_sql(args["description"], schemas)
         return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
 
@@ -909,9 +1062,13 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds, "datasets.write")
-        result = engine.materialize(ds)
+        try:
+            result = engine.materialize(ds, _trusted_user_context(body, args))
+        except (duckdb.Error, ValueError) as exc:
+            status_code, detail = _friendly_duckdb_error(exc, args["name"])
+            raise HTTPException(status_code=status_code, detail=detail) from exc
         store.update_refresh(args["name"], result["row_count"])
-        _reindex_dataset_best_effort(args["name"])
+        _reindex_dataset_best_effort(args["name"], body)
         return result
 
     if tool == "list_datasets":
@@ -952,8 +1109,9 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         source = args["source"]
         _require_source_scope(body, source)
         limit  = args.get("limit", 3)
-        schema = engine.get_source_schema(source)
-        preview = engine.preview_source(source, limit)
+        ctx = _trusted_user_context(body, args)
+        schema = engine.get_source_schema(source, ctx)
+        preview = engine.preview_source(source, limit, ctx)
         return {
             "source":  source,
             "fields":  schema.get("fields", []),
@@ -971,7 +1129,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         _require_dataset_scope(body, ds)
         cartridge = ds.get("cartridge", "unknown")
         _validate_dataset_name(cartridge)
-        parquet   = f"s3://{engine.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
+        parquet   = engine._silver_path(cartridge, name, _trusted_user_context(body, args))
         try:
             with engine._duckdb_lock:
                 con = engine._conn()
@@ -1051,6 +1209,11 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
     if tool == "publish_app":
         sec = _require_security_permission(body, "apps.write")
         args = {**args, "created_by_id": sec.get("user_id")}
+        cartridge_id = str(args.get("cartridge_id") or "").strip()
+        if not cartridge_id and not _is_unscoped_admin_security_context(sec):
+            return {"error": "cartridge_id is required for published apps outside admin context"}
+        if cartridge_id:
+            _require_cartridge_scope(sec, cartridge_id)
         return _publish_app(args)
 
     if tool == "list_apps":
@@ -1339,12 +1502,18 @@ def _publish_app(args: dict) -> dict:
 
 
 def _app_visible(sec: dict, row: dict) -> bool:
-    if _is_admin_security_context(sec):
+    if _is_unscoped_admin_security_context(sec):
         return True
+    cartridge = str(row.get("cartridge_id") or "").strip()
+    is_owner = row.get("created_by_id") is not None and str(row.get("created_by_id")) == str(sec.get("user_id"))
+    if not cartridge:
+        return is_owner
+    if not _prefix_allowed(sec, f"cartridges/{cartridge}/"):
+        return False
     visibility = str(row.get("visibility") or "private")
     if visibility in {"shared", "public"}:
         return True
-    return row.get("created_by_id") is not None and str(row.get("created_by_id")) == str(sec.get("user_id"))
+    return is_owner
 
 
 def _get_app_details(args: dict, sec: dict) -> dict:
@@ -1387,7 +1556,7 @@ def _get_app_html(args: dict, sec: dict) -> dict:
 def _list_apps(sec: dict) -> dict:
     try:
         rows = _pg_exec(
-            "SELECT name, title, description, datasets_used, visibility, created_by_id, updated_at "
+            "SELECT name, title, description, cartridge_id, datasets_used, visibility, created_by_id, updated_at "
             "FROM analytic_apps ORDER BY updated_at DESC",
             fetch=True,
         ) or []
@@ -1405,13 +1574,17 @@ def _list_apps(sec: dict) -> dict:
 def _delete_app(args: dict, sec: dict) -> dict:
     name = args["name"]
     existing = _pg_exec(
-        "SELECT name, visibility, created_by_id FROM analytic_apps WHERE name=%s",
+        "SELECT name, visibility, cartridge_id, created_by_id FROM analytic_apps WHERE name=%s",
         (name,),
         fetch=True,
     ) or []
     if not existing:
         return {"deleted": False, "name": name, "error": "App not found"}
-    if not (_is_admin_security_context(sec) or str(existing[0].get("created_by_id")) == str(sec.get("user_id"))):
+    row = dict(existing[0])
+    if not _app_visible(sec, row):
+        return {"deleted": False, "name": name, "error": "App not found"}
+    is_owner = str(row.get("created_by_id")) == str(sec.get("user_id"))
+    if not (_is_unscoped_admin_security_context(sec) or is_owner):
         raise HTTPException(403, "app delete requires admin or owner")
     rows = _pg_exec(
         "DELETE FROM analytic_apps WHERE name=%s RETURNING name",
@@ -1570,7 +1743,7 @@ async def list_datasets(
     return {"datasets": datasets}
 
 
-def _reindex_dataset_best_effort(name: str) -> None:
+def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> None:
     """Keep RAG schema docs fresh without blocking materialization."""
     try:
         import httpx as _httpx
@@ -1580,8 +1753,11 @@ def _reindex_dataset_best_effort(name: str) -> None:
         if not key and not _is_production():
             key = os.environ.get("INTERNAL_API_KEY") or ""
         headers = {"x-internal-service": "refinement", "x-api-key": key} if key else {}
+        payload: dict = {"kind": "dataset", "name": name}
+        if auth_body and isinstance(auth_body.get("security_context"), dict):
+            payload["security_context"] = {**auth_body["security_context"], "source": "refinement"}
         with _httpx.Client(timeout=15, headers=headers) as client:
-            client.post(f"{mcp}/rag/reindex", json={"kind": "dataset", "name": name})
+            client.post(f"{mcp}/rag/reindex", json=payload)
     except Exception:
         logger.debug("dataset RAG reindex skipped for %s", name, exc_info=True)
 
@@ -1681,10 +1857,11 @@ async def refresh_dataset(
     ds = store.get_dataset(name)
     if not ds:
         raise HTTPException(404)
-    _require_dataset_scope(_body_from_security_header(internal_service, x_security_context), ds, "datasets.write")
-    result = engine.materialize(ds)
+    auth_body = _body_from_security_header(internal_service, x_security_context)
+    _require_dataset_scope(auth_body, ds, "datasets.write")
+    result = engine.materialize(ds, _trusted_user_context(auth_body, {}))
     store.update_refresh(name, result["row_count"])
-    _reindex_dataset_best_effort(name)
+    _reindex_dataset_best_effort(name, auth_body)
     return result
 
 
@@ -1709,6 +1886,7 @@ async def refresh_by_source(
 
     all_ds   = store.list_datasets()
     sec = _require_security_permission(auth_body, "datasets.read")
+    ctx = _trusted_user_context(auth_body, {})
     matched  = [d for d in all_ds if source in (d.get("sources") or []) and _dataset_allowed(sec, d)]
     results  = []
 
@@ -1717,8 +1895,9 @@ async def refresh_by_source(
         if not ds or ds.get("layer") == "gold":
             continue  # gold depende de Silver, no de Bronze directamente
         try:
-            result = engine.materialize(ds)
+            result = engine.materialize(ds, ctx)
             store.update_refresh(meta["name"], result["row_count"])
+            _reindex_dataset_best_effort(meta["name"], auth_body)
             results.append({"name": meta["name"], "status": "ok",
                              "row_count": result["row_count"],
                              "storage_uri": result["storage_uri"]})

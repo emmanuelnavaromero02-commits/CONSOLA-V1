@@ -161,15 +161,17 @@ def _rls_user_context(user: dict | None) -> dict:
     # to depend on.
     if not user:
         return {}
-    role = user.get("role")
+    workspace_id = user.get("active_workspace_id") or user.get("workspace_id")
+    workspace_role = user.get("workspace_role")
+    role = workspace_role if workspace_id and workspace_role else user.get("role")
     return {
         "id": user.get("id"),
         "email": user.get("email", ""),
         "name": user.get("name") or user.get("email", ""),
         "role": role,
         "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
-        "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
-        "workspace_role": user.get("workspace_role"),
+        "workspace_id": workspace_id,
+        "workspace_role": workspace_role,
         "_server_trusted_context": True,
     }
 
@@ -180,10 +182,16 @@ async def _assert_dataset_visible(user: dict, dataset: str) -> None:
         raise HTTPException(404, f"Dataset '{dataset}' not found")
     p = await pg()
     row = await p.fetchrow(
-        "SELECT name FROM datasets WHERE name = $1 AND workspace_id = $2",
+        "SELECT name, cartridge FROM datasets WHERE name = $1 AND workspace_id = $2",
         dataset, ws_id,
     )
     if not row:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    cartridge = str(dict(row).get("cartridge") or "").strip()
+    if not cartridge:
+        raise HTTPException(404, f"Dataset '{dataset}' not found")
+    allowed = _allowed_cartridge_set(user)
+    if allowed is not None and cartridge not in allowed:
         raise HTTPException(404, f"Dataset '{dataset}' not found")
 
 
@@ -192,18 +200,33 @@ def _security_context(user: dict | None) -> dict:
     if not ctx:
         return {"trusted": False, "permissions": []}
     role = ctx.get("role") or "workspace_user"
-    admin = role in {"admin", "owner", "super_admin"}
-    explicit_cartridges = (user or {}).get("allowed_cartridges") or (user or {}).get("cartridges") or []
-    allowed_cartridges = explicit_cartridges or (["*"] if admin else [])
-    if admin or "*" in allowed_cartridges:
+    raw_cartridges = (user or {}).get("allowed_cartridges") if "allowed_cartridges" in (user or {}) else (user or {}).get("cartridges")
+    allowed_cartridges = list(raw_cartridges or [])
+    tenant_id = ctx.get("tenant_id")
+    workspace_id = ctx.get("workspace_id")
+    scoped = bool(tenant_id and workspace_id)
+    if "*" in allowed_cartridges and not scoped:
         allowed_prefixes = ["raw/", "silver/", "gold/", "uploads/", "cartridges/"]
     else:
-        allowed_prefixes = [
-            f"{layer}/{str(cart).strip().strip('/')}/"
-            for cart in allowed_cartridges
-            for layer in ("raw", "silver", "gold", "uploads", "cartridges")
-            if str(cart).strip().strip("/")
-        ]
+        allowed_prefixes = []
+        for cart in allowed_cartridges:
+            c = str(cart).strip().strip("/")
+            if not c or c == "*":
+                continue
+            if scoped:
+                scope = f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
+                allowed_prefixes.extend([
+                    f"raw/{c}/{scope}",
+                    f"silver/{c}/{scope}",
+                    f"gold/{c}/{scope}",
+                    f"uploads/{c}/{scope}",
+                    f"cartridges/{c}/",
+                ])
+            else:
+                allowed_prefixes.extend([
+                    f"{layer}/{c}/"
+                    for layer in ("raw", "silver", "gold", "uploads", "cartridges")
+                ])
     return {
         "trusted": True,
         "source": "workspace",
@@ -211,13 +234,40 @@ def _security_context(user: dict | None) -> dict:
         "email": ctx.get("email", ""),
         "role": role,
         "workspace_role": ctx.get("workspace_role"),
-        "tenant_id": ctx.get("tenant_id"),
-        "workspace_id": ctx.get("workspace_id"),
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "permissions": ["datasets.read", "apps.read", "workspace.access"],
         "allowed_cartridges": allowed_cartridges,
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": allowed_prefixes,
     }
+
+
+def _is_admin_user(user: dict | None) -> bool:
+    return (user or {}).get("role") in {"admin", "owner", "super_admin"}
+
+
+def _allowed_cartridge_set(user: dict | None) -> set[str] | None:
+    if not user:
+        return set()
+    raw_allowed = user.get("allowed_cartridges") if "allowed_cartridges" in user else None
+    if raw_allowed is None:
+        return None if _is_admin_user(user) and not (user.get("active_workspace_id") or user.get("workspace_id")) else set()
+    allowed = {
+        str(cart).strip()
+        for cart in (raw_allowed or [])
+        if str(cart).strip()
+    }
+    if "*" in allowed:
+        return None
+    return allowed
+
+
+def _app_allowed_for_user(user: dict, app_cartridge: str | None, owner_id: int | None) -> bool:
+    if not app_cartridge:
+        return owner_id == user.get("id") or _allowed_cartridge_set(user) is None
+    allowed = _allowed_cartridge_set(user)
+    return allowed is None or app_cartridge in allowed
 
 
 def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
@@ -337,7 +387,11 @@ async def auth_middleware(request: Request, call_next):
     # Always resolve the session if a cookie is present so soft-auth endpoints
     # like /auth/me can introspect it.
     token = request.cookies.get(_session.COOKIE_NAME)
-    user  = await _session.get_session_user(token) if token else None
+    requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None
+    try:
+        user = await _session.get_session_user(token, requested_workspace_id) if token else None
+    except PermissionError:
+        return _apply_security_headers(JSONResponse({"detail": "workspace access forbidden"}, status_code=403), path)
     request.state.user = user
 
     is_public = path in _PUBLIC_EXACT or any(path.startswith(p) for p in _PUBLIC_PREFIX)
@@ -480,19 +534,23 @@ async def workspace_chat_stream(request: Request, body: dict):
 async def api_apps(request: Request):
     user = require_user(request)
     p = await pg()
-    is_admin = user.get("role") == "admin"
-    if is_admin:
+    allowed = _allowed_cartridge_set(user)
+    if allowed is None:
         rows = await p.fetch(
-            """SELECT name, title, description, updated_at, created_by_id, visibility
+            """SELECT name, title, description, updated_at, created_by_id, visibility, cartridge_id
                  FROM analytic_apps ORDER BY updated_at DESC NULLS LAST"""
         )
+    elif not allowed:
+        rows = []
     else:
         rows = await p.fetch(
-            """SELECT name, title, description, updated_at, created_by_id, visibility
+            """SELECT name, title, description, updated_at, created_by_id, visibility, cartridge_id
                  FROM analytic_apps
-                WHERE visibility = 'shared' OR created_by_id = $1
+                WHERE cartridge_id = ANY($2::text[])
+                  AND (created_by_id = $1 OR visibility = 'shared')
                 ORDER BY updated_at DESC NULLS LAST""",
             user["id"],
+            sorted(allowed or []),
         )
     return {"apps": [
         {**dict(r), "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None}
@@ -512,10 +570,13 @@ async def _load_visible_app(user: dict, name: str) -> dict:
         static_app = STATIC / "apps" / f"{name}.html"
         if static_app.is_file():
             html = static_app.read_text(encoding="utf-8")
-            return {"html": html, "datasets_used": _datasets_from_html(html)}
+            datasets_used = _datasets_from_html(html)
+            for dataset in datasets_used:
+                await _assert_dataset_visible(user, dataset)
+            return {"html": html, "datasets_used": datasets_used}
     p = await pg()
     row = await p.fetchrow(
-        """SELECT html, created_by_id, visibility, datasets_used
+        """SELECT html, created_by_id, visibility, datasets_used, cartridge_id
              FROM analytic_apps WHERE name = $1""",
         name,
     )
@@ -524,10 +585,13 @@ async def _load_visible_app(user: dict, name: str) -> dict:
     # Visibility check: shared apps are public to all logged-in users; private
     # apps are visible only to creator and admins. Returning 404 (not 403) so we
     # don't leak that the app exists.
-    is_admin = user.get("role") == "admin"
-    if row["visibility"] != "shared" and row["created_by_id"] != user["id"] and not is_admin:
+    if row["visibility"] != "shared" and row["created_by_id"] != user["id"] and not _is_admin_user(user):
+        raise HTTPException(404, f"App '{name}' not found")
+    if not _app_allowed_for_user(user, row["cartridge_id"], row["created_by_id"]):
         raise HTTPException(404, f"App '{name}' not found")
     datasets_used = row["datasets_used"] or _datasets_from_html(row["html"])
+    for dataset in datasets_used:
+        await _assert_dataset_visible(user, str(dataset))
     return {"html": row["html"], "datasets_used": [str(d) for d in datasets_used]}
 
 
@@ -835,10 +899,10 @@ async def api_users_list(request: Request):
 
 @app.get("/api/datasets")
 async def api_datasets_list(request: Request):
-    require_user(request)
+    user = require_user(request)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "list_datasets", "args": {}})
+                         json=_mcp_payload("list_datasets", {"user_context": _rls_user_context(user)}, user))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "datasets unavailable")
     return r.json()
@@ -846,10 +910,12 @@ async def api_datasets_list(request: Request):
 
 @app.get("/api/datasets/{name}/schema")
 async def api_dataset_schema(request: Request, name: str):
-    require_user(request)
+    user = require_user(request)
+    _validate_dataset_name(name)
+    await _assert_dataset_visible(user, name)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=20) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json={"tool": "get_schema", "args": {"name": name}})
+                         json=_mcp_payload("get_schema", {"name": name, "user_context": _rls_user_context(user)}, user))
     if r.status_code != 200:
         raise HTTPException(r.status_code, "schema unavailable")
     return r.json()

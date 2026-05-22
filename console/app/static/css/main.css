@@ -113,7 +113,7 @@ html, body {
 /* ── LAYOUT ──────────────────────────────────────────────────────────────── */
 .layout {
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -137,6 +137,16 @@ html, body {
   background: var(--color-surface);
   min-height: 0;
   position: relative;
+}
+
+.viewer-panel.is-collapsed {
+  height: 32px !important;
+  min-height: 32px;
+}
+
+.viewer-panel.is-collapsed .viewer-iframe,
+.viewer-panel.is-collapsed .viewer-fallback {
+  display: none !important;
 }
 
 .viewer-panel-header {
@@ -436,7 +446,8 @@ html, body {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--color-border);
-  overflow: hidden;
+  overflow-y: auto;
+  min-width: 0;
 }
 
 .panel-side {
@@ -747,6 +758,64 @@ html[data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
 .token-models { padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 3px; }
 .token-model-row { font-size: 10px; color: var(--color-text-secondary); display: flex; justify-content: space-between; }
 .token-model-name { color: var(--color-text-secondary); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── OMEGA MONITOR FRAME ─────────────────────────────────────────────────── */
+.monitor-no-sidebar .ent-topbar {
+  min-height: 62px;
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+}
+
+.monitor-no-sidebar .ent-breadcrumb {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.monitor-no-sidebar .app-body {
+  background: transparent;
+}
+
+.monitor-no-sidebar .layout {
+  min-height: 0;
+}
+
+.monitor-no-sidebar .panel-main {
+  border-left: none;
+  border-top: none;
+  min-width: 0;
+}
+
+.monitor-no-sidebar .sidebar {
+  max-width: 360px;
+  background: color-mix(in srgb, var(--color-surface) 74%, var(--color-bg));
+}
+
+.monitor-no-sidebar .panel-side {
+  background: transparent;
+}
+
+.monitor-no-sidebar .viewer-panel {
+  max-height: 64vh;
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.16);
+}
+
+.monitor-no-sidebar .viewer-panel-header {
+  min-height: 34px;
+}
+
+.monitor-no-sidebar .viewer-panel-actions .btn-sm {
+  margin-left: 0;
+}
+
+@media (max-width: 1180px) {
+  .monitor-no-sidebar .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .monitor-no-sidebar .sidebar {
+    display: none;
+  }
+}
 
 /* ── ANIMATIONS ──────────────────────────────────────────────────────────── */
 @keyframes blink {

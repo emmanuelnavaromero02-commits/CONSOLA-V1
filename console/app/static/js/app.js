@@ -2,6 +2,7 @@
 
 let _history = [];
 let _busy = false;
+let _currentUser = null;
 
 // ── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -15,6 +16,8 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 async function bootSequence() {
   await delay(400);
+  await loadMe();
+  applyPermissionVisibility();
   setText('boot-mcp-line', 'Connecting to MCP registry...');
   await loadServers(true);   // force health-check on boot
   await Promise.all([loadTokens(), loadJobs()]);
@@ -27,6 +30,38 @@ async function bootSequence() {
 function csrfToken() {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
+}
+
+async function loadMe() {
+  const data = await apiFetch('/api/me');
+  _currentUser = data || null;
+}
+
+function userRoles() {
+  if (!_currentUser) return new Set();
+  return new Set([_currentUser.role, _currentUser.workspace_role].filter(Boolean));
+}
+
+function isGlobalAdmin() {
+  return ['owner', 'super_admin', 'admin'].includes(String(_currentUser?.role || ''));
+}
+
+function hasPermission(permission) {
+  const perms = Array.isArray(_currentUser?.permissions) ? _currentUser.permissions : [];
+  if (perms.includes(permission)) return true;
+  const roles = userRoles();
+  if (permission === 'global.admin') return isGlobalAdmin();
+  if (permission === 'studio.write') return roles.has('admin') || roles.has('workspace_admin');
+  if (permission === 'datasets.write') return roles.has('admin') || roles.has('workspace_admin');
+  if (permission === 'mcp.servers.write') return isGlobalAdmin();
+  return false;
+}
+
+function applyPermissionVisibility(root = document) {
+  root.querySelectorAll('[data-permission]').forEach(el => {
+    const required = el.getAttribute('data-permission');
+    if (required && !hasPermission(required)) el.remove();
+  });
 }
 
 async function apiFetch(url, method = 'GET', body = null) {
@@ -183,9 +218,14 @@ function renderText(text) {
 // ── MCP Servers ───────────────────────────────────────────────────────────────
 
 async function loadServers(forceCheck = false) {
-  if (forceCheck) await apiFetch('/api/mcp/servers/health-check', 'POST');
+  if (forceCheck && hasPermission('mcp.servers.write')) await apiFetch('/api/mcp/servers/health-check', 'POST');
   const data = await apiFetch('/api/mcp/servers');
   const list = document.getElementById('servers-list');
+  if (!data) {
+    list.innerHTML = `<div class="dim" style="padding:10px;font-size:10px">No tienes permiso para ver el registro MCP.</div>`;
+    setText('tools-count', '—');
+    return;
+  }
   const servers = data?.servers || [];
 
   if (!servers.length) {
@@ -271,7 +311,7 @@ async function loadDatasets() {
         <div class="dataset-meta">
           ${d.row_count != null ? `<div>${Number(d.row_count).toLocaleString()} rows</div>` : ''}
           <div>${refreshed}</div>
-          <button class="btn-sm" style="margin-top:4px" onclick="refreshDataset('${esc(d.name)}')">↺ refresh</button>
+          ${hasPermission('datasets.write') ? `<button class="btn-sm" style="margin-top:4px" onclick="refreshDataset('${esc(d.name)}')">↺ refresh</button>` : ''}
         </div>
       </div>`;
     }).join('')}
@@ -409,6 +449,7 @@ let _viewerTabs = [];   // [{url, label}]
 let _activeViewerUrl = null;
 let _viewerLoadTimer = null;
 const VIEWER_DEFAULT_H = 360;
+let _viewerExpandedHeight = VIEWER_DEFAULT_H;
 
 function openViewer(url, label) {
   // Add tab if not already open
@@ -465,12 +506,16 @@ function closeViewerTab(url) {
 }
 
 function closeViewerPanel() {
-  document.getElementById('viewer-panel').style.display = 'none';
-  document.getElementById('resize-handle').style.display = 'none';
+  const panel = document.getElementById('viewer-panel');
+  const handle = document.getElementById('resize-handle');
+  panel.classList.remove('is-collapsed');
+  panel.style.display = 'none';
+  handle.style.display = 'none';
   document.getElementById('viewer-frame').src = 'about:blank';
   const fallback = document.getElementById('viewer-fallback');
   if (fallback) fallback.style.display = 'none';
   if (_viewerLoadTimer) clearTimeout(_viewerLoadTimer);
+  _syncViewerToggle();
 }
 
 function popoutViewer() {
@@ -480,11 +525,46 @@ function popoutViewer() {
 function _showViewerPanel() {
   const panel = document.getElementById('viewer-panel');
   const handle = document.getElementById('resize-handle');
+  panel.classList.remove('is-collapsed');
   panel.style.display = 'flex';
   handle.style.display = 'block';
   if (!panel.style.height || panel.style.height === '0px') {
-    panel.style.height = VIEWER_DEFAULT_H + 'px';
+    panel.style.height = _viewerDefaultHeight() + 'px';
   }
+  const maxHeight = Math.max(220, Math.round(window.innerHeight * 0.64));
+  const currentHeight = Number.parseInt(panel.style.height, 10) || _viewerDefaultHeight();
+  if (currentHeight > maxHeight) panel.style.height = maxHeight + 'px';
+  _syncViewerToggle();
+}
+
+function _viewerDefaultHeight() {
+  return Math.max(260, Math.min(420, Math.round(window.innerHeight * 0.38)));
+}
+
+function _syncViewerToggle() {
+  const panel = document.getElementById('viewer-panel');
+  const btn = document.getElementById('btn-toggle-viewer');
+  if (!panel || !btn) return;
+  const collapsed = panel.classList.contains('is-collapsed');
+  btn.textContent = collapsed ? '▴' : '▾';
+  btn.title = collapsed ? 'Expandir panel' : 'Contraer panel';
+}
+
+function toggleViewerPanel() {
+  const panel = document.getElementById('viewer-panel');
+  const handle = document.getElementById('resize-handle');
+  if (!panel || panel.style.display === 'none') return;
+
+  if (panel.classList.contains('is-collapsed')) {
+    panel.classList.remove('is-collapsed');
+    panel.style.height = Math.max(220, _viewerExpandedHeight || _viewerDefaultHeight()) + 'px';
+    if (handle) handle.style.display = 'block';
+  } else {
+    _viewerExpandedHeight = panel.offsetHeight || _viewerDefaultHeight();
+    panel.classList.add('is-collapsed');
+    if (handle) handle.style.display = 'none';
+  }
+  _syncViewerToggle();
 }
 
 // Drag resize
@@ -505,7 +585,8 @@ function _showViewerPanel() {
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
     const delta = startY - e.clientY;
-    const newH = Math.max(120, Math.min(window.innerHeight * 0.85, startH + delta));
+    const newH = Math.max(180, Math.min(window.innerHeight * 0.64, startH + delta));
+    _viewerExpandedHeight = newH;
     document.getElementById('viewer-panel').style.height = newH + 'px';
   });
 

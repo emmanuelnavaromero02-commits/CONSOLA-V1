@@ -54,7 +54,7 @@ export async function studioAction(path, { method = "GET", body = null, render =
     const payload = await r.json().catch(() => ({}));
     if (typeof render === "function") render(payload, r);
     if (!r.ok) {
-      showStudioError(payload?.detail || payload?.error || `Error HTTP ${r.status}`, path);
+      showStudioError(actionErrorMessage(payload, `Error HTTP ${r.status}`), path);
       return null;
     }
     return payload;
@@ -63,6 +63,19 @@ export async function studioAction(path, { method = "GET", body = null, render =
     showStudioError(err instanceof Error ? err.message : "Accion de Studio fallida", path);
     return null;
   }
+}
+
+function actionErrorMessage(payload, fallback = "Accion fallida") {
+  if (!payload) return fallback;
+  if (typeof payload === "string") return payload;
+  const detail = payload.detail ?? payload.error ?? payload.message ?? payload.reason;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    return detail.message || detail.error || detail.detail || JSON.stringify(detail);
+  }
+  const result = payload.result;
+  if (result && typeof result === "object") return actionErrorMessage(result, fallback);
+  return fallback;
 }
 
 function showStudioError(message, path) {
@@ -103,9 +116,9 @@ const STEP_ACTIONS = {
     { path: "/api/studio/entities", render: renderEntities },
   ],
   4: [
-    { path: "/api/studio/silver/preview", render: data => renderLayerPreview("silver", data) },
-    { path: "/api/studio/gold/preview", render: data => renderLayerPreview("gold", data) },
-    { path: "/api/studio/master/preview", render: data => renderLayerPreview("master", data) },
+    { path: "/api/studio/silver/preview", render: (data) => renderLayerPreview("silver", data) },
+    { path: "/api/studio/gold/preview", render: (data) => renderLayerPreview("gold", data) },
+    { path: "/api/studio/master/preview", render: (data) => renderLayerPreview("master", data) },
   ],
   5: [],
   6: [
@@ -132,16 +145,6 @@ const CLICK_ACTIONS = [
     path: "/api/studio/entities",
     render: renderEntities,
     before: openEntityForm,
-  },
-  {
-    match: /^silver(?:\s*\(\d+\))?$/i,
-    path: "/api/studio/silver/preview",
-    render: data => renderLayerPreview("silver", data),
-  },
-  {
-    match: /^gold(?:\s*\(\d+\))?$/i,
-    path: "/api/studio/gold/preview",
-    render: data => renderLayerPreview("gold", data),
   },
 ];
 
@@ -246,9 +249,20 @@ function renderSupersetStatus(payload, response, button) {
   const box = document.createElement("div");
   box.className = "superset-status empty-card";
   if (!response.ok || payload?.error || payload?.detail) {
-    box.innerHTML = `<span style="color:var(--red)">No se pudo crear: ${escapeHtml(payload?.error || payload?.detail || `HTTP ${response.status}`)}</span>`;
+    box.innerHTML = `<span style="color:var(--red)">No se pudo crear: ${escapeHtml(actionErrorMessage(payload, `HTTP ${response.status}`))}</span>`;
   } else if (payload?.needs_materialization) {
-    box.innerHTML = `<span style="color:var(--amber)">${escapeHtml(payload?.message || "Materializa primero el dataset Gold y vuelve a intentar.")}</span>`;
+    const table = payload?.table || payload?.table_name || datasetNameFromSupersetButton(button) || "";
+    const dataset = String(table).replace(/^gold_/, "");
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <span style="color:var(--amber)">${escapeHtml(payload?.message || "Materializa primero el dataset Gold y vuelve a intentar.")}</span>
+        ${dataset ? `<button type="button" class="btn btn-sm btn-amber" data-superset-materialize="${escapeHtml(dataset)}">Materializar y crear</button>` : ""}
+      </div>
+    `;
+    const materializeBtn = box.querySelector("[data-superset-materialize]");
+    if (materializeBtn) {
+      materializeBtn.addEventListener("click", () => materializeAndCreateSuperset(dataset, button, box));
+    }
   } else {
     const table = payload?.table || payload?.table_name || payload?.dataset_name || "dataset";
     box.textContent = payload?.existing
@@ -256,6 +270,33 @@ function renderSupersetStatus(payload, response, button) {
       : `✓ Dataset creado en Superset: ${table}`;
   }
   host.prepend(box);
+}
+
+async function materializeAndCreateSuperset(datasetName, originalButton, statusBox) {
+  if (!datasetName) return;
+  if (statusBox) {
+    statusBox.innerHTML = `<span style="color:var(--amber)">⟳ Materializando Gold '${escapeHtml(datasetName)}'...</span>`;
+  }
+  const result = await studioAction(`/datasets/${encodeURIComponent(datasetName)}/refresh`, {
+    method: "POST",
+    render: (payload, response) => {
+      if (!response.ok && statusBox) {
+        statusBox.innerHTML = `<span style="color:var(--red)">${escapeHtml(actionErrorMessage(payload, `HTTP ${response.status}`))}</span>`;
+      }
+    },
+  });
+  if (!result) return;
+  if (result?.error || result?.detail) {
+    if (statusBox) {
+      statusBox.innerHTML = `<span style="color:var(--red)">${escapeHtml(actionErrorMessage(result, "No se pudo materializar"))}</span>`;
+    }
+    return;
+  }
+  if (statusBox) {
+    const rows = result?.row_count ?? result?.result?.row_count;
+    statusBox.innerHTML = `<span style="color:var(--green)">✓ Materializado${rows != null ? ` · ${Number(rows).toLocaleString("es")} filas` : ""}. Creando dataset en Superset...</span>`;
+  }
+  await createSupersetDatasetFromButton(originalButton);
 }
 
 function createSupersetDatasetFromButton(button) {

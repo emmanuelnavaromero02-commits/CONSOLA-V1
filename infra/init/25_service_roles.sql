@@ -128,9 +128,13 @@ GRANT USAGE ON SCHEMA public TO omega_workspace;
 -- v1.20 audit: added user_sessions + token_usage. Workspace reads the
 -- session cookie to identify the caller (user_sessions) and emits per-
 -- request token usage rows (token_usage) for the LLM cost dashboard.
+-- v1.45 audit: added user_workspace_roles. Workspace builds the
+-- server-trusted tenant/workspace/role context from this mapping on every
+-- authenticated request; without it every /workspace and /apps request
+-- fails inside auth middleware.
 GRANT SELECT ON datasets, decisions, analytic_apps, semantic_terms,
        users, workspaces, tenants, roles, rag_sources, rag_chunks,
-       user_sessions, token_usage
+       user_sessions, user_workspace_roles, token_usage
        TO omega_workspace;
 GRANT INSERT, UPDATE ON decisions, decision_actions,
        user_sessions, token_usage

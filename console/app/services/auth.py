@@ -150,9 +150,10 @@ def verify_password(plain: str, hashed: str | None) -> bool:
 # could not be granted membership: the SELECT against `roles` would miss and
 # /api/me would 403 the user on first login.
 _WORKSPACE_ROLE_FALLBACK = {
-    "owner": "admin",
-    "super_admin": "admin",
-    "security_admin": "admin",
+    "owner": "workspace_admin",
+    "super_admin": "workspace_admin",
+    "admin": "workspace_admin",
+    "security_admin": "workspace_admin",
     "auditor": "analyst",
     "workspace_user": "viewer",
     "user": "viewer",
@@ -168,14 +169,22 @@ async def _resolve_workspace_role_id(conn, role: str) -> int | None:
     return row["id"] if row else None
 
 
-async def _assign_default_workspace_role(conn, user_id: int, role: str) -> None:
-    """Grant a freshly-created user membership in the default workspace.
+async def _assign_default_workspace_role(
+    conn,
+    user_id: int,
+    role: str,
+    workspace_id: str | None = None,
+) -> None:
+    """Grant a freshly-created user membership in the target/default workspace.
     The dependency chain in dependencies._with_workspace_context refuses
     requests without at least one row in user_workspace_roles, so this must
     run in the same transaction as the INSERT into users."""
-    workspace = await conn.fetchrow(
-        "SELECT id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1"
-    )
+    if workspace_id:
+        workspace = await conn.fetchrow("SELECT id FROM workspaces WHERE id = $1::uuid", workspace_id)
+    else:
+        workspace = await conn.fetchrow(
+            "SELECT id FROM workspaces ORDER BY created_at ASC, name ASC LIMIT 1"
+        )
     if not workspace:
         raise RuntimeError("no workspaces configured; cannot assign user membership")
     role_id = await _resolve_workspace_role_id(conn, role)
@@ -190,7 +199,7 @@ async def _assign_default_workspace_role(conn, user_id: int, role: str) -> None:
 
 
 async def create_user(email: str, password: str, name: str | None = None,
-                      role: str = "user") -> dict:
+                      role: str = "user", workspace_id: str | None = None) -> dict:
     """Direct create with password — used by bootstrap_admin and admin override."""
     p = await pool()
     async with p.acquire() as conn:
@@ -201,21 +210,29 @@ async def create_user(email: str, password: str, name: str | None = None,
                    RETURNING id, email, name, role, is_active, must_change_password, created_at""",
                 email.lower().strip(), name, hash_password(password), role,
             )
-            await _assign_default_workspace_role(conn, row["id"], role)
+            await _assign_default_workspace_role(conn, row["id"], role, workspace_id)
     return _user_to_dict(row)
 
 
-async def create_invited_user(email: str, name: str | None = None, role: str = "user") -> dict:
+async def create_invited_user(
+    email: str,
+    name: str | None = None,
+    role: str = "user",
+    workspace_id: str | None = None,
+) -> dict:
     """Create a user without a password (must_change_password is moot here —
     the activation flow sets the password). is_active stays FALSE until the
     invitee clicks the email link and chooses a password."""
     p = await pool()
-    row = await p.fetchrow(
-        """INSERT INTO users (email, name, password_hash, role, is_active, must_change_password)
-           VALUES ($1, $2, NULL, $3, FALSE, FALSE)
-           RETURNING id, email, name, role, is_active, must_change_password, created_at""",
-        email.lower().strip(), name, role,
-    )
+    async with p.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """INSERT INTO users (email, name, password_hash, role, is_active, must_change_password)
+                   VALUES ($1, $2, NULL, $3, FALSE, FALSE)
+                   RETURNING id, email, name, role, is_active, must_change_password, created_at""",
+                email.lower().strip(), name, role,
+            )
+            await _assign_default_workspace_role(conn, row["id"], role, workspace_id)
     return _user_to_dict(row)
 
 
@@ -563,7 +580,7 @@ def cookie_secure() -> bool:
 def verify_internal_api_key(
     x_api_key: str | None = Header(None),
     x_internal_service: str | None = Header(None),
-) -> None:
+) -> str:
     # Sprint v1.12: console exposes /internal/* endpoints to workspace and
     # to the four cartridges. Each pair has its own dedicated key. The
     # legacy shared INTERNAL_API_KEY is still accepted during migration.
@@ -584,3 +601,4 @@ def verify_internal_api_key(
 
     if not any(secrets.compare_digest(x_api_key, k) for k in accepted if k):
         raise HTTPException(status_code=403, detail="Forbidden")
+    return x_internal_service

@@ -49,6 +49,12 @@ def client(monkeypatch):
         "role": "admin",
         "workspace_role": "admin",
     }
+    app.dependency_overrides[studio_router.require_studio_global_admin] = lambda: {
+        "id": 1,
+        "email": "admin@local.ai",
+        "role": "admin",
+        "workspace_role": "admin",
+    }
 
     manifest = {
         "id": "replicon",
@@ -138,6 +144,7 @@ def client(monkeypatch):
         app.dependency_overrides.pop(require_authenticated, None)
         app.dependency_overrides.pop(studio_router.require_studio_read, None)
         app.dependency_overrides.pop(studio_router.require_studio_write, None)
+        app.dependency_overrides.pop(studio_router.require_studio_global_admin, None)
 
 
 REAL_ENDPOINTS = [

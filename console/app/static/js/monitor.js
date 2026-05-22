@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-exec').addEventListener('click', () => sendMessage());
   document.getElementById('btn-jobs-reload').addEventListener('click', () => loadJobs());
   document.getElementById('btn-servers-reload').addEventListener('click', () => loadServers(true));
+  document.getElementById('btn-toggle-viewer')?.addEventListener('click', () => toggleViewerPanel());
   document.getElementById('btn-popout').addEventListener('click', () => popoutViewer());
   document.getElementById('btn-close-viewer').addEventListener('click', () => closeViewerPanel());
   document.getElementById('btn-popout-fallback').addEventListener('click', () => popoutViewer());

@@ -20,6 +20,15 @@ SESSION_SLIDE    = timedelta(days=1)
 _POOL: asyncpg.Pool | None = None
 
 
+def _is_production_env() -> bool:
+    return os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "production")).strip().lower() in {
+        "production",
+        "prod",
+        "staging",
+        "stage",
+    }
+
+
 async def pool() -> asyncpg.Pool:
     global _POOL
     if _POOL is None:
@@ -46,22 +55,61 @@ async def _workspace_memberships(p: asyncpg.Pool, user_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-async def _workspace_cartridges(p: asyncpg.Pool, workspace_id: str | None) -> list[str]:
+async def _workspace_cartridges(p: asyncpg.Pool, workspace_id: str | None, user_id: int | None = None) -> list[str]:
     if not workspace_id:
         return []
-    rows = await p.fetch(
-        """SELECT DISTINCT cartridge
-             FROM datasets
-            WHERE workspace_id = $1
-              AND cartridge IS NOT NULL
-              AND cartridge <> ''
-            ORDER BY cartridge""",
-        workspace_id,
-    )
+    has_entitlements = await p.fetchval("SELECT to_regclass('public.tenant_entitlements')")
+    if has_entitlements:
+        has_user_overrides = await p.fetchval("SELECT to_regclass('public.user_cartridge_overrides')")
+        deny_filter = ""
+        args: tuple = (workspace_id,)
+        if has_user_overrides and user_id is not None:
+            deny_filter = """
+                  AND NOT EXISTS (
+                    SELECT 1
+                      FROM user_cartridge_overrides uco
+                     WHERE uco.tenant_id = te.tenant_id
+                       AND uco.workspace_id = te.workspace_id
+                       AND uco.cartridge_id = te.cartridge_id
+                       AND uco.user_id = $2
+                       AND uco.mode = 'deny'
+                  )
+            """
+            args = (workspace_id, user_id)
+        rows = await p.fetch(
+            f"""SELECT cartridge_id AS cartridge
+                 FROM tenant_entitlements te
+                WHERE te.workspace_id = $1
+                  AND te.status = 'active'
+                  AND (te.ends_at IS NULL OR te.ends_at > NOW())
+                  AND EXISTS (
+                    SELECT 1
+                      FROM cartridge_installations ci
+                     WHERE ci.tenant_id = te.tenant_id
+                       AND ci.workspace_id = te.workspace_id
+                       AND ci.cartridge_id = te.cartridge_id
+                       AND ci.status = 'ready'
+                  )
+                  {deny_filter}
+                ORDER BY cartridge""",
+            *args,
+        )
+    else:
+        if _is_production_env():
+            return []
+        rows = await p.fetch(
+            """SELECT DISTINCT cartridge
+                 FROM datasets
+                WHERE workspace_id = $1
+                  AND cartridge IS NOT NULL
+                  AND cartridge <> ''
+                ORDER BY cartridge""",
+            workspace_id,
+        )
     return [str(row["cartridge"]) for row in rows if row["cartridge"]]
 
 
-async def get_session_user(token: str) -> dict | None:
+async def get_session_user(token: str, requested_workspace_id: str | None = None) -> dict | None:
     if not token:
         return None
     p = await pool()
@@ -91,12 +139,16 @@ async def get_session_user(token: str) -> dict | None:
     workspaces = await _workspace_memberships(p, row["id"])
     if workspaces:
         active = workspaces[0]
+        if requested_workspace_id:
+            active = next((w for w in workspaces if w["workspace_id"] == requested_workspace_id), None)
+            if not active:
+                raise PermissionError("workspace access forbidden")
         user.update({
             "active_workspace_id": active["workspace_id"],
             "active_tenant_id": active["tenant_id"],
             "workspace_role": active["workspace_role"],
             "workspaces": workspaces,
-            "allowed_cartridges": await _workspace_cartridges(p, active["workspace_id"]),
+            "allowed_cartridges": await _workspace_cartridges(p, active["workspace_id"], user_id=row["id"]),
         })
     return user
 

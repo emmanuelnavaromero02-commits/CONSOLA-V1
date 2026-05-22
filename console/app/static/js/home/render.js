@@ -1,4 +1,3 @@
-import { permissionText, quickActions } from './actions.js';
 import { renderTopbar } from './navigation.js';
 import { humanizeTerm } from '../i18n/labels.js';
 import { hasPermission, state } from './state.js';
@@ -11,11 +10,16 @@ function el(tag, className, text) {
 }
 
 function linkButton(label, href, variant = 'secondary', enabled = true, reason = '') {
+  if (!enabled) return null;
   const node = document.createElement(enabled ? 'a' : 'span');
   node.className = `home-btn ${variant} ${enabled ? '' : 'disabled'}`.trim();
-  node.textContent = enabled ? label : `${label} · ${reason}`;
+  node.textContent = label;
   if (enabled) node.href = href;
   return node;
+}
+
+function appendIf(parent, ...nodes) {
+  nodes.filter(Boolean).forEach((node) => parent.append(node));
 }
 
 function chip(text, variant = '') {
@@ -27,12 +31,8 @@ function statusDot(status) {
 }
 
 function isAdminUser() {
-  // Sprint v1.5: the home is split into "Workspace-only" for non-admins
-  // and "everything" for admins. We deliberately key off the literal role
-  // here (binary admin gate) rather than a granular permission so analyst /
-  // workspace_admin / security_admin etc. all collapse to the non-admin
-  // experience the client requested in the demo.
-  return state.user?.role === 'admin';
+  const role = String(state.user?.role || state.role || '').toLowerCase();
+  return ['admin', 'owner', 'super_admin'].includes(role);
 }
 
 function renderHero() {
@@ -45,15 +45,15 @@ function renderHero() {
   );
 
   const actions = el('div', 'home-hero-actions');
-  actions.append(
-    linkButton('Abrir Workspace', '/workspace', 'primary', hasPermission('workspace.access'), permissionText('workspace.access')),
-    linkButton('Abrir Copiloto', '/copilot', 'secondary', hasPermission('copilot.use'), permissionText('copilot.use')),
-    linkButton('Configurar Credenciales', '/viewer/vault', 'secondary', hasPermission('vault.connections.write'), permissionText('vault.connections.write')),
+  appendIf(
+    actions,
+    linkButton('Abrir Workspace', '/workspace', 'primary', hasPermission('workspace.access')),
+    linkButton('Abrir Copiloto', '/copilot', 'secondary', hasPermission('copilot.use')),
   );
   if (isAdminUser()) {
-    actions.append(
-      linkButton('Abrir Monitor', '/monitor', 'secondary', hasPermission('monitor.read'), permissionText('monitor.read')),
-      linkButton('Gestionar IAM', '/iam', 'secondary', hasPermission('iam.users.read'), permissionText('iam.users.read'))
+    appendIf(
+      actions,
+      linkButton('Abrir Monitor', '/monitor', 'secondary', hasPermission('monitor.read'))
     );
   }
 
@@ -76,9 +76,10 @@ function renderHero() {
   return hero;
 }
 
-function card({ title, icon, description, href, primary, permission, secondary = [], size = 'secondary-card', kind = '', meta = [] }) {
-  const allowed = !permission || hasPermission(permission);
-  const node = el('article', `home-card ${size} ${kind} ${allowed ? '' : 'locked'}`.trim());
+function card({ title, icon, description, href, primary, permission, secondary = [], size = 'secondary-card', kind = '', meta = [], adminOnly = false }) {
+  const allowed = (!adminOnly || isAdminUser()) && (!permission || hasPermission(permission));
+  if (!allowed) return null;
+  const node = el('article', `home-card ${size} ${kind}`.trim());
   const top = el('div', 'home-card-top');
   const copy = el('div');
   copy.append(el('div', 'home-icon', icon), el('h3', null, title));
@@ -86,18 +87,22 @@ function card({ title, icon, description, href, primary, permission, secondary =
   node.append(top, el('p', null, description));
 
   const metaWrap = el('div', 'home-card-meta');
-  if (permission) metaWrap.append(chip(allowed ? 'Disponible' : permissionText(permission), allowed ? 'ok' : 'locked'));
+  if (permission) metaWrap.append(chip('Disponible', 'ok'));
   meta.forEach((item) => metaWrap.append(chip(item.text, item.variant || '')));
   node.appendChild(metaWrap);
 
   const actions = el('div', 'home-card-actions');
-  actions.append(linkButton(primary, href, allowed ? 'primary' : 'secondary', allowed, permission ? permissionText(permission) : 'Acceso limitado'));
+  appendIf(actions, linkButton(primary, href, 'primary', true));
   secondary.forEach((action) => {
-    const actionAllowed = !action.permission || hasPermission(action.permission);
-    actions.append(linkButton(action.label, action.href, 'secondary', actionAllowed, action.permission ? permissionText(action.permission) : 'Disponible desde el módulo'));
+    const actionAllowed = (!action.adminOnly || isAdminUser()) && (!action.permission || hasPermission(action.permission));
+    appendIf(actions, linkButton(action.label, action.href, 'secondary', actionAllowed));
   });
   node.appendChild(actions);
   return node;
+}
+
+function appendCard(parent, config) {
+  appendIf(parent, card(config));
 }
 
 function renderSection(title, desc, content) {
@@ -110,67 +115,73 @@ function renderSection(title, desc, content) {
   return section;
 }
 
-function renderQuickAccess() {
-  const panel = el('section', 'home-quick-panel');
-  const copy = el('div');
-  copy.append(el('h2', 'home-section-title', 'Acceso rápido'), el('p', 'home-section-desc', 'Tus accesos principales, ordenados por utilidad y permisos.'));
-  const actions = el('div', 'home-quick-actions');
-  quickActions().forEach((item) => {
-    actions.append(linkButton(item.label, item.href, item.allowed ? 'primary' : 'secondary', item.allowed, item.hint));
-  });
-  panel.append(copy, actions);
-  return panel;
-}
-
 function renderOperational() {
   const grid = el('div', 'home-operational-grid');
-  // Keep the important v1.44 surfaces visible from the canonical :8000
-  // home. Next.js may keep experimenting, but operators should not need
-  // secret direct URLs to reach Copilot or Cartridge configuration.
-  grid.append(
-    card({
+  appendCard(
+    grid,
+    {
       title: 'Workspace',
       icon: 'W',
-      description: 'Área de trabajo diaria con copiloto, memoria, redacción, workflows y aprobación de acciones.',
+      description: 'Área diaria para apps, decisiones, memoria y aprobaciones visibles para el cliente.',
       href: '/workspace',
       primary: 'Abrir Workspace',
       permission: 'workspace.access',
       size: 'primary-card',
-      meta: [{ text: 'Copiloto' }, { text: 'Memoria' }, { text: 'Workflows' }],
-      secondary: [{ label: 'Nueva conversación', href: '/copilot', permission: 'copilot.use' }],
-    }),
-    card({
-        title: 'Studio',
+      meta: [{ text: 'Apps' }, { text: 'Decisiones' }, { text: 'Workspace' }],
+    }
+  );
+  appendCard(
+    grid,
+    {
+      title: 'Copiloto',
+      icon: 'AI',
+      description: 'Asistente operativo para consultar información, preparar respuestas y solicitar acciones aprobadas.',
+      href: '/copilot',
+      primary: 'Abrir Copiloto',
+      permission: 'copilot.use',
+      size: 'primary-card',
+      meta: [{ text: 'Chat' }, { text: 'Acciones' }, { text: 'Aprobaciones' }],
+    }
+  );
+  appendCard(
+    grid,
+    {
+      title: 'Marketplace',
+      icon: 'MK',
+      description: 'Catálogo comercial para conocer cartuchos, pedir activación y revisar estado del workspace.',
+      href: '/marketplace',
+      primary: 'Abrir Marketplace',
+      permission: 'marketplace.read',
+      size: 'primary-card',
+      meta: [{ text: 'Catálogo' }, { text: 'Solicitud' }, { text: 'Estado' }],
+    }
+  );
+  appendCard(
+    grid,
+    {
+      title: 'Monitor',
+      icon: 'M',
+      description: 'Revisa flujos automáticos, trabajos recientes y salud operativa sin entrar a Studio.',
+      href: '/monitor',
+      primary: 'Abrir Monitor',
+      permission: 'monitor.read',
+      size: 'primary-card',
+      meta: [{ text: state.statuses.mcp?.label || 'Servicios internos no verificados' }],
+    }
+  );
+  if (isAdminUser()) {
+    appendCard(
+      grid,
+      {
+        title: 'Studio interno',
         icon: 'S',
-        description: 'Studio para raw, silver y gold: entidades, transformaciones y ejecuciones.',
+        description: 'Herramienta técnica para raw, silver y gold: entidades, transformaciones y ejecuciones.',
         href: '/studio',
         primary: 'Abrir Studio',
         permission: 'studio.read',
-        size: 'primary-card',
-        meta: [{ text: 'Fuentes de datos' }, { text: 'Reportes' }],
-        secondary: [{ label: 'Nueva fuente', href: '/studio', permission: 'studio.write' }],
-      }),
-  );
-  if (isAdminUser()) {
-    grid.append(
-      card({
-        title: 'Monitor',
-        icon: 'M',
-        description: 'Revisa flujos automáticos, trabajos recientes, reportes y servicios internos.',
-        href: '/monitor',
-        primary: 'Abrir Monitor',
-        permission: 'monitor.read',
-        meta: [{ text: state.statuses.mcp?.label || 'Servicios internos no verificados' }],
-      }),
-      card({
-        title: 'Operaciones',
-        icon: 'O',
-        description: 'Usuarios, auditoría, Vault, versión, migraciones y salud de servicios.',
-        href: '/operations',
-        primary: 'Abrir Operaciones',
-        permission: 'operations.read',
-        meta: [{ text: 'Usuarios' }, { text: 'Auditoría' }, { text: 'Vault' }],
-      }),
+        adminOnly: true,
+        meta: [{ text: 'Interno' }, { text: 'Datos' }, { text: 'Pipelines' }],
+      }
     );
   }
   return renderSection('Trabajo operativo', 'Lo que usas para trabajar con datos, fuentes y decisiones.', grid);
@@ -187,8 +198,8 @@ function usersMeta() {
 
 function renderAdministration() {
   const grid = el('div', 'home-admin-grid');
-  grid.append(
-    card({
+  [
+    {
       title: 'IAM / Accesos',
       icon: 'I',
       description: 'Administra accesos, roles, sesiones y reglas visibles.',
@@ -197,12 +208,9 @@ function renderAdministration() {
       permission: 'iam.users.read',
       kind: 'admin',
       meta: [{ text: 'Permisos por rol' }, ...usersMeta()],
-      secondary: [
-        { label: 'Gestionar usuarios', href: '/iam?tab=users', permission: 'iam.users.read' },
-        { label: 'Invitar usuario', href: '/iam?tab=users', permission: 'iam.users.write' },
-      ],
-    }),
-    card({
+      secondary: [{ label: 'Gestionar usuarios', href: '/iam?tab=users', permission: 'iam.users.read' }],
+    },
+    {
       title: 'Centro de seguridad',
       icon: 'A',
       description: 'Revisa auditoría, sesiones e intentos de acceso.',
@@ -211,9 +219,8 @@ function renderAdministration() {
       permission: 'security.audit.read',
       kind: 'admin',
       meta: [{ text: state.activity.audit || 'Auditoría no verificada' }],
-      secondary: [{ label: 'Ver auditoría', href: '/security', permission: 'security.audit.read' }],
-    }),
-    card({
+    },
+    {
       title: 'Vault / Credenciales',
       icon: 'V',
       description: 'Administra credenciales de cartuchos con conn_id, base URL, método auth, token y JSON adicional.',
@@ -222,12 +229,20 @@ function renderAdministration() {
       permission: 'vault.connections.read',
       kind: 'admin',
       meta: [{ text: 'Replicon' }, { text: 'SAP' }, { text: 'Secretos ocultos' }],
-      secondary: [
-        { label: 'Agregar conexión', href: '/viewer/vault', permission: 'vault.connections.write' },
-        { label: 'Ver secretos', href: '/viewer/vault', permission: 'vault.secrets.read_masked' },
-      ],
-    }),
-    card({
+      secondary: [{ label: 'Agregar conexión', href: '/viewer/vault', permission: 'vault.connections.write' }],
+    },
+    {
+      title: 'Gestión de cartuchos',
+      icon: 'GC',
+      description: 'Aprueba, pausa, revoca y reactiva instalaciones por cliente, workspace y cartucho.',
+      href: '/admin/installations',
+      primary: 'Abrir gestión',
+      permission: 'marketplace.admin',
+      adminOnly: true,
+      kind: 'admin',
+      meta: [{ text: 'Licencias' }, { text: 'Instalaciones' }, { text: 'SaaS' }],
+    },
+    {
       title: 'Agentes',
       icon: 'G',
       description: 'Configura agentes especializados por cartucho con prompt, tools permitidas, modelo, personalidad, RAG y agenda.',
@@ -236,9 +251,8 @@ function renderAdministration() {
       permission: 'studio.write',
       kind: 'admin',
       meta: [{ text: 'Prompt' }, { text: 'Tools' }, { text: 'Runs' }],
-      secondary: [{ label: 'Crear agente', href: '/agents', permission: 'studio.write' }],
-    }),
-    card({
+    },
+    {
       title: 'Configuración',
       icon: 'C',
       description: 'Credenciales, integraciones, feature flags y rotación de secretos.',
@@ -247,26 +261,25 @@ function renderAdministration() {
       permission: 'settings.read',
       kind: 'admin',
       meta: [{ text: 'Editable desde UI' }],
-      secondary: [{ label: 'Editar secretos', href: '/settings', permission: 'settings.write' }],
-    }),
-    card({
-      title: 'Operaciones legacy',
+    },
+    {
+      title: 'Operaciones',
       icon: 'O',
-      description: 'Versión, migraciones y salud de servicios en la consola base.',
+      description: 'Versión, migraciones, soporte técnico y salud de servicios de la plataforma.',
       href: '/operations',
       primary: 'Abrir Operaciones',
       permission: 'operations.read',
       kind: 'admin',
       meta: [{ text: 'Health en vivo' }],
-    })
-  );
+    },
+  ].forEach((config) => appendCard(grid, config));
   return renderSection('Administración', 'Identidad, seguridad y accesos viven separados del trabajo diario.', grid);
 }
 
 function renderDataProcesses() {
   const grid = el('div', 'home-admin-grid');
-  grid.append(
-    card({
+  [
+    {
       title: humanizeTerm('datasets'),
       icon: 'DT',
       description: 'Explora reportes y tablas preparadas para análisis.',
@@ -275,8 +288,9 @@ function renderDataProcesses() {
       permission: 'datasets.read',
       kind: 'system',
       meta: [{ text: 'Datos preparados' }],
-    }),
-    card({
+      adminOnly: true,
+    },
+    {
       title: humanizeTerm('pipelines'),
       icon: 'F',
       description: 'Revisa ejecuciones, estados y próximos procesos.',
@@ -284,19 +298,19 @@ function renderDataProcesses() {
       primary: 'Ver flujos',
       permission: 'pipelines.read',
       kind: 'system',
-      secondary: [{ label: 'Ejecutar Replicon', href: '/monitor', permission: 'pipelines.run' }],
-    }),
-    card({
-      title: 'Replicon',
+    },
+    {
+      title: 'Fuente Replicon',
       icon: 'R',
       description: 'Fuente de datos operativa para extracción y gobierno de datos Replicon.',
       href: '/studio',
-      primary: 'Abrir fuente',
+      primary: 'Abrir en Studio',
       permission: 'studio.read',
       kind: 'system',
       meta: [{ text: state.statuses.replicon?.label || 'No verificado' }],
-    }),
-    card({
+      adminOnly: true,
+    },
+    {
       title: 'Trabajos',
       icon: 'T',
       description: 'Consulta historial y detalle de trabajos recientes.',
@@ -304,8 +318,9 @@ function renderDataProcesses() {
       primary: 'Ver trabajos',
       permission: 'monitor.read',
       kind: 'system',
-    })
-  );
+      adminOnly: true,
+    },
+  ].forEach((config) => appendCard(grid, config));
   return renderSection('Datos y procesos', 'Flujos automáticos, fuentes y reportes en una zona operativa compacta.', grid);
 }
 
@@ -353,13 +368,10 @@ export function renderHome(root) {
   root.replaceChildren();
   const shell = el('div', 'home-shell');
   const container = el('div', 'home-container');
-  // Non-admins only get the hero (with the Workspace CTA) and a single
-  // operational cards in the operational grid — the administration,
-  // data-processes and system-ops blocks expose admin-only surface and
-  // are hidden entirely instead of being rendered with "Acceso limitado"
-  // chips. Admins keep the original layout.
+  // The home surface is permission-aware: unavailable actions disappear
+  // instead of becoming dead buttons. Admin-only sections stay hidden from
+  // customer/workspace users even when the backend would still deny access.
   container.append(renderHero());
-  if (isAdminUser()) container.append(renderQuickAccess());
   container.append(renderOperational());
   if (isAdminUser()) {
     container.append(renderAdministration(), renderDataProcesses(), renderSystemOps());

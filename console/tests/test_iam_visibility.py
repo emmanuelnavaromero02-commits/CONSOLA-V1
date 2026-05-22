@@ -90,15 +90,21 @@ ADMIN_ONLY_PATHS = [
     "/iam",
     "/settings",
     "/operations",
-    "/viewer/jobs",
-    "/viewer/jobs/run-123",
-    "/viewer/datasets",
-    "/viewer/datasets/gold_sales",
-    "/viewer/semantic",
     "/decisions",
     "/admin/users",
     "/viewer/pipeline",
     "/viewer/vault",
+]
+
+MONITOR_VIEWER_PATHS = [
+    "/viewer/jobs",
+    "/viewer/jobs/run-123",
+]
+
+DATA_VIEWER_PATHS = [
+    "/viewer/datasets",
+    "/viewer/datasets/gold_sales",
+    "/viewer/semantic",
 ]
 
 
@@ -127,6 +133,42 @@ def test_non_admin_rejected_from_admin_only_pages(path, user):
     )
 
 
+# ─── Viewer pages are permission-gated, not binary admin-only ────────
+
+@pytest.mark.parametrize("path", MONITOR_VIEWER_PATHS)
+@pytest.mark.parametrize("user", [ANALYST_USER, VIEWER_USER, SECURITY_ADMIN_USER],
+                          ids=["analyst", "viewer", "security_admin"])
+def test_monitor_viewer_pages_follow_monitor_permission(path, user):
+    client = _build_app(user)
+    r = client.get(path)
+    assert r.status_code == 200, (
+        f"{user['role']} with monitor.read unexpectedly blocked from {path}: "
+        f"{r.status_code} {r.text}"
+    )
+
+
+@pytest.mark.parametrize("path", DATA_VIEWER_PATHS)
+@pytest.mark.parametrize("user", [ANALYST_USER, VIEWER_USER],
+                          ids=["analyst", "viewer"])
+def test_data_viewer_pages_follow_dataset_permission(path, user):
+    client = _build_app(user)
+    r = client.get(path)
+    assert r.status_code == 200, (
+        f"{user['role']} with datasets.read unexpectedly blocked from {path}: "
+        f"{r.status_code} {r.text}"
+    )
+
+
+@pytest.mark.parametrize("path", DATA_VIEWER_PATHS)
+def test_security_admin_without_dataset_permission_cannot_open_data_viewers(path):
+    client = _build_app(SECURITY_ADMIN_USER)
+    r = client.get(path)
+    assert r.status_code in (401, 403), (
+        f"security_admin unexpectedly reached data viewer {path}: "
+        f"{r.status_code} {r.text}"
+    )
+
+
 # ─── Workspace, healthz and /me stay reachable for everyone ──────────
 
 @pytest.mark.parametrize("path", ["/workspace", "/healthz", "/me"])
@@ -149,6 +191,15 @@ def test_anonymous_rejected_with_401(path):
     r = client.get(path)
     assert r.status_code == 401, (
         f"anonymous unexpectedly reached {path}: {r.status_code} {r.text}"
+    )
+
+
+@pytest.mark.parametrize("path", MONITOR_VIEWER_PATHS + DATA_VIEWER_PATHS)
+def test_anonymous_rejected_from_permission_viewers_with_401(path):
+    client = _build_app(user=None)
+    r = client.get(path)
+    assert r.status_code == 401, (
+        f"anonymous unexpectedly reached viewer route {path}: {r.status_code} {r.text}"
     )
 
 

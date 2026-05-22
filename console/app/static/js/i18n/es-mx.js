@@ -47,6 +47,9 @@ export const PERMISSION_LABELS = {
   'datasets.read': 'No tienes permiso para ver reportes de datos.',
   'datasets.write': 'No tienes permiso para modificar reportes de datos.',
   'datasets.delete': 'No tienes permiso para eliminar reportes de datos.',
+  'marketplace.read': 'No tienes permiso para ver el Marketplace.',
+  'marketplace.request': 'No tienes permiso para solicitar cartuchos en este workspace.',
+  'marketplace.admin': 'No tienes permiso para administrar instalaciones de Marketplace.',
 };
 
 export const ERROR_LABELS = {

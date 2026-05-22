@@ -11,6 +11,8 @@ import os
 
 import asyncpg
 
+from app.services.security_context import build_security_context
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 _pool: asyncpg.Pool | None = None
@@ -41,12 +43,20 @@ async def get(job_id: str) -> dict:
     return _row_to_dict(row)
 
 
-async def list_recent(limit: int = 10) -> list[dict]:
+async def get_scoped(job_id: str, user: dict | None = None) -> dict:
+    data = await get(job_id)
+    if data.get("error") or _job_allowed(data, user):
+        return data
+    return {"error": f"Job '{job_id}' not found"}
+
+
+async def list_recent(limit: int = 10, user: dict | None = None) -> list[dict]:
     pool = await _get_pool()
     rows = await pool.fetch(
         "SELECT * FROM jobs ORDER BY created_at DESC LIMIT $1", min(limit, 50)
     )
-    return [_row_to_dict(r) for r in rows]
+    jobs = [_row_to_dict(r) for r in rows]
+    return [job for job in jobs if _job_allowed(job, user)]
 
 
 def _row_to_dict(row) -> dict:
@@ -61,3 +71,40 @@ def _row_to_dict(row) -> dict:
             except Exception:
                 pass
     return d
+
+
+def _job_allowed(job: dict, user: dict | None) -> bool:
+    if user is None:
+        return True
+    ctx = build_security_context(user)
+    allowed = {
+        str(item).strip()
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    if "*" in allowed and not (ctx.get("tenant_id") or ctx.get("workspace_id")):
+        return True
+
+    args = job.get("args") if isinstance(job.get("args"), dict) else {}
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    tenant_id = str(args.get("tenant_id") or result.get("tenant_id") or "").strip()
+    workspace_id = str(args.get("workspace_id") or result.get("workspace_id") or "").strip()
+    cartridge = str(
+        args.get("cartridge_id")
+        or args.get("cartridge")
+        or result.get("cartridge_id")
+        or result.get("cartridge")
+        or ""
+    ).strip()
+    ctx_tenant = str(ctx.get("tenant_id") or "").strip()
+    ctx_workspace = str(ctx.get("workspace_id") or "").strip()
+    if ctx_tenant or ctx_workspace:
+        if not tenant_id or not workspace_id:
+            return False
+        if ctx_tenant and tenant_id != ctx_tenant:
+            return False
+        if ctx_workspace and workspace_id != ctx_workspace:
+            return False
+    if cartridge:
+        return "*" in allowed or cartridge in allowed
+    return False

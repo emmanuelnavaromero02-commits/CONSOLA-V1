@@ -19,7 +19,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.security import get_internal_api_key
+from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
 from app.services import audit_service
+from app.services.security_context import build_security_context
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -35,6 +37,22 @@ _CARTRIDGE_PORTS = {
     "sap_successfactors": 8203,
     "sap_s4hana": 8204,
 }
+
+
+def _allowed_cartridges(user: dict | None) -> set[str] | None:
+    ctx = build_security_context(user)
+    allowed = {str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()}
+    if "*" in allowed:
+        return None
+    return allowed
+
+
+def _require_cartridge_visible(user: dict | None, cartridge: str) -> None:
+    if cartridge not in _CARTRIDGE_PORTS:
+        raise HTTPException(404, "Unknown cartridge")
+    allowed = _allowed_cartridges(user)
+    if allowed is not None and cartridge not in allowed:
+        raise HTTPException(403, "cartridge not allowed")
 
 
 def _cartridge_url(cartridge: str, path: str) -> str:
@@ -83,18 +101,19 @@ def _scrub_credential_payload(payload: dict) -> dict:
 
 
 @router.get("", dependencies=[Depends(require_permission("cartridges.read"))])
-async def list_cartridges():
-    return {"cartridges": sorted(_CARTRIDGE_PORTS.keys())}
+async def list_cartridges(user: dict = Depends(require_authenticated)):
+    allowed = _allowed_cartridges(user)
+    cartridges = sorted(_CARTRIDGE_PORTS.keys()) if allowed is None else sorted(set(_CARTRIDGE_PORTS) & allowed)
+    return {"cartridges": cartridges}
 
 
 @router.get(
     "/{cartridge}/connector_schema",
     dependencies=[Depends(require_permission("cartridges.read"))],
 )
-async def connector_schema(cartridge: str):
+async def connector_schema(cartridge: str, user: dict = Depends(require_authenticated)):
     """Return connector.yaml so the UI can render a dynamic form."""
-    if cartridge not in _CARTRIDGE_PORTS:
-        raise HTTPException(404, "Unknown cartridge")
+    _require_cartridge_visible(user, cartridge)
     import yaml
     candidates = [
         Path(f"/registry/cartridges/{cartridge}/app/config/connector.yaml"),
@@ -110,10 +129,9 @@ async def connector_schema(cartridge: str):
     "/{cartridge}/entities",
     dependencies=[Depends(require_permission("cartridges.read"))],
 )
-async def entities(cartridge: str):
+async def entities(cartridge: str, user: dict = Depends(require_authenticated)):
     """List entities + last watermark per entity, merged for the UI."""
-    if cartridge not in _CARTRIDGE_PORTS:
-        raise HTTPException(404, "Unknown cartridge")
+    _require_cartridge_visible(user, cartridge)
     async with httpx.AsyncClient(timeout=15.0, headers=_cartridge_internal_headers()) as c:
         ents = await c.get(_cartridge_url(cartridge, "/skills/entities"))
         wms = await c.get(_cartridge_url(cartridge, "/skills/get_watermarks"))
@@ -131,8 +149,7 @@ async def entities(cartridge: str):
 )
 async def run_entity(cartridge: str, entity: str, request: Request, mode: str = "incremental"):
     """Trigger entity extraction via the cartridge /skills router."""
-    if cartridge not in _CARTRIDGE_PORTS:
-        raise HTTPException(404, "Unknown cartridge")
+    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
     if mode not in {"full", "incremental"}:
         raise HTTPException(400, "mode must be 'full' or 'incremental'")
     skill = "run_full_load" if mode == "full" else "run_incremental"
@@ -186,8 +203,7 @@ async def test_connection(cartridge: str, request: Request):
     the response body so a chatty cartridge error can't leak
     sensitive substrings into audit_events.
     """
-    if cartridge not in _CARTRIDGE_PORTS:
-        raise HTTPException(404, "Unknown cartridge")
+    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
 
     started = time.monotonic()
     ok = False
@@ -245,10 +261,11 @@ _DEFAULT_CONN_ID = "default"
 
 @router.post(
     "/{cartridge}/credentials",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("vault.connections.write")),
-    ],
+	    dependencies=[
+	        Depends(require_csrf),
+	        Depends(require_permission("vault.connections.write")),
+	        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+	    ],
 )
 async def save_credentials(cartridge: str, body: dict, request: Request):
     """Encrypt + store cartridge credentials in the vault.
@@ -258,8 +275,7 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
 
     Returns: ``{"ok": true, "encrypted_count": N, "conn_id": "default"}``
     """
-    if cartridge not in _CARTRIDGE_PORTS:
-        raise HTTPException(404, "Unknown cartridge")
+    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
     if not isinstance(body, dict) or not body:
         raise HTTPException(400, "Credential payload must be a non-empty object")
 
@@ -307,15 +323,15 @@ async def save_credentials(cartridge: str, body: dict, request: Request):
 
 @router.delete(
     "/{cartridge}/credentials",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("vault.connections.write")),
-    ],
+	    dependencies=[
+	        Depends(require_csrf),
+	        Depends(require_permission("vault.connections.write")),
+	        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+	    ],
 )
 async def delete_credentials(cartridge: str, request: Request):
     """Remove cartridge credentials from the vault. 404 if absent."""
-    if cartridge not in _CARTRIDGE_PORTS:
-        raise HTTPException(404, "Unknown cartridge")
+    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
 
     user = getattr(request.state, "user", None) or {}
     not_found = False

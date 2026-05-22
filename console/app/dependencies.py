@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, Request
@@ -11,6 +12,12 @@ ROLE_USER = "user"
 ROLE_WORKSPACE_ADMIN = "workspace_admin"
 ROLE_ANALYST = "analyst"
 ROLE_VIEWER = "viewer"
+_GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+
+
+def _is_production_env() -> bool:
+    value = os.environ.get("APP_ENV") or os.environ.get("ENVIRONMENT") or "development"
+    return value.strip().lower() in {"prod", "production", "staging"}
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -64,6 +71,63 @@ async def _workspace_memberships(user_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+async def _workspace_cartridges(workspace_id: str | None, user_id: int | None = None) -> list[str]:
+    if not workspace_id:
+        return []
+    p = await _auth.pool()
+    if not hasattr(p, "fetchval"):
+        return []
+    has_entitlements = await p.fetchval("SELECT to_regclass('public.tenant_entitlements')")
+    if has_entitlements:
+        has_user_overrides = await p.fetchval("SELECT to_regclass('public.user_cartridge_overrides')")
+        deny_filter = ""
+        args: tuple = (workspace_id,)
+        if has_user_overrides and user_id is not None:
+            deny_filter = """
+                  AND NOT EXISTS (
+                    SELECT 1
+                      FROM user_cartridge_overrides uco
+                     WHERE uco.tenant_id = te.tenant_id
+                       AND uco.workspace_id = te.workspace_id
+                       AND uco.cartridge_id = te.cartridge_id
+                       AND uco.user_id = $2
+                       AND uco.mode = 'deny'
+                  )
+            """
+            args = (workspace_id, user_id)
+        rows = await p.fetch(
+            f"""SELECT cartridge_id AS cartridge
+                 FROM tenant_entitlements te
+                WHERE te.workspace_id = $1
+                  AND te.status = 'active'
+                  AND (te.ends_at IS NULL OR te.ends_at > NOW())
+                  AND EXISTS (
+                    SELECT 1
+                      FROM cartridge_installations ci
+                     WHERE ci.tenant_id = te.tenant_id
+                       AND ci.workspace_id = te.workspace_id
+                       AND ci.cartridge_id = te.cartridge_id
+                       AND ci.status = 'ready'
+                  )
+                  {deny_filter}
+                ORDER BY cartridge""",
+            *args,
+        )
+    else:
+        if _is_production_env():
+            return []
+        rows = await p.fetch(
+            """SELECT DISTINCT cartridge
+                 FROM datasets
+                WHERE workspace_id = $1
+                  AND cartridge IS NOT NULL
+                  AND cartridge <> ''
+                ORDER BY cartridge""",
+            workspace_id,
+        )
+    return [str(row["cartridge"]) for row in rows if row["cartridge"]]
+
+
 async def _with_workspace_context(user: dict, requested_workspace_id: str | None) -> dict:
     workspaces = await _workspace_memberships(user["id"])
     if not workspaces:
@@ -82,6 +146,7 @@ async def _with_workspace_context(user: dict, requested_workspace_id: str | None
         "active_tenant_id": active["tenant_id"],
         "workspace_role": active["workspace_role"],
         "workspaces": workspaces,
+        "allowed_cartridges": await _workspace_cartridges(active["workspace_id"], user_id=user["id"]),
     })
     return enriched
 
@@ -103,6 +168,18 @@ async def get_current_user(request: Request) -> dict:
 require_authenticated = get_current_user
 
 
+async def get_current_global_user(request: Request) -> dict:
+    token = _bearer_token(request)
+    if token:
+        return await _user_from_jwt(token)
+
+    session_token = request.cookies.get(_auth.COOKIE_NAME)
+    user = await _auth.get_session_user(session_token) if session_token else None
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return user
+
+
 def require_role(role_name: str) -> Callable:
     async def dependency(user: dict = Depends(get_current_user)) -> dict:
         role = user.get("workspace_role") or user.get("role")
@@ -117,9 +194,21 @@ def require_any_role(*role_names: str) -> Callable:
     allowed = set(role_names)
 
     async def dependency(user: dict = Depends(get_current_user)) -> dict:
-        role = user.get("workspace_role") or user.get("role")
-        if role not in allowed:
+        roles = {role for role in (user.get("workspace_role"), user.get("role")) if role}
+        if not roles.intersection(allowed):
             raise HTTPException(status_code=403, detail="required role missing")
+        return user
+
+    return dependency
+
+
+def require_global_any_role(*role_names: str) -> Callable:
+    allowed = set(role_names)
+
+    async def dependency(user: dict = Depends(get_current_global_user)) -> dict:
+        role = user.get("role")
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="global role required")
         return user
 
     return dependency
@@ -136,6 +225,6 @@ def require_user(request: Request) -> dict:
 
 def require_admin(request: Request) -> dict:
     u = require_user(request)
-    if u.get("role") != "admin":
+    if u.get("role") not in _GLOBAL_ADMIN_ROLES:
         raise HTTPException(403, "admin role required")
     return u

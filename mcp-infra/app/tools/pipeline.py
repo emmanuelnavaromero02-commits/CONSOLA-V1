@@ -119,6 +119,9 @@ def watermark_set(cartridge_id: str, entity: str, watermark_field: str,
             "storage_uri":          {"type": "string"},
             "watermark_updated_to": {"type": "string"},
             "error_message":        {"type": "string"},
+            "tenant_id":            {"type": "string"},
+            "workspace_id":         {"type": "string"},
+            "project_id":           {"type": "string"},
             "extra":                {"type": "object", "description": "Any additional stats"},
         },
         "required": ["run_id", "dag_id", "cartridge_id", "entity", "status"],
@@ -132,35 +135,75 @@ def pipeline_run_save(
     duration_seconds: float = None, record_count: int = None,
     bytes_written: int = None, storage_uri: str = None,
     watermark_updated_to: str = None, error_message: str = None,
+    tenant_id: str = None, workspace_id: str = None, project_id: str = None,
     extra: dict = None,
 ) -> dict:
     import json
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO pipeline_runs
-                   (run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                    mode, status, started_at, finished_at, duration_seconds,
-                    record_count, bytes_written, storage_uri,
-                    watermark_updated_to, error_message, extra)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (run_id) DO UPDATE
-               SET airflow_dag_run_id   = COALESCE(EXCLUDED.airflow_dag_run_id, pipeline_runs.airflow_dag_run_id),
-                   status               = EXCLUDED.status,
-                   finished_at          = EXCLUDED.finished_at,
-                   duration_seconds     = EXCLUDED.duration_seconds,
-                   record_count         = EXCLUDED.record_count,
-                   bytes_written        = EXCLUDED.bytes_written,
-                   storage_uri          = EXCLUDED.storage_uri,
-                   watermark_updated_to = EXCLUDED.watermark_updated_to,
-                   error_message        = EXCLUDED.error_message,
-                   extra                = pipeline_runs.extra || EXCLUDED.extra""",
-            (
-                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-                mode, status, started_at, finished_at, duration_seconds,
-                record_count, bytes_written, storage_uri,
-                watermark_updated_to, error_message,
-                json.dumps(extra or {}),
-            ),
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'pipeline_runs'
+            """
+        )
+        available = {str(row[0]) for row in cur.fetchall()}
+        columns = [
+            "run_id",
+            "dag_id",
+            "cartridge_id",
+            "entity",
+            "airflow_dag_run_id",
+            "mode",
+            "status",
+            "started_at",
+            "finished_at",
+            "duration_seconds",
+            "record_count",
+            "bytes_written",
+            "storage_uri",
+            "watermark_updated_to",
+            "error_message",
+            "extra",
+        ]
+        values = [
+            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+            mode, status, started_at, finished_at, duration_seconds,
+            record_count, bytes_written, storage_uri,
+            watermark_updated_to, error_message,
+            json.dumps(extra or {}),
+        ]
+        for scoped_column, scoped_value in (
+            ("tenant_id", tenant_id),
+            ("workspace_id", workspace_id),
+            ("project_id", project_id),
+        ):
+            if scoped_column in available and scoped_value:
+                columns.append(scoped_column)
+                values.append(scoped_value)
+        placeholders = ",".join(["%s"] * len(columns))
+        updates = [
+            "airflow_dag_run_id   = COALESCE(EXCLUDED.airflow_dag_run_id, pipeline_runs.airflow_dag_run_id)",
+            "status               = EXCLUDED.status",
+            "finished_at          = EXCLUDED.finished_at",
+            "duration_seconds     = EXCLUDED.duration_seconds",
+            "record_count         = EXCLUDED.record_count",
+            "bytes_written        = EXCLUDED.bytes_written",
+            "storage_uri          = EXCLUDED.storage_uri",
+            "watermark_updated_to = EXCLUDED.watermark_updated_to",
+            "error_message        = EXCLUDED.error_message",
+            "extra                = pipeline_runs.extra || EXCLUDED.extra",
+        ]
+        for scoped_column in ("tenant_id", "workspace_id", "project_id"):
+            if scoped_column in columns:
+                updates.append(f"{scoped_column} = COALESCE(EXCLUDED.{scoped_column}, pipeline_runs.{scoped_column})")
+        cur.execute(
+            f"""INSERT INTO pipeline_runs ({", ".join(columns)})
+                VALUES ({placeholders})
+                ON CONFLICT (run_id) DO UPDATE
+                SET {", ".join(updates)}""",
+            values,
         )
         conn.commit()
     return {"saved": True, "run_id": run_id, "status": status}

@@ -57,6 +57,22 @@ import { state } from './legacy-state.js';
       return entity && cart ? [`raw/${cart}/${entity}`] : [];
     }
 
+    function currentTemplateSource() {
+      const cartridge = currentCartridgeId();
+      const entity = _currentEditorEntity();
+      if (entity && cartridge) return { layer: 'silver', cartridge, name: entity };
+      const sources = state._selectedDSDetail?.sources || [];
+      const first = String(sources[0] || '');
+      const parts = first.split('/').filter(Boolean);
+      if (parts.length >= 3 && ['silver', 'gold'].includes(parts[0])) {
+        return { layer: parts[0], cartridge: parts[1] || cartridge, name: parts[2] };
+      }
+      if (parts.length >= 3 && parts[0] === 'raw') {
+        return { layer: 'silver', cartridge: parts[1] || cartridge, name: parts[2] };
+      }
+      return null;
+    }
+
     function entityDomId(entity) {
       return String(entity || '').replace(/[^A-Za-z0-9_-]/g, ch => `_${ch.charCodeAt(0).toString(16)}_`);
     }
@@ -64,7 +80,7 @@ import { state } from './legacy-state.js';
     async function jsonOrThrow(response) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.detail || data.error) {
-        throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+        throw new Error(friendlyError(data, `HTTP ${response.status}`));
       }
       return data;
     }
@@ -72,7 +88,15 @@ import { state } from './legacy-state.js';
     function friendlyError(payload, fallback) {
       if (!payload) return fallback || 'Acción fallida';
       if (typeof payload === 'string') return payload;
-      return payload.detail || payload.error || payload.message || payload.reason || fallback || 'Acción fallida';
+      const value = payload.detail || payload.error || payload.message || payload.reason;
+      if (typeof value === 'string') return value;
+      if (value && typeof value === 'object') {
+        return value.message || value.error || value.detail || JSON.stringify(value);
+      }
+      if (payload.result && typeof payload.result === 'object') {
+        return friendlyError(payload.result, fallback);
+      }
+      return fallback || 'Acción fallida';
     }
 
     function ragSelectedKinds() {
@@ -736,7 +760,7 @@ import { state } from './legacy-state.js';
           body: JSON.stringify(body),
         });
         const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
+        if (!r.ok) throw new Error(friendlyError(d, `HTTP ${r.status}`));
         if (btn) {
           btn.innerHTML = '✓ RAG';
           btn.title = `RAG re-indexado: ${kind}:${name}`;
@@ -1568,7 +1592,7 @@ import { state } from './legacy-state.js';
       const listHtml = ds.length ? ds.map(d => `
         <div class="ds-row ds-list-item ${state._selectedDS?.name===d.name?'ds-row-active':''}"
              style="cursor:pointer;padding:8px 10px"
-             onclick="selectDS(${escJsArg(d.name)})">
+             data-dataset-name="${esc(d.name)}">
           <div style="min-width:0">
             <div class="ds-row-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</div>
             <div class="ds-row-meta" style="font-size:9px">
@@ -1597,6 +1621,10 @@ import { state } from './legacy-state.js';
           </div>
         </div>`;
 
+      area.querySelectorAll('.ds-list-item[data-dataset-name]').forEach(row => {
+        row.addEventListener('click', () => selectDS(row.dataset.datasetName || ''));
+      });
+
       // Auto-select first or restore selection
       if (state._selectedDS && ds.find(d => d.name === state._selectedDS.name)) {
         selectDS(state._selectedDS.name);
@@ -1622,6 +1650,7 @@ import { state } from './legacy-state.js';
 
       if (!name) {
         // ── New dataset form ──────────────────────────────────────────────────
+        state._selectedDSDetail = null;
         panel.innerHTML = _dsEditorHtml({
           name: '', layer: state._activeLayer, cartridge, entity: '', description: '', sql: '', isNew: true
         });
@@ -1631,6 +1660,7 @@ import { state } from './legacy-state.js';
       panel.innerHTML = `<div style="color:var(--text3);padding:20px">Cargando...</div>`;
 
       let sqlDef = '', description = '', sources = [], layer = state._activeLayer;
+      state._selectedDSDetail = null;
       try {
         const r = await fetch(`/api/datasets/${encodeURIComponent(name)}/detail`);
         const d = await r.json();
@@ -1639,6 +1669,7 @@ import { state } from './legacy-state.js';
         description = detail.description || '';
         sources     = detail.sources || [];
         layer       = detail.layer || state._activeLayer;
+        state._selectedDSDetail = detail;
       } catch(e) {}
 
       const meta = state._allDatasets.find(d => d.name === name) || {};
@@ -1827,22 +1858,36 @@ SELECT * EXCLUDE (rn, load_date)
 FROM ranked
 WHERE rn = 1`;
       } else if (type === 'gold_agg') {
+        const source = currentTemplateSource();
+        const status = document.getElementById('ds-ed-status');
+        if (!source) {
+          if (status) status.innerHTML = '<span style="color:var(--amber)">Selecciona una entidad o una fuente upstream antes de usar una plantilla Gold.</span>';
+          return;
+        }
+        const upstream = `s3://{bucket}/${source.layer}/${source.cartridge}/${source.name}/data.parquet`;
         sql = `-- Agregación Gold: edita los GROUP BY y métricas según tu caso
 SELECT
   -- dimension1,
   -- dimension2,
   COUNT(*) AS total,
   SUM(Amount) AS total_amount
-FROM silver_${entity || 'entity'}
+FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)
 -- GROUP BY dimension1, dimension2
 ORDER BY total DESC`;
       } else if (type === 'gold_kpi') {
+        const source = currentTemplateSource();
+        const status = document.getElementById('ds-ed-status');
+        if (!source) {
+          if (status) status.innerHTML = '<span style="color:var(--amber)">Selecciona una entidad o una fuente upstream antes de usar una plantilla Gold.</span>';
+          return;
+        }
+        const upstream = `s3://{bucket}/${source.layer}/${source.cartridge}/${source.name}/data.parquet`;
         sql = `-- KPI único (un solo valor escalar)
 SELECT
   COUNT(DISTINCT Id) AS total_registros,
   SUM(Amount)        AS monto_total,
   AVG(Amount)        AS monto_promedio
-FROM silver_${entity || 'entity'}`;
+FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       }
       const ta = document.getElementById('ds-ed-sql');
       if (ta && sql) { ta.value = sql; state._dsEditorDirty = true; }
@@ -1863,12 +1908,12 @@ FROM silver_${entity || 'entity'}`;
           method: 'POST', headers: jsonHeaders(),
           body: JSON.stringify({ sql, limit: 50, sources }),
         });
-        const d = await r.json();
+        const d = await r.json().catch(() => ({}));
         const elapsed = ((Date.now()-t0)/1000).toFixed(2);
         const result  = d.result || d;
-        if (result.error) {
+        if (!r.ok || result.error || result.detail) {
           if (status) status.textContent = '✗ error';
-          area.innerHTML = `<div style="color:var(--red);white-space:pre-wrap;font-size:11px;padding:8px 0">${esc(result.error)}</div>`;
+          area.innerHTML = `<div style="color:var(--red);white-space:pre-wrap;font-size:11px;padding:8px 0">${esc(friendlyError(result, `HTTP ${r.status}`))}</div>`;
           return;
         }
         const rows   = result.data   || [];
@@ -1911,10 +1956,11 @@ FROM silver_${entity || 'entity'}`;
       try {
         const sources = entity && cart ? [`raw/${cart}/${entity}`] : [];
         const r = await fetch('/api/datasets/save', {
-          method: 'POST', headers: jsonHeaders(),
+          method: 'POST', credentials: 'include', headers: jsonHeaders(),
           body: JSON.stringify({ name, layer, sql, description: desc, cartridge: cart, sources }),
         });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.detail || d.error) throw new Error(friendlyError(d, `HTTP ${r.status}`));
         if (status) status.innerHTML = '<span style="color:var(--green)">✓ guardado</span>';
         state._dsEditorDirty = false;
         state._selectedDS = { name };
@@ -1939,8 +1985,15 @@ FROM silver_${entity || 'entity'}`;
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ materializando...';
       try {
-        const r = await fetch(`/datasets/${encodeURIComponent(name)}/refresh`, { method: 'POST' });
-        const d = await r.json();
+        const r = await fetch(`/datasets/${encodeURIComponent(name)}/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: jsonHeaders(),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error || d.detail) {
+          throw new Error(friendlyError(d, `HTTP ${r.status}`));
+        }
         const rows = d.row_count ?? d.result?.row_count;
         if (status) status.innerHTML = `<span style="color:var(--green)">✓ ${rows != null ? Number(rows).toLocaleString('es')+' filas' : 'ok'}</span>`;
         // Refresh list stats
@@ -1960,13 +2013,15 @@ FROM silver_${entity || 'entity'}`;
       const status = document.getElementById('ds-ed-status');
       if (status) status.textContent = '⟳ eliminando...';
       try {
-        const r = await fetch(`/api/datasets?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
-        if (!r.ok) {
-          const txt = await r.text().catch(() => '');
-          const err = (() => { try { return JSON.parse(txt); } catch { return {}; } })();
-          const msg = err.detail || err.error || txt || `HTTP ${r.status}`;
-          if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(msg)}</span>`;
-          console.error('deleteDS', r.status, txt);
+        const r = await fetch(`/api/datasets?name=${encodeURIComponent(name)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: csrfHeaders(),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.detail || d.error) {
+          if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(friendlyError(d, `HTTP ${r.status}`))}</span>`;
+          console.error('deleteDS', r.status, d);
           return;
         }
         // Remove from local cache and re-render
@@ -2012,6 +2067,8 @@ FROM silver_${entity || 'entity'}`;
     export async function loadBronzeTab() {
       const area = document.getElementById('ds-list-area');
       if (!area) return;
+      if (state._activeLayer !== 'bronze') return;
+      const requestedCartridge = state._currentCartridge?.id || '';
 
       let sources = state._bronzeSources;
       if (!sources.length) {
@@ -2026,14 +2083,17 @@ FROM silver_${entity || 'entity'}`;
         } catch(e) { sources = []; }
       }
 
-      const cartridge = state._currentCartridge?.id || '';
+      if (state._activeLayer !== 'bronze') return;
+      if ((state._currentCartridge?.id || '') !== requestedCartridge) return;
+
+      const cartridge = requestedCartridge;
       const filtered  = cartridge ? sources.filter(s => s.cartridge === cartridge) : sources;
 
       const count = document.getElementById('bronze-count');
       if (count) count.textContent = `(${filtered.length})`;
 
       const entityRows = filtered.map(s => `
-        <div class="ds-row" style="cursor:pointer;padding-left:12px" onclick="bronzeSelectSource(${escJsArg(s.source)})">
+        <div class="ds-row bronze-source-row" style="cursor:pointer;padding-left:12px" data-bronze-source="${esc(s.source)}">
           <div>
             <div class="ds-row-name">${esc(s.entity)}</div>
             <div class="ds-row-meta">${esc(s.source)}</div>
@@ -2084,6 +2144,10 @@ FROM silver_${entity || 'entity'}`;
           </div>
         </div>
       `;
+
+      area.querySelectorAll('.bronze-source-row[data-bronze-source]').forEach(row => {
+        row.addEventListener('click', () => bronzeSelectSource(row.dataset.bronzeSource || ''));
+      });
     }
 
     export function bronzeSelectSource(source) {
@@ -2105,15 +2169,15 @@ FROM silver_${entity || 'entity'}`;
       const t0 = Date.now();
       try {
         const r = await fetch('/api/bronze/query', {
-          method: 'POST', headers: jsonHeaders(),
+          method: 'POST', credentials: 'include', headers: jsonHeaders(),
           body: JSON.stringify({ sql, limit: 500 }),
         });
-        const d = await r.json();
+        const d = await r.json().catch(() => ({}));
         const elapsed = ((Date.now()-t0)/1000).toFixed(2);
         const result  = d.result || d;
-        if (result.error) {
+        if (!r.ok || result.error || result.detail) {
           if (statusEl) statusEl.textContent = `✗ error`;
-          if (resultsEl) resultsEl.innerHTML = `<div style="color:var(--red);white-space:pre-wrap;font-size:11px">${esc(result.error)}</div>`;
+          if (resultsEl) resultsEl.innerHTML = `<div style="color:var(--red);white-space:pre-wrap;font-size:11px">${esc(friendlyError(result, `HTTP ${r.status}`))}</div>`;
           return;
         }
         const schema = result.schema || [];
@@ -2165,9 +2229,21 @@ FROM silver_${entity || 'entity'}`;
 
     export async function refreshDS(name) {
       try {
-        await fetch(`/datasets/${name}/refresh`, {method: 'POST'});
+        const r = await fetch(`/datasets/${encodeURIComponent(name)}/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: csrfHeaders(),
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(friendlyError(d, `HTTP ${r.status}`));
+        }
         renderRefine();
-      } catch(e) { /* ignore */ }
+      } catch(e) {
+        console.warn('refreshDS failed', e);
+        const status = document.getElementById('ds-ed-status');
+        if (status) status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || 'No se pudo refrescar el dataset')}</span>`;
+      }
     }
 
     // ── Step 4: Analytics ──────────────────────────────────────────────────────
@@ -2314,7 +2390,11 @@ FROM silver_${entity || 'entity'}`;
     export async function deleteAnalyticApp(name, title) {
       if (!confirm(`¿Eliminar la aplicación "${title}"?\n\nEsto no se puede deshacer.`)) return;
       try {
-        const r = await fetch('/api/apps/' + encodeURIComponent(name), {method: 'DELETE'});
+        const r = await fetch('/api/apps/' + encodeURIComponent(name), {
+          method: 'DELETE',
+          headers: csrfHeaders(),
+          credentials: 'include'
+        });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
           alert('Error eliminando: ' + (d.detail || r.statusText));

@@ -10,13 +10,13 @@
 <body>
 
   <!-- Enterprise Shell -->
-  <div class="ent-shell">
+  <div class="ent-shell monitor-no-sidebar">
     <aside class="ent-sidebar">
       <div class="ent-sidebar-logo">OMEGA</div>
       <nav class="ent-sidebar-nav">
         <a href="/" class="ent-nav-item">Dashboard</a>
         <a href="/viewer/pipeline" class="ent-nav-item">Pipelines</a>
-        <a href="/viewer/datasets" class="ent-nav-item">Datasets</a>
+        <a href="/viewer/datasets" class="ent-nav-item" data-permission="datasets.read">Datasets</a>
         <a href="/monitor" class="ent-nav-item active">Jobs</a>
         <a href="/viewer/vault" class="ent-nav-item">Vault</a>
         <a href="/iam" class="ent-nav-item">IAM</a>
@@ -51,7 +51,7 @@
             <!-- LEFT: Assistant -->
             <section class="panel panel-main">
               <div class="panel-title">
-                <span class="panel-icon">▶</span> Assistant
+                <span class="panel-icon">▶</span> OMEGA Monitor
                 <span class="panel-badge" id="model-badge">CLAUDE SONNET 4.6</span>
               </div>
 
@@ -74,7 +74,7 @@
               </div>
             </section>
 
-            <!-- RIGHT: Sidebar -->
+            <!-- RIGHT: Operational context -->
             <aside class="sidebar">
               <!-- Jobs -->
               <div class="panel panel-side">
@@ -114,8 +114,8 @@
                   <button class="qbtn" data-action="quick-cmd" data-cmd="Lista todos los datasets disponibles">📦 Listar datasets</button>
                   <button class="qbtn" data-action="quick-cmd" data-cmd="Lista las fuentes de datos bronze disponibles">🗄 Bronze sources</button>
                   <button class="qbtn" data-action="quick-cmd" data-cmd="¿Qué MCP servers están registrados y qué herramientas tienen?">◈ MCP status</button>
-                  <button class="qbtn" data-action="open-datasets">📊 Datasets panel</button>
-                  <button class="qbtn" data-action="go-studio" style="border-color:var(--cyan);color:var(--cyan)">⚙ Ir a Studio →</button>
+                  <button class="qbtn" data-action="open-datasets" data-permission="datasets.read">📊 Datasets panel</button>
+                  <button class="qbtn" data-action="go-studio" data-permission="global.admin" style="border-color:var(--cyan);color:var(--cyan)">⚙ Ir a Studio →</button>
                 </div>
               </div>
 
@@ -161,6 +161,7 @@
               <span class="panel-icon" style="padding:0 8px;font-size:9px;color:var(--green)">◈</span>
               <div class="viewer-tabs" id="viewer-tabs"></div>
               <div class="viewer-panel-actions">
+                <button class="btn-sm" id="btn-toggle-viewer" title="Contraer o expandir panel">▾</button>
                 <button class="btn-sm" id="btn-popout" title="Abrir en nueva pestaña">⬡</button>
                 <button class="btn-sm" id="btn-close-viewer" title="Cerrar panel">✕</button>
               </div>

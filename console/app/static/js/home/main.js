@@ -11,6 +11,7 @@ import {
 } from './api.js';
 import { applyPermissionsFromRole, setState, state } from './state.js';
 import { renderHome, renderVersionBadge } from './render.js';
+import { renderMarketplace, renderMarketplaceAdmin } from '../marketplace.js';
 import { cycleTheme } from '../theme.js';
 import { humanizeError, humanizeTerm } from '../i18n/labels.js';
 
@@ -33,6 +34,9 @@ function applyPermissionRegistry(registry, role) {
   const row = matrix[role] || {};
   const keys = Object.keys(row).filter((key) => row[key]);
   if (keys.length) {
+    if (['owner', 'super_admin', 'admin'].includes(role)) {
+      keys.push('marketplace.read', 'marketplace.request', 'marketplace.admin');
+    }
     state.effectivePermissions = new Set(keys);
   }
   setState({ permissions: registry });
@@ -49,7 +53,7 @@ async function optional(label, fn, fallback) {
 
 async function loadHomeData() {
   const user = await optional('current user', fetchCurrentUser, null);
-  const role = user?.role || 'anonymous';
+  const role = user?.workspace_role || user?.role || 'anonymous';
   setState({ user, role });
   applyPermissionsFromRole(role);
 
@@ -58,6 +62,9 @@ async function loadHomeData() {
 
   const permissions = await optional('permissions', fetchPermissions, null);
   if (permissions) applyPermissionRegistry(permissions, role);
+  if (Array.isArray(user?.permissions)) {
+    state.effectivePermissions = new Set(user.permissions);
+  }
 
   const mcp = await optional('mcp', fetchMcpServers, null);
   if (mcp) {
@@ -96,7 +103,13 @@ export async function initHomeControlPlane() {
   if (!root) return;
   try {
     await loadHomeData();
-    renderHome(root);
+    if (window.location.pathname === '/marketplace' || window.location.pathname === '/customer/cartridges') {
+      await renderMarketplace(root);
+    } else if (window.location.pathname === '/admin/installations' || window.location.pathname === '/admin/licenses') {
+      await renderMarketplaceAdmin(root);
+    } else {
+      renderHome(root);
+    }
   } catch (error) {
     console.warn('Home control plane fallback:', humanizeError(error));
   }

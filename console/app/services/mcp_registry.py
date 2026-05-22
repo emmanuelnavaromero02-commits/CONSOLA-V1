@@ -143,10 +143,52 @@ def _is_admin_context(ctx: dict) -> bool:
     return bool(ctx.get("trusted")) and str(ctx.get("role") or "").lower() in _ADMIN_ROLES
 
 
+def _is_unscoped_admin_context(ctx: dict) -> bool:
+    if not _is_admin_context(ctx):
+        return False
+    if ctx.get("tenant_id") or ctx.get("workspace_id"):
+        return False
+    allowed = [str(c).strip() for c in (ctx.get("allowed_cartridges") or [])]
+    return "*" in allowed
+
+
 def _prefix_allowed(ctx: dict, value: str) -> bool:
     value = (value or "").lstrip("/")
+    if not value:
+        return False
     prefixes = [str(p).lstrip("/") for p in (ctx.get("allowed_prefixes") or [])]
-    return bool(value) and any(value.startswith(prefix) for prefix in prefixes)
+    if any(value.startswith(prefix.rstrip("/") + "/") or value == prefix.rstrip("/") for prefix in prefixes):
+        return True
+    if _is_unscoped_admin_context(ctx):
+        return True
+
+    allowed = {
+        str(item).strip().strip("/")
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    if "*" in allowed:
+        return True
+    parts = value.strip("/").split("/")
+    if len(parts) < 2:
+        return False
+    root, cartridge = parts[0], parts[1]
+    if cartridge not in allowed:
+        return False
+    if root == "cartridges":
+        return True
+    if root not in {"raw", "silver", "gold", "uploads"}:
+        return False
+
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        return True
+    if len(parts) <= 3 and root in {"raw", "silver", "gold"}:
+        return True
+    scoped_marker = f"tenant_id={tenant_id}/workspace_id={workspace_id}"
+    normalized = value.rstrip("/")
+    return f"/{scoped_marker}/" in f"/{normalized}/" or normalized.endswith(f"/{scoped_marker}")
 
 
 def _require_context(ctx: dict, *permissions: str) -> None:
@@ -161,7 +203,7 @@ def _require_cartridge_scope(ctx: dict, cartridge_id: str) -> None:
     cartridge_id = str(cartridge_id or "").strip()
     if not cartridge_id:
         raise PermissionError("cartridge_id is required")
-    if _is_admin_context(ctx):
+    if _is_unscoped_admin_context(ctx):
         return
     allowed = [str(c).strip() for c in (ctx.get("allowed_cartridges") or [])]
     if "*" in allowed or cartridge_id in allowed:
@@ -398,6 +440,8 @@ def _headers_for(server_id: str, url: str) -> dict[str, str]:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA"
     elif server_id == "refinement" or "refinement" in url:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT"
+    elif server_id in {"monitoring", "studio_ops"} or "console" in url:
+        key_env = "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE"
     elif normalized.startswith("SAP_") or server_id == "replicon":
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE"
     pair_key = os.environ.get(key_env) if key_env else None
