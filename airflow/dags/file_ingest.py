@@ -81,6 +81,32 @@ def _minio_client():
                  secret_key=cfg["secret_key"], secure=cfg["secure"])
 
 
+def _safe_scope_segment(value: str | None, label: str) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", value):
+        raise ValueError(f"{label} inválido para partición SaaS")
+    return value
+
+
+def _upload_prefix(cartridge_id: str, tenant_id: str | None, workspace_id: str | None) -> str:
+    tenant = _safe_scope_segment(tenant_id, "tenant_id")
+    workspace = _safe_scope_segment(workspace_id, "workspace_id")
+    if tenant and workspace:
+        return f"uploads/{cartridge_id}/tenant_id={tenant}/workspace_id={workspace}/in/"
+    return f"uploads/{cartridge_id}/in/"
+
+
+def _raw_prefix(cartridge_id: str, entity: str, tenant_id: str | None, workspace_id: str | None, load_date: str) -> str:
+    tenant = _safe_scope_segment(tenant_id, "tenant_id")
+    workspace = _safe_scope_segment(workspace_id, "workspace_id")
+    base = f"raw/{cartridge_id}/{entity}/"
+    if tenant and workspace:
+        base += f"tenant_id={tenant}/workspace_id={workspace}/"
+    return f"{base}load_date={load_date}/"
+
+
 # ── Parsers (dispatch by name) ───────────────────────────────────────────────
 # Each parser receives the raw bytes + conf and returns a pandas DataFrame.
 # Add new ones here — referenced from entity_config.dag_params["parser"].
@@ -149,6 +175,9 @@ def _save_run(cartridge_id: str, entity: str, run_id: str, **kwargs) -> None:
         "storage_uri",
         "watermark_updated_to",
         "error_message",
+        "tenant_id",
+        "workspace_id",
+        "project_id",
     }
     args = {
         "dag_id":       "file_ingest",
@@ -177,7 +206,23 @@ def _save_run(cartridge_id: str, entity: str, run_id: str, **kwargs) -> None:
         raise RuntimeError(str(body["error"]))
 
 
-def _trigger_refresh_chain(cartridge_id: str, entity: str) -> None:
+def _require_saas_scope(conf: dict, cartridge_id: str) -> tuple[str, str]:
+    tenant_id = str(conf.get("tenant_id") or "").strip()
+    workspace_id = str(conf.get("workspace_id") or "").strip()
+    if tenant_id and workspace_id:
+        return tenant_id, workspace_id
+    if cartridge_id == "platform" and conf.get("allow_unscoped_platform"):
+        return tenant_id, workspace_id
+    raise ValueError("tenant_id and workspace_id are required for file_ingest")
+
+
+def _trigger_refresh_chain(
+    cartridge_id: str,
+    entity: str,
+    *,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> None:
     """Dispara dataset_refresh_chain con seed_raw=raw/<cartridge>/<entity>
     para que los silver/gold dependientes se materialicen en cascada."""
     import os as _os
@@ -185,16 +230,25 @@ def _trigger_refresh_chain(cartridge_id: str, entity: str) -> None:
     url  = _os.environ.get("AIRFLOW_URL", "http://airflow:8080")
     user = _os.environ.get("AIRFLOW_USER") or _os.environ.get("AIRFLOW_ADMIN_USER") or "admin"
     pw   = _os.environ.get("AIRFLOW_PASSWORD") or _os.environ.get("AIRFLOW_ADMIN_PASSWORD") or "admin"
+    conf = {
+        "seed_raw": f"raw/{cartridge_id}/{entity}",
+        "cartridge_id": cartridge_id,
+        "triggered_by": "file_ingest",
+    }
+    if tenant_id:
+        conf["tenant_id"] = tenant_id
+    if workspace_id:
+        conf["workspace_id"] = workspace_id
     try:
-        _req.post(
+        r = _req.post(
             f"{url}/api/v1/dags/dataset_refresh_chain/dagRuns",
             auth=(user, pw),
-            json={"conf": {"seed_raw": f"raw/{cartridge_id}/{entity}",
-                           "triggered_by": "file_ingest"}},
+            json={"conf": conf},
             timeout=15,
         )
+        r.raise_for_status()
     except Exception as exc:                                       # noqa: BLE001
-        print(f"[file_ingest] WARN: refresh_chain trigger falló: {exc}")
+        raise RuntimeError(f"refresh_chain trigger falló: {exc}") from exc
 
 
 # ── DAG ──────────────────────────────────────────────────────────────────────
@@ -225,13 +279,18 @@ def file_ingest():
     def list_matching_files(**ctx) -> list[dict]:
         conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
         cartridge_id = conf.get("cartridge_id") or "replicon"
+        tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
         pattern      = conf.get("file_pattern") or ""
         if not pattern:
             raise ValueError("dag_params.file_pattern es obligatorio")
 
         cfg     = _minio_cfg()
         bucket  = cfg["bucket"]
-        prefix  = f"uploads/{cartridge_id}/in/"
+        prefix  = _upload_prefix(
+            cartridge_id,
+            tenant_id,
+            workspace_id,
+        )
         client  = _minio_client()
         matches: list[dict] = []
         for obj in client.list_objects(bucket, prefix=prefix, recursive=False):
@@ -256,6 +315,7 @@ def file_ingest():
 
         conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
         cartridge_id = conf.get("cartridge_id") or "replicon"
+        tenant_id, workspace_id = _require_saas_scope(conf, cartridge_id)
         entity       = conf.get("entity")
         if not entity:
             raise ValueError("conf.entity es obligatorio")
@@ -275,7 +335,7 @@ def file_ingest():
         batch_id = str(uuid.uuid4())
         started  = datetime.now(timezone.utc)
         today    = started.strftime("%Y-%m-%d")
-        out_pref = f"raw/{cartridge_id}/{entity}/load_date={today}/"
+        out_pref = _raw_prefix(cartridge_id, entity, tenant_id, workspace_id, today)
 
         if not files:
             print(f"[file_ingest] no hay archivos para {cartridge_id}.{entity} — noop")
@@ -284,6 +344,9 @@ def file_ingest():
                       started_at=started.isoformat(),
                       finished_at=datetime.now(timezone.utc).isoformat(),
                       airflow_dag_run_id=airflow_run_id,
+                      tenant_id=tenant_id,
+                      workspace_id=workspace_id,
+                      project_id=conf.get("project_id"),
                       note="no files matched")
             return {"row_count": 0, "files": 0, "storage_uri": None}
 
@@ -299,6 +362,10 @@ def file_ingest():
             df["_source_file"] = f["name"]
             frames.append(df)
         df = pd.concat(frames, ignore_index=True)
+        if tenant_id:
+            df["tenant_id"] = str(tenant_id)
+        if workspace_id:
+            df["workspace_id"] = str(workspace_id)
         print(f"[file_ingest] {cartridge_id}.{entity} → {len(df)} filas de {len(files)} archivo(s)")
 
         # Wipe day's prefix (so re-runs are idempotent for the same day)
@@ -335,11 +402,19 @@ def file_ingest():
             started_at=started.isoformat(),
             finished_at=finished.isoformat(),
             airflow_dag_run_id=airflow_run_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            project_id=conf.get("project_id"),
             files_processed=len(files),
         )
 
         # Propagar aguas abajo (silver→gold) según el grafo de dependencias
-        _trigger_refresh_chain(cartridge_id, entity)
+        _trigger_refresh_chain(
+            cartridge_id,
+            entity,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+        )
         return {
             "row_count":      len(df),
             "files":          len(files),

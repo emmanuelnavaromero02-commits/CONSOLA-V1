@@ -1,4 +1,7 @@
+@import url("./marketplace.css");
+
 :root {
+  --marketplace-css-loaded: 1;
   --home-navy: var(--text);
   --home-navy-2: var(--primary-dark);
   --home-blue: var(--primary);
@@ -117,11 +120,11 @@ body {
   position: sticky;
   top: 0;
   z-index: 10;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(320px, 560px) minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 16px 34px;
+  gap: 12px;
+  padding: 14px 28px;
   border-bottom: 1px solid var(--home-border);
   background: var(--home-surface);
   backdrop-filter: blur(10px);
@@ -134,6 +137,16 @@ body {
   color: var(--home-navy);
   font-weight: 850;
   font-size: 18px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.home-brand small {
+  color: var(--home-muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .home-mark {
@@ -152,7 +165,17 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.home-nav {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.home-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .home-nav a {
@@ -162,6 +185,7 @@ body {
   font-size: 14px;
   padding: 8px 10px;
   border-radius: 9px;
+  white-space: nowrap;
 }
 
 .home-nav a:hover {
@@ -173,6 +197,86 @@ body {
   justify-content: flex-end;
   color: var(--home-muted);
   font-size: 13px;
+  white-space: nowrap;
+}
+
+.home-service-search {
+  position: relative;
+  min-width: 0;
+}
+
+.home-service-search input {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--home-border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--home-text);
+  font: 750 13px/1 var(--home-font);
+  padding: 9px 12px;
+  outline: none;
+}
+
+.home-service-search input:focus {
+  border-color: var(--home-blue);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.home-search-results {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  max-height: min(68vh, 620px);
+  overflow-y: auto;
+  border: 1px solid var(--home-border);
+  border-radius: 12px;
+  background: var(--home-surface);
+  box-shadow: var(--home-shadow);
+}
+
+.home-search-results[hidden] {
+  display: none;
+}
+
+.home-search-results a {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--home-text);
+  text-decoration: none;
+}
+
+.home-search-results a:hover {
+  background: var(--primary-soft);
+}
+
+.home-search-category {
+  margin: 8px 4px 2px;
+  color: var(--home-blue);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.home-search-category:first-child {
+  margin-top: 2px;
+}
+
+.home-search-results strong {
+  font-size: 13px;
+}
+
+.home-search-results small {
+  color: var(--home-muted);
+  font-size: 11px;
 }
 
 .home-role {
@@ -535,11 +639,21 @@ body {
 }
 
 @media (max-width: 1060px) {
-  .home-topbar,
   .home-hero,
   .home-section-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .home-topbar {
+    grid-template-columns: 1fr auto;
+    align-items: flex-start;
+  }
+
+  .home-service-search,
+  .home-nav {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .home-hero {
@@ -561,6 +675,12 @@ body {
 @media (max-width: 680px) {
   .home-topbar {
     padding: 14px 18px;
+    grid-template-columns: 1fr;
+  }
+
+  .home-user {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .home-container {

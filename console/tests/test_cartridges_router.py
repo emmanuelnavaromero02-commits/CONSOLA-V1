@@ -22,7 +22,12 @@ class _FakeAsyncClient:
 
 
 def _request():
-    return SimpleNamespace(state=SimpleNamespace(user={"id": 1, "email": "admin@example.com"}))
+    return SimpleNamespace(state=SimpleNamespace(user={
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+        "allowed_cartridges": ["replicon"],
+    }))
 
 
 @pytest.mark.asyncio

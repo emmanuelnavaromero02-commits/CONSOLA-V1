@@ -45,6 +45,10 @@ PERMISSIONS = [
     {"key": "cartridges.read", "label": "Read cartridges", "category": "Cartridges", "description": "List cartridges, view entities and watermarks."},
     {"key": "cartridges.write", "label": "Configure cartridges", "category": "Cartridges", "description": "Edit connection metadata and run test_connection probes."},
     {"key": "cartridges.execute", "label": "Run cartridge extractions", "category": "Cartridges", "description": "Trigger entity extractions and knowledge-bit runs."},
+    {"key": "marketplace.read", "label": "Read marketplace", "category": "Marketplace", "description": "View available cartridges and installation status."},
+    {"key": "marketplace.request", "label": "Request marketplace products", "category": "Marketplace", "description": "Request activation of cartridge products for a workspace."},
+    {"key": "marketplace.write", "label": "Legacy marketplace write", "category": "Marketplace", "description": "Backward-compatible marketplace write permission."},
+    {"key": "marketplace.admin", "label": "Administer marketplace products", "category": "Marketplace", "description": "Approve, pause, revoke and reactivate cartridge entitlements."},
     # Sprint v1.42 — copilot RBAC. The brain in copilot_service.py maps
     # every tool's risk_level → required permission before invocation
     # (read tools → copilot.use, write tools → copilot.write, destructive
@@ -144,18 +148,23 @@ ROLE_PERMISSIONS = {
         "monitor.read",
     },
     "workspace_admin": {
+        # Workspace admins can manage identities inside their own workspace.
+        # Routes still scope the visible/manageable users server-side; this
+        # permission is not a platform-admin grant.
+        "iam.users.read", "iam.users.write", "iam.roles.read",
         "datasets.read", "datasets.write", "datasets.delete",
         "pipelines.read", "pipelines.run", "pipelines.write",
         "studio.read", "studio.write", "monitor.read", "workspace.access",
         "vault.connections.read", "vault.connections.write",
         "vault.secrets.read_masked", "apps.read", "apps.write",
         "cartridges.read", "cartridges.write", "cartridges.execute",
+        "marketplace.read", "marketplace.request",
         # v1.42: workspace admins drive the copilot end-to-end.
         "copilot.use", "copilot.write", "copilot.execute",
     },
     "analyst": {
         "datasets.read", "pipelines.read", "studio.read", "monitor.read",
-        "workspace.access", "apps.read", "cartridges.read",
+        "workspace.access", "apps.read", "cartridges.read", "marketplace.read", "marketplace.request",
         # v1.42: analysts query data via the copilot — read-only.
         "copilot.use",
     },
@@ -165,9 +174,9 @@ ROLE_PERMISSIONS = {
         # v1.42: auditors read via the copilot to investigate incidents.
         "copilot.use",
     },
-    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read", "copilot.use"},
-    "workspace_user": {"workspace.access", "apps.read"},
-    "user": {"monitor.read", "workspace.access", "apps.read", "studio.read"},
+    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"},
+    "workspace_user": {"workspace.access", "apps.read", "marketplace.read", "marketplace.request"},
+    "user": {"monitor.read", "workspace.access", "apps.read", "studio.read", "marketplace.read"},
 }
 
 RESOURCE_ACTION_PERMISSIONS = {
@@ -194,6 +203,10 @@ RESOURCE_ACTION_PERMISSIONS = {
     ("/studio", "write"): "studio.write",
     ("/monitor", "read"): "monitor.read",
     ("/workspace", "access"): "workspace.access",
+    ("/marketplace", "read"): "marketplace.read",
+    ("/marketplace", "request"): "marketplace.request",
+    ("/admin/installations", "read"): "marketplace.admin",
+    ("/admin/installations", "write"): "marketplace.admin",
 }
 
 
@@ -205,17 +218,53 @@ def canonical_role(role: str | None) -> str:
 def user_role(user: dict | None) -> str:
     if not user:
         return "anonymous"
-    return canonical_role(user.get("workspace_role") or user.get("role"))
+    # This is the global account role only. Workspace roles are intentionally
+    # kept separate so a workspace admin cannot be treated as a platform admin
+    # by downstream MCP/refinement services.
+    return canonical_role(user.get("role"))
+
+
+def workspace_role(user: dict | None) -> str | None:
+    """Return the scoped workspace role, never a platform-admin role.
+
+    The legacy database role name ``admin`` exists in ``user_workspace_roles``
+    for old installs. Inside a workspace that means "admin of this workspace",
+    not "admin of the whole platform". Normalize it before permission union so
+    workspace membership cannot accidentally grant global IAM/Vault powers.
+    """
+    if not user or not user.get("workspace_role"):
+        return None
+    resolved = canonical_role(user.get("workspace_role"))
+    if resolved in {"admin", "owner", "super_admin", "security_admin"}:
+        return "workspace_admin"
+    if resolved in ROLE_PERMISSIONS:
+        return resolved
+    return None
 
 
 def get_effective_permissions(user: dict | None = None, role: str | None = None) -> set[str]:
-    resolved = canonical_role(role or user_role(user))
-    return set(ROLE_PERMISSIONS.get(resolved, set()))
+    if role:
+        resolved = canonical_role(role)
+        return set(ROLE_PERMISSIONS.get(resolved, set()))
+    if not user:
+        return set()
+    roles = {user_role(user)}
+    scoped = workspace_role(user)
+    if scoped:
+        roles.add(scoped)
+    if not roles:
+        roles = {user_role(user)}
+    effective: set[str] = set()
+    for resolved in roles:
+        effective.update(ROLE_PERMISSIONS.get(resolved, set()))
+    return effective
 
 
 def has_permission(user: dict | None, permission: str) -> bool:
     if permission not in PERMISSION_KEYS:
         return False
+    if permission == "marketplace.admin":
+        return canonical_role((user or {}).get("role")) in {"owner", "super_admin", "admin"}
     return permission in get_effective_permissions(user)
 
 

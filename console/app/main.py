@@ -29,7 +29,7 @@ from app.logging_config import setup_logging  # noqa: E402
 setup_logging(service_name="console")
 
 import httpx
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends, Header, Query
+from fastapi import Body, FastAPI, HTTPException, UploadFile, File, Request, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -65,6 +65,7 @@ def _public_url(
 
 from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest
 from app.services import cartridge_service
+from app.services import marketplace_service
 from app.services import agent_service as _agents
 from app.services import agent_runtime as _agent_runtime
 from app.services import auth as _auth
@@ -78,15 +79,18 @@ from app.dependencies import (
     ROLE_ADMIN,
     ROLE_ANALYST,
     ROLE_WORKSPACE_ADMIN,
+    _workspace_cartridges,
     _workspace_memberships,
+    get_current_global_user,
     get_current_user as get_current_user_dependency,
     require_any_role,
     require_authenticated,
+    require_global_any_role,
     require_role,
 )
 from app.services.auth import verify_internal_api_key
 from app.services import audit_service as _audit
-from app.services.permissions import ROLE_DEFINITIONS, require_permission
+from app.services.permissions import ROLE_DEFINITIONS, get_effective_permissions, has_permission, require_permission
 from app.services.security_context import build_security_context, rls_user_context
 from app.middleware.request_id import request_id_var
 
@@ -239,7 +243,12 @@ def _is_internal_request(request: Request) -> bool:
 
 def _is_security_admin_context(ctx: dict) -> bool:
     role = str(ctx.get("role") or "").lower()
-    return bool(ctx.get("trusted")) and role in {ROLE_ADMIN, "owner", "super_admin"}
+    if not (bool(ctx.get("trusted")) and role in {ROLE_ADMIN, "owner", "super_admin"}):
+        return False
+    if ctx.get("tenant_id") or ctx.get("workspace_id"):
+        return False
+    allowed = {str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()}
+    return "*" in allowed
 
 
 def _is_replicon_vault_reveal_request(request: Request) -> bool:
@@ -271,15 +280,34 @@ def _internal_service_user() -> dict:
         "id": 0,
         "email": "internal@omega.local",
         "role": ROLE_ADMIN,
-        "workspace_role": ROLE_ADMIN,
+        "workspace_role": None,
         "active_workspace_id": None,
     }
+
+
+def _user_payload(user: dict | None) -> dict | None:
+    if not user:
+        return None
+    payload = dict(user)
+    payload["permissions"] = sorted(get_effective_permissions(payload))
+    return payload
 
 
 async def _internal_or_authenticated(request: Request) -> dict:
     if _is_internal_request(request):
         return _internal_service_user()
     return await require_authenticated(request)
+
+
+def _is_internal_service_actor(user: dict | None) -> bool:
+    if not user:
+        return False
+    return int(user.get("id") or -1) == 0 and user.get("email") == "internal@omega.local"
+
+
+def _require_effective_permission(user: dict | None, permission: str) -> None:
+    if not has_permission(user, permission):
+        raise HTTPException(status_code=403, detail=f"permission required: {permission}")
 
 
 app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
@@ -469,17 +497,19 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str, user: dict | No
 
     source = f"raw/{cartridge}/{entity}"
     ctx = build_security_context(user)
-    if not _is_security_admin_context(ctx):
-        path = f"{source}/"
-        prefixes = [str(prefix).lstrip("/") for prefix in ctx.get("allowed_prefixes") or []]
-        if not any(path.startswith(prefix) for prefix in prefixes):
-            return {}
+    tenant = str(ctx.get("tenant_id") or "").strip()
+    workspace = str(ctx.get("workspace_id") or "").strip()
+    list_prefix = f"{source}/"
+    if tenant and workspace:
+        list_prefix = f"{source}/tenant_id={tenant}/workspace_id={workspace}/"
+    if not _explorer_path_allowed(list_prefix, user):
+        return {}
     bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
     try:
         client = _minio_client()
         object_names = [
             obj.object_name
-            for obj in client.list_objects(bucket, prefix=f"{source}/", recursive=True)
+            for obj in client.list_objects(bucket, prefix=list_prefix, recursive=True)
         ]
         latest_date = _bronze_latest_date_from_objects(cartridge, entity, object_names)
         if not latest_date:
@@ -518,6 +548,53 @@ def _normalize_airflow_state(state: str | None) -> str:
     return "unknown"
 
 
+_COLUMN_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
+
+
+async def _table_has_column(table: str, column: str) -> bool:
+    key = (table, column)
+    if key in _COLUMN_EXISTS_CACHE:
+        return _COLUMN_EXISTS_CACHE[key]
+    try:
+        pool = await _get_db_pool()
+        exists = await pool.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema='public'
+                   AND table_name=$1
+                   AND column_name=$2
+            )
+            """,
+            table,
+            column,
+        )
+        _COLUMN_EXISTS_CACHE[key] = bool(exists)
+        return bool(exists)
+    except Exception:
+        logger.debug("Could not inspect column %s.%s", table, column, exc_info=True)
+        _COLUMN_EXISTS_CACHE[key] = False
+        return False
+
+
+async def _pipeline_runs_scope_predicate(user: dict | None, start_index: int = 1) -> tuple[str, list]:
+    ctx = build_security_context(user)
+    clauses: list[str] = []
+    values: list = []
+    idx = start_index
+    workspace_id = ctx.get("workspace_id")
+    tenant_id = ctx.get("tenant_id")
+    if workspace_id and await _table_has_column("pipeline_runs", "workspace_id"):
+        clauses.append(f"workspace_id=${idx}::uuid")
+        values.append(workspace_id)
+        idx += 1
+    if tenant_id and await _table_has_column("pipeline_runs", "tenant_id"):
+        clauses.append(f"tenant_id=${idx}::uuid")
+        values.append(tenant_id)
+    return (" AND " + " AND ".join(clauses) if clauses else ""), values
+
+
 async def _record_dag_pipeline_trigger(
     *,
     cartridge: str,
@@ -527,33 +604,70 @@ async def _record_dag_pipeline_trigger(
     mode: str,
     status: str,
     conf: dict,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> None:
     if not dag_run_id:
         return
 
     pool = await _get_db_pool()
-    await pool.execute(
-        """
-        INSERT INTO pipeline_runs (
-            run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
-            mode, status, started_at, extra
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
-        ON CONFLICT (run_id) DO UPDATE SET
-            airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
-            mode = EXCLUDED.mode,
-            status = EXCLUDED.status,
-            extra = pipeline_runs.extra || EXCLUDED.extra
-        """,
-        dag_run_id,
-        dag_id,
-        cartridge,
-        entity,
-        dag_run_id,
-        mode,
-        _normalize_airflow_state(status),
-        json.dumps({"raw_conf": conf, "triggered_by": "console"}),
+    has_scope = (
+        tenant_id
+        and workspace_id
+        and await _table_has_column("pipeline_runs", "tenant_id")
+        and await _table_has_column("pipeline_runs", "workspace_id")
     )
+    extra = json.dumps({"raw_conf": conf, "triggered_by": "console"})
+    if has_scope:
+        await pool.execute(
+            """
+            INSERT INTO pipeline_runs (
+                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                mode, status, started_at, extra, tenant_id, workspace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb, $9::uuid, $10::uuid)
+            ON CONFLICT (run_id) DO UPDATE SET
+                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                mode = EXCLUDED.mode,
+                status = EXCLUDED.status,
+                tenant_id = COALESCE(pipeline_runs.tenant_id, EXCLUDED.tenant_id),
+                workspace_id = COALESCE(pipeline_runs.workspace_id, EXCLUDED.workspace_id),
+                extra = pipeline_runs.extra || EXCLUDED.extra
+            """,
+            dag_run_id,
+            dag_id,
+            cartridge,
+            entity,
+            dag_run_id,
+            mode,
+            _normalize_airflow_state(status),
+            extra,
+            tenant_id,
+            workspace_id,
+        )
+    else:
+        await pool.execute(
+            """
+            INSERT INTO pipeline_runs (
+                run_id, dag_id, cartridge_id, entity, airflow_dag_run_id,
+                mode, status, started_at, extra
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8::jsonb)
+            ON CONFLICT (run_id) DO UPDATE SET
+                airflow_dag_run_id = EXCLUDED.airflow_dag_run_id,
+                mode = EXCLUDED.mode,
+                status = EXCLUDED.status,
+                extra = pipeline_runs.extra || EXCLUDED.extra
+            """,
+            dag_run_id,
+            dag_id,
+            cartridge,
+            entity,
+            dag_run_id,
+            mode,
+            _normalize_airflow_state(status),
+            extra,
+        )
 
 
 async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
@@ -1012,21 +1126,33 @@ async def auth_middleware(request: Request, call_next):
 
     is_public = path in _AUTH_PUBLIC_EXACT or any(path.startswith(p) for p in _AUTH_PUBLIC_PREFIX)
 
+    requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None
     token = request.cookies.get(_auth.COOKIE_NAME)
     user  = await _auth.get_session_user(token) if token else None
-    if user and not user.get("active_workspace_id"):
+    if user and (requested_workspace_id or not user.get("active_workspace_id")):
         try:
             workspaces = await _workspace_memberships(user["id"])
             if workspaces:
+                active_workspace = workspaces[0]
+                if requested_workspace_id:
+                    active_workspace = next((w for w in workspaces if w["workspace_id"] == requested_workspace_id), None)
+                    if not active_workspace:
+                        return _apply_security_headers(JSONResponse({"detail": "workspace access forbidden"}, status_code=403), path)
                 user = dict(user)
                 user.update({
-                    "workspace_role": workspaces[0]["workspace_role"],
-                    "active_workspace_id": workspaces[0]["workspace_id"],
-                    "active_tenant_id": workspaces[0]["tenant_id"],
+                    "workspace_role": active_workspace["workspace_role"],
+                    "active_workspace_id": active_workspace["workspace_id"],
+                    "active_tenant_id": active_workspace["tenant_id"],
                     "workspaces": workspaces,
+                    "allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=user["id"]),
                 })
         except Exception:
-            logger.debug("Session workspace enrichment failed", exc_info=True)
+            logger.exception("Session workspace enrichment failed")
+            if not is_public and _uses_rbac_dependency(path):
+                return _apply_security_headers(
+                    JSONResponse({"detail": "workspace context unavailable"}, status_code=403),
+                    path,
+                )
 
     # Fall back to JWT bearer so require_permission() routes get request.state.user set.
     if not user:
@@ -1040,15 +1166,27 @@ async def auth_middleware(request: Request, call_next):
                 if jwt_user and jwt_user.get("is_active"):
                     workspaces = await _workspace_memberships(jwt_user["id"])
                     if workspaces:
+                        active_workspace = workspaces[0]
+                        if requested_workspace_id:
+                            active_workspace = next((w for w in workspaces if w["workspace_id"] == requested_workspace_id), None)
+                            if not active_workspace:
+                                return _apply_security_headers(JSONResponse({"detail": "workspace access forbidden"}, status_code=403), path)
                         jwt_user = dict(jwt_user)
                         jwt_user.update({
-                            "workspace_role": workspaces[0]["workspace_role"],
-                            "active_workspace_id": workspaces[0]["workspace_id"],
-                            "active_tenant_id": workspaces[0]["tenant_id"],
+                            "workspace_role": active_workspace["workspace_role"],
+                            "active_workspace_id": active_workspace["workspace_id"],
+                            "active_tenant_id": active_workspace["tenant_id"],
+                            "workspaces": workspaces,
+                            "allowed_cartridges": await _workspace_cartridges(active_workspace["workspace_id"], user_id=jwt_user["id"]),
                         })
                     user = jwt_user
             except Exception:
                 logger.debug("Bearer JWT auth fallback failed", exc_info=True)
+                if not is_public and _uses_rbac_dependency(path):
+                    return _apply_security_headers(
+                        JSONResponse({"detail": "authentication required"}, status_code=401),
+                        path,
+                    )
 
     request.state.user = user
     try:
@@ -1090,7 +1228,7 @@ def require_user(request: Request) -> dict:
 
 def require_admin(request: Request) -> dict:
     u = require_user(request)
-    if u.get("role") != "admin":
+    if u.get("role") not in {"admin", "owner", "super_admin"}:
         raise HTTPException(403, "admin role required")
     return u
 
@@ -1227,7 +1365,7 @@ async def auth_logout(request: Request):
 
 @app.get("/auth/me")
 async def auth_me(request: Request):
-    return {"user": current_user(request)}
+    return {"user": _user_payload(current_user(request))}
 
 
 @app.get("/auth/me-jwt")
@@ -1254,7 +1392,7 @@ async def auth_me_jwt(authorization: str | None = Header(None)):
 
 @app.get("/auth/me-current")
 async def auth_me_current(user: dict = Depends(get_current_user_dependency)):
-    return {"user": user}
+    return {"user": _user_payload(user)}
 
 
 # ── Activation ────────────────────────────────────────────────────────────────
@@ -1510,7 +1648,7 @@ async def viewer_me(request: Request):
 
 @app.get("/api/me")
 async def api_me(user: dict = Depends(require_authenticated)):
-    return user
+    return _user_payload(user)
 
 
 @app.post("/api/me/change-password", dependencies=[Depends(require_csrf)])
@@ -1531,13 +1669,13 @@ async def api_me_change_password(body: dict, user: dict = Depends(require_authen
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 @app.get("/jobs", dependencies=[Depends(require_authenticated)])
-async def list_jobs(limit: int = 20):
-    return {"jobs": await job_service.list_recent(limit)}
+async def list_jobs(limit: int = 20, user: dict = Depends(require_authenticated)):
+    return {"jobs": await _call_with_optional_user(job_service.list_recent, limit, user=user)}
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
-async def get_job(job_id: str):
-    return await job_service.get(job_id)
+async def get_job(job_id: str, user: dict = Depends(require_authenticated)):
+    return await job_service.get_scoped(job_id, user=user)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
@@ -1602,16 +1740,19 @@ async def refresh_dataset(name: str, user: dict = Depends(require_permission("da
 # ── Viewer data APIs ──────────────────────────────────────────────────────────
 
 @app.get("/api/jobs", dependencies=[Depends(require_authenticated)])
-async def api_jobs(limit: int = 50):
-    return {"jobs": await job_service.list_recent(limit)}
+async def api_jobs(limit: int = 50, user: dict = Depends(require_authenticated)):
+    return {"jobs": await _call_with_optional_user(job_service.list_recent, limit, user=user)}
 
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_authenticated)])
-async def api_job(job_id: str):
-    return await job_service.get(job_id)
+async def api_job(job_id: str, user: dict = Depends(require_authenticated)):
+    return await job_service.get_scoped(job_id, user=user)
 
 @app.get("/api/jobs/{job_id}/logs", dependencies=[Depends(require_authenticated)])
-async def api_job_logs(job_id: str, limit: int = 200):
+async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(require_authenticated)):
     import json as _json
+    scoped = await job_service.get_scoped(job_id, user=user)
+    if scoped.get("error"):
+        raise HTTPException(404, "job not found")
     pool = await _get_db_pool()
     rows = await pool.fetch(
         "SELECT entity, level, message, detail, ts FROM run_logs "
@@ -1696,17 +1837,21 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
     if not sql:
         raise HTTPException(400, "sql is required")
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "preview_transform",
-                             {
-                                 "sql": sql,
-                                 "limit": limit,
-                                 "sources": sources,
-                                 "user_context": _rls_user_context(user),
-                             },
-                             user,
-                         ))
+        r = await c.post(
+            f"{REFINEMENT_URL}/mcp/invoke",
+            json=_mcp_payload(
+                "preview_transform",
+                {
+                    "sql": sql,
+                    "limit": limit,
+                    "sources": sources,
+                    "user_context": _rls_user_context(user),
+                },
+                user,
+            ),
+        )
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement query failed"))
     return r.json()
 
 
@@ -1788,7 +1933,32 @@ def _explorer_path_allowed(path: str, user: dict | None) -> bool:
     if not path:
         return False
     prefixes = [str(p).lstrip("/") for p in ctx.get("allowed_prefixes") or []]
-    return any(path.startswith(prefix) for prefix in prefixes)
+    if any(path.startswith(prefix.rstrip("/") + "/") or path == prefix.rstrip("/") for prefix in prefixes):
+        return True
+
+    allowed = {
+        str(item).strip().strip("/")
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip().strip("/")
+    }
+    parts = path.strip("/").split("/")
+    if len(parts) < 2:
+        return False
+    root, cartridge = parts[0], parts[1]
+    if cartridge not in allowed and "*" not in allowed:
+        return False
+    if root == "cartridges":
+        return True
+    if root not in {"raw", "silver", "gold", "uploads"}:
+        return False
+
+    tenant = str(ctx.get("tenant_id") or "").strip()
+    workspace = str(ctx.get("workspace_id") or "").strip()
+    if not tenant or not workspace:
+        return True
+    scoped_marker = f"tenant_id={tenant}/workspace_id={workspace}"
+    normalized = path.rstrip("/")
+    return f"/{scoped_marker}/" in f"/{normalized}/" or normalized.endswith(f"/{scoped_marker}")
 
 
 @app.get("/api/explorer/buckets", dependencies=[Depends(require_permission("pipelines.read"))])
@@ -1984,12 +2154,14 @@ async def serve_app(name: str, user: dict = Depends(require_permission("apps.rea
     return RedirectResponse(f"{workspace_url}/apps/{quote(name, safe='')}", status_code=307)
 
 
-@app.get("/api/apps", dependencies=[Depends(require_authenticated)])
-async def api_apps(user: dict = Depends(require_authenticated)):
+@app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
+async def api_apps(user: dict = Depends(require_permission("apps.read"))):
     """List all published analytic apps."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("list_apps", {}, user))
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, _upstream_error_detail(r, "Apps service unavailable"))
     return r.json()
 
 
@@ -2152,8 +2324,9 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 # ── Pipeline DAG ──────────────────────────────────────────────────────────────
 
 @app.get("/studio/cartridges/{cartridge_id}/connections", dependencies=[Depends(require_authenticated)])
-async def studio_cartridge_connections(cartridge_id: str):
+async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(require_authenticated)):
     """Proxy to Vault — returns masked connection config for the cartridge."""
+    _require_cartridge_visible(user, cartridge_id)
     vault_url = os.environ.get("VAULT_URL", "http://vault:8300")
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         try:
@@ -2174,6 +2347,7 @@ async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require
     Fuentes: entity_config (entities), pipeline_runs + jobs (run history), refinement (datasets).
     """
     user = _runtime_user(user)
+    _require_cartridge_visible(user, cartridge)
     import re as _re
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 
@@ -2210,8 +2384,9 @@ async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require
     dag_runs_by_entity: dict[str, dict] = {}
     try:
         _pool = await _get_db_pool()
+        scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 2)
         rows_pg = await _pool.fetch(
-            """SELECT DISTINCT ON (entity)
+            f"""SELECT DISTINCT ON (entity)
                    run_id, dag_id, entity, airflow_dag_run_id,
                    status, mode,
                    started_at, finished_at,
@@ -2219,8 +2394,10 @@ async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require
                    duration_seconds, watermark_updated_to, error_message, extra
                FROM pipeline_runs
                WHERE cartridge_id = $1
+                 {scope_sql}
                ORDER BY entity, started_at DESC""",
             cartridge,
+            *scope_values,
         )
         for row in rows_pg:
             run = await _refresh_dag_run_status(dict(row), user)
@@ -2229,7 +2406,7 @@ async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require
         logger.debug("Could not load pipeline_runs for %s", cartridge, exc_info=True)
 
     # 2b. jobs table — internal queue (legacy / console-triggered runs)
-    all_jobs = await job_service.list_recent(100)
+    all_jobs = await _call_with_optional_user(job_service.list_recent, 100, user=user)
     jobs_by_entity: dict[str, dict] = {}
     for j in all_jobs:
         entity = (j.get("args") or {}).get("entity") or ""
@@ -2414,19 +2591,23 @@ async def api_dag_template_code(template_id: str,
 @app.get("/api/pipeline_runs", dependencies=[Depends(require_authenticated)])
 async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, limit: int = 50, user: dict = Depends(require_authenticated)):
     """Recent DAG run history from pipeline_runs table."""
+    user = _runtime_user(user)
+    _require_cartridge_visible(user, cartridge)
     try:
         pool = await _get_db_pool()
         if entity:
+            scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
             rows = await pool.fetch(
                 "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
-                "ORDER BY started_at DESC NULLS LAST LIMIT $3",
-                cartridge, entity, limit,
+                f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $3",
+                cartridge, entity, limit, *scope_values,
             )
         else:
+            scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
             rows = await pool.fetch(
                 "SELECT * FROM pipeline_runs WHERE cartridge_id=$1 "
-                "ORDER BY started_at DESC NULLS LAST LIMIT $2",
-                cartridge, limit,
+                f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
+                cartridge, limit, *scope_values,
             )
         return {"runs": [dict(r) for r in rows]}
     except Exception:
@@ -2453,6 +2634,8 @@ def _format_pipeline_entity_run(row: dict) -> dict:
 @app.get("/api/pipeline/{cartridge}/{entity}/runs", dependencies=[Depends(require_authenticated)])
 async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20, user: dict = Depends(require_authenticated)):
     """Recent DAG-based pipeline runs for one cartridge entity."""
+    user = _runtime_user(user)
+    _require_cartridge_visible(user, cartridge)
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if not metadata.get("entity"):
         raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
@@ -2461,18 +2644,21 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
 
     try:
         pool = await _get_db_pool()
+        scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
         rows = await pool.fetch(
-            """
+            f"""
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
                    started_at, finished_at, duration_seconds, error_message
               FROM pipeline_runs
              WHERE cartridge_id=$1 AND entity=$2
+               {scope_sql}
              ORDER BY started_at DESC NULLS LAST
              LIMIT $3
             """,
             cartridge,
             entity,
             safe_limit,
+            *scope_values,
         )
     except Exception:
         _eid = uuid.uuid4().hex
@@ -2494,26 +2680,31 @@ async def api_pipeline_entity_runs(cartridge: str, entity: str, limit: int = 20,
 @app.get("/api/pipeline/{cartridge}/{entity}/runs/{dag_run_id}/logs", dependencies=[Depends(require_authenticated)])
 async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, user: dict = Depends(require_authenticated)):
     """Basic DAG run logs summary for one cartridge entity run."""
+    user = _runtime_user(user)
+    _require_cartridge_visible(user, cartridge)
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if not metadata.get("entity"):
         raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
 
     try:
         pool = await _get_db_pool()
+        scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 4)
         row = await pool.fetchrow(
-            """
+            f"""
             SELECT run_id, dag_id, airflow_dag_run_id, status, mode,
                    started_at, finished_at, duration_seconds, error_message
               FROM pipeline_runs
              WHERE cartridge_id=$1
                AND entity=$2
                AND (run_id=$3 OR airflow_dag_run_id=$3)
+               {scope_sql}
              ORDER BY started_at DESC NULLS LAST
              LIMIT 1
             """,
             cartridge,
             entity,
             dag_run_id,
+            *scope_values,
         )
     except Exception:
         _eid = uuid.uuid4().hex
@@ -2582,6 +2773,8 @@ async def api_pipeline_extract(
     user: dict = Depends(require_permission("pipelines.run")),
 ):
     """Trigger extraction for a single entity. Returns job_id for polling."""
+    user = _runtime_user(user)
+    _require_cartridge_visible(user, cartridge)
     body = body or {}
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if (metadata.get("pattern") or "").lower() == "dag-based":
@@ -2593,7 +2786,10 @@ async def api_pipeline_extract(
         if not dag_id:
             raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
 
-        conf = _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body)
+        conf = _apply_user_scope_to_dag_conf(
+            _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body),
+            user,
+        )
         requested_dag_run_id = _dag_run_id_from_idempotency_key(
             dag_id,
             body.get("idempotency_key") or body.get("request_id"),
@@ -2610,6 +2806,8 @@ async def api_pipeline_extract(
             mode=conf.get("mode", metadata.get("mode") or "incremental"),
             status=result.get("state") or "queued",
             conf=conf,
+            tenant_id=conf.get("tenant_id"),
+            workspace_id=conf.get("workspace_id"),
         )
         return {
             "triggered": True,
@@ -2642,6 +2840,7 @@ async def api_pipeline_extract_all(
     """Trigger extraction for every entity currently visible in the pipeline."""
     body = body or {}
     user = _runtime_user(user)
+    _require_cartridge_visible(user, cartridge)
     pipeline = await _call_with_optional_user(api_pipeline, cartridge, user=user)
     rows = pipeline.get("pipeline") or []
     triggered: list[dict] = []
@@ -2725,6 +2924,21 @@ def _build_dag_extract_conf(cartridge: str, entity: str, configured_mode: str | 
     return conf
 
 
+def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:
+    scoped = dict(conf or {})
+    ctx = build_security_context(user)
+    tenant_id = ctx.get("tenant_id")
+    workspace_id = ctx.get("workspace_id")
+    if not tenant_id or not workspace_id:
+        return scoped
+    for key, value in (("tenant_id", tenant_id), ("workspace_id", workspace_id)):
+        existing = scoped.get(key)
+        if existing and str(existing) != str(value):
+            raise HTTPException(403, detail=f"{key} scope mismatch")
+        scoped[key] = str(value)
+    return scoped
+
+
 def _dag_run_id_from_idempotency_key(dag_id: str, idempotency_key: object | None) -> str | None:
     if idempotency_key is None:
         return None
@@ -2742,11 +2956,12 @@ async def _trigger_airflow_extract_dag(
     user: dict | None,
     dag_run_id: str | None = None,
 ) -> dict:
+    scoped_conf = _apply_user_scope_to_dag_conf(conf, user)
     result: dict = {}
     for attempt in range(5):
         args = {
             "dag_id": dag_id,
-            "conf": conf,
+            "conf": scoped_conf,
         }
         if dag_run_id:
             args["dag_run_id"] = dag_run_id
@@ -2767,8 +2982,15 @@ def _is_transient_airflow_trigger_error(error: str) -> bool:
 
 # ── Studio — Entity config ───────────────────────────────────────────────────
 
-@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
+@app.post("/studio/cartridges/{cartridge_id}/entities/{entity}/rename", dependencies=[Depends(require_csrf)])
+async def studio_rename_entity(
+    cartridge_id: str,
+    entity: str,
+    body: dict,
+    _global_admin: dict = Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    user: dict = Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+):
+    _require_cartridge_visible(user, cartridge_id)
     new_name = (body.get("new_name") or "").strip()
     if not new_name:
         raise HTTPException(400, "new_name is required")
@@ -2787,9 +3009,16 @@ async def studio_rename_entity(cartridge_id: str, entity: str, body: dict):
     return {"renamed": True, "old_name": entity, "new_name": new_name}
 
 
-@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
+@app.patch("/studio/cartridges/{cartridge_id}/entities/{entity}", dependencies=[Depends(require_csrf)])
+async def studio_update_entity(
+    cartridge_id: str,
+    entity: str,
+    body: dict,
+    _global_admin: dict = Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    user: dict = Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)),
+):
     """Update entity_config fields."""
+    _require_cartridge_visible(user, cartridge_id)
     allowed = {"display_name", "mode", "primary_key", "dag_id",
                "trigger_type", "cron_expression", "description", "enabled",
                "dag_params", "connection_id"}
@@ -2803,8 +3032,13 @@ async def studio_update_entity(cartridge_id: str, entity: str, body: dict):
 # ── Studio — Cartridge management ────────────────────────────────────────────
 
 @app.get("/studio/cartridges", dependencies=[Depends(require_authenticated)])
-async def studio_list_cartridges():
-    return {"cartridges": await cartridge_service.list_cartridges()}
+async def studio_list_cartridges(user: dict = Depends(require_authenticated)):
+    cartridges = await cartridge_service.list_cartridges()
+    ctx = build_security_context(user)
+    allowed = {str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()}
+    if "*" not in allowed:
+        cartridges = [c for c in cartridges if str(c.get("id") or c.get("cartridge") or "").strip() in allowed]
+    return {"cartridges": cartridges}
 
 
 # ── Microservice-backed cartridges (probed via internal HTTP) ───────────────
@@ -2866,13 +3100,14 @@ async def _probe_microservice(base_url: str, cartridge_id: str) -> dict:
 
 
 @app.get("/studio/cartridges/{cartridge_id}/status", dependencies=[Depends(require_authenticated)])
-async def studio_cartridge_status(cartridge_id: str):
+async def studio_cartridge_status(cartridge_id: str, user: dict = Depends(require_authenticated)):
     """Lightweight status probe for the cartridge.
 
     For Replicon (and any cartridge not backed by a dedicated microservice in
     this deployment) we just report ``operational`` if it is registered.
     For SAP cartridges we probe the corresponding FastAPI service.
     """
+    _require_cartridge_visible(user, cartridge_id)
     manifest = await cartridge_service.get_cartridge(cartridge_id)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
@@ -2885,7 +3120,7 @@ async def studio_cartridge_status(cartridge_id: str):
     return {"cartridge_id": cartridge_id, **probe}
 
 
-@app.post("/studio/cartridges", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@app.post("/studio/cartridges", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 async def studio_create_cartridge(body: dict):
     cid  = body.get("id", "").strip()
     name = body.get("name", "").strip()
@@ -2899,23 +3134,26 @@ async def studio_create_cartridge(body: dict):
 
 
 @app.get("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_authenticated)])
-async def studio_get_cartridge(cartridge_id: str):
+async def studio_get_cartridge(cartridge_id: str, user: dict = Depends(require_authenticated)):
+    _require_cartridge_visible(user, cartridge_id)
     manifest = await cartridge_service.get_cartridge(cartridge_id)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return manifest
 
 
-@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def studio_update_cartridge(cartridge_id: str, body: dict):
+@app.patch("/studio/cartridges/{cartridge_id}", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+async def studio_update_cartridge(cartridge_id: str, body: dict, user: dict = Depends(require_authenticated)):
+    _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     return await cartridge_service.update_cartridge(cartridge_id, body)
 
 
-@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
+@app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...), user: dict = Depends(require_authenticated)):
     """Upload a spec file (OpenAPI YAML, WSDL, OData $metadata) for the cartridge."""
+    _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     content = (await file.read()).decode("utf-8", errors="replace")
@@ -2924,10 +3162,13 @@ async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...)):
 
 
 def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:
-    ctx = build_security_context(user)
-    if _is_security_admin_context(ctx):
+    if user is None:
         return
-    if str(cartridge_id) not in set(ctx.get("allowed_cartridges") or []):
+    ctx = build_security_context(user)
+    allowed = {str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()}
+    if "*" in allowed:
+        return
+    if str(cartridge_id) not in allowed:
         raise HTTPException(403, "cartridge not allowed")
 
 
@@ -2948,7 +3189,7 @@ async def studio_export_cartridge(
     )
 
 
-@app.post("/studio/import", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
+@app.post("/studio/import", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Depends(require_authenticated)):
     """Import a cartridge from a previously exported ZIP."""
     zip_bytes = await file.read()
@@ -2961,7 +3202,7 @@ async def studio_import_cartridge(file: UploadFile = File(...), user: dict = Dep
 
 # ── Studio — AI assistant ─────────────────────────────────────────────────────
 
-@app.post("/studio/chat", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))])
+@app.post("/studio/chat", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
     cartridge_id = body.get("cartridge_id")
     manifest     = await cartridge_service.get_cartridge(cartridge_id) if cartridge_id else None
@@ -2970,12 +3211,12 @@ async def studio_chat(body: dict, user: dict = Depends(require_authenticated)):
         history  = body.get("history", []),
         step     = body.get("step", 1),
         manifest = manifest,
-        actor_role = user.get("workspace_role") or user.get("role"),
+        actor_role = user.get("role"),
         actor_user = user,
     )
 
 
-@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write"))])
+@app.post("/studio/chat/stream", dependencies=[Depends(require_csrf), Depends(require_permission("studio.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 async def studio_chat_stream(body: dict, user: dict = Depends(require_authenticated)):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
@@ -3000,7 +3241,7 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
                 step     = step,
                 manifest = manifest,
                 on_event = on_event,
-                actor_role = user.get("workspace_role") or user.get("role"),
+                actor_role = user.get("role"),
                 actor_user = user,
             )
             await queue.put({"type": "done", **result})
@@ -3031,11 +3272,221 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
 async def studio_page():
     return FileResponse(STATIC / "studio.html")
 
-@app.get("/viewer/pipeline", dependencies=[Depends(require_admin)])
+@app.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
+async def marketplace_page():
+    return FileResponse(STATIC / "index.html")
+
+@app.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
+async def customer_cartridges_page():
+    return FileResponse(STATIC / "index.html")
+
+@app.get(
+    "/admin/installations",
+    dependencies=[
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def admin_installations_page():
+    return FileResponse(STATIC / "index.html")
+
+@app.get(
+    "/admin/licenses",
+    dependencies=[
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def admin_licenses_page():
+    return FileResponse(STATIC / "index.html")
+
+@app.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
+async def api_marketplace_products(user: dict = Depends(require_authenticated)):
+    try:
+        return await marketplace_service.list_products(user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.get("/api/marketplace/products/{cartridge_id}", dependencies=[Depends(require_permission("marketplace.read"))])
+async def api_marketplace_product(cartridge_id: str, user: dict = Depends(require_authenticated)):
+    try:
+        return {"product": await marketplace_service.get_product(cartridge_id, user)}
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+@app.get("/api/marketplace/installations", dependencies=[Depends(require_permission("marketplace.read"))])
+async def api_marketplace_installations(user: dict = Depends(require_authenticated)):
+    try:
+        return await marketplace_service.list_installations(user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.get("/api/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
+async def api_customer_cartridges(user: dict = Depends(require_authenticated)):
+    try:
+        return await marketplace_service.list_installations(user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/marketplace/products/{cartridge_id}/request",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("marketplace.request")),
+    ],
+)
+async def api_marketplace_request(cartridge_id: str, user: dict = Depends(require_authenticated)):
+    try:
+        return await marketplace_service.request_product(cartridge_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/marketplace/products/{cartridge_id}/activate",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_marketplace_activate(cartridge_id: str, user: dict = Depends(require_authenticated)):
+    try:
+        return await marketplace_service.activate_product(cartridge_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/marketplace/installations/{installation_id}/retry",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("marketplace.request")),
+    ],
+)
+async def api_marketplace_retry(installation_id: str, user: dict = Depends(require_authenticated)):
+    try:
+        return await marketplace_service.retry_installation(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        status = 403 if "permission" in lowered or "access" in lowered or "allowed" in lowered else (
+            409 if "approval" in lowered or "active" in lowered or "state" in lowered or "status" in lowered else 404
+        )
+        raise HTTPException(status, message) from exc
+
+@app.get(
+    "/api/admin/installations",
+    dependencies=[
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installations(user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.list_admin_installations(user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+@app.get(
+    "/api/admin/installations/{installation_id}",
+    dependencies=[
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation(installation_id: str, user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.get_admin_installation(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+@app.get(
+    "/api/admin/installations/{installation_id}/access",
+    dependencies=[
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation_access(installation_id: str, user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.list_installation_access(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+@app.patch(
+    "/api/admin/installations/{installation_id}/access/{target_user_id}",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation_user_access(
+    installation_id: str,
+    target_user_id: int,
+    payload: dict = Body(default_factory=dict),
+    user: dict = Depends(get_current_global_user),
+):
+    try:
+        return await marketplace_service.set_installation_user_access(
+            installation_id,
+            target_user_id,
+            payload.get("mode"),
+            payload.get("reason"),
+            user,
+        )
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/admin/installations/{installation_id}/approve",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation_approve(installation_id: str, user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.approve_installation(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/admin/installations/{installation_id}/pause",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation_pause(installation_id: str, user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.pause_installation(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/admin/installations/{installation_id}/revoke",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation_revoke(installation_id: str, user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.revoke_installation(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.post(
+    "/api/admin/installations/{installation_id}/reactivate",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+    ],
+)
+async def api_admin_installation_reactivate(installation_id: str, user: dict = Depends(get_current_global_user)):
+    try:
+        return await marketplace_service.reactivate_installation(installation_id, user)
+    except marketplace_service.MarketplaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.get("/viewer/pipeline", dependencies=[Depends(require_permission("monitor.read"))])
 async def viewer_pipeline():
     return FileResponse(STATIC / "viewers" / "pipeline.html")
 
-@app.get("/viewer/vault", dependencies=[Depends(require_admin)])
+@app.get("/viewer/vault", dependencies=[Depends(require_permission("vault.connections.read"))])
 async def viewer_vault():
     return FileResponse(STATIC / "viewers" / "vault.html")
 
@@ -3270,7 +3721,8 @@ _VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
 _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
 @app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
-async def api_vault_list_connections(cartridge: str):
+async def api_vault_list_connections(cartridge: str, user: dict = Depends(require_authenticated)):
+    _require_cartridge_visible(user, cartridge)
     try:
         async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
             r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
@@ -3289,8 +3741,9 @@ async def api_vault_list_connections(cartridge: str):
     return data
 
 @app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
-async def api_vault_reveal_connection(cartridge: str, conn_id: str):
+async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
     """Returns full credentials including token (not masked)."""
+    _require_cartridge_visible(user, cartridge)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
         if r.status_code == 404:
@@ -3298,15 +3751,17 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
-async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict):
+@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):
+    _require_cartridge_visible(user, cartridge)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
-async def api_vault_delete_connection(cartridge: str, conn_id: str):
+@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+async def api_vault_delete_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
+    _require_cartridge_visible(user, cartridge)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
         if r.status_code == 404:
@@ -3314,15 +3769,27 @@ async def api_vault_delete_connection(cartridge: str, conn_id: str):
         r.raise_for_status()
         return r.json()
 
+
+def _require_vault_scope_visible(user: dict, scope: str) -> None:
+    scope = (scope or "").strip()
+    if scope in {"global", "platform", "studio", "system", "_system"}:
+        if not _is_global_iam_admin(user):
+            raise HTTPException(403, "global vault scope requires platform admin")
+        return
+    _require_cartridge_visible(user, scope)
+
+
 @app.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_permission("vault.secrets.read_masked"))])
-async def api_vault_list_secrets(scope: str):
+async def api_vault_list_secrets(scope: str, user: dict = Depends(require_authenticated)):
+    _require_vault_scope_visible(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}")
         r.raise_for_status()
         return r.json()
 
 @app.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
-async def api_vault_reveal_secret(scope: str, key: str):
+async def api_vault_reveal_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
+    _require_vault_scope_visible(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.get(f"{_VAULT_URL}/secrets/{scope}/{key}")
         if r.status_code == 404:
@@ -3330,15 +3797,17 @@ async def api_vault_reveal_secret(scope: str, key: str):
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
-async def api_vault_upsert_secret(scope: str, key: str, body: dict):
+@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+async def api_vault_upsert_secret(scope: str, key: str, body: dict, user: dict = Depends(require_authenticated)):
+    _require_vault_scope_visible(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
         r.raise_for_status()
         return r.json()
 
-@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
-async def api_vault_delete_secret(scope: str, key: str):
+@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+async def api_vault_delete_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
+    _require_vault_scope_visible(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")
         if r.status_code == 404:
@@ -3389,7 +3858,8 @@ async def api_rag_search(body: dict, user: dict = Depends(require_authenticated)
                 user,
             ),
         )
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG search failed"))
         return r.json().get("result") or r.json()
 
 @app.post("/api/rag/reindex", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
@@ -3398,11 +3868,7 @@ async def api_rag_reindex(body: dict, user: dict = Depends(require_authenticated
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/reindex", json=body)
         if r.status_code >= 400:
-            try:
-                detail = r.json().get("detail") or "RAG reindex failed"
-            except ValueError:
-                detail = r.text or "RAG reindex failed"
-            raise HTTPException(r.status_code, detail)
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG reindex failed"))
         return r.json()
 
 @app.post("/api/rag/ingest", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
@@ -3410,7 +3876,8 @@ async def api_rag_ingest(body: dict, user: dict = Depends(require_authenticated)
     body = {**body, "security_context": build_security_context(user)}
     async with httpx.AsyncClient(headers=_hdr_for("MCP_INFRA"), timeout=300) as c:
         r = await c.post(f"{_RAG_URL}/rag/ingest", json=body)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG ingest failed"))
         return r.json()
 
 
@@ -3436,7 +3903,8 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
                 user,
             ),
         )
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "RAG search failed"))
         results = ((r.json().get("result") or {}).get("results") or [])
 
     if not results:
@@ -3484,6 +3952,7 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
 @app.get("/api/semantic", dependencies=[Depends(require_authenticated)])
 async def api_semantic(cartridge: str = "replicon", user: dict = Depends(require_authenticated)):
     from app.services import cartridge_service as _cs
+    _require_cartridge_visible(user, cartridge)
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
@@ -3528,18 +3997,38 @@ async def api_catalog_relationship(body: dict, user: dict = Depends(require_auth
     return await _refinement_invoke("register_relationship", body, user=user)
 
 
+def _upstream_error_detail(response, fallback: str = "Upstream request failed"):
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return text or fallback
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("error") or payload.get("message")
+        if isinstance(detail, dict):
+            return detail
+        if detail:
+            return str(detail)
+        result = payload.get("result")
+        if isinstance(result, dict):
+            nested = result.get("detail") or result.get("error") or result.get("message")
+            if isinstance(nested, dict):
+                return nested
+            if nested:
+                return str(nested)
+    return fallback
+
+
 async def _refinement_invoke(tool: str, args: dict, *, timeout: int = 30, user: dict | None = None):
     import httpx
     refinement_url = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=timeout) as client:
-        r = await client.post(f"{refinement_url}/mcp/invoke",
-                              json=_mcp_payload(tool, args, user))
+        r = await client.post(
+            f"{refinement_url}/mcp/invoke",
+            json=_mcp_payload(tool, args, user),
+        )
         if r.status_code >= 400:
-            try:
-                detail = r.json().get("detail") or r.text
-            except ValueError:
-                detail = r.text
-            raise HTTPException(r.status_code, detail or "Refinement request failed")
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement request failed"))
         return r.json()
 
 
@@ -3567,6 +4056,8 @@ async def monitoring_mcp_invoke(body: dict, user: dict = Depends(_internal_or_au
     The underlying monitoring_invoke() handler did not check the cookie
     on its own, so the dependency is the single chokepoint.
     """
+    if not _is_internal_service_actor(user):
+        _require_effective_permission(user, "monitor.read")
     return await monitoring_invoke(body, user=user)
 
 
@@ -3580,12 +4071,14 @@ def _role_name(user: dict) -> str:
 
 
 def _require_studio_ops_write_role(user: dict) -> None:
-    if _role_name(user) not in {ROLE_ADMIN, ROLE_WORKSPACE_ADMIN}:
-        raise HTTPException(403, "admin or workspace_admin role required")
+    if str(user.get("role") or "").lower() not in {"owner", "super_admin", ROLE_ADMIN}:
+        raise HTTPException(403, "global admin role required")
 
 
 @app.get("/studio_ops/mcp/tools")
 async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
+    if not _is_internal_service_actor(user):
+        _require_effective_permission(user, "studio.read")
     tools = [
         {
             "name": "rename_entity",
@@ -3685,6 +4178,11 @@ async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
 async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authenticated)):
     tool = body.get("tool")
     args = body.get("args", {})
+    if not _is_internal_service_actor(user):
+        _require_effective_permission(user, "studio.read")
+    cartridge_id_arg = str((args or {}).get("cartridge_id") or "").strip()
+    if cartridge_id_arg:
+        _require_cartridge_visible(user, cartridge_id_arg)
 
     if tool in STUDIO_OPS_WRITE_TOOLS:
         _require_studio_ops_write_role(user)
@@ -3728,10 +4226,12 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
         runs_map = {}
         try:
             _pool = await _get_db_pool()
+            scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 2)
             rows = await _pool.fetch(
                 "SELECT DISTINCT ON (entity) entity, status, started_at, finished_at, record_count, error_message "
-                "FROM pipeline_runs WHERE cartridge_id=$1 ORDER BY entity, started_at DESC",
+                f"FROM pipeline_runs WHERE cartridge_id=$1 {scope_sql} ORDER BY entity, started_at DESC",
                 cartridge_id,
+                *scope_values,
             )
             for r in rows:
                 runs_map[r["entity"]] = {"status": r["status"],
@@ -3762,12 +4262,13 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
         last_run = None
         try:
             _pool = await _get_db_pool()
+            scope_sql, scope_values = await _pipeline_runs_scope_predicate(user, 3)
             row  = await _pool.fetchrow(
                 "SELECT dag_id, airflow_dag_run_id, status, mode, "
                 "       started_at, finished_at, record_count, error_message, extra "
                 "FROM pipeline_runs WHERE cartridge_id=$1 AND entity=$2 "
-                "ORDER BY started_at DESC LIMIT 1",
-                cartridge_id, entity,
+                f"{scope_sql} ORDER BY started_at DESC LIMIT 1",
+                cartridge_id, entity, *scope_values,
             )
             if row:
                 last_run = dict(row)
@@ -3840,8 +4341,8 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
 
 CONSOLE_URL = _public_url("CONSOLE_URL", development_default="http://localhost:8000")
 
-@app.get("/monitoring/tools", dependencies=[Depends(require_authenticated)])
-async def monitoring_tools(user: dict = Depends(require_authenticated)):
+@app.get("/monitoring/tools", dependencies=[Depends(require_permission("monitor.read"))])
+async def monitoring_tools(user: dict = Depends(require_permission("monitor.read"))):
     # Sprint v1.22: same rationale as /monitoring/mcp/tools — tool
     # discovery should be authenticated.
     return {"tools": [
@@ -3933,10 +4434,11 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticat
     # POST and could be called from a cross-origin form otherwise.
     tool = body.get("tool")
     args = body.get("args", {})
+    _require_effective_permission(user, "monitor.read")
 
     if tool == "view_job":
         job_id = args["job_id"]
-        job = await job_service.get(job_id)
+        job = await job_service.get_scoped(job_id, user=user)
         entity = (job.get("args") or {}).get("entity", "")
         return {
             "url":     f"{CONSOLE_URL}/viewer/jobs/{job_id}",
@@ -4463,10 +4965,23 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
 
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
-def _assignable_role(value: str | None) -> str:
+_GLOBAL_ASSIGNABLE_ROLES = {"owner", "super_admin", ROLE_ADMIN, "security_admin", "auditor"}
+_WORKSPACE_ASSIGNABLE_ROLES = {"workspace_admin", "analyst", "viewer", "workspace_user", "user"}
+
+
+def _assignable_role(value: str | None, actor_user: dict | None = None) -> str:
     role = (value or "user").strip()
     info = ROLE_DEFINITIONS.get(role)
-    return role if info and info.get("assignable") else "user"
+    if not info or not info.get("assignable"):
+        return "user"
+    if _is_global_iam_admin(actor_user):
+        return role
+    # Workspace admins can invite/manage users inside their workspace, but
+    # cannot write platform/global roles into users.role. That keeps tenant
+    # IAM from becoming a hidden global privilege escalation path.
+    if role in _GLOBAL_ASSIGNABLE_ROLES:
+        raise HTTPException(403, "global role assignment requires platform admin")
+    return role if role in _WORKSPACE_ASSIGNABLE_ROLES else "user"
 
 
 @app.get("/api/users")
@@ -4483,9 +4998,105 @@ async def viewer_admin_users(request: Request, user: dict = Depends(require_perm
     return FileResponse(STATIC / "iam.html")
 
 
+def _is_global_iam_admin(user: dict | None) -> bool:
+    return (user or {}).get("role") in {"owner", "super_admin", ROLE_ADMIN}
+
+
+def _session_workspace_ids(user: dict | None) -> set[str]:
+    return {
+        str(w.get("workspace_id"))
+        for w in ((user or {}).get("workspaces") or [])
+        if w.get("workspace_id")
+    }
+
+
+async def _workspace_rows_from_auth_stub(user_id: int) -> list[dict]:
+    """Compatibility path for unit-test auth doubles without DATABASE_URL."""
+    pool_factory = getattr(_auth, "pool", None)
+    if not callable(pool_factory):
+        return []
+    pool = await pool_factory()
+    rows = await pool.fetch(
+        "SELECT workspace_id::text AS workspace_id FROM user_workspace_roles WHERE user_id = $1",
+        user_id,
+    )
+    return [dict(row) for row in rows]
+
+
+async def _target_user_workspace_ids(user_id: int) -> set[str]:
+    try:
+        pool = await _get_db_pool()
+    except RuntimeError as exc:
+        if "DATABASE_URL is not configured" not in str(exc):
+            raise
+        rows = await _workspace_rows_from_auth_stub(user_id)
+        return {str(row["workspace_id"]) for row in rows if row.get("workspace_id")}
+    rows = await pool.fetch(
+        "SELECT workspace_id::text AS workspace_id FROM user_workspace_roles WHERE user_id = $1",
+        user_id,
+    )
+    return {str(row["workspace_id"]) for row in rows if row["workspace_id"]}
+
+
+async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> set[int]:
+    if _is_global_iam_admin(admin_user):
+        return {int(u["id"]) for u in users if u.get("id") is not None}
+    workspace_ids = sorted(_session_workspace_ids(admin_user))
+    if not workspace_ids:
+        return set()
+    try:
+        pool = await _get_db_pool()
+    except RuntimeError as exc:
+        if "DATABASE_URL is not configured" not in str(exc):
+            raise
+        visible: set[int] = set()
+        admin_id = admin_user.get("id")
+        for candidate in users:
+            candidate_id = candidate.get("id")
+            candidate_workspaces = _session_workspace_ids(candidate)
+            if candidate_id == admin_id or candidate_workspaces.intersection(workspace_ids):
+                visible.add(int(candidate_id))
+        return visible
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT user_id
+          FROM user_workspace_roles
+         WHERE workspace_id = ANY($1::uuid[])
+        """,
+        workspace_ids,
+    )
+    return {int(row["user_id"]) for row in rows}
+
+
+async def _assert_can_use_workspace(admin_user: dict, workspace_id: str | None) -> None:
+    if _is_global_iam_admin(admin_user):
+        return
+    memberships = _session_workspace_ids(admin_user)
+    if not workspace_id or workspace_id not in memberships:
+        raise HTTPException(403, "workspace access forbidden")
+
+
+async def _assert_can_manage_target_user(admin_user: dict, target_user_id: int) -> None:
+    if _is_global_iam_admin(admin_user):
+        return
+    memberships = _session_workspace_ids(admin_user)
+    if not memberships:
+        raise HTTPException(403, "workspace access forbidden")
+    target = await _auth.get_user_by_id(target_user_id)
+    if _is_global_iam_admin(target):
+        raise HTTPException(403, "workspace admins cannot manage platform admins")
+    target_workspaces = await _target_user_workspace_ids(target_user_id)
+    if not target_workspaces or memberships.isdisjoint(target_workspaces):
+        raise HTTPException(403, "workspace access forbidden")
+
+
 @app.get("/api/admin/users")
 async def api_admin_users_list(admin_user: dict = Depends(require_permission("iam.users.read"))):
-    return {"users": await _auth.list_users(active_only=False)}
+    users = await _auth.list_users(active_only=False)
+    if _is_global_iam_admin(admin_user):
+        return {"users": users}
+    visible_ids = await _visible_user_ids_for_admin(admin_user, users)
+    return {"users": [u for u in users if u.get("id") in visible_ids]}
 
 
 @app.post("/api/admin/users", dependencies=[Depends(require_csrf)])
@@ -4496,9 +5107,27 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
         raise HTTPException(400, "email and password are required")
     if await _auth.get_user_by_email(email):
         raise HTTPException(409, f"user with email {email} already exists")
-    role = _assignable_role(body.get("role"))
+    role = _assignable_role(body.get("role"), admin_user)
+    workspace_id = (
+        (body.get("workspace_id") or admin_user.get("active_workspace_id") or "").strip()
+        or None
+    )
+    if not workspace_id:
+        raise HTTPException(400, "workspace_id is required")
+    await _assert_can_use_workspace(admin_user, workspace_id)
     try:
-        target_user = await _auth.create_user(email=email, password=pw, name=body.get("name"), role=role)
+        create_user_kwargs = {
+            "email": email,
+            "password": pw,
+            "name": body.get("name"),
+            "role": role,
+        }
+        # Test doubles from older auth contracts may not expose workspace_id;
+        # production auth.create_user does and assigns the membership in the
+        # same transaction after the route has validated workspace scope.
+        if "workspace_id" in inspect.signature(_auth.create_user).parameters:
+            create_user_kwargs["workspace_id"] = workspace_id
+        target_user = await _auth.create_user(**create_user_kwargs)
     except RuntimeError as exc:
         # create_user assigns workspace membership in the same transaction;
         # surface a clear 500 when the RBAC seed (workspaces/roles) is missing.
@@ -4506,7 +5135,7 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
-        metadata={"role": role},
+        metadata={"role": role, "workspace_id": workspace_id},
     )
     return target_user
 
@@ -4516,12 +5145,13 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
     # Don't let an admin demote / disable themselves accidentally
     if user_id == admin_user["id"] and (body.get("role") not in (None, admin_user.get("role")) or body.get("is_active") is False):
         raise HTTPException(400, "you cannot demote or disable your own account")
+    await _assert_can_manage_target_user(admin_user, user_id)
     before = await _auth.get_user_by_id(user_id)
     password_changed = bool(body.get("password"))
     target_user = await _auth.update_user(
         user_id,
         name=body.get("name"),
-        role=_assignable_role(body.get("role")) if body.get("role") else None,
+        role=_assignable_role(body.get("role"), admin_user) if body.get("role") else None,
         is_active=body.get("is_active"),
         password=body.get("password"),
         escalation_notify=body.get("escalation_notify") if "escalation_notify" in body else None,
@@ -4567,12 +5197,26 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
 
 
 @app.delete("/api/admin/users/{user_id}", dependencies=[Depends(require_csrf)])
-async def api_admin_users_delete(user_id: int, admin_user: dict = Depends(require_permission("iam.users.write"))):
+async def api_admin_users_delete(
+    user_id: int,
+    request: Request,
+    admin_user: dict = Depends(require_permission("iam.users.write")),
+):
     if user_id == admin_user["id"]:
         raise HTTPException(400, "you cannot delete your own account")
+    await _assert_can_manage_target_user(admin_user, user_id)
     ok = await _auth.delete_user(user_id)
     if not ok:
         raise HTTPException(404, "user not found")
+    await _audit.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "user.deleted",
+        "user",
+        str(user_id),
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"deleted": True, "id": user_id}
 
 
@@ -4659,6 +5303,7 @@ async def api_admin_users_vpn_reissue(
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user:
         raise HTTPException(404, "user not found")
+    await _assert_can_manage_target_user(admin_user, user_id)
     res = await _issue_vpn_for_user(user_id, target_user["email"], target_user.get("name"))
     await _audit.record_event(
         admin_user.get("id"),
@@ -4683,8 +5328,21 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
     existing = await _auth.get_user_by_email(email)
     if existing:
         raise HTTPException(409, f"user with email {email} already exists")
-    role = _assignable_role(body.get("role"))
-    target_user = await _auth.create_invited_user(email=email, name=body.get("name"), role=role)
+    role = _assignable_role(body.get("role"), admin_user)
+    workspace_id = (
+        (body.get("workspace_id") or admin_user.get("active_workspace_id") or "").strip()
+        or None
+    )
+    if workspace_id:
+        await _assert_can_use_workspace(admin_user, workspace_id)
+    else:
+        raise HTTPException(400, "workspace_id is required")
+    target_user = await _auth.create_invited_user(
+        email=email,
+        name=body.get("name"),
+        role=role,
+        workspace_id=workspace_id,
+    )
     tok, _ = await _tokens.create(target_user["id"], "invite")
     activation_link = _activation_link(tok)
 
@@ -4716,7 +5374,7 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.invited", "user", str(target_user["id"]),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
-        metadata={"role": role, "email_sent": sent, "vpn": vpn_result},
+        metadata={"role": role, "workspace_id": workspace_id, "email_sent": sent, "vpn": vpn_result},
     )
     return {"invited": True, "user": target_user, "email_sent": sent, "vpn": vpn_result}
 
@@ -4724,6 +5382,7 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
 @app.post("/api/admin/users/{user_id}/reinvite", dependencies=[Depends(require_csrf)])
 async def api_admin_users_reinvite(
     user_id: int,
+    request: Request,
     body: dict | None = None,
     admin_user: dict = Depends(require_permission("iam.users.write")),
 ):
@@ -4731,6 +5390,7 @@ async def api_admin_users_reinvite(
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user:
         raise HTTPException(404, "user not found")
+    await _assert_can_manage_target_user(admin_user, user_id)
     if target_user.get("is_active"):
         raise HTTPException(400, "user already active; use password reset instead")
     tok, _ = await _tokens.create(user_id, "invite")
@@ -4763,6 +5423,16 @@ async def api_admin_users_reinvite(
             target_user.get("name"), target_user["email"], activation_link, INVITE_TTL_HOURS,
         )
         sent = await _email.send_email(target_user["email"], subject, html)
+    await _audit.record_event(
+        admin_user.get("id"),
+        admin_user.get("email"),
+        "user.reinvited",
+        "user",
+        str(user_id),
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        metadata={"email_sent": sent, "vpn": vpn_result},
+    )
     return {"reinvited": True, "email_sent": sent, "vpn": vpn_result}
 
 
@@ -4772,6 +5442,7 @@ async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict
     target_user = await _auth.get_user_by_id(user_id)
     if not target_user or not target_user.get("is_active"):
         raise HTTPException(404, "user not found or inactive")
+    await _assert_can_manage_target_user(admin, user_id)
     tok, _ = await _tokens.create(user_id, "reset")
     subject, html = _email.render_password_reset(target_user.get("name"), _reset_link(tok), RESET_TTL_HOURS)
     sent = await _email.send_email(target_user["email"], subject, html)

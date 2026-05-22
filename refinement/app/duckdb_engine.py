@@ -54,6 +54,52 @@ def _escape_sql_literal_inner(value: str) -> str:
     return (value or "").replace("'", "''")
 
 
+def _strip_sql_comments(sql: str) -> str:
+    """Remove SQL comments while preserving quoted string literals.
+
+    Cartridge dataset SQL commonly carries leading metadata comments. The
+    safety gate should inspect the executable SQL, not reject trusted dataset
+    definitions because they have a header.
+    """
+    text = sql or ""
+    out: list[str] = []
+    i = 0
+    quote: str | None = None
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                if nxt == quote:
+                    out.append(nxt)
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in {"'", '"'}:
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "-" and nxt == "-":
+            while i < len(text) and text[i] not in "\r\n":
+                i += 1
+            out.append("\n")
+            continue
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < len(text) and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i = min(i + 2, len(text))
+            out.append(" ")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def validate_safe_identifier(value: str, label: str = "identifier") -> None:
     if not SAFE_IDENTIFIER_RE.fullmatch(value or ""):
         raise ValueError(f"Invalid {label} name")
@@ -170,28 +216,122 @@ class DuckDBEngine:
         validate_safe_identifier(parts[2], "entity")
         return source
 
-    def _bronze_path(self, source: str) -> str:
+    def _safe_scope_segment(self, value: str | None, label: str) -> str:
+        value = str(value or "").strip()
+        if not value:
+            return ""
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]+", value):
+            raise ValueError(f"Invalid {label}")
+        return value
+
+    def _scope_values(self, user_context: dict | None) -> tuple[str, str]:
+        if not user_context:
+            return "", ""
+        tenant = self._safe_scope_segment(user_context.get("tenant_id"), "tenant_id")
+        workspace = self._safe_scope_segment(user_context.get("workspace_id"), "workspace_id")
+        return tenant, workspace
+
+    def _bronze_path(self, source: str, user_context: dict | None = None) -> str:
         source = self._validate_bronze_source(source)
         if source.startswith("s3://"):
             return source
+        tenant, workspace = self._scope_values(user_context)
+        if tenant and workspace:
+            return (
+                f"s3://{self.minio_bucket}/{source}/"
+                f"tenant_id={tenant}/workspace_id={workspace}/**/*.parquet"
+            )
         return f"s3://{self.minio_bucket}/{source}/**/*.parquet"
 
-    def _bronze_read(self, source: str) -> str:
-        path = self._bronze_path(source)
+    def _bronze_read(self, source: str, user_context: dict | None = None) -> str:
+        path = self._bronze_path(source, user_context)
         return f"read_parquet('{path}', hive_partitioning=true, union_by_name=true)"
 
-    def _silver_path(self, cartridge: str, name: str) -> str:
+    def _silver_path(self, cartridge: str, name: str, user_context: dict | None = None) -> str:
         """Silver es un snapshot único — un archivo por dataset, siempre sobreescrito."""
         validate_safe_identifier(cartridge, "cartridge")
         validate_safe_identifier(name, "dataset")
+        tenant, workspace = self._scope_values(user_context)
+        if tenant and workspace:
+            return (
+                f"s3://{self.minio_bucket}/silver/{cartridge}/{name}/"
+                f"tenant_id={tenant}/workspace_id={workspace}/data.parquet"
+            )
         return f"s3://{self.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
 
-    def _resolve_latest_date(self, source: str) -> str | None:
+    def _gold_path(self, cartridge: str, name: str, user_context: dict | None = None) -> str:
+        validate_safe_identifier(cartridge, "cartridge")
+        validate_safe_identifier(name, "dataset")
+        tenant, workspace = self._scope_values(user_context)
+        if tenant and workspace:
+            return (
+                f"s3://{self.minio_bucket}/gold/{cartridge}/{name}/"
+                f"tenant_id={tenant}/workspace_id={workspace}/data.parquet"
+            )
+        return f"s3://{self.minio_bucket}/gold/{cartridge}/{name}/data.parquet"
+
+    def _scope_storage_sql(self, sql: str, sources: list[str], user_context: dict | None) -> str:
+        """Rewrite known raw/silver/gold S3 references to the tenant/workspace
+        partition when the caller is scoped. This keeps dataset SQL portable:
+        definitions still reference raw/<cartridge>/<entity>, while execution
+        uses only the current tenant/workspace physical path."""
+        tenant, workspace = self._scope_values(user_context)
+        if not (tenant and workspace):
+            return sql
+
+        out = sql
+        for source in sources or []:
+            src = str(source or "").strip()
+            if src.startswith("raw/"):
+                try:
+                    scoped = self._bronze_path(src, user_context)
+                    legacy = f"s3://{self.minio_bucket}/{src}/**/*.parquet"
+                    out = out.replace(legacy, scoped)
+                    out = out.replace(legacy.replace("**/*.parquet", "*.parquet"), scoped)
+                except Exception:
+                    continue
+            elif src.startswith(("silver/", "gold/")):
+                parts = src.split("/")
+                if len(parts) >= 3:
+                    layer, cartridge, name = parts[0], parts[1], parts[2]
+                    legacy = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}/data.parquet"
+                    scoped = (
+                        self._silver_path(cartridge, name, user_context)
+                        if layer == "silver"
+                        else self._gold_path(cartridge, name, user_context)
+                    )
+                    out = out.replace(legacy, scoped)
+        return out
+
+    def _ensure_scope_columns(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        sql: str,
+        user_context: dict | None,
+    ) -> str:
+        tenant, workspace = self._scope_values(user_context)
+        if not (tenant and workspace):
+            return sql
+        try:
+            rows = con.execute(f"DESCRIBE SELECT * FROM ({sql}) _scope_probe LIMIT 0").fetchall()
+            cols = {str(r[0]).lower() for r in rows}
+        except Exception:
+            cols = set()
+        extras = []
+        if "tenant_id" not in cols:
+            extras.append(f"{_sql_quote(tenant)} AS tenant_id")
+        if "workspace_id" not in cols:
+            extras.append(f"{_sql_quote(workspace)} AS workspace_id")
+        if not extras:
+            return sql
+        return f"SELECT {', '.join(extras)}, _scope_q.* FROM ({sql}) _scope_q"
+
+    def _resolve_latest_date(self, source: str, user_context: dict | None = None) -> str | None:
         """Devuelve el load_date más reciente disponible en una fuente Bronze."""
         try:
             with self._duckdb_lock:
                 con = self._conn()
-                expr = self._bronze_read(source)
+                expr = self._bronze_read(source, user_context)
                 row = con.execute(
                     f"SELECT MAX(load_date) FROM {expr}"
                 ).fetchone()
@@ -213,17 +353,17 @@ class DuckDBEngine:
         except Exception:
             return []
 
-    def get_source_schema(self, source: str) -> dict:
+    def get_source_schema(self, source: str, user_context: dict | None = None) -> dict:
         try:
             with self._duckdb_lock:
                 con = self._conn()
-                expr = self._bronze_read(source)
+                expr = self._bronze_read(source, user_context)
                 rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
             return {"source": source, "fields": [{"name": r[0], "type": r[1]} for r in rows]}
         except Exception as exc:
             return {"source": source, "error": str(exc)}
 
-    def get_source_partitions(self, source: str) -> dict:
+    def get_source_partitions(self, source: str, user_context: dict | None = None) -> dict:
         """
         Returns partition values (load_date, batch_id) available in a bronze source.
         Also returns sql_latest — a ready-to-use SQL filtered to the most recent load_date.
@@ -231,7 +371,7 @@ class DuckDBEngine:
         try:
             with self._duckdb_lock:
                 con = self._conn()
-                expr = self._bronze_read(source)
+                expr = self._bronze_read(source, user_context)
                 rows = con.execute(
                     f"SELECT DISTINCT load_date, batch_id FROM {expr} "
                     f"ORDER BY load_date DESC, batch_id DESC LIMIT 30"
@@ -253,11 +393,11 @@ class DuckDBEngine:
         except Exception as exc:
             return {"source": source, "error": str(exc)}
 
-    def preview_source(self, source: str, limit: int = 5) -> dict:
+    def preview_source(self, source: str, limit: int = 5, user_context: dict | None = None) -> dict:
         try:
             with self._duckdb_lock:
                 con = self._conn()
-                expr = self._bronze_read(source)
+                expr = self._bronze_read(source, user_context)
                 schema_rows = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 0").fetchall()
                 data = con.execute(f"SELECT * FROM {expr} LIMIT {limit}").fetchall()
             cols = [r[0] for r in schema_rows]
@@ -293,14 +433,15 @@ class DuckDBEngine:
     _DANGEROUS_PATH_RE = re.compile(r"(?i)(file://|['\"]/(?:etc|proc|var)/)")
 
     def _validate_safe_sql(self, sql: str) -> None:
+        policy_sql = _strip_sql_comments(sql)
         for pattern in self._DANGEROUS_PATTERNS:
-            if pattern.search(sql):
+            if pattern.search(policy_sql):
                 raise ValueError(
                     f"SQL blocked by safety policy: matched {pattern.pattern}"
                 )
-        if self._DANGEROUS_PATH_RE.search(sql):
+        if self._DANGEROUS_PATH_RE.search(policy_sql):
             raise ValueError("SQL contains a blocked local file path")
-        for match in self._READ_PARQUET_RE.finditer(sql):
+        for match in self._READ_PARQUET_RE.finditer(policy_sql):
             path = match.group(2).strip()
             if not path.startswith("s3://"):
                 raise ValueError("read_parquet is only allowed for s3:// sources")
@@ -352,7 +493,15 @@ class DuckDBEngine:
 
                 con = self._conn()
 
-                effective_sql = self._inject_bucket(self._inject_latest_date(rls_sql, sources or []))
+                effective_sql = self._inject_bucket(rls_sql)
+                effective_sql = self._scope_storage_sql(effective_sql, sources or [], user_context)
+                try:
+                    effective_sql = self._inject_latest_date(effective_sql, sources or [], user_context)
+                except TypeError:
+                    # Tiny test doubles and older cartridge fakes sometimes
+                    # still expose the pre-tenant signature. Keep those helpers
+                    # compatible while the real method remains scope-aware.
+                    effective_sql = self._inject_latest_date(effective_sql, sources or [])
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
                 # Watchdog: fires con.interrupt() if the query runs past
@@ -387,6 +536,19 @@ class DuckDBEngine:
             # so the LLM/caller gets something actionable instead of a stack
             # trace fragment.
             lower = msg.lower()
+            missing_parquet = (
+                ("no files found" in lower and ("read_parquet" in lower or "s3://" in lower))
+                or ("404" in lower and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower))
+            )
+            if missing_parquet:
+                return {
+                    "code": "source_files_missing",
+                    "error": (
+                        "No hay archivos Parquet para la fuente seleccionada. "
+                        "Ejecuta primero la extracción o materializa la dependencia upstream."
+                    ),
+                    "raw_error": msg,
+                }
             if (
                 "interrupt" in lower
                 or "timeout" in lower
@@ -532,6 +694,7 @@ class DuckDBEngine:
             user_context
             and str(user_context.get("role") or "").lower() in {"admin", "owner", "super_admin"}
             and user_context.get("_server_trusted_context")
+            and not (user_context.get("workspace_id") or user_context.get("tenant_id"))
         ):
             return sql, []
 
@@ -556,9 +719,20 @@ class DuckDBEngine:
         # Delegate RLS to preview_sql — do NOT call get_rls_filters here.
         # preview_sql always applies RLS and combines rls_params + filter_params
         # in the correct positional order (RLS ? inside subqueries come first).
-        return self.preview_sql(sql, limit, params=filter_params, user_context=user_context)
+        return self.preview_sql(
+            sql,
+            limit,
+            sources=ds.get("sources") or [],
+            params=filter_params,
+            user_context=user_context,
+        )
 
-    def _inject_latest_date(self, sql: str, sources: list[str]) -> str:
+    def _inject_latest_date(
+        self,
+        sql: str,
+        sources: list[str],
+        user_context: dict | None = None,
+    ) -> str:
         """
         Sustituye el placeholder {latest_date} en el SQL por el load_date más
         reciente de la primera fuente Bronze. Si el SQL ya NO usa el placeholder,
@@ -581,7 +755,12 @@ class DuckDBEngine:
         primary_source = sources[0] if sources else None
         if not primary_source:
             return sql.replace("{latest_date}", _escape_sql_literal_inner("1970-01-01"))
-        latest = self._resolve_latest_date(primary_source)
+        try:
+            latest = self._resolve_latest_date(primary_source, user_context)
+        except TypeError:
+            # Older tests and very small local fakes monkeypatch the resolver
+            # with the pre-scope one-argument signature.
+            latest = self._resolve_latest_date(primary_source)
         return sql.replace(
             "{latest_date}", _escape_sql_literal_inner(latest or "1970-01-01")
         )
@@ -596,7 +775,38 @@ class DuckDBEngine:
 
     # ── Materialization ───────────────────────────────────────────────────────
 
-    def materialize(self, ds: dict) -> dict:
+    def _gold_table_columns(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        table: str,
+    ) -> set[str] | None:
+        try:
+            rows = con.execute(
+                f"DESCRIBE SELECT * FROM pggold.{table} LIMIT 0"
+            ).fetchall()
+            return {str(r[0]).lower() for r in rows}
+        except Exception:
+            return None
+
+    def _ensure_scoped_gold_table(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        table: str,
+        sql: str,
+    ) -> None:
+        cols = self._gold_table_columns(con, table)
+        if cols is None:
+            con.execute(f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0")
+            return
+        if "tenant_id" in cols and "workspace_id" in cols:
+            return
+        # Legacy unscoped gold tables cannot safely coexist with SaaS-scoped
+        # writes. Recreate the table as empty with scoped columns rather than
+        # silently mixing tenants in pggold.gold_<dataset>.
+        con.execute(f"DROP TABLE IF EXISTS pggold.{table}")
+        con.execute(f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0")
+
+    def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
         """
         Materialize a dataset to silver or gold.
 
@@ -626,20 +836,51 @@ class DuckDBEngine:
             row_count   = 0
 
             sql = self._inject_bucket(sql)
+            sql = self._scope_storage_sql(sql, sources, user_context)
 
             if layer == "gold":
                 # ── Gold → tabla en postgres_gold ────────────────────────────────
                 self._pg_gold_attach(con)
                 table = f"gold_{name}"
                 validate_safe_identifier(table, "table")
-                con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({sql})")
-                row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
+                effective_sql = self._inject_latest_date(sql, sources, user_context)
+                effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
+                tenant, workspace = self._scope_values(user_context)
+                if tenant and workspace:
+                    self._ensure_scoped_gold_table(con, table, effective_sql)
+                    con.execute(
+                        f"DELETE FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
+                        [tenant, workspace],
+                    )
+                    con.execute(
+                        f"INSERT INTO pggold.{table} SELECT * FROM ({effective_sql}) _q"
+                    )
+                    row_count = con.execute(
+                        f"SELECT COUNT(*) FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
+                        [tenant, workspace],
+                    ).fetchone()[0]
+                    gold_parquet_path = self._gold_path(cartridge, name, user_context)
+                    con.execute(
+                        f"COPY (SELECT * FROM pggold.{table} "
+                        f"WHERE tenant_id = {_sql_quote(tenant)} "
+                        f"AND workspace_id = {_sql_quote(workspace)}) "
+                        f"TO '{gold_parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)",
+                    )
+                else:
+                    con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
+                    row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
+                    gold_parquet_path = self._gold_path(cartridge, name)
+                    con.execute(
+                        f"COPY (SELECT * FROM pggold.{table}) TO '{gold_parquet_path}' "
+                        "(FORMAT PARQUET, OVERWRITE_OR_IGNORE true)"
+                    )
                 storage_uri = f"postgres_gold:{table}"
 
             else:
                 # ── Silver → Parquet único, siempre sobreescrito (última extracción) ──
-                effective_sql = self._inject_latest_date(sql, sources)
-                parquet_path  = self._silver_path(cartridge, name)
+                effective_sql = self._inject_latest_date(sql, sources, user_context)
+                effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
+                parquet_path  = self._silver_path(cartridge, name, user_context)
                 con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
                 row_count = con.execute(
                     f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
@@ -649,7 +890,7 @@ class DuckDBEngine:
             # ── Infer schema for catalog & lineage ──────────────────────────────
             try:
                 if layer == "silver":
-                    parquet_path = self._silver_path(cartridge, name)
+                    parquet_path = self._silver_path(cartridge, name, user_context)
                     schema_rows  = con.execute(
                         f"DESCRIBE SELECT * FROM read_parquet('{parquet_path}') LIMIT 0"
                     ).fetchall()
@@ -664,7 +905,7 @@ class DuckDBEngine:
 
         # ── Write lineage ────────────────────────────────────────────────────
         source_entity = (sources or [""])[0]
-        latest_date   = self._resolve_latest_date(source_entity) if source_entity else None
+        latest_date   = self._resolve_latest_date(source_entity, user_context) if source_entity else None
         self._write_lineage(
             silver_name      = name,
             cartridge_id     = cartridge,

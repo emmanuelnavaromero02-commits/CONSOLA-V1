@@ -16,7 +16,7 @@ import httpx
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.dependencies import require_authenticated
+from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
 from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
@@ -36,6 +36,7 @@ from app.services.permissions import require_permission
 router = APIRouter(prefix="/api/studio", tags=["Studio"])
 require_studio_read = require_permission("studio.read")
 require_studio_write = require_permission("studio.write")
+require_studio_global_admin = require_global_any_role("owner", "super_admin", ROLE_ADMIN)
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
@@ -90,6 +91,21 @@ def _clean_dag_id(value: str) -> str:
     if not _SAFE_DAG_ID_RE.fullmatch(dag_id):
         raise HTTPException(400, "Invalid dag_id: use letters, numbers and underscores only")
     return dag_id
+
+
+def _require_cartridge_visible(user: dict | None, cartridge_id: str) -> None:
+    if user is None:
+        return
+    ctx = build_security_context(user)
+    allowed = {
+        str(item).strip()
+        for item in (ctx.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    if "*" in allowed:
+        return
+    if str(cartridge_id).strip() not in allowed:
+        raise HTTPException(403, "cartridge not allowed")
 
 
 def _manifest_dag_ids(manifest: dict | None) -> set[str]:
@@ -276,6 +292,7 @@ async def dag_graph(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
 ):
+    _require_cartridge_visible(user, cartridge)
     manifest = await cartridge_service.get_cartridge(cartridge)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
@@ -317,6 +334,8 @@ async def dags_list(
     cartridge: str | None = None,
     user: dict = Depends(require_authenticated),
 ):
+    if cartridge:
+        _require_cartridge_visible(user, cartridge)
     manifest = await cartridge_service.get_cartridge(cartridge) if cartridge else None
     registered = _manifest_dag_ids(manifest)
     result = await mcp_registry.invoke("infra", "airflow_list_dags", {}, user=user)
@@ -370,6 +389,7 @@ async def dag_source(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
 ):
+    _require_cartridge_visible(user, cartridge)
     safe_dag_id = _clean_dag_id(dag_id)
     result = await mcp_registry.invoke("infra", "dag_get_source", {
         "cartridge_id": cartridge,
@@ -389,6 +409,7 @@ async def dag_source(
 async def dag_delete(
     dag_id: str,
     cartridge: str = "replicon",
+    _global_admin: dict = Depends(require_studio_global_admin),
     user: dict = Depends(require_authenticated),
 ):
     safe_dag_id = _clean_dag_id(dag_id)
@@ -423,7 +444,11 @@ async def dag_delete(
 
 
 @router.post("/dag-deploy", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
-async def dag_deploy(request: Request, user: dict = Depends(require_authenticated)):
+async def dag_deploy(
+    request: Request,
+    _global_admin: dict = Depends(require_studio_global_admin),
+    user: dict = Depends(require_authenticated),
+):
     body = await _optional_json(request)
     cartridge = body.get("cartridge") or body.get("cartridge_id") or "replicon"
     entity = body.get("entity") or "Entity"
@@ -482,6 +507,7 @@ async def entities_list(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
 ):
+    _require_cartridge_visible(user, cartridge)
     if not await cartridge_service.get_cartridge(cartridge):
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
     entities = await studio_entities.list_entities(cartridge=cartridge)
@@ -489,7 +515,11 @@ async def entities_list(
 
 
 @router.post("/entities/upload", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
-async def entities_upload(request: Request, user: dict = Depends(require_authenticated)):
+async def entities_upload(
+    request: Request,
+    _global_admin: dict = Depends(require_studio_global_admin),
+    user: dict = Depends(require_authenticated),
+):
     content_type = request.headers.get("content-type", "")
     cartridge = request.query_params.get("cartridge") or "replicon"
     filename = "spec.yaml"
@@ -536,7 +566,11 @@ async def entities_upload(request: Request, user: dict = Depends(require_authent
 
 
 @router.post("/entity", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
-async def entity(request: Request, user: dict = Depends(require_authenticated)):
+async def entity(
+    request: Request,
+    _global_admin: dict = Depends(require_studio_global_admin),
+    user: dict = Depends(require_authenticated),
+):
     body = await _optional_json(request)
     cartridge = body.get("cartridge") or body.get("cartridge_id") or "replicon"
     entity_name = body.get("entity") or body.get("name")
@@ -569,6 +603,8 @@ async def _layer_preview(layer: str, request: Request, user: dict) -> dict:
     layer = layer.lower()
     limit = _limit_param(request)
     cartridge = request.query_params.get("cartridge") or "replicon"
+    if cartridge:
+        _require_cartridge_visible(user, cartridge)
     requested = request.query_params.get("dataset")
     datasets = await _refinement_datasets(user)
     candidates = [
@@ -628,7 +664,11 @@ async def master_preview(request: Request, user: dict = Depends(require_authenti
 
 
 @router.post("/superset/dataset", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
-async def superset_dataset(request: Request, user: dict = Depends(require_authenticated)):
+async def superset_dataset(
+    request: Request,
+    _global_admin: dict = Depends(require_studio_global_admin),
+    user: dict = Depends(require_authenticated),
+):
     body = await _optional_json(request)
     database_id = body.get("database_id")
     table_name = body.get("table_name") or body.get("dataset_name")
@@ -701,6 +741,7 @@ async def semantic(
     cartridge: str = "replicon",
     user: dict = Depends(require_authenticated),
 ):
+    _require_cartridge_visible(user, cartridge)
     manifest = await cartridge_service.get_cartridge(cartridge)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
@@ -720,7 +761,11 @@ async def rag(user: dict = Depends(require_authenticated)):
 
 
 @router.post("/assistant", dependencies=[Depends(require_csrf), Depends(require_studio_write)])
-async def assistant(request: Request, user: dict = Depends(require_authenticated)):
+async def assistant(
+    request: Request,
+    _global_admin: dict = Depends(require_studio_global_admin),
+    user: dict = Depends(require_authenticated),
+):
     body = await _optional_json(request)
     message = (body.get("message") or body.get("prompt") or "").strip()
     if not message:

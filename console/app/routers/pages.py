@@ -134,41 +134,39 @@ async def operations_page():
     return FileResponse(STATIC / "operations.html")
 
 
-# Sprint v1.5 — viewer pages listed by the spec (jobs / datasets / semantic)
-# go admin-only. The /{job_id} and /{name} variants follow their parents to
-# keep the surface uniform. /viewer/schema exposes dataset schema and follows
-# the same admin-only viewer policy.
-@router.get("/viewer/jobs", dependencies=[Depends(require_admin)])
+# Viewer pages are operational read surfaces. They stay permission-gated so
+# Monitor can deep-link into them without showing buttons the backend rejects.
+@router.get("/viewer/jobs", dependencies=[Depends(require_permission("monitor.read"))])
 async def viewer_jobs():
     return FileResponse(STATIC / "viewers" / "jobs.html")
 
 
-@router.get("/viewer/jobs/{job_id}", dependencies=[Depends(require_admin)])
+@router.get("/viewer/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
 async def viewer_job(job_id: str):
     return FileResponse(STATIC / "viewers" / "job.html")
 
 
-@router.get("/viewer/schema", dependencies=[Depends(require_admin)])
+@router.get("/viewer/schema", dependencies=[Depends(require_permission("datasets.read"))])
 async def viewer_schema():
     return FileResponse(STATIC / "viewers" / "schema.html")
 
 
-@router.get("/viewer/datasets", dependencies=[Depends(require_admin)])
+@router.get("/viewer/datasets", dependencies=[Depends(require_permission("datasets.read"))])
 async def viewer_datasets():
     return FileResponse(STATIC / "viewers" / "datasets.html")
 
 
-@router.get("/viewer/datasets/{name}", dependencies=[Depends(require_admin)])
+@router.get("/viewer/datasets/{name}", dependencies=[Depends(require_permission("datasets.read"))])
 async def viewer_dataset(name: str):
     return FileResponse(STATIC / "viewers" / "dataset.html")
 
 
-@router.get("/viewer/semantic", dependencies=[Depends(require_admin)])
+@router.get("/viewer/semantic", dependencies=[Depends(require_permission("datasets.read"))])
 async def viewer_semantic():
     return FileResponse(STATIC / "viewers" / "semantic.html")
 
 
-@router.get("/apps-gallery")
+@router.get("/apps-gallery", dependencies=[Depends(require_permission("apps.read"))])
 async def apps_gallery():
     return FileResponse(STATIC / "apps_gallery.html")
 

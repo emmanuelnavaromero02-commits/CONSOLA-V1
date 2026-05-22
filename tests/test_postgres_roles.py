@@ -25,6 +25,7 @@ import yaml
 
 REPO_ROOT  = Path(__file__).resolve().parents[1]
 MIGRATION  = REPO_ROOT / "infra" / "init" / "25_service_roles.sql"
+MARKETPLACE_MIGRATION = REPO_ROOT / "infra" / "init" / "73_marketplace_installations.sql"
 COMPOSE    = REPO_ROOT / "infra" / "docker-compose.yml"
 BOOTSTRAP  = REPO_ROOT / "infra" / "bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / "infra" / ".env.example"
@@ -291,6 +292,29 @@ def test_omega_workspace_has_user_sessions():
         "omega_workspace section is missing user_sessions. Workspace "
         "reads + slides this table on every authenticated request."
     )
+
+
+def test_omega_workspace_has_user_workspace_roles():
+    """Workspace auth builds the server-trusted tenant/workspace/role
+    context from user_workspace_roles on every authenticated request."""
+    section = _role_section(MIGRATION.read_text(encoding="utf-8"), "omega_workspace")
+    assert "user_workspace_roles" in section, (
+        "omega_workspace section is missing user_workspace_roles. Workspace "
+        "cannot resolve active workspace context without this grant."
+    )
+
+
+def test_omega_workspace_has_marketplace_entitlements():
+    """Marketplace activation controls which cartuchos a workspace can see.
+    Workspace must read the entitlement/install state, but not write it."""
+    section = MARKETPLACE_MIGRATION.read_text(encoding="utf-8")
+    assert "GRANT SELECT ON marketplace_products, tenant_entitlements, cartridge_installations" in section
+    assert "TO omega_workspace" in section
+    for table in ("marketplace_products", "tenant_entitlements", "cartridge_installations"):
+        assert table in section, (
+            f"marketplace migration is missing {table}. Workspace cannot "
+            "scope purchased cartuchos without this grant."
+        )
 
 
 def test_omega_mcp_infra_has_cartridge_dags():

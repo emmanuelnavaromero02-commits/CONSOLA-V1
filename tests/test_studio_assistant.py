@@ -130,6 +130,7 @@ def test_studio_assistant_audits_messages(monkeypatch):
 
     app.dependency_overrides[require_authenticated] = lambda: admin
     app.dependency_overrides[studio_router.require_studio_write] = lambda: admin
+    app.dependency_overrides[studio_router.require_studio_global_admin] = lambda: admin
     monkeypatch.setattr(studio_router.studio_assistant, "chat", fake_chat)
     monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
     monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
@@ -145,6 +146,7 @@ def test_studio_assistant_audits_messages(monkeypatch):
     finally:
         app.dependency_overrides.pop(require_authenticated, None)
         app.dependency_overrides.pop(studio_router.require_studio_write, None)
+        app.dependency_overrides.pop(studio_router.require_studio_global_admin, None)
 
     assert response.status_code == 200, response.text
     assert audits[0]["action"] == "studio.assistant.message"

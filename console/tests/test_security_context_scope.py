@@ -20,8 +20,9 @@ def test_security_context_is_backend_owned_and_scoped_to_user_cartridges():
     assert ctx["permissions"] and "datasets.read" in ctx["permissions"]
     assert ctx["allowed_buckets"] == ["lakehouse"]
     assert ctx["allowed_cartridges"] == ["replicon"]
-    assert "raw/replicon/" in ctx["allowed_prefixes"]
-    assert "gold/replicon/" in ctx["allowed_prefixes"]
+    assert "raw/replicon/tenant_id=tenant_1/workspace_id=ws_1/" in ctx["allowed_prefixes"]
+    assert "gold/replicon/tenant_id=tenant_1/workspace_id=ws_1/" in ctx["allowed_prefixes"]
+    assert "raw/replicon/" not in ctx["allowed_prefixes"]
     assert "raw/" not in ctx["allowed_prefixes"]
     assert "_trusted_admin" not in ctx
 

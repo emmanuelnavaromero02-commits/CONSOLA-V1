@@ -31,6 +31,26 @@
       return entity && cart ? [`raw/${cart}/${entity}`] : [];
     }
 
+    function friendlyError(payload, fallback) {
+      if (!payload) return fallback || 'Acción fallida';
+      if (typeof payload === 'string') return payload;
+      const value = payload.detail || payload.error || payload.message || payload.reason;
+      if (typeof value === 'string') return value;
+      if (value && typeof value === 'object') return value.message || value.error || value.detail || JSON.stringify(value);
+      if (payload.result && typeof payload.result === 'object') return friendlyError(payload.result, fallback);
+      return fallback || 'Acción fallida';
+    }
+
+    function unresolvedTemplateMessage(sql) {
+      if (/\{ENTITY\}/i.test(sql || '')) {
+        return 'El SQL todavía tiene el placeholder {ENTITY}. Selecciona una entidad o una fuente upstream antes de ejecutar.';
+      }
+      if (/\bfrom\s+silver_entity\b/i.test(sql || '')) {
+        return 'La plantilla Gold no tiene fuente real. Selecciona una entidad/fuente upstream o usa read_parquet sobre silver/gold.';
+      }
+      return '';
+    }
+
     export function openSqlRunner(sql, label, sources) {
       const ta = document.getElementById('sql-runner-ta');
       const ov = document.getElementById('sql-runner-overlay');
@@ -61,6 +81,12 @@
         : ta.value.trim();
 
       if (!sel) return;
+      const templateError = unresolvedTemplateMessage(sel);
+      if (templateError) {
+        status.textContent = '✗ plantilla incompleta';
+        results.innerHTML = `<div style="color:var(--amber);font-size:11px">${esc(templateError)}</div>`;
+        return;
+      }
       if (status) status.textContent = '⟳ ejecutando...';
       results.innerHTML = '';
       const t0 = Date.now();
@@ -71,13 +97,13 @@
           headers: jsonHeaders(),
           body: JSON.stringify({ sql: sel, limit: 200, sources: state._sqlRunnerSources }),
         });
-        const d      = await r.json();
+        const d      = await r.json().catch(() => ({}));
         const elapsed = ((Date.now()-t0)/1000).toFixed(2);
         const result = d.result || d;
-        if (result.error) {
+        if (!r.ok || result.error || result.detail) {
           status.textContent = '✗ error';
           results.innerHTML = `<pre style="color:var(--red);font-size:11px;
-            font-family:var(--font-mono);white-space:pre-wrap">${esc(result.error)}</pre>`;
+            font-family:var(--font-mono);white-space:pre-wrap">${esc(friendlyError(result, `HTTP ${r.status}`))}</pre>`;
           return;
         }
         const rows   = result.data   || [];

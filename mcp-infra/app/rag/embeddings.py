@@ -15,7 +15,7 @@ import re
 
 import boto3
 from botocore.config import Config as BotoConfig
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError, NoRegionError
 
 from app.rag.config import BEDROCK_REGION, EMBED_DIM, EMBED_MODEL
 
@@ -27,6 +27,22 @@ _MAX_RETRIES = 4
 _RETRY_DELAY_PATTERNS = [
     re.compile(r"retry\s*(?:in|after)\s+([\d.]+)\s*s", re.IGNORECASE),
 ]
+
+
+class EmbeddingProviderError(RuntimeError):
+    """Raised when the configured embedding provider cannot be used."""
+
+
+def _provider_error_message(exc: Exception) -> str:
+    if isinstance(exc, (NoCredentialsError, NoRegionError)):
+        return (
+            "Bedrock embeddings are not configured. Set AWS credentials and "
+            "BEDROCK_REGION/EMBED_MODEL for RAG indexing/search."
+        )
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "ClientError")
+        return f"Bedrock embeddings failed with {code}: {exc.response.get('Error', {}).get('Message', str(exc))}"
+    return f"Bedrock embeddings failed: {exc}"
 
 
 def _bedrock_client():
@@ -77,15 +93,24 @@ def _invoke_sync(text: str) -> list[float]:
                 import time
                 time.sleep(_parse_retry_delay(str(exc), attempt))
                 continue
-            raise
+            raise EmbeddingProviderError(_provider_error_message(exc)) from exc
+        except (NoCredentialsError, NoRegionError) as exc:
+            raise EmbeddingProviderError(_provider_error_message(exc)) from exc
+        except BotoCoreError as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES - 1:
+                import time
+                time.sleep(_parse_retry_delay(str(exc), attempt))
+                continue
+            raise EmbeddingProviderError(_provider_error_message(exc)) from exc
         except Exception as exc:
             last_exc = exc
             if attempt < _MAX_RETRIES - 1:
                 import time
                 time.sleep(_parse_retry_delay(str(exc), attempt))
                 continue
-            raise
-    raise last_exc or RuntimeError("Bedrock invoke failed without raising")
+            raise EmbeddingProviderError(_provider_error_message(exc)) from exc
+    raise EmbeddingProviderError(_provider_error_message(last_exc or RuntimeError("Bedrock invoke failed without raising")))
 
 
 async def _invoke(text: str) -> list[float]:

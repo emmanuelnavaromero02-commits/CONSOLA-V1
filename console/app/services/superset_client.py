@@ -73,6 +73,7 @@ class SupersetClient:
         )
         self._access_token: str | None = None
         self._csrf_token: str | None = None
+        self._cookies = httpx.Cookies()
 
     @property
     def configured(self) -> bool:
@@ -112,6 +113,7 @@ class SupersetClient:
                 self._csrf_token = result
             else:
                 self._csrf_token = payload.get("csrf_token") if isinstance(payload, dict) else ""
+            self._cookies = client.cookies
         return {"access_token": self._access_token, "csrf_token": self._csrf_token or ""}
 
     async def _headers(self) -> dict[str, str]:
@@ -129,16 +131,23 @@ class SupersetClient:
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+                headers = await self._headers()
+                async with httpx.AsyncClient(
+                    timeout=self.timeout,
+                    transport=self.transport,
+                    cookies=self._cookies,
+                ) as client:
                     response = await client.request(
                         method,
                         f"{self.base_url}{path}",
-                        headers=await self._headers(),
+                        headers=headers,
                         json=json,
                     )
+                    self._cookies = client.cookies
                 if response.status_code == 401 and attempt == 0:
                     self._access_token = None
                     self._csrf_token = None
+                    self._cookies = httpx.Cookies()
                     continue
                 if response.status_code in {408, 429, 500, 502, 503, 504} and attempt < 2:
                     await asyncio.sleep(delay)

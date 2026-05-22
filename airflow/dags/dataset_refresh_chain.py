@@ -73,6 +73,26 @@ def _pg():
     return psycopg2.connect(POSTGRES_DSN)
 
 
+def _datasets_has_column(column: str) -> bool:
+    conn = _pg()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'datasets'
+                   AND column_name = %s
+                 LIMIT 1
+                """,
+                (column,),
+            )
+            return bool(cur.fetchone())
+    finally:
+        conn.close()
+
+
 def _is_production() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
 
@@ -99,25 +119,101 @@ def _internal_headers(target: str, ctx: dict | None = None) -> dict[str, str]:
     return headers
 
 
-def _airflow_security_context() -> dict:
+def _security_context_for(item: dict, conf: dict) -> dict:
+    cartridge = str(item.get("cartridge") or conf.get("cartridge_id") or "").strip()
+    tenant_id = str(conf.get("tenant_id") or "").strip()
+    workspace_id = str(conf.get("workspace_id") or "").strip()
+    if cartridge and tenant_id and workspace_id:
+        scope = f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
+        prefixes = [
+            f"raw/{cartridge}/{scope}",
+            f"silver/{cartridge}/{scope}",
+            f"gold/{cartridge}/{scope}",
+            f"uploads/{cartridge}/{scope}",
+            f"cartridges/{cartridge}/",
+        ]
+    elif cartridge:
+        prefixes = [f"{layer}/{cartridge}/" for layer in ("raw", "silver", "gold", "uploads", "cartridges")]
+    else:
+        prefixes = []
     return {
         "trusted": True,
         "source": "airflow",
         "role": "admin",
         "permissions": ["datasets.read", "datasets.write"],
-        "allowed_prefixes": ["raw/", "silver/", "gold/"],
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "allowed_cartridges": [cartridge] if cartridge else [],
+        "allowed_prefixes": prefixes,
     }
 
 
-def _load_graph() -> dict[str, dict]:
+def _cartridge_from_seed_raw(seed_raw: str) -> str:
+    parts = (seed_raw or "").strip("/").split("/")
+    if len(parts) >= 3 and parts[0].lower() == "raw":
+        return parts[1]
+    return ""
+
+
+def _scoped_cartridge(conf: dict, graph: dict[str, dict], seed_raw: str, seed_dataset: str) -> str:
+    requested = str(conf.get("cartridge_id") or "").strip()
+    inferred = ""
+    if seed_raw:
+        inferred = _cartridge_from_seed_raw(seed_raw)
+    elif seed_dataset and seed_dataset in graph:
+        inferred = str(graph[seed_dataset].get("cartridge") or "").strip()
+    cartridge = requested or inferred
+    if requested and inferred and requested != inferred:
+        raise ValueError(
+            f"cartridge_id mismatch: conf={requested!r} seed={inferred!r}"
+        )
+    if not cartridge:
+        raise ValueError("cartridge_id is required or must be inferable from the seed")
+    return cartridge
+
+
+def _require_run_scope(conf: dict, cartridge: str) -> tuple[str, str]:
+    tenant_id = str(conf.get("tenant_id") or "").strip()
+    workspace_id = str(conf.get("workspace_id") or "").strip()
+    if tenant_id and workspace_id:
+        return tenant_id, workspace_id
+    if cartridge == "platform" and conf.get("allow_unscoped_platform"):
+        return tenant_id, workspace_id
+    raise ValueError("tenant_id and workspace_id are required for dataset_refresh_chain")
+
+
+def _validate_plan_scope(plan: list[dict], cartridge: str) -> None:
+    mismatches = [
+        f"{item.get('name')}:{item.get('cartridge') or '<none>'}"
+        for item in plan
+        if str(item.get("cartridge") or "").strip() != cartridge
+    ]
+    if mismatches:
+        raise ValueError(
+            f"dataset_refresh_chain crossed cartridge boundary for {cartridge}: "
+            + ", ".join(mismatches[:10])
+        )
+
+
+def _load_graph(workspace_id: str | None = None) -> dict[str, dict]:
     """Devuelve {dataset_name: {layer, cartridge, sources:[str]}}."""
     conn = _pg()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT name, layer, cartridge, COALESCE(sources,'[]'::jsonb) "
-                "FROM datasets"
-            )
+            workspace_id = str(workspace_id or "").strip()
+            if workspace_id:
+                if not _datasets_has_column("workspace_id"):
+                    raise RuntimeError("datasets.workspace_id column is required for scoped refresh")
+                cur.execute(
+                    "SELECT name, layer, cartridge, COALESCE(sources,'[]'::jsonb) "
+                    "FROM datasets WHERE workspace_id = %s",
+                    (workspace_id,),
+                )
+            else:
+                cur.execute(
+                    "SELECT name, layer, cartridge, COALESCE(sources,'[]'::jsonb) "
+                    "FROM datasets"
+                )
             rows = cur.fetchall()
     finally:
         conn.close()
@@ -175,8 +271,11 @@ def resolve_chain(**ctx):
     if not seed_raw and not seed_dataset:
         raise ValueError("conf debe incluir seed_raw o seed_dataset")
 
-    graph = _load_graph()
+    workspace_id = str(conf.get("workspace_id") or "").strip()
+    graph = _load_graph(workspace_id)
     rev   = _build_reverse_index(graph)
+    cartridge = _scoped_cartridge(conf, graph, seed_raw, seed_dataset)
+    _require_run_scope(conf, cartridge)
 
     # BFS por niveles → asignamos rank al dataset (mayor rank = más profundo)
     rank: dict[str, int] = {}
@@ -206,13 +305,15 @@ def resolve_chain(**ctx):
 
     ordered = sorted(rank.items(), key=lambda kv: (kv[1], kv[0]))
     plan = [
-        {"name": n, "layer": graph[n]["layer"], "rank": r}
+        {"name": n, "layer": graph[n]["layer"], "cartridge": graph[n]["cartridge"], "rank": r}
         for n, r in ordered if n in graph
     ]
+    _validate_plan_scope(plan, cartridge)
     print(f"[refresh_chain] seed={seed_raw or seed_dataset} → {len(plan)} datasets:")
     for p in plan:
         print(f"  rank={p['rank']}  {p['layer']}.{p['name']}")
     ctx["ti"].xcom_push(key="plan", value=plan)
+    ctx["ti"].xcom_push(key="cartridge_id", value=cartridge)
     return len(plan)
 
 
@@ -220,11 +321,23 @@ def resolve_chain(**ctx):
 
 def materialize_in_order(**ctx):
     plan = ctx["ti"].xcom_pull(task_ids="resolve_chain", key="plan") or []
+    scoped_cartridge = ctx["ti"].xcom_pull(task_ids="resolve_chain", key="cartridge_id")
     conf = (ctx.get("dag_run").conf if ctx.get("dag_run") else {}) or {}
+    if not scoped_cartridge:
+        graph = _load_graph(str(conf.get("workspace_id") or "").strip())
+        scoped_cartridge = _scoped_cartridge(
+            conf,
+            graph,
+            str(conf.get("seed_raw") or ""),
+            str(conf.get("seed_dataset") or ""),
+        )
+    tenant_id, workspace_id = _require_run_scope(conf, scoped_cartridge)
     allow_partial = bool(conf.get("allow_partial"))
     if not plan:
         print("[refresh_chain] nada que materializar")
         return {"materialized": 0, "results": []}
+    _validate_plan_scope(plan, scoped_cartridge)
+    scoped_conf = {**conf, "cartridge_id": scoped_cartridge, "tenant_id": tenant_id, "workspace_id": workspace_id}
 
     results = []
     for item in plan:
@@ -236,7 +349,7 @@ def materialize_in_order(**ctx):
                 json={
                     "tool": "materialize",
                     "args": {"name": name},
-                    "security_context": _airflow_security_context(),
+                    "security_context": _security_context_for(item, scoped_conf),
                 },
                 timeout=600,
             )
@@ -254,8 +367,11 @@ def materialize_in_order(**ctx):
     print(f"[refresh_chain] materialized {ok}/{len(results)}")
     ctx["ti"].xcom_push(key="result", value=result)
     if ok != len(results) and not allow_partial:
-        failed = [r.get("name") for r in results if not r.get("ok")]
-        raise RuntimeError(f"dataset_refresh_chain failed for: {', '.join(failed)}")
+        failed = [str(r.get("name") or "?") for r in results if not r.get("ok")]
+        raise RuntimeError(
+            "dataset_refresh_chain failed for critical materialization(s): "
+            + ", ".join(failed[:10])
+        )
     return result
 
 
@@ -281,6 +397,11 @@ def record_run(**ctx):
         }
     started = ctx["logical_date"].isoformat()
     ended   = datetime.now(timezone.utc).isoformat()
+    run_cartridge = (
+        ctx["ti"].xcom_pull(task_ids="resolve_chain", key="cartridge_id")
+        or str(conf.get("cartridge_id") or CARTRIDGE_ID)
+    )
+    tenant_id, workspace_id = _require_run_scope(conf, str(run_cartridge))
     materialized = int(inv.get("materialized") or 0)
     results = inv.get("results") or []
     total = len(results)
@@ -293,7 +414,7 @@ def record_run(**ctx):
             headers=_internal_headers("MCP_INFRA", ctx),
             json={"tool": "pipeline_run_save",
                   "args": {"dag_id": "dataset_refresh_chain",
-                           "cartridge_id": CARTRIDGE_ID,
+                           "cartridge_id": run_cartridge,
                            "entity":       ENTITY,
                            "run_id":       f"dataset_refresh_chain:{ctx['run_id']}",
                            "airflow_dag_run_id": ctx["run_id"],
@@ -301,6 +422,9 @@ def record_run(**ctx):
                            "status":       status,
                            "started_at":   started,
                            "finished_at":  ended,
+                           "tenant_id":    tenant_id,
+                           "workspace_id": workspace_id,
+                           "project_id":   conf.get("project_id"),
                            "extra":        inv}},
             timeout=15,
         )

@@ -142,6 +142,37 @@ async def test_create_dataset_retries_on_timeout(superset_client_module, monkeyp
     assert result["dataset_id"] == 77
 
 
+@pytest.mark.asyncio
+async def test_create_dataset_preserves_superset_csrf_session_cookie(superset_client_module):
+    seen = {"dataset_cookie": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/security/login":
+            return httpx.Response(200, json={"access_token": "token-1"})
+        if request.url.path == "/api/v1/security/csrf_token/":
+            return httpx.Response(
+                200,
+                json={"result": {"csrf_token": "csrf-1"}},
+                headers={"Set-Cookie": "session=superset-session; Path=/"},
+            )
+        if request.url.path == "/api/v1/dataset/" and request.method == "POST":
+            seen["dataset_cookie"] = request.headers.get("cookie", "")
+            return httpx.Response(200, json={"id": 77})
+        return httpx.Response(404, json={"message": request.url.path})
+
+    client = superset_client_module.SupersetClient(
+        base_url="http://superset:8088",
+        username="admin",
+        password="secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.create_dataset(7, "gold_hours", "public")
+
+    assert result["dataset_id"] == 77
+    assert "session=superset-session" in seen["dataset_cookie"]
+
+
 @pytest.fixture()
 def studio_client(monkeypatch):
     os.environ["APP_ENV"] = "test"
@@ -163,6 +194,7 @@ def studio_client(monkeypatch):
     admin = {"id": 1, "email": "admin@local.ai", "role": "admin", "workspace_role": "admin"}
     app.dependency_overrides[require_authenticated] = lambda: admin
     app.dependency_overrides[studio_router.require_studio_write] = lambda: admin
+    app.dependency_overrides[studio_router.require_studio_global_admin] = lambda: admin
 
     client = TestClient(app)
     client.cookies.set("csrf_token", CSRF)
@@ -171,6 +203,7 @@ def studio_client(monkeypatch):
     finally:
         app.dependency_overrides.pop(require_authenticated, None)
         app.dependency_overrides.pop(studio_router.require_studio_write, None)
+        app.dependency_overrides.pop(studio_router.require_studio_global_admin, None)
 
 
 def test_dataset_endpoint_returns_503_without_config(studio_client, monkeypatch):

@@ -26,6 +26,16 @@ html[data-theme="dark"] {
   font-family: var(--font-sans);
 }
 
+.ent-shell.monitor-no-sidebar {
+  background:
+    radial-gradient(circle at 92% 0%, var(--info-soft), transparent 32%),
+    var(--color-bg);
+}
+
+.monitor-no-sidebar .ent-sidebar {
+  display: none;
+}
+
 /* SIDEBAR */
 .ent-sidebar {
   width: var(--shell-sidebar-width);
@@ -190,4 +200,8 @@ html[data-theme="dark"] {
   flex-direction: column;
   position: relative;
   min-height: 0;
+}
+
+.monitor-no-sidebar .ent-content {
+  background: transparent;
 }

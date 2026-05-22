@@ -22,7 +22,7 @@ def test_mcp_invoke_enforces_trusted_security_context_before_data_tools():
     assert '"cartridge_preview"' in source
     assert '"cartridge_query_kb"' in source
     assert "object prefix is required" in source
-    assert "direct gold SQL requires admin context" in source
+    assert "main database access requires explicit unscoped admin context" in source
     assert "cartridge SQL must stay inside its cartridge prefix" in source
     assert "sensitive internal tables are not readable through MCP" in source
     assert "_AGENT_READ_TOOLS" in source
@@ -55,6 +55,8 @@ def test_refinement_preview_transform_rejects_unscoped_duckdb_readers():
     assert "_SQL_STORAGE_LITERAL_RE" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source
     assert "_PGGOLD_SCHEMA_TABLE_RE" in source
+    assert 'path.replace("s3://{bucket}/", f"s3://{engine.minio_bucket}/", 1)' in source
+    assert "sql = _strip_sql_comments(sql or \"\")" in source
     assert "len(reader_calls) != len(direct_readers)" in source
     assert "SQL readers must use a direct string literal path" in source
     assert "pgdb schema is not readable through refinement" in source

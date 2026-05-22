@@ -1,9 +1,33 @@
 // Sprint v1.11 phase 3 — extracted from apps_gallery.html for strict CSP.
+let _viewerUser = null;
+
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+async function loadViewerUser() {
+  try {
+    const r = await fetch('/api/me', { credentials: 'same-origin' });
+    _viewerUser = r.ok ? await r.json() : null;
+  } catch {
+    _viewerUser = null;
+  }
+}
+
+function canDeleteApps() {
+  const role = String(_viewerUser?.role || '');
+  return ['owner', 'super_admin', 'admin'].includes(role);
+}
 
 async function loadApps() {
   const container = document.getElementById('apps-container');
   try {
     const r = await fetch('/api/apps');
+    if (!r.ok) {
+      const error = await r.json().catch(() => ({}));
+      throw new Error(error.detail || error.error || r.statusText || 'No se pudieron cargar apps');
+    }
     const d = await r.json();
     const apps = d.apps || [];
 
@@ -23,6 +47,7 @@ async function loadApps() {
     // Sprint v1.11 phase 3: inline onclick="deleteApp(...)" → data-action on the
     // dynamically-rendered delete button; a single delegated listener at the
     // bottom dispatches.
+    const deleteEnabled = canDeleteApps();
     container.innerHTML = `<div class="apps-grid">${apps.map(app => `
       <div class="app-card" id="card-${escHtml(app.name)}">
         <div class="app-card-icon">▦</div>
@@ -31,12 +56,12 @@ async function loadApps() {
         <div class="app-card-meta">Actualizado: ${escHtml(app.updated_at ? app.updated_at.slice(0,16).replace('T',' ') : '—')}</div>
         <div style="display:flex;gap:8px;align-items:center">
           <a class="app-card-btn" href="/apps/${encodeURIComponent(app.name || '')}" target="_blank" style="flex:1">→ ABRIR APP</a>
-          <button class="app-card-btn"
+          ${deleteEnabled ? `<button class="app-card-btn"
                   data-action="delete-app"
                   data-app-name="${escHtml(app.name || '')}"
                   data-app-title="${escHtml(app.title || '')}"
                   title="Eliminar aplicación"
-                  style="background:transparent;border-color:#c44;color:#c44;cursor:pointer;padding:6px 10px">🗑</button>
+                  style="background:transparent;border-color:#c44;color:#c44;cursor:pointer;padding:6px 10px">🗑</button>` : ''}
         </div>
       </div>
     `).join('')}</div>`;
@@ -48,7 +73,14 @@ async function loadApps() {
 async function deleteApp(name, title) {
   if (!confirm(`¿Eliminar la aplicación "${title}"?\n\nEsto no se puede deshacer.`)) return;
   try {
-    const r = await fetch('/api/apps/' + encodeURIComponent(name), { method: 'DELETE' });
+    const headers = {};
+    const csrf = csrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+    const r = await fetch('/api/apps/' + encodeURIComponent(name), {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers,
+    });
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       alert('Error eliminando: ' + (d.detail || r.statusText));
@@ -69,5 +101,5 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = ev.target.closest('[data-action="delete-app"]');
     if (btn) deleteApp(btn.dataset.appName, btn.dataset.appTitle);
   });
-  loadApps();
+  loadViewerUser().finally(loadApps);
 });

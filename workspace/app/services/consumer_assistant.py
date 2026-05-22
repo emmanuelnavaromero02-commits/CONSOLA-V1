@@ -10,6 +10,7 @@ Constraints (vs the builder assistant):
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 
@@ -85,8 +86,34 @@ def _security_context(user: dict | None) -> dict:
             "allowed_prefixes": [],
         }
     role = (user or {}).get("role") or "workspace_user"
-    admin = role in {"admin", "owner", "super_admin"}
-    allowed_cartridges = (user or {}).get("allowed_cartridges") or (["*"] if admin else [])
+    raw_cartridges = (user or {}).get("allowed_cartridges") if "allowed_cartridges" in (user or {}) else None
+    allowed_cartridges = list(raw_cartridges or [])
+    tenant_id = (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id")
+    workspace_id = (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id")
+    scoped = bool(tenant_id and workspace_id)
+    unrestricted = "*" in allowed_cartridges and not scoped
+    if unrestricted:
+        allowed_prefixes = ["raw/", "silver/", "gold/", "uploads/", "cartridges/"]
+    else:
+        allowed_prefixes = []
+        for cart in allowed_cartridges:
+            c = str(cart).strip().strip("/")
+            if not c or c == "*":
+                continue
+            if scoped:
+                scope = f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
+                allowed_prefixes.extend([
+                    f"raw/{c}/{scope}",
+                    f"silver/{c}/{scope}",
+                    f"gold/{c}/{scope}",
+                    f"uploads/{c}/{scope}",
+                    f"cartridges/{c}/",
+                ])
+            else:
+                allowed_prefixes.extend([
+                    f"{layer}/{c}/"
+                    for layer in ("raw", "silver", "gold", "uploads", "cartridges")
+                ])
     return {
         "trusted": True,
         "source": "workspace",
@@ -94,16 +121,12 @@ def _security_context(user: dict | None) -> dict:
         "email": (user or {}).get("email", ""),
         "role": role,
         "workspace_role": (user or {}).get("workspace_role"),
-        "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
-        "workspace_id": (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id"),
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "permissions": ["datasets.read", "cartridges.read", "apps.read", "workspace.access"],
         "allowed_cartridges": allowed_cartridges,
         "allowed_buckets": ["lakehouse"],
-        "allowed_prefixes": (
-            ["raw/", "silver/", "gold/", "uploads/", "cartridges/"]
-            if admin
-            else [f"{layer}/{cart}/" for cart in allowed_cartridges for layer in ("raw", "silver", "gold", "uploads", "cartridges")]
-        ),
+        "allowed_prefixes": allowed_prefixes,
     }
 
 
@@ -287,6 +310,19 @@ def _make_user_aware_invoke(user: dict | None):
                 if name and not name.startswith(prefix) and not _looks_official(name):
                     args = {**args, "name": prefix + name}
 
+        elif tool == "request_admin_help":
+            # Do not trust model-supplied identity/scope fields. The backend
+            # stamps them from the authenticated session before invoking MCP.
+            if user:
+                stamped = {
+                    "user_id": user.get("id"),
+                    "user_email": user.get("email"),
+                    "user_name": user.get("name") or user.get("email"),
+                    "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+                    "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+                }
+                args = {**args, **{k: v for k, v in stamped.items() if v is not None}}
+
         return await _raw_invoke(server_id, tool, args, user)
 
     return invoke
@@ -373,20 +409,34 @@ _HINTS_TTL = 300
 
 
 async def _cartridge_hints_block(user: dict | None) -> str:
-    """Concatenate `assistant_hints` from every registered cartridge so the
-    workspace assistant honors cartridge-specific rules across the catalog."""
+    """Concatenate assistant_hints only from cartridges this workspace can use."""
     global _hints_ts
     key = _scope_cache_key(user)
     if key in _hints_text_by_scope and (time.time() - _hints_ts) < _HINTS_TTL:
         return _hints_text_by_scope[key]
     try:
+        raw_allowed = (user or {}).get("allowed_cartridges") if "allowed_cartridges" in (user or {}) else None
+        allowed = [
+            str(cart).strip()
+            for cart in (raw_allowed or [])
+            if re.fullmatch(r"[a-zA-Z0-9_\-]+", str(cart).strip() or "")
+        ]
+        unrestricted = "*" in allowed
+        if not unrestricted and "*" not in allowed and not allowed:
+            _hints_text_by_scope[key] = ""
+            _hints_ts = time.time()
+            return ""
+        scope_clause = ""
+        if not unrestricted and "*" not in allowed:
+            quoted = ", ".join("'" + cart.replace("'", "''") + "'" for cart in allowed)
+            scope_clause = f" AND id IN ({quoted})"
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(f"{MCP_INFRA_URL}/mcp/invoke",
                              json=_payload(
                                  "postgres_execute_query",
                                  {"sql": "SELECT id, COALESCE(assistant_hints,'') AS hints "
                                          "FROM cartridges WHERE assistant_hints IS NOT NULL "
-                                         "AND length(assistant_hints) > 0"},
+                                         f"AND length(assistant_hints) > 0{scope_clause}"},
                                  user,
                              ),
                              headers=_headers_for("mcp-infra"))
