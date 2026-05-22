@@ -16,7 +16,7 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_runs_tenant_workspace_status
 
 GRANT SELECT ON pipeline_runs TO omega_workspace;
 GRANT SELECT, INSERT, UPDATE ON pipeline_runs TO omega_console;
-GRANT SELECT, INSERT, UPDATE ON pipeline_runs TO omega_airflow;
+GRANT SELECT, INSERT, UPDATE ON pipeline_runs TO omega_airflow_dag;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('76_pipeline_runs_scope.sql', NOW())
