@@ -5,166 +5,277 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mis accesos — OMEGA</title>
   <link rel="stylesheet" href="/static/css/main.css">
+  <!-- Phase-3b reskin — adopt the same design tokens as Home / Marketplace
+       so /mis-accesos no se siente "otra app". home-modern.css trae los
+       --home-* tokens y el reset de body/fondo consistente. -->
+  <link rel="stylesheet" href="/static/css/home-modern.css">
   <style>
-    body { padding: 0; margin: 0; overflow: auto; }
-    .shell { max-width: 920px; margin: 0 auto; padding: 24px 24px 80px; }
-    .topbar {
-      display: flex; align-items: center; gap: 16px; margin-bottom: 24px;
-      padding-bottom: 14px; border-bottom: 1px solid var(--border);
+    /* Page-scoped styles. Same DOM ids the JS already targets
+       (me-email, perm-groups, cart-allowed, cart-denied, link-*) —
+       solo cambia el tratamiento visual. */
+    body { padding: 0; margin: 0; overflow: auto; background: var(--home-bg); }
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 28px 80px;
     }
-    .topbar a.back {
-      font-size: 10px; color: var(--text3); font-family: var(--font-mono);
-      letter-spacing: 1px; text-decoration: none;
+
+    .page-header {
+      display: flex; align-items: flex-start; gap: 22px;
+      margin-bottom: 28px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--home-border);
     }
-    .topbar a.back:hover { color: var(--green); }
-    .title  { font-size: 13px; color: var(--amber); letter-spacing: 3px; font-family: var(--font-mono); }
-    .subtitle { font-size: 10px; color: var(--text3); letter-spacing: 1px; margin-top: 4px; }
+    .page-header a.back {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--home-muted);
+      text-decoration: none;
+      padding-top: 18px;
+    }
+    .page-header a.back:hover { color: var(--home-blue); }
+    .page-header .eyebrow {
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--home-muted);
+      font-weight: 700;
+      margin: 0;
+    }
+    .page-header h1 {
+      margin: 4px 0 6px;
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--home-navy);
+      line-height: 1.15;
+    }
+    .page-header .subtitle {
+      margin: 0;
+      font-size: 13px;
+      color: var(--home-muted);
+    }
 
     .card {
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
-      padding: 20px 24px; margin-bottom: 18px;
+      background: var(--home-surface);
+      border: 1px solid var(--home-border);
+      border-radius: var(--home-radius);
+      padding: 22px 26px;
+      margin-bottom: 18px;
+      box-shadow: var(--home-shadow);
     }
     .card h2 {
-      margin: 0 0 14px; font-family: var(--font-mono); font-size: 11px;
-      color: var(--amber); letter-spacing: 2px;
+      margin: 0 0 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--home-muted);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
     }
+
     .info-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px;
-      font-size: 13px;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 12px 28px;
+      font-size: 14px;
     }
     .info-grid .lbl {
-      font-family: var(--font-mono); font-size: 10px; color: var(--text3);
+      font-size: 11px;
+      color: var(--home-muted);
+      text-transform: uppercase;
       letter-spacing: 1px;
+      font-weight: 600;
     }
-    .info-grid .val { color: var(--text1); }
+    .info-grid .val {
+      color: var(--home-text);
+      font-weight: 500;
+      word-break: break-all;
+    }
+
     .role-pill {
-      display: inline-block; padding: 2px 8px; border-radius: 4px;
-      background: rgba(176, 109, 0, .15); color: var(--amber);
-      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
+      display: inline-flex; align-items: center;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.06);
+      color: var(--home-text);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
     }
-    .role-pill.platform { background: rgba(94,179,89,.15); color: var(--green); }
-    .role-pill.muted    { background: rgba(255,255,255,.06); color: var(--text3); }
+    .role-pill.platform  { background: rgba(22, 163, 74, 0.14); color: #15803d; }
+    .role-pill.scoped    { background: rgba(37, 99, 235, 0.12); color: var(--home-blue); }
+    .role-pill.workspace { background: rgba(245, 158, 11, 0.18); color: #b45309; }
+    .role-pill.muted     { background: rgba(15, 23, 42, 0.05); color: var(--home-muted); font-weight: 500; }
+
+    .perm-group { margin-bottom: 16px; }
+    .perm-group:last-child { margin-bottom: 0; }
+    .perm-group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .perm-group-title {
+      font-size: 11px;
+      color: var(--home-text-2);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .perm-group-count {
+      font-size: 10px;
+      color: var(--home-muted);
+      background: rgba(15, 23, 42, 0.06);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-weight: 600;
+    }
 
     .perm-list, .cart-list {
       list-style: none; padding: 0; margin: 0;
       display: flex; flex-wrap: wrap; gap: 6px;
     }
     .perm-list li {
-      font-family: var(--font-mono); font-size: 10px;
-      padding: 3px 8px; border-radius: 3px;
-      background: rgba(255,255,255,.04); color: var(--text2);
-      border: 1px solid var(--border);
-    }
-    /* Phase-3 — grouped permissions by domain. */
-    .perm-group { margin-bottom: 14px; }
-    .perm-group:last-child { margin-bottom: 0; }
-    .perm-group-head {
-      display: flex; align-items: center; gap: 10px;
-      margin-bottom: 6px;
-    }
-    .perm-group-title {
-      font-family: var(--font-mono); font-size: 11px;
-      color: var(--text2); letter-spacing: 1.5px; text-transform: uppercase;
-    }
-    .perm-group-count {
-      font-family: var(--font-mono); font-size: 10px;
-      color: var(--text3);
-      background: rgba(255,255,255,.04);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 1px 6px;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.04);
+      color: var(--home-text-2);
+      border: 1px solid var(--home-border);
+      font-weight: 500;
+      font-family: var(--home-font);
     }
 
     .role-hint {
-      font-size: 11px; color: var(--text2);
-      line-height: 1.45; margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--home-text-2);
+      line-height: 1.5;
+      margin: 8px 0 0;
     }
-    .role-hint strong { color: var(--amber); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; }
+    .role-hint strong {
+      color: var(--home-blue);
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-right: 4px;
+      font-weight: 700;
+    }
 
-    /* Phase-3 cartridge cards (replace previous row layout). */
     .cart-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 14px;
     }
     .cart-card {
-      background: rgba(255,255,255,.02);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px 14px;
+      background: var(--home-surface);
+      border: 1px solid var(--home-border);
+      border-left: 4px solid var(--home-border);
+      border-radius: 10px;
+      padding: 14px 16px;
       display: flex; flex-direction: column; gap: 10px;
     }
-    .cart-card-allow { border-left: 3px solid var(--green); }
-    .cart-card-deny  { border-left: 3px solid var(--red); opacity: .85; }
-    .cart-card-head { display: flex; flex-direction: column; gap: 2px; }
-    .cart-card-name { color: var(--text1); font-size: 13px; font-weight: 600; }
-    .cart-card-id   { color: var(--text3); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; }
-    .cart-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .cart-card-allow { border-left-color: var(--home-success); }
+    .cart-card-deny  { border-left-color: var(--home-error); }
+    .cart-card-head  { display: flex; flex-direction: column; gap: 3px; }
+    .cart-card-name  { color: var(--home-text); font-size: 14px; font-weight: 600; }
+    .cart-card-id    { color: var(--home-muted); font-size: 11px; font-family: ui-monospace, "SF Mono", monospace; }
+    .cart-card-meta  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
     .cart-status {
-      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
-      padding: 2px 6px; border-radius: 3px;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
     }
-    .cart-status.ok    { background: rgba(94,179,89,.15); color: var(--green); }
-    .cart-status.warn  { background: rgba(176,109,0,.15); color: var(--amber); }
-    .cart-status.deny  { background: rgba(179,38,30,.15); color: var(--red); }
-    .cart-status.muted { background: rgba(255,255,255,.06); color: var(--text3); }
-    .cart-substatus    { color: var(--text3); font-size: 10px; }
-
-    /* Backwards-compat for any legacy bits that still emit .badge / .cart-row */
-    .cart-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 0; border-bottom: 1px solid var(--border);
-    }
-    .cart-row:last-child { border-bottom: none; }
-    .cart-name { color: var(--text1); font-size: 13px; }
-    .cart-id   { color: var(--text3); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
-    .badge {
-      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px;
-      padding: 2px 6px; border-radius: 3px;
-    }
-    .badge.allow { background: rgba(94,179,89,.15); color: var(--green); }
-    .badge.deny  { background: rgba(179,38,30,.15); color: var(--red); }
-    .badge.status { background: rgba(255,255,255,.06); color: var(--text3); margin-left: 6px; }
+    .cart-status.ok    { background: rgba(22, 163, 74, 0.14); color: #15803d; }
+    .cart-status.warn  { background: rgba(245, 158, 11, 0.14); color: #b45309; }
+    .cart-status.deny  { background: rgba(220, 38, 38, 0.14); color: #b91c1c; }
+    .cart-status.muted { background: rgba(15, 23, 42, 0.06); color: var(--home-muted); }
+    .cart-substatus    { color: var(--home-muted); font-size: 11px; }
 
     .muted-note {
-      font-size: 11px; color: var(--text3); font-style: italic;
-      margin-top: 6px;
+      font-size: 12px;
+      color: var(--home-muted);
+      line-height: 1.5;
+      margin-top: 10px;
     }
     .empty {
-      font-size: 12px; color: var(--text3);
-      font-family: var(--font-mono); letter-spacing: 1px;
-      padding: 6px 0;
+      font-size: 13px;
+      color: var(--home-muted);
+      padding: 8px 0;
+      line-height: 1.5;
     }
+
     .help-actions {
-      display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap;
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+      flex-wrap: wrap;
     }
     .help-actions a {
-      font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px;
-      color: var(--amber); text-decoration: none;
-      padding: 6px 12px; border: 1px solid var(--border); border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--home-text);
+      text-decoration: none;
+      padding: 8px 14px;
+      border: 1px solid var(--home-border);
+      border-radius: 8px;
+      background: var(--home-surface);
+      transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
     }
-    .help-actions a:hover { background: rgba(176,109,0,.08); }
+    .help-actions a:hover {
+      border-color: var(--home-blue);
+      color: var(--home-blue);
+      background: var(--surface-soft, var(--home-surface));
+    }
+
     .err {
-      color: var(--red); font-size: 12px; padding: 8px;
-      background: rgba(179,38,30,.08); border-radius: 4px;
+      color: var(--home-error);
+      font-size: 13px;
+      padding: 10px 12px;
+      background: rgba(179, 38, 30, 0.08);
+      border-radius: 8px;
+      border: 1px solid rgba(179, 38, 30, 0.20);
+      margin-bottom: 18px;
+    }
+
+    /* Backwards-compat for any legacy .cart-row / .badge that might still
+       be emitted by older code paths. */
+    .cart-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid var(--home-border);
+    }
+    .cart-row:last-child { border-bottom: none; }
+    .cart-name { color: var(--home-text); font-size: 14px; }
+    .cart-id   { color: var(--home-muted); font-size: 11px; margin-top: 2px; font-family: ui-monospace, monospace; }
+    .badge {
+      font-size: 9px; letter-spacing: 1px;
+      padding: 2px 6px; border-radius: 3px;
+    }
+    .badge.allow  { background: rgba(22, 163, 74, 0.14); color: #15803d; }
+    .badge.deny   { background: rgba(179, 38, 30, 0.14); color: #b91c1c; }
+    .badge.status { background: rgba(15, 23, 42, 0.06); color: var(--home-muted); margin-left: 6px; }
+
+    @media (max-width: 720px) {
+      .info-grid { grid-template-columns: 1fr; gap: 6px; }
+      .page-header { flex-direction: column; gap: 6px; }
+      .page-header a.back { padding-top: 0; }
+      .page-header h1 { font-size: 24px; }
     }
   </style>
 </head>
 <body>
   <main class="shell">
-    <div class="topbar">
-      <a class="back" href="/" id="back-link">← INICIO</a>
+    <header class="page-header">
+      <a class="back" href="/" id="back-link">← Volver al inicio</a>
       <div>
-        <div class="title">MIS ACCESOS</div>
-        <div class="subtitle">Identidad · workspace · permisos efectivos · cartuchos disponibles</div>
+        <p class="eyebrow">Mi cuenta</p>
+        <h1>Mis accesos</h1>
+        <p class="subtitle">Identidad, workspace, permisos efectivos y cartuchos disponibles.</p>
       </div>
-    </div>
+    </header>
 
     <div id="err-banner" class="err" style="display:none"></div>
 
     <section class="card">
-      <h2>IDENTIDAD</h2>
+      <h2>Identidad</h2>
       <div class="info-grid">
         <div class="lbl">Email</div>             <div class="val" id="me-email">…</div>
         <div class="lbl">Nombre</div>            <div class="val" id="me-name">…</div>
@@ -177,7 +288,7 @@
     </section>
 
     <section class="card">
-      <h2>PERMISOS EFECTIVOS</h2>
+      <h2>Permisos efectivos</h2>
       <div id="perm-groups"></div>
       <div class="muted-note">
         Los permisos se agrupan por dominio. Cada llamada al backend valida
@@ -187,12 +298,12 @@
     </section>
 
     <section class="card">
-      <h2>CARTUCHOS DISPONIBLES</h2>
+      <h2>Cartuchos disponibles</h2>
       <div id="cart-allowed"></div>
     </section>
 
     <section class="card">
-      <h2>CARTUCHOS BLOQUEADOS PARA MI USUARIO</h2>
+      <h2>Cartuchos bloqueados para mi usuario</h2>
       <div id="cart-denied"></div>
       <div class="muted-note">
         Tu usuario tiene un <b>deny</b> explícito para los siguientes
@@ -202,16 +313,16 @@
     </section>
 
     <section class="card">
-      <h2>ACCIONES DISPONIBLES</h2>
+      <h2>Acciones disponibles</h2>
       <div class="help-actions">
-        <a href="/me">CAMBIAR PASSWORD</a>
-        <a href="/marketplace">SOLICITAR ACCESO A CARTUCHO</a>
-        <a href="/customer/cartridges">VER MIS CARTUCHOS</a>
-        <a id="link-sessions" href="/security" style="display:none">VER SESIONES ACTIVAS</a>
-        <a id="link-audit" href="/security" style="display:none">VER AUDITORÍA</a>
-        <a id="link-workspace-admin" href="/iam" style="display:none">ADMIN WORKSPACE</a>
-        <a id="link-iam" href="/iam" style="display:none">PANEL IAM GLOBAL</a>
-        <a id="link-marketplace-admin" href="/admin/installations" style="display:none">ADMIN MARKETPLACE</a>
+        <a href="/me">Cambiar password</a>
+        <a href="/marketplace">Solicitar acceso a cartucho</a>
+        <a href="/customer/cartridges">Ver mis cartuchos</a>
+        <a id="link-sessions" href="/security" style="display:none">Ver sesiones activas</a>
+        <a id="link-audit" href="/security" style="display:none">Ver auditoría</a>
+        <a id="link-workspace-admin" href="/iam" style="display:none">Admin workspace</a>
+        <a id="link-iam" href="/iam" style="display:none">Panel IAM global</a>
+        <a id="link-marketplace-admin" href="/admin/installations" style="display:none">Admin marketplace</a>
       </div>
       <div class="muted-note">
         Cambio de password, Marketplace y Mis cartuchos están disponibles
