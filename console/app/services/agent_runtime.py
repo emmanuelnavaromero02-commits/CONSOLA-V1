@@ -9,7 +9,9 @@ is its "body".
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,6 +25,8 @@ from app.middleware.request_id import request_id_var
 from app.services import audit_service, llm_client
 from app.services.security_context import build_security_context, rls_user_context
 from app.services import tool_policy
+
+logger = logging.getLogger(__name__)
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL  = os.environ.get("MCP_INFRA_URL",  "http://mcp-infra:8010")
@@ -493,6 +497,62 @@ def _interpolate_variables(text: str, variables: dict) -> str:
     return text
 
 
+# Hard cap on injected cartridge hints. The largest real hint shipped today is
+# ~4.2 KB (replicon); 8000 matches tool_policy.MAX_STRING_VALUE_CHARS and leaves
+# ~2x headroom while preventing a giant imported hint from crowding the prompt.
+MAX_HINTS_CHARS = 8000
+
+# Wrapper / chat-template tokens a malicious imported cartridge could embed in
+# assistant_hints to break out of the <hints_cartucho> wrapper (or fake a new
+# system turn) so the model treats following text as trusted system text.
+_HINT_INJECTION_TOKENS = (
+    "</hints_cartucho>",
+    "<hints_cartucho",
+    "<system>",
+    "</system>",
+    "<|im_start|>",
+    "<|im_end|>",
+)
+
+
+def _sanitize_cartridge_hints(cartridge_id: str, hints: str) -> str:
+    """Neutralise prompt-injection vectors in cartridge-supplied hints.
+
+    ``assistant_hints`` is attacker-controllable: a cartridge installed from the
+    marketplace ships arbitrary text here, and it is injected into the agent
+    system prompt inside a ``<hints_cartucho>`` wrapper. A hint containing the
+    literal closing tag (or chat-template tokens like ``<system>`` /
+    ``<|im_start|>``) could break out of the wrapper and have the model treat
+    the following text as trusted system instructions. We neutralise those
+    tokens at injection time by HTML-escaping their angle brackets — benign
+    ``<`` usage elsewhere in the hint is left untouched — and hard-cap the
+    length. The stored hints are never modified; this is runtime-only.
+    """
+    if not hints:
+        return ""
+    sanitized = hints
+    for token in _HINT_INJECTION_TOKENS:
+        pattern = re.compile(re.escape(token), re.IGNORECASE)
+        if pattern.search(sanitized):
+            logger.warning(
+                "cartridge_hints: neutralized wrapper/template token %r in hints for cartridge %s",
+                token, cartridge_id,
+            )
+            neutral = token.replace("<", "&lt;").replace(">", "&gt;")
+            sanitized = pattern.sub(neutral, sanitized)
+    if len(sanitized) > MAX_HINTS_CHARS:
+        original_length = len(sanitized)
+        sanitized = (
+            sanitized[:MAX_HINTS_CHARS]
+            + f"\n\n[...HINTS TRUNCADOS — original {original_length} chars, mostrados {MAX_HINTS_CHARS}]"
+        )
+        logger.warning(
+            "cartridge_hints: truncated hints for cartridge %s (original_length=%d, truncated_to=%d)",
+            cartridge_id, original_length, MAX_HINTS_CHARS,
+        )
+    return sanitized
+
+
 def _build_system_prompt(agent: Agent, cartridge_hints: str) -> str:
     parts = [
         f"# Agente: {agent.name}",
@@ -517,7 +577,7 @@ def _build_system_prompt(agent: Agent, cartridge_hints: str) -> str:
         parts += [
             "",
             f"<hints_cartucho id=\"{agent.cartridge_id}\">",
-            cartridge_hints.strip(),
+            _sanitize_cartridge_hints(agent.cartridge_id, cartridge_hints.strip()),
             "</hints_cartucho>",
         ]
     text = "\n".join(parts)

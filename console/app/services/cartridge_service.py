@@ -709,6 +709,12 @@ async def import_cartridge(zip_bytes: bytes, actor_user: dict | None = None) -> 
                         if r.status_code >= 400:
                             raise ValueError(f"DAG import failed for {fname}: {r.text[:300]}")
                         dag_files_written.append(fname)
+            # Transaction committed. The seed and/or hints/assistant.md may have
+            # (re)written cartridges.assistant_hints, so drop the in-process
+            # hints cache; otherwise the copilot serves stale hints for up to
+            # the cache TTL after an import.
+            from app.services import agent_runtime
+            agent_runtime.invalidate_hint_cache(cartridge_id)
         finally:
             await conn.close()
 
