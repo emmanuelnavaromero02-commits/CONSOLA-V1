@@ -99,3 +99,48 @@ def test_cartridge_caller_pair_key_via_canonical_name(refinement_main):
 
 def test_cartridge_caller_legacy_replicon_identifier_still_works(refinement_main):
     refinement_main.verify_api_key(x_api_key=CART_KEY, x_internal_service="replicon")
+
+
+@pytest.fixture()
+def refinement_main_prod_legacy_only(monkeypatch):
+    """Production stack where only the legacy shared key is set (no pair keys)."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
+    for name in (
+        "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",
+        "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
+        "INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT",
+        "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setitem(sys.modules, "app.duckdb_engine", _module(DuckDBEngine=lambda: object()))
+    monkeypatch.setitem(sys.modules, "app.dataset_store", _module(DatasetStore=lambda path: object()))
+
+    async def generate_sql(*args, **kwargs):
+        return "", ""
+
+    monkeypatch.setitem(sys.modules, "app.llm_sql", _module(generate_sql=generate_sql))
+    monkeypatch.setitem(sys.modules, "app.security", _module(get_internal_api_key=lambda: LEGACY))
+    sys.modules.pop("app.main", None)
+    main = importlib.import_module("app.main")
+    yield main
+    sys.modules.pop("app.main", None)
+
+
+def test_legacy_key_rejected_in_production(refinement_main_prod_legacy_only):
+    # The legacy fallback is disabled in production: even a correct legacy key
+    # is refused once APP_ENV=production and no pair key is configured.
+    with pytest.raises(HTTPException) as exc:
+        refinement_main_prod_legacy_only.verify_api_key(
+            x_api_key=LEGACY, x_internal_service="console"
+        )
+    assert exc.value.status_code == 403
+
+
+def test_pair_key_still_accepted_in_production(monkeypatch, refinement_main_prod_legacy_only):
+    # verify_api_key reads the pair-key env live, so configuring it makes the
+    # caller work even in production (only the legacy fallback is disabled).
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT", CONSOLE_KEY)
+    refinement_main_prod_legacy_only.verify_api_key(
+        x_api_key=CONSOLE_KEY, x_internal_service="console"
+    )
