@@ -924,9 +924,9 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
-      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
+      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "${OUTLOOK_RECEIVER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "${OUTLOOK_SENDER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # DAG get_secret() prefers these env names over Variable.get; kept
       # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
       MINIO_ACCESS_KEY:     "minio"
@@ -948,7 +948,10 @@ services:
     ports:
       - "8082:8080"
     volumes:
-      - ../airflow/dags:/opt/airflow/dags
+      # read-only: mcp-infra is the sole runtime DAG writer (airflow_create_dag,
+      # gated behind APP_ENV dev + ALLOW_RCE_TOOLS). The webserver only parses
+      # and serves DAGs, so it never needs write access to this directory.
+      - ../airflow/dags:/opt/airflow/dags:ro
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
@@ -1010,9 +1013,9 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
-      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
+      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "${OUTLOOK_RECEIVER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "${OUTLOOK_SENDER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # DAG get_secret() prefers these env names over Variable.get; kept
       # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
       MINIO_ACCESS_KEY:     "minio"
@@ -1027,7 +1030,10 @@ services:
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
     volumes:
-      - ../airflow/dags:/opt/airflow/dags
+      # read-only: mcp-infra is the sole runtime DAG writer (airflow_create_dag,
+      # gated behind APP_ENV dev + ALLOW_RCE_TOOLS). The scheduler only parses
+      # and executes DAGs, so it never needs write access to this directory.
+      - ../airflow/dags:/opt/airflow/dags:ro
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
