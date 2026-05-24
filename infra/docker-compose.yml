@@ -948,10 +948,13 @@ services:
     ports:
       - "8082:8080"
     volumes:
-      # read-only: mcp-infra is the sole runtime DAG writer (airflow_create_dag,
-      # gated behind APP_ENV dev + ALLOW_RCE_TOOLS). The webserver only parses
-      # and serves DAGs, so it never needs write access to this directory.
-      - ../airflow/dags:/opt/airflow/dags:ro
+      # Kept read-write on purpose: the per-cartridge DAGs below are nested
+      # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
+      # Docker has to create those mountpoints inside this mount at container
+      # start. A :ro parent makes that fail (EROFS) because the subdirs don't
+      # pre-exist on the host. Runtime DAG-write protection lives in the
+      # airflow_create_dag tool (APP_ENV dev + ALLOW_RCE_TOOLS), not here.
+      - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
@@ -1030,10 +1033,13 @@ services:
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
     volumes:
-      # read-only: mcp-infra is the sole runtime DAG writer (airflow_create_dag,
-      # gated behind APP_ENV dev + ALLOW_RCE_TOOLS). The scheduler only parses
-      # and executes DAGs, so it never needs write access to this directory.
-      - ../airflow/dags:/opt/airflow/dags:ro
+      # Kept read-write on purpose: the per-cartridge DAGs below are nested
+      # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
+      # Docker has to create those mountpoints inside this mount at container
+      # start. A :ro parent makes that fail (EROFS) because the subdirs don't
+      # pre-exist on the host. Runtime DAG-write protection lives in the
+      # airflow_create_dag tool (APP_ENV dev + ALLOW_RCE_TOOLS), not here.
+      - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
       - ../cartridges:/registry/cartridges:ro
