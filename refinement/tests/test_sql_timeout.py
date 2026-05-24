@@ -115,7 +115,7 @@ def _wire_minimal_engine(engine_module, conn):
     eng._validate_safe_sql = lambda sql: None
     eng.get_rls_filters = lambda sql, user_ctx: (sql, [])
     eng._inject_bucket = lambda sql: sql
-    eng._inject_latest_date = lambda sql, srcs: sql
+    eng._inject_latest_date = lambda sql, srcs, user_context=None: sql
     eng._conn = lambda: conn
     return eng
 
@@ -176,7 +176,7 @@ def test_preview_sql_actually_interrupts_long_running_query(engine_module, monke
     eng._validate_safe_sql = lambda sql: None
     eng.get_rls_filters = lambda sql, user_ctx: (sql, [])
     eng._inject_bucket = lambda sql: sql
-    eng._inject_latest_date = lambda sql, srcs: sql
+    eng._inject_latest_date = lambda sql, srcs, user_context=None: sql
     eng._conn = lambda: real_con
 
     # Tighten the cap so the test runs in <1s. We do this on the
