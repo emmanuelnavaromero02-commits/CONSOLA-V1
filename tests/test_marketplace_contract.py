@@ -127,9 +127,13 @@ def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
     service = read("console/app/services/marketplace_service.py")
     js = read("console/app/static/js/marketplace.js")
     retry_section = service.split("async def retry_installation", 1)[1].split("async def list_installation_access", 1)[0]
-    assert "require_global_any_role" in main
-    assert "user.get(\"role\") in ADMIN_ROLES" in service
-    assert "user.get(\"workspace_role\") in ADMIN_ROLES" not in service
+    # Marketplace admin is enforced by the marketplace.admin PERMISSION, not a
+    # hardcoded global role: the admin routes gate on require_permission and the
+    # service resolves access through has_permission. owner/super_admin/admin
+    # still pass because they carry marketplace.admin via ROLE_PERMISSIONS.
+    assert 'require_permission("marketplace.admin")' in main
+    assert 'permissions.has_permission(user, "marketplace.admin")' in service
+    assert "in ADMIN_ROLES" not in service
     assert "admin approval required before retry" in retry_section
     assert "SET status = 'pending_connection'" in retry_section
     assert "UPDATE tenant_entitlements" not in retry_section
