@@ -3440,7 +3440,7 @@ async def customer_cartridges_page():
 @app.get(
     "/admin/installations",
     dependencies=[
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def admin_installations_page():
@@ -3449,7 +3449,7 @@ async def admin_installations_page():
 @app.get(
     "/admin/licenses",
     dependencies=[
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def admin_licenses_page():
@@ -3500,7 +3500,7 @@ async def api_marketplace_request(cartridge_id: str, user: dict = Depends(requir
     "/api/marketplace/products/{cartridge_id}/activate",
     dependencies=[
         Depends(require_csrf),
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_marketplace_activate(cartridge_id: str, user: dict = Depends(require_authenticated)):
@@ -3530,7 +3530,7 @@ async def api_marketplace_retry(installation_id: str, user: dict = Depends(requi
 @app.get(
     "/api/admin/installations",
     dependencies=[
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installations(user: dict = Depends(get_current_global_user)):
@@ -3542,7 +3542,7 @@ async def api_admin_installations(user: dict = Depends(get_current_global_user))
 @app.get(
     "/api/admin/installations/{installation_id}",
     dependencies=[
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation(installation_id: str, user: dict = Depends(get_current_global_user)):
@@ -3554,7 +3554,7 @@ async def api_admin_installation(installation_id: str, user: dict = Depends(get_
 @app.get(
     "/api/admin/installations/{installation_id}/access",
     dependencies=[
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation_access(installation_id: str, user: dict = Depends(get_current_global_user)):
@@ -3567,7 +3567,7 @@ async def api_admin_installation_access(installation_id: str, user: dict = Depen
     "/api/admin/installations/{installation_id}/access/{target_user_id}",
     dependencies=[
         Depends(require_csrf),
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation_user_access(
@@ -3591,7 +3591,7 @@ async def api_admin_installation_user_access(
     "/api/admin/installations/{installation_id}/approve",
     dependencies=[
         Depends(require_csrf),
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation_approve(installation_id: str, user: dict = Depends(get_current_global_user)):
@@ -3604,7 +3604,7 @@ async def api_admin_installation_approve(installation_id: str, user: dict = Depe
     "/api/admin/installations/{installation_id}/pause",
     dependencies=[
         Depends(require_csrf),
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation_pause(installation_id: str, user: dict = Depends(get_current_global_user)):
@@ -3617,7 +3617,7 @@ async def api_admin_installation_pause(installation_id: str, user: dict = Depend
     "/api/admin/installations/{installation_id}/revoke",
     dependencies=[
         Depends(require_csrf),
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation_revoke(installation_id: str, user: dict = Depends(get_current_global_user)):
@@ -3630,7 +3630,7 @@ async def api_admin_installation_revoke(installation_id: str, user: dict = Depen
     "/api/admin/installations/{installation_id}/reactivate",
     dependencies=[
         Depends(require_csrf),
-        Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN)),
+        Depends(require_permission("marketplace.admin")),
     ],
 )
 async def api_admin_installation_reactivate(installation_id: str, user: dict = Depends(get_current_global_user)):

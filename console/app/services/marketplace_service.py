@@ -20,7 +20,6 @@ _SCHEMA_READY = False
 ACTIVE_ENTITLEMENT_STATUS = "active"
 READY_INSTALLATION_STATUS = "ready"
 CUSTOMER_PRODUCT_STATUSES = {"active"}
-ADMIN_ROLES = {"owner", "super_admin", "admin"}
 
 
 COMMERCIAL_PROFILES: dict[str, dict[str, Any]] = {
@@ -113,10 +112,11 @@ def _scope(user: dict) -> tuple[str, str]:
     return str(tenant_id), str(workspace_id)
 
 
-def _is_platform_admin(user: dict | None) -> bool:
-    if not user:
-        return False
-    return user.get("role") in ADMIN_ROLES
+def _can_admin_marketplace(user: dict | None) -> bool:
+    # Enforced by the marketplace.admin permission, not a hardcoded global
+    # role. owner/super_admin/admin already carry it via ROLE_PERMISSIONS;
+    # a custom role granted marketplace.admin is honored too.
+    return permissions.has_permission(user, "marketplace.admin")
 
 
 def _row(row: asyncpg.Record | None) -> dict[str, Any] | None:
@@ -531,7 +531,7 @@ async def request_product(cartridge_id: str, user: dict, *, source: str = "marke
 
 async def activate_product(cartridge_id: str, user: dict, *, source: str = "console_admin") -> dict[str, Any]:
     """Admin/direct activation. Customer activation requests use request_product."""
-    if not _is_platform_admin(user):
+    if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     tenant_id, workspace_id = _scope(user)
     p = await cartridge_service.pool()
@@ -618,7 +618,7 @@ async def list_installations(user: dict) -> dict[str, Any]:
 
 
 async def list_admin_installations(user: dict) -> dict[str, Any]:
-    if not _is_platform_admin(user):
+    if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
     async with p.acquire() as conn:
@@ -669,7 +669,7 @@ async def list_admin_installations(user: dict) -> dict[str, Any]:
 
 
 async def get_admin_installation(installation_id: str, user: dict) -> dict[str, Any]:
-    if not _is_platform_admin(user):
+    if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
     async with p.acquire() as conn:
@@ -835,7 +835,7 @@ async def retry_installation(installation_id: str, user: dict) -> dict[str, Any]
 
 
 async def list_installation_access(installation_id: str, user: dict) -> dict[str, Any]:
-    if not _is_platform_admin(user):
+    if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     p = await cartridge_service.pool()
     async with p.acquire() as conn:
@@ -894,7 +894,7 @@ async def set_installation_user_access(
     reason: str | None,
     user: dict,
 ) -> dict[str, Any]:
-    if not _is_platform_admin(user):
+    if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     try:
         target_id = int(target_user_id)
@@ -1042,7 +1042,7 @@ async def _set_installation_state(
     allowed_installation_statuses: set[str] | None = None,
     assert_product_activatable: bool = False,
 ) -> dict[str, Any]:
-    if not _is_platform_admin(user):
+    if not _can_admin_marketplace(user):
         raise MarketplaceError("admin role required")
     user_id = user.get("id")
     p = await cartridge_service.pool()
