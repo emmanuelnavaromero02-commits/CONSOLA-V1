@@ -64,6 +64,10 @@ _FORBIDDEN_SEED_SQL = re.compile(
     r"foreign\s+server|foreign\s+table)\b|\\",
     re.IGNORECASE,
 )
+# Opening (or closing) delimiter of a PostgreSQL dollar-quoted string: ``$$`` or
+# ``$tag$`` with an alphanumeric tag. The splitter uses this to treat ``;``
+# inside a dollar-quoted literal as data, not a statement boundary.
+_DOLLAR_QUOTE_OPEN_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 _SAFE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
 _SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -765,6 +769,10 @@ def _validate_import_zip_members(members: list[object]) -> None:
 def _validate_seed_sql(sql: str) -> None:
     if "\x00" in sql or _FORBIDDEN_SEED_SQL.search(sql or ""):
         raise ValueError("seed.sql contains forbidden SQL")
+    # Fail-closed: a block comment can hide a ';' that breaks statement
+    # splitting. No legitimate cartridge seed.sql uses them, so reject outright.
+    if "/*" in sql or "*/" in sql:
+        raise ValueError("seed.sql cannot contain block comments")
     cleaned = "\n".join(
         line for line in (sql or "").splitlines()
         if not line.lstrip().startswith("--")
@@ -798,21 +806,53 @@ def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     buf: list[str] = []
     in_single = False
+    dollar_tag: str | None = None  # active dollar-quote delimiter, e.g. "$$" or "$body$"
     i = 0
-    while i < len(sql):
+    n = len(sql)
+    while i < n:
         ch = sql[i]
-        buf.append(ch)
-        if ch == "'":
-            if in_single and i + 1 < len(sql) and sql[i + 1] == "'":
-                buf.append(sql[i + 1])
-                i += 2
+        if dollar_tag is not None:
+            # Inside a dollar-quoted string: only the matching closing delimiter
+            # ends it; ';' and "'" in between are literal data.
+            if sql.startswith(dollar_tag, i):
+                buf.append(dollar_tag)
+                i += len(dollar_tag)
+                dollar_tag = None
                 continue
-            in_single = not in_single
-        elif ch == ";" and not in_single:
-            statement = "".join(buf[:-1]).strip()
+            buf.append(ch)
+            i += 1
+            continue
+        if in_single:
+            buf.append(ch)
+            if ch == "'":
+                if i + 1 < n and sql[i + 1] == "'":
+                    buf.append(sql[i + 1])
+                    i += 2
+                    continue
+                in_single = False
+            i += 1
+            continue
+        if ch == "'":
+            buf.append(ch)
+            in_single = True
+            i += 1
+            continue
+        if ch == "$":
+            m = _DOLLAR_QUOTE_OPEN_RE.match(sql, i)
+            if m:
+                delim = m.group(0)
+                buf.append(delim)
+                dollar_tag = delim
+                i += len(delim)
+                continue
+        if ch == ";":
+            statement = "".join(buf).strip()
             if statement:
                 statements.append(statement)
             buf = []
+            i += 1
+            continue
+        buf.append(ch)
         i += 1
     tail = "".join(buf).strip()
     if tail:
