@@ -924,9 +924,9 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
-      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
+      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "${OUTLOOK_RECEIVER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "${OUTLOOK_SENDER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # DAG get_secret() prefers these env names over Variable.get; kept
       # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
       MINIO_ACCESS_KEY:     "minio"
@@ -948,6 +948,12 @@ services:
     ports:
       - "8082:8080"
     volumes:
+      # Kept read-write on purpose: the per-cartridge DAGs below are nested
+      # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
+      # Docker has to create those mountpoints inside this mount at container
+      # start. A :ro parent makes that fail (EROFS) because the subdirs don't
+      # pre-exist on the host. Runtime DAG-write protection lives in the
+      # airflow_create_dag tool (APP_ENV dev + ALLOW_RCE_TOOLS), not here.
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
@@ -1010,9 +1016,9 @@ services:
       AIRFLOW_VAR_MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
       AIRFLOW_VAR_MINIO_BUCKET: "lakehouse"
       AIRFLOW_VAR_MINIO_SECURE: "false"
-      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "devnull@modecissions.local"
-      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "dummy-local-password"
+      AIRFLOW_VAR_OUTLOOK_RECEIVER_EMAIL: "${OUTLOOK_RECEIVER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_SENDER_EMAIL: "${OUTLOOK_SENDER_EMAIL:-devnull@modecissions.local}"
+      AIRFLOW_VAR_OUTLOOK_APP_PASSWORD: "${OUTLOOK_APP_PASSWORD:-dummy-local-password}"
       # DAG get_secret() prefers these env names over Variable.get; kept
       # alongside AIRFLOW_VAR_* during the transition off metadata-DB storage.
       MINIO_ACCESS_KEY:     "minio"
@@ -1027,6 +1033,12 @@ services:
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
     volumes:
+      # Kept read-write on purpose: the per-cartridge DAGs below are nested
+      # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and
+      # Docker has to create those mountpoints inside this mount at container
+      # start. A :ro parent makes that fail (EROFS) because the subdirs don't
+      # pre-exist on the host. Runtime DAG-write protection lives in the
+      # airflow_create_dag tool (APP_ENV dev + ALLOW_RCE_TOOLS), not here.
       - ../airflow/dags:/opt/airflow/dags
       - ../airflow/logs:/opt/airflow/logs
       - ../airflow/plugins:/opt/airflow/plugins
