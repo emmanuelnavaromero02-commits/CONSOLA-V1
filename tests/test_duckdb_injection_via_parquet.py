@@ -75,7 +75,7 @@ def _engine_with_resolved(monkeypatch, duck_engine_module, latest):
     ``latest`` (string or None)."""
     Eng = duck_engine_module.DuckDBEngine
     eng = Eng.__new__(Eng)  # bypass __init__ (config)
-    eng._resolve_latest_date = lambda source: latest
+    eng._resolve_latest_date = lambda source, user_context=None: latest
     return eng
 
 

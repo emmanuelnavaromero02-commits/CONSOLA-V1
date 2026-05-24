@@ -495,13 +495,7 @@ class DuckDBEngine:
 
                 effective_sql = self._inject_bucket(rls_sql)
                 effective_sql = self._scope_storage_sql(effective_sql, sources or [], user_context)
-                try:
-                    effective_sql = self._inject_latest_date(effective_sql, sources or [], user_context)
-                except TypeError:
-                    # Tiny test doubles and older cartridge fakes sometimes
-                    # still expose the pre-tenant signature. Keep those helpers
-                    # compatible while the real method remains scope-aware.
-                    effective_sql = self._inject_latest_date(effective_sql, sources or [])
+                effective_sql = self._inject_latest_date(effective_sql, sources or [], user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
                 # Watchdog: fires con.interrupt() if the query runs past
@@ -755,12 +749,11 @@ class DuckDBEngine:
         primary_source = sources[0] if sources else None
         if not primary_source:
             return sql.replace("{latest_date}", _escape_sql_literal_inner("1970-01-01"))
-        try:
-            latest = self._resolve_latest_date(primary_source, user_context)
-        except TypeError:
-            # Older tests and very small local fakes monkeypatch the resolver
-            # with the pre-scope one-argument signature.
-            latest = self._resolve_latest_date(primary_source)
+        # No silent fallback: _resolve_latest_date is always scope-aware, so we
+        # pass user_context straight through. A pre-scope one-argument caller or
+        # test double now raises TypeError loudly instead of degrading tenant
+        # isolation by resolving the latest load_date across all tenants.
+        latest = self._resolve_latest_date(primary_source, user_context)
         return sql.replace(
             "{latest_date}", _escape_sql_literal_inner(latest or "1970-01-01")
         )
