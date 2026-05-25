@@ -152,10 +152,17 @@ jobs:
           cache: npm
           cache-dependency-path: |
             console-next/package-lock.json
+            console/control-room-next/package-lock.json
             tests-e2e/package-lock.json
 
       - name: Audit console-next dependencies
         working-directory: console-next
+        run: |
+          npm ci
+          npm audit --audit-level=high
+
+      - name: Audit control-room dependencies
+        working-directory: console/control-room-next
         run: |
           npm ci
           npm audit --audit-level=high

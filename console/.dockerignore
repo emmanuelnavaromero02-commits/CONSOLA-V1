@@ -1,0 +1,5 @@
+__pycache__/
+.pytest_cache/
+control-room-next/.next/
+control-room-next/node_modules/
+control-room-next/out/

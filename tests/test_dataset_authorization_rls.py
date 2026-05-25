@@ -19,6 +19,9 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # The module validates INTERNAL_API_KEY at import time and constructs a
@@ -106,6 +109,36 @@ def test_raw_layer_behaviour_unchanged():
     assert _prefix_allowed(sec, "raw/replicon/Entity") is True  # legacy 3-part
     # logical 4-part raw prefix is NOT accepted (fix is silver/gold only)
     assert _prefix_allowed(sec, "raw/replicon/Entity/") is False
+
+
+def test_declared_source_physical_glob_allowed_for_scoped_query():
+    sec = _scoped_sec(cartridges=("sap_hcm",))
+    refinement_main._require_sql_path_scope(
+        sec,
+        "s3://lakehouse/raw/sap_hcm/EmployeeMaster/**/*.parquet",
+        sources=["raw/sap_hcm/EmployeeMaster"],
+    )
+
+
+def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeypatch):
+    sec = _scoped_sec(cartridges=("sap_hcm",))
+    path = "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/**/*.parquet"
+
+    def fake_get_dataset(name: str):
+        if name != "sap_hcm_employee_master_full":
+            return None
+        return {
+            "cartridge": "sap_hcm",
+            "layer": "silver",
+            "name": name,
+            "workspace_id": "ws-1",
+        }
+
+    monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
+    with pytest.raises(HTTPException):
+        refinement_main._require_sql_path_scope(sec, path)
+
+    refinement_main._require_sql_path_scope(sec, path, allow_registered_dataset_paths=True)
 
 
 # 4. Unscoped admin (no tenant/workspace, allowed_cartridges == ["*"]) sees everything.

@@ -447,7 +447,37 @@ def _reader_storage_key(path: str) -> str:
     return key
 
 
-def _require_sql_path_scope(sec: dict, path: str) -> None:
+def _storage_path_matches_declared_source(sec: dict, key: str, sources: list[str] | None) -> bool:
+    parts = key.split("/")
+    if len(parts) < 3:
+        return False
+    logical = "/".join(parts[:3])
+    declared = {str(source).strip().strip("/") for source in (sources or [])}
+    return logical in declared and _prefix_allowed(sec, logical)
+
+
+def _storage_path_matches_registered_dataset(sec: dict, key: str) -> bool:
+    parts = key.split("/")
+    if len(parts) < 3 or parts[0] not in {"silver", "gold"}:
+        return False
+    layer, cartridge, name = parts[:3]
+    ds = store.get_dataset(name)
+    if not ds:
+        return False
+    if str(ds.get("layer") or "").strip().lower() != layer:
+        return False
+    if str(ds.get("cartridge") or "").strip() != cartridge:
+        return False
+    return _dataset_allowed(sec, ds)
+
+
+def _require_sql_path_scope(
+    sec: dict,
+    path: str,
+    *,
+    sources: list[str] | None = None,
+    allow_registered_dataset_paths: bool = False,
+) -> None:
     bucket, _key = _s3_path_to_bucket_key(path)
     key = _reader_storage_key(path)
     allowed_buckets = {str(b) for b in (sec.get("allowed_buckets") or []) if b}
@@ -455,11 +485,22 @@ def _require_sql_path_scope(sec: dict, path: str) -> None:
         raise HTTPException(403, "SQL storage bucket not allowed")
     if not allowed_buckets and not _is_admin_security_context(sec) and bucket != engine.minio_bucket:
         raise HTTPException(403, "SQL storage bucket not allowed")
-    if not _prefix_allowed(sec, key):
-        raise HTTPException(403, "SQL storage path not allowed")
+    if _prefix_allowed(sec, key):
+        return
+    if _storage_path_matches_declared_source(sec, key, sources):
+        return
+    if allow_registered_dataset_paths and _storage_path_matches_registered_dataset(sec, key):
+        return
+    raise HTTPException(403, "SQL storage path not allowed")
 
 
-def _require_sql_storage_scope(body: dict, sql: str, sources: list[str] | None = None) -> None:
+def _require_sql_storage_scope(
+    body: dict,
+    sql: str,
+    sources: list[str] | None = None,
+    *,
+    allow_registered_dataset_paths: bool = False,
+) -> None:
     sec = _require_security_permission(body, "datasets.read")
     sql = _strip_sql_comments(sql or "")
     masked = _mask_single_quoted(sql)
@@ -479,11 +520,26 @@ def _require_sql_storage_scope(body: dict, sql: str, sources: list[str] | None =
     if len(reader_calls) != len(direct_readers):
         raise HTTPException(403, "SQL readers must use a direct string literal path")
     for match in direct_readers:
-        _require_sql_path_scope(sec, match.group(3))
+        _require_sql_path_scope(
+            sec,
+            match.group(3),
+            sources=sources,
+            allow_registered_dataset_paths=allow_registered_dataset_paths,
+        )
     for match in _SQL_STORAGE_LITERAL_RE.finditer(sql):
-        _require_sql_path_scope(sec, match.group(2))
+        _require_sql_path_scope(
+            sec,
+            match.group(2),
+            sources=sources,
+            allow_registered_dataset_paths=allow_registered_dataset_paths,
+        )
     for match in _DIRECT_STORAGE_SCAN_RE.finditer(sql):
-        _require_sql_path_scope(sec, match.group(2))
+        _require_sql_path_scope(
+            sec,
+            match.group(2),
+            sources=sources,
+            allow_registered_dataset_paths=allow_registered_dataset_paths,
+        )
 
     scoped_tables = {m.group(1) for m in _PGGOLD_SCHEMA_TABLE_RE.finditer(sql or "")}
     scoped_tables.update(m.group(1) for m in _PGGOLD_TABLE_RE.finditer(sql or ""))
@@ -1112,7 +1168,12 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
-        _require_sql_storage_scope(body, ds.get("sql") or ds.get("sql_def") or "", ds.get("sources") or [])
+        _require_sql_storage_scope(
+            body,
+            ds.get("sql") or ds.get("sql_def") or "",
+            ds.get("sources") or [],
+            allow_registered_dataset_paths=True,
+        )
         return engine.query_dataset(ds, args.get("filters", {}), args.get("limit", 100), _trusted_user_context(body, args))
 
     if tool == "get_lineage":
