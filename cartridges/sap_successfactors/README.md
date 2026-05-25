@@ -119,6 +119,23 @@ arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
 > EmpEmploymentTermination. `workforce_distribution` lee el silver `empemployment_latest`
 > porque ningún gold expone `employee_class`.
 
+**Hints del asistente (Bloque E):** `hints/assistant.md` se carga en
+`cartridges.assistant_hints` al arrancar (`seed_packaged_hints.py`) y el copiloto lo
+inyecta a su system prompt. Cubre identidad del cartucho, modelo de datos HXM,
+convenciones, reglas operativas, apps publicadas y limitaciones honestas.
+
+## Agentes especializados
+
+Definidos en `infra/init/88_sap_successfactors_agents_seed.sql` (y espejados en
+`config/seed.sql`), en la tabla `agents` (cartridge-scoped, sin `workspace_id`). La
+plataforma aún no enruta por triggers; los agentes se invocan por `cartridge_id + slug`
+y las frases de trigger viven en `extra` como metadata de intención.
+
+| Agente (slug) | Nombre | Especialidad | Golds / KBs primarios | Triggers (intención) |
+| --- | --- | --- | --- | --- |
+| `sap_successfactors_hr_strategist` | HR Strategist | Plantilla y composición organizacional | `gold_sap_successfactors_headcount_by_*`, `..._turnover_by_period` · `kb_sap_successfactors_headcount_by_*`, `..._turnover_recent` | "headcount", "plantilla", "composición", "distribución", "departamento", "ubicación", "compañía", "workforce" |
+| `sap_successfactors_talent_advisor` | Talent Advisor | Reclutamiento, rotación, calidad y span | `..._recruitment_funnel`, `..._employees_anomalies`, `..._manager_hierarchy` · `kb_sap_successfactors_recruitment_funnel`, `..._employees_anomalies`, `..._manager_hierarchy_depth` | "rotación", "turnover", "reclutamiento", "candidatos", "requisiciones", "anomalías", "manager", "span", "talento" |
+
 ## Environment variables
 
 Required to talk to SAP:
