@@ -1,12 +1,16 @@
-"""Phase 2 Block A — SAP cartridge foundation alignment (sap_hcm).
+"""Phase 2 Block A — SAP cartridge foundation alignment.
 
-sap_hcm now keys entities.yaml by the business names the rest of the platform
-uses, mapping each to its technical OData path via ``odata_entity`` (+ an
+sap_hcm (sub-PR 1) keys entities.yaml by the business names the platform uses,
+mapping each to its technical OData path via ``odata_entity`` (+ an
 ``odata_filter`` for the OrgUnit / Position / JobCode trio that shares
-HRP1000Set). Migration 78 seeds entity_config to match.
+HRP1000Set); migration 78 seeds entity_config to match.
 
-These static checks pin the alignment (no live DB) plus a real protection_service
-regression. S/4HANA and SuccessFactors are aligned in their own PRs.
+sap_s4hana (sub-PR 2) was already DB-aligned by migration 77; here its cartridge
+seed.sql is rewritten from the 10 stale HCM copy-paste rows to the 25 real ERP
+entities, and per-field ``protection:`` is added to its sensitive entities.
+
+These static checks pin the alignment (no live DB) plus real protection_service
+regressions. SuccessFactors is aligned in its own PR.
 """
 from __future__ import annotations
 
@@ -100,3 +104,67 @@ def test_hcm_protection_applies_rules_to_personal_data():
     assert "*" in out["Nachn"] and out["Nachn"].endswith("rcia")        # masked (last 4 kept)
     assert out["Gbdat"] not in ("1990-01-01", None)                     # encrypted (Fernet token)
     assert out["Gesch"] == "2"                                          # unlisted field untouched
+
+
+# ═══ sap_s4hana (sub-PR 2) ═══════════════════════════════════════════════════
+
+def _seed_entity_config_rows(cartridge: str) -> dict[str, str]:
+    """{entity: odata_entity} parsed from the cartridge seed's entity_config block."""
+    sql = (REPO_ROOT / "cartridges" / cartridge / "config" / "seed.sql").read_text(encoding="utf-8")
+    block = re.search(r"INSERT INTO entity_config\b.*?VALUES(.*?)ON CONFLICT", sql, re.DOTALL)
+    assert block, f"{cartridge} seed.sql has no entity_config INSERT block"
+    return dict(re.findall(rf"\('{cartridge}',\s*'([^']+)',\s*'([^']+)'", block.group(1)))
+
+
+def test_s4hana_entities_have_odata_entity_and_valid_protection():
+    entities = _yaml_entities("sap_s4hana")
+    assert len(entities) == 25, f"expected 25 ERP entities, got {len(entities)}"
+    for entry in entities:
+        assert entry.get("odata_entity"), f"{entry.get('entity')} missing odata_entity"
+        for field, rule in (entry.get("protection") or {}).items():
+            assert rule in VALID_RULES, f"{entry['entity']}.{field}: invalid rule {rule!r}"
+
+
+def test_s4hana_sensitive_entities_carry_protection():
+    by_name = {e["entity"]: e for e in _yaml_entities("sap_s4hana")}
+    for name in ("BusinessPartner", "Customer", "Supplier", "BusinessPartnerAddress", "SupplierInvoice"):
+        assert by_name[name].get("protection"), f"{name} should declare protection"
+
+
+def test_seed_s4hana_matches_yaml():
+    seed = _seed_entity_config_rows("sap_s4hana")
+    yaml_map = {e["entity"]: e["odata_entity"] for e in _yaml_entities("sap_s4hana")}
+    assert set(seed) == set(yaml_map), "seed entities differ from entities.yaml"
+    for entity, odata in seed.items():
+        assert odata == yaml_map[entity], f"{entity}: seed {odata!r} != yaml {yaml_map[entity]!r}"
+
+
+def test_seed_s4hana_has_no_stale_hcm_rows():
+    seed = _seed_entity_config_rows("sap_s4hana")
+    for hcm_entity in ("EmployeeMaster", "PersonalData", "ContractData", "WorkSchedule", "LeaveAbsence"):
+        assert hcm_entity not in seed, f"stale HCM row {hcm_entity} still in seed"
+
+
+def test_seed_s4hana_leaves_replicon_and_others_untouched():
+    sql = (REPO_ROOT / "cartridges" / "sap_s4hana" / "config" / "seed.sql").read_text(encoding="utf-8")
+    cart_ids = set(re.findall(r"\('(\w+)',\s*'[^']+'", sql))
+    assert cart_ids == {"sap_s4hana"}, f"seed references other cartridges: {cart_ids}"
+    assert "replicon" not in sql.lower()
+
+
+def test_s4hana_protection_applies_to_customer():
+    mod = _load_protection("sap_s4hana")
+    rows = [{
+        "Customer": "0000123456",
+        "TaxNumber1": "ESB12345678",
+        "IBAN": "ES9121000418450200051332",
+        "BankAccount": "0200051332",
+        "CompanyCode": "1000",
+    }]
+    out = mod.apply_protection_for_entity("Customer", rows)[0]
+
+    assert out["Customer"] != "0000123456" and len(out["Customer"]) == 64   # shadowed
+    assert "*" in out["TaxNumber1"] and out["TaxNumber1"].endswith("5678")  # masked
+    assert out["IBAN"] != "ES9121000418450200051332"                        # encrypted
+    assert out["BankAccount"] != "0200051332"                               # encrypted
+    assert out["CompanyCode"] == "1000"                                     # unlisted untouched

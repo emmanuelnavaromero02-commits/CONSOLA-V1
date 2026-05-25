@@ -27,7 +27,9 @@ entities:
       - CreationDate
       - LastChangeDate
     protection:
+      BusinessPartner: shadowed
       BusinessPartnerFullName: masked
+      BusinessPartnerName: masked
 
   - entity: Customer
     odata_entity: API_BUSINESS_PARTNER/A_Customer
@@ -35,6 +37,18 @@ entities:
     mode: incremental
     watermark_field: LastChangeDate
     page_size: 500
+    protection:
+      Customer: shadowed
+      TaxNumber1: masked
+      TaxNumber2: masked
+      TaxNumber3: masked
+      TaxNumber4: masked
+      TaxNumber5: masked
+      BankAccountHolderName: encrypted
+      BankAccount: encrypted
+      IBAN: encrypted
+      BankNumber: encrypted
+      SwiftCode: encrypted
 
   - entity: Supplier
     odata_entity: API_BUSINESS_PARTNER/A_Supplier
@@ -42,6 +56,18 @@ entities:
     mode: incremental
     watermark_field: LastChangeDate
     page_size: 500
+    protection:
+      Supplier: shadowed
+      TaxNumber1: masked
+      TaxNumber2: masked
+      TaxNumber3: masked
+      TaxNumber4: masked
+      TaxNumber5: masked
+      BankAccountHolderName: encrypted
+      BankAccount: encrypted
+      IBAN: encrypted
+      BankNumber: encrypted
+      SwiftCode: encrypted
 
   - entity: BusinessPartnerAddress
     odata_entity: API_BUSINESS_PARTNER/A_BusinessPartnerAddress
@@ -51,7 +77,15 @@ entities:
     page_size: 1000
     protection:
       StreetName: masked
-      PostalCode: masked
+      HouseNumber: masked
+      EmailAddress: masked
+      PhoneNumber: masked
+      MobilePhoneNumber: masked
+      FaxNumber: masked
+      PostalCode: plain
+      CityName: plain
+      Country: plain
+      Region: plain
 
   # ── Master data: products / materials ────────────────────────────────────
   - entity: Product
@@ -168,6 +202,8 @@ entities:
     mode: incremental
     watermark_field: LastChangeDateTime
     page_size: 500
+    protection:
+      InvoicingParty: shadowed
 
   # ── Finance (FI / CO) ─────────────────────────────────────────────────────
   - entity: GLAccountLineItem

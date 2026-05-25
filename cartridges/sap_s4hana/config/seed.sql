@@ -29,30 +29,53 @@ VALUES
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
 -- ── Entities ──────────────────────────────────────────────────────────────────
--- display_name: nombre legible para UI y reportes
--- mode:         full | incremental
--- dag_id:       DAG que maneja la extracción
--- trigger_type: manual | scheduled
+-- The real S/4HANA OData entities, mirroring infra/init/77_sap_entity_alignment.sql
+-- and cartridges/sap_s4hana/app/config/entities.yaml. Previously this block held a
+-- copy-paste of the SAP HCM business entities (EmployeeMaster, PersonalData, ...),
+-- which never matched entities.yaml; re-importing the cartridge re-seeded those junk
+-- rows and undid migration 77's alignment. Metadata (odata_entity / mode / watermark
+-- / page_size / date_field) is inherited from entities.yaml.
 INSERT INTO entity_config
-    (cartridge_id, entity,               display_name,                         mode,          primary_key,        dag_id,              description,                                                   enabled, trigger_type)
+    (cartridge_id, entity, odata_entity, display_name, description, mode,
+     watermark_field, watermark_format, page_size, date_field, dag_id, enabled, trigger_type)
 VALUES
-    ('sap_s4hana', 'EmployeeMaster',      'Maestro de Empleados',       'incremental', 'Pernr',        'sap_s4hana_extract', 'Asignación organizacional del empleado (infotipo 0001)', TRUE, 'manual'),
-    ('sap_s4hana', 'PersonalData',        'Datos Personales',           'incremental', 'Pernr',        'sap_s4hana_extract', 'Datos personales del empleado', TRUE, 'manual'),
-    ('sap_s4hana', 'ContractData',        'Datos de Contrato',          'incremental', 'Pernr',        'sap_s4hana_extract', 'Datos del contrato del empleado', TRUE, 'manual'),
-    ('sap_s4hana', 'OrgUnit',             'Unidad Organizacional',      'full',        'ObjId',        'sap_s4hana_extract', 'Unidad Organizacional', TRUE, 'manual'),
-    ('sap_s4hana', 'Position',            'Posición',                   'full',        'ObjId',        'sap_s4hana_extract', 'Posición', TRUE, 'manual'),
-    ('sap_s4hana', 'CostCenter',          'Centro de Costos',           'full',        'Kostl',        'sap_s4hana_extract', 'Centro de Costos', TRUE, 'manual'),
-    ('sap_s4hana', 'JobCode',             'Código de Trabajo',          'full',        'ObjId',        'sap_s4hana_extract', 'Código de Trabajo', TRUE, 'manual'),
-    ('sap_s4hana', 'EmployeeActions',     'Acciones de Empleados',      'incremental', 'Pernr',        'sap_s4hana_extract', 'Acciones de personal', TRUE, 'manual'),
-    ('sap_s4hana', 'LeaveAbsence',        'Ausencias',                  'incremental', 'Pernr',        'sap_s4hana_extract', 'Ausencias y permisos', TRUE, 'manual'),
-    ('sap_s4hana', 'WorkSchedule',        'Horarios',                   'full',        'Pernr',        'sap_s4hana_extract', 'Horario de trabajo', TRUE, 'manual')
+    ('sap_s4hana', 'BusinessPartner', 'API_BUSINESS_PARTNER/A_BusinessPartner', 'BusinessPartner', 'Business Partner header (customers, vendors, employees).', 'incremental', 'LastChangeDate', 'iso8601', 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'Customer', 'API_BUSINESS_PARTNER/A_Customer', 'Customer', 'Customer master.', 'incremental', 'LastChangeDate', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'Supplier', 'API_BUSINESS_PARTNER/A_Supplier', 'Supplier', 'Supplier (vendor) master.', 'incremental', 'LastChangeDate', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'BusinessPartnerAddress', 'API_BUSINESS_PARTNER/A_BusinessPartnerAddress', 'BusinessPartnerAddress', 'Business partner addresses.', 'incremental', 'LastChangeDate', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'Product', 'API_PRODUCT_SRV/A_Product', 'Product', 'Product (material) master.', 'incremental', 'LastChangeDateTime', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'ProductDescription', 'API_PRODUCT_SRV/A_ProductDescription', 'ProductDescription', 'Product descriptions per language.', 'full', NULL, NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'CompanyCode', 'API_COMPANYCODE_SRV/A_CompanyCode', 'CompanyCode', 'Company code master.', 'full', NULL, NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'CostCenter', 'API_COSTCENTER_SRV/A_CostCenter', 'CostCenter', 'Cost centers.', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'ProfitCenter', 'API_PROFITCENTER_SRV/A_ProfitCenter', 'ProfitCenter', 'Profit centers.', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'GLAccount', 'API_GLACCOUNT_SRV/A_GLAccount', 'GLAccount', 'G/L account master (chart of accounts).', 'full', NULL, NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'SalesOrder', 'API_SALES_ORDER_SRV/A_SalesOrder', 'SalesOrder', 'Sales order header.', 'incremental', 'LastChangeDateTime', NULL, 500, 'SalesOrderDate', 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'SalesOrderItem', 'API_SALES_ORDER_SRV/A_SalesOrderItem', 'SalesOrderItem', 'Sales order line items.', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'SalesOrderScheduleLine', 'API_SALES_ORDER_SRV/A_SalesOrderScheduleLine', 'SalesOrderScheduleLine', 'Sales order schedule lines (delivery dates).', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'BillingDocument', 'API_BILLING_DOCUMENT_SRV/A_BillingDocument', 'BillingDocument', 'Billing document header (invoice header).', 'incremental', 'LastChangeDateTime', NULL, 500, 'BillingDocumentDate', 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'BillingDocumentItem', 'API_BILLING_DOCUMENT_SRV/A_BillingDocumentItem', 'BillingDocumentItem', 'Billing document items.', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'PurchaseOrder', 'API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder', 'PurchaseOrder', 'Purchase order header.', 'incremental', 'LastChangeDateTime', NULL, 500, 'PurchaseOrderDate', 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'PurchaseOrderItem', 'API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrderItem', 'PurchaseOrderItem', 'Purchase order line items.', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'PurchaseRequisitionHeader', 'API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionHeader', 'PurchaseRequisitionHeader', 'Purchase requisition header.', 'incremental', 'LastChangeDateTime', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'PurchaseRequisitionItem', 'API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionItem', 'PurchaseRequisitionItem', 'Purchase requisition line items.', 'incremental', 'LastChangeDateTime', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'SupplierInvoice', 'API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice', 'SupplierInvoice', 'Supplier invoice header (vendor invoice).', 'incremental', 'LastChangeDateTime', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'GLAccountLineItem', 'API_GLACCOUNTLINEITEM_SRV/YY1_GLAccountLineItem', 'GLAccountLineItem', 'G/L account line items (FI ledger detail).', 'incremental', 'LastChangeDate', NULL, 1000, 'PostingDate', 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'OPLAcctgDocItemCube', 'API_OPLACCTGDOCITEMCUBE_SRV/YY1_OPLAcctgDocItemCube', 'OPLAcctgDocItemCube', 'Operational accounting document cube (matrix view of FI postings).', 'incremental', 'LastChangeDate', NULL, 1000, 'PostingDate', 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'JournalEntryItem', 'API_JOURNALENTRYITEM_SRV/A_JournalEntryItem', 'JournalEntryItem', 'Universal Journal entry items (ACDOCA).', 'incremental', 'LastChangeDateTime', NULL, 2000, 'PostingDate', 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'MatlStkInAcctMod', 'API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod', 'MatlStkInAcctMod', 'Material stock by account modification.', 'full', NULL, NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'MaterialDocumentHeader', 'API_MATERIAL_DOCUMENT_SRV/A_MaterialDocumentHeader', 'MaterialDocumentHeader', 'Material document header (goods movements).', 'incremental', 'LastChangeDateTime', NULL, 1000, 'PostingDate', 'sap_s4hana_extract', TRUE, 'manual')
 ON CONFLICT (cartridge_id, entity) DO UPDATE
-    SET display_name  = EXCLUDED.display_name,
-        mode          = EXCLUDED.mode,
-        primary_key   = EXCLUDED.primary_key,
-        dag_id        = EXCLUDED.dag_id,
-        description   = EXCLUDED.description,
-        trigger_type  = EXCLUDED.trigger_type;
+    SET odata_entity     = EXCLUDED.odata_entity,
+        display_name     = EXCLUDED.display_name,
+        description      = EXCLUDED.description,
+        mode             = EXCLUDED.mode,
+        watermark_field  = EXCLUDED.watermark_field,
+        watermark_format = EXCLUDED.watermark_format,
+        page_size        = EXCLUDED.page_size,
+        date_field       = EXCLUDED.date_field,
+        dag_id           = EXCLUDED.dag_id,
+        enabled          = EXCLUDED.enabled,
+        trigger_type     = EXCLUDED.trigger_type;
 
 -- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
