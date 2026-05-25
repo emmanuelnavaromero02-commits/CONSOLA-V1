@@ -22,12 +22,11 @@ import type {
  *   - listConversationsQuery: the sidebar's conversation list
  *   - conversationQuery: messages + metadata for the currently
  *                        open conversation
- *   - sendMutation:       POST a new user message (non-streaming)
+ *   - sendMutation:       legacy JSON POST for non-stream callers
  *   - approveMutation:    confirm a pending destructive action
  *
- * Conversation list is invalidated on every send so the sidebar
- * stays in sync with new conversations + bumped updated_at
- * timestamps.
+ * The interactive chat surface uses streamMessage directly so token
+ * deltas can render while the turn is still running.
  *
  * The hook intentionally does NOT manage "which conversation is
  * open" — the page passes a ``conversationId`` in. That keeps

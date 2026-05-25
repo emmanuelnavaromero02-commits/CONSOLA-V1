@@ -13,7 +13,11 @@ Routes:
 """
 from __future__ import annotations
 
+import json
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from app.dependencies import require_authenticated
 from app.services import audit_service, copilot_service, proactive_service
@@ -35,6 +39,41 @@ def _forensic(request: Request) -> tuple[str | None, str | None]:
         request.client.host if request.client else None,
         request.headers.get("user-agent"),
     )
+
+
+def _sse(event: str, data: dict | None = None) -> str:
+    if data is None:
+        return f"event: {event}\ndata: {{}}\n\n"
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _stream_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+
+
+def _event_to_sse(evt: dict) -> str:
+    typ = str(evt.get("type") or "message")
+    if typ == "heartbeat":
+        return ": keep-alive\n\n"
+    if typ == "ready":
+        return _sse("ready", {"ok": True, "conversation_id": evt.get("conversation_id")})
+    if typ == "text_delta":
+        return _sse("token", {"delta": evt.get("text") or ""})
+    if typ == "text":
+        return _sse("message", {"text": evt.get("text") or ""})
+    if typ == "done":
+        result = evt.get("result")
+        return _sse("done", result if isinstance(result, dict) else {})
+    if typ == "error":
+        return _sse("error", {
+            "status_code": evt.get("status_code") or 500,
+            "detail": evt.get("detail") or "stream error",
+        })
+    return _sse(typ, {k: v for k, v in evt.items() if k != "type"})
 
 
 @router.post("/conversations", dependencies=[Depends(require_csrf)])
@@ -118,6 +157,97 @@ async def send_message(
         conversation_id=conversation_id,
     )
     return result
+
+
+@router.get("/chat/{conversation_id}/stream")
+async def chat_stream_probe(
+    conversation_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    """SSE readiness probe for clients before opening a mutating stream.
+
+    This GET route is intentionally side-effect-free. The POST route below
+    performs the real user-message turn and enforces CSRF.
+    """
+    try:
+        uuid.UUID(str(conversation_id))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "invalid conversation_id: not a UUID")
+
+    async def event_source():
+        yield _sse("ready", {"ok": True, "conversation_id": conversation_id})
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers=_stream_headers(),
+    )
+
+
+@router.post(
+    "/chat/{conversation_id}/stream",
+    dependencies=[Depends(require_csrf)],
+)
+async def stream_message(
+    conversation_id: str,
+    body: dict,
+    request: Request,
+    user: dict = Depends(require_authenticated),
+):
+    message = ((body or {}).get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "empty message")
+    ip, ua = _forensic(request)
+    events = await copilot_service.open_turn_stream(
+        conversation_id=conversation_id,
+        user_message=message,
+        user=user,
+        ip=ip,
+        user_agent=ua,
+    )
+
+    async def event_source():
+        audited = False
+        async for evt in events:
+            if evt.get("type") == "done" and not audited:
+                audited = True
+                await audit_service.record_event(
+                    user_id=user["id"],
+                    email=user.get("email"),
+                    action="copilot.message.send",
+                    resource_type="conversation",
+                    resource_id=conversation_id,
+                    ip=ip,
+                    user_agent=ua,
+                    status="success",
+                    metadata={"message_len": len(message), "stream": True},
+                    conversation_id=conversation_id,
+                )
+            elif evt.get("type") == "error" and not audited:
+                audited = True
+                await audit_service.record_event(
+                    user_id=user["id"],
+                    email=user.get("email"),
+                    action="copilot.message.send",
+                    resource_type="conversation",
+                    resource_id=conversation_id,
+                    ip=ip,
+                    user_agent=ua,
+                    status="error",
+                    metadata={
+                        "message_len": len(message),
+                        "stream": True,
+                        "error": str(evt.get("detail") or "stream error")[:200],
+                    },
+                    conversation_id=conversation_id,
+                )
+            yield _event_to_sse(evt)
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers=_stream_headers(),
+    )
 
 
 @router.post(

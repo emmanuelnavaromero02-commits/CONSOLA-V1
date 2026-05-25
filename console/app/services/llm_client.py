@@ -101,6 +101,7 @@ async def chat(
     if CHAT_PROVIDER == "ollama":
         return await _openai_compat_chat(
             system, messages, tools, invoke_tool, tool_server_map, _ollama_client(),
+            on_event,
             model=model, max_tokens=max_tokens, temperature=temperature,
         )
     return await _anthropic_chat(
@@ -288,6 +289,9 @@ async def _anthropic_chat(
         if temperature is not None:
             kwargs["temperature"] = temperature
         async with _anthropic_client().messages.stream(**kwargs) as stream:
+            async for text_delta in stream.text_stream:
+                if text_delta:
+                    await _emit(on_event, {"type": "text_delta", "text": text_delta})
             response = await stream.get_final_message()
         usage = response.usage
         cache_read   = getattr(usage, "cache_read_input_tokens", 0) or 0
@@ -772,6 +776,7 @@ async def _openai_compat_chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     client: AsyncOpenAI,
+    on_event: Callable | None = None,
     *,
     model: str | None = None,
     max_tokens: int | None = None,
@@ -810,6 +815,7 @@ async def _openai_compat_chat(
 
         if finish != "tool_calls" or not msg.tool_calls:
             text = msg.content or ""
+            await _emit(on_event, {"type": "text", "text": text})
             msgs.append({"role": "assistant", "content": text})
             return text, viewer_urls, msgs
 
@@ -819,8 +825,19 @@ async def _openai_compat_chat(
             args = json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
             server_id = tool_server_map.get(fn.name, "")
             bare_name = fn.name.split("__", 1)[-1]
+            await _emit(on_event, {
+                "type":   "tool_use",
+                "tool":   bare_name,
+                "server": server_id,
+                "args":   args,
+            })
             result    = await invoke_tool(server_id, bare_name, args)
             viewer_urls.extend(_extract_viewer_urls(result))
+            await _emit(on_event, {
+                "type":    "tool_result",
+                "tool":    bare_name,
+                "summary": _summarize_tool_result(result, bare_name),
+            })
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
 
     return "(máximo de iteraciones alcanzado)", viewer_urls, msgs

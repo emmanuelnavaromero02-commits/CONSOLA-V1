@@ -2,9 +2,9 @@
  * v1.44.3.2.1 spec 11 — Copilot backend deep coverage.
  *
  * 22 tests covering the LIVE /api/copilot/* endpoints. These are
- * skipped only where they require live LLM keys or the deferred
- * streaming SSE endpoint. The /copilot shell itself is active
- * coverage and reuses the global authenticated storage state.
+ * skipped only where they require live LLM keys. The /copilot shell
+ * itself is active coverage and reuses the global authenticated
+ * storage state.
  *
  * Real LLM calls happen only when the developer has ANTHROPIC_API_KEY
  * (or GEMINI_API_KEY) exported. Without a key the LLM-dependent
@@ -282,12 +282,14 @@ test.describe("Copilot streaming + chat UI", () => {
   test.use({ storageState: ".auth/session.json" });
 
   test("GET /api/copilot/chat/{id}/stream exists", async () => {
-    test.skip(true, "SSE chat endpoint is deferred; /copilot shell is covered below.");
     const { ctx } = await authedCtxAndCsrf();
     const r = await ctx.get(
       `${BACKEND}/api/copilot/chat/00000000-0000-0000-0000-000000000000/stream`,
     );
-    expect(r.status()).not.toBe(404);
+    expect(r.status()).toBe(200);
+    expect(r.headers()["content-type"]).toContain("text/event-stream");
+    expect(await r.text()).toContain("event: ready");
+    await ctx.dispose();
   });
 
   test("/copilot Next.js page renders chat shell", async ({ page }) => {
@@ -305,18 +307,20 @@ test.describe("Copilot streaming + chat UI", () => {
   });
 
   test("/copilot streaming renders tokens incrementally", async ({ page }) => {
-    test.skip(true, "SSE chat endpoint is deferred until live streaming is implemented.");
+    test.skip(!HAS_LLM_KEY,
+      "ANTHROPIC_API_KEY/GEMINI_API_KEY not set — skip live streaming probe",
+    );
     await page.goto("/copilot");
     const input = page.getByRole("textbox", { name: /mensaje|message/i });
-    await input.fill("Cuántos cartuchos hay configurados?");
-    await page.getByRole("button", { name: /enviar|send/i }).click();
-    // Look for SSE streaming evidence — text growing over time.
     const messageRegion = page.locator(
       '[data-testid="chat-messages"], [aria-label*="mensajes" i]',
     ).first();
-    const initialText = await messageRegion.innerText().catch(() => "");
-    await page.waitForTimeout(3_000);
-    const laterText = await messageRegion.innerText().catch(() => "");
-    expect(laterText.length).toBeGreaterThan(initialText.length);
+    const beforeText = await messageRegion.innerText().catch(() => "");
+    await input.fill("Cuántos cartuchos hay configurados?");
+    await page.getByRole("button", { name: /enviar|send/i }).click();
+    await expect.poll(
+      async () => (await messageRegion.innerText().catch(() => "")).length,
+      { timeout: 30_000 },
+    ).toBeGreaterThan(beforeText.length);
   });
 });
