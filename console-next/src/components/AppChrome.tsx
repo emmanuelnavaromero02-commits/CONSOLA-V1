@@ -52,11 +52,42 @@ function resolveThemePreference(value: string | null): "light" | "dark" {
   return "light";
 }
 
+function readCachedEmail(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem("omega_user_email") || "";
+  } catch {
+    return "";
+  }
+}
+
+function readThemePreference(): string {
+  if (typeof document === "undefined") return "light";
+  try {
+    return (
+      window.localStorage.getItem(THEME_STORAGE_KEY)
+      || (document.documentElement.classList.contains("dark") ? "dark" : "light")
+    );
+  } catch {
+    return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  }
+}
+
+function applyThemePreference(themePreference: string): "light" | "dark" {
+  const resolvedTheme = resolveThemePreference(themePreference);
+  document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
+  document.documentElement.dataset.theme = resolvedTheme;
+  document.documentElement.dataset.themePreference = themePreference;
+  return resolvedTheme;
+}
+
 export function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "/";
   const isPublic = PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-  const [email,        setEmail]        = useState("");
-  const [dark,         setDark]         = useState(false);
+  const [email,        setEmail]        = useState(readCachedEmail);
+  const [dark,         setDark]         = useState(() => (
+    resolveThemePreference(readThemePreference()) === "dark"
+  ));
   const [mobileOpen,   setMobileOpen]   = useState(false);
 
   // Refs for the mobile-drawer accessibility plumbing
@@ -65,18 +96,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
   const drawerCloseRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    // Round 1 P1 — Safari private mode + SSR safety: every
-    // localStorage access is now wrapped so a thrown
-    // SecurityError can't surface as an uncaught exception.
-    let stored: string | null = null;
-    try {
-      stored = window.localStorage.getItem("omega_user_email");
-    } catch {
-      stored = null;
-    }
-    if (stored) {
-      setEmail(stored);
-    } else {
+    if (!email) {
       fetch("/auth/me", { credentials: "include" })
         .then((response) => (response.ok ? response.json() : null))
         .then((body) => {
@@ -93,21 +113,8 @@ export function AppChrome({ children }: { children: ReactNode }) {
         .catch(() => null);
     }
 
-    let themePreference = "light";
-    try {
-      themePreference = (
-        window.localStorage.getItem(THEME_STORAGE_KEY)
-        || (document.documentElement.classList.contains("dark") ? "dark" : "light")
-      );
-    } catch {
-      themePreference = document.documentElement.classList.contains("dark") ? "dark" : "light";
-    }
-    const resolvedTheme = resolveThemePreference(themePreference);
-    document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
-    document.documentElement.dataset.theme = resolvedTheme;
-    document.documentElement.dataset.themePreference = themePreference;
-    setDark(resolvedTheme === "dark");
-  }, []);
+    applyThemePreference(readThemePreference());
+  }, [email]);
 
   // Mobile drawer accessibility — focus the close button on
   // open, restore focus to the hamburger on close, lock body
@@ -127,13 +134,14 @@ export function AppChrome({ children }: { children: ReactNode }) {
       if (e.key === "Escape") setMobileOpen(false);
     }
     document.addEventListener("keydown", onKey);
+    const opener = hamburgerRef.current;
 
     return () => {
       window.clearTimeout(focusTimer);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
       // Restore focus to the hamburger that opened the drawer.
-      hamburgerRef.current?.focus();
+      opener?.focus();
     };
   }, [mobileOpen]);
 

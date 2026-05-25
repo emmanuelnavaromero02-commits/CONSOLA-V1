@@ -565,6 +565,8 @@ function setAssistantOpen(open) {
   }
 }
 
+window.studioSetAssistantOpen = setAssistantOpen;
+
 function hookAssistantPanel() {
   if (document.__studioAssistantPanelHookInstalled) return;
   document.__studioAssistantPanelHookInstalled = true;

@@ -59,6 +59,12 @@ jobs:
       - name: Console Next typecheck
         run: npm --prefix console-next run typecheck
 
+      - name: Console Next lint, unit tests, and build
+        run: |
+          npm --prefix console-next run lint
+          npm --prefix console-next run test
+          npm --prefix console-next run build
+
   build-and-push:
     needs: validate-release
     runs-on: ubuntu-latest

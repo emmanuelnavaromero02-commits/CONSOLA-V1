@@ -1,7 +1,5 @@
 "use client";
 
-import { useRef } from "react";
-
 import Link from "next/link";
 import { Sparkles } from "lucide-react";
 
@@ -63,14 +61,7 @@ export function BriefingSection() {
   const highlights     = briefingQuery.data ?? [];
   const isEmpty        = !isLoading && !isError && highlights.length === 0;
 
-  // Remember the last-known count so the skeleton renders the
-  // right number of placeholders on refetch (avoids layout
-  // jump when real data is 1 / 2 / 4 / 5 cards).
-  const lastKnownCount = useRef<number>(0);
-  if (!isLoading && !isError && highlights.length > 0) {
-    lastKnownCount.current = highlights.length;
-  }
-  const skeletonCount = Math.max(1, Math.min(lastKnownCount.current || 3, 6));
+  const skeletonCount = Math.max(1, Math.min(highlights.length || 3, 6));
 
   const criticalCount = highlights.filter(
     (h) => h.severity === "critical",

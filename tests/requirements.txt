@@ -6,16 +6,16 @@
 # union of cartridges/*/requirements.txt plus pytest itself.
 
 pytest>=7.4
-httpx>=0.27          # required by fastapi.testclient
+httpx>=0.28.1        # required by fastmcp 3.x + supported by fastapi.testclient
 
 # Cartridge runtime imports pulled in transitively when TestClient boots an app
 # v1.43.2 (DevOps R1 follow-up): fastapi >= 0.121.0 is the first
 # version that allows starlette >= 0.49.0 transitively.
 fastapi>=0.136.1
 starlette>=1.0.1
-uvicorn[standard]>=0.27
+uvicorn[standard]>=0.47.0,<0.48.0
 pydantic>=2.6
-pydantic-settings>=2.2
+pydantic-settings>=2.14.1
 PyYAML>=6.0
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
@@ -24,7 +24,24 @@ minio>=7.2
 pandas>=2.1
 pyarrow>=15.0
 duckdb>=0.10
-fastmcp>=0.1
+# fastmcp-slim provides the importable `fastmcp` package. We spell out the
+# client/server extra dependencies below to avoid pip backtracking through the
+# fastmcp metapackage / extras self-dependency.
+fastmcp-slim==3.3.1
+mcp>=1.24.0,<2.0
+authlib>=1.6.11
+exceptiongroup>=1.2.2
+opentelemetry-api>=1.20.0
+jsonref>=1.1.0
+jsonschema-path>=0.3.4
+openapi-pydantic>=0.5.1
+cyclopts>=4.0.0
+griffelib>=2.0.0
+py-key-value-aio[filetree,keyring,memory]>=0.4.4,<0.5.0
+pyperclip>=1.9.0
+uncalled-for>=0.2.0
+watchfiles>=1.0.0
+websockets>=15.0.1,<17.0
 cryptography>=42.0
 requests>=2.31
 python-dotenv>=1.0

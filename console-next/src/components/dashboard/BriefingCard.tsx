@@ -173,7 +173,6 @@ export function BriefingCard({ highlight, onDismiss }: Props) {
       // Defensive — runs once per render. The cost is
       // negligible (a single console.warn) and the alternative
       // (silent drop) cost us a real briefing-card audit P1.
-      // eslint-disable-next-line no-console
       console.warn(
         "[BriefingCard] dropping unsafe action_href",
         { id: highlight.id, href: highlight.action_href },

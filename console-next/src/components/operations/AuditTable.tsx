@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 
@@ -9,7 +9,6 @@ import { es } from "date-fns/locale";
 
 import type { AuditEvent } from "@/lib/operations/types";
 import { useAuditEvents } from "@/lib/operations/hooks";
-import { cn } from "@/lib/utils";
 
 
 /**
@@ -56,13 +55,6 @@ export function AuditTable() {
     return events.filter((e) => eventMatches(e, query));
   }, [data, query]);
 
-  // Round 1 P1: reset the expanded panel when the filter
-  // changes so a row that scrolled out of the filtered view
-  // doesn't leave invisible state behind.
-  useEffect(() => {
-    setExpanded(null);
-  }, [query]);
-
   if (isLoading) {
     return (
       <div aria-busy="true" className="space-y-2">
@@ -104,7 +96,10 @@ export function AuditTable() {
         <input
           type="search"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setExpanded(null);
+          }}
           placeholder="email, acción, recurso, IP…"
           className="min-h-[44px] w-full max-w-md rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />

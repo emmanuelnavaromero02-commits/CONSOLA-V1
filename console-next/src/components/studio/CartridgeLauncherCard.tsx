@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 
-import { ArrowRight, ExternalLink } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 import type { Severity } from "@/lib/copilot/types";
 import { cn } from "@/lib/utils";

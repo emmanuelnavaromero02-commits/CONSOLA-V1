@@ -35,6 +35,7 @@ export function ChatMessages({ messages, pending }: Props) {
       role="log"
       aria-live="polite"
       aria-label="Mensajes de la conversación"
+      data-testid="chat-messages"
       className="flex-1 space-y-4 overflow-y-auto p-4"
     >
       {messages.map((m) => (

@@ -6,9 +6,9 @@ FastAPI backend (port 8000), and external service surfaces (Airflow
 8082, Superset 8088, MinIO 9001, Mailhog 8025, MCP cartridges
 8201-8204).
 
-Sprint v1.44.3.2 — **detection-only**. The tests intentionally fail
-loudly when the corresponding surface is broken. Bug fixes ship in
-v1.44.3.3 after the developer reviews the HTML report.
+Sprint v1.44.3.3+ — active regression suite. The tests fail loudly when
+the corresponding surface is broken and are wired into CI through
+`.github/workflows/e2e.yml`.
 
 ## Setup (first time)
 
@@ -69,7 +69,7 @@ Open the file (auto-opens in an interactive shell) for:
 | `01-login.spec.ts` | Next.js `/login` flow + middleware redirect |
 | `02-dashboard.spec.ts` | Next.js `/dashboard` KPIs + freshness table |
 | `03-cartridges.spec.ts` | Next.js `/cartridges` grid + dynamic form |
-| `04-copilot.spec.ts` | Next.js `/copilot` (marked `test.fail()` until v1.44.4) |
+| `04-copilot.spec.ts` | Next.js `/copilot` chat shell, input, and conversation sidebar |
 | `05-studio.spec.ts` | Legacy `/studio` — pins the user-reported broken buttons |
 | `06-html-pages.spec.ts` | Legacy `/audit`, `/iam`, `/operations`, `/monitor`, etc. |
 | `07-api-endpoints.spec.ts` | FastAPI contracts (auth gate + shape validation) |
@@ -77,13 +77,13 @@ Open the file (auto-opens in an interactive shell) for:
 
 ## Interpreting failures
 
-The detection-only sprint expects some tests to fail. Read the HTML
-report and triage:
+Any non-skipped failure should be treated as a regression unless the
+spec explicitly marks it with `test.fail()`. Read the HTML report and
+triage:
 
-1. **Reproducible UI failures** (`05-studio.spec.ts` flagged buttons:
-   Grafo, Deploy a Airflow, Crear en Superset, Silver subtab, Subir
-   spec drop zone) → file in `docs/E2E_FINDINGS.md` under "Tests que
-   FALLAN ❌" with the screenshot path. These are v1.44.3.3 fix targets.
+1. **Reproducible UI failures** (`05-studio*.spec.ts`) → attach the
+   Playwright screenshot/trace path and file the failing route or
+   button in `docs/E2E_FINDINGS.md`.
 
 2. **API auth-gate regressions** (`07-api-endpoints.spec.ts`) → P0
    security regression if any protected endpoint returns 200 without
@@ -93,14 +93,13 @@ report and triage:
    likely a compose port drift. Check `infra/docker-compose.yml`
    `ports:` mappings for the service in question.
 
-4. **Pending Copilot tests** (`04-copilot.spec.ts`) → expected to
-   fail until v1.44.4 ships the chat page. The `test.fail(true, …)`
-   line documents the deferral; once the page lands the suite
-   automatically flips to passing.
+4. **Explicit expected failures** (`test.fail(true, …)`) → tracked
+   deferrals. Once the missing surface lands, remove the marker so the
+   suite fails again on regressions.
 
 ## CI
 
-The suite is NOT yet wired into `.github/workflows/`. A future
-sprint will add a job that boots the stack via docker-compose,
-waits for healthcheck convergence, then runs the suite. For now
-the validation is operator-driven on a Mac with a booted stack.
+The suite is wired into `.github/workflows/e2e.yml`. The workflow
+bootstraps `infra/.env`, starts the compose stack with the SAP profile,
+waits for healthcheck convergence, runs `make smoke`, then runs
+`make e2e` and uploads `tests-e2e/playwright-report` as an artifact.

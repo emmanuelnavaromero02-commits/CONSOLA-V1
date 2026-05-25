@@ -65,6 +65,7 @@ def client(monkeypatch):
             "dag_id": "replicon_timeentry_full",
             "mode": "full",
         }],
+        "dags": [{"dag_id": "replicon_extract"}],
         "semantic_model": {
             "vocabulary": [{"term": "Horas", "definition": "Tiempo registrado", "maps_to": "TimeEntry.hours"}],
         },
@@ -170,6 +171,39 @@ def test_studio_endpoints_return_real_payloads(client, verb, path, payload):
     assert response.status_code == 200, response.text[:500]
     body = response.json()
     assert body.get("stub") is not True
+
+
+def test_dag_deploy_skips_packaged_cartridge_dag(client, monkeypatch):
+    test_client, studio_router = client
+    calls = []
+    events = []
+
+    async def fail_if_airflow_create_dag(server, tool, args, **_kwargs):
+        calls.append((server, tool, args))
+        raise AssertionError("packaged cartridge DAG must not be copied to airflow/dags")
+
+    async def fake_record_event(**kwargs):
+        events.append(kwargs)
+
+    monkeypatch.setattr(studio_router.mcp_registry, "invoke", fail_if_airflow_create_dag)
+    monkeypatch.setattr(studio_router.audit_service, "record_event", fake_record_event)
+
+    response = test_client.post(
+        "/api/studio/dag-deploy",
+        json={
+            "cartridge": "replicon",
+            "dag_id": "replicon_extract",
+            "code": "print('runtime copy should not be created')",
+        },
+        headers={"X-CSRF-Token": CSRF},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "managed"
+    assert body["dag_id"] == "replicon_extract"
+    assert calls == []
+    assert events and events[0]["status"] == "skipped"
+    assert events[0]["metadata"]["reason"] == "packaged_dag_managed_by_cartridge"
 
 
 def test_entity_create_persists_via_cartridge_service(client, monkeypatch):

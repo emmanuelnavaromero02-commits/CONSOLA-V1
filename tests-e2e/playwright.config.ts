@@ -1,4 +1,23 @@
 import { defineConfig, devices } from "@playwright/test";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
+function loadLocalEnv(): void {
+  const envPath = path.resolve(process.cwd(), ".env");
+  if (!existsSync(envPath)) return;
+  for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    const idx = line.indexOf("=");
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadLocalEnv();
 
 /**
  * v1.44.3.2.1 — Deep-coverage E2E suite (200+ tests).
@@ -29,14 +48,11 @@ export default defineConfig({
   // CI starts a fresh Docker stack on shared runners; allow one retry
   // so transient service/UI timing does not fail an otherwise healthy PR.
   retries: process.env.CI ? 1 : 0,
-  // v1.44.3.2.1 R1 DevOps P1: 2 workers safe because storage state
-  // is read-only (cookies persist on the BrowserContext but the
-  // session itself isn't mutated by any spec). Cuts a ~10 min serial
-  // run to ~6 min on a developer Mac. Specs that genuinely need
-  // serial execution (rate-limited login probes) live in their own
-  // file and Playwright keeps tests-within-a-file in declaration
-  // order at any worker count.
-  workers: process.env.CI ? 1 : 2,
+  // Legacy /studio specs exercise a shared backend/UI surface and are
+  // not yet isolated enough for file-level parallelism. Keep the
+  // release gate deterministic by default; developers can opt into a
+  // faster exploratory run with E2E_WORKERS=2.
+  workers: process.env.CI ? 1 : Number(process.env.E2E_WORKERS || "1"),
   forbidOnly: !!process.env.CI,
   reporter: [
     ["html", { outputFolder: "playwright-report", open: "never" }],

@@ -53,7 +53,7 @@ export function LogoutButton({ className }: { className?: string }) {
       }
       router.replace("/login");
       router.refresh();
-    } catch (err) {
+    } catch {
       toast.error("No se pudo cerrar la sesión. Intenta de nuevo.");
     } finally {
       setSubmitting(false);

@@ -91,7 +91,7 @@ export async function loginUser(email: string, password: string): Promise<unknow
       credentials: "include",
       signal: csrfTimeout.signal,
     });
-  } catch (err) {
+  } catch {
     throw makeError(
       "No se pudo contactar al backend. Verifica que la consola esté arriba.",
     );
@@ -131,7 +131,7 @@ export async function loginUser(email: string, password: string): Promise<unknow
       body: JSON.stringify({ email, password }),
       signal: loginTimeout.signal,
     });
-  } catch (err) {
+  } catch {
     throw makeError(
       "Error de red contactando al backend.",
     );

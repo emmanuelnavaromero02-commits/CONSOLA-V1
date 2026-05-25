@@ -362,7 +362,13 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
         </header>
 
         {showEmpty ? (
-          <div className="flex flex-1 items-start justify-center overflow-y-auto p-6">
+          <div
+            role="log"
+            aria-live="polite"
+            aria-label="Mensajes de la conversación"
+            data-testid="chat-messages"
+            className="flex flex-1 items-start justify-center overflow-y-auto p-6"
+          >
             <div className="w-full max-w-2xl space-y-6">
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">

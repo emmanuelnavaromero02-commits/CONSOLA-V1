@@ -80,6 +80,17 @@ async function goStudioStep(page: Page, step: number) {
   }
 }
 
+async function openAssistantPanel(page: Page) {
+  const panel = page.locator("#ai-panel");
+  if (!(await panel.isVisible({ timeout: 500 }).catch(() => false))) {
+    const toggle = page.getByRole("button", { name: /abrir asistente de studio/i }).first();
+    await expect(toggle).toBeVisible({ timeout: 10_000 });
+    await toggle.click();
+  }
+  await expect(panel).toBeVisible({ timeout: 10_000 });
+  return panel;
+}
+
 test.describe("Studio — 7 tabs render", () => {
   const TABS = [
     /Resumen/i, /DAGs/i, /Entidades/i, /Refinar/i,
@@ -171,11 +182,18 @@ test.describe("Studio — DAGs tab (USER-REPORTED BUGS pin)", () => {
     await expect(copy).toBeEnabled();
   });
 
-  test("'Asistente' button opens a chat region", async () => {
-    test.skip(
-      true,
-      "Legacy Studio assistant dock was intentionally removed; Workspace/Copilot owns chat.",
-    );
+  test("'Asistente' button opens a chat region", async ({
+    authedPage: page,
+  }) => {
+    await openStudio(page);
+    await goStudioStep(page, 2);
+    const assistant = page.locator("#dag-editor-body").getByRole("button", { name: /asistente/i }).first();
+    await expect(assistant).toBeVisible({ timeout: 10_000 });
+    await assistant.click();
+    await expect(page.locator("#ai-panel")).toBeVisible({ timeout: 10_000 });
+    const input = page.locator("#ai-input");
+    await expect(input).toBeVisible({ timeout: 10_000 });
+    await expect(input).toHaveValue(/DAG|dag/);
   });
 
   test("'Renombrar' button opens an input field", async ({
@@ -408,30 +426,21 @@ test.describe("Studio — IA Semántica + RAG tabs", () => {
   });
 });
 
-// Legacy Studio assistant dock was intentionally removed; Workspace/Copilot owns chat.
-test.describe.skip("Studio — Lateral assistant", () => {
+test.describe("Studio — Lateral assistant", () => {
   test("assistant panel exists (right sidebar)", async ({
     authedPage: page,
   }) => {
     await openStudio(page);
     await goStudioStep(page, 2);
-    const aside = page.locator(
-      "aside:visible, .assistant-panel:visible, .copilot-panel:visible, [data-testid='assistant']:visible",
-    ).first();
-    if (!(await aside.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "no lateral assistant panel on /studio — UX gap");
-    }
+    await openAssistantPanel(page);
   });
 
   test("assistant input accepts text", async ({ authedPage: page }) => {
     await openStudio(page);
     await goStudioStep(page, 2);
-    const input = page.locator(
-      'aside:visible textarea, aside:visible input[type="text"], .assistant-panel:visible textarea',
-    ).first();
-    if (!(await input.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "no assistant input — UX gap");
-    }
+    await openAssistantPanel(page);
+    const input = page.locator("#ai-panel textarea#ai-input").first();
+    await expect(input).toBeVisible({ timeout: 10_000 });
     await input.fill("test message");
     expect(await input.inputValue()).toBe("test message");
   });
