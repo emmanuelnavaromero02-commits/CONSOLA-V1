@@ -53,8 +53,11 @@ def _parse_dataset(sql_path: pathlib.Path) -> dict:
                 parsed = json.loads(raw)
                 if isinstance(parsed, list):
                     sources = [str(item) for item in parsed]
-            except Exception:
-                logger.warning("[seed_packaged_datasets] invalid sources in %s", sql_path)
+            except Exception as exc:
+                logger.warning(
+                    "[seed_packaged_datasets] invalid sources in %s: %s",
+                    sql_path, exc, exc_info=True,
+                )
         elif stripped.startswith("-- description:"):
             description = stripped.removeprefix("-- description:").strip()
 
