@@ -75,8 +75,32 @@ _(Pendiente — Bloque D.)_
 
 ## Conocimiento del dominio
 
-Knowledge Bits actuales en `app/config/knowledge_bits.yaml`. KBs sobre los golds
-de este bloque llegan en el Bloque C.
+Knowledge Bits en `app/config/knowledge_bits.yaml`. Se cargan en `kb_config` al
+arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
+
+**Base (leen bronze):** `kb_employee_360`, `kb_headcount_by_department`,
+`kb_talent_pipeline`, `kb_learning_completion`, `kb_performance_distribution`,
+`kb_compensation_analysis`.
+
+**Bloque C (leen los golds del Bloque B en `gold/sap_successfactors/sap_successfactors_<name>/`):**
+
+| KB | Pregunta de negocio | Dataset |
+| --- | --- | --- |
+| `kb_sap_successfactors_headcount_by_department` | ¿Empleados activos por departamento? | headcount_by_department |
+| `kb_sap_successfactors_headcount_by_location` | ¿Distribución por ubicación? | headcount_by_location |
+| `kb_sap_successfactors_headcount_by_company` | ¿Distribución por compañía/legal entity? | headcount_by_company |
+| `kb_sap_successfactors_recruitment_funnel` | ¿Embudo de reclutamiento? (parcial) | recruitment_funnel |
+| `kb_sap_successfactors_turnover_recent` | ¿Rotación reciente y motivos? (parcial) | turnover_by_period |
+| `kb_sap_successfactors_manager_hierarchy_depth` | ¿Niveles de management? (managerId real) | manager_hierarchy |
+| `kb_sap_successfactors_employees_anomalies` | ¿Anomalías en datos de empleados? | employees_anomalies |
+| `kb_sap_successfactors_workforce_distribution` | ¿Composición por tipo de empleo? | empemployment_latest (silver) |
+
+> Notas: los datasets gold de SF llevan el prefijo `sap_successfactors_` en el nombre,
+> por lo que la ruta parquet lo repite (`gold/sap_successfactors/sap_successfactors_<x>/`).
+> Parciales por bronze pendiente: `recruitment_funnel` es a nivel de requisición
+> (JobApplication no extraída); `turnover_by_period` puede venir vacío hasta activar
+> EmpEmploymentTermination. `workforce_distribution` lee el silver `empemployment_latest`
+> porque ningún gold expone `employee_class`.
 
 ## Environment variables
 

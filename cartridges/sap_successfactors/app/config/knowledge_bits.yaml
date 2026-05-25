@@ -161,3 +161,87 @@ knowledge_bits:
       FROM Compensation c
       JOIN Job j ON c.userId = j.userId
       GROUP BY j.payGrade, j.department, j.jobCode
+
+  # ── Bloque C: KBs sobre los golds del Bloque B (gold/sap_successfactors/<name>/) ─
+  # Leen el parquet gold materializado vía read_parquet (DuckDB), no pggold. Los
+  # datasets gold de SF llevan el prefijo sap_successfactors_ en el nombre, por eso
+  # la ruta repite el prefijo. Prefijo kb_sap_successfactors_ para id global unico.
+  - id: kb_sap_successfactors_headcount_by_department
+    name: "Headcount por departamento"
+    description: "¿Cuántos empleados activos tengo por departamento? Headcount activo por departamento, desde el gold sap_successfactors_headcount_by_department."
+    sql: >
+      SELECT department_id, department_name, headcount
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_headcount_by_department/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY headcount DESC
+
+  - id: kb_sap_successfactors_headcount_by_location
+    name: "Headcount por ubicación"
+    description: "¿Cómo se distribuye mi plantilla por ubicación geográfica? Headcount activo por location, desde el gold sap_successfactors_headcount_by_location."
+    sql: >
+      SELECT location_id, location_name, headcount
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_headcount_by_location/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY headcount DESC
+
+  - id: kb_sap_successfactors_headcount_by_company
+    name: "Headcount por compañía"
+    description: "¿Cuál es mi distribución de plantilla por compañía / legal entity? Headcount activo por company, desde el gold sap_successfactors_headcount_by_company."
+    sql: >
+      SELECT company_id, company_name, headcount
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_headcount_by_company/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY headcount DESC
+
+  - id: kb_sap_successfactors_recruitment_funnel
+    name: "Embudo de reclutamiento"
+    description: "¿Cómo está mi embudo de reclutamiento por departamento? Requisiciones totales y abiertas, desde el gold sap_successfactors_recruitment_funnel. Parcial, pendiente bronze: las etapas por candidato requieren JobApplication (no extraída); hoy es a nivel de requisición."
+    sql: >
+      SELECT department, requisitions, open_requisitions, candidate_pool
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_recruitment_funnel/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY requisitions DESC
+
+  - id: kb_sap_successfactors_turnover_recent
+    name: "Rotación reciente"
+    description: "¿Cuál es mi rotación reciente y por qué motivos? Bajas por mes y motivo de salida, desde el gold sap_successfactors_turnover_by_period. Parcial, pendiente bronze: puede venir vacío hasta activar la extracción de EmpEmploymentTermination."
+    sql: >
+      SELECT termination_month, event_reason, terminations
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_turnover_by_period/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY termination_month DESC, terminations DESC
+
+  - id: kb_sap_successfactors_manager_hierarchy_depth
+    name: "Niveles de organización"
+    description: "¿Cómo se estructura mi organización en niveles de management? Empleados y reportes directos promedio por nivel jerárquico, desde el gold sap_successfactors_manager_hierarchy (managerId real en SF)."
+    sql: >
+      SELECT depth,
+             COUNT(*)                       AS employees,
+             ROUND(AVG(direct_reports), 1)  AS avg_direct_reports,
+             MAX(direct_reports)            AS max_direct_reports
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_manager_hierarchy/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY depth
+      ORDER BY depth
+
+  - id: kb_sap_successfactors_employees_anomalies
+    name: "Anomalías de empleados"
+    description: "¿Qué anomalías tengo en datos de empleados? (sin manager, sin departamento, job code inválido). Conteo por tipo y severidad, desde el gold sap_successfactors_employees_anomalies."
+    sql: >
+      SELECT anomaly_type, severity, COUNT(*) AS total_cases
+      FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employees_anomalies/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY anomaly_type, severity
+      ORDER BY total_cases DESC
+
+  - id: kb_sap_successfactors_workforce_distribution
+    name: "Composición por tipo de empleo"
+    description: "¿Cuál es la composición de mi plantilla por tipo de empleo (employee class)? Empleados activos por clase de empleo. Se lee del silver sap_successfactors_empemployment_latest porque no hay gold dedicado (el employee_class no está en los golds de headcount)."
+    sql: >
+      SELECT employee_class, COUNT(*) AS headcount
+      FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empemployment_latest/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      WHERE CAST(start_date AS DATE) <= CURRENT_DATE
+        AND (end_date IS NULL OR CAST(end_date AS DATE) >= CURRENT_DATE)
+      GROUP BY employee_class
+      ORDER BY headcount DESC
