@@ -110,9 +110,24 @@ _(Pendiente — Bloque D.)_
 
 ## Conocimiento del dominio
 
-Knowledge Bits actuales en `app/config/knowledge_bits.yaml` (5: headcount,
-acciones 30d, ausencias, jerarquía org, distribución de contratos). KBs sobre
-los golds de este bloque llegan en el Bloque C.
+Knowledge Bits en `app/config/knowledge_bits.yaml`. Se cargan en `kb_config` al
+arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
+
+**Base (Bloque A, leen bronze):** `kb_headcount_snapshot`,
+`kb_employee_actions_30d`, `kb_absence_analysis`, `kb_org_hierarchy`,
+`kb_contract_type_distribution`.
+
+**Bloque C (leen los golds del Bloque B en `gold/sap_hcm/<name>/`):**
+
+| KB | Pregunta de negocio | Gold |
+| --- | --- | --- |
+| `kb_sap_hcm_headcount_active_by_department` | ¿Cuántos empleados activos por departamento? | headcount_by_department |
+| `kb_sap_hcm_headcount_by_costcenter` | ¿Cómo se distribuye el headcount por centro de costo? | headcount_by_costcenter |
+| `kb_sap_hcm_absence_top_employees` | ¿Qué empleados tienen más días de ausencia (12m)? | absence_balance_by_employee |
+| `kb_sap_hcm_absence_trend_monthly` | ¿Cómo evoluciona el ausentismo mes a mes? | absence_by_type_and_month |
+| `kb_sap_hcm_employees_anomalies_active` | ¿Qué anomalías de personal tengo? | employees_anomalies |
+| `kb_sap_hcm_manager_span_of_control` | ¿Span of control de mis managers? (parcial: requiere HRP1001/Sbrtr) | manager_hierarchy |
+| `kb_sap_hcm_workforce_composition_by_position_type` | ¿Composición de plantilla por tipo? | headcount_by_position_type |
 
 ## Environment variables
 

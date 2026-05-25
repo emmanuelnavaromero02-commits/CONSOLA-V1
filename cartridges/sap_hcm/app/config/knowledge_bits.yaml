@@ -145,3 +145,74 @@ knowledge_bits:
       FROM ActiveEmployees ae
       JOIN Contracts c ON ae.Pernr = c.Pernr
       GROUP BY c.Ktart, ae.Persk
+
+  # ── Bloque C: KBs sobre los golds del Bloque B (gold/sap_hcm/<name>/) ─────────
+  # Se leen con read_parquet del parquet gold materializado (DuckDB), no de
+  # pggold. Prefijo kb_sap_hcm_ para id global único. Columnas = salida real del gold.
+  - id: kb_sap_hcm_headcount_active_by_department
+    name: "Headcount activo por departamento"
+    description: "¿Cuántos empleados activos tengo por departamento? Headcount activo por unidad organizacional, desde el gold headcount_by_department."
+    sql: >
+      SELECT org_id, org_name, headcount
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/headcount_by_department/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY headcount DESC
+
+  - id: kb_sap_hcm_headcount_by_costcenter
+    name: "Headcount por centro de costo"
+    description: "¿Cómo se distribuye mi headcount por centro de costo? Empleados activos por centro de costo, desde el gold headcount_by_costcenter."
+    sql: >
+      SELECT cost_center, headcount
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/headcount_by_costcenter/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY headcount DESC
+
+  - id: kb_sap_hcm_absence_top_employees
+    name: "Empleados con más ausencias"
+    description: "¿Qué empleados tienen más días de ausencia (últimos 12 meses)? Top 20 por días hábiles, desde el gold absence_balance_by_employee. pernr llega shadowed (hash) desde bronze."
+    sql: >
+      SELECT pernr, SUM(total_days_workable) AS total_absence_days
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/absence_balance_by_employee/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY pernr
+      ORDER BY total_absence_days DESC
+      LIMIT 20
+
+  - id: kb_sap_hcm_absence_trend_monthly
+    name: "Tendencia mensual de ausencias"
+    description: "¿Cómo evoluciona mi ausentismo mes a mes y por tipo? Tendencia mensual de días de ausencia y empleados afectados, desde el gold absence_by_type_and_month."
+    sql: >
+      SELECT absence_month, absence_type, total_days_workable, employees_affected
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/absence_by_type_and_month/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY absence_month DESC, total_days_workable DESC
+
+  - id: kb_sap_hcm_employees_anomalies_active
+    name: "Anomalías de personal activas"
+    description: "¿Qué anomalías de personal tengo? (empleados sin centro de costo, sin posición, baja-pero-activo). Conteo por tipo y severidad, desde el gold employees_anomalies."
+    sql: >
+      SELECT anomaly_type, severity, COUNT(*) AS total_cases
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/employees_anomalies/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      GROUP BY anomaly_type, severity
+      ORDER BY total_cases DESC
+
+  - id: kb_sap_hcm_manager_span_of_control
+    name: "Span of control de managers"
+    description: "¿Cuál es el span of control (reportes directos) promedio y máximo de mis managers? Desde el gold manager_hierarchy. PARCIAL: el vínculo manager no está en el bronze actual (requiere HRP1001/Sbrtr), por lo que hoy puede venir vacío."
+    sql: >
+      SELECT AVG(direct_reports) AS avg_span,
+             MAX(direct_reports) AS max_span,
+             COUNT(*)            AS total_managers
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/manager_hierarchy/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      WHERE direct_reports > 0
+
+  - id: kb_sap_hcm_workforce_composition_by_position_type
+    name: "Composición de plantilla por tipo"
+    description: "¿Cómo se compone mi plantilla por tipo de personal (grupo/subgrupo de empleado)? Desde el gold headcount_by_position_type."
+    sql: >
+      SELECT employee_group, employee_subgroup, headcount
+      FROM read_parquet('s3://{bucket}/gold/sap_hcm/headcount_by_position_type/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY headcount DESC
