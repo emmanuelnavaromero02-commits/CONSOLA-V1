@@ -57,6 +57,44 @@ def _bronze_path(cartridge_id: str, entity: str) -> str:
     return f"s3://{settings.minio_bucket}/raw/{cartridge_id}/{entity}/load_date=*/batch_id=*/*.parquet"
 
 
+def _entity_name_matches(requested: str, entity: str, odata_entity: str | None) -> bool:
+    """An entity_config row matches `requested` by any of three forms:
+    business name (`entity`), full technical `odata_entity` (e.g.
+    ``HRPA_EE_PA_SRV/PA0000Set``), or the last path segment of the
+    ``odata_entity`` (e.g. ``PA0000Set``). Lets MCP clients ask by the
+    technical OData entityset even though entity_config stores the business
+    name after the Block-A re-alignment."""
+    if entity == requested:
+        return True
+    odata = odata_entity or ""
+    if odata and (odata == requested or odata.split("/")[-1] == requested):
+        return True
+    return False
+
+
+def _resolve_entity_name(cur, cartridge_id: str, requested: str) -> str | None:
+    """Resolve a requested entity identifier (business name, full
+    odata_entity, or its last segment) to the canonical business `entity`
+    name for a cartridge, or None if no entity matches. odata_entity may be
+    absent on older DBs, so it is selected defensively."""
+    cur.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'entity_config'
+        """
+    )
+    has_odata = "odata_entity" in {r[0] for r in cur.fetchall()}
+    odata_sel = "odata_entity" if has_odata else "NULL::text"
+    cur.execute(
+        f"SELECT entity, {odata_sel} FROM entity_config WHERE cartridge_id = %s",
+        (cartridge_id,),
+    )
+    for ent, odata in cur.fetchall():
+        if _entity_name_matches(requested, ent, odata):
+            return ent
+    return None
+
+
 def _airflow_auth() -> tuple[str, str]:
     return (settings.airflow_user, settings.airflow_password)
 
@@ -453,6 +491,11 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
         def col(name: str, fallback: str) -> str:
             return name if name in columns else f"{fallback} AS {name}"
 
+        # Accept the business name, the full odata_entity, or its last segment.
+        resolved = _resolve_entity_name(cur, cartridge_id, entity)
+        if resolved is None:
+            return {"error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"}
+
         select_sql = ", ".join([
             "entity",
             "mode",
@@ -469,6 +512,7 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
             col("description", "NULL::text"),
             col("display_name", "NULL::text"),
             col("enabled", "TRUE"),
+            col("odata_entity", "NULL::text"),
         ])
         cur.execute(
             f"""
@@ -476,7 +520,7 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
             FROM entity_config
             WHERE cartridge_id = %s AND entity = %s
             """,
-            (cartridge_id, entity),
+            (cartridge_id, resolved),
         )
         row = cur.fetchone()
     if not row:
@@ -497,6 +541,7 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
         "description":      row[12],
         "display_name":     row[13],
         "enabled":          row[14],
+        "odata_entity":     row[15],
     }
 
 
@@ -572,16 +617,21 @@ async def cartridge_extract(
     from_date: str | None = None,
     to_date:   str | None = None,
 ) -> dict[str, Any]:
-    # Look up the DAG bound to this entity
+    # Look up the DAG bound to this entity. Accept the business name, the full
+    # odata_entity, or its last segment (uniform MCP lookup contract).
     with _conn() as c, c.cursor() as cur:
+        resolved = _resolve_entity_name(cur, cartridge_id, entity)
+        if resolved is None:
+            return {"error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"}
         cur.execute(
             "SELECT dag_id FROM entity_config WHERE cartridge_id=%s AND entity=%s",
-            (cartridge_id, entity),
+            (cartridge_id, resolved),
         )
         row = cur.fetchone()
     if not row or not row[0]:
-        return {"error": f"No dag_id configured for {cartridge_id}.{entity}"}
+        return {"error": f"No dag_id configured for {cartridge_id}.{resolved}"}
     dag_id = row[0]
+    entity = resolved
     run_id = uuid.uuid4().hex[:8]
 
     conf = {"job_id": run_id, "run_id": run_id, "entity": entity, "mode": mode}
