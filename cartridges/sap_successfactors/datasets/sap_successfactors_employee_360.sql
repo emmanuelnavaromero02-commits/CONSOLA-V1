@@ -1,0 +1,57 @@
+-- sap_successfactors_employee_360  (silver)  cartridge: sap_successfactors
+-- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/PerPersonal", "raw/sap_successfactors/FOCompany", "raw/sap_successfactors/FODepartment", "raw/sap_successfactors/FODivision", "raw/sap_successfactors/FOLocation"]
+-- description: Vista 360 del empleado activo: empleo + puesto + nombre (PerPersonal) + nombres de org. Una fila por empleado.
+
+-- NOTA de privacidad: se une por claves PLANAS (EmpEmployment/EmpJob.user_id y
+-- EmpEmployment.person_id_external). User y PerPerson quedan FUERA porque su
+-- clave está shadowed (hash) y no casa con las planas — artefacto del Bloque A.
+WITH emp AS (
+    SELECT user_id, person_id_external, start_date, end_date,
+           ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY start_date DESC) AS rn
+    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empemployment_latest/**/*.parquet')
+),
+job AS (
+    SELECT user_id, job_code, department, division, location, company, cost_center, manager_id,
+           ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY start_date DESC) AS rn
+    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empjob_latest/**/*.parquet')
+),
+pers AS (
+    SELECT person_id_external,
+           TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) AS full_name,
+           gender, marital_status,
+           ROW_NUMBER() OVER (PARTITION BY person_id_external ORDER BY valid_from DESC) AS rn
+    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_perpersonal_latest/**/*.parquet')
+),
+company AS (SELECT company_id, company_name FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_focompany_latest/**/*.parquet')),
+dept AS (SELECT department_id, department_name FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_fodepartment_latest/**/*.parquet')),
+divi AS (SELECT division_id, division_name FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_fodivision_latest/**/*.parquet')),
+loc AS (SELECT location_id, location_name FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_folocation_latest/**/*.parquet'))
+SELECT
+    e.user_id                       AS user_id,            -- plano
+    p.full_name                     AS full_name,          -- masked
+    p.gender                        AS gender,
+    p.marital_status                AS marital_status,
+    j.company                       AS company_id,
+    co.company_name                 AS company_name,
+    j.division                      AS division_id,
+    dv.division_name                AS division_name,
+    j.department                    AS department_id,
+    d.department_name               AS department_name,
+    j.location                      AS location_id,
+    l.location_name                 AS location_name,
+    j.job_code                      AS job_code,
+    j.cost_center                   AS cost_center,
+    j.manager_id                    AS manager_id,         -- plano (para manager_hierarchy)
+    e.start_date                    AS start_date,
+    e.end_date                      AS end_date,
+    CASE WHEN e.start_date <= CURRENT_DATE AND e.end_date >= CURRENT_DATE
+         THEN TRUE ELSE FALSE END   AS is_active
+FROM emp e
+LEFT JOIN job j  ON j.user_id = e.user_id AND j.rn = 1
+LEFT JOIN pers p ON p.person_id_external = e.person_id_external AND p.rn = 1
+LEFT JOIN company co ON co.company_id = j.company
+LEFT JOIN dept d ON d.department_id = j.department
+LEFT JOIN divi dv ON dv.division_id = j.division
+LEFT JOIN loc l  ON l.location_id = j.location
+WHERE e.rn = 1
+ORDER BY e.user_id

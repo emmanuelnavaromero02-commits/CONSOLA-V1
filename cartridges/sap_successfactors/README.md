@@ -27,6 +27,57 @@ Employee Central:
 Full list with watermark / select fields:
 [`app/config/entities.yaml`](app/config/entities.yaml).
 
+## Entidades extraídas (Bloque A)
+
+30 entidades en `app/config/entities.yaml` cubriendo 4 módulos HXM:
+
+| Módulo | Entidades |
+| --- | --- |
+| Employee Central | `User`, `PerPerson`, `PerPersonal`, `PerEmail`, `PerPhone`, `PerAddressDEFLT`, `PerNationalId`, `EmpEmployment`, `EmpJob`, `EmpJob_History`, `EmpCompensation`, `EmpPayCompRecurring`, `EmpPayCompNonRecurring`, `EmpEmploymentTermination` |
+| Foundation Objects | `FOCompany`, `FODepartment`, `FODivision`, `FOLocation`, `FOBusinessUnit`, `FOCostCenter`, `FOJobCode`, `Position` |
+| Recruiting | `Candidate`, `JobRequisition` |
+| Performance & Goals | `GoalPlan` (entityset `Goal`), `PerformanceReview` (entityset `FormHeader`) |
+| Learning | `LearningItem` (entityset `Item`) |
+
+Protección: `userId`/`personIdExternal`/`candidateId` `shadowed`; nombre/email
+`masked`; `dateOfBirth`/`nationalId`/`paycompValue` `encrypted`.
+
+## Datasets (Bloque B)
+
+30 datasets en `datasets/` (sembrados vía `infra/init/82_sap_successfactors_datasets_seed.sql`,
+con `workspace_id` en cada fila). **Todos los nombres llevan prefijo
+`sap_successfactors_`** porque `datasets.name` es PK global (HCM ya usa
+`headcount_by_department`, `manager_hierarchy`, `employees_anomalies`).
+
+**Silver — 18 `*_latest`:** user, perperson, perpersonal, empemployment, empjob,
+empcompensation, emppaycomprecurring, emppaycompnonrecurring,
+empemploymenttermination, focompany, fodepartment, fodivision, folocation,
+fobusinessunit, fojobcode, position, candidate, jobrequisition.
+
+**Silver — 4 curados:** `employee_360`, `org_structure`, `compensation_full`,
+`recruitment_pipeline`.
+
+**Gold — 8:** `headcount_by_department`, `headcount_by_location`,
+`headcount_by_company`, `compensation_distribution` (TODO: paycompValue
+encrypted), `recruitment_funnel`, `turnover_by_period`, `manager_hierarchy`
+(real: EmpJob.managerId), `employees_anomalies` (mejora propia).
+
+> **Nota de privacidad/modelo:** `User.userId` y `PerPerson.personIdExternal`
+> están `shadowed`, pero `EmpEmployment/EmpJob.userId` y
+> `PerPersonal.personIdExternal` van en claro → el 360 se construye por las
+> claves planas de Emp*/PerPersonal y **excluye** User/PerPerson (sus hashes no
+> casan). `paycompValue`/`dateOfBirth`/`nationalId` son encrypted: viajan como
+> caja negra en silvers y nunca se agregan en golds.
+
+## Apps publicadas
+
+_(Pendiente — Bloque D.)_
+
+## Conocimiento del dominio
+
+Knowledge Bits actuales en `app/config/knowledge_bits.yaml`. KBs sobre los golds
+de este bloque llegan en el Bloque C.
+
 ## Environment variables
 
 Required to talk to SAP:

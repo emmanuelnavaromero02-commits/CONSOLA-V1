@@ -1,0 +1,17 @@
+-- sap_successfactors_headcount_by_company  (gold)  cartridge: sap_successfactors
+-- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOCompany"]
+-- description: Empleados activos por compañía legal (snapshot del mes en curso).
+
+WITH emp AS (
+    SELECT company_id, company_name
+    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    WHERE is_active = TRUE
+)
+SELECT
+    COALESCE(company_id, '(sin compania)')          AS company_id,
+    COALESCE(company_name, '(sin nombre)')          AS company_name,
+    COUNT(*)                                        AS headcount,
+    CAST(DATE_TRUNC('month', CURRENT_DATE) AS DATE) AS snapshot_month
+FROM emp
+GROUP BY company_id, company_name
+ORDER BY headcount DESC, company_id
