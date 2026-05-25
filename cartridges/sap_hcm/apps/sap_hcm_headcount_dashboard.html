@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<!--
+  app_id: sap_hcm_headcount_dashboard
+  name: Headcount Dashboard
+  description: Panorama operativo de plantilla activa por departamento, centro de costo y tipo de posicion (SAP HCM)
+  cartridge: sap_hcm
+  datasets: [headcount_by_department, headcount_by_costcenter, headcount_by_position_type]
+-->
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Headcount Dashboard — SAP HCM</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --border:#30363d;
+    --text1:#e6edf3; --text2:#8b949e; --text3:#6e7681;
+    --blue:#7c9fff; --green:#3fb950; --amber:#d29922; --red:#f85149; --purple:#bc8cff; --cyan:#39d3ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:13px}
+  h1{font-size:18px;margin:0 0 2px;font-weight:700}
+  .subtitle{color:var(--text2);font-size:11px;letter-spacing:.04em;margin-bottom:18px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+  select{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;
+         padding:7px 10px;font-size:12px;min-width:220px}
+  button{background:var(--bg2);color:var(--blue);border:1px solid var(--blue);border-radius:6px;
+         padding:7px 14px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.5px}
+  button:hover{background:rgba(124,159,255,.12)}
+  .kpis{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .kpi-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));
+            border-radius:8px;padding:16px 20px;min-width:180px}
+  .kpi-label{font-size:9px;color:var(--text2);letter-spacing:1.5px;font-weight:600;margin-bottom:8px;text-transform:uppercase}
+  .kpi-val{font-size:26px;font-weight:700;line-height:1}
+  .kpi-sub{font-size:10px;color:var(--text3);margin-top:6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .section.full{grid-column:1 / -1}
+  .section-title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;
+                 font-weight:600;margin-bottom:14px}
+  .chart-wrap{position:relative;height:300px}
+  .empty{padding:28px;text-align:center;color:var(--text3);font-style:italic}
+  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);
+         padding:14px;border-radius:6px;margin-bottom:16px}
+  @media(max-width:880px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <h1>◆ Headcount Dashboard</h1>
+  <div class="subtitle">SAP HCM · plantilla activa · ultimo snapshot disponible</div>
+
+  <div id="error"></div>
+
+  <div class="controls">
+    <label for="dept-filter">Departamento</label>
+    <select id="dept-filter"><option value="">Todos los departamentos</option></select>
+    <button onclick="resetFilter()">RESET</button>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div class="section">
+      <div class="section-title">Top 10 departamentos por headcount</div>
+      <div class="chart-wrap"><canvas id="chart-dept"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Top 10 centros de costo por headcount (organizacion completa)</div>
+      <div class="chart-wrap"><canvas id="chart-cc"></canvas></div>
+    </div>
+    <div class="section full">
+      <div class="section-title">Distribucion por tipo de posicion (organizacion completa)</div>
+      <div class="chart-wrap" style="height:320px"><canvas id="chart-pos"></canvas></div>
+    </div>
+  </div>
+
+<script>
+const COLORS = ['#7c9fff','#3fb950','#d29922','#bc8cff','#39d3ff','#f85149','#db61a2','#56d4dd','#e3b341','#a5d6ff'];
+const fmtN = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
+const charts = {};
+
+function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">Error cargando datos: ${msg}</div>`; }
+
+async function fetchJson(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(url + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+
+// Keep only rows of the most recent snapshot_month (headcount is point-in-time).
+function latestSnapshot(rows){
+  if(!rows.length) return [];
+  const months = rows.map(r => String(r.snapshot_month || '')).filter(Boolean);
+  if(!months.length) return rows;
+  const max = months.sort().at(-1);
+  return rows.filter(r => String(r.snapshot_month || '') === max);
+}
+
+let DEPT = [], CC = [], POS = [];
+
+function renderKPIs(deptRows){
+  const total = deptRows.reduce((s,r)=> s + Number(r.headcount||0), 0);
+  const sel = document.getElementById('dept-filter').value;
+  const label = sel ? '1 departamento' : `${deptRows.length} departamentos`;
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi-card" style="--accent:var(--green)">
+      <div class="kpi-label">Headcount activo${sel ? ' (filtrado)' : ''}</div>
+      <div class="kpi-val">${fmtN(total)}</div>
+      <div class="kpi-sub">${label}</div>
+    </div>
+    <div class="kpi-card" style="--accent:var(--blue)">
+      <div class="kpi-label">Centros de costo</div>
+      <div class="kpi-val">${fmtN(CC.length)}</div>
+      <div class="kpi-sub">con plantilla activa</div>
+    </div>
+    <div class="kpi-card" style="--accent:var(--purple)">
+      <div class="kpi-label">Tipos de posicion</div>
+      <div class="kpi-val">${fmtN(POS.length)}</div>
+      <div class="kpi-sub">grupo / subgrupo</div>
+    </div>`;
+}
+
+function hbar(canvasId, labels, values, color){
+  if(charts[canvasId]) charts[canvasId].destroy();
+  const ctx = document.getElementById(canvasId);
+  if(!labels.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos</div>'; return; }
+  charts[canvasId] = new Chart(ctx, {
+    type:'bar',
+    data:{ labels, datasets:[{ data:values, backgroundColor:color, borderRadius:4 }] },
+    options:{
+      indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ ticks:{color:'#8b949e'}, grid:{color:'#21262d'} },
+        y:{ ticks:{color:'#e6edf3'}, grid:{display:false} }
+      }
+    }
+  });
+}
+
+function renderDeptChart(deptRows){
+  const top = [...deptRows].sort((a,b)=> Number(b.headcount)-Number(a.headcount)).slice(0,10);
+  hbar('chart-dept', top.map(r=> r.org_name || r.org_id || '—'), top.map(r=> Number(r.headcount||0)), '#7c9fff');
+}
+
+function renderCcChart(){
+  const top = [...CC].sort((a,b)=> Number(b.headcount)-Number(a.headcount)).slice(0,10);
+  hbar('chart-cc', top.map(r=> r.cost_center || '(sin centro)'), top.map(r=> Number(r.headcount||0)), '#3fb950');
+}
+
+function renderPosChart(){
+  if(charts['chart-pos']) charts['chart-pos'].destroy();
+  const ctx = document.getElementById('chart-pos');
+  if(!POS.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos</div>'; return; }
+  const agg = {};
+  POS.forEach(r=>{
+    const key = [r.employee_group || '(sin grupo)', r.employee_subgroup].filter(Boolean).join(' / ');
+    agg[key] = (agg[key]||0) + Number(r.headcount||0);
+  });
+  const labels = Object.keys(agg), values = labels.map(k=> agg[k]);
+  charts['chart-pos'] = new Chart(ctx, {
+    type:'doughnut',
+    data:{ labels, datasets:[{ data:values, backgroundColor:labels.map((_,i)=> COLORS[i%COLORS.length]), borderColor:'#0d1117', borderWidth:2 }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{position:'right', labels:{color:'#e6edf3', font:{size:11}}} } }
+  });
+}
+
+function applyFilter(){
+  const sel = document.getElementById('dept-filter').value;
+  const deptRows = sel ? DEPT.filter(r=> String(r.org_id||r.org_name) === sel) : DEPT;
+  renderKPIs(deptRows);
+  renderDeptChart(deptRows);
+}
+function resetFilter(){ document.getElementById('dept-filter').value = ''; applyFilter(); }
+
+async function init(){
+  try{
+    const [dept, cc, pos] = await Promise.all([
+      fetchJson('/api/data/headcount_by_department'),
+      fetchJson('/api/data/headcount_by_costcenter'),
+      fetchJson('/api/data/headcount_by_position_type'),
+    ]);
+    DEPT = latestSnapshot(dept);
+    CC = latestSnapshot(cc);
+    POS = latestSnapshot(pos);
+
+    const opts = [...DEPT].sort((a,b)=> Number(b.headcount)-Number(a.headcount))
+      .map(r=> `<option value="${r.org_id||r.org_name}">${r.org_name || r.org_id}</option>`).join('');
+    document.getElementById('dept-filter').insertAdjacentHTML('beforeend', opts);
+    document.getElementById('dept-filter').addEventListener('change', applyFilter);
+
+    renderKPIs(DEPT);
+    renderDeptChart(DEPT);
+    renderCcChart();
+    renderPosChart();
+  }catch(e){ showError(e.message); }
+}
+init();
+</script>
+</body>
+</html>

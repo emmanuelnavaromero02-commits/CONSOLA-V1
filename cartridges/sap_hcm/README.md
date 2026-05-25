@@ -106,7 +106,20 @@ expone campos `shadowed`/`encrypted` en crudo; `pernr` viaja como hash estable
 
 ## Apps publicadas
 
-_(Pendiente — Bloque D.)_
+Dashboards HTML standalone en `apps/` (Chart.js, tema oscuro). Se registran en
+`analytic_apps` vía la migración `83_sap_hcm_apps_seed.sql` y se reconcilian al
+arrancar la consola (`seed_packaged_apps.py` lee `apps/*.html` + `*.json`). Las
+apps leen los golds vía `GET /api/data/<dataset>` (sin prefijo `gold_`). Nombres
+de archivo con prefijo `sap_hcm_` para evitar colisión con otros cartuchos.
+
+| App | Propósito | Datasets gold |
+| --- | --- | --- |
+| `sap_hcm_headcount_dashboard` | Panorama operativo: plantilla activa por departamento, centro de costo y tipo de posición. KPIs + barras top 10 + donut, con filtro por departamento. | `headcount_by_department`, `headcount_by_costcenter`, `headcount_by_position_type` |
+| `sap_hcm_people_quality_dashboard` | Salud operativa: anomalías de datos, tendencia mensual de ausencias y span of control. 4 KPIs + tabla de anomalías + line chart + histograma, con filtro por tipo de anomalía. | `employees_anomalies`, `absence_by_type_and_month`, `manager_hierarchy` |
+
+> El span of control y la jerarquía de managers son parciales: el vínculo manager
+> requiere extracción de HRP1001/Sbrtr (pendiente), por lo que esos widgets muestran
+> estado vacío hasta que el bronze incluya la jerarquía.
 
 ## Conocimiento del dominio
 

@@ -1,0 +1,6 @@
+{
+  "name": "sap_hcm_headcount_dashboard",
+  "title": "Headcount Dashboard",
+  "description": "Panorama operativo de plantilla activa por departamento, centro de costo y tipo de posicion.",
+  "datasets_used": ["headcount_by_department", "headcount_by_costcenter", "headcount_by_position_type"]
+}

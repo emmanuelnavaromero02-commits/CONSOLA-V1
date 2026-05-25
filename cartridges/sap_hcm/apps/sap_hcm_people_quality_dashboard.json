@@ -1,0 +1,6 @@
+{
+  "name": "sap_hcm_people_quality_dashboard",
+  "title": "People Quality Dashboard",
+  "description": "Salud operativa de la plantilla: anomalias de datos, tendencia de ausencias y span of control de managers.",
+  "datasets_used": ["employees_anomalies", "absence_by_type_and_month", "manager_hierarchy"]
+}
