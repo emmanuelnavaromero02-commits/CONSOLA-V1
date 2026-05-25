@@ -63,6 +63,10 @@ def run_entity(
     else:
         select_fields = []
     date_field = config.get("date_field")
+    # Optional static OData $filter (e.g. "Otype eq 'O'") so entities that share
+    # one entity set (OrgUnit / Position / JobCode all use HRP1000Set) extract
+    # disjoint slices instead of overwriting each other.
+    odata_filter = config.get("odata_filter")
 
     if from_date or to_date:
         mode = "historical"
@@ -114,9 +118,12 @@ def run_entity(
             buffer = []
 
         while True:
-            filter_expr = None
+            clauses: list[str] = []
             if mode == "incremental" and watermark and watermark_field:
-                filter_expr = f"{watermark_field} gt '{watermark}'"
+                clauses.append(f"{watermark_field} gt '{watermark}'")
+            if odata_filter:
+                clauses.append(f"({odata_filter})")
+            filter_expr = " and ".join(clauses) if clauses else None
 
             page = client.fetch_entity(
                 entity=config.get("odata_entity", entity),

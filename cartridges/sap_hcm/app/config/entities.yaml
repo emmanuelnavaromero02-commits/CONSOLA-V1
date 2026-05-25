@@ -1,41 +1,31 @@
 # SAP HCM (NetWeaver Gateway OData).
 #
-# SAP HCM exposes many small OData services under
-# /sap/opu/odata/sap/<SERVICE>/, each with its own $metadata document.
-# Point ``SAP_HCM_BASE_URL`` at /sap/opu/odata/sap (NOT at one specific
-# service) and use ``odata_entity:`` to spell out "<SERVICE>/<EntitySet>"
-# per entity. extraction_service uses ``config.get("odata_entity", entity)``
-# so this works without any client change.
+# Phase-2 alignment: the ``entity:`` key is the BUSINESS name the rest of the
+# platform already uses (entity_config rows, knowledge_bits, the bronze path
+# raw/sap_hcm/<entity>/, semantic_terms). The technical OData path lives in
+# ``odata_entity:`` — extraction_service resolves it via
+# ``config.get("odata_entity", entity)`` and never sees the business name.
 #
-# ``entity:`` is the URL-safe id used by /entities/{entity}/* console
-# routes and DAGs. ``odata_entity:`` is the real OData path that
-# fetch_entity hits. When the two are equal, ``odata_entity`` may be
-# omitted.
+# Point ``SAP_HCM_BASE_URL`` at /sap/opu/odata/sap (NOT one specific service);
+# ``odata_entity`` spells out "<SERVICE>/<EntitySet>" per entity.
+#
+# Organizational Management objects (OrgUnit / Position / JobCode) all live in
+# the same HRP1000Set entity set, distinguished by object type. ``odata_filter``
+# carries the OData ``$filter`` (e.g. "Otype eq 'O'") so they no longer
+# overwrite each other in bronze.
+#
+# Privacy is declared per field under ``protection:`` (plain | masked |
+# shadowed | encrypted) and enforced by protection_service before parquet write.
 entities:
-  # ── PA infotypes (Personnel Administration) ───────────────────────────────
-  - entity: PA0000Set
-    odata_entity: HRPA_EE_PA_SRV/PA0000Set
-    description: "Infotype 0000 — Actions (hire, transfer, termination)."
+  # ── Employee master data (PA infotypes) ───────────────────────────────────
+  - entity: EmployeeMaster
+    odata_entity: HRPA_EE_PA_SRV/PA0001Set
+    description: "Organizational assignment (IT0001): org unit, position, cost center."
     mode: incremental
     watermark_field: AedtmAed
     watermark_format: iso8601
-    page_size: 500
-    select_fields:
-      - Pernr
-      - Begda
-      - Endda
-      - Massn
-      - Massg
-      - AedtmAed
-    protection:
-      Pernr: shadowed
-
-  - entity: PA0001Set
-    odata_entity: HRPA_EE_PA_SRV/PA0001Set
-    description: "Infotype 0001 — Organizational Assignment (org unit, position, cost center)."
-    mode: incremental
-    watermark_field: AedtmAed
     page_size: 1000
+    primary_key: Pernr
     effective_dated: true
     date_field: Begda
     select_fields:
@@ -53,12 +43,13 @@ entities:
     protection:
       Pernr: shadowed
 
-  - entity: PA0002Set
+  - entity: PersonalData
     odata_entity: HRPA_EE_PA_SRV/PA0002Set
-    description: "Infotype 0002 — Personal Data (name, gender, DOB, marital status)."
+    description: "Personal data (IT0002): name, gender, date of birth, marital status."
     mode: incremental
     watermark_field: AedtmAed
     page_size: 1000
+    primary_key: Pernr
     select_fields:
       - Pernr
       - Vorna
@@ -69,140 +60,109 @@ entities:
       - AedtmAed
     protection:
       Pernr: shadowed
+      Vorna: masked
+      Nachn: masked
       Gbdat: encrypted
-      Vorna: masked
-      Nachn: masked
 
-  - entity: PA0006Set
-    odata_entity: HRPA_EE_PA_SRV/PA0006Set
-    description: "Infotype 0006 — Addresses (subtypes 1=permanent, 2=temporary)."
+  - entity: EmployeeActions
+    odata_entity: HRPA_EE_PA_SRV/PA0000Set
+    description: "Actions (IT0000): hire, transfer, termination."
     mode: incremental
     watermark_field: AedtmAed
-    page_size: 1000
+    page_size: 500
+    primary_key: Pernr
+    select_fields:
+      - Pernr
+      - Begda
+      - Endda
+      - Massn
+      - Massg
+      - AedtmAed
     protection:
-      Stras: masked
-      Pstlz: masked
+      Pernr: shadowed
 
-  - entity: PA0007Set
+  - entity: ContractData
+    odata_entity: HRPA_EE_PA_SRV/PA0016Set
+    description: "Contract elements (IT0016): contract type, probation, notice."
+    mode: incremental
+    watermark_field: AedtmAed
+    page_size: 500
+    primary_key: Pernr
+    effective_dated: true
+    date_field: Begda
+    protection:
+      Pernr: shadowed
+
+  - entity: WorkSchedule
     odata_entity: HRPA_EE_PA_SRV/PA0007Set
-    description: "Infotype 0007 — Planned Working Time (work schedule rule)."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-    effective_dated: true
-    date_field: Begda
-
-  - entity: PA0008Set
-    odata_entity: HRPA_EE_PA_SRV/PA0008Set
-    description: "Infotype 0008 — Basic Pay (wage type, amount)."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-    effective_dated: true
-    date_field: Begda
-    protection:
-      Bet01: encrypted
-      Bet02: encrypted
-      Bet03: encrypted
-
-  - entity: PA0009Set
-    odata_entity: HRPA_EE_PA_SRV/PA0009Set
-    description: "Infotype 0009 — Bank Details."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-    protection:
-      Bankn: encrypted
-      Bkont: encrypted
-
-  - entity: PA0014Set
-    odata_entity: HRPA_EE_PA_SRV/PA0014Set
-    description: "Infotype 0014 — Recurring Payments/Deductions."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-    effective_dated: true
-    date_field: Begda
-
-  - entity: PA0015Set
-    odata_entity: HRPA_EE_PA_SRV/PA0015Set
-    description: "Infotype 0015 — Additional Payments (one-time)."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-    date_field: Begda
-
-  - entity: PA0019Set
-    odata_entity: HRPA_EE_PA_SRV/PA0019Set
-    description: "Infotype 0019 — Monitoring of Tasks."
+    description: "Planned working time (IT0007): work schedule rule."
     mode: full
-    page_size: 1000
-
-  - entity: PA0021Set
-    odata_entity: HRPA_EE_PA_SRV/PA0021Set
-    description: "Infotype 0021 — Family / Related Person."
-    mode: incremental
     watermark_field: AedtmAed
     page_size: 1000
+    primary_key: Pernr
+    effective_dated: true
+    date_field: Begda
     protection:
-      Vorna: masked
-      Nachn: masked
+      Pernr: shadowed
 
-  - entity: PA0041Set
-    odata_entity: HRPA_EE_PA_SRV/PA0041Set
-    description: "Infotype 0041 — Date Specifications (entry, seniority, leaving)."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-
-  - entity: PA0105Set
-    odata_entity: HRPA_EE_PA_SRV/PA0105Set
-    description: "Infotype 0105 — Communication (email, phone, MSO_ID)."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-    protection:
-      Usrid: masked
-
-  # ── Time Management (PT*) ─────────────────────────────────────────────────
-  - entity: PA2001Set
+  - entity: LeaveAbsence
     odata_entity: HRESS_TEAM_SRV/PA2001Set
-    description: "Infotype 2001 — Absences (leave, sickness)."
+    description: "Absences (IT2001): leave, sickness."
     mode: incremental
     watermark_field: AedtmAed
     page_size: 1000
+    primary_key: Pernr
     date_field: Begda
+    protection:
+      Pernr: shadowed
 
-  - entity: PA2002Set
-    odata_entity: HRESS_TEAM_SRV/PA2002Set
-    description: "Infotype 2002 — Attendances."
-    mode: incremental
+  - entity: CostCenter
+    odata_entity: HRPA_EE_PA_SRV/PA0001Set
+    description: "Cost-center assignment (subset of IT0001, keyed on Kostl)."
+    mode: full
     watermark_field: AedtmAed
     page_size: 1000
-    date_field: Begda
+    primary_key: Kostl
+    select_fields:
+      - Pernr
+      - Kostl
+      - Orgeh
+      - Begda
+      - Endda
+      - AedtmAed
+    protection:
+      Pernr: shadowed
 
-  - entity: PA2006Set
-    odata_entity: HRESS_TIMEACCOUNT_SRV/PA2006Set
-    description: "Infotype 2006 — Absence Quotas (vacation balance)."
-    mode: incremental
-    watermark_field: AedtmAed
-    page_size: 1000
-
-  # ── OM (Organizational Management) ────────────────────────────────────────
-  - entity: HRP1000Set
+  # ── Organizational Management (HRP1000, filtered by object type) ───────────
+  - entity: OrgUnit
     odata_entity: HRORG_OBJECT_SRV/HRP1000Set
-    description: "OM Object header (org unit / position / job, by ObjectType+ObjectId)."
-    mode: incremental
+    odata_filter: "Otype eq 'O'"
+    description: "Organizational units (OM objects, object type O)."
+    mode: full
     watermark_field: AedtmAed
     page_size: 1000
+    primary_key: ObjId
     effective_dated: true
     date_field: Begda
 
-  - entity: HRP1001Set
-    odata_entity: HRORG_OBJECT_SRV/HRP1001Set
-    description: "OM Relationships (org structure edges A002, A003, B007 etc)."
-    mode: incremental
+  - entity: Position
+    odata_entity: HRORG_OBJECT_SRV/HRP1000Set
+    odata_filter: "Otype eq 'S'"
+    description: "Positions (OM objects, object type S)."
+    mode: full
     watermark_field: AedtmAed
-    page_size: 2000
+    page_size: 1000
+    primary_key: ObjId
+    effective_dated: true
+    date_field: Begda
+
+  - entity: JobCode
+    odata_entity: HRORG_OBJECT_SRV/HRP1000Set
+    odata_filter: "Otype eq 'C'"
+    description: "Jobs (OM objects, object type C)."
+    mode: full
+    watermark_field: AedtmAed
+    page_size: 1000
+    primary_key: ObjId
     effective_dated: true
     date_field: Begda
