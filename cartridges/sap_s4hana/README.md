@@ -144,6 +144,23 @@ arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
 > (PaymentStatus/partidas FI no extraído); `inventory_movement_summary` es conteo a
 > nivel de documento (detalle por material en A_MaterialDocumentItem no extraído).
 
+**Hints del asistente (Bloque E):** `hints/assistant.md` se carga en
+`cartridges.assistant_hints` al arrancar (`seed_packaged_hints.py`) y el copiloto lo
+inyecta a su system prompt. Cubre identidad del cartucho, modelo de datos esencial,
+convenciones, reglas operativas, apps publicadas y limitaciones honestas.
+
+## Agentes especializados
+
+Definidos en `infra/init/86_sap_s4hana_agents_seed.sql` (y espejados en
+`config/seed.sql`), en la tabla `agents` (cartridge-scoped, sin `workspace_id`). La
+plataforma aún no enruta por triggers; los agentes se invocan por `cartridge_id + slug`
+y las frases de trigger viven en `extra` como metadata de intención.
+
+| Agente (slug) | Nombre | Especialidad | Golds / KBs primarios | Triggers (intención) |
+| --- | --- | --- | --- | --- |
+| `sap_s4hana_analista_comercial` | Analista Comercial | Ventas, clientes y backlog | `gold_revenue_by_customer`, `gold_open_sales_orders`, `gold_business_partner_anomalies` · `kb_sap_s4hana_revenue_top_customers`, `kb_sap_s4hana_revenue_by_month`, `kb_sap_s4hana_open_sales_backlog` | "revenue", "top customers", "ventas", "backlog", "pedidos abiertos", "facturacion" |
+| `sap_s4hana_controller_financiero` | Controller Financiero | Finanzas, cartera y balance | `gold_gl_balance_by_account`, `gold_overdue_billing`, `gold_purchase_spend_by_supplier` · `kb_sap_s4hana_gl_balance_summary`, `kb_sap_s4hana_overdue_invoices`, `kb_sap_s4hana_top_suppliers_spend` | "cartera", "vencidas", "balance contable", "saldo cuentas", "gasto proveedores", "cobranza" |
+
 ## Environment variables
 
 Required to talk to SAP (canonical names):
