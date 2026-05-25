@@ -1,0 +1,130 @@
+"""Regression tests for the dataset RLS bug in refinement's authorization layer.
+
+Bug: ``_dataset_allowed`` builds the logical prefix ``f"{layer}/{cartridge}/{name}/"``
+(trailing slash -> 4 segments, last empty). ``_prefix_allowed``'s silver/gold
+branch only accepted 3-segment (legacy) or 5+-segment (tenant-partitioned
+physical) paths for scoped users, so every dataset in a real workspace was
+rejected -> /datasets, /api/catalog and /api/lineage returned 0 datasets.
+
+Fix: the silver/gold branch now also accepts the 4-segment logical form
+``layer/cartridge/name/``. Cartridge access is gated by ``allowed_cartridges``
+and workspace isolation is enforced by ``_dataset_allowed`` itself, so this is
+the same logical-identity grant as the existing 3-segment form.
+
+These tests exercise the real functions (imported, not parsed).
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# The module validates INTERNAL_API_KEY at import time and constructs a
+# DuckDBEngine (lazy — no connection). Provide safe defaults so the import
+# succeeds in CI without touching real infra. setdefault keeps any real values.
+os.environ.setdefault("INTERNAL_API_KEY", "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ")
+os.environ.setdefault("MINIO_SECRET_KEY", "test-secret")
+os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
+sys.path.insert(0, str(REPO_ROOT / "refinement"))
+
+from app import main as refinement_main  # noqa: E402
+
+_dataset_allowed = refinement_main._dataset_allowed
+_prefix_allowed = refinement_main._prefix_allowed
+
+
+def _scoped_sec(*, workspace="ws-1", cartridges=("replicon", "sap_hcm")):
+    return {
+        "trusted": True,
+        "role": "member",
+        "tenant_id": "tenant-1",
+        "workspace_id": workspace,
+        "allowed_cartridges": list(cartridges),
+        "permissions": ["datasets.read"],
+    }
+
+
+def _dataset(*, cartridge="replicon", layer="silver", name="replicon_project_latest", workspace="ws-1"):
+    return {"cartridge": cartridge, "layer": layer, "name": name, "workspace_id": workspace}
+
+
+# 1. Happy path that used to fail: scoped user, matching workspace, allowed cartridge.
+def test_scoped_user_sees_own_dataset():
+    assert _dataset_allowed(_scoped_sec(), _dataset()) is True
+
+
+def test_scoped_user_sees_own_gold_dataset():
+    ds = _dataset(cartridge="sap_hcm", layer="gold", name="headcount_by_department")
+    assert _dataset_allowed(_scoped_sec(), ds) is True
+
+
+# 2. Cartridge not in the user's allowlist -> denied.
+def test_scoped_user_denied_when_cartridge_not_allowed():
+    ds = _dataset(cartridge="sap_s4hana", name="some_dataset")
+    assert _dataset_allowed(_scoped_sec(cartridges=("replicon",)), ds) is False
+
+
+# 3. Dataset in a different workspace -> denied.
+def test_scoped_user_denied_other_workspace():
+    ds = _dataset(workspace="ws-OTHER")
+    assert _dataset_allowed(_scoped_sec(workspace="ws-1"), ds) is False
+
+
+# 4. Legacy 3-segment prefix still works (no trailing slash).
+def test_legacy_three_part_prefix_allowed():
+    assert _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest") is True
+
+
+# The fix itself: 4-segment logical prefix (trailing slash) is now accepted.
+def test_four_part_logical_prefix_allowed():
+    assert _prefix_allowed(_scoped_sec(), "silver/replicon/replicon_project_latest/") is True
+    assert _prefix_allowed(_scoped_sec(), "gold/sap_hcm/headcount_by_department/") is True
+
+
+# A 4-segment path whose last segment is NOT empty must not be treated as the
+# logical form (guards against accidental over-acceptance of physical paths).
+def test_four_part_nonempty_tail_not_logical_form():
+    # tenant partition without the workspace partition -> not a valid 5-part
+    # physical path and not the logical trailing-slash form -> denied.
+    assert _prefix_allowed(_scoped_sec(), "silver/replicon/x/tenant_id=tenant-1") is False
+
+
+# 5. Multi-tenant 5+-segment physical paths keep matching on tenant+workspace.
+def test_multitenant_five_part_prefix_matches_and_isolates():
+    sec = _scoped_sec(workspace="ws-1")
+    ok = "silver/replicon/x/tenant_id=tenant-1/workspace_id=ws-1/data.parquet"
+    bad = "silver/replicon/x/tenant_id=tenant-9/workspace_id=ws-9/data.parquet"
+    assert _prefix_allowed(sec, ok) is True
+    assert _prefix_allowed(sec, bad) is False
+
+
+# 4./5. for the raw layer: untouched by the fix, still behaves as before.
+def test_raw_layer_behaviour_unchanged():
+    sec = _scoped_sec()
+    assert _prefix_allowed(sec, "raw/replicon/Entity") is True  # legacy 3-part
+    # logical 4-part raw prefix is NOT accepted (fix is silver/gold only)
+    assert _prefix_allowed(sec, "raw/replicon/Entity/") is False
+
+
+# 4. Unscoped admin (no tenant/workspace, allowed_cartridges == ["*"]) sees everything.
+def test_unscoped_admin_sees_all():
+    admin = {"trusted": True, "role": "admin", "allowed_cartridges": ["*"]}
+    assert _dataset_allowed(admin, _dataset(workspace="ws-ANY", cartridge="anything")) is True
+
+
+# 6. Endpoint-level proxy: /datasets, /api/catalog and /api/lineage all filter
+# the dataset list through _dataset_allowed. Simulate that filter and assert a
+# scoped user now receives their workspace's datasets (the symptom was 0).
+def test_endpoint_filter_returns_scoped_datasets():
+    sec = _scoped_sec(workspace="ws-1", cartridges=("replicon", "sap_hcm"))
+    catalog = [
+        _dataset(cartridge="replicon", layer="silver", name="replicon_project_latest", workspace="ws-1"),
+        _dataset(cartridge="sap_hcm", layer="gold", name="headcount_by_department", workspace="ws-1"),
+        _dataset(cartridge="sap_s4hana", layer="silver", name="gl_account", workspace="ws-1"),  # cartridge not allowed
+        _dataset(cartridge="replicon", layer="silver", name="other_ws", workspace="ws-2"),       # other workspace
+    ]
+    visible = [ds for ds in catalog if _dataset_allowed(sec, ds)]
+    names = {ds["name"] for ds in visible}
+    assert names == {"replicon_project_latest", "headcount_by_department"}
