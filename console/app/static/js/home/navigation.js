@@ -28,6 +28,7 @@ function isAdminUser() {
 const SERVICE_REGISTRY = [
   { label: 'Panel operativo', href: '/', category: 'Trabajo diario', aliases: 'inicio dashboard home consola resumen accesos' },
   { label: 'Workspace', href: '/workspace', category: 'Trabajo diario', permission: 'workspace.access', aliases: 'trabajo apps decisiones aplicaciones publicadas' },
+  { label: 'Sala de Control', href: '/control-room', category: 'Trabajo diario', permission: 'workspace.access', aliases: 'omega control room sala control anomalías anomalias decisiones auditoria auditoría aprobaciones sap' },
   { label: 'Copiloto', href: '/copilot', category: 'Trabajo diario', permission: 'copilot.use', aliases: 'chat asistente ia acciones aprobaciones memoria redactar workflows' },
   { label: 'Apps publicadas', href: '/apps-gallery', category: 'Trabajo diario', permission: 'apps.read', aliases: 'aplicaciones dashboards publicadas workspace gallery' },
   { label: 'Decisiones', href: '/decisions', category: 'Trabajo diario', permission: 'apps.read', adminOnly: true, aliases: 'decisions aprobaciones historial decisiones' },
@@ -135,7 +136,7 @@ export function renderTopbar() {
   nav.setAttribute('aria-label', 'Navegación principal');
   nav.append(navLink('Inicio', '/'));
   services
-    .filter((item) => ['Workspace', 'Copiloto', 'Marketplace', 'Monitor', 'Gestión de cartuchos'].includes(item.label))
+    .filter((item) => ['Workspace', 'Sala de Control', 'Copiloto', 'Marketplace', 'Monitor', 'Gestión de cartuchos'].includes(item.label))
     .forEach((item) => nav.append(navLink(item.label, item.href)));
 
   const user = el('div', 'home-user');

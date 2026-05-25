@@ -16,6 +16,7 @@ from app.services.permissions import require_permission
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
+CONTROL_ROOM_STATIC = STATIC / "control-room"
 WORKSPACE_INTERNAL_URL = os.environ.get("WORKSPACE_INTERNAL_URL", "http://workspace:8001").rstrip("/")
 
 router = APIRouter(tags=["Pages"])
@@ -104,6 +105,37 @@ async def monitor_page():
 @router.get("/security", dependencies=[Depends(require_permission("security.audit.read"))])
 async def security_page():
     return FileResponse(STATIC / "security.html")
+
+
+def _control_room_file(path: str = "index.html") -> Path:
+    root = CONTROL_ROOM_STATIC.resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=503, detail="control room frontend is not built")
+    candidate = (root / path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="control room asset not found") from exc
+    if candidate.is_dir():
+        candidate = candidate / "index.html"
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="control room asset not found")
+    return candidate
+
+
+@router.get("/control-room", dependencies=[Depends(require_permission("workspace.access"))])
+async def control_room_page():
+    return FileResponse(_control_room_file())
+
+
+@router.get("/control-room/", dependencies=[Depends(require_permission("workspace.access"))])
+async def control_room_page_slash():
+    return FileResponse(_control_room_file())
+
+
+@router.get("/control-room/{asset_path:path}", dependencies=[Depends(require_permission("workspace.access"))])
+async def control_room_asset(asset_path: str):
+    return FileResponse(_control_room_file(asset_path or "index.html"))
 
 
 # Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of

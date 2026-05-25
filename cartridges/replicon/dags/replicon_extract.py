@@ -354,6 +354,7 @@ def replicon_extract():
         import logging
         import os as _os
         import requests as _req
+        from airflow.operators.python import get_current_context
 
         log = logging.getLogger("airflow.task")
         if result.get("record_count", 0) == 0:
@@ -361,6 +362,15 @@ def replicon_extract():
             return {"triggered": False}
 
         entity = result["entity"]
+        dag_run = get_current_context().get("dag_run")
+        run_conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+        refresh_conf = {
+            "seed_raw": f"raw/replicon/{entity}",
+            "triggered_by": "replicon_extract",
+        }
+        for key in ("tenant_id", "workspace_id", "security_context"):
+            if run_conf.get(key):
+                refresh_conf[key] = run_conf[key]
         airflow_url = _os.environ.get("AIRFLOW_URL", "http://airflow:8080").rstrip("/")
         user = (
             _os.environ.get("AIRFLOW_USER")
@@ -376,12 +386,7 @@ def replicon_extract():
             response = _req.post(
                 f"{airflow_url}/api/v1/dags/dataset_refresh_chain/dagRuns",
                 auth=(user, password),
-                json={
-                    "conf": {
-                        "seed_raw": f"raw/replicon/{entity}",
-                        "triggered_by": "replicon_extract",
-                    }
-                },
+                json={"conf": refresh_conf},
                 timeout=15,
             )
             response.raise_for_status()

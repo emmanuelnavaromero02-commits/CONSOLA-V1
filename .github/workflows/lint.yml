@@ -67,3 +67,26 @@ jobs:
 
       - name: Production build
         run: npm --prefix console-next run build
+
+  control-room-next:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console/control-room-next/package-lock.json
+
+      - name: Install control-room dependencies
+        run: npm --prefix console/control-room-next ci
+
+      - name: ESLint
+        run: npm --prefix console/control-room-next run lint
+
+      - name: TypeScript
+        run: npm --prefix console/control-room-next run typecheck
+
+      - name: Static export build
+        run: npm --prefix console/control-room-next run build

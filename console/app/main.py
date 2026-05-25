@@ -802,6 +802,19 @@ STRICT_AUTH_SECURITY_HEADERS = {
         "form-action 'self'"
     ),
 }
+CONTROL_ROOM_SECURITY_HEADERS = {
+    **SECURITY_HEADERS,
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    ),
+}
 _STRICT_CSP_PATHS = frozenset({
     "/login",
     "/me",
@@ -998,6 +1011,10 @@ def _is_viewer_path(path: str) -> bool:
     return path == "/viewer" or path.startswith("/viewer/")
 
 
+def _is_control_room_path(path: str) -> bool:
+    return path == "/control-room" or path.startswith("/control-room/")
+
+
 def _apply_security_headers(response: Response, path: str = "") -> Response:
     # Sprint v1.11: prefer the strict-auth headers for the five auth-form
     # pages; viewers keep their iframe-friendly headers; everything else
@@ -1005,7 +1022,9 @@ def _apply_security_headers(response: Response, path: str = "") -> Response:
     # auth POST endpoints (/auth/login etc.) live under /auth/ and fall
     # through to the default set, which is fine because their responses
     # are JSON, not HTML.
-    if path in _STRICT_CSP_PATHS:
+    if _is_control_room_path(path):
+        headers = CONTROL_ROOM_SECURITY_HEADERS
+    elif path in _STRICT_CSP_PATHS:
         headers = STRICT_AUTH_SECURITY_HEADERS
     elif _is_viewer_path(path):
         headers = VIEWER_SECURITY_HEADERS
@@ -3100,6 +3119,7 @@ def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:
         if existing and str(existing) != str(value):
             raise HTTPException(403, detail=f"{key} scope mismatch")
         scoped[key] = str(value)
+    scoped["security_context"] = ctx
     return scoped
 
 
@@ -5628,7 +5648,7 @@ from app.routers import freshness as freshness_router
 from app.routers import metrics as metrics_router
 from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
 from app.routers import studio as studio_router             # v1.44.3.3 Task B
-from app.routers import mcp, mcp_public, operations, pages, security, settings, settings_internal
+from app.routers import control_room, mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
 app.include_router(mcp.router)
@@ -5636,6 +5656,7 @@ app.include_router(mcp_public.router)
 app.include_router(settings.router)
 app.include_router(settings_internal.router)
 app.include_router(operations.router)
+app.include_router(control_room.router)
 app.include_router(security.router)
 app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)

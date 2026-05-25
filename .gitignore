@@ -57,6 +57,18 @@ Thumbs.db
 # Docker
 *.log
 
+# Local frontend build artefacts
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+console/control-room-next/node_modules/
+console/control-room-next/.next/
+console/control-room-next/out/
+tests-e2e/.auth/
+tests-e2e/test-results/
+tests-e2e/playwright-report/
+
 # Airflow runtime artefacts
 airflow/logs/
 airflow/dags/replicon_extract.py

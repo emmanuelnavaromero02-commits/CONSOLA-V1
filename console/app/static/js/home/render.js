@@ -48,6 +48,7 @@ function renderHero() {
   appendIf(
     actions,
     linkButton('Abrir Workspace', '/workspace', 'primary', hasPermission('workspace.access')),
+    linkButton('Sala de Control', '/control-room', 'secondary', hasPermission('workspace.access')),
     linkButton('Abrir Copiloto', '/copilot', 'secondary', hasPermission('copilot.use')),
   );
   if (isAdminUser()) {
@@ -128,6 +129,19 @@ function renderOperational() {
       permission: 'workspace.access',
       size: 'primary-card',
       meta: [{ text: 'Apps' }, { text: 'Decisiones' }, { text: 'Workspace' }],
+    }
+  );
+  appendCard(
+    grid,
+    {
+      title: 'Sala de Control',
+      icon: 'Ω',
+      description: 'Dashboard operativo para anomalías, investigación, decisiones y aprobaciones auditadas.',
+      href: '/control-room',
+      primary: 'Abrir Sala',
+      permission: 'workspace.access',
+      size: 'primary-card',
+      meta: [{ text: 'Anomalías' }, { text: 'Decisiones' }, { text: 'Auditoría' }],
     }
   );
   appendCard(

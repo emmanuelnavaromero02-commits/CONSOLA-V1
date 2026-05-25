@@ -57,6 +57,8 @@ const BACKEND_URL =
   process.env.LEGACY_URL || process.env.BACKEND_URL || "http://localhost:8000";
 const FRONTEND_URL =
   process.env.BASE_URL || "http://localhost:3000";
+const FASTAPI_ONLY_AUTH =
+  process.env.E2E_FASTAPI_ONLY === "1" || new URL(FRONTEND_URL).port === "8000";
 
 const TEST_EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
 const TEST_PASSWORD = process.env.TEST_PASSWORD || "";
@@ -78,28 +80,27 @@ function extractCsrfFromSetCookie(setCookie: string | string[] | undefined): str
  * Programmatic login via the discovered CSRF flow. Returns the
  * login HTTP response so callers can assert status / cookies.
  *
- * v1.44.3.2.2 R-Mac-4: both round-trips go through the Next.js
- * same-origin proxy (FRONTEND_URL) so they exercise the exact
- * code path the browser uses in production. The proxy forwards
- * to FastAPI over the docker network; the cookies that come
- * back are scoped to :3000 (matching what the browser actually
- * stores when a real user logs in via the UI).
+ * v1.44.3.2.2 R-Mac-4: by default both round-trips go through the
+ * Next.js same-origin proxy (FRONTEND_URL). Control-room runs can opt
+ * into FastAPI-only auth by setting BASE_URL=:8000 or E2E_FASTAPI_ONLY=1;
+ * that seeds CSRF from GET /login directly on the backend.
  */
 export async function loginViaApi(request: APIRequestContext) {
-  // Step 1: GET /login-proxy to seed the csrf_token cookie.
+  // Step 1: seed the csrf_token cookie.
   // `/login-proxy` (not `/login`) because the Next.js app owns
   // a client-rendered /login page; the proxy route lives under
   // a non-colliding path.
-  const csrfResponse = await request.get(`${FRONTEND_URL}/login-proxy`);
+  const csrfPath = FASTAPI_ONLY_AUTH ? "/login" : "/login-proxy";
+  const csrfResponse = await request.get(`${FRONTEND_URL}${csrfPath}`);
   const csrfToken = extractCsrfFromSetCookie(
     csrfResponse.headers()["set-cookie"],
   );
   if (!csrfToken) {
     throw new Error(
-      `csrf_token cookie not set by GET ${FRONTEND_URL}/login-proxy ` +
+      `csrf_token cookie not set by GET ${FRONTEND_URL}${csrfPath} ` +
       `(status=${csrfResponse.status()}). The login flow has drifted; ` +
-      "verify the backend still seeds csrf_token on the login page render " +
-      "AND that the Next.js /login-proxy route is forwarding Set-Cookie.",
+      "verify the backend still seeds csrf_token on the login page render" +
+      (FASTAPI_ONLY_AUTH ? "." : " AND that the Next.js /login-proxy route is forwarding Set-Cookie."),
     );
   }
 
