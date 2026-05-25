@@ -43,6 +43,77 @@ Full list with watermark / select fields:
 > service names against your tenant — they vary slightly between SAP
 > releases / namespaces.
 
+## Entidades extraídas (Bloque A)
+
+Las 10 entidades alineadas en `app/config/entities.yaml` (nombre de negocio →
+entityset OData):
+
+| Entidad | OData (`odata_entity`) | Modo | Notas |
+| --- | --- | --- | --- |
+| `EmployeeMaster` | `HRPA_EE_PA_SRV/PA0001Set` | incremental | Asignación org (Pernr shadowed) |
+| `PersonalData` | `HRPA_EE_PA_SRV/PA0002Set` | incremental | Nombre masked, fecha nac. encrypted |
+| `EmployeeActions` | `HRPA_EE_PA_SRV/PA0000Set` | incremental | Altas/bajas/traslados |
+| `ContractData` | `HRPA_EE_PA_SRV/PA0016Set` | incremental | Elementos de contrato |
+| `WorkSchedule` | `HRPA_EE_PA_SRV/PA0007Set` | full | Horario planificado |
+| `LeaveAbsence` | `HRESS_TEAM_SRV/PA2001Set` | incremental | Ausencias |
+| `CostCenter` | `HRPA_EE_PA_SRV/PA0001Set` | full | Subconjunto de PA0001 (Kostl) |
+| `OrgUnit` | `HRORG_OBJECT_SRV/HRP1000Set` (`Otype eq 'O'`) | full | Unidades organizacionales |
+| `Position` | `HRORG_OBJECT_SRV/HRP1000Set` (`Otype eq 'S'`) | full | Posiciones |
+| `JobCode` | `HRORG_OBJECT_SRV/HRP1000Set` (`Otype eq 'C'`) | full | Trabajos |
+
+## Datasets (Bloque B)
+
+21 datasets en `datasets/` (sembrados en la tabla `datasets` vía
+`infra/init/80_sap_hcm_datasets_seed.sql`). Privacy by design: ningún gold
+expone campos `shadowed`/`encrypted` en crudo; `pernr` viaja como hash estable
+(FK) y los nombres llegan ya enmascarados desde bronze.
+
+**Silver — 10 `*_latest` (una extracción más reciente, tipada por entidad):**
+
+| Dataset | Fuente | Descripción |
+| --- | --- | --- |
+| `sap_hcm_employeemaster_latest` | EmployeeMaster | Asignación org tipada |
+| `sap_hcm_personaldata_latest` | PersonalData | Datos personales (ya protegidos) |
+| `sap_hcm_employeeactions_latest` | EmployeeActions | Acciones de personal |
+| `sap_hcm_contractdata_latest` | ContractData | Elementos de contrato |
+| `sap_hcm_orgunit_latest` | OrgUnit | Unidades organizacionales |
+| `sap_hcm_position_latest` | Position | Posiciones |
+| `sap_hcm_jobcode_latest` | JobCode | Trabajos / clasificaciones |
+| `sap_hcm_costcenter_latest` | CostCenter | Asignación de centro de costo |
+| `sap_hcm_leaveabsence_latest` | LeaveAbsence | Ausencias por empleado/tipo |
+| `sap_hcm_workschedule_latest` | WorkSchedule | Horario de trabajo |
+
+**Silver — 3 curados (multi-entidad):**
+
+| Dataset | Descripción |
+| --- | --- |
+| `sap_hcm_employee_master_full` | Vista 360: PA0001 + PA0002 + PA0016 + nombre de org/posición |
+| `sap_hcm_org_hierarchy` | Unidades org (jerarquía plana; padre pendiente de HRP1001) |
+| `sap_hcm_position_assignment_latest` | Posiciones con titular y marca de vacante |
+
+**Gold — 8 de negocio:**
+
+| Dataset | Descripción |
+| --- | --- |
+| `headcount_by_department` | Empleados activos por unidad org |
+| `headcount_by_costcenter` | Empleados activos por centro de costo |
+| `headcount_by_position_type` | Distribución por grupo/subgrupo de personal |
+| `absence_balance_by_employee` | Días de ausencia por empleado/tipo (12 meses) |
+| `absence_by_type_and_month` | Tendencia mensual de ausencias por tipo |
+| `manager_hierarchy` | Árbol de supervisión (manager pendiente de HRP1001/Sbrtr) |
+| `employees_anomalies` | Detección automática de irregularidades (mejora propia, prep. Fase 3) |
+| `workforce_cost_monthly` | Costo de nómina estimado (pendiente de extraer PA0008) |
+
+## Apps publicadas
+
+_(Pendiente — Bloque D.)_
+
+## Conocimiento del dominio
+
+Knowledge Bits actuales en `app/config/knowledge_bits.yaml` (5: headcount,
+acciones 30d, ausencias, jerarquía org, distribución de contratos). KBs sobre
+los golds de este bloque llegan en el Bloque C.
+
 ## Environment variables
 
 Required to talk to SAP:
