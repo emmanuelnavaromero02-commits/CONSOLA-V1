@@ -77,8 +77,10 @@ def _dag_id_for_entity(entity: dict[str, Any]) -> str:
 
 
 def _seed_if_empty() -> None:
-    """If entity_config has no rows for this cartridge, import from YAML.
-    Also upserts the cartridge header so Studio's dropdown picks it up."""
+    """Top-up entity_config from YAML on every startup (entities missing from the
+    DB get inserted; existing rows are preserved via ON CONFLICT DO NOTHING) so
+    partial catalog states self-heal. Also upserts the cartridge header so Studio's
+    dropdown picks it up, and seeds kb_config when empty."""
     try:
         engine = _get_engine()
         with engine.begin() as conn:
@@ -96,43 +98,42 @@ def _seed_if_empty() -> None:
                         updated_at  = NOW()
             """), {"cid": CARTRIDGE_ID, **CARTRIDGE_META})
 
-            count = conn.execute(
-                text("SELECT COUNT(*) FROM entity_config WHERE cartridge_id = :cid"),
-                {"cid": CARTRIDGE_ID},
-            ).scalar()
-            if count == 0:
-                for e in _yaml_entities():
-                    conn.execute(text("""
-                        INSERT INTO entity_config (
-                            cartridge_id, entity, display_name, mode, watermark_field, watermark_format,
-                            page_size, select_fields, protection,
-                            effective_dated, date_field, future_window_days, primary_key,
-                            dag_id, trigger_type, connection_id, description, enabled
-                        ) VALUES (
-                            :cid, :entity, :display, :mode, :wf, :wfmt,
-                            :ps, CAST(:sel AS JSONB), CAST(:prot AS JSONB),
-                            :ed, :df, :fwd, :pk,
-                            :dag, 'manual', :conn, :desc, TRUE
-                        )
-                        ON CONFLICT (cartridge_id, entity) DO NOTHING
-                    """), {
-                        "cid": CARTRIDGE_ID,
-                        "entity": e.get("entity"),
-                        "display": e.get("display_name") or e.get("entity"),
-                        "mode": e.get("mode", "full"),
-                        "wf": e.get("watermark_field"),
-                        "wfmt": e.get("watermark_format"),
-                        "ps": e.get("page_size", 1000),
-                        "sel": json.dumps(e.get("select_fields") or []),
-                        "prot": json.dumps(e.get("protection", {})),
-                        "ed": bool(e.get("effective_dated", False)),
-                        "df": e.get("date_field"),
-                        "fwd": e.get("future_window_days"),
-                        "pk": e.get("primary_key"),
-                        "dag": _dag_id_for_entity(e),
-                        "conn": CARTRIDGE_ID,
-                        "desc": e.get("description", ""),
-                    })
+            # Top-up entity_config from YAML on every startup so partial DB states
+            # self-heal (entities missing from the DB get inserted). ON CONFLICT
+            # DO NOTHING preserves any existing row, so admin edits and
+            # migration-set fields (odata_entity, primary_key) are never clobbered.
+            for e in _yaml_entities():
+                conn.execute(text("""
+                    INSERT INTO entity_config (
+                        cartridge_id, entity, display_name, mode, watermark_field, watermark_format,
+                        page_size, select_fields, protection,
+                        effective_dated, date_field, future_window_days, primary_key,
+                        dag_id, trigger_type, connection_id, description, enabled
+                    ) VALUES (
+                        :cid, :entity, :display, :mode, :wf, :wfmt,
+                        :ps, CAST(:sel AS JSONB), CAST(:prot AS JSONB),
+                        :ed, :df, :fwd, :pk,
+                        :dag, 'manual', :conn, :desc, TRUE
+                    )
+                    ON CONFLICT (cartridge_id, entity) DO NOTHING
+                """), {
+                    "cid": CARTRIDGE_ID,
+                    "entity": e.get("entity"),
+                    "display": e.get("display_name") or e.get("entity"),
+                    "mode": e.get("mode", "full"),
+                    "wf": e.get("watermark_field"),
+                    "wfmt": e.get("watermark_format"),
+                    "ps": e.get("page_size", 1000),
+                    "sel": json.dumps(e.get("select_fields") or []),
+                    "prot": json.dumps(e.get("protection", {})),
+                    "ed": bool(e.get("effective_dated", False)),
+                    "df": e.get("date_field"),
+                    "fwd": e.get("future_window_days"),
+                    "pk": e.get("primary_key"),
+                    "dag": _dag_id_for_entity(e),
+                    "conn": CARTRIDGE_ID,
+                    "desc": e.get("description", ""),
+                })
 
             kb_count = conn.execute(
                 text("SELECT COUNT(*) FROM kb_config WHERE cartridge_id = :cid"),
