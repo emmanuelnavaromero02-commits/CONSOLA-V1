@@ -1,0 +1,6 @@
+{
+  "name": "sap_successfactors_talent_health",
+  "title": "Talent Health",
+  "description": "Salud de talento: anomalias de datos, embudo de reclutamiento y span of control de managers.",
+  "datasets_used": ["sap_successfactors_employees_anomalies", "sap_successfactors_recruitment_funnel", "sap_successfactors_manager_hierarchy"]
+}
