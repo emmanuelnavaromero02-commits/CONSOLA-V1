@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<!--
+  app_id: sap_s4hana_finance_dashboard
+  name: Finance Dashboard
+  description: Dashboard ejecutivo financiero. Saldo contable, facturas vencidas, mora y gasto en proveedores (SAP S/4HANA)
+  cartridge: sap_s4hana
+  datasets: [gl_balance_by_account, overdue_billing, purchase_spend_by_supplier]
+-->
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finance Dashboard — SAP S/4HANA</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --border:#30363d;
+    --text1:#e6edf3; --text2:#8b949e; --text3:#6e7681;
+    --blue:#7c9fff; --green:#3fb950; --amber:#d29922; --red:#f85149; --purple:#bc8cff; --cyan:#39d3ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--text1);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:13px}
+  h1{font-size:18px;margin:0 0 2px;font-weight:700}
+  .subtitle{color:var(--text2);font-size:11px;letter-spacing:.04em;margin-bottom:18px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+  .controls label{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+  select{background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;
+         padding:7px 10px;font-size:12px;min-width:200px}
+  button{background:var(--bg2);color:var(--blue);border:1px solid var(--blue);border-radius:6px;
+         padding:7px 14px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.5px}
+  button:hover{background:rgba(124,159,255,.12)}
+  .kpis{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .kpi-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent,var(--blue));
+            border-radius:8px;padding:16px 20px;min-width:175px;flex:1}
+  .kpi-label{font-size:9px;color:var(--text2);letter-spacing:1.5px;font-weight:600;margin-bottom:8px;text-transform:uppercase}
+  .kpi-val{font-size:24px;font-weight:700;line-height:1}
+  .kpi-sub{font-size:10px;color:var(--text3);margin-top:6px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .section{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .section.full{grid-column:1 / -1}
+  .section-title{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;
+                 font-weight:600;margin-bottom:14px}
+  .chart-wrap{position:relative;height:300px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+  th{color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .empty{padding:28px;text-align:center;color:var(--text3);font-style:italic}
+  .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);
+         padding:14px;border-radius:6px;margin-bottom:16px}
+  @media(max-width:880px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <h1>◆ Finance Dashboard</h1>
+  <div class="subtitle">SAP S/4HANA · finanzas · saldo contable, cobros y gasto</div>
+
+  <div id="error"></div>
+
+  <div class="controls">
+    <label for="company-filter">Compañía (CompanyCode)</label>
+    <select id="company-filter"><option value="">Todas las compañías</option></select>
+    <button onclick="resetFilter()">RESET</button>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div class="section">
+      <div class="section-title">Top 10 cuentas contables por saldo absoluto</div>
+      <div id="gl-table"></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Top 10 proveedores por gasto</div>
+      <div class="chart-wrap"><canvas id="chart-suppliers"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Saldo contable por año fiscal</div>
+      <div class="chart-wrap"><canvas id="chart-fiscal"></canvas></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Facturas vencidas por antigüedad</div>
+      <div id="overdue-table" style="max-height:300px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+<script>
+const COLORS = ['#7c9fff','#3fb950','#d29922','#bc8cff','#39d3ff','#f85149','#db61a2','#56d4dd','#e3b341','#a5d6ff'];
+const fmtN = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
+const fmtM = n => n==null ? '—' : '$' + Number(n).toLocaleString('es-MX', {maximumFractionDigits:0});
+const fmtD = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1});
+const charts = {};
+function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">Error cargando datos: ${msg}</div>`; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function fetchJson(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(url + ' (' + r.status + ')');
+  const d = await r.json();
+  return Array.isArray(d) ? d : (d.data || []);
+}
+
+let GL = [], OVD = [], SPEND = [];
+
+function latestYearSpend(){
+  const years = SPEND.map(r=> String(r.spend_month||'').slice(0,4)).filter(Boolean);
+  if(!years.length) return 0;
+  const max = years.sort().at(-1);
+  return SPEND.filter(r=> String(r.spend_month||'').startsWith(max)).reduce((s,r)=> s + Number(r.total_spend||0), 0);
+}
+
+function renderKPIs(glRows){
+  const saldo = glRows.reduce((s,r)=> s + Number(r.balance||0), 0);
+  const vencido = OVD.reduce((s,r)=> s + Number(r.amount||0), 0);
+  const moras = OVD.map(r=> Number(r.days_overdue||0)).filter(n=> n>0);
+  const avgMora = moras.length ? moras.reduce((a,b)=>a+b,0)/moras.length : null;
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi-card" style="--accent:var(--blue)">
+      <div class="kpi-label">Saldo contable</div>
+      <div class="kpi-val">${fmtM(saldo)}</div>
+      <div class="kpi-sub">${glRows.length} cuentas</div>
+    </div>
+    <div class="kpi-card" style="--accent:var(--red)">
+      <div class="kpi-label">Facturas vencidas</div>
+      <div class="kpi-val">${fmtM(vencido)}</div>
+      <div class="kpi-sub">${fmtN(OVD.length)} documentos</div>
+    </div>
+    <div class="kpi-card" style="--accent:var(--amber)">
+      <div class="kpi-label">Días promedio de mora</div>
+      <div class="kpi-val">${avgMora==null ? '—' : fmtD(avgMora)}</div>
+      <div class="kpi-sub">vencimiento estimado a 30 días</div>
+    </div>
+    <div class="kpi-card" style="--accent:var(--green)">
+      <div class="kpi-label">Gasto proveedores (YTD)</div>
+      <div class="kpi-val">${fmtM(latestYearSpend())}</div>
+      <div class="kpi-sub">último año disponible</div>
+    </div>`;
+}
+
+function renderGlTable(glRows){
+  const el = document.getElementById('gl-table');
+  if(!glRows.length){ el.innerHTML = '<div class="empty">Sin saldos contables</div>'; return; }
+  const top = [...glRows].sort((a,b)=> Math.abs(Number(b.balance||0)) - Math.abs(Number(a.balance||0))).slice(0,10);
+  el.innerHTML = `<table><thead><tr><th>Compañía</th><th>Cuenta</th><th>Año</th><th class="num">Saldo</th></tr></thead><tbody>${
+    top.map(r=> `<tr><td>${esc(r.company_code)}</td><td>${esc(r.gl_account)}</td><td>${esc(r.fiscal_year)}</td><td class="num">${fmtM(r.balance)}</td></tr>`).join('')
+  }</tbody></table>`;
+}
+
+function renderSuppliersChart(){
+  if(charts['chart-suppliers']) charts['chart-suppliers'].destroy();
+  const ctx = document.getElementById('chart-suppliers');
+  if(!SPEND.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin gasto de proveedores</div>'; return; }
+  const agg = {};
+  SPEND.forEach(r=>{ const s = r.supplier_code || '(sin proveedor)'; agg[s] = (agg[s]||0) + Number(r.total_spend||0); });
+  const top = Object.entries(agg).sort((a,b)=> b[1]-a[1]).slice(0,10);
+  charts['chart-suppliers'] = new Chart(ctx, {
+    type:'bar',
+    data:{ labels:top.map(t=>t[0]), datasets:[{ data:top.map(t=>t[1]), backgroundColor:'#3fb950', borderRadius:4 }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}}, y:{ticks:{color:'#e6edf3'},grid:{display:false}} } }
+  });
+}
+
+function renderFiscalChart(glRows){
+  if(charts['chart-fiscal']) charts['chart-fiscal'].destroy();
+  const ctx = document.getElementById('chart-fiscal');
+  if(!glRows.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos</div>'; return; }
+  const agg = {};
+  glRows.forEach(r=>{ const y = String(r.fiscal_year||'—'); agg[y] = (agg[y]||0) + Number(r.balance||0); });
+  const years = Object.keys(agg).sort();
+  charts['chart-fiscal'] = new Chart(ctx, {
+    type:'bar',
+    data:{ labels:years, datasets:[{ label:'Saldo', data:years.map(y=>agg[y]), backgroundColor:'#7c9fff', borderRadius:4 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{color:'#e6edf3'},grid:{display:false}}, y:{ticks:{color:'#8b949e'},grid:{color:'#21262d'}} } }
+  });
+}
+
+function renderOverdueTable(){
+  const el = document.getElementById('overdue-table');
+  if(!OVD.length){ el.innerHTML = '<div class="empty">Sin facturas vencidas</div>'; return; }
+  const top = [...OVD].sort((a,b)=> Number(b.days_overdue||0) - Number(a.days_overdue||0)).slice(0,15);
+  el.innerHTML = `<table><thead><tr><th>Factura</th><th>Cliente</th><th class="num">Monto</th><th class="num">Días mora</th></tr></thead><tbody>${
+    top.map(r=> `<tr><td>${esc(r.billing_document)}</td><td>${esc(r.customer_code)}</td><td class="num">${fmtM(r.amount)}</td><td class="num">${fmtN(r.days_overdue)}</td></tr>`).join('')
+  }</tbody></table>`;
+}
+
+function applyFilter(){
+  const sel = document.getElementById('company-filter').value;
+  const glRows = sel ? GL.filter(r=> String(r.company_code) === sel) : GL;
+  renderKPIs(glRows);
+  renderGlTable(glRows);
+  renderFiscalChart(glRows);
+}
+function resetFilter(){ document.getElementById('company-filter').value = ''; applyFilter(); }
+
+async function init(){
+  try{
+    const [gl, ovd, spend] = await Promise.all([
+      fetchJson('/api/data/gl_balance_by_account'),
+      fetchJson('/api/data/overdue_billing'),
+      fetchJson('/api/data/purchase_spend_by_supplier'),
+    ]);
+    GL = gl; OVD = ovd; SPEND = spend;
+
+    const companies = [...new Set(GL.map(r=> String(r.company_code||'')).filter(Boolean))].sort();
+    document.getElementById('company-filter').insertAdjacentHTML('beforeend',
+      companies.map(c=> `<option value="${esc(c)}">${esc(c)}</option>`).join(''));
+    document.getElementById('company-filter').addEventListener('change', applyFilter);
+
+    renderKPIs(GL);
+    renderGlTable(GL);
+    renderSuppliersChart();
+    renderFiscalChart(GL);
+    renderOverdueTable();
+  }catch(e){ showError(e.message); }
+}
+init();
+</script>
+</body>
+</html>

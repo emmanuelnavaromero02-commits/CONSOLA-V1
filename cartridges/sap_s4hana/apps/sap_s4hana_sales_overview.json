@@ -1,0 +1,6 @@
+{
+  "name": "sap_s4hana_sales_overview",
+  "title": "Sales Overview",
+  "description": "Dashboard ejecutivo de ventas: revenue mensual, top clientes, backlog abierto y anomalias de business partners.",
+  "datasets_used": ["revenue_by_customer", "open_sales_orders", "business_partner_anomalies"]
+}
