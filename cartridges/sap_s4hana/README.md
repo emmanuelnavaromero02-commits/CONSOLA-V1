@@ -106,8 +106,28 @@ _(Pendiente — Bloque D.)_
 
 ## Conocimiento del dominio
 
-Knowledge Bits actuales en `app/config/knowledge_bits.yaml`. KBs sobre los golds
-de este bloque llegan en el Bloque C.
+Knowledge Bits en `app/config/knowledge_bits.yaml`. Se cargan en `kb_config` al
+arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
+
+**Base (leen bronze, materializan a silver):** `kb_open_sales_orders`,
+`kb_overdue_invoices`, `kb_purchase_spend_by_supplier`, `kb_gl_balance_by_account`.
+
+**Bloque C (leen los golds del Bloque B en `gold/sap_s4hana/<name>/`):**
+
+| KB | Pregunta de negocio | Gold |
+| --- | --- | --- |
+| `kb_sap_s4hana_revenue_top_customers` | ¿Top 10 clientes por revenue YTD? | revenue_by_customer |
+| `kb_sap_s4hana_revenue_by_month` | ¿Cómo evoluciona el revenue mes a mes? | revenue_by_customer |
+| `kb_sap_s4hana_open_sales_backlog` | ¿Cuál es el backlog de pedidos abiertos? | open_sales_orders |
+| `kb_sap_s4hana_overdue_invoices` | ¿Qué facturas tengo vencidas? (parcial) | overdue_billing |
+| `kb_sap_s4hana_top_suppliers_spend` | ¿En qué proveedores gasto más este año? | purchase_spend_by_supplier |
+| `kb_sap_s4hana_gl_balance_summary` | ¿Balance de cuentas contables principales? | gl_balance_by_account |
+| `kb_sap_s4hana_inventory_movements_recent` | ¿Movimientos de inventario recientes? (parcial) | inventory_movement_summary |
+| `kb_sap_s4hana_business_partner_anomalies` | ¿Problemas de calidad en business partners? | business_partner_anomalies |
+
+> Parciales por bronze pendiente: `overdue_billing` estima el vencimiento a 30 días
+> (PaymentStatus/partidas FI no extraído); `inventory_movement_summary` es conteo a
+> nivel de documento (detalle por material en A_MaterialDocumentItem no extraído).
 
 ## Environment variables
 
