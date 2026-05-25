@@ -281,6 +281,12 @@ def _prefix_allowed(sec: dict, value: str) -> bool:
     if layer in {"silver", "gold"}:
         if len(parts) == 3:
             return True
+        # Logical dataset prefix "layer/cartridge/name/": the trailing slash
+        # yields a 4th empty segment. Cartridge is already gated above and
+        # workspace isolation is enforced by the caller (_dataset_allowed),
+        # so this is the same logical-identity grant as the 3-part form.
+        if len(parts) == 4 and parts[3] == "":
+            return True
         if scoped and len(parts) >= 5:
             return parts[3] == f"tenant_id={tenant}" and parts[4] == f"workspace_id={workspace}"
         return not scoped and value.startswith(f"{layer}/{cartridge}/")
