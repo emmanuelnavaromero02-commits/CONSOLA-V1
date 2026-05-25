@@ -1,0 +1,6 @@
+{
+  "name": "sap_s4hana_finance_dashboard",
+  "title": "Finance Dashboard",
+  "description": "Dashboard ejecutivo financiero: saldo contable, facturas vencidas, mora promedio y gasto en proveedores.",
+  "datasets_used": ["gl_balance_by_account", "overdue_billing", "purchase_spend_by_supplier"]
+}

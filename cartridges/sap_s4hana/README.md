@@ -102,7 +102,22 @@ con `workspace_id` en cada fila). Privacy by design: ningún gold expone campos
 
 ## Apps publicadas
 
-_(Pendiente — Bloque D.)_
+Dashboards HTML standalone en `apps/` (Chart.js, tema oscuro). Se registran en
+`analytic_apps` vía la migración `85_sap_s4hana_apps_seed.sql` y se reconcilian al
+arrancar la consola (`seed_packaged_apps.py` lee `apps/*.html` + `*.json`). Las
+apps leen los golds vía `GET /api/data/<dataset>` (sin prefijo `gold_`). Nombres
+de archivo con prefijo `sap_s4hana_` para evitar colisión con otros cartuchos.
+
+| App | Propósito | Datasets gold |
+| --- | --- | --- |
+| `sap_s4hana_sales_overview` | Dashboard ejecutivo de ventas: revenue mensual, top clientes, backlog abierto por antigüedad y anomalías de business partners. | `revenue_by_customer`, `open_sales_orders`, `business_partner_anomalies` |
+| `sap_s4hana_finance_dashboard` | Dashboard ejecutivo financiero: saldo contable por cuenta/año fiscal, facturas vencidas, mora promedio y gasto en proveedores. | `gl_balance_by_account`, `overdue_billing`, `purchase_spend_by_supplier` |
+
+> Adaptaciones a columnas reales: `open_sales_orders` no expone estado de pedido, así
+> que el donut muestra backlog **por antigüedad**; `gl_balance_by_account` solo tiene
+> grano de año fiscal (no mensual), así que la serie es **por año fiscal**. `overdue_billing`
+> estima el vencimiento a 30 días (PaymentStatus no extraído). El filtro por compañía
+> aplica a los widgets de saldo contable (los demás golds no llevan `company_code`).
 
 ## Conocimiento del dominio
 
