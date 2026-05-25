@@ -71,7 +71,24 @@ encrypted), `recruitment_funnel`, `turnover_by_period`, `manager_hierarchy`
 
 ## Apps publicadas
 
-_(Pendiente — Bloque D.)_
+Dashboards HTML standalone en `apps/` (Chart.js, tema oscuro). Se registran en
+`analytic_apps` vía la migración `87_sap_successfactors_apps_seed.sql` y se reconcilian
+al arrancar la consola (`seed_packaged_apps.py` lee `apps/*.html` + `*.json`). Las apps
+leen los golds vía `GET /api/data/<dataset>` usando el **nombre completo con prefijo**
+`sap_successfactors_` (así están sembrados en migración 82). Filenames con prefijo
+`sap_successfactors_` para evitar colisión con otros cartuchos.
+
+| App | Propósito | Datasets |
+| --- | --- | --- |
+| `sap_successfactors_workforce_overview` | Dashboard ejecutivo de plantilla: headcount por departamento, ubicación y compañía, y rotación mensual. | `headcount_by_department`, `headcount_by_location`, `headcount_by_company`, `turnover_by_period` |
+| `sap_successfactors_talent_health` | Salud de talento: anomalías de datos, embudo de reclutamiento (por departamento) y span of control. | `employees_anomalies`, `recruitment_funnel`, `manager_hierarchy` |
+
+> Adaptaciones a columnas reales: `recruitment_funnel` no tiene columna de estado, así que
+> las barras muestran requisiciones **por departamento** (total vs abiertas), no por estado;
+> `turnover_by_period` usa `event_reason` y puede venir vacío hasta activar
+> EmpEmploymentTermination; `manager_hierarchy.direct_reports` está poblado (managerId real
+> en SF), por lo que el histograma de span of control es válido. El filtro por compañía aplica
+> a los widgets de compañía (los golds de departamento/ubicación/rotación no llevan company).
 
 ## Conocimiento del dominio
 

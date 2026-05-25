@@ -1,0 +1,6 @@
+{
+  "name": "sap_successfactors_workforce_overview",
+  "title": "Workforce Overview",
+  "description": "Dashboard ejecutivo de plantilla: headcount por departamento, ubicacion y compania, y rotacion mensual.",
+  "datasets_used": ["sap_successfactors_headcount_by_department", "sap_successfactors_headcount_by_location", "sap_successfactors_headcount_by_company", "sap_successfactors_turnover_by_period"]
+}
