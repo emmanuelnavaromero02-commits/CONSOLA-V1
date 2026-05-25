@@ -1,40 +1,42 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: SAP SuccessFactors HXM — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
--- ─────────────────────────────────────────────────────────────────────────────
+-- 79_sap_successfactors_alignment.sql
+--
+-- Align sap_successfactors' entity_config with its OData contract and
+-- entities.yaml (same class of fix as migrations 77/78 for S/4HANA and HCM).
+--
+-- Problems:
+--  1. Foundation Object rows were seeded under the wrong business names
+--     (Department / Division / Location / CostCenter) while entities.yaml and
+--     the real OData entitysets use the FO* names (FODepartment, FODivision,
+--     FOLocation, FOCostCenter). The names never matched, so the catalog merge
+--     could not fill odata_entity and the knowledge bits read the wrong bronze
+--     folder.
+--  2. The talent entities (JobRequisition, Candidate, GoalPlan, PerformanceReview,
+--     LearningItem) and EmpJob_History existed in entity_config but not in
+--     entities.yaml, and several have a business name that differs from the OData
+--     entityset (GoalPlan->Goal, PerformanceReview->FormHeader, LearningItem->Item,
+--     EmpJob_History->EmpJobRelationships).
+--
+-- Fix (data only; extraction_service already resolves the path via
+-- config.get("odata_entity", entity)): add the odata_entity column, drop the
+-- four misnamed FO rows so they can be recreated under the FO* names, and UPSERT
+-- the 15 canonical entities with their odata_entity. Business names are the
+-- bronze-path component raw/sap_successfactors/{entity}/ and what the KBs read.
+--
+-- Note on LearningItem: odata_entity 'Item' is the SuccessFactors LMS standard
+-- entityset default. It is NOT externally verified for this tenant — flagged in
+-- the PR for follow-up; the business name and bronze path stay 'LearningItem'.
+--
+-- Scope: sap_successfactors ONLY (filtered by cartridge_id). Replicon, sap_hcm
+-- and sap_s4hana are untouched. Idempotent (re-runnable).
 
--- ── Cartridge header ──────────────────────────────────────────────────────────
-INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
-VALUES (
-    'sap_successfactors',
-    'SAP SuccessFactors HXM',
-    '1.0.0',
-    'SAP SuccessFactors Human Experience Management — extrae datos de Empleados, Posiciones, Departamentos, y Módulos de Talento (Candidatos, Objetivos, Desempeño).',
-    'dag-based',
-    'cartridge',
-    'raw/sap_successfactors/{entity}/load_date={date}/'
-)
-ON CONFLICT (id) DO UPDATE
-    SET name        = EXCLUDED.name,
-        version     = EXCLUDED.version,
-        description = EXCLUDED.description,
-        updated_at  = NOW();
+ALTER TABLE entity_config ADD COLUMN IF NOT EXISTS odata_entity TEXT;
 
--- ── DAGs ──────────────────────────────────────────────────────────────────────
-INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
-VALUES
-    ('sap_successfactors', 'sap_successfactors_extract',     'sap_successfactors_extract.py',     'Extrae una entidad en Bronze MinIO (full o incremental)',  'on-demand', '["entity","mode","from_date","to_date"]'),
-    ('sap_successfactors', 'sap_successfactors_extract_all', 'sap_successfactors_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',       'on-demand', '["mode","entities"]')
-ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
+-- Rename the misnamed Foundation Object rows by removing the old keys; the
+-- canonical FO* rows are recreated by the UPSERT below.
+DELETE FROM entity_config
+ WHERE cartridge_id = 'sap_successfactors'
+   AND entity IN ('Department', 'Division', 'Location', 'CostCenter');
 
--- ── Entities ──────────────────────────────────────────────────────────────────
--- Canonical entities, aligned with infra/init/79_sap_successfactors_alignment.sql
--- and app/config/entities.yaml. Foundation Objects use their FO* names (FODepartment,
--- FODivision, FOLocation, FOCostCenter); talent entities carry odata_entity where the
--- business name differs from the OData entityset (GoalPlan -> Goal, PerformanceReview
--- -> FormHeader, LearningItem -> Item, EmpJob_History -> EmpJobRelationships). Metadata
--- (odata_entity / mode / watermark / page_size) is inherited from entities.yaml.
 INSERT INTO entity_config
     (cartridge_id, entity, odata_entity, display_name, description, mode,
      watermark_field, page_size, primary_key, dag_id, enabled, trigger_type)
@@ -66,10 +68,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         enabled         = EXCLUDED.enabled,
         trigger_type    = EXCLUDED.trigger_type;
 
--- ── Semantic vocabulary ───────────────────────────────────────────────────────
-INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
-VALUES
-    ('sap_successfactors', 'headcount activo', 'Número de empleados activos (startDate <= hoy <= endDate)', 'EmpEmployment WHERE isActive = true'),
-    ('sap_successfactors', 'turnover', 'Rotación de personal', 'User.status changes'),
-    ('sap_successfactors', 'evaluación', 'Rating en PerformanceReview', 'PerformanceReview.overallRating')
-ON CONFLICT (cartridge_id, term) DO NOTHING;
+INSERT INTO schema_migrations (filename, applied_at)
+VALUES ('79_sap_successfactors_alignment.sql', NOW())
+ON CONFLICT (filename) DO NOTHING;
