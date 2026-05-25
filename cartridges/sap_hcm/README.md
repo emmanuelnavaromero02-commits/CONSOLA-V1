@@ -142,6 +142,23 @@ arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
 | `kb_sap_hcm_manager_span_of_control` | ¿Span of control de mis managers? (parcial: requiere HRP1001/Sbrtr) | manager_hierarchy |
 | `kb_sap_hcm_workforce_composition_by_position_type` | ¿Composición de plantilla por tipo? | headcount_by_position_type |
 
+**Hints del asistente (Bloque E):** `hints/assistant.md` se carga en
+`cartridges.assistant_hints` al arrancar (`seed_packaged_hints.py`) y el copiloto lo
+inyecta a su system prompt. Cubre identidad del cartucho, modelo de datos esencial,
+convenciones, reglas operativas, apps publicadas y limitaciones honestas.
+
+## Agentes especializados
+
+Definidos en `infra/init/84_sap_hcm_agents_seed.sql` (y espejados en
+`config/seed.sql`), en la tabla `agents` (cartridge-scoped, sin `workspace_id`). La
+plataforma aún no enruta por triggers; los agentes se invocan por `cartridge_id + slug`
+y las frases de trigger viven en `extra` como metadata de intención.
+
+| Agente (slug) | Nombre | Especialidad | Golds / KBs primarios | Triggers (intención) |
+| --- | --- | --- | --- | --- |
+| `sap_hcm_auditor_org_chart` | Auditor de Organigrama | Detección de problemas estructurales y de calidad de datos | `gold_employees_anomalies`, `gold_manager_hierarchy` · `kb_sap_hcm_employees_anomalies_active`, `kb_sap_hcm_manager_span_of_control` | "qué problemas tengo en mi plantilla", "auditoría de personal", "empleados sin centro de costo", "anomalías de empleados", "calidad de datos de empleados" |
+| `sap_hcm_analista_workforce` | Analista de Plantilla | Composición y dinámica de la plantilla | `gold_headcount_by_*`, `gold_absence_by_type_and_month` · `kb_sap_hcm_headcount_active_by_department`, `kb_sap_hcm_headcount_by_costcenter`, `kb_sap_hcm_workforce_composition_by_position_type`, `kb_sap_hcm_absence_trend_monthly` | "cómo se compone mi plantilla", "headcount por departamento", "evolución de ausencias", "distribución de empleados", "tendencias de personal" |
+
 ## Environment variables
 
 Required to talk to SAP:
