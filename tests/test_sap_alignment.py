@@ -6,11 +6,17 @@ mapping each to its technical OData path via ``odata_entity`` (+ an
 HRP1000Set); migration 78 seeds entity_config to match.
 
 sap_s4hana (sub-PR 2) was already DB-aligned by migration 77; here its cartridge
-seed.sql is rewritten from the 10 stale HCM copy-paste rows to the 25 real ERP
-entities, and per-field ``protection:`` is added to its sensitive entities.
+seed.sql is rewritten from the 10 stale HCM rows to the 25 real ERP entities,
+and per-field ``protection:`` is added to its sensitive entities.
+
+sap_successfactors (sub-PR 3) adds the 5 talent entities + EmpJob_History to
+entities.yaml, renames the misnamed Foundation Objects (Department->FODepartment,
+...) across entity_config and the KBs, and bridges business name vs OData
+entityset via ``odata_entity`` (GoalPlan->Goal, PerformanceReview->FormHeader,
+LearningItem->Item); migration 79 seeds entity_config to match.
 
 These static checks pin the alignment (no live DB) plus real protection_service
-regressions. SuccessFactors is aligned in its own PR.
+regressions.
 """
 from __future__ import annotations
 
@@ -168,3 +174,82 @@ def test_s4hana_protection_applies_to_customer():
     assert out["IBAN"] != "ES9121000418450200051332"                        # encrypted
     assert out["BankAccount"] != "0200051332"                               # encrypted
     assert out["CompanyCode"] == "1000"                                     # unlisted untouched
+
+
+# ═══ sap_successfactors (sub-PR 3) ═══════════════════════════════════════════
+
+MIGRATION_79 = REPO_ROOT / "infra" / "init" / "79_sap_successfactors_alignment.sql"
+
+
+def test_sf_entities_contract():
+    entities = _yaml_entities("sap_successfactors")
+    assert entities, "sap_successfactors entities.yaml is empty"
+    names = {e["entity"] for e in entities}
+    for new in ("Candidate", "JobRequisition", "GoalPlan", "PerformanceReview", "LearningItem", "EmpJob_History"):
+        assert new in names, f"{new} missing from entities.yaml"
+    for entry in entities:
+        assert entry.get("mode"), f"{entry.get('entity')} missing mode"
+        for field, rule in (entry.get("protection") or {}).items():
+            assert rule in VALID_RULES, f"{entry['entity']}.{field}: invalid rule {rule!r}"
+
+
+def test_sf_business_name_entities_carry_odata_entity():
+    # Where the business name differs from the OData entityset, odata_entity bridges.
+    by_name = {e["entity"]: e for e in _yaml_entities("sap_successfactors")}
+    expected = {"GoalPlan": "Goal", "PerformanceReview": "FormHeader",
+                "LearningItem": "Item", "EmpJob_History": "EmpJobRelationships"}
+    for name, entityset in expected.items():
+        assert by_name[name].get("odata_entity") == entityset, f"{name} should map to {entityset}"
+
+
+def test_sf_seed_entities_exist_in_yaml():
+    # 3-source alignment: every seeded entity_config row has an entities.yaml home.
+    seed = _seed_entity_config_rows("sap_successfactors")
+    yaml_names = {e["entity"] for e in _yaml_entities("sap_successfactors")}
+    missing = set(seed) - yaml_names
+    assert not missing, f"seed entities with no entities.yaml home (phantoms): {missing}"
+    for bad in ("Department", "Division", "Location", "CostCenter"):
+        assert bad not in seed, f"misnamed FO row {bad} still in seed"
+    for good in ("FODepartment", "FODivision", "FOLocation", "FOCostCenter"):
+        assert good in seed, f"{good} missing from seed"
+
+
+def test_sf_kbs_reference_aligned_entities():
+    kb = (REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "knowledge_bits.yaml").read_text(encoding="utf-8")
+    refs = set(re.findall(r"raw/sap_successfactors/(\w+)/", kb))
+    yaml_names = {e["entity"] for e in _yaml_entities("sap_successfactors")}
+    orphans = refs - yaml_names
+    assert not orphans, f"KB bronze paths with no entities.yaml entry: {orphans}"
+    assert "Department" not in refs and "Location" not in refs, "KB still reads pre-rename FO folders"
+    assert "FODepartment" in refs and "FOLocation" in refs, "FO rename did not reach the KBs"
+
+
+def test_migration_79_scoped_and_registered():
+    sql = MIGRATION_79.read_text(encoding="utf-8")
+    block = re.search(r"INSERT INTO entity_config\b.*?VALUES(.*?)ON CONFLICT", sql, re.DOTALL)
+    assert block, "migration 79 has no entity_config INSERT block"
+    insert_carts = set(re.findall(r"\('(\w+)',\s*'[^']+',\s*'[^']+'", block.group(1)))
+    assert insert_carts == {"sap_successfactors"}, f"migration writes other cartridges: {insert_carts}"
+    delete_carts = set(re.findall(r"cartridge_id\s*=\s*'(\w+)'", sql))
+    assert delete_carts <= {"sap_successfactors"}
+    assert "ADD COLUMN IF NOT EXISTS odata_entity" in sql
+    assert "'79_sap_successfactors_alignment.sql'" in sql
+    for bad in ("'Department'", "'Division'", "'Location'", "'CostCenter'"):
+        assert bad in sql, f"migration should drop misnamed FO row {bad}"
+
+
+def test_sf_protection_applies_to_user():
+    mod = _load_protection("sap_successfactors")
+    rows = [{
+        "userId": "USR000123",
+        "firstName": "Ana",
+        "lastName": "Garcia",
+        "email": "ana.garcia@example.com",
+        "status": "active",
+    }]
+    out = mod.apply_protection_for_entity("User", rows)[0]
+
+    assert out["userId"] != "USR000123" and len(out["userId"]) == 64    # shadowed
+    assert "*" in out["lastName"] and out["lastName"].endswith("rcia")  # masked
+    assert "*" in out["email"]                                          # masked
+    assert out["status"] == "active"                                    # unlisted untouched

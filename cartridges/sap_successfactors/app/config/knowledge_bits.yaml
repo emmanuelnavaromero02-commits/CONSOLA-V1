@@ -52,12 +52,12 @@ knowledge_bits:
       ),
       Departments AS (
           SELECT DISTINCT ON (externalCode) externalCode, name_defaultValue
-          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Department/load_date=*/batch_id=*/*.parquet')
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FODepartment/load_date=*/batch_id=*/*.parquet')
           ORDER BY externalCode, _extracted_at DESC
       ),
       Locations AS (
           SELECT DISTINCT ON (externalCode) externalCode, country
-          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/Location/load_date=*/batch_id=*/*.parquet')
+          FROM read_parquet('s3://{bucket}/raw/sap_successfactors/FOLocation/load_date=*/batch_id=*/*.parquet')
           ORDER BY externalCode, _extracted_at DESC
       )
       SELECT

@@ -23,6 +23,9 @@ entities:
       - hireDate
       - lastModifiedDateTime
     protection:
+      userId: shadowed
+      firstName: masked
+      lastName: masked
       email: masked
 
   - entity: PerPerson
@@ -49,6 +52,11 @@ entities:
     page_size: 200
     effective_dated: true
     date_field: startDate
+    protection:
+      firstName: masked
+      lastName: masked
+      gender: plain
+      maritalStatus: plain
 
   - entity: PerEmail
     description: "Person email addresses (business / personal)."
@@ -217,3 +225,53 @@ entities:
     page_size: 500
     effective_dated: true
     date_field: startDate
+
+  # ── Recruiting ──────────────────────────────────────────────────────────────
+  - entity: JobRequisition
+    description: "Recruiting: job requisitions (open positions in the pipeline)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+
+  - entity: Candidate
+    description: "Recruiting: candidates in the pipeline."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    protection:
+      candidateId: shadowed
+      firstName: masked
+      lastName: masked
+
+  # ── Performance & Goals ───────────────────────────────────────────────────
+  # Business names differ from the OData entityset, so odata_entity carries the
+  # technical name (extraction_service resolves config.get("odata_entity", entity)).
+  - entity: GoalPlan
+    odata_entity: Goal
+    description: "Performance & Goals: goal entries (OData entityset Goal)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+
+  - entity: PerformanceReview
+    odata_entity: FormHeader
+    description: "Performance: review form headers (OData entityset FormHeader). overallRating / comments stay plain (operational, not direct PII)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+
+  # ── Learning ──────────────────────────────────────────────────────────────
+  - entity: LearningItem
+    odata_entity: Item
+    description: "Learning (LMS): learning items. odata_entity 'Item' is the standard default and is NOT externally verified — see PR notes."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+
+  # ── Job relationships ─────────────────────────────────────────────────────
+  - entity: EmpJob_History
+    odata_entity: EmpJobRelationships
+    description: "Job relationships (matrix / additional managers); OData entityset EmpJobRelationships."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
