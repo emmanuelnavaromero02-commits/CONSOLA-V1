@@ -8,15 +8,15 @@
  *
  * Backend reality (see types.ts module doc for the audit
  * findings):
- *   - run_turn (``sendMessage``) is non-streaming for now —
- *     SSE is v1.44.4.1 backend scope.
+ *   - ``sendMessage`` preserves the legacy JSON route; the chat UI
+ *     calls ``streamMessage`` for the SSE path.
  *   - createFact + generateDraft return ENVELOPES
  *     ({ok, fact} / {ok, draft}); we unwrap before returning
  *     so call sites can stay simple.
  *   - getWorkflow returns ``{workflow, steps}`` (NOT a flat
  *     Workflow); the typed wrapper preserves both.
  */
-import { api } from "@/lib/api";
+import { api, readCookie } from "@/lib/api";
 import type {
   Conversation,
   ConversationDetailResponse,
@@ -32,6 +32,12 @@ import type {
   WorkflowDetailResponse,
   WorkflowListResponse,
 } from "./types";
+
+export interface StreamMessageHandlers {
+  onToken?: (delta: string) => void;
+  onText?:  (text: string) => void;
+  onEvent?: (event: string, data: unknown) => void;
+}
 
 
 // ── Conversations ───────────────────────────────────────────────────
@@ -75,6 +81,114 @@ export async function sendMessage(
     { message },
   );
   return data;
+}
+
+function parseSseFrame(frame: string): { event: string; data: unknown } | null {
+  const lines = frame.split(/\r?\n/);
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim() || "message";
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (dataLines.length === 0) return null;
+  const raw = dataLines.join("\n");
+  try {
+    return { event, data: JSON.parse(raw) };
+  } catch {
+    return { event, data: raw };
+  }
+}
+
+
+function csrfHeaders(): HeadersInit {
+  const token = readCookie("csrf_token");
+  return token ? { "X-CSRF-Token": token } : {};
+}
+
+
+export async function streamMessage(
+  conversationId: string,
+  message: string,
+  handlers: StreamMessageHandlers = {},
+): Promise<SendMessageResponse> {
+  const response = await fetch(
+    `/api/copilot/chat/${encodeURIComponent(conversationId)}/stream`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...csrfHeaders(),
+      },
+      body: JSON.stringify({ message }),
+    },
+  );
+
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalData: SendMessageResponse | null = null;
+  let sawToken = false;
+
+  function consume(frame: string) {
+    const parsed = parseSseFrame(frame);
+    if (!parsed) return;
+    handlers.onEvent?.(parsed.event, parsed.data);
+    const data = parsed.data as Record<string, unknown>;
+
+    if (parsed.event === "token") {
+      const delta = typeof data?.delta === "string" ? data.delta : "";
+      if (delta) {
+        sawToken = true;
+        handlers.onToken?.(delta);
+      }
+      return;
+    }
+
+    if (parsed.event === "message") {
+      const text = typeof data?.text === "string" ? data.text : "";
+      if (text && !sawToken) handlers.onText?.(text);
+      return;
+    }
+
+    if (parsed.event === "done") {
+      finalData = data as unknown as SendMessageResponse;
+      return;
+    }
+
+    if (parsed.event === "error") {
+      const detail =
+        typeof data?.detail === "string" ? data.detail : "Copilot stream error";
+      throw new Error(detail);
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    let idx = buffer.indexOf("\n\n");
+    while (idx !== -1) {
+      const frame = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 2);
+      if (frame && !frame.startsWith(":")) consume(frame);
+      idx = buffer.indexOf("\n\n");
+    }
+    if (done) break;
+  }
+
+  const tail = buffer.trim();
+  if (tail && !tail.startsWith(":")) consume(tail);
+  if (!finalData) throw new Error("Copilot stream ended before completion.");
+  return finalData;
 }
 
 

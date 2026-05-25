@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { toast } from "sonner";
 
+import { streamMessage } from "@/lib/copilot/client";
 import { useChat } from "@/lib/copilot/useChat";
 import type { Message as MessageType, PendingAction } from "@/lib/copilot/types";
 
@@ -125,20 +127,23 @@ interface ChatLayoutProps {
 }
 
 export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
+  const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const preparedPrompt = initialPrompt?.trim();
 
   const {
     listConversationsQuery,
     conversationQuery,
-    sendMutation,
     approveMutation,
     createConversationMutation,
   } = useChat(activeId);
 
   const conversations = listConversationsQuery.data ?? [];
-  const messages: MessageType[] =
-    conversationQuery.data?.messages ?? [];
+  const rawMessages = conversationQuery.data?.messages;
+  const messages: MessageType[] = useMemo(
+    () => rawMessages ?? [],
+    [rawMessages],
+  );
 
   // Round 1 review: do NOT auto-select on cold mount — a
   // returning user might want a fresh thread, and a brand-new
@@ -171,6 +176,28 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
     actions:        PendingAction[];
   } | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
+  const [optimisticTurn, setOptimisticTurn] = useState<{
+    conversationId: string;
+    messages:       MessageType[];
+  } | null>(null);
+  const [streamingTurn, setStreamingTurn] = useState<{
+    conversationId: string;
+    content:        string;
+  } | null>(null);
+
+  const visibleOptimistic = useMemo(
+    () => optimisticTurn?.conversationId === activeId
+      ? optimisticTurn.messages
+      : [],
+    [activeId, optimisticTurn],
+  );
+  const visibleStreaming =
+    streamingTurn?.conversationId === activeId ? streamingTurn.content : null;
+  const displayMessages = useMemo(
+    () => [...messages, ...visibleOptimistic],
+    [messages, visibleOptimistic],
+  );
+  const sending = streamingTurn !== null || createConversationMutation.isPending;
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeId) return activeId;
@@ -180,12 +207,39 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
   }, [activeId, createConversationMutation]);
 
   const handleSend = useCallback(async (text: string) => {
+    let cid: string | null = null;
     try {
-      const cid  = await ensureConversation();
-      const data = await sendMutation.mutateAsync({
+      cid = await ensureConversation();
+      setOptimisticTurn({
         conversationId: cid,
-        message:        text,
+        messages: [{
+          id:         `__user_${Date.now()}`,
+          role:       "user",
+          content:    text,
+          created_at: new Date().toISOString(),
+        }],
       });
+      setStreamingTurn({ conversationId: cid, content: "" });
+
+      const data = await streamMessage(cid, text, {
+        onToken: (delta) => {
+          setStreamingTurn((current) =>
+            current?.conversationId === cid
+              ? { ...current, content: current.content + delta }
+              : current,
+          );
+        },
+        onText: (content) => {
+          setStreamingTurn((current) =>
+            current?.conversationId === cid ? { ...current, content } : current,
+          );
+        },
+      });
+      setStreamingTurn((current) =>
+        current?.conversationId === cid
+          ? { ...current, content: data.reply || current.content }
+          : current,
+      );
       if (data.requires_approval && data.pending_actions.length > 0) {
         setPendingApproval({
           conversationId: cid,
@@ -194,11 +248,24 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
         });
         setApproveError(null);
       }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["copilot", "conversation", cid] }),
+        qc.invalidateQueries({ queryKey: ["copilot", "conversations"] }),
+      ]);
     } catch (err) {
+      if (cid) {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ["copilot", "conversation", cid] }),
+          qc.invalidateQueries({ queryKey: ["copilot", "conversations"] }),
+        ]);
+      }
       const msg = err instanceof Error ? err.message : "Error desconocido.";
       toast.error(`No se pudo enviar: ${msg}`);
+    } finally {
+      setStreamingTurn(null);
+      setOptimisticTurn(null);
     }
-  }, [ensureConversation, sendMutation]);
+  }, [ensureConversation, qc]);
 
   const handleApprove = useCallback(async () => {
     if (!pendingApproval) return;
@@ -264,8 +331,10 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
 
   // ── Render ──────────────────────────────────────────────────
   const showEmpty =
-    !activeId ||
-    (!conversationQuery.isLoading && messages.length === 0);
+    (!activeId && !streamingTurn) ||
+    (!conversationQuery.isLoading &&
+      displayMessages.length === 0 &&
+      visibleStreaming === null);
 
   return (
     <div className="flex h-full">
@@ -403,12 +472,16 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
             </div>
           </div>
         ) : (
-          <ChatMessages messages={messages} pending={sendMutation.isPending} />
+          <ChatMessages
+            messages={displayMessages}
+            pending={false}
+            streamingContent={visibleStreaming}
+          />
         )}
 
         <MessageInput
           onSend={(t) => void handleSend(t)}
-          disabled={sendMutation.isPending}
+          disabled={sending}
           initialValue={initialPrompt}
           onSlash={() => {
             setPaletteQuery("");

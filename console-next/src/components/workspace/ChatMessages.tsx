@@ -7,28 +7,29 @@ import type { Message as MessageType } from "@/lib/copilot/types";
 import { Message } from "./Message";
 
 interface Props {
-  messages:  MessageType[];
-  pending?:  boolean;
+  messages:          MessageType[];
+  pending?:          boolean;
+  streamingContent?: string | null;
 }
 
 /**
  * v1.44.4 Task A — scrollable message list.
  *
  * Renders the conversation history and auto-scrolls to the
- * bottom whenever a new message lands (including the "pending"
- * placeholder we inject while sendMutation is in flight).
+ * bottom whenever a new message lands, including the assistant
+ * placeholder/content injected while an SSE turn is in flight.
  *
  * Uses a sentinel element + ``scrollIntoView`` rather than
  * fighting layout heights — works with arbitrary message
  * lengths and survives window resizes without manual
  * recalculation.
  */
-export function ChatMessages({ messages, pending }: Props) {
+export function ChatMessages({ messages, pending, streamingContent }: Props) {
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, pending]);
+  }, [messages.length, pending, streamingContent]);
 
   return (
     <div
@@ -41,6 +42,16 @@ export function ChatMessages({ messages, pending }: Props) {
       {messages.map((m) => (
         <Message key={m.id} message={m} />
       ))}
+      {streamingContent !== null && streamingContent !== undefined ? (
+        <Message
+          message={{
+            id:      "__streaming__",
+            role:    "assistant",
+            content: streamingContent,
+          }}
+          pending={streamingContent.length === 0}
+        />
+      ) : null}
       {pending ? (
         <Message
           message={{

@@ -159,6 +159,86 @@ def test_send_empty_message_returns_400(copilot_router):
     assert r.status_code == 400
 
 
+def test_chat_stream_probe_returns_sse(copilot_router):
+    api = _make_app(copilot_router)
+    r = TestClient(api).get(
+        "/api/copilot/chat/00000000-0000-0000-0000-000000000000/stream",
+    )
+    assert r.status_code == 200, r.text
+    assert "text/event-stream" in r.headers["content-type"]
+    assert "event: ready" in r.text
+
+
+def test_stream_message_requires_csrf(copilot_router):
+    from app.dependencies import require_authenticated
+
+    api = FastAPI()
+    api.include_router(copilot_router.router)
+    api.dependency_overrides[require_authenticated] = lambda: {
+        "id": 7, "email": "u@example.com", "role": "admin",
+    }
+    invoked = []
+
+    async def fake_open_turn_stream(**kw):
+        invoked.append(kw)
+
+    copilot_router.copilot_service.open_turn_stream = fake_open_turn_stream
+    r = TestClient(api).post(
+        "/api/copilot/chat/00000000-0000-0000-0000-000000000000/stream",
+        json={"message": "hola"},
+    )
+    assert r.status_code in (401, 403)
+    assert invoked == []
+
+
+def test_stream_message_happy_path_emits_sse_and_audits(copilot_router):
+    api = _make_app(copilot_router)
+    captured = {}
+    audit_calls = []
+
+    async def fake_open_turn_stream(**kw):
+        captured.update(kw)
+
+        async def events():
+            yield {"type": "ready", "conversation_id": kw["conversation_id"]}
+            yield {"type": "text_delta", "text": "Ho"}
+            yield {
+                "type": "done",
+                "result": {
+                    "message_id": "m1",
+                    "reply": "Hola",
+                    "tool_calls": [],
+                    "tool_results": [],
+                    "citations": [],
+                    "pending_actions": [],
+                    "requires_approval": False,
+                },
+            }
+
+        return events()
+
+    async def fake_audit(**kw):
+        audit_calls.append(kw)
+
+    copilot_router.copilot_service.open_turn_stream = fake_open_turn_stream
+    copilot_router.audit_service.record_event = fake_audit
+    r = TestClient(api).post(
+        "/api/copilot/chat/00000000-0000-0000-0000-000000000000/stream",
+        json={"message": "hola"},
+        headers={"User-Agent": "test-agent/1.0"},
+    )
+    assert r.status_code == 200, r.text
+    assert "event: token" in r.text
+    assert "event: done" in r.text
+    assert captured["conversation_id"] == "00000000-0000-0000-0000-000000000000"
+    assert captured["user_message"] == "hola"
+    assert captured["user"]["id"] == 7
+    assert captured["user_agent"] == "test-agent/1.0"
+    assert captured["ip"] is not None
+    assert audit_calls[0]["action"] == "copilot.message.send"
+    assert audit_calls[0]["metadata"]["stream"] is True
+
+
 def test_get_conversation_returns_only_owner_messages(copilot_router):
     api = _make_app(copilot_router, user={"id": 1, "role": "admin"})
     async def fake_get(*, conversation_id, user):

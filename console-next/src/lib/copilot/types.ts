@@ -29,9 +29,8 @@
  *     result, status, started_at, finished_at}``.
  *   - PendingAction has no ``rationale`` field — render from
  *     ``args`` + ``risk_level`` instead.
- *   - run_turn STILL returns JSON (NOT a stream). Streaming
- *     SSE remains v1.44.4.1 backend work
- *     (copilot_workflows.py:6-7).
+ *   - run_turn returns JSON for the legacy route; the chat UI uses
+ *     the SSE stream at /api/copilot/chat/{id}/stream.
  */
 
 export type Severity = "info" | "warning" | "critical";

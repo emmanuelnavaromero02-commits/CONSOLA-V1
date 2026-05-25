@@ -35,6 +35,8 @@ untouched — it stays the wizard helper for cartridge configuration.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 import json
 import uuid
 from typing import Any
@@ -1049,6 +1051,7 @@ async def _run_loop(
     ip: str | None,
     user_agent: str | None,
     approved_keys: set[str] | None = None,
+    on_event: Callable[[dict], Any] | None = None,
 ) -> dict:
     """Shared core used by ``run_turn`` and ``approve_pending_action``.
 
@@ -1069,6 +1072,14 @@ async def _run_loop(
     invocations: list[dict] = []   # one entry per invoke_tool call, in order
     pending_actions: list[dict] = []
     seen_pending_keys: set[str] = set()  # dedupe pending by approval_key
+
+    async def emit_event(evt: dict) -> None:
+        if on_event is None:
+            return
+        safe_evt = dict(evt)
+        if "args" in safe_evt:
+            safe_evt["args"] = _scrub_args(safe_evt["args"])
+        await on_event(safe_evt)
 
     tools, server_map, classifications = await _build_tools_for_llm()
     # v1.43 R1-DBA: one freshness-lookup cache per turn, shared by
@@ -1232,7 +1243,7 @@ async def _run_loop(
             tools=tools,
             invoke_tool=invoke_tool,
             tool_server_map=server_map,
-            on_event=None,
+            on_event=emit_event if on_event is not None else None,
         )
     except Exception as exc:                    # noqa: BLE001
         # Log the full exception server-side; surface a sanitised
@@ -1475,6 +1486,25 @@ async def run_turn(
     user_agent: str | None = None,
 ) -> dict:
     """Handle one user → assistant exchange."""
+    conversation_id = await _persist_user_turn(
+        conversation_id=conversation_id,
+        user_message=user_message,
+        user=user,
+    )
+    return await _run_loop(
+        conversation_id=conversation_id,
+        user=user, ip=ip, user_agent=user_agent,
+        approved_keys=None,
+    )
+
+
+async def _persist_user_turn(
+    *,
+    conversation_id: str,
+    user_message: str,
+    user: dict,
+) -> str:
+    """Validate ownership and persist the user message before the LLM turn."""
     if not permissions.has_permission(user, "copilot.use"):
         raise HTTPException(403, "permission required: copilot.use")
     if not user_message or not user_message.strip():
@@ -1495,11 +1525,100 @@ async def run_turn(
             role="user", content=user_message,
         )
 
-    return await _run_loop(
+    return conversation_id
+
+
+async def open_turn_stream(
+    *,
+    conversation_id: str,
+    user_message: str,
+    user: dict,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> AsyncIterator[dict]:
+    """Prepare one user turn and return an async stream of Copilot events.
+
+    Validation and user-message persistence happen before the stream object is
+    returned, so HTTP errors still reach FastAPI as normal 4xx/5xx responses.
+    The returned iterator then runs the existing LLM loop in a background task
+    and yields provider/tool events as they arrive, followed by a ``done``
+    event carrying the same response envelope as ``run_turn``.
+    """
+    conversation_id = await _persist_user_turn(
         conversation_id=conversation_id,
-        user=user, ip=ip, user_agent=user_agent,
-        approved_keys=None,
+        user_message=user_message,
+        user=user,
     )
+    return _turn_event_generator(
+        conversation_id=conversation_id,
+        user=user,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+
+async def _turn_event_generator(
+    *,
+    conversation_id: str,
+    user: dict,
+    ip: str | None,
+    user_agent: str | None,
+) -> AsyncIterator[dict]:
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    async def on_event(evt: dict) -> None:
+        await queue.put(evt)
+
+    async def worker() -> None:
+        try:
+            result = await _run_loop(
+                conversation_id=conversation_id,
+                user=user,
+                ip=ip,
+                user_agent=user_agent,
+                approved_keys=None,
+                on_event=on_event,
+            )
+            await queue.put({"type": "done", "result": result})
+        except HTTPException as exc:
+            await queue.put({
+                "type": "error",
+                "status_code": exc.status_code,
+                "detail": exc.detail,
+            })
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception(
+                "copilot streaming turn failed",
+                extra={"conversation_id": conversation_id, "user_id": user.get("id")},
+            )
+            await queue.put({
+                "type": "error",
+                "status_code": 500,
+                "detail": "copilot stream error",
+            })
+        finally:
+            await queue.put({"type": "_complete"})
+
+    task = asyncio.create_task(worker())
+    yield {"type": "ready", "conversation_id": conversation_id}
+    try:
+        while True:
+            try:
+                evt = await asyncio.wait_for(queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield {"type": "heartbeat"}
+                continue
+            if evt.get("type") == "_complete":
+                break
+            yield evt
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 async def approve_pending_action(

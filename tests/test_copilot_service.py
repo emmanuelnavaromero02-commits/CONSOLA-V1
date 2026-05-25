@@ -1169,3 +1169,49 @@ def test_copilot_approval_key_is_args_specific(copilot_module):
     k3 = copilot_module._approval_key("infra", "foo", {"a": 1, "b": 2})
     k4 = copilot_module._approval_key("infra", "foo", {"b": 2, "a": 1})
     assert k3 == k4
+
+
+def test_copilot_open_turn_stream_emits_events_and_scrubs_args(
+    copilot_module, db, admin_user,
+):
+    """Streaming should reuse the real turn loop while keeping raw tool args
+    out of the browser-visible event stream."""
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    async def fake_chat(*, messages, on_event=None, **_kw):
+        assert on_event is not None
+        await on_event({"type": "text_delta", "text": "Ho"})
+        await on_event({
+            "type": "tool_use",
+            "tool": "probe",
+            "server": "infra",
+            "args": {"password": "PWN", "safe": "ok"},
+        })
+        final = list(messages) + [
+            {"role": "assistant", "content": [{"type": "text", "text": "Hola"}]},
+        ]
+        return ("Hola", [], final)
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+
+    async def collect():
+        stream = await copilot_module.open_turn_stream(
+            conversation_id=conv["id"],
+            user_message="hola",
+            user=admin_user,
+        )
+        out = []
+        async for evt in stream:
+            out.append(evt)
+        return out
+
+    events = _run(collect())
+    assert events[0]["type"] == "ready"
+    assert {"type": "text_delta", "text": "Ho"} in events
+    tool_evt = next(e for e in events if e.get("type") == "tool_use")
+    assert tool_evt["args"] == {"password": "***", "safe": "ok"}
+    done_evt = next(e for e in events if e.get("type") == "done")
+    assert done_evt["result"]["reply"] == "Hola"

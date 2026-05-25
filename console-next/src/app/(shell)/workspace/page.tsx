@@ -9,12 +9,9 @@ import { ChatLayout } from "@/components/workspace/ChatLayout";
  * is a thin shell so future route params (e.g. /workspace/[cid])
  * can wrap the same component.
  *
- * SSE streaming is documented in copilot_workflows.py:6-7 as
- * next-session backend work; useChat awaits the full
- * non-streaming run_turn response and renders the assistant
- * reply once it lands. The "pensando…" placeholder ChatMessages
- * shows while sendMutation.isPending covers the perceived-
- * latency gap.
+ * ChatLayout opens the Copilot SSE stream for interactive turns,
+ * renders token deltas as they arrive, then refreshes the persisted
+ * conversation once the turn completes.
  */
 type SearchParams =
   | Record<string, string | string[] | undefined>
