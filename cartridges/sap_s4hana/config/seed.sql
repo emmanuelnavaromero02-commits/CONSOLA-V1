@@ -31,10 +31,12 @@ ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 -- ── Entities ──────────────────────────────────────────────────────────────────
 -- The real S/4HANA OData entities, mirroring infra/init/77_sap_entity_alignment.sql
 -- and cartridges/sap_s4hana/app/config/entities.yaml. Previously this block held a
--- copy-paste of the SAP HCM business entities (EmployeeMaster, PersonalData, ...),
--- which never matched entities.yaml; re-importing the cartridge re-seeded those junk
--- rows and undid migration 77's alignment. Metadata (odata_entity / mode / watermark
--- / page_size / date_field) is inherited from entities.yaml.
+-- clone of the SAP HCM business entities (EmployeeMaster, PersonalData, ...), which
+-- never matched entities.yaml; re-importing the cartridge re-seeded those junk rows
+-- and undid migration 77's alignment. This UPSERT now seeds the 25 correct rows on
+-- (cartridge_id, entity); any leftover HCM rows are pruned by migration 77 (a fresh
+-- install has none). Metadata (odata_entity / mode / watermark / page_size /
+-- date_field) is inherited from entities.yaml.
 INSERT INTO entity_config
     (cartridge_id, entity, odata_entity, display_name, description, mode,
      watermark_field, watermark_format, page_size, date_field, dag_id, enabled, trigger_type)
