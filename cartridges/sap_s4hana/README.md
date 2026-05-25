@@ -40,6 +40,75 @@ URL-safe id in `entity:`, lives in
 > short, URL-safe `entity:` id (e.g. `BusinessPartner`) without breaking
 > on slashes.
 
+## Entidades extraídas (Bloque A)
+
+25 entidades ERP alineadas en `app/config/entities.yaml` (nombre de negocio →
+entityset OData), cubriendo Maestros, Ventas (SD), Compras (MM), Finanzas (FI/CO)
+e Inventario:
+
+| Dominio | Entidades |
+| --- | --- |
+| Partners | `BusinessPartner`, `Customer`, `Supplier`, `BusinessPartnerAddress` |
+| Productos | `Product`, `ProductDescription` |
+| Organización | `CompanyCode`, `CostCenter`, `ProfitCenter`, `GLAccount` |
+| Ventas | `SalesOrder`, `SalesOrderItem`, `SalesOrderScheduleLine`, `BillingDocument`, `BillingDocumentItem` |
+| Compras | `PurchaseOrder`, `PurchaseOrderItem`, `PurchaseRequisitionHeader`, `PurchaseRequisitionItem`, `SupplierInvoice` |
+| Finanzas | `GLAccountLineItem`, `OPLAcctgDocItemCube`, `JournalEntryItem` |
+| Inventario | `MatlStkInAcctMod`, `MaterialDocumentHeader` |
+
+Protección por campo: ids de partner (`BusinessPartner`/`Customer`/`Supplier`/
+`InvoicingParty`) `shadowed`; impuestos `masked`; banca (`IBAN`/`BankAccount`/
+`SwiftCode`/…) `encrypted`; dirección `masked`.
+
+## Datasets (Bloque B)
+
+27 datasets en `datasets/` (sembrados vía `infra/init/81_sap_s4hana_datasets_seed.sql`,
+con `workspace_id` en cada fila). Privacy by design: ningún gold expone campos
+`encrypted`; los ids viajan como hash estable (FK).
+
+**Silver — 15 `*_latest` (por entidad, tipados):** `businesspartner`, `customer`,
+`supplier`, `businesspartneraddress`, `product`, `companycode`, `costcenter`,
+`glaccount`, `salesorder`, `salesorderitem`, `billingdocument`,
+`billingdocumentitem`, `purchaseorder`, `purchaseorderitem`, `supplierinvoice`.
+
+**Silver — 4 curados:**
+
+| Dataset | Descripción |
+| --- | --- |
+| `sap_s4hana_sales_orders_full` | Pedidos de venta a nivel línea + cabecera |
+| `sap_s4hana_purchase_orders_full` | Órdenes de compra a nivel línea + cabecera |
+| `sap_s4hana_invoices_full` | Facturas de venta a nivel línea + cabecera |
+| `sap_s4hana_business_partner_full` | Vista 360 del partner (roles cliente/proveedor + dirección) |
+
+**Gold — 8 de negocio:**
+
+| Dataset | Descripción |
+| --- | --- |
+| `revenue_by_customer` | Ingresos por cliente y mes |
+| `open_sales_orders` | Backlog de pedidos abiertos por cliente |
+| `overdue_billing` | Aging de cartera (vencimiento estimado; estado de pago pendiente de FI) |
+| `purchase_spend_by_supplier` | Gasto de compras por proveedor y mes |
+| `gl_balance_by_account` | Saldo contable por sociedad/cuenta/ejercicio (ACDOCA) |
+| `inventory_movement_summary` | Movimientos de inventario por mes (cabecera; cantidades pendientes de item) |
+| `cost_center_expense` | Gasto por centro de costo (pendiente de asignación contable de compra) |
+| `business_partner_anomalies` | Detección automática de irregularidades (mejora propia, prep. Fase 3) |
+
+> **Nota de privacidad/modelo:** `Customer`/`Supplier` están `shadowed` en sus
+> maestros, pero `SoldToParty`/`Supplier` en documentos transaccionales van en
+> claro (esas entidades no tienen regla de protección), así que no se puede unir
+> el maestro de cliente/proveedor por id desde ventas/compras; se usa el código
+> del documento como dimensión. La vista 360 de partner sí une bien porque
+> BusinessPartner/Customer/Supplier comparten el id con el mismo hash.
+
+## Apps publicadas
+
+_(Pendiente — Bloque D.)_
+
+## Conocimiento del dominio
+
+Knowledge Bits actuales en `app/config/knowledge_bits.yaml`. KBs sobre los golds
+de este bloque llegan en el Bloque C.
+
 ## Environment variables
 
 Required to talk to SAP (canonical names):
