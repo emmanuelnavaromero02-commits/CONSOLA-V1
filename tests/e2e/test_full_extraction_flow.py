@@ -55,9 +55,9 @@ def _bail_or_skip(message: str) -> None:
 def test_full_flow_01_admin_session_and_request_id(admin_session):
     """Sanity: the admin session works and every response carries the
     correlation header introduced in v1.42.1."""
-    r = admin_session.get("/api/auth/me")
+    r = admin_session.get("/api/me")
     assert r.status_code == 200, r.text
-    assert r.headers.get("x-request-id"), "X-Request-ID missing on /api/auth/me"
+    assert r.headers.get("x-request-id"), "X-Request-ID missing on /api/me"
 
 
 def test_full_flow_02_tool_manifest_lists_cartridges(admin_session):
@@ -132,17 +132,17 @@ def test_full_flow_05_audit_event_carries_ip_user_agent(admin_session):
     """v1.41.0 forensic-complete: every admin action lands in
     audit_events with ip + user_agent populated. After the conversation
     in test 4 there's at least one new row."""
-    r = admin_session.get("/api/admin/audit?limit=20")
+    r = admin_session.get("/security/audit?limit=20")
     if r.status_code == 404:
         # The audit list endpoint isn't shipped in all build profiles.
         # In CI this is a deploy-config issue worth surfacing.
         _bail_or_skip(
-            "GET /api/admin/audit returned 404 — this build profile "
+            "GET /security/audit returned 404 — this build profile "
             "does not expose the audit list endpoint"
         )
     if r.status_code != 200:
         _bail_or_skip(
-            f"GET /api/admin/audit returned {r.status_code} — "
+            f"GET /security/audit returned {r.status_code} — "
             "audit surface is degraded"
         )
     body = r.json()
