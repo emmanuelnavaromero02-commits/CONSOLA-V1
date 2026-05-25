@@ -1,0 +1,45 @@
+"""P11 — packaged-dataset seeding must surface bad data, not swallow it.
+
+``_parse_dataset`` parses a ``-- sources: [...]`` header line. When the JSON is
+malformed it must keep parsing (best-effort seed) but log a WARNING with the
+offending path and exception, instead of silently dropping the error.
+"""
+from __future__ import annotations
+
+import importlib
+import logging
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture()
+def seed_module():
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
+    siblings = ("/cartridges/", "/console", "/refinement", "/vault", "/workspace", "/mcp-infra")
+    sys.path[:] = [p for p in sys.path if not any(s in p for s in siblings)]
+    sys.path.insert(0, str(REPO_ROOT / "console"))
+    return importlib.import_module("app.services.seed_packaged_datasets")
+
+
+def test_invalid_sources_logs_warning_and_continues(seed_module, tmp_path, caplog):
+    sql_file = tmp_path / "replicon_demo.sql"
+    sql_file.write_text(
+        "-- sources: [not-valid-json\n-- description: demo\nSELECT 1 AS ok\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        result = seed_module._parse_dataset(sql_file)
+
+    # Best-effort: parsing still returns a dataset with empty sources.
+    assert result["sources"] == []
+    assert result["sql"].strip().endswith("SELECT 1 AS ok")
+    # And the failure is surfaced, not swallowed.
+    messages = " ".join(r.getMessage() for r in caplog.records)
+    assert "invalid sources" in messages
+    assert "replicon_demo.sql" in messages

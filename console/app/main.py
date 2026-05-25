@@ -1047,10 +1047,17 @@ async def security_headers_middleware(request: Request, call_next):
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
 _AUTH_PUBLIC_EXACT = {
-    "/login", "/auth/login", "/api/auth/login", "/auth/logout", "/auth/me", "/auth/me-jwt", "/auth/me-current", "/auth/refresh", "/favicon.ico",
+    # ── Login / session ──
+    "/login", "/auth/login", "/api/auth/login", "/auth/logout",
+    "/auth/me", "/auth/me-jwt", "/auth/me-current", "/auth/refresh",
+    # ── Account activation ──
     "/activate", "/auth/activate", "/auth/activate/info",
+    # ── Password recovery ──
     "/forgot-password", "/auth/forgot-password",
-    "/reset-password",  "/auth/reset-password", "/auth/reset/info",
+    "/reset-password", "/auth/reset-password", "/auth/reset/info",
+    # ── Static / browser ──
+    "/favicon.ico",
+    # ── Health / monitoring ──
     # Sprint v1.23.1 hotfix: /healthz must be reachable WITHOUT auth so
     # the v1.21 compose probe + the v1.23 smoke script can hit it from
     # inside the container / from `make smoke` on the host. Without
