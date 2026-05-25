@@ -51,20 +51,29 @@ export function SlashCommandsPalette({
   commands,
   onClose,
 }: Props) {
+  if (!open) return null;
+  return (
+    <SlashCommandsPaletteContent
+      key={query ?? ""}
+      query={query}
+      commands={commands}
+      onClose={onClose}
+    />
+  );
+}
+
+function SlashCommandsPaletteContent({
+  query,
+  commands,
+  onClose,
+}: Omit<Props, "open">) {
   const inputRef     = useRef<HTMLInputElement | null>(null);
   const [search, setSearch]     = useState(query ?? "");
   const [activeIdx, setActiveIdx] = useState(0);
 
-  // Re-seed the search when the palette opens with a fresh
-  // query (e.g. when triggered by the input typing "/").
   useEffect(() => {
-    if (open) {
-      setSearch(query ?? "");
-      setActiveIdx(0);
-      // Defer focus to next tick so the input is mounted.
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open, query]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.replace(/^\/+/, "").trim().toLowerCase();
@@ -114,8 +123,6 @@ export function SlashCommandsPalette({
       onClose();
     }
   }
-
-  if (!open) return null;
 
   // Flat-index helper so the per-group rendering knows which
   // row in the global filtered list it represents.

@@ -37,7 +37,6 @@ function validateBase(raw: string | undefined | null): string {
     /* fall through */
   }
   if (typeof console !== "undefined") {
-    // eslint-disable-next-line no-console
     console.warn(
       "[legacy-url] NEXT_PUBLIC_LEGACY_CONSOLE_URL rejected; using deployment-safe fallback",
       { raw: trimmed },

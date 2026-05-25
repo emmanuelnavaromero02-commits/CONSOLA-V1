@@ -408,6 +408,13 @@ import { state } from './legacy-state.js';
 
     export async function renderResumen() {
       const cartridges = state._cartridges;
+      const selected = state._currentCartridge;
+      const selectedSummary = selected ? `
+        <div id="studio-selected-summary" class="empty-card" style="margin-bottom:12px">
+          Cartucho seleccionado: <strong>${esc(selected.name || selected.id)}</strong>
+          <span style="color:var(--text3);font-family:var(--font-mono)">(${esc(selected.id)})</span>
+          · ${esc(String((selected.entities || []).length))} entidades
+        </div>` : '';
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -415,6 +422,7 @@ import { state } from './legacy-state.js';
             <p class="step-desc">Cartuchos registrados. Selecciona uno en el combo para ver sus detalles, o crea uno nuevo con el asistente.</p>
           </div>
         </div>
+        ${selectedSummary}
         ${makeUploadZone('uz-conn', 'Importar cartucho desde ZIP', 'Sube un ZIP exportado previamente para registrarlo en esta instalación')}
         <div class="item-grid" id="cart-grid">
           ${cartridges.length
@@ -513,13 +521,13 @@ import { state } from './legacy-state.js';
                   </select>
                 </span>
                 <span><select><option>preview_dag</option></select></span>
-                <span><button class="btn btn-sm" type="button">► Extraer</button></span>
+                <span><button class="btn btn-sm" type="button" aria-label="Extraer">► Extraer</button></span>
               </div>
             </div>` : '<div class="empty-card empty-state">No hay cartuchos. Ve al Paso 1 para crear uno.</div>'}
         </div>
       `;
 
-      if (cartridges.length) loadEntityList();
+      if (cartridges.length) await loadEntityList();
     }
 
     // entity → last pipeline_run record
@@ -627,7 +635,8 @@ import { state } from './legacy-state.js';
 
       // Mode select
       const modeSel = `
-        <select style="width:100%;height:22px;font-size:10px;padding:0 4px"
+        <select name="mode" aria-label="Modo de extracción"
+                style="width:100%;height:22px;font-size:10px;padding:0 4px"
                 onchange="patchEntityField(${escJsArg(cartridge)},${escJsArg(rawName)},'mode',this.value,this)">
           <option value="full"        ${modeRaw==='full'        ?'selected':''}>full</option>
           <option value="incremental" ${modeRaw==='incremental' ?'selected':''}>incremental</option>
@@ -666,8 +675,9 @@ import { state } from './legacy-state.js';
       const safeEntityId = entityDomId(rawName);
       const extractBtnId = `ebtn-${safeEntityId}`;
       const extractBtn = isExtracting
-        ? `<button class="btn btn-sm" id="${extractBtnId}" disabled style="color:var(--cyan)">⟳ ...</button>`
+        ? `<button class="btn btn-sm" id="${extractBtnId}" aria-label="Extraer" disabled style="color:var(--cyan)">⟳ ...</button>`
         : `<button class="btn btn-sm" id="${extractBtnId}"
+                   aria-label="Extraer"
                    data-studio-action="extract"
                    data-cartridge="${esc(cartridge)}"
                    data-entity="${esc(rawName)}"
@@ -1529,15 +1539,9 @@ import { state } from './legacy-state.js';
 
           <!-- Tab bar (shrinks to content) -->
           <div class="tab-bar" style="flex-shrink:0;margin:0;display:flex;align-items:center">
-            <div class="tab ${state._activeLayer==='bronze'?'active':''}" onclick="filterDS('bronze')">
-              BRONZE <span style="opacity:.6" id="bronze-count"></span>
-            </div>
-            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">
-              SILVER <span style="opacity:.6">(${counts.silver})</span>
-            </div>
-            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">
-              GOLD <span style="opacity:.6">(${counts.gold})</span>
-            </div>
+            <div class="tab ${state._activeLayer==='bronze'?'active':''}" onclick="filterDS('bronze')">BRONZE <span style="opacity:.6" id="bronze-count"></span></div>
+            <div class="tab ${state._activeLayer==='silver'?'active':''}" onclick="filterDS('silver')">SILVER <span style="opacity:.6">(${counts.silver})</span></div>
+            <div class="tab ${state._activeLayer==='gold'?'active':''}" onclick="filterDS('gold')">GOLD <span style="opacity:.6">(${counts.gold})</span></div>
             <button class="btn btn-amber btn-sm" id="btn-new-ds" onclick="toggleNewDS()"
                     style="margin-left:auto;margin-right:8px;${state._activeLayer==='bronze'?'display:none':''}">+ Nuevo</button>
           </div>
@@ -1553,11 +1557,11 @@ import { state } from './legacy-state.js';
         </div>
       `;
       if (state._activeLayer === 'bronze') loadBronzeTab();
-      else renderDSWorkspace(state._activeLayer);
+      else await renderDSWorkspace(state._activeLayer);
     }
 
 
-    export function filterDS(layer) {
+    export async function filterDS(layer) {
       if (layer === 'master') layer = 'gold';
       state._activeLayer = layer;
       document.querySelectorAll('#step-content .tab').forEach((t, i) => {
@@ -1571,7 +1575,7 @@ import { state } from './legacy-state.js';
         document.getElementById('ds-list-area').innerHTML = '<div style="color:var(--text3);padding:16px">Cargando fuentes Bronze...</div>';
         loadBronzeTab();
       } else {
-        renderDSWorkspace(layer);
+        await renderDSWorkspace(layer);
       }
     }
 
@@ -1584,7 +1588,7 @@ import { state } from './legacy-state.js';
 
     // ── Silver/Gold two-panel workspace ────────────────────────────────────────
 
-    export function renderDSWorkspace(layer) {
+    export async function renderDSWorkspace(layer) {
       const area = document.getElementById('ds-list-area');
       if (!area) return;
       const _cart = state._currentCartridge?.id || '';
@@ -1627,9 +1631,9 @@ import { state } from './legacy-state.js';
 
       // Auto-select first or restore selection
       if (state._selectedDS && ds.find(d => d.name === state._selectedDS.name)) {
-        selectDS(state._selectedDS.name);
+        await selectDS(state._selectedDS.name);
       } else if (ds.length) {
-        selectDS(ds[0].name);
+        await selectDS(ds[0].name);
       }
     }
 
@@ -1657,10 +1661,19 @@ import { state } from './legacy-state.js';
         return;
       }
 
-      panel.innerHTML = `<div style="color:var(--text3);padding:20px">Cargando...</div>`;
-
       let sqlDef = '', description = '', sources = [], layer = state._activeLayer;
       state._selectedDSDetail = null;
+      panel.innerHTML = _dsEditorHtml({
+        name,
+        layer,
+        cartridge,
+        entity: '',
+        description: '',
+        sql: `-- ${name} (${layer})\nSELECT 1 AS preview_ready;`,
+        isNew: false,
+        rowCount: undefined,
+        lastRefresh: undefined,
+      });
       try {
         const r = await fetch(`/api/datasets/${encodeURIComponent(name)}/detail`);
         const d = await r.json();
@@ -1767,7 +1780,7 @@ import { state } from './legacy-state.js';
 
           <!-- Action bar -->
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn btn-amber" onclick="previewDS()">▶ Vista Previa</button>
+            <button class="btn btn-amber" onclick="previewDS()">▶ Ejecutar vista previa</button>
             <button class="btn btn-amber" onclick="openDsEditorRunner()">⬡ Ejecutar SQL</button>
             <span style="font-size:10px;color:var(--text3)">Ctrl+Enter · Ctrl+⇧+Enter (modal)</span>
             <button class="btn" onclick="saveDS()">✓ Guardar</button>
@@ -2257,7 +2270,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
               Describe los KPIs que necesitas y el asistente los configura por ti.</p>
           </div>
-          <a class="btn btn-sm btn-amber" href="${esc(supersetUrl())}" target="_blank">Abrir Superset ↗</a>
+          <a class="btn btn-sm btn-amber" role="button" href="${esc(supersetUrl())}" target="_blank" rel="noopener">Abrir Superset ↗</a>
         </div>
 
         <div class="card">
@@ -3402,8 +3415,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
               <div id="dag-list" class="dag-list empty-state">
                 <div style="padding:20px;text-align:center;color:var(--text3);font-size:11px">Cargando…</div>
               </div>
-              <div class="dag-sidebar-hdr" style="cursor:pointer;border-top:1px solid var(--border)"
-                   onclick="toggleDagTemplates()" title="Plantillas de DAG">
+              <div class="dag-sidebar-hdr" role="button" tabindex="0" aria-label="Plantillas"
+                   style="cursor:pointer;border-top:1px solid var(--border)"
+                   onclick="toggleDagTemplates()" onkeydown="if(event.key==='Enter')toggleDagTemplates()" title="Plantillas de DAG">
                 ◈ PLANTILLAS
                 <span id="tpl-toggle-s" style="margin-left:auto;color:var(--text3);font-size:9px">▶</span>
               </div>
@@ -4525,6 +4539,15 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const msg = hasSource
         ? `Quiero modificar el DAG \`${dagId}\`. Código actual:\n\n\`\`\`python\n${source}\n\`\`\`\n\n¿Qué cambios quieres hacer?`
         : `Quiero crear el DAG \`${dagId}\` del cartucho \`${_dagCartridge()}\`. Genera el código completo y despliégalo con infra__airflow_create_dag.`;
+
+      if (typeof window.studioSetAssistantOpen === 'function') {
+        window.studioSetAssistantOpen(true);
+      } else {
+        document.body.classList.add('studio-ai-open');
+        document.body.classList.remove('studio-ai-collapsed');
+        document.getElementById('studio-ai-toggle')?.setAttribute('aria-expanded', 'true');
+        try { localStorage.setItem('studio.ai.panel', 'open'); } catch(_) {}
+      }
 
       const input = document.getElementById('ai-input');
       if (input) {

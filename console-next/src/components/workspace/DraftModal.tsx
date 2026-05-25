@@ -58,6 +58,11 @@ const MAX_TITLE_CHARS    = 120;
 
 
 export function DraftModal({ open, onClose, seed }: Props) {
+  if (!open) return null;
+  return <DraftModalContent key={seed ?? ""} onClose={onClose} seed={seed} />;
+}
+
+function DraftModalContent({ onClose, seed }: Omit<Props, "open">) {
   const [kind,     setKind]     = useState<string>("email");
   const [about,    setAbout]    = useState(seed ?? "");
   const [audience, setAudience] = useState("");
@@ -71,19 +76,9 @@ export function DraftModal({ open, onClose, seed }: Props) {
   const textareaRef   = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    if (!open) return;
-
     previousFocus.current = (document.activeElement instanceof HTMLElement)
       ? document.activeElement
       : null;
-
-    setAbout(seed ?? "");
-    setAudience("");
-    setTitle("");
-    setKind("email");
-    setTone("formal");
-    setDraft(null);
-    setBusy(false);
 
     requestAnimationFrame(() => textareaRef.current?.focus());
 
@@ -95,7 +90,7 @@ export function DraftModal({ open, onClose, seed }: Props) {
       document.removeEventListener("keydown", onKey);
       previousFocus.current?.focus();
     };
-  }, [open, seed, onClose]);
+  }, [onClose]);
 
   async function generate() {
     const aboutTrimmed = about.trim();
@@ -127,8 +122,6 @@ export function DraftModal({ open, onClose, seed }: Props) {
       toast.error("No se pudo copiar. Selecciona y copia manualmente.");
     }
   }
-
-  if (!open) return null;
 
   return (
     <div

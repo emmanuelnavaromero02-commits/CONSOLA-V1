@@ -1,7 +1,7 @@
 "use client";
 
 import TextareaAutosize from "react-textarea-autosize";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useReducer, type KeyboardEvent } from "react";
 
 interface Props {
   onSend:       (text: string) => void;
@@ -20,6 +20,22 @@ interface Props {
  * referenced by copilot_service.py.
  */
 const MAX_MESSAGE_CHARS = 8_000;
+
+type ValueAction =
+  | { type: "clear" }
+  | { type: "input"; value: string }
+  | { type: "seed"; value?: string };
+
+function trimSeed(value?: string): string {
+  return value?.trim().slice(0, MAX_MESSAGE_CHARS) ?? "";
+}
+
+function valueReducer(current: string, action: ValueAction): string {
+  if (action.type === "clear") return "";
+  if (action.type === "input") return action.value.slice(0, MAX_MESSAGE_CHARS);
+  const seed = trimSeed(action.value);
+  return current.trim() || !seed ? current : seed;
+}
 
 /**
  * v1.44.4 Task A — chat input.
@@ -43,19 +59,17 @@ export function MessageInput({
   initialValue,
   onSlash,
 }: Props) {
-  const [value, setValue] = useState("");
+  const [value, dispatchValue] = useReducer(valueReducer, initialValue, trimSeed);
 
   useEffect(() => {
-    const seed = initialValue?.trim();
-    if (!seed) return;
-    setValue((current) => (current.trim() ? current : seed.slice(0, MAX_MESSAGE_CHARS)));
+    dispatchValue({ type: "seed", value: initialValue });
   }, [initialValue]);
 
   function submit() {
     const trimmed = value.trim();
     if (!trimmed) return;
     onSend(trimmed);
-    setValue("");
+    dispatchValue({ type: "clear" });
   }
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -84,7 +98,7 @@ export function MessageInput({
     >
       <TextareaAutosize
         value={value}
-        onChange={(e) => setValue(e.target.value.slice(0, MAX_MESSAGE_CHARS))}
+        onChange={(e) => dispatchValue({ type: "input", value: e.target.value })}
         onKeyDown={handleKey}
         disabled={disabled}
         placeholder={placeholder ?? "Pregunta algo o escribe / para comandos…"}

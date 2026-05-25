@@ -463,10 +463,38 @@ async def dag_deploy(
             "message": "dag_id and code are required, or provide template_id + cartridge + entity",
             "dag_id": dag_id,
         }
+    safe_cartridge = _clean_identifier(cartridge, label="cartridge")
+    _require_cartridge_visible(user, safe_cartridge)
+    manifest = await cartridge_service.get_cartridge(safe_cartridge)
+    if not manifest:
+        raise HTTPException(404, f"Cartridge '{safe_cartridge}' not found")
+    safe_dag_id = _clean_dag_id(dag_id)
+    registered = _manifest_dag_ids(manifest)
+    if safe_dag_id in registered:
+        await audit_service.record_event(
+            user_id=user.get("id"),
+            email=user.get("email"),
+            action="studio.dag.deploy",
+            resource_type="airflow_dag",
+            resource_id=safe_dag_id,
+            status="skipped",
+            metadata={
+                "cartridge": safe_cartridge,
+                "entity": entity,
+                "reason": "packaged_dag_managed_by_cartridge",
+            },
+        )
+        return {
+            "status": "managed",
+            "dag_id": safe_dag_id,
+            "message": "DAG empaquetado: se gestiona desde el cartucho, no desde airflow/dags.",
+        }
+    if not safe_dag_id.startswith(f"{safe_cartridge}_"):
+        raise HTTPException(403, f"DAG '{safe_dag_id}' does not belong to cartridge '{safe_cartridge}'")
     result = await mcp_registry.invoke("infra", "airflow_create_dag", {
-        "dag_id": _clean_identifier(dag_id, label="dag_id"),
+        "dag_id": safe_dag_id,
         "code": code,
-        "cartridge_id": cartridge,
+        "cartridge_id": safe_cartridge,
         "description": body.get("description"),
     }, user=user)
     if isinstance(result, dict) and result.get("error"):
@@ -475,26 +503,26 @@ async def dag_deploy(
             email=user.get("email"),
             action="studio.dag.deploy",
             resource_type="airflow_dag",
-            resource_id=dag_id,
+            resource_id=safe_dag_id,
             status="failed",
-            metadata={"cartridge": cartridge, "entity": entity, "error": result.get("error")},
+            metadata={"cartridge": safe_cartridge, "entity": entity, "error": result.get("error")},
         )
         if "ALLOW_RCE_TOOLS" in str(result.get("error")):
             raise HTTPException(
                 403,
                 "Deploy a Airflow requiere ALLOW_RCE_TOOLS=true en el entorno local.",
             )
-        return {"status": "failed", "dag_id": dag_id, "error": result["error"]}
+        return {"status": "failed", "dag_id": safe_dag_id, "error": result["error"]}
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),
         action="studio.dag.deploy",
         resource_type="airflow_dag",
-        resource_id=dag_id,
+        resource_id=safe_dag_id,
         status="success",
-        metadata={"cartridge": cartridge, "entity": entity},
+        metadata={"cartridge": safe_cartridge, "entity": entity},
     )
-    return {"status": "deployed", "dag_id": dag_id, "result": result}
+    return {"status": "deployed", "dag_id": safe_dag_id, "result": result}
 
 
 @router.get("/templates", dependencies=[Depends(require_studio_read)])

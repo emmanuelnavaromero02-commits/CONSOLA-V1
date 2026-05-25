@@ -135,7 +135,7 @@ test.describe("Login — happy path", () => {
     ).toBe(true);
   });
 
-  test("case-sensitive email — UPPERCASE login fails", async ({ page }) => {
+  test("case-insensitive email — UPPERCASE login behavior is documented", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel(/email/i).fill(EMAIL.toUpperCase());
     await page.getByLabel(/contraseña|password/i).fill(PASSWORD);
@@ -143,7 +143,7 @@ test.describe("Login — happy path", () => {
     // If this test FAILS (login succeeds), the backend normalises
     // emails — fine semantics but worth knowing. The bug report
     // pins it as user-reported behaviour.
-    await page.waitForTimeout(2_000);
+    await page.waitForURL(/\/dashboard/, { timeout: 10_000 }).catch(() => undefined);
     const url = page.url();
     // Allow either: login succeeded (case-insensitive backend) or
     // stayed on /login (case-sensitive). Pin which one happens.

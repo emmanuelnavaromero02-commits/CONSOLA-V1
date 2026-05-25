@@ -2,10 +2,9 @@
  * v1.44.3.2.1 spec 11 — Copilot backend deep coverage.
  *
  * 22 tests covering the LIVE /api/copilot/* endpoints. These are
- * marked test.fail(true) where they require the v1.44.4 streaming
- * SSE endpoint or the /copilot chat page that haven't shipped yet
- * — but the contract probes for memory / drafts / workflows /
- * briefing all run today against the v1.44.3 LLM integration.
+ * skipped only where they require live LLM keys or the deferred
+ * streaming SSE endpoint. The /copilot shell itself is active
+ * coverage and reuses the global authenticated storage state.
  *
  * Real LLM calls happen only when the developer has ANTHROPIC_API_KEY
  * (or GEMINI_API_KEY) exported. Without a key the LLM-dependent
@@ -279,8 +278,11 @@ test.describe("Copilot briefing", () => {
   });
 });
 
-test.describe.skip("Copilot streaming + chat UI — deferred to v1.44.4", () => {
+test.describe("Copilot streaming + chat UI", () => {
+  test.use({ storageState: ".auth/session.json" });
+
   test("GET /api/copilot/chat/{id}/stream exists", async () => {
+    test.skip(true, "SSE chat endpoint is deferred; /copilot shell is covered below.");
     const { ctx } = await authedCtxAndCsrf();
     const r = await ctx.get(
       `${BACKEND}/api/copilot/chat/00000000-0000-0000-0000-000000000000/stream`,
@@ -290,9 +292,9 @@ test.describe.skip("Copilot streaming + chat UI — deferred to v1.44.4", () => 
 
   test("/copilot Next.js page renders chat shell", async ({ page }) => {
     await page.goto("/copilot");
-    await expect(page.getByText(/copiloto|chat/i).first()).toBeVisible({
-      timeout: 10_000,
-    });
+    await expect(
+      page.locator('[data-testid="chat-messages"], [role="log"], [aria-label*="mensajes" i]').first(),
+    ).toBeVisible({ timeout: 10_000 });
   });
 
   test("/copilot has a message input", async ({ page }) => {
@@ -303,6 +305,7 @@ test.describe.skip("Copilot streaming + chat UI — deferred to v1.44.4", () => 
   });
 
   test("/copilot streaming renders tokens incrementally", async ({ page }) => {
+    test.skip(true, "SSE chat endpoint is deferred until live streaming is implemented.");
     await page.goto("/copilot");
     const input = page.getByRole("textbox", { name: /mensaje|message/i });
     await input.fill("Cuántos cartuchos hay configurados?");

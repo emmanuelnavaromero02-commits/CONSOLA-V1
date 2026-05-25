@@ -234,10 +234,21 @@ test.describe("Legacy /studio page (port 8000)", () => {
     async ({ authedPage: page }) => {
       await openStudio(page);
       await goStudioStep(page, 5);
+      await page.waitForFunction(
+        () => {
+          const text = document.querySelector("#gold-list")?.textContent || "";
+          return (
+            /Crear en Superset/i.test(text) ||
+            /No hay datasets Gold|Error cargando datasets/i.test(text)
+          );
+        },
+        null,
+        { timeout: 15_000 },
+      );
       const supersetBtn = page
         .getByRole("button", { name: /\+?\s*crear en superset/i })
         .first();
-      if (!(await supersetBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
+      if (!(await supersetBtn.isVisible().catch(() => false))) {
         test.skip(true, "'Crear en Superset' button not present on /studio");
       }
       const requestPromise = page.waitForRequest(
@@ -277,6 +288,14 @@ test.describe("Legacy /studio page (port 8000)", () => {
       // — we look for whichever the page exposes.
       await openStudio(page);
       await goStudioStep(page, 2);
+      const existingPanel = page
+        .locator('[role="dialog"], [role="tabpanel"], .templates-list, .plantillas')
+        .first();
+      if (await existingPanel.isVisible({ timeout: 5_000 }).catch(() => false)) {
+        await expect(existingPanel).toBeVisible();
+        return;
+      }
+
       const candidates = [
         page.getByRole("tab", { name: /plantilla/i }),
         page.getByRole("button", { name: /plantilla/i }),

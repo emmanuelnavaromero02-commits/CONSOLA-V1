@@ -41,3 +41,29 @@ jobs:
           ruff format --check \
             console workspace vault refinement mcp-infra cartridges \
             || true
+
+  console-next:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console-next/package-lock.json
+
+      - name: Install console-next dependencies
+        run: npm --prefix console-next ci
+
+      - name: ESLint
+        run: npm --prefix console-next run lint
+
+      - name: Vitest
+        run: npm --prefix console-next run test
+
+      - name: TypeScript
+        run: npm --prefix console-next run typecheck
+
+      - name: Production build
+        run: npm --prefix console-next run build
