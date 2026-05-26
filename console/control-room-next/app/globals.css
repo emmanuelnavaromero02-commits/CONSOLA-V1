@@ -420,14 +420,15 @@ p {
 .operations-strip {
   max-width: 1308px;
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(230px, 0.45fr) minmax(220px, 0.45fr);
+  grid-template-columns: minmax(0, 1.7fr) repeat(3, minmax(210px, 0.45fr));
   gap: 16px;
   margin: 0 auto 30px;
 }
 
 .cycle-panel,
 .source-health-panel,
-.threshold-panel {
+.threshold-panel,
+.learning-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -582,6 +583,13 @@ p {
   padding: 18px;
 }
 
+.learning-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px;
+}
+
 .threshold-title {
   display: flex;
   align-items: flex-start;
@@ -589,9 +597,28 @@ p {
   gap: 10px;
 }
 
-.threshold-title strong {
+.threshold-title strong,
+.learning-title strong {
   color: #475569;
   font-size: 12px;
+}
+
+.learning-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.learning-title strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.learning-title svg {
+  width: 15px;
+  height: 15px;
 }
 
 .threshold-meter {
@@ -609,12 +636,39 @@ p {
   background: linear-gradient(90deg, var(--purple), var(--blue));
 }
 
-.threshold-panel p {
+.threshold-panel p,
+.learning-panel p {
   margin: 0 0 12px;
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.learning-panel article {
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.learning-panel article span,
+.learning-empty {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.learning-panel article strong {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 5px;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .threshold-tags {
@@ -1482,6 +1536,44 @@ p {
 .rules-list {
   display: grid;
   gap: 12px;
+}
+
+.learned-history {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: 8px;
+  background: #ecfdf5;
+}
+
+.learned-history > div span,
+.learned-history article span {
+  color: #047857;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.learned-history > div strong {
+  display: block;
+  margin-top: 4px;
+  color: #064e3b;
+  font-size: 15px;
+}
+
+.learned-history article {
+  padding: 12px;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.learned-history article p {
+  margin: 5px 0 0;
+  color: #334155;
+  line-height: 1.45;
 }
 
 .execution-bridge {

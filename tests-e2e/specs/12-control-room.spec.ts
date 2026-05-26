@@ -159,6 +159,19 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       "approval must be written to audit_events",
     ).toBe(true);
 
+    const lessonsResponse = await page.request.get(
+      `${LEGACY}/api/control-room/lessons?cartridge_id=${encodeURIComponent(targetItem.cartridge)}&anomaly_type=${encodeURIComponent(targetItem.anomaly_type)}`,
+    );
+    expect(lessonsResponse.status(), "approval must expose persisted lessons").toBe(200);
+    const lessons = await lessonsResponse.json();
+    expect(lessons.summary.total, "approval should create at least one learned rule").toBeGreaterThan(0);
+    expect(
+      lessons.lessons.some((lesson: { item_id?: string; source_decision_id?: number | null }) => (
+        lesson.item_id === targetItem.id || Boolean(lesson.source_decision_id)
+      )),
+      "lessons endpoint must return item or decision-linked memory",
+    ).toBe(true);
+
     const cleanupResponse = await page.request.post(
       `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/reopen`,
       {

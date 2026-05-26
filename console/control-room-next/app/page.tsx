@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -143,6 +144,27 @@ interface DetectionThreshold {
   source?: "workspace" | "default" | string;
 }
 
+interface Lesson {
+  id?: number;
+  item_id: string;
+  cartridge_id: string;
+  anomaly_type: string;
+  rule: string;
+  source_decision_id?: number | null;
+  confidence?: number | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+}
+
+interface LessonPattern {
+  cartridge_id: string;
+  anomaly_type: string;
+  count: number;
+  avg_confidence?: number | null;
+  latest_rule?: string;
+  last_seen_at?: string;
+}
+
 interface ControlChecklistItem {
   id: string;
   desc: string;
@@ -215,6 +237,8 @@ interface ControlItem {
   impact_explanation?: string;
   thresholds_applied?: DetectionThreshold[];
   threshold_state?: "critical" | "warning" | "default" | string;
+  related_lessons?: Lesson[];
+  lesson_count?: number;
   action_templates?: ActionTemplate[];
   omega: Omega;
 }
@@ -246,6 +270,12 @@ interface Dashboard {
       total: number;
       by_cartridge?: Record<string, number>;
       items_with_thresholds?: number;
+    };
+    lessons?: {
+      total: number;
+      recent: Lesson[];
+      by_cartridge?: Record<string, number>;
+      top_patterns?: LessonPattern[];
     };
   };
   domains: Domain[];
@@ -885,6 +915,7 @@ function DashboardView({
           totalSources={dashboard?.sources.length ?? 0}
         />
         <ThresholdPanel thresholds={dashboard?.summary.thresholds} />
+        <LearningPanel lessons={dashboard?.summary.lessons} />
       </section>
 
       <FinancialPanel financial={dashboard?.summary.financial} />
@@ -1086,6 +1117,37 @@ function ThresholdPanel({
         </div>
       ) : (
         <span className="threshold-empty">Sin overrides por workspace</span>
+      )}
+    </section>
+  );
+}
+
+function LearningPanel({
+  lessons,
+}: {
+  lessons?: Dashboard["summary"]["lessons"];
+}) {
+  const total = lessons?.total ?? 0;
+  const topPattern = lessons?.top_patterns?.[0];
+  const recent = lessons?.recent?.[0];
+  return (
+    <section className="learning-panel" aria-label="Lecciones aprendidas">
+      <div className="learning-title">
+        <p className="section-kicker">Aprendizaje</p>
+        <strong><BookOpen aria-hidden /> {total}</strong>
+      </div>
+      <p>
+        {topPattern
+          ? `${topPattern.cartridge_id} · ${topPattern.anomaly_type} (${topPattern.count})`
+          : "Sin lecciones persistidas todavia"}
+      </p>
+      {recent ? (
+        <article>
+          <span>Decision #{recent.source_decision_id || "N/D"}</span>
+          <strong>{recent.rule}</strong>
+        </article>
+      ) : (
+        <span className="learning-empty">Se llenara al aprobar recomendaciones</span>
       )}
     </section>
   );
@@ -1336,6 +1398,7 @@ function DetailPage({
           <InfoBlock label="Impacto" value={item.impact_status === "ok" ? fmtMoney(item.impact_estimate) : "No calculable"} />
           <InfoBlock label="Prioridad" value={`${item.priority_score ?? 0}/100`} />
           <InfoBlock label="Umbral" value={item.threshold_state && item.threshold_state !== "default" ? item.threshold_state : "Default"} />
+          <InfoBlock label="Lecciones" value={`${item.lesson_count ?? 0} relacionadas`} />
         </div>
       </header>
 
@@ -1775,8 +1838,23 @@ function ControlPanel({ item }: { item: ControlItem }) {
 }
 
 function RulesPanel({ item }: { item: ControlItem }) {
+  const related = item.related_lessons || [];
   return (
     <div className="rules-list">
+      {related.length ? (
+        <section className="learned-history" aria-label="Historial de aprendizaje">
+          <div>
+            <span>{related.length} persistidas</span>
+            <strong>Patron aprendido para {item.cartridge}</strong>
+          </div>
+          {related.slice(0, 3).map((lesson) => (
+            <article key={`${lesson.id || lesson.item_id}-${lesson.rule}`}>
+              <span>Decision #{lesson.source_decision_id || "N/D"} · confianza {Math.round((lesson.confidence || 0) * 100)}%</span>
+              <p>{lesson.rule}</p>
+            </article>
+          ))}
+        </section>
+      ) : null}
       {item.omega.lessons.rules.map((rule) => (
         <PanelRow key={rule} label="Regla aprendida" value={rule} />
       ))}

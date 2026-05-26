@@ -285,6 +285,13 @@ async def control_room_patch_threshold(
 @router.get("/lessons", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_lessons(
     cartridge_id: str | None = Query(default=None),
+    anomaly_type: str | None = Query(default=None),
+    item_id: str | None = Query(default=None),
     user: dict = Depends(require_authenticated),
 ):
-    return await control_room_service.list_lessons(user, cartridge_id=cartridge_id)
+    return await control_room_service.list_lessons(
+        user,
+        cartridge_id=cartridge_id,
+        anomaly_type=anomaly_type,
+        item_id=item_id,
+    )
