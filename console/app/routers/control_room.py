@@ -169,6 +169,27 @@ async def control_room_create_item_lesson(
     )
 
 
+@router.post(
+    "/items/{item_id}/control/{control_id}",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_update_item_control(
+    item_id: str,
+    control_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.update_item_control(
+        item_id,
+        control_id,
+        body if isinstance(body, dict) else {},
+        user,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
 @router.get("/anomalies/{anomaly_id}", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_anomaly_detail(anomaly_id: str, user: dict = Depends(require_authenticated)):
     return await control_room_service.get_anomaly(anomaly_id, user)
