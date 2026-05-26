@@ -41,6 +41,12 @@ EXECUTION_STATUSES = {
 }
 
 ACTIVITY_LABELS = {
+    "signals_opened": "Senal abierta",
+    "investigation_reviewed": "Investigacion revisada",
+    "options_reviewed": "Opciones revisadas",
+    "decision_reviewed": "Decision revisada",
+    "execution_reviewed": "Ejecucion revisada",
+    "control_checked": "Control confirmado",
     "option_selected": "Opcion seleccionada",
     "decision_created": "Decision creada",
     "action_preview": "Preview generado",
@@ -50,6 +56,16 @@ ACTIVITY_LABELS = {
     "lesson_recorded": "Leccion registrada",
     "dismissed": "Item descartado",
     "reopened": "Item reabierto",
+}
+
+OMEGA_STEP_EVENT_TYPES = {
+    "signals": "signals_opened",
+    "investigation": "investigation_reviewed",
+    "options": "options_reviewed",
+    "decision": "decision_reviewed",
+    "execution": "execution_reviewed",
+    "control": "control_checked",
+    "lessons": "lesson_recorded",
 }
 
 ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -3087,6 +3103,18 @@ async def _record_item_event(
         return
 
 
+def _merge_rule(existing: Any, rule: str) -> list[str]:
+    rules: list[str] = []
+    if isinstance(existing, list):
+        for value in existing:
+            text = str(value).strip()
+            if text and text not in rules:
+                rules.append(text)
+    if rule and rule not in rules:
+        rules.insert(0, rule)
+    return rules[:10]
+
+
 async def _persist_lessons(
     pool: Any,
     *,
@@ -3426,6 +3454,135 @@ async def get_item_impact(
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
     return _impact_for_item(item)
+
+
+async def record_item_step(
+    item_id: str,
+    step_id: str,
+    user: dict,
+    *,
+    note: str | None = None,
+    control_id: str | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    step = str(step_id or "").strip()
+    if step not in OMEGA_STEP_EVENT_TYPES:
+        raise HTTPException(400, "invalid OMEGA step")
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    pool = await auth.pool()
+    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "open")
+    event_type = OMEGA_STEP_EVENT_TYPES[step]
+    metadata = {
+        "step_id": step,
+        "note": str(note or "").strip()[:500],
+        "control_id": str(control_id or "").strip()[:120],
+    }
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type=event_type,
+        metadata=metadata,
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.step.record",
+        resource_type="control_room_item",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={"event_type": event_type, "step_id": step, "item": item, **metadata},
+        critical=step in {"decision", "execution", "control", "lessons"},
+    )
+    return {
+        "recorded": True,
+        "step_id": step,
+        "event_type": event_type,
+        "item": _with_omega(item),
+    }
+
+
+async def create_item_lesson(
+    item_id: str,
+    body: dict[str, Any],
+    user: dict,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    rule = str(body.get("rule") or "").strip()
+    if len(rule) < 8:
+        raise HTTPException(400, "lesson rule must contain at least 8 characters")
+    rule = rule[:700]
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    decision_id = int(item["decision_id"]) if item.get("decision_id") is not None else None
+    pool = await auth.pool()
+    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review")
+    await _persist_lessons(pool, user=user, item=item, decision_id=decision_id, lessons=[rule])
+    try:
+        await pool.execute(
+            """
+            UPDATE control_room_items
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $1
+               AND item_id = $2
+            """,
+            _workspace_id(user),
+            item["id"],
+            json.dumps({"learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule)}),
+        )
+    except Exception:
+        pass
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="lesson_recorded",
+        metadata={"decision_id": decision_id, "lessons": [rule], "manual": True},
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.lesson.create",
+        resource_type="control_room_item",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={"decision_id": decision_id, "rule": rule, "item": item},
+        critical=True,
+    )
+    lessons = await _load_lesson_rows(user, item_id=item["id"], limit=20)
+    if not lessons:
+        lessons = [{
+            "id": None,
+            "item_id": item["id"],
+            "cartridge_id": item.get("cartridge") or "platform",
+            "anomaly_type": item.get("anomaly_type") or "control_room_item",
+            "rule": rule,
+            "source_decision_id": decision_id,
+            "confidence": _impact_for_item(item).get("confidence") or 0.7,
+            "metadata": {"manual": True},
+            "created_at": datetime.now(UTC).isoformat(),
+        }]
+    public_item = _with_omega({
+        **item,
+        "related_lessons": lessons[:5],
+        "lesson_count": len(lessons),
+        "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule),
+    })
+    return {
+        "created": True,
+        "lesson": lessons[0],
+        "lessons": lessons,
+        "item": public_item,
+    }
 
 
 def _resolve_template(item: dict[str, Any], template_id: str | None) -> dict[str, Any]:

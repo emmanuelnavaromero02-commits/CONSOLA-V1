@@ -181,6 +181,10 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("tab", { name: /control/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /reglas/i })).toBeVisible();
     await expect(page.getByRole("region", { name: /bitacora operativa/i })).toBeVisible();
+    await page.getByRole("button", { name: /registrar investigacion revisada/i }).click();
+    await expect(page.getByText(/investigacion revisada/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
     await page.getByRole("tab", { name: /opciones/i }).click();
     await expect(page.getByText(/score/i).first()).toBeVisible();
     const exceptionOption = page.getByRole("button", { name: /aprobar excepcion temporal/i });
@@ -196,6 +200,14 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(optionStateResponse.status(), "selected option must be persisted in backend").toBe(200);
     const optionState = await optionStateResponse.json();
     expect(optionState.selected_option_id).toBe("exception");
+
+    await page.getByRole("tab", { name: /^decision$/i }).click();
+    await expect(page.getByRole("button", { name: /crear decision/i })).toBeVisible();
+    await page.getByRole("button", { name: /crear decision/i }).click();
+    await expect(page.getByRole("button", { name: /decision #/i })).toBeVisible({
+      timeout: 15_000,
+    });
+
     await page.getByRole("tab", { name: /ejecucion/i }).click();
     await expect(page.getByRole("button", { name: /^preview$/i }).first()).toBeVisible();
     await page.getByRole("button", { name: /^preview$/i }).first().click();
@@ -207,17 +219,23 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       timeout: 15_000,
     });
 
-    await expect(page.getByRole("button", { name: /crear decision/i })).toBeVisible();
-    await page.getByRole("button", { name: /crear decision/i }).click();
-    await expect(page.getByRole("button", { name: /decision #/i })).toBeVisible({
-      timeout: 15_000,
-    });
-
     await page.getByRole("button", { name: /aprobar recomendacion/i }).click();
     await expect(page.getByRole("button", { name: /recomendacion aprobada/i })).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText(/aprobacion registrada/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.getByRole("tab", { name: /control/i }).click();
+    await page.getByRole("button", { name: /confirmar control/i }).first().click();
+    await expect(page.getByText(/control confirmado/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.getByRole("tab", { name: /reglas/i }).click();
+    const manualLesson = `Leccion E2E ${Date.now()}: validar owner antes de aprobar`;
+    await page.getByLabel(/nueva leccion persistida/i).fill(manualLesson);
+    await page.getByRole("button", { name: /guardar leccion/i }).click();
+    await expect(page.getByText(manualLesson).first()).toBeVisible({
       timeout: 15_000,
     });
 
@@ -229,10 +247,13 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     const activity = await activityResponse.json();
     expect(activity.counts.total, "activity trail must have persisted operational events").toBeGreaterThanOrEqual(5);
     const activityTypes = activity.activity.map((entry: { type?: string }) => entry.type);
+    expect(activityTypes).toContain("investigation_reviewed");
     expect(activityTypes).toContain("option_selected");
     expect(activityTypes).toContain("action_preview");
     expect(activityTypes).toContain("action_dry_run");
     expect(activityTypes).toContain("approved");
+    expect(activityTypes).toContain("control_checked");
+    expect(activityTypes).toContain("lesson_recorded");
 
     const auditResponse = await page.request.get(`${LEGACY}/security/audit`, {
       timeout: 30_000,

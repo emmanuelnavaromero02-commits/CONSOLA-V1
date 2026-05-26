@@ -45,6 +45,49 @@ async def control_room_item_activity(item_id: str, user: dict = Depends(require_
     return await control_room_service.get_item_activity(item_id, user)
 
 
+@router.post(
+    "/items/{item_id}/step",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_record_item_step(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    step_id = body.get("step_id") if isinstance(body, dict) else None
+    note = body.get("note") if isinstance(body, dict) else None
+    control_id = body.get("control_id") if isinstance(body, dict) else None
+    return await control_room_service.record_item_step(
+        item_id,
+        str(step_id or ""),
+        user,
+        note=str(note or ""),
+        control_id=str(control_id or ""),
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
+    "/items/{item_id}/lessons",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_create_item_lesson(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.create_item_lesson(
+        item_id,
+        body if isinstance(body, dict) else {},
+        user,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
 @router.get("/anomalies/{anomaly_id}", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_anomaly_detail(anomaly_id: str, user: dict = Depends(require_authenticated)):
     return await control_room_service.get_anomaly(anomaly_id, user)

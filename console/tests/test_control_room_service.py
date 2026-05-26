@@ -779,6 +779,89 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
 
 
 @pytest.mark.asyncio
+async def test_record_item_step_writes_operational_event_and_audit():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = None
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.record_item_step(
+            anomaly["id"],
+            "investigation",
+            USER,
+            note="reviewed root cause",
+            fetcher=sample_fetcher,
+        )
+
+    assert result["recorded"] is True
+    assert result["event_type"] == "investigation_reviewed"
+    assert any("INSERT INTO control_room_item_events" in call.args[0] for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.step.record"
+    assert audit_event.await_args.kwargs["metadata"]["step_id"] == "investigation"
+
+
+@pytest.mark.asyncio
+async def test_create_item_lesson_persists_manual_lesson_and_audits():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    lesson_row = {
+        "id": 91,
+        "item_id": anomaly["id"],
+        "cartridge_id": anomaly["cartridge"],
+        "anomaly_type": anomaly["anomaly_type"],
+        "rule": "Si reaparece, validar owner antes de aprobar.",
+        "source_decision_id": None,
+        "confidence": 0.8,
+        "metadata": {"manual": True},
+        "created_at": datetime(2026, 5, 20, 11, 0, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = None
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[lesson_row])),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.create_item_lesson(
+            anomaly["id"],
+            {"rule": lesson_row["rule"]},
+            USER,
+            fetcher=sample_fetcher,
+        )
+
+    assert result["created"] is True
+    assert result["lesson"]["id"] == 91
+    assert result["item"]["lesson_count"] == 1
+    assert result["item"]["omega"]["lessons"]["rules"][0] == lesson_row["rule"]
+    assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any("lesson_recorded" in str(call.args) for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.lesson.create"
+
+
+@pytest.mark.asyncio
 async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
