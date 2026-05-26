@@ -58,6 +58,9 @@ SAMPLE_ROWS = {
     "analytic_skill_gap_by_manager": [],
 }
 
+for _source in control_room_service._all_sources():  # noqa: SLF001 - registry contract test fixture
+    SAMPLE_ROWS.setdefault(_source.dataset, [])
+
 
 async def sample_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
     return SAMPLE_ROWS[dataset]
@@ -129,16 +132,14 @@ async def test_list_anomalies_normalizes_all_real_sources():
         "status": "ok",
         "count": 1,
     }
-    assert {item["dataset"] for item in result["sources"][3:]} == {
-        "revenue_by_customer",
-        "open_sales_orders",
-        "purchase_spend_by_supplier",
-        "consultor_asignacion",
-        "consultor_timesheet_semanal",
-        "pnl_mensual",
-        "analytic_skill_gap_by_manager",
+    anomaly_sources = {
+        "employees_anomalies",
+        "business_partner_anomalies",
+        "sap_successfactors_employees_anomalies",
     }
-    assert all(item["status"] == "empty" for item in result["sources"][3:])
+    expected_empty = {source.dataset for source in control_room_service._all_sources()} - anomaly_sources  # noqa: SLF001
+    actual_empty = {item["dataset"] for item in result["sources"] if item["status"] == "empty"}
+    assert expected_empty <= actual_empty
 
 
 @pytest.mark.asyncio
@@ -293,6 +294,105 @@ async def test_dashboard_keeps_active_empty_cartridges_visible_and_creates_sourc
     assert replicon["source_status"] == "empty"
     assert any(item["kind"] == "source_state" and item["cartridge"] == "replicon" for item in result["items"])
     assert result["omega_steps"][0]["label"] == "Senales"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_expands_installed_connectors_into_operational_cartridge_map():
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+                {"cartridge_id": "sap_s4hana", "installation_status": "ready", "label": "SAP S/4HANA"},
+                {
+                    "cartridge_id": "sap_successfactors",
+                    "installation_status": "ready",
+                    "label": "SAP SuccessFactors",
+                },
+                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
+
+    visible_ids = {item["id"] for item in result["cartridges"]}
+    assert {
+        "sap_hcm_payroll",
+        "sap_hcm_absences",
+        "sap_successfactors_recruiting",
+        "sap_s4hana_sales",
+        "sap_s4hana_procurement",
+        "sap_s4hana_budget",
+        "replicon_finance",
+        "replicon_skills",
+    } <= visible_ids
+    assert all(item["connector_id"] in USER["allowed_cartridges"] for item in result["cartridges"])
+    domain_labels = {domain["label"] for domain in result["domains"] if domain["modules"]}
+    assert {"Recursos Humanos", "Nomina", "Finanzas", "Presupuestos", "Compras", "Ventas", "Operacion"} <= domain_labels
+    ventas = next(domain for domain in result["domains"] if domain["label"] == "Ventas")
+    assert any(module["id"] == "sap_s4hana_sales" for module in ventas["modules"])
+
+
+@pytest.mark.asyncio
+async def test_dashboard_hides_denied_connector_modules_from_operational_map():
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
+
+    visible_ids = {item["id"] for item in result["cartridges"]}
+    assert "sap_s4hana_sales" not in visible_ids
+    assert "sap_successfactors_recruiting" not in visible_ids
+    assert {"sap_hcm", "replicon"} <= visible_ids
+
+
+@pytest.mark.asyncio
+async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching_sources():
+    called: list[str] = []
+
+    async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        called.append(dataset)
+        return SAMPLE_ROWS[dataset]
+
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_s4hana", "installation_status": "paused", "label": "SAP S/4HANA"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=fetcher)
+
+    assert called == []
+    assert result["cartridges"]
+    assert all(item["active"] is False for item in result["cartridges"])
+    assert {item["source_status"] for item in result["cartridges"]} == {"blocked"}
+    assert result["summary"]["source_states"]["blocked"] == len(result["sources"])
 
 
 @pytest.mark.asyncio
