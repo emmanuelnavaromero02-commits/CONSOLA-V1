@@ -1014,6 +1014,101 @@ async def test_create_item_lesson_persists_manual_lesson_and_audits():
 
 
 @pytest.mark.asyncio
+async def test_apply_item_lesson_persists_application_and_audits():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    lesson_row = {
+        "id": 91,
+        "item_id": anomaly["id"],
+        "cartridge_id": anomaly["cartridge"],
+        "anomaly_type": anomaly["anomaly_type"],
+        "rule": "Si reaparece, validar owner antes de aprobar.",
+        "source_decision_id": 42,
+        "confidence": 0.82,
+        "metadata": {"manual": True},
+        "created_at": datetime(2026, 5, 20, 11, 0, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = None
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[lesson_row])),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.apply_item_lesson(
+            anomaly["id"],
+            91,
+            {"note": "Aplicar patron en la siguiente revision"},
+            USER,
+            fetcher=sample_fetcher,
+        )
+
+    assert result["applied"] is True
+    assert result["lesson_application"]["lesson_id"] == 91
+    assert result["lesson_application"]["note"] == "Aplicar patron en la siguiente revision"
+    assert result["item"]["status"] == "in_review"
+    assert result["item"]["lesson_applications"][0]["lesson_id"] == 91
+    assert result["item"]["omega"]["lessons"]["applied"][0]["lesson_id"] == 91
+    assert result["item"]["omega"]["lessons"]["rules"][0] == lesson_row["rule"]
+    assert any("lesson_applications" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any("lesson_applied" in str(call.args) for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.lesson.apply"
+    assert audit_event.await_args.kwargs["critical"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_item_lesson_rejects_unrelated_pattern():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    unrelated_lesson = {
+        "id": 404,
+        "item_id": "other-item",
+        "cartridge_id": "replicon",
+        "anomaly_type": "low_margin",
+        "rule": "Si cae margen, revisar billing antes de aprobar.",
+        "source_decision_id": None,
+        "confidence": 0.7,
+        "metadata": {},
+        "created_at": datetime(2026, 5, 20, 11, 0, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = None
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[unrelated_lesson])),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.apply_item_lesson(
+                anomaly["id"],
+                404,
+                {},
+                USER,
+                fetcher=sample_fetcher,
+            )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test

@@ -2625,6 +2625,78 @@ p {
   line-height: 1.45;
 }
 
+.compact-action {
+  width: fit-content;
+  min-height: 34px;
+  margin-top: 10px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.compact-action.applied {
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.35);
+  background: #ecfdf5;
+}
+
+.applied-lessons {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.applied-lessons > div span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.applied-lessons > div strong {
+  display: block;
+  margin-top: 4px;
+  color: #1e3a8a;
+  font-size: 15px;
+}
+
+.applied-lessons article {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.applied-lessons article svg {
+  width: 18px;
+  height: 18px;
+  color: #2563eb;
+}
+
+.applied-lessons article strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.applied-lessons article span,
+.applied-lessons article p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.applied-lessons article p {
+  margin: 5px 0 0;
+}
+
 .lesson-form {
   display: grid;
   gap: 10px;

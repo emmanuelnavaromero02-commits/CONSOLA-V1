@@ -170,6 +170,27 @@ async def control_room_create_item_lesson(
 
 
 @router.post(
+    "/items/{item_id}/lessons/{lesson_id}/apply",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_apply_item_lesson(
+    item_id: str,
+    lesson_id: int,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.apply_item_lesson(
+        item_id,
+        lesson_id,
+        body if isinstance(body, dict) else {},
+        user,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
     "/items/{item_id}/control/{control_id}",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )

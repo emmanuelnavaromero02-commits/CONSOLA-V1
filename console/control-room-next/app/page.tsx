@@ -207,6 +207,17 @@ interface LessonPattern {
   last_seen_at?: string;
 }
 
+interface LessonApplication {
+  lesson_id?: number;
+  rule: string;
+  source_decision_id?: number | null;
+  cartridge_id?: string;
+  anomaly_type?: string;
+  applied_at?: string;
+  applied_by?: string;
+  note?: string;
+}
+
 interface ActivityEntry {
   id: string;
   kind: "event" | "execution" | "decision_action";
@@ -270,6 +281,7 @@ interface Omega {
   };
   lessons: {
     rules: string[];
+    applied?: LessonApplication[];
   };
 }
 
@@ -317,6 +329,7 @@ interface ControlItem {
   threshold_state?: "critical" | "warning" | "default" | string;
   related_lessons?: Lesson[];
   lesson_count?: number;
+  lesson_applications?: LessonApplication[];
   action_templates?: ActionTemplate[];
   omega: Omega;
 }
@@ -600,6 +613,7 @@ function activityDescription(entry: ActivityEntry): string {
   if (entry.metadata?.decision_id) return `Decision #${metadataText(entry.metadata.decision_id)}`;
   if (entry.metadata?.template_id) return `Template ${metadataText(entry.metadata.template_id)}`;
   if (entry.metadata?.lessons) return `Lecciones: ${metadataText(entry.metadata.lessons)}`;
+  if (entry.metadata?.lesson_id) return `Leccion #${metadataText(entry.metadata.lesson_id)} aplicada`;
   return entry.status || entry.type;
 }
 
@@ -1184,6 +1198,24 @@ export default function ControlRoomPage() {
     }
   }
 
+  async function applyLesson(item: ControlItem, lesson: Lesson) {
+    if (!lesson.id) return;
+    setBusyAction(`applyLesson:${item.id}:${lesson.id}`);
+    setActionError("");
+    try {
+      const payload = await apiJson<{ item: ControlItem }>(
+        `/api/control-room/items/${encodeURIComponent(item.id)}/lessons/${lesson.id}/apply`,
+        { method: "POST", body: JSON.stringify({ note: "Aplicada desde Sala de Control" }) },
+      );
+      refreshAfterMutation(payload.item);
+      void loadLessons();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "No se pudo aplicar la leccion");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function createDecision(item: ControlItem) {
     setBusyAction(`decision:${item.id}`);
     setActionError("");
@@ -1476,6 +1508,7 @@ export default function ControlRoomPage() {
             onApprove={approve}
             onDismiss={dismiss}
             onCreateLesson={createLesson}
+            onApplyLesson={applyLesson}
           />
         ) : (
           <DashboardView
@@ -2874,6 +2907,7 @@ function DetailPage({
   onApprove,
   onDismiss,
   onCreateLesson,
+  onApplyLesson,
 }: {
   item: ControlItem;
   omegaSteps: Array<{ id: string; label: string }>;
@@ -2898,6 +2932,7 @@ function DetailPage({
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
   onCreateLesson: (item: ControlItem, rule: string) => void;
+  onApplyLesson: (item: ControlItem, lesson: Lesson) => void;
 }) {
   const activeStep = mode === null
     ? "signals"
@@ -3016,6 +3051,7 @@ function DetailPage({
           onApprove={onApprove}
           onDismiss={onDismiss}
           onCreateLesson={onCreateLesson}
+          onApplyLesson={onApplyLesson}
         />
       ) : null}
     </section>
@@ -3195,6 +3231,7 @@ function ManualFlow({
   onApprove,
   onDismiss,
   onCreateLesson,
+  onApplyLesson,
 }: {
   item: ControlItem;
   tab: number;
@@ -3211,6 +3248,7 @@ function ManualFlow({
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
   onCreateLesson: (item: ControlItem, rule: string) => void;
+  onApplyLesson: (item: ControlItem, lesson: Lesson) => void;
 }) {
   function selectTab(index: number) {
     onTab(index);
@@ -3285,6 +3323,7 @@ function ManualFlow({
             busyAction={busyAction}
             actionError={actionError}
             onCreateLesson={onCreateLesson}
+            onApplyLesson={onApplyLesson}
           />
         ) : null}
       </div>
@@ -3627,13 +3666,17 @@ function RulesPanel({
   busyAction,
   actionError,
   onCreateLesson,
+  onApplyLesson,
 }: {
   item: ControlItem;
   busyAction: string;
   actionError: string;
   onCreateLesson: (item: ControlItem, rule: string) => void;
+  onApplyLesson: (item: ControlItem, lesson: Lesson) => void;
 }) {
   const related = item.related_lessons || [];
+  const applied = item.lesson_applications || item.omega.lessons.applied || [];
+  const appliedIds = new Set(applied.map((entry) => Number(entry.lesson_id || 0)).filter(Boolean));
   const [draftRule, setDraftRule] = useState(item.omega.lessons.rules[0] || "");
   return (
     <div className="rules-list">
@@ -3643,10 +3686,51 @@ function RulesPanel({
             <span>{related.length} persistidas</span>
             <strong>Patron aprendido para {item.cartridge}</strong>
           </div>
-          {related.slice(0, 3).map((lesson) => (
+          {related.slice(0, 5).map((lesson) => {
+            const isApplied = Boolean(lesson.id && appliedIds.has(lesson.id));
+            return (
             <article key={`${lesson.id || lesson.item_id}-${lesson.rule}`}>
               <span>Decision #{lesson.source_decision_id || "N/D"} · confianza {Math.round((lesson.confidence || 0) * 100)}%</span>
               <p>{lesson.rule}</p>
+              {lesson.id ? (
+                <button
+                  type="button"
+                  className={isApplied ? "secondary-action compact-action applied" : "primary-action compact-action"}
+                  onClick={() => onApplyLesson(item, lesson)}
+                  disabled={busyAction !== "" || isApplied}
+                >
+                  {busyAction === `applyLesson:${item.id}:${lesson.id}` ? (
+                    <Loader2 aria-hidden className="spin" />
+                  ) : isApplied ? (
+                    <CheckCircle2 aria-hidden />
+                  ) : (
+                    <BookOpen aria-hidden />
+                  )}
+                  {isApplied ? "Leccion aplicada" : "Aplicar leccion"}
+                </button>
+              ) : null}
+            </article>
+            );
+          })}
+        </section>
+      ) : null}
+      {applied.length ? (
+        <section className="applied-lessons" aria-label="Lecciones aplicadas">
+          <div>
+            <span>{applied.length} aplicadas</span>
+            <strong>Feedback loop activo en esta senal</strong>
+          </div>
+          {applied.slice(0, 5).map((application) => (
+            <article key={`${application.lesson_id || application.rule}-${application.applied_at || ""}`}>
+              <CheckCircle2 aria-hidden />
+              <div>
+                <strong>{application.rule}</strong>
+                <span>
+                  {application.applied_at ? fmtDate(application.applied_at) : "Fecha N/D"}
+                  {application.applied_by ? ` · ${application.applied_by}` : ""}
+                </span>
+                {application.note ? <p>{application.note}</p> : null}
+              </div>
             </article>
           ))}
         </section>
