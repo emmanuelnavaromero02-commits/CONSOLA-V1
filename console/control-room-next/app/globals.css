@@ -420,13 +420,14 @@ p {
 .operations-strip {
   max-width: 1308px;
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(260px, 0.45fr);
+  grid-template-columns: minmax(0, 1.8fr) minmax(230px, 0.45fr) minmax(220px, 0.45fr);
   gap: 16px;
   margin: 0 auto 30px;
 }
 
 .cycle-panel,
-.source-health-panel {
+.source-health-panel,
+.threshold-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -575,6 +576,79 @@ p {
 .source-health-track .unavailable,
 .source-health-track .blocked {
   background: var(--red);
+}
+
+.threshold-panel {
+  padding: 18px;
+}
+
+.threshold-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.threshold-title strong {
+  color: #475569;
+  font-size: 12px;
+}
+
+.threshold-meter {
+  height: 9px;
+  overflow: hidden;
+  margin: 12px 0 10px;
+  border-radius: 99px;
+  background: #e5e7eb;
+}
+
+.threshold-meter em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--purple), var(--blue));
+}
+
+.threshold-panel p {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.threshold-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.threshold-tags span,
+.threshold-empty,
+.threshold-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.threshold-tags span,
+.threshold-empty {
+  color: #475569;
+  background: #eef2ff;
+}
+
+.threshold-chip.warning {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.threshold-chip.critical {
+  color: #991b1b;
+  background: #fee2e2;
 }
 
 .financial-panel {
@@ -1264,14 +1338,16 @@ p {
   grid-column: 1 / -1;
 }
 
-.impact-drivers {
+.impact-drivers,
+.threshold-detail {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 
-.impact-drivers article {
+.impact-drivers article,
+.threshold-detail article {
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--line-soft);
@@ -1279,7 +1355,9 @@ p {
   background: var(--surface-soft);
 }
 
-.impact-drivers span {
+.impact-drivers span,
+.threshold-detail span,
+.threshold-detail em {
   display: block;
   margin-bottom: 5px;
   color: #8b96a8;
@@ -1288,7 +1366,14 @@ p {
   text-transform: uppercase;
 }
 
-.impact-drivers strong {
+.threshold-detail em {
+  margin: 5px 0 0;
+  font-style: normal;
+  text-transform: none;
+}
+
+.impact-drivers strong,
+.threshold-detail strong {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -1742,6 +1827,10 @@ button:disabled {
   .summary-row,
   .money-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .operations-strip {
+    grid-template-columns: 1fr;
   }
 
   .impact-detail,

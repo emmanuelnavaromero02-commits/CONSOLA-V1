@@ -240,6 +240,25 @@ async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list
     return rows[dataset]
 
 
+async def threshold_margin_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+    rows = {key: [] for key in SAMPLE_ROWS}
+    rows["pnl_mensual"] = [
+        {
+            "mes": "2026-05-01",
+            "revenue_manager": "RM Norte",
+            "proyecto": "P-THR",
+            "project_name": "Omega Threshold",
+            "revenue_usd": 100000,
+            "facturacion_mes_usd": 90000,
+            "wip_usd": 0,
+            "costo_total": 85000,
+            "margen_bruto_usd": 15000,
+            "margen_bruto_pct": 15,
+        }
+    ]
+    return rows[dataset]
+
+
 @pytest.mark.asyncio
 async def test_dashboard_adds_real_impact_and_priority_without_inventing_money():
     mock_pool = AsyncMock()
@@ -267,6 +286,82 @@ async def test_dashboard_adds_real_impact_and_priority_without_inventing_money()
     hcm_item = next(item for item in result["items"] if item["source_dataset"] == "employees_anomalies")
     assert hcm_item["impact_status"] == "unavailable"
     assert hcm_item["impact_estimate"] is None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_applies_workspace_thresholds_to_detection_and_priority():
+    threshold_row = {
+        "id": 11,
+        "cartridge_id": "replicon",
+        "anomaly_type": "low_margin",
+        "metric": "margen_bruto_pct",
+        "warning_value": 30,
+        "critical_value": 16,
+        "currency": "PCT",
+        "enabled": True,
+        "metadata": {},
+        "created_at": datetime(2026, 5, 20, 10, 0, 0),
+        "updated_at": datetime(2026, 5, 20, 10, 0, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetch = AsyncMock(side_effect=[[threshold_row], []])
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=threshold_margin_fetcher)
+
+    item = next(item for item in result["items"] if item["anomaly_type"] == "low_margin")
+    assert item["severity"] == "critical"
+    assert item["threshold_state"] == "critical"
+    assert item["thresholds_applied"][0]["source"] == "workspace"
+    assert item["thresholds_applied"][0]["warning_value"] == 30
+    assert item["priority_score"] >= 80
+    assert result["summary"]["thresholds"]["active"] == 1
+    assert result["summary"]["thresholds"]["items_with_thresholds"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_workspace_threshold_can_suppress_default_signal():
+    threshold_row = {
+        "id": 12,
+        "cartridge_id": "replicon",
+        "anomaly_type": "low_margin",
+        "metric": "margen_bruto_pct",
+        "warning_value": 10,
+        "critical_value": 0,
+        "currency": "PCT",
+        "enabled": True,
+        "metadata": {},
+        "created_at": datetime(2026, 5, 20, 10, 0, 0),
+        "updated_at": datetime(2026, 5, 20, 10, 0, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetch = AsyncMock(side_effect=[[threshold_row], []])
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=threshold_margin_fetcher)
+
+    assert not any(item["anomaly_type"] == "low_margin" for item in result["items"])
+    assert result["summary"]["thresholds"]["active"] == 1
 
 
 @pytest.mark.asyncio

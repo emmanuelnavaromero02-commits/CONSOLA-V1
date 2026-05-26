@@ -754,6 +754,7 @@ ANOMALY_COPY: dict[str, dict[str, str]] = {
 
 
 DatasetFetcher = Callable[[str, dict | None, int], Awaitable[list[dict[str, Any]]]]
+ThresholdMap = dict[tuple[str, str, str], dict[str, Any]]
 
 
 def _is_production_env() -> bool:
@@ -902,6 +903,124 @@ def _row_to_public(row: Any) -> dict[str, Any]:
     return data
 
 
+def _threshold_to_public(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    for key in ("warning_value", "critical_value"):
+        data[key] = _num(data.get(key))
+    data["currency"] = str(data.get("currency") or "USD").upper()
+    data["enabled"] = bool(data.get("enabled", True))
+    data["metadata"] = _details(data.get("metadata"))
+    return data
+
+
+async def _load_threshold_rows(user: dict | None, *, enabled_only: bool = True) -> list[dict[str, Any]]:
+    workspace_id = _workspace_id(user)
+    pool = await auth.pool()
+    where = ["workspace_id = $1"]
+    if enabled_only:
+        where.append("enabled = TRUE")
+    try:
+        rows = await pool.fetch(
+            f"""
+            SELECT id, cartridge_id, anomaly_type, metric, warning_value,
+                   critical_value, currency, enabled, metadata, created_at, updated_at
+              FROM control_room_thresholds
+             WHERE {' AND '.join(where)}
+             ORDER BY cartridge_id, anomaly_type, metric
+            """,
+            workspace_id,
+        )
+        return [_threshold_to_public(row) for row in rows]
+    except Exception:
+        return []
+
+
+def _threshold_map(rows: Iterable[dict[str, Any]]) -> ThresholdMap:
+    thresholds: ThresholdMap = {}
+    for row in rows:
+        if not row.get("enabled", True):
+            continue
+        cartridge_id = str(row.get("cartridge_id") or "").strip()
+        anomaly_type = str(row.get("anomaly_type") or "").strip()
+        metric = str(row.get("metric") or "").strip()
+        if cartridge_id and anomaly_type and metric:
+            thresholds[(cartridge_id, anomaly_type, metric)] = row
+    return thresholds
+
+
+def _threshold_rule(
+    thresholds: ThresholdMap | None,
+    cartridge_id: str,
+    anomaly_type: str,
+    metric: str,
+) -> dict[str, Any] | None:
+    if not thresholds:
+        return None
+    return thresholds.get((cartridge_id, anomaly_type, metric))
+
+
+def _threshold_value(
+    thresholds: ThresholdMap | None,
+    cartridge_id: str,
+    anomaly_type: str,
+    metric: str,
+    field: str,
+    default: float,
+) -> float:
+    rule = _threshold_rule(thresholds, cartridge_id, anomaly_type, metric)
+    if not rule:
+        return default
+    value = _num(rule.get(field))
+    return default if value is None else value
+
+
+def _threshold_ref(
+    thresholds: ThresholdMap | None,
+    cartridge_id: str,
+    anomaly_type: str,
+    metric: str,
+    *,
+    warning_default: float,
+    critical_default: float | None = None,
+    currency: str = "USD",
+) -> dict[str, Any]:
+    rule = _threshold_rule(thresholds, cartridge_id, anomaly_type, metric)
+    warning_value = _threshold_value(
+        thresholds,
+        cartridge_id,
+        anomaly_type,
+        metric,
+        "warning_value",
+        warning_default,
+    )
+    critical_value = (
+        _threshold_value(thresholds, cartridge_id, anomaly_type, metric, "critical_value", critical_default)
+        if critical_default is not None
+        else None
+    )
+    return {
+        "cartridge_id": cartridge_id,
+        "anomaly_type": anomaly_type,
+        "metric": metric,
+        "warning_value": warning_value,
+        "critical_value": critical_value,
+        "currency": str((rule or {}).get("currency") or currency).upper(),
+        "source": "workspace" if rule else "default",
+    }
+
+
+def _attach_thresholds(
+    item: dict[str, Any],
+    thresholds_applied: list[dict[str, Any]],
+    state: str,
+) -> dict[str, Any]:
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    item["thresholds_applied"] = thresholds_applied
+    item["threshold_state"] = state
+    item["details"] = {**details, "thresholds": thresholds_applied, "threshold_state": state}
+    return item
+
+
 async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
     tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
@@ -1048,6 +1167,8 @@ def _base_item(source: ControlRoomSource, row: dict[str, Any], item_type: str, e
         "sql": technical_sql,
         "status": "open",
         "decision_id": None,
+        "thresholds_applied": [],
+        "threshold_state": "default",
     }
 
 
@@ -1069,16 +1190,49 @@ def _normalize_standard_anomaly(source: ControlRoomSource, row: dict[str, Any]) 
     return item
 
 
-def _normalize_replicon_allocation(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_replicon_allocation(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     pct = _num(row.get("pct_asignacion"))
-    if pct is None or 40 <= pct <= 110:
+    over_warning = _threshold_value(thresholds, "replicon", "over_allocation", "pct_asignacion", "warning_value", 110)
+    over_critical = _threshold_value(thresholds, "replicon", "over_allocation", "pct_asignacion", "critical_value", 130)
+    under_warning = _threshold_value(thresholds, "replicon", "under_allocation", "pct_asignacion", "warning_value", 40)
+    under_critical = _threshold_value(thresholds, "replicon", "under_allocation", "pct_asignacion", "critical_value", 20)
+    if pct is None or under_warning <= pct <= over_warning:
         return None
     consultor = str(row.get("consultor") or "Sin consultor").strip()
     proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
     item_type = "over_allocation" if pct > 110 else "under_allocation"
-    severity = "high" if pct > 130 or pct < 20 else "medium"
+    if pct > over_warning:
+        item_type = "over_allocation"
+        threshold_state = "critical" if pct >= over_critical else "warning"
+        severity = "high" if threshold_state == "critical" else "medium"
+        threshold_refs = [_threshold_ref(
+            thresholds,
+            "replicon",
+            "over_allocation",
+            "pct_asignacion",
+            warning_default=110,
+            critical_default=130,
+            currency="PCT",
+        )]
+    else:
+        item_type = "under_allocation"
+        threshold_state = "critical" if pct <= under_critical else "warning"
+        severity = "high" if threshold_state == "critical" else "medium"
+        threshold_refs = [_threshold_ref(
+            thresholds,
+            "replicon",
+            "under_allocation",
+            "pct_asignacion",
+            warning_default=40,
+            critical_default=20,
+            currency="PCT",
+        )]
     item = _base_item(source, {**row, "severity": severity}, item_type, f"{consultor}:{proyecto}", consultor)
-    direction = "sobreasignacion" if pct > 110 else "subasignacion"
+    direction = "sobreasignacion" if item_type == "over_allocation" else "subasignacion"
     item.update({
         "title": f"{consultor} con {direction} operativa",
         "description": f"{consultor} registra {pct:.1f}% de asignacion en {proyecto}.",
@@ -1087,20 +1241,41 @@ def _normalize_replicon_allocation(source: ControlRoomSource, row: dict[str, Any
         "impact": "Riesgo de capacidad, margen o entrega del proyecto.",
         "details": {**item["details"], **row},
     })
-    return item
+    return _attach_thresholds(item, threshold_refs, threshold_state)
 
 
-def _normalize_replicon_timesheet(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_replicon_timesheet(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     total = _num(row.get("horas_total")) or 0
     no_billable = _num(row.get("horas_no_facturables")) or 0
     if total <= 0:
         return None
     ratio = no_billable / total
-    if ratio < 0.35:
+    warning_ratio = _threshold_value(
+        thresholds,
+        "replicon",
+        "non_billable_ratio",
+        "horas_no_facturables_ratio",
+        "warning_value",
+        0.35,
+    )
+    critical_ratio = _threshold_value(
+        thresholds,
+        "replicon",
+        "non_billable_ratio",
+        "horas_no_facturables_ratio",
+        "critical_value",
+        0.55,
+    )
+    if ratio < warning_ratio:
         return None
     consultor = str(row.get("consultor") or "Sin consultor").strip()
     proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
-    severity = "high" if ratio >= 0.55 else "medium"
+    threshold_state = "critical" if ratio >= critical_ratio else "warning"
+    severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(source, {**row, "severity": severity}, "non_billable_ratio", f"{consultor}:{proyecto}", consultor)
     item.update({
         "title": "Horas no facturables fuera de rango",
@@ -1110,23 +1285,51 @@ def _normalize_replicon_timesheet(source: ControlRoomSource, row: dict[str, Any]
         "impact": "Puede erosionar margen y ocultar demanda no planificada.",
         "details": {**item["details"], **row},
     })
-    return item
+    return _attach_thresholds(
+        item,
+        [_threshold_ref(
+            thresholds,
+            "replicon",
+            "non_billable_ratio",
+            "horas_no_facturables_ratio",
+            warning_default=0.35,
+            critical_default=0.55,
+            currency="PCT",
+        )],
+        threshold_state,
+    )
 
 
-def _normalize_replicon_pnl(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_replicon_pnl(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     margin = _num(row.get("margen_bruto_pct"))
     wip = _num(row.get("wip_usd")) or 0
-    if (margin is None or margin >= 20) and abs(wip) < 5000:
+    margin_warning = _threshold_value(thresholds, "replicon", "low_margin", "margen_bruto_pct", "warning_value", 20)
+    margin_critical = _threshold_value(thresholds, "replicon", "low_margin", "margen_bruto_pct", "critical_value", 0)
+    wip_warning = _threshold_value(thresholds, "replicon", "wip_variance", "wip_usd", "warning_value", 5000)
+    wip_critical = _threshold_value(thresholds, "replicon", "wip_variance", "wip_usd", "critical_value", 25000)
+    margin_breached = margin is not None and margin < margin_warning
+    wip_breached = abs(wip) >= wip_warning
+    if not margin_breached and not wip_breached:
         return None
     proyecto = str(row.get("proyecto") or row.get("project_name") or "Sin proyecto").strip()
     manager = str(row.get("revenue_manager") or "Sin RM").strip()
-    if margin is not None and margin < 0:
+    if margin is not None and margin < margin_critical:
         severity = "critical"
-    elif margin is not None and margin < 20:
+        threshold_state = "critical"
+    elif abs(wip) >= wip_critical:
+        severity = "critical"
+        threshold_state = "critical"
+    elif margin_breached:
         severity = "high"
+        threshold_state = "warning"
     else:
         severity = "medium"
-    item_type = "low_margin" if margin is not None and margin < 20 else "wip_variance"
+        threshold_state = "warning"
+    item_type = "low_margin" if margin_breached else "wip_variance"
     item = _base_item(source, {**row, "severity": severity}, item_type, proyecto, str(row.get("project_name") or proyecto))
     item.update({
         "title": "Proyecto con margen o WIP fuera de control",
@@ -1136,7 +1339,27 @@ def _normalize_replicon_pnl(source: ControlRoomSource, row: dict[str, Any]) -> d
         "impact": "Riesgo financiero directo en margen, cash flow o forecast.",
         "details": {**item["details"], **row},
     })
-    return item
+    refs = []
+    if margin_breached:
+        refs.append(_threshold_ref(
+            thresholds,
+            "replicon",
+            "low_margin",
+            "margen_bruto_pct",
+            warning_default=20,
+            critical_default=0,
+            currency="PCT",
+        ))
+    if wip_breached:
+        refs.append(_threshold_ref(
+            thresholds,
+            "replicon",
+            "wip_variance",
+            "wip_usd",
+            warning_default=5000,
+            critical_default=25000,
+        ))
+    return _attach_thresholds(item, refs, threshold_state)
 
 
 def _normalize_replicon_skill_gap(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
@@ -1158,15 +1381,29 @@ def _normalize_replicon_skill_gap(source: ControlRoomSource, row: dict[str, Any]
     return item
 
 
-def _normalize_s4_revenue(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_s4_revenue(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     revenue = _num(row.get("revenue"))
-    if revenue is None or revenue >= 0:
+    warning_revenue = _threshold_value(thresholds, "sap_s4hana", "negative_revenue", "revenue", "warning_value", 0)
+    critical_revenue = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "negative_revenue",
+        "revenue",
+        "critical_value",
+        -100000,
+    )
+    if revenue is None or revenue >= warning_revenue:
         return None
     customer = str(row.get("customer_code") or "Sin cliente").strip()
     month = str(row.get("revenue_month") or row.get("mes") or "").strip()
+    severity = "critical" if revenue <= critical_revenue else "high"
     item = _base_item(
         source,
-        {**row, "severity": "high"},
+        {**row, "severity": severity},
         "negative_revenue",
         f"{customer}:{month}",
         customer,
@@ -1179,16 +1416,38 @@ def _normalize_s4_revenue(source: ControlRoomSource, row: dict[str, Any]) -> dic
         "impact": "Riesgo de distorsion de revenue, forecast y margen comercial.",
         "details": {**item["details"], **row},
     })
-    return item
+    return _attach_thresholds(
+        item,
+        [_threshold_ref(
+            thresholds,
+            "sap_s4hana",
+            "negative_revenue",
+            "revenue",
+            warning_default=0,
+            critical_default=-100000,
+        )],
+        "critical" if severity == "critical" else "warning",
+    )
 
 
-def _normalize_s4_backlog(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_s4_backlog(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     age = _num(row.get("oldest_age_days")) or 0
     open_value = _num(row.get("open_value")) or 0
-    if age < 45 and open_value < 50000:
+    age_warning = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "oldest_age_days", "warning_value", 45)
+    age_critical = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "oldest_age_days", "critical_value", 90)
+    value_warning = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "open_value", "warning_value", 50000)
+    value_critical = _threshold_value(thresholds, "sap_s4hana", "aged_sales_backlog", "open_value", "critical_value", 250000)
+    age_breached = age >= age_warning
+    value_breached = open_value >= value_warning
+    if not age_breached and not value_breached:
         return None
     customer = str(row.get("customer_code") or "Sin cliente").strip()
-    severity = "critical" if age >= 90 or open_value >= 250000 else "high"
+    threshold_state = "critical" if age >= age_critical or open_value >= value_critical else "warning"
+    severity = "critical" if threshold_state == "critical" else "high"
     item = _base_item(
         source,
         {**row, "severity": severity},
@@ -1204,16 +1463,57 @@ def _normalize_s4_backlog(source: ControlRoomSource, row: dict[str, Any]) -> dic
         "impact": "Riesgo de cash flow, cumplimiento de entrega y forecast de ventas.",
         "details": {**item["details"], **row},
     })
-    return item
+    refs = []
+    if age_breached:
+        refs.append(_threshold_ref(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "oldest_age_days",
+            warning_default=45,
+            critical_default=90,
+            currency="DAYS",
+        ))
+    if value_breached:
+        refs.append(_threshold_ref(
+            thresholds,
+            "sap_s4hana",
+            "aged_sales_backlog",
+            "open_value",
+            warning_default=50000,
+            critical_default=250000,
+        ))
+    return _attach_thresholds(item, refs, threshold_state)
 
 
-def _normalize_s4_supplier_spend(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_s4_supplier_spend(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     spend = _num(row.get("total_spend")) or 0
-    if spend < 250000:
+    warning_spend = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "supplier_spend_concentration",
+        "total_spend",
+        "warning_value",
+        250000,
+    )
+    critical_spend = _threshold_value(
+        thresholds,
+        "sap_s4hana",
+        "supplier_spend_concentration",
+        "total_spend",
+        "critical_value",
+        750000,
+    )
+    if spend < warning_spend:
         return None
     supplier = str(row.get("supplier_code") or "Sin proveedor").strip()
     month = str(row.get("spend_month") or "").strip()
-    severity = "high" if spend >= 750000 else "medium"
+    threshold_state = "critical" if spend >= critical_spend else "warning"
+    severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(
         source,
         {**row, "severity": severity},
@@ -1229,26 +1529,41 @@ def _normalize_s4_supplier_spend(source: ControlRoomSource, row: dict[str, Any])
         "impact": "Riesgo de sobrepresupuesto, dependencia de proveedor o control de aprobaciones.",
         "details": {**item["details"], **row},
     })
-    return item
+    return _attach_thresholds(
+        item,
+        [_threshold_ref(
+            thresholds,
+            "sap_s4hana",
+            "supplier_spend_concentration",
+            "total_spend",
+            warning_default=250000,
+            critical_default=750000,
+        )],
+        threshold_state,
+    )
 
 
-def _normalize_row(source: ControlRoomSource, row: dict[str, Any]) -> dict[str, Any] | None:
+def _normalize_row(
+    source: ControlRoomSource,
+    row: dict[str, Any],
+    thresholds: ThresholdMap | None = None,
+) -> dict[str, Any] | None:
     if source.normalizer == "standard_anomaly":
         return _normalize_standard_anomaly(source, row)
     if source.normalizer == "replicon_allocation":
-        return _normalize_replicon_allocation(source, row)
+        return _normalize_replicon_allocation(source, row, thresholds)
     if source.normalizer == "replicon_timesheet":
-        return _normalize_replicon_timesheet(source, row)
+        return _normalize_replicon_timesheet(source, row, thresholds)
     if source.normalizer == "replicon_pnl":
-        return _normalize_replicon_pnl(source, row)
+        return _normalize_replicon_pnl(source, row, thresholds)
     if source.normalizer == "replicon_skill_gap":
         return _normalize_replicon_skill_gap(source, row)
     if source.normalizer == "s4_revenue":
-        return _normalize_s4_revenue(source, row)
+        return _normalize_s4_revenue(source, row, thresholds)
     if source.normalizer == "s4_backlog":
-        return _normalize_s4_backlog(source, row)
+        return _normalize_s4_backlog(source, row, thresholds)
     if source.normalizer == "s4_supplier_spend":
-        return _normalize_s4_supplier_spend(source, row)
+        return _normalize_s4_supplier_spend(source, row, thresholds)
     return None
 
 
@@ -1396,7 +1711,12 @@ def _impact_payload(
     estimate_value = round(float(estimate or 0), 2) if estimate is not None else None
     severity_weight = SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2)
     impact_points = 0 if estimate_value is None else min(42, int(abs(estimate_value) / 10_000))
-    priority_score = min(100, max(0, severity_weight * 14 + impact_points + int(confidence * 20)))
+    threshold_state = str(item.get("threshold_state") or "")
+    threshold_points = {"critical": 12, "warning": 6}.get(threshold_state, 0)
+    priority_score = min(
+        100,
+        max(0, severity_weight * 14 + impact_points + int(confidence * 20) + threshold_points),
+    )
     return {
         "item_id": item.get("id"),
         "status": status,
@@ -1729,6 +2049,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "impact_drivers": impact.get("drivers"),
         "impact_formula": impact.get("formula"),
         "impact_explanation": impact.get("explanation"),
+        "thresholds_applied": item.get("thresholds_applied") or [],
+        "threshold_state": item.get("threshold_state") or "default",
         "selected_option_id": selected_option_id,
         "execution_status": execution_status,
         "action_templates": action_templates,
@@ -1739,12 +2061,14 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                 "detected_at": item.get("detected_at"),
                 "status": status,
                 "priority_score": impact.get("priority_score"),
+                "threshold_state": item.get("threshold_state") or "default",
             },
             "investigation": {
                 "root_cause": item.get("root_cause"),
                 "impact": item.get("impact"),
                 "evidence": item.get("details") or {},
                 "money": impact,
+                "thresholds": item.get("thresholds_applied") or [],
             },
             "options": options,
             "decision": {
@@ -1825,10 +2149,11 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _status_sort_key(item: dict[str, Any]) -> tuple[int, int, str, str]:
+def _status_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str, str]:
     active_rank = 1 if item.get("status") in TERMINAL_ITEM_STATUSES else 0
     return (
         active_rank,
+        -int(item.get("priority_score") or 0),
         -int(item.get("severity_weight") or 0),
         str(item.get("domain") or ""),
         str(item.get("title") or ""),
@@ -1912,6 +2237,8 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
                         "details": item.get("details") if isinstance(item.get("details"), dict) else {},
                         "sql": item.get("sql"),
                         "impact_payload": impact,
+                        "thresholds_applied": item.get("thresholds_applied") or [],
+                        "threshold_state": item.get("threshold_state") or "default",
                     }),
                     impact.get("estimate"),
                     impact.get("currency") or "USD",
@@ -1958,6 +2285,8 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
             "priority_score": state.get("priority_score"),
             "selected_option_id": state.get("selected_option_id") or metadata.get("selected_option_id"),
             "execution_status": state.get("execution_status") or metadata.get("execution_status"),
+            "thresholds_applied": metadata.get("thresholds_applied") or item.get("thresholds_applied") or [],
+            "threshold_state": metadata.get("threshold_state") or item.get("threshold_state") or "default",
             "lessons": metadata.get("lessons"),
             "first_seen_at": state.get("first_seen_at"),
             "last_seen_at": state.get("last_seen_at"),
@@ -2007,6 +2336,8 @@ async def _collect_items(
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
+    threshold_rows = await _load_threshold_rows(user) if use_catalog else []
+    thresholds = _threshold_map(threshold_rows)
     for module in modules:
         installation = installation_by_cartridge.get(module.cartridge, {})
         if module.cartridge not in active:
@@ -2040,7 +2371,7 @@ async def _collect_items(
             if source_status["status"] != "ok":
                 continue
             for row in rows:
-                item = _normalize_row(source, row)
+                item = _normalize_row(source, row, thresholds)
                 if item:
                     items.append(item)
 
@@ -2051,6 +2382,7 @@ async def _collect_items(
         "installations": installations,
         "modules": modules,
         "financial": _financial_metrics(sources, rows_by_dataset),
+        "thresholds": threshold_rows,
     }
 
 
@@ -2164,6 +2496,7 @@ async def dashboard(
     modules = payload["modules"]
     installations = payload["installations"]
     financial = payload["financial"]
+    thresholds = payload.get("thresholds") or []
 
     by_severity = _severity_counts(items)
     by_cartridge: dict[str, int] = {}
@@ -2252,6 +2585,19 @@ async def dashboard(
             },
             "cycle_counts": _cycle_counts(items),
             "financial": financial,
+            "thresholds": {
+                "active": sum(1 for row in thresholds if row.get("enabled", True)),
+                "total": len(thresholds),
+                "by_cartridge": {
+                    cartridge_id: sum(1 for row in thresholds if row.get("cartridge_id") == cartridge_id)
+                    for cartridge_id in sorted({
+                        str(row.get("cartridge_id") or "").strip()
+                        for row in thresholds
+                        if str(row.get("cartridge_id") or "").strip()
+                    })
+                },
+                "items_with_thresholds": sum(1 for item in items if item.get("thresholds_applied")),
+            },
         },
         "domains": domains,
         "cartridges": cartridges,
@@ -2309,6 +2655,10 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
         "open_decisions": open_decisions,
         "sources": collected["sources"],
         "financial": collected["financial"],
+        "thresholds": {
+            "active": sum(1 for row in collected.get("thresholds", []) if row.get("enabled", True)),
+            "total": len(collected.get("thresholds", [])),
+        },
     }
 
 
@@ -2390,6 +2740,8 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
         "impact_currency": public_row.get("impact_currency"),
         "confidence": public_row.get("confidence"),
         "priority_score": public_row.get("priority_score"),
+        "thresholds_applied": metadata.get("thresholds_applied") or [],
+        "threshold_state": metadata.get("threshold_state") or "default",
         "selected_option_id": public_row.get("selected_option_id") or metadata.get("selected_option_id"),
         "execution_status": public_row.get("execution_status") or metadata.get("execution_status"),
         "lessons": metadata.get("lessons"),
@@ -2604,6 +2956,8 @@ async def _ensure_item_row(pool: Any, *, user: dict, item: dict[str, Any], statu
                 "details": item.get("details") if isinstance(item.get("details"), dict) else {},
                 "sql": item.get("sql"),
                 "impact_payload": impact,
+                "thresholds_applied": item.get("thresholds_applied") or [],
+                "threshold_state": item.get("threshold_state") or "default",
             }),
             impact.get("estimate"),
             impact.get("currency") or "USD",
@@ -3202,22 +3556,8 @@ async def reopen_item(
 
 
 async def list_thresholds(user: dict) -> dict[str, Any]:
-    workspace_id = _workspace_id(user)
-    pool = await auth.pool()
-    try:
-        rows = await pool.fetch(
-            """
-            SELECT id, cartridge_id, anomaly_type, metric, warning_value,
-                   critical_value, currency, enabled, metadata, created_at, updated_at
-              FROM control_room_thresholds
-             WHERE workspace_id = $1
-             ORDER BY cartridge_id, anomaly_type, metric
-            """,
-            workspace_id,
-        )
-        return {"thresholds": [_row_to_public(row) for row in rows]}
-    except Exception:
-        return {"thresholds": [], "status": "unavailable"}
+    rows = await _load_threshold_rows(user, enabled_only=False)
+    return {"thresholds": rows}
 
 
 async def upsert_threshold(
@@ -3267,7 +3607,7 @@ async def upsert_threshold(
         enabled,
         json.dumps(metadata),
     )
-    public = _row_to_public(row)
+    public = _threshold_to_public(row)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

@@ -133,6 +133,16 @@ interface ImpactDriver {
   unit?: string;
 }
 
+interface DetectionThreshold {
+  cartridge_id: string;
+  anomaly_type: string;
+  metric: string;
+  warning_value?: number | null;
+  critical_value?: number | null;
+  currency?: string;
+  source?: "workspace" | "default" | string;
+}
+
 interface ControlChecklistItem {
   id: string;
   desc: string;
@@ -203,6 +213,8 @@ interface ControlItem {
   impact_drivers?: ImpactDriver[];
   impact_formula?: string;
   impact_explanation?: string;
+  thresholds_applied?: DetectionThreshold[];
+  threshold_state?: "critical" | "warning" | "default" | string;
   action_templates?: ActionTemplate[];
   omega: Omega;
 }
@@ -229,6 +241,12 @@ interface Dashboard {
     source_states: Record<SourceState, number>;
     cycle_counts?: Record<string, number>;
     financial?: FinancialSummary;
+    thresholds?: {
+      active: number;
+      total: number;
+      by_cartridge?: Record<string, number>;
+      items_with_thresholds?: number;
+    };
   };
   domains: Domain[];
   cartridges: Cartridge[];
@@ -866,6 +884,7 @@ function DashboardView({
           sourceStates={dashboard?.summary.source_states}
           totalSources={dashboard?.sources.length ?? 0}
         />
+        <ThresholdPanel thresholds={dashboard?.summary.thresholds} />
       </section>
 
       <FinancialPanel financial={dashboard?.summary.financial} />
@@ -1041,6 +1060,37 @@ function SourceHealthPanel({
   );
 }
 
+function ThresholdPanel({
+  thresholds,
+}: {
+  thresholds?: Dashboard["summary"]["thresholds"];
+}) {
+  const active = thresholds?.active ?? 0;
+  const affected = thresholds?.items_with_thresholds ?? 0;
+  const byCartridge = Object.entries(thresholds?.by_cartridge || {}).slice(0, 3);
+  return (
+    <section className="threshold-panel" aria-label="Umbrales de deteccion">
+      <div className="threshold-title">
+        <p className="section-kicker">Umbrales</p>
+        <strong>{active} activos</strong>
+      </div>
+      <div className="threshold-meter" aria-hidden>
+        <em style={{ width: `${Math.min(100, Math.max(6, affected * 14))}%` }} />
+      </div>
+      <p>{affected} senales usando reglas configuradas o defaults trazables.</p>
+      {byCartridge.length ? (
+        <div className="threshold-tags">
+          {byCartridge.map(([key, value]) => (
+            <span key={key}>{key}: {value}</span>
+          ))}
+        </div>
+      ) : (
+        <span className="threshold-empty">Sin overrides por workspace</span>
+      )}
+    </section>
+  );
+}
+
 function FinancialPanel({ financial }: { financial?: FinancialSummary }) {
   const status = financial?.status || "empty";
   const hasData = status === "ok";
@@ -1180,6 +1230,9 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
         <div>
           <div className="anomaly-top">
             <span className={`severity-pill ${item.severity}`}>{severityLabels[item.severity]}</span>
+            {item.threshold_state && item.threshold_state !== "default" ? (
+              <span className={`threshold-chip ${item.threshold_state}`}>Umbral {item.threshold_state}</span>
+            ) : null}
             <span>{item.cartridge}</span>
             <span>{item.module}</span>
             <ChevronRight aria-hidden />
@@ -1188,6 +1241,7 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
           <p>{item.description}</p>
           <div className="anomaly-meta">
             <span>{item.entity_label}</span>
+            <span>Prioridad {item.priority_score ?? 0}/100</span>
             <span>{statusLabels[item.status] || item.status}</span>
           </div>
         </div>
@@ -1281,6 +1335,7 @@ function DetailPage({
           <InfoBlock label="Decision" value={item.decision_id ? `Decision #${item.decision_id}` : "Pendiente"} />
           <InfoBlock label="Impacto" value={item.impact_status === "ok" ? fmtMoney(item.impact_estimate) : "No calculable"} />
           <InfoBlock label="Prioridad" value={`${item.priority_score ?? 0}/100`} />
+          <InfoBlock label="Umbral" value={item.threshold_state && item.threshold_state !== "default" ? item.threshold_state : "Default"} />
         </div>
       </header>
 
@@ -1340,6 +1395,7 @@ function DetailPage({
 function ImpactDetail({ item }: { item: ControlItem }) {
   const confidence = item.confidence ?? 0;
   const drivers = item.impact_drivers || [];
+  const thresholds = item.thresholds_applied || [];
   return (
     <section className={`impact-detail ${item.impact_status === "ok" ? "ready" : "muted"}`} aria-label="Impacto economico del item">
       <div className="impact-main">
@@ -1364,6 +1420,20 @@ function ImpactDetail({ item }: { item: ControlItem }) {
                 {driver.currency ? fmtMoney(Number(driver.value || 0)) : driver.value ?? "N/D"}
                 {driver.unit ? ` ${driver.unit}` : ""}
               </strong>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {thresholds.length ? (
+        <div className="threshold-detail">
+          {thresholds.map((threshold) => (
+            <article key={`${threshold.anomaly_type}-${threshold.metric}`}>
+              <span>{threshold.metric}</span>
+              <strong>
+                W {threshold.warning_value ?? "N/D"}
+                {threshold.critical_value !== null && threshold.critical_value !== undefined ? ` · C ${threshold.critical_value}` : ""}
+              </strong>
+              <em>{threshold.source === "workspace" ? "Workspace" : "Default"} · {threshold.currency || "USD"}</em>
             </article>
           ))}
         </div>
