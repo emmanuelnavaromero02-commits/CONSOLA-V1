@@ -942,6 +942,33 @@ def _threshold_to_public(row: Any) -> dict[str, Any]:
     return data
 
 
+def _threshold_insights(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    items = list(rows)
+    active = [row for row in items if row.get("enabled", True)]
+    disabled = [row for row in items if not row.get("enabled", True)]
+    by_cartridge: dict[str, int] = {}
+    by_anomaly_type: dict[str, int] = {}
+    for row in active:
+        cartridge_id = str(row.get("cartridge_id") or "").strip()
+        anomaly_type = str(row.get("anomaly_type") or "").strip()
+        if cartridge_id:
+            by_cartridge[cartridge_id] = by_cartridge.get(cartridge_id, 0) + 1
+        if anomaly_type:
+            by_anomaly_type[anomaly_type] = by_anomaly_type.get(anomaly_type, 0) + 1
+    return {
+        "total": len(items),
+        "active": len(active),
+        "disabled": len(disabled),
+        "by_cartridge": by_cartridge,
+        "by_anomaly_type": by_anomaly_type,
+        "recent": sorted(
+            items,
+            key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""),
+            reverse=True,
+        )[:5],
+    }
+
+
 async def _load_threshold_rows(user: dict | None, *, enabled_only: bool = True) -> list[dict[str, Any]]:
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
@@ -4021,7 +4048,7 @@ async def reopen_item(
 
 async def list_thresholds(user: dict) -> dict[str, Any]:
     rows = await _load_threshold_rows(user, enabled_only=False)
-    return {"thresholds": rows}
+    return {"thresholds": rows, "summary": _threshold_insights(rows)}
 
 
 async def upsert_threshold(
@@ -4037,6 +4064,12 @@ async def upsert_threshold(
     metric = str(body.get("metric") or "").strip()
     if not cartridge_id or not anomaly_type or not metric:
         raise HTTPException(400, "cartridge_id, anomaly_type and metric are required")
+    known_cartridges = {module.cartridge for module in MODULES}
+    if cartridge_id not in known_cartridges:
+        raise HTTPException(400, "unknown cartridge_id")
+    allowed = _allowed_from_user(user)
+    if allowed is not None and cartridge_id not in allowed:
+        raise HTTPException(403, "cartridge not allowed for active workspace")
     warning_value = _num(body.get("warning_value"))
     critical_value = _num(body.get("critical_value"))
     currency = str(body.get("currency") or "USD").strip().upper()[:8] or "USD"

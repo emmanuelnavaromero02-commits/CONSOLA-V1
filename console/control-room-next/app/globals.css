@@ -1497,6 +1497,152 @@ p {
   font-weight: 800;
 }
 
+.threshold-rules-board {
+  display: grid;
+  gap: 16px;
+}
+
+.threshold-workbench {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+.threshold-editor,
+.threshold-rule-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.threshold-editor {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.threshold-editor > div:first-child {
+  display: grid;
+  grid-template-columns: 1fr 0.55fr 0.55fr 0.42fr;
+  gap: 10px;
+}
+
+.threshold-editor label {
+  display: grid;
+  gap: 7px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.threshold-editor input,
+.threshold-editor select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 11px;
+  color: #0f172a;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.threshold-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.threshold-toggle {
+  display: inline-flex !important;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px !important;
+  color: #475569 !important;
+  text-transform: none !important;
+}
+
+.threshold-toggle input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.threshold-editor-help {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.threshold-rule-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+}
+
+.threshold-rule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.threshold-rule-header strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.threshold-rule-header span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.threshold-rule-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: #0f172a;
+  background: #f8fafc;
+  text-align: left;
+}
+
+.threshold-rule-card:hover,
+.threshold-rule-card:focus-visible,
+.threshold-rule-card.active {
+  border-color: rgba(124, 58, 237, 0.45);
+  background: #f5f3ff;
+  outline: none;
+}
+
+.threshold-rule-card span,
+.threshold-rule-card small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.threshold-rule-card strong {
+  font-size: 14px;
+}
+
+.threshold-rule-card em {
+  color: #334155;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .lessons-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -2057,6 +2203,13 @@ p {
 
 .activity-error {
   color: #991b1b;
+}
+
+.activity-success {
+  margin: 0;
+  color: #047857;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .auto-run-button {
@@ -2642,7 +2795,9 @@ button:disabled {
 
   .impact-detail,
   .decision-panel,
-  .execution-bridge {
+  .execution-bridge,
+  .threshold-workbench,
+  .threshold-editor > div:first-child {
     grid-template-columns: 1fr;
   }
 

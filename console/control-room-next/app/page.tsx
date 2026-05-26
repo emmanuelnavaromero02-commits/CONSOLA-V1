@@ -137,6 +137,7 @@ interface ImpactDriver {
 }
 
 interface DetectionThreshold {
+  id?: number;
   cartridge_id: string;
   anomaly_type: string;
   metric: string;
@@ -144,6 +145,41 @@ interface DetectionThreshold {
   critical_value?: number | null;
   currency?: string;
   source?: "workspace" | "default" | string;
+  enabled?: boolean;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ThresholdPayload {
+  thresholds: DetectionThreshold[];
+  summary?: {
+    total: number;
+    active: number;
+    disabled: number;
+    by_cartridge?: Record<string, number>;
+    by_anomaly_type?: Record<string, number>;
+    recent?: DetectionThreshold[];
+  };
+}
+
+interface ThresholdCandidate extends DetectionThreshold {
+  key: string;
+  module: string;
+  module_id?: string;
+  domain: string;
+  title?: string;
+  item_count: number;
+}
+
+interface ThresholdDraft {
+  cartridge_id: string;
+  anomaly_type: string;
+  metric: string;
+  warning_value: string;
+  critical_value: string;
+  currency: string;
+  enabled: boolean;
 }
 
 interface Lesson {
@@ -512,6 +548,14 @@ function parseDate(value?: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function thresholdKey(threshold: Pick<DetectionThreshold, "cartridge_id" | "anomaly_type" | "metric">): string {
+  return `${threshold.cartridge_id}:${threshold.anomaly_type}:${threshold.metric}`;
+}
+
+function thresholdLabel(threshold: Pick<DetectionThreshold, "anomaly_type" | "metric">): string {
+  return `${threshold.anomaly_type} / ${threshold.metric}`;
+}
+
 function dedupeLessons(lessons: Lesson[]): Lesson[] {
   const seen = new Set<string>();
   const unique: Lesson[] = [];
@@ -584,6 +628,12 @@ export default function ControlRoomPage() {
   const [lessonsPayload, setLessonsPayload] = useState<LessonsPayload | null>(null);
   const [lessonsLoading, setLessonsLoading] = useState(false);
   const [lessonsError, setLessonsError] = useState("");
+  const [thresholdsPayload, setThresholdsPayload] = useState<ThresholdPayload | null>(null);
+  const [thresholdsLoading, setThresholdsLoading] = useState(false);
+  const [thresholdsError, setThresholdsError] = useState("");
+  const [thresholdSaving, setThresholdSaving] = useState(false);
+  const [thresholdSaveError, setThresholdSaveError] = useState("");
+  const [thresholdSaveMessage, setThresholdSaveMessage] = useState("");
 
   const load = useCallback(async (
     preferredId?: string,
@@ -793,13 +843,27 @@ export default function ControlRoomPage() {
     }
   }, [selectedConnectorId]);
 
+  const loadThresholds = useCallback(async () => {
+    setThresholdsLoading(true);
+    setThresholdsError("");
+    try {
+      const payload = await apiJson<ThresholdPayload>("/api/control-room/thresholds", { cache: "no-store" });
+      setThresholdsPayload(payload);
+    } catch (err) {
+      setThresholdsError(err instanceof Error ? err.message : "No se pudieron cargar umbrales");
+    } finally {
+      setThresholdsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (state !== "ready") return;
     const timer = window.setTimeout(() => {
       void loadLessons();
+      void loadThresholds();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [domain, cartridge, loadLessons, state]);
+  }, [domain, cartridge, loadLessons, loadThresholds, state]);
 
   useEffect(() => {
     if (state !== "ready") return undefined;
@@ -808,10 +872,11 @@ export default function ControlRoomPage() {
       if (document.visibilityState === "visible") {
         void load(selectedId, { background: true, reason: "poll" });
         void loadLessons();
+        void loadThresholds();
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [dashboard?.meta?.refresh_interval_seconds, load, loadLessons, selectedId, state]);
+  }, [dashboard?.meta?.refresh_interval_seconds, load, loadLessons, loadThresholds, selectedId, state]);
 
   const contextLessons = useMemo(() => {
     const itemIds = new Set(filtered.map((item) => item.id));
@@ -826,6 +891,51 @@ export default function ControlRoomPage() {
       return contextConnectorIds.has(lesson.cartridge_id) && (anomalyKeys.size === 0 || anomalyKeys.has(key));
     });
   }, [cartridge, contextConnectorIds, domain, filtered, lessonsPayload?.lessons]);
+
+  const contextThresholds = useMemo(() => {
+    const thresholds = thresholdsPayload?.thresholds || [];
+    if (domain === "all" && cartridge === "all") return thresholds;
+    return thresholds.filter((threshold) => contextConnectorIds.has(threshold.cartridge_id));
+  }, [cartridge, contextConnectorIds, domain, thresholdsPayload?.thresholds]);
+
+  const contextThresholdCandidates = useMemo(() => {
+    const byKey = new Map<string, ThresholdCandidate>();
+    filtered.forEach((item) => {
+      (item.thresholds_applied || []).forEach((threshold) => {
+        const key = thresholdKey(threshold);
+        const current = byKey.get(key);
+        byKey.set(key, {
+          ...threshold,
+          key,
+          module: item.module,
+          module_id: item.module_id,
+          domain: item.domain,
+          title: current?.title || item.title,
+          item_count: (current?.item_count || 0) + 1,
+        });
+      });
+    });
+    contextThresholds.forEach((threshold) => {
+      const key = thresholdKey(threshold);
+      if (byKey.has(key)) return;
+      const relatedModule = contextModules.find((module) => module.connector_id === threshold.cartridge_id);
+      byKey.set(key, {
+        ...threshold,
+        key,
+        source: "workspace",
+        module: relatedModule?.label || threshold.cartridge_id,
+        module_id: relatedModule?.id,
+        domain: relatedModule?.domain || domain,
+        item_count: 0,
+      });
+    });
+    return [...byKey.values()].sort((left, right) => (
+      left.domain.localeCompare(right.domain)
+      || left.module.localeCompare(right.module)
+      || left.anomaly_type.localeCompare(right.anomaly_type)
+      || left.metric.localeCompare(right.metric)
+    ));
+  }, [contextModules, contextThresholds, domain, filtered]);
 
   useEffect(() => {
     if (!detailOpen || !selected?.id) return undefined;
@@ -872,6 +982,38 @@ export default function ControlRoomPage() {
     void load(nextItem.id, { background: true, reason: "mutation" });
     void loadActivity(nextItem.id);
     void loadLessons();
+    void loadThresholds();
+  }
+
+  async function saveThreshold(draft: ThresholdDraft) {
+    setThresholdSaving(true);
+    setThresholdSaveError("");
+    setThresholdSaveMessage("");
+    try {
+      const payload = await apiJson<{ threshold: DetectionThreshold }>(
+        "/api/control-room/thresholds",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            cartridge_id: draft.cartridge_id,
+            anomaly_type: draft.anomaly_type,
+            metric: draft.metric,
+            warning_value: draft.warning_value === "" ? null : Number(draft.warning_value),
+            critical_value: draft.critical_value === "" ? null : Number(draft.critical_value),
+            currency: draft.currency || "USD",
+            enabled: draft.enabled,
+            metadata: { source: "control_room_ui" },
+          }),
+        },
+      );
+      setThresholdSaveMessage(`Umbral guardado: ${thresholdLabel(payload.threshold)}`);
+      void loadThresholds();
+      void load(selectedId, { background: true, reason: "mutation" });
+    } catch (err) {
+      setThresholdSaveError(err instanceof Error ? err.message : "No se pudo guardar el umbral");
+    } finally {
+      setThresholdSaving(false);
+    }
   }
 
   async function recordStep(
@@ -1101,6 +1243,12 @@ export default function ControlRoomPage() {
     pushControlRoomUrl(nextDomain, nextModule);
   }
 
+  function refreshAll() {
+    void load(selectedId, { reason: "manual" });
+    void loadLessons();
+    void loadThresholds();
+  }
+
   return (
     <main className="app-shell">
       <Sidebar
@@ -1128,7 +1276,7 @@ export default function ControlRoomPage() {
           syncError={syncError}
           liveMode={dashboard?.meta?.live_mode || "polling"}
           refreshSeconds={dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS}
-          onRefresh={() => void load(selectedId, { reason: "manual" })}
+          onRefresh={refreshAll}
         />
 
         {state === "error" ? (
@@ -1183,6 +1331,13 @@ export default function ControlRoomPage() {
             contextLessons={contextLessons}
             lessonsLoading={lessonsLoading}
             lessonsError={lessonsError}
+            contextThresholds={contextThresholds}
+            thresholdCandidates={contextThresholdCandidates}
+            thresholdsLoading={thresholdsLoading}
+            thresholdsError={thresholdsError}
+            thresholdSaving={thresholdSaving}
+            thresholdSaveError={thresholdSaveError}
+            thresholdSaveMessage={thresholdSaveMessage}
             contextCycleCounts={contextCycleCounts}
             contextCritical={contextCritical}
             contextAttention={contextAttention}
@@ -1197,6 +1352,7 @@ export default function ControlRoomPage() {
             onDomain={navigateDomain}
             onCartridge={navigateModule}
             onSeverity={setSeverity}
+            onSaveThreshold={saveThreshold}
             onToggleDomain={toggleDomain}
             onOpenItem={openItem}
           />
@@ -1344,6 +1500,13 @@ function DashboardView({
   contextLessons,
   lessonsLoading,
   lessonsError,
+  contextThresholds,
+  thresholdCandidates,
+  thresholdsLoading,
+  thresholdsError,
+  thresholdSaving,
+  thresholdSaveError,
+  thresholdSaveMessage,
   contextCycleCounts,
   contextCritical,
   contextAttention,
@@ -1358,6 +1521,7 @@ function DashboardView({
   onDomain,
   onCartridge,
   onSeverity,
+  onSaveThreshold,
   onToggleDomain,
   onOpenItem,
 }: {
@@ -1372,6 +1536,13 @@ function DashboardView({
   contextLessons: Lesson[];
   lessonsLoading: boolean;
   lessonsError: string;
+  contextThresholds: DetectionThreshold[];
+  thresholdCandidates: ThresholdCandidate[];
+  thresholdsLoading: boolean;
+  thresholdsError: string;
+  thresholdSaving: boolean;
+  thresholdSaveError: string;
+  thresholdSaveMessage: string;
   contextCycleCounts?: Record<string, number>;
   contextCritical: number;
   contextAttention: number;
@@ -1386,6 +1557,7 @@ function DashboardView({
   onDomain: (domain: string) => void;
   onCartridge: (cartridge: string, domain: string) => void;
   onSeverity: (severity: Severity | "all") => void;
+  onSaveThreshold: (draft: ThresholdDraft) => void;
   onToggleDomain: (domainId: string) => void;
   onOpenItem: (item: ControlItem) => void;
 }) {
@@ -1475,6 +1647,18 @@ function DashboardView({
       </section>
 
       <SourceInventoryPanel context={context} sources={contextSources} />
+
+      <ThresholdRulesBoard
+        context={context}
+        thresholds={contextThresholds}
+        candidates={thresholdCandidates}
+        loading={thresholdsLoading}
+        error={thresholdsError}
+        saving={thresholdSaving}
+        saveError={thresholdSaveError}
+        saveMessage={thresholdSaveMessage}
+        onSave={onSaveThreshold}
+      />
 
       <LessonsBoard
         context={context}
@@ -1754,6 +1938,200 @@ function SourceInventoryPanel({
             <span>No hay fuentes visibles para este contexto.</span>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function ThresholdRulesBoard({
+  context,
+  thresholds,
+  candidates,
+  loading,
+  error,
+  saving,
+  saveError,
+  saveMessage,
+  onSave,
+}: {
+  context: ActiveContext;
+  thresholds: DetectionThreshold[];
+  candidates: ThresholdCandidate[];
+  loading: boolean;
+  error: string;
+  saving: boolean;
+  saveError: string;
+  saveMessage: string;
+  onSave: (draft: ThresholdDraft) => void;
+}) {
+  const [selectedKey, setSelectedKey] = useState("");
+  const [draftEdits, setDraftEdits] = useState<Record<string, ThresholdDraft>>({});
+  const overridesByKey = useMemo(() => new Map(
+    thresholds.map((threshold) => [thresholdKey(threshold), threshold]),
+  ), [thresholds]);
+  const effectiveSelectedKey = selectedKey && candidates.some((candidate) => candidate.key === selectedKey)
+    ? selectedKey
+    : candidates[0]?.key || "";
+  const selected = candidates.find((candidate) => candidate.key === effectiveSelectedKey);
+  const selectedOverride = selected ? overridesByKey.get(selected.key) : undefined;
+  const selectedSource = selected ? selectedOverride || selected : undefined;
+  const baseDraft: ThresholdDraft = selected && selectedSource ? {
+    cartridge_id: selected.cartridge_id,
+    anomaly_type: selected.anomaly_type,
+    metric: selected.metric,
+    warning_value: selectedSource.warning_value === null || selectedSource.warning_value === undefined ? "" : String(selectedSource.warning_value),
+    critical_value: selectedSource.critical_value === null || selectedSource.critical_value === undefined ? "" : String(selectedSource.critical_value),
+    currency: selectedSource.currency || "USD",
+    enabled: selectedSource.enabled !== false,
+  } : {
+    cartridge_id: "",
+    anomaly_type: "",
+    metric: "",
+    warning_value: "",
+    critical_value: "",
+    currency: "USD",
+    enabled: true,
+  };
+  const draft = effectiveSelectedKey ? draftEdits[effectiveSelectedKey] || baseDraft : baseDraft;
+  const activeOverrides = thresholds.filter((threshold) => threshold.enabled !== false).length;
+  const disabledOverrides = thresholds.length - activeOverrides;
+
+  function updateDraft(patch: Partial<ThresholdDraft>) {
+    if (!selected || !effectiveSelectedKey) return;
+    setDraftEdits((current) => ({
+      ...current,
+      [effectiveSelectedKey]: { ...draft, ...patch },
+    }));
+  }
+
+  return (
+    <section className="section-block threshold-rules-board" aria-label="Umbrales configurables del contexto">
+      <div className="anomaly-heading">
+        <div>
+          <p className="section-kicker">Umbrales configurables</p>
+          <h2>{context.title}</h2>
+        </div>
+        <span>
+          {activeOverrides} activos
+          {disabledOverrides ? ` · ${disabledOverrides} inactivos` : ""}
+        </span>
+      </div>
+      {error ? <p className="activity-error" role="alert">{error}</p> : null}
+      <div className="threshold-workbench">
+        <article className="threshold-editor" aria-label="Editor de umbral">
+          <div>
+            <label>
+              Regla base
+              <select
+                aria-label="Regla de umbral"
+                value={effectiveSelectedKey}
+                onChange={(event) => setSelectedKey(event.target.value)}
+                disabled={!candidates.length || saving}
+              >
+                {candidates.map((candidate) => (
+                  <option value={candidate.key} key={candidate.key}>
+                    {candidate.module} · {thresholdLabel(candidate)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Warning
+              <input
+                aria-label="Valor warning"
+                type="number"
+                step="0.01"
+                value={draft.warning_value}
+                onChange={(event) => updateDraft({ warning_value: event.target.value })}
+                disabled={!selected || saving}
+              />
+            </label>
+            <label>
+              Critico
+              <input
+                aria-label="Valor critico"
+                type="number"
+                step="0.01"
+                value={draft.critical_value}
+                onChange={(event) => updateDraft({ critical_value: event.target.value })}
+                disabled={!selected || saving}
+              />
+            </label>
+            <label>
+              Moneda
+              <input
+                aria-label="Moneda del umbral"
+                value={draft.currency}
+                maxLength={8}
+                onChange={(event) => updateDraft({ currency: event.target.value.toUpperCase() })}
+                disabled={!selected || saving}
+              />
+            </label>
+          </div>
+          <div className="threshold-editor-footer">
+            <label className="threshold-toggle">
+              <input
+                type="checkbox"
+                checked={draft.enabled}
+                onChange={(event) => updateDraft({ enabled: event.target.checked })}
+                disabled={!selected || saving}
+              />
+              Activo para este workspace
+            </label>
+            <button
+              type="button"
+              className="primary-action"
+              disabled={!selected || saving}
+              onClick={() => onSave(draft)}
+            >
+              {saving ? <Loader2 aria-hidden className="spin" /> : <ShieldCheck aria-hidden />}
+              Guardar umbral
+            </button>
+          </div>
+          {selected ? (
+            <p className="threshold-editor-help">
+              {selectedOverride ? "Override workspace activo para esta regla." : "Esta regla usa default trazable; al guardar queda como override workspace auditado."}
+            </p>
+          ) : (
+            <p className="threshold-editor-help">No hay reglas detectadas en este contexto todavia.</p>
+          )}
+          {saveError ? <p className="activity-error" role="alert">{saveError}</p> : null}
+          {saveMessage ? <p className="activity-success" role="status">{saveMessage}</p> : null}
+        </article>
+
+        <article className="threshold-rule-list" aria-label="Reglas de umbral visibles">
+          <div className="threshold-rule-header">
+            <strong>Reglas del contexto</strong>
+            <span>{loading ? "Actualizando" : `${candidates.length} reglas`}</span>
+          </div>
+          {candidates.length ? candidates.slice(0, 8).map((candidate) => {
+            const override = overridesByKey.get(candidate.key);
+            const source = override || candidate;
+            return (
+              <button
+                type="button"
+                key={candidate.key}
+                className={`threshold-rule-card ${candidate.key === selected?.key ? "active" : ""}`}
+                onClick={() => setSelectedKey(candidate.key)}
+              >
+                <span>{candidate.domain} · {candidate.module}</span>
+                <strong>{thresholdLabel(candidate)}</strong>
+                <em>
+                  W {source.warning_value ?? "N/D"}
+                  {source.critical_value !== null && source.critical_value !== undefined ? ` · C ${source.critical_value}` : ""}
+                  {" · "}
+                  {override ? "Workspace" : "Default"}
+                </em>
+                <small>{candidate.item_count} senales usando esta regla</small>
+              </button>
+            );
+          }) : (
+            <div className="state-panel">
+              <ShieldCheck aria-hidden />
+              <span>No hay umbrales trazables para este contexto.</span>
+            </div>
+          )}
+        </article>
       </div>
     </section>
   );

@@ -48,6 +48,21 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.meta?.live_mode, "dashboard must expose live refresh mode").toBe("polling");
     expect(dashboard.meta?.refresh_interval_seconds, "dashboard must publish polling interval").toBe(30);
     expect(dashboard.sources.every((source: { checked_at?: string }) => Boolean(source.checked_at))).toBe(true);
+    const csrf = await csrfToken(page);
+    const seededThreshold = {
+      cartridge_id: "replicon",
+      anomaly_type: "low_margin",
+      metric: "margen_bruto_pct",
+      warning_value: 21,
+      critical_value: 1,
+      currency: "USD",
+      enabled: true,
+    };
+    const seedThresholdResponse = await page.request.post(`${LEGACY}/api/control-room/thresholds`, {
+      headers: { "X-CSRF-Token": csrf },
+      data: seededThreshold,
+    });
+    expect(seedThresholdResponse.status(), "control-room threshold seed must be accepted").toBe(200);
 
     const response = await page.goto(`${LEGACY}/control-room`, {
       waitUntil: "domcontentloaded",
@@ -67,7 +82,40 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toBeVisible();
+    await expect(page.getByLabel(/umbrales configurables del contexto/i)).toBeVisible();
+    await expect(page.getByLabel(/reglas de umbral visibles/i)).toContainText(/low_margin/i);
     await expect(page.getByText(/conectores .* modulos/i).first()).toBeVisible();
+
+    await page.getByLabel(/regla de umbral/i).selectOption("replicon:low_margin:margen_bruto_pct");
+    await page.getByLabel(/valor warning/i).fill("22");
+    await page.getByLabel(/valor critico/i).fill("2");
+    await page.getByRole("button", { name: /guardar umbral/i }).click();
+    await expect(page.getByText(/umbral guardado/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    const thresholdStateResponse = await page.request.get(`${LEGACY}/api/control-room/thresholds`, {
+      timeout: 30_000,
+    });
+    expect(thresholdStateResponse.status(), "thresholds API must expose UI-updated rule").toBe(200);
+    const thresholdState = await thresholdStateResponse.json();
+    expect(
+      thresholdState.thresholds.some((threshold: {
+        cartridge_id?: string;
+        anomaly_type?: string;
+        metric?: string;
+        warning_value?: number;
+        critical_value?: number;
+        enabled?: boolean;
+      }) => (
+        threshold.cartridge_id === "replicon"
+        && threshold.anomaly_type === "low_margin"
+        && threshold.metric === "margen_bruto_pct"
+        && threshold.warning_value === 22
+        && threshold.critical_value === 2
+        && threshold.enabled === true
+      )),
+      "threshold override must be persisted workspace-scoped",
+    ).toBe(true);
 
     const refreshResponse = page.waitForResponse((apiResponse) => (
       apiResponse.url().includes("/api/control-room/dashboard") && apiResponse.status() === 200
@@ -78,6 +126,11 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
 
     expect(forbidden3000, "control-room assets and APIs must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room must not emit console.error").toEqual([]);
+
+    await page.request.patch(`${LEGACY}/api/control-room/thresholds`, {
+      headers: { "X-CSRF-Token": csrf },
+      data: { ...seededThreshold, enabled: false },
+    });
   });
 
   test("navigates domain and module contexts in the same :8000 tab", async ({
