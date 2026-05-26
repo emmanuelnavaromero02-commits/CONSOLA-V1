@@ -64,6 +64,7 @@ ACTIVITY_LABELS = {
     "action_blocked": "Ejecucion bloqueada",
     "approved": "Aprobacion registrada",
     "lesson_recorded": "Leccion registrada",
+    "lesson_applied": "Leccion aplicada",
     "dismissed": "Item descartado",
     "reopened": "Item reabierto",
     "alert_acknowledged": "Alerta reconocida",
@@ -2408,6 +2409,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "action_templates": action_templates,
         "related_lessons": item.get("related_lessons") or [],
         "lesson_count": lesson_count,
+        "lesson_applications": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
         "omega": {
             "signals": {
                 "source": item.get("source_dataset"),
@@ -2482,6 +2484,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             },
             "lessons": {
                 "rules": lessons,
+                "applied": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
             },
         },
     }
@@ -2558,6 +2561,19 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
     control_state = item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
     if control_state:
         metadata["control_state"] = control_state
+    learned_rules = item.get("learned_rules") if isinstance(item.get("learned_rules"), list) else []
+    if learned_rules:
+        metadata["learned_rules"] = learned_rules[:10]
+    lessons = item.get("lessons") if isinstance(item.get("lessons"), list) else []
+    if lessons:
+        metadata["lessons"] = lessons[:10]
+    lesson_applications = (
+        item.get("lesson_applications")
+        if isinstance(item.get("lesson_applications"), list)
+        else []
+    )
+    if lesson_applications:
+        metadata["lesson_applications"] = lesson_applications[:20]
     return metadata
 
 
@@ -2805,6 +2821,8 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
             "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else item.get("alert_state"),
             "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else item.get("control_state"),
             "lessons": metadata.get("lessons"),
+            "learned_rules": metadata.get("learned_rules"),
+            "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
             "first_seen_at": state.get("first_seen_at"),
             "last_seen_at": state.get("last_seen_at"),
             "resolved_at": state.get("resolved_at"),
@@ -3293,6 +3311,8 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
         "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else {},
         "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else {},
         "lessons": metadata.get("lessons"),
+        "learned_rules": metadata.get("learned_rules"),
+        "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
         "first_seen_at": public_row.get("first_seen_at"),
         "last_seen_at": public_row.get("last_seen_at"),
         "resolved_at": public_row.get("resolved_at"),
@@ -4074,6 +4094,160 @@ async def create_item_lesson(
         "created": True,
         "lesson": lessons[0],
         "lessons": lessons,
+        "item": public_item,
+    }
+
+
+def _lesson_matches_item(lesson: dict[str, Any], item: dict[str, Any]) -> bool:
+    if lesson.get("item_id") == item.get("id"):
+        return True
+    return (
+        lesson.get("cartridge_id") == item.get("cartridge")
+        and lesson.get("anomaly_type") == item.get("anomaly_type")
+    )
+
+
+def _lesson_applications(item: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = item.get("lesson_applications")
+    if not isinstance(raw, list):
+        raw = item.get("omega", {}).get("lessons", {}).get("applied")
+    if not isinstance(raw, list):
+        return []
+    applications: list[dict[str, Any]] = []
+    for value in raw:
+        if isinstance(value, dict):
+            applications.append(value)
+    return applications[:20]
+
+
+def _dedupe_lessons(lessons: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for lesson in lessons:
+        key = str(lesson.get("id") or f"{lesson.get('item_id')}:{lesson.get('rule')}")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(lesson)
+    return unique
+
+
+async def apply_item_lesson(
+    item_id: str,
+    lesson_id: int,
+    body: dict[str, Any],
+    user: dict,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    related_lessons = await _load_lesson_rows(
+        user,
+        cartridge_id=item.get("cartridge"),
+        anomaly_type=item.get("anomaly_type"),
+        limit=100,
+    )
+    item_lessons = await _load_lesson_rows(user, item_id=item["id"], limit=100)
+    lessons = _dedupe_lessons([*related_lessons, *item_lessons])
+    lesson = next((row for row in lessons if int(row.get("id") or 0) == int(lesson_id)), None)
+    if not lesson or not _lesson_matches_item(lesson, item):
+        raise HTTPException(404, "lesson not applicable to this control room item")
+
+    rule = str(lesson.get("rule") or "").strip()
+    if len(rule) < 8:
+        raise HTTPException(400, "lesson rule is not valid")
+    note = str(body.get("note") or "").strip()[:500]
+    now = datetime.now(UTC).isoformat()
+    application = {
+        "lesson_id": int(lesson_id),
+        "rule": rule,
+        "source_decision_id": lesson.get("source_decision_id"),
+        "cartridge_id": lesson.get("cartridge_id"),
+        "anomaly_type": lesson.get("anomaly_type"),
+        "applied_at": now,
+        "applied_by": user.get("email"),
+    }
+    if note:
+        application["note"] = note
+
+    applications = _lesson_applications(item)
+    applications = [entry for entry in applications if int(entry.get("lesson_id") or 0) != int(lesson_id)]
+    applications.insert(0, application)
+    applications = applications[:20]
+    learned_rules = _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), rule)
+    target_status = item.get("status") if item.get("status") in TERMINAL_ITEM_STATUSES else "in_review"
+
+    pool = await auth.pool()
+    await _ensure_item_row(pool, user=user, item=item, status=target_status)
+    try:
+        await pool.execute(
+            """
+            UPDATE control_room_items
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                   status = CASE
+                       WHEN status = ANY($4::text[])
+                       THEN status
+                       ELSE $5
+                   END,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $1
+               AND item_id = $2
+            """,
+            _workspace_id(user),
+            item["id"],
+            json.dumps({
+                "learned_rules": learned_rules,
+                "lesson_applications": applications,
+            }),
+            sorted(TERMINAL_ITEM_STATUSES),
+            target_status,
+        )
+    except Exception:
+        pass
+
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="lesson_applied",
+        metadata={
+            "lesson_id": int(lesson_id),
+            "rule": rule,
+            "source_decision_id": lesson.get("source_decision_id"),
+            "note": note,
+        },
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.lesson.apply",
+        resource_type="control_room_item",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "lesson_id": int(lesson_id),
+            "rule": rule,
+            "item": item,
+        },
+        critical=True,
+    )
+    related = _dedupe_lessons([lesson, *(item.get("related_lessons") or []), *lessons])[:5]
+    public_item = _with_omega({
+        **item,
+        "status": target_status,
+        "related_lessons": related,
+        "lesson_count": max(len(related), int(item.get("lesson_count") or 0), 1),
+        "learned_rules": learned_rules,
+        "lesson_applications": applications,
+    })
+    return {
+        "applied": True,
+        "lesson": lesson,
+        "lesson_application": application,
         "item": public_item,
     }
 

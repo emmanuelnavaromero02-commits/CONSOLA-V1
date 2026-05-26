@@ -343,6 +343,24 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByText(manualLesson).first()).toBeVisible({
       timeout: 15_000,
     });
+    const applyLessonButton = page.getByRole("button", { name: /aplicar leccion/i }).first();
+    await expect(applyLessonButton).toBeVisible({ timeout: 15_000 });
+    await applyLessonButton.click();
+    await expect(page.getByText(/leccion aplicada/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const lessonStateResponse = await page.request.get(
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}`,
+      { timeout: 30_000 },
+    );
+    expect(lessonStateResponse.status(), "lesson application state must be persisted").toBe(200);
+    const lessonState = await lessonStateResponse.json();
+    expect(
+      Array.isArray(lessonState.lesson_applications)
+      && lessonState.lesson_applications.some((entry: { rule?: string }) => entry.rule === manualLesson),
+      "applied lesson must be stored on the control room item",
+    ).toBe(true);
 
     const activityResponse = await page.request.get(
       `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/activity`,
@@ -359,6 +377,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(activityTypes).toContain("approved");
     expect(activityTypes).toContain("control_checked");
     expect(activityTypes).toContain("lesson_recorded");
+    expect(activityTypes).toContain("lesson_applied");
 
     const auditResponse = await page.request.get(`${LEGACY}/security/audit`, {
       timeout: 30_000,
@@ -369,6 +388,10 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(
       auditEvents.some((event: { action?: string }) => event.action === "control_room.approve"),
       "approval must be written to audit_events",
+    ).toBe(true);
+    expect(
+      auditEvents.some((event: { action?: string }) => event.action === "control_room.lesson.apply"),
+      "lesson application must be written to audit_events",
     ).toBe(true);
 
     const lessonsResponse = await page.request.get(
