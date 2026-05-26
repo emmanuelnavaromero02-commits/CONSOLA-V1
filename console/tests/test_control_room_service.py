@@ -953,12 +953,40 @@ async def test_thresholds_are_workspace_scoped_and_audited():
 
     assert created["threshold"]["id"] == 5
     assert listed["thresholds"][0]["cartridge_id"] == "replicon"
+    assert listed["summary"]["active"] == 1
+    assert listed["summary"]["by_cartridge"] == {"replicon": 1}
     sql, *args = mock_pool.fetchrow.call_args.args
     assert "workspace_id" in sql
     assert "ON CONFLICT (workspace_id, cartridge_id, anomaly_type, metric)" in sql
     assert "workspace-A" in args
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.threshold.upsert"
+
+
+@pytest.mark.asyncio
+async def test_threshold_upsert_rejects_denied_or_unknown_cartridge():
+    with pytest.raises(HTTPException) as unknown_exc:
+        await control_room_service.upsert_threshold(
+            {
+                "cartridge_id": "unknown",
+                "anomaly_type": "low_margin",
+                "metric": "margen_bruto_pct",
+            },
+            USER,
+        )
+
+    with pytest.raises(HTTPException) as denied_exc:
+        await control_room_service.upsert_threshold(
+            {
+                "cartridge_id": "platform",
+                "anomaly_type": "freshness",
+                "metric": "age_minutes",
+            },
+            USER,
+        )
+
+    assert unknown_exc.value.status_code == 400
+    assert denied_exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
