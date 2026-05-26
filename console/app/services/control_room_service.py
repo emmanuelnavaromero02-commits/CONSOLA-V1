@@ -22,6 +22,7 @@ CONTROL_ROOM_REFRESH_INTERVAL_SECONDS = 30
 TERMINAL_ITEM_STATUSES = {"approved", "dismissed", "resolved"}
 ITEM_STATUSES = {"open", "in_review", "decision_created", "approved", "dismissed", "resolved"}
 SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+ALERT_SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 OMEGA_STEPS = [
     {"id": "signals", "label": "Senales"},
     {"id": "investigation", "label": "Investigacion"},
@@ -1917,6 +1918,68 @@ def _impact_payload(
     }
 
 
+def _priority_payload(item: dict[str, Any], impact: dict[str, Any] | None = None) -> dict[str, Any]:
+    impact = impact or _impact_for_item(item)
+    score = int(impact.get("priority_score") or 0)
+    drivers: list[dict[str, Any]] = [
+        {
+            "label": "Severidad",
+            "value": item.get("severity") or "medium",
+            "points": SEVERITY_WEIGHT.get(str(item.get("severity") or "medium"), 2) * 14,
+        }
+    ]
+    if impact.get("status") == "ok" and impact.get("estimate") is not None:
+        drivers.append({
+            "label": "Impacto economico",
+            "value": impact.get("estimate"),
+            "currency": impact.get("currency") or "USD",
+            "points": min(42, int(abs(float(impact.get("estimate") or 0)) / 10_000)),
+        })
+    else:
+        drivers.append({"label": "Impacto economico", "value": "no disponible", "points": 0})
+
+    threshold_state = str(item.get("threshold_state") or "default")
+    threshold_points = {"critical": 16, "warning": 8}.get(threshold_state, 0)
+    if threshold_points:
+        drivers.append({"label": "Umbral", "value": threshold_state, "points": threshold_points})
+        score += threshold_points
+
+    source_status = ""
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    if item.get("kind") == "source_state":
+        source_status = str(details.get("source_status") or item.get("status") or "")
+    source_points = {
+        "invalid_schema": 24,
+        "unavailable": 22,
+        "missing": 20,
+        "blocked": 18,
+        "no_permission": 18,
+        "empty": 8,
+    }.get(source_status, 0)
+    if source_points:
+        drivers.append({"label": "Salud fuente", "value": source_status, "points": source_points})
+        score += source_points
+
+    lesson_count = int(item.get("lesson_count") or 0)
+    lesson_points = min(12, lesson_count * 4)
+    if lesson_points:
+        drivers.append({"label": "Patron aprendido", "value": lesson_count, "points": lesson_points})
+        score += lesson_points
+
+    if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
+        drivers.append({"label": "Estado cerrado", "value": item.get("status"), "points": -35})
+        score -= 35
+
+    score = max(0, min(100, score))
+    band = "critical" if score >= 90 else "high" if score >= 75 else "medium" if score >= 55 else "low"
+    return {
+        "score": score,
+        "band": band,
+        "drivers": drivers,
+        "formula": "severity + impact + confidence + thresholds + source_health + learned_patterns",
+    }
+
+
 def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
     if item.get("kind") == "source_state":
@@ -2226,13 +2289,16 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
     for option in options:
         option["selected"] = option["id"] == selected_option_id
     lessons = _lessons_for_item(item)
+    lesson_count = int(item.get("lesson_count") or 0)
+    priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
     return {
         **item,
         "impact_estimate": impact.get("estimate"),
         "impact_currency": impact.get("currency"),
         "impact_status": impact.get("status"),
         "confidence": impact.get("confidence"),
-        "priority_score": impact.get("priority_score"),
+        "priority_score": priority["score"],
+        "priority": priority,
         "impact_drivers": impact.get("drivers"),
         "impact_formula": impact.get("formula"),
         "impact_explanation": impact.get("explanation"),
@@ -2242,14 +2308,15 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "execution_status": execution_status,
         "action_templates": action_templates,
         "related_lessons": item.get("related_lessons") or [],
-        "lesson_count": int(item.get("lesson_count") or 0),
+        "lesson_count": lesson_count,
         "omega": {
             "signals": {
                 "source": item.get("source_dataset"),
                 "severity": item.get("severity"),
                 "detected_at": item.get("detected_at"),
                 "status": status,
-                "priority_score": impact.get("priority_score"),
+                "priority_score": priority["score"],
+                "priority_band": priority["band"],
                 "threshold_state": item.get("threshold_state") or "default",
             },
             "investigation": {
@@ -2347,6 +2414,118 @@ def _status_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str, str]:
         str(item.get("domain") or ""),
         str(item.get("title") or ""),
     )
+
+
+def _alert_type_for_item(item: dict[str, Any]) -> str:
+    if item.get("kind") == "source_state":
+        return "source_health"
+    if str(item.get("threshold_state") or "default") in {"critical", "warning"}:
+        return "threshold_breach"
+    if int(item.get("lesson_count") or 0) > 0:
+        return "learned_pattern"
+    return "critical_signal" if item.get("severity") in {"critical", "high"} else "watchlist"
+
+
+def _alert_message(item: dict[str, Any], alert_type: str) -> str:
+    if alert_type == "source_health":
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        return f"{item.get('source_dataset')} esta {details.get('source_status') or 'sin datos operativos'}."
+    if alert_type == "threshold_breach":
+        thresholds = item.get("thresholds_applied") or []
+        if thresholds:
+            names = ", ".join(
+                f"{row.get('anomaly_type')}/{row.get('metric')}"
+                for row in thresholds[:2]
+            )
+            return f"Umbral operativo excedido: {names}."
+    if alert_type == "learned_pattern":
+        return f"Patron repetido con {int(item.get('lesson_count') or 0)} lecciones previas."
+    return str(item.get("description") or item.get("title") or "Senal operativa requiere revision.")
+
+
+def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
+        return None
+    priority = item.get("priority") if isinstance(item.get("priority"), dict) else _priority_payload(item)
+    score = int(priority.get("score") or item.get("priority_score") or 0)
+    alert_type = _alert_type_for_item(item)
+    threshold_state = str(item.get("threshold_state") or "default")
+    should_alert = (
+        alert_type in {"source_health", "threshold_breach", "learned_pattern"}
+        or item.get("severity") in {"critical", "high"}
+        or score >= 55
+    )
+    if not should_alert:
+        return None
+    severity = str(priority.get("band") or item.get("severity") or "medium")
+    if severity not in ALERT_SEVERITY_WEIGHT:
+        severity = "medium"
+    return {
+        "id": f"alert:{item.get('id')}",
+        "item_id": item.get("id"),
+        "alert_type": alert_type,
+        "severity": severity,
+        "priority_score": score,
+        "domain": item.get("domain"),
+        "module": item.get("module"),
+        "module_id": item.get("module_id") or item.get("cartridge"),
+        "cartridge": item.get("cartridge"),
+        "connector_id": item.get("connector_id") or item.get("cartridge"),
+        "source_dataset": item.get("source_dataset"),
+        "title": item.get("title"),
+        "message": _alert_message(item, alert_type),
+        "status": "open",
+        "threshold_state": threshold_state,
+        "lesson_count": int(item.get("lesson_count") or 0),
+        "impact_estimate": item.get("impact_estimate"),
+        "impact_currency": item.get("impact_currency") or "USD",
+        "recommended_action": item.get("recommendation"),
+        "drivers": priority.get("drivers") or [],
+        "route_key": f"{item.get('cartridge')}:{item.get('anomaly_type')}:{item.get('module_id') or item.get('cartridge')}",
+        "push_ready": True,
+        "delivery": {
+            "status": "not_configured",
+            "channels": ["email", "slack", "teams"],
+            "reason": "Push externo queda preparado; no se envia en V1.",
+        },
+        "created_at": item.get("first_seen_at") or item.get("detected_at") or datetime.now(UTC).isoformat(),
+        "updated_at": item.get("last_seen_at") or datetime.now(UTC).isoformat(),
+    }
+
+
+def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+    alerts = [alert for item in items if (alert := _alert_for_item(item))]
+    alerts.sort(key=lambda alert: (
+        -int(alert.get("priority_score") or 0),
+        -ALERT_SEVERITY_WEIGHT.get(str(alert.get("severity") or "medium"), 2),
+        str(alert.get("domain") or ""),
+        str(alert.get("title") or ""),
+    ))
+    by_type: dict[str, int] = {}
+    by_domain: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for alert in alerts:
+        alert_type = str(alert.get("alert_type") or "watchlist")
+        domain = str(alert.get("domain") or "unknown")
+        severity = str(alert.get("severity") or "medium")
+        by_type[alert_type] = by_type.get(alert_type, 0) + 1
+        by_domain[domain] = by_domain.get(domain, 0) + 1
+        by_severity[severity] = by_severity.get(severity, 0) + 1
+    return {
+        "alerts": alerts,
+        "summary": {
+            "total": len(alerts),
+            "critical": by_severity.get("critical", 0),
+            "high": by_severity.get("high", 0),
+            "medium": by_severity.get("medium", 0),
+            "low": by_severity.get("low", 0),
+            "push_ready": sum(1 for alert in alerts if alert.get("push_ready")),
+            "by_type": by_type,
+            "by_domain": by_domain,
+            "by_severity": by_severity,
+            "top": alerts[:5],
+        },
+    }
 
 
 async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *, persist: bool = False) -> list[dict[str, Any]]:
@@ -2691,6 +2870,9 @@ async def dashboard(
     lesson_rows = await _load_lesson_rows(user, limit=200)
     lesson_summary = _lesson_insights(lesson_rows)
     items = _attach_lessons_to_items(items, lesson_rows)
+    alerts_payload = _alert_payload(items)
+    alerts = alerts_payload["alerts"]
+    alert_summary = alerts_payload["summary"]
 
     by_severity = _severity_counts(items)
     by_cartridge: dict[str, int] = {}
@@ -2806,10 +2988,12 @@ async def dashboard(
                 "items_with_thresholds": sum(1 for item in items if item.get("thresholds_applied")),
             },
             "lessons": lesson_summary,
+            "alerts": alert_summary,
         },
         "domains": domains,
         "cartridges": cartridges,
         "sources": sources,
+        "alerts": alerts,
         "items": items,
     }
 
@@ -2856,6 +3040,8 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
             workspace_id,
         ) or 0)
     lesson_rows = await _load_lesson_rows(user, limit=100)
+    items = _attach_lessons_to_items(items, lesson_rows)
+    alert_summary = _alert_payload(items)["summary"]
     return {
         "total_anomalies": len(items),
         "by_severity": by_severity,
@@ -2869,6 +3055,7 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
             "total": len(collected.get("thresholds", [])),
         },
         "lessons": _lesson_insights(lesson_rows),
+        "alerts": alert_summary,
     }
 
 
@@ -4044,6 +4231,19 @@ async def reopen_item(
         critical=True,
     )
     return {"reopened": True, "item": _with_omega({**item, "status": "open", "decision_id": None})}
+
+
+async def list_alerts(
+    user: dict,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    payload = await dashboard(user, fetcher=fetcher, persist=True)
+    return {
+        "alerts": payload.get("alerts") or [],
+        "summary": payload.get("summary", {}).get("alerts") or _alert_payload(payload.get("items") or [])["summary"],
+        "generated_at": payload.get("meta", {}).get("generated_at"),
+    }
 
 
 async def list_thresholds(user: dict) -> dict[str, Any]:

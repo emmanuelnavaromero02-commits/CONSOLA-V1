@@ -330,6 +330,64 @@ async def test_dashboard_applies_workspace_thresholds_to_detection_and_priority(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_exposes_push_ready_alert_queue_with_priority_drivers():
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=finance_fetcher)
+
+    alerts = result["alerts"]
+    assert alerts
+    assert result["summary"]["alerts"]["total"] == len(alerts)
+    assert result["summary"]["alerts"]["push_ready"] == len(alerts)
+    top = alerts[0]
+    assert top["push_ready"] is True
+    assert top["delivery"]["status"] == "not_configured"
+    assert top["priority_score"] >= alerts[-1]["priority_score"]
+    assert any(driver["label"] == "Severidad" for driver in top["drivers"])
+    threshold_alert = next(alert for alert in alerts if alert["alert_type"] == "threshold_breach")
+    assert threshold_alert["item_id"]
+    assert threshold_alert["recommended_action"]
+    item = next(item for item in result["items"] if item["id"] == threshold_alert["item_id"])
+    assert item["priority"]["score"] == item["priority_score"]
+    assert item["priority"]["formula"]
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_returns_same_alert_contract_as_dashboard():
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.list_alerts(USER, fetcher=finance_fetcher)
+
+    assert result["generated_at"]
+    assert result["summary"]["total"] == len(result["alerts"])
+    assert all(alert["id"].startswith("alert:") for alert in result["alerts"])
+
+
+@pytest.mark.asyncio
 async def test_dashboard_workspace_threshold_can_suppress_default_signal():
     threshold_row = {
         "id": 12,
