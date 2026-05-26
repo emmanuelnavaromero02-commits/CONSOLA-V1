@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Bell,
   BookOpen,
   CheckCircle2,
   ChevronDown,
@@ -20,6 +21,7 @@ import {
   Play,
   RefreshCcw,
   ShieldCheck,
+  Send,
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -295,6 +297,12 @@ interface ControlItem {
   impact_status?: "ok" | "unavailable" | "missing" | "empty";
   confidence?: number | null;
   priority_score?: number | null;
+  priority?: {
+    score: number;
+    band: Severity;
+    formula?: string;
+    drivers?: Array<ImpactDriver & { points?: number }>;
+  };
   impact_drivers?: ImpactDriver[];
   impact_formula?: string;
   impact_explanation?: string;
@@ -304,6 +312,38 @@ interface ControlItem {
   lesson_count?: number;
   action_templates?: ActionTemplate[];
   omega: Omega;
+}
+
+interface ControlAlert {
+  id: string;
+  item_id: string;
+  alert_type: "source_health" | "threshold_breach" | "learned_pattern" | "critical_signal" | "watchlist" | string;
+  severity: Severity;
+  priority_score: number;
+  domain: string;
+  module: string;
+  module_id?: string;
+  cartridge: string;
+  connector_id?: string;
+  source_dataset: string;
+  title: string;
+  message: string;
+  status: string;
+  threshold_state?: string;
+  lesson_count?: number;
+  impact_estimate?: number | null;
+  impact_currency?: string;
+  recommended_action?: string;
+  drivers?: Array<ImpactDriver & { points?: number }>;
+  route_key?: string;
+  push_ready?: boolean;
+  delivery?: {
+    status: string;
+    channels?: string[];
+    reason?: string;
+  };
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface Dashboard {
@@ -349,10 +389,23 @@ interface Dashboard {
       by_cartridge?: Record<string, number>;
       top_patterns?: LessonPattern[];
     };
+    alerts?: {
+      total: number;
+      critical: number;
+      high: number;
+      medium: number;
+      low: number;
+      push_ready: number;
+      by_type?: Record<string, number>;
+      by_domain?: Record<string, number>;
+      by_severity?: Record<string, number>;
+      top?: ControlAlert[];
+    };
   };
   domains: Domain[];
   cartridges: Cartridge[];
   sources: SourceStatus[];
+  alerts?: ControlAlert[];
   items: ControlItem[];
 }
 
@@ -441,6 +494,14 @@ const sourceStateLabels: Record<SourceState | SourceRollup, string> = {
   attention: "Atencion",
   inactive: "Inactiva",
   no_sources: "Sin fuentes",
+};
+
+const alertTypeLabels: Record<string, string> = {
+  source_health: "Salud de fuente",
+  threshold_breach: "Umbral excedido",
+  learned_pattern: "Patron aprendido",
+  critical_signal: "Senal critica",
+  watchlist: "Watchlist",
 };
 
 function csrfToken(): string {
@@ -898,6 +959,15 @@ export default function ControlRoomPage() {
     return thresholds.filter((threshold) => contextConnectorIds.has(threshold.cartridge_id));
   }, [cartridge, contextConnectorIds, domain, thresholdsPayload?.thresholds]);
 
+  const contextAlerts = useMemo(() => {
+    const alerts = dashboard?.alerts || [];
+    if (domain === "all" && cartridge === "all") return alerts;
+    return alerts.filter((alert) => (
+      (domain === "all" || alert.domain === domain)
+      && (cartridge === "all" || alert.module_id === cartridge)
+    ));
+  }, [cartridge, dashboard?.alerts, domain]);
+
   const contextThresholdCandidates = useMemo(() => {
     const byKey = new Map<string, ThresholdCandidate>();
     filtered.forEach((item) => {
@@ -1329,6 +1399,7 @@ export default function ControlRoomPage() {
             contextSourceStates={contextSourceStates}
             contextModules={contextModules}
             contextLessons={contextLessons}
+            contextAlerts={contextAlerts}
             lessonsLoading={lessonsLoading}
             lessonsError={lessonsError}
             contextThresholds={contextThresholds}
@@ -1498,6 +1569,7 @@ function DashboardView({
   contextSourceStates,
   contextModules,
   contextLessons,
+  contextAlerts,
   lessonsLoading,
   lessonsError,
   contextThresholds,
@@ -1534,6 +1606,7 @@ function DashboardView({
   contextSourceStates: Record<SourceState, number>;
   contextModules: Cartridge[];
   contextLessons: Lesson[];
+  contextAlerts: ControlAlert[];
   lessonsLoading: boolean;
   lessonsError: string;
   contextThresholds: DetectionThreshold[];
@@ -1600,8 +1673,16 @@ function DashboardView({
         sources={contextSources}
         items={groupedItems.flatMap((group) => group.items)}
         lessons={contextLessons}
+        alerts={contextAlerts}
         onOpenItem={onOpenItem}
         onCartridge={onCartridge}
+      />
+
+      <AlertQueuePanel
+        context={context}
+        alerts={contextAlerts}
+        onOpenItem={onOpenItem}
+        items={groupedItems.flatMap((group) => group.items)}
       />
 
       <section className="summary-row" aria-label="Resumen ejecutivo">
@@ -1755,6 +1836,7 @@ function ContextOperations({
   sources,
   items,
   lessons,
+  alerts,
   onOpenItem,
   onCartridge,
 }: {
@@ -1763,6 +1845,7 @@ function ContextOperations({
   sources: SourceStatus[];
   items: ControlItem[];
   lessons: Lesson[];
+  alerts: ControlAlert[];
   onOpenItem: (item: ControlItem) => void;
   onCartridge: (cartridge: string, domain: string) => void;
 }) {
@@ -1771,7 +1854,6 @@ function ContextOperations({
     || right.severity_weight - left.severity_weight
   ))[0];
   const sourceRisk = sources.filter((source) => source.status !== "ok").length;
-  const approved = items.filter((item) => item.status === "approved" || item.status === "resolved").length;
   return (
     <section className="context-ops" aria-label="Panel operativo contextual">
       <article className="context-ops-main">
@@ -1785,7 +1867,7 @@ function ContextOperations({
         <div className="context-mini-grid">
           <InfoBlock label="Modulos en vista" value={`${modules.length}`} />
           <InfoBlock label="Fuentes con riesgo" value={`${sourceRisk}`} />
-          <InfoBlock label="Aprobadas" value={`${approved}`} />
+          <InfoBlock label="Alertas" value={`${alerts.length}`} />
           <InfoBlock label="Lecciones" value={`${lessons.length}`} />
         </div>
       </article>
@@ -1828,6 +1910,82 @@ function ContextOperations({
           ))}
         </div>
       </article>
+    </section>
+  );
+}
+
+function AlertQueuePanel({
+  context,
+  alerts,
+  items,
+  onOpenItem,
+}: {
+  context: ActiveContext;
+  alerts: ControlAlert[];
+  items: ControlItem[];
+  onOpenItem: (item: ControlItem) => void;
+}) {
+  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const topAlerts = alerts.slice(0, 6);
+  const critical = alerts.filter((alert) => alert.severity === "critical").length;
+  const pushReady = alerts.filter((alert) => alert.push_ready).length;
+  return (
+    <section className="alert-queue-panel" aria-label="Cola de alertas operativas">
+      <div className="alert-queue-header">
+        <div>
+          <p className="section-kicker">Alertas y prioridad</p>
+          <h2>{alerts.length} alertas activas para {context.title}</h2>
+          <span>{pushReady} listas para ruteo · {critical} criticas · sin push externo en V1</span>
+        </div>
+        <div className="alert-route-pill">
+          <Send aria-hidden />
+          Push-ready
+        </div>
+      </div>
+      {topAlerts.length ? (
+        <div className="alert-grid">
+          {topAlerts.map((alert) => {
+            const item = itemById.get(alert.item_id);
+            return (
+              <article className={`alert-card ${alert.severity}`} key={alert.id}>
+                <div className="alert-card-top">
+                  <span className={`severity-pill ${alert.severity}`}>{severityLabels[alert.severity]}</span>
+                  <strong>Prioridad {alert.priority_score}</strong>
+                </div>
+                <h3>{alert.title}</h3>
+                <p>{alert.message}</p>
+                <dl>
+                  <div><dt>Tipo</dt><dd>{alertTypeLabels[alert.alert_type] || alert.alert_type}</dd></div>
+                  <div><dt>Modulo</dt><dd>{alert.module}</dd></div>
+                  <div><dt>Entrega</dt><dd>{alert.delivery?.status || "not_configured"}</dd></div>
+                </dl>
+                <div className="alert-driver-row">
+                  {(alert.drivers || []).slice(0, 3).map((driver) => (
+                    <span key={`${alert.id}-${driver.label}`}>
+                      {driver.label}
+                      {driver.points !== undefined ? ` +${driver.points}` : ""}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="tool-button"
+                  disabled={!item}
+                  onClick={() => item && onOpenItem(item)}
+                >
+                  <Bell aria-hidden />
+                  Abrir alerta
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="state-panel">
+          <CheckCircle2 aria-hidden />
+          <span>Sin alertas activas para este contexto.</span>
+        </div>
+      )}
     </section>
   );
 }

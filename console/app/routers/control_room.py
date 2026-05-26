@@ -25,6 +25,11 @@ async def control_room_dashboard(user: dict = Depends(require_authenticated)):
     return await control_room_service.dashboard(user)
 
 
+@router.get("/alerts", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_alerts(user: dict = Depends(require_authenticated)):
+    return await control_room_service.list_alerts(user)
+
+
 @router.get("/anomalies", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_anomalies(user: dict = Depends(require_authenticated)):
     return await control_room_service.list_anomalies(user)

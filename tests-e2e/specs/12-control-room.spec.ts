@@ -45,6 +45,12 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.cartridges.length, "active cartridges must come from backend catalog").toBeGreaterThan(0);
     expect(dashboard.summary.active_connectors, "dashboard must distinguish commercial connectors").toBeGreaterThan(0);
     expect(dashboard.summary.active_modules, "dashboard must expose operational modules").toBeGreaterThan(0);
+    expect(dashboard.summary.alerts.total, "dashboard must expose operational alert queue").toBeGreaterThan(0);
+    expect(dashboard.summary.alerts.push_ready, "alerts must be push-ready without external delivery").toBeGreaterThan(0);
+    const alertsResponse = await page.request.get(`${LEGACY}/api/control-room/alerts`, { timeout: 30_000 });
+    expect(alertsResponse.status(), "control-room alerts API must respond").toBe(200);
+    const alertsPayload = await alertsResponse.json();
+    expect(alertsPayload.summary.total, "alerts API must expose alert summary").toBeGreaterThan(0);
     expect(dashboard.meta?.live_mode, "dashboard must expose live refresh mode").toBe("polling");
     expect(dashboard.meta?.refresh_interval_seconds, "dashboard must publish polling interval").toBe(30);
     expect(dashboard.sources.every((source: { checked_at?: string }) => Boolean(source.checked_at))).toBe(true);
@@ -80,6 +86,8 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByText(/vivo 30s/i).first()).toBeVisible();
     await expect(page.getByText(/siguiente/i).first()).toBeVisible();
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
+    await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
+    await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/push-ready/i);
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toBeVisible();
     await expect(page.getByLabel(/umbrales configurables del contexto/i)).toBeVisible();
@@ -117,10 +125,12 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       "threshold override must be persisted workspace-scoped",
     ).toBe(true);
 
+    const refreshButton = page.getByRole("button", { name: /refrescar/i });
+    await expect(refreshButton).toBeEnabled({ timeout: 20_000 });
     const refreshResponse = page.waitForResponse((apiResponse) => (
       apiResponse.url().includes("/api/control-room/dashboard") && apiResponse.status() === 200
     ));
-    await page.getByRole("button", { name: /refrescar/i }).click();
+    await refreshButton.click();
     await refreshResponse;
     await expect(page.getByText(/actualizado/i).first()).toBeVisible();
 
@@ -163,6 +173,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/datasets/i);
     await expect(page.getByLabel(/estados de fuentes del contexto/i)).toContainText(/Operativa/i);
     await expect(page.getByLabel(/lecciones aprendidas del contexto/i)).toContainText(/reglas visibles/i);
+    await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/alertas activas/i);
     await expect(page.getByText(/actualizado/i).first()).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toContainText(/finanzas/i);
 
