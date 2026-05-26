@@ -37,22 +37,68 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboardResponse.status(), "control-room dashboard API must respond").toBe(200);
     const dashboard = await dashboardResponse.json();
     expect(dashboard.cartridges.length, "active cartridges must come from backend catalog").toBeGreaterThan(0);
+    expect(dashboard.summary.active_connectors, "dashboard must distinguish commercial connectors").toBeGreaterThan(0);
+    expect(dashboard.summary.active_modules, "dashboard must expose operational modules").toBeGreaterThan(0);
 
     const response = await page.goto(`${LEGACY}/control-room`, {
       waitUntil: "domcontentloaded",
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
-    await expect(page.getByRole("heading", { name: /^dashboard operativo$/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
+    await expect(page.getByText(/conectores .* modulos operativos/i).first()).toBeVisible();
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista portfolio/i);
     await expect(page.getByRole("button", { name: /refrescar/i })).toBeEnabled({
       timeout: 15_000,
     });
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toBeVisible();
-    await expect(page.getByText(/duckdb \+ parquet/i)).toBeVisible();
+    await expect(page.getByText(/conectores .* modulos/i).first()).toBeVisible();
 
     expect(forbidden3000, "control-room assets and APIs must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room must not emit console.error").toEqual([]);
+  });
+
+  test("navigates domain and module contexts in the same :8000 tab", async ({
+    authedPage: page,
+  }) => {
+    const consoleErrors: string[] = [];
+    const forbidden3000: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.port === "3000") forbidden3000.push(request.url());
+    });
+
+    const response = await page.goto(`${LEGACY}/control-room`, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
+    await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
+
+    await page.getByRole("button", { name: /^finanzas\s+\d+/i }).first().click();
+    await expect(page).toHaveURL(/\/control-room\?domain=Finanzas/);
+    await expect(page.getByRole("heading", { name: /^finanzas$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de dominio/i);
+    await expect(page.getByLabel(/anomalias detectadas/i)).toContainText(/finanzas/i);
+
+    await page.getByRole("button", { name: /margen y facturacion\s+\d+/i }).first().click();
+    await expect(page).toHaveURL(/\/control-room\?module=replicon_finance/);
+    await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
+    await expect(page.getByText(/estado del modulo/i)).toBeVisible();
+    await expect(page.getByLabel(/estado por dominio/i)).toContainText(/margen y facturacion/i);
+
+    await page.goto(`${LEGACY}/control-room?module=replicon_finance`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
+
+    expect(forbidden3000, "control-room navigation must not call :3000").toEqual([]);
+    expect(consoleErrors, "control-room navigation must not emit console.error").toEqual([]);
   });
 
   test("runs item -> decision -> approval -> audit without relying on :3000", async ({
@@ -92,7 +138,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       waitUntil: "domcontentloaded",
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
-    await expect(page.getByRole("heading", { name: /^dashboard operativo$/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
 
     const targetButton = page.getByRole("button", {
       name: new RegExp(

@@ -233,9 +233,19 @@ p {
 
 .header h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1;
   letter-spacing: 0;
+}
+
+.header-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .header p {
@@ -364,6 +374,80 @@ p {
   gap: 16px;
   max-width: 1308px;
   margin: 0 auto 30px;
+}
+
+.context-panel {
+  max-width: 1308px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 0 auto 20px;
+  padding: 24px;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(239, 246, 255, 0.94), rgba(255, 255, 255, 0.98));
+  box-shadow: var(--shadow);
+}
+
+.context-panel.domain {
+  border-color: rgba(16, 185, 129, 0.24);
+  background:
+    linear-gradient(135deg, rgba(236, 253, 245, 0.94), rgba(255, 255, 255, 0.98));
+}
+
+.context-panel.module {
+  border-color: rgba(124, 58, 237, 0.24);
+  background:
+    linear-gradient(135deg, rgba(245, 243, 255, 0.95), rgba(255, 255, 255, 0.98));
+}
+
+.context-panel h2 {
+  margin: 0 0 7px;
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1;
+}
+
+.context-panel span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.context-panel dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(84px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.context-panel dl div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.context-panel dt {
+  color: #8b96a8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.context-panel dd {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.context-panel em {
+  grid-column: 1 / -1;
+  color: #7c2d12;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .summary-card {
@@ -2030,6 +2114,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .context-panel {
+    grid-template-columns: 1fr;
+  }
+
   .impact-detail,
   .execution-bridge {
     grid-template-columns: 1fr;
@@ -2070,6 +2158,7 @@ button:disabled {
     .detail-grid,
     .impact-metrics,
     .money-grid,
+    .context-panel dl,
     .risk-strip,
     .option-card dl,
   .control-row dl {

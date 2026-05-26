@@ -2720,6 +2720,12 @@ async def dashboard(
             "critical": by_severity.get("critical", 0),
             "attention": by_severity.get("high", 0) + by_severity.get("medium", 0),
             "open_decisions": open_decisions,
+            "active_connectors": len({
+                row["connector_id"]
+                for row in cartridges
+                if row["active"] and not row["operational"]
+            }),
+            "active_modules": len([row for row in cartridges if row["active"] and not row["operational"]]),
             "active_cartridges": len([row for row in cartridges if row["active"] and not row["operational"]]),
             "operational_cartridges": len([row for row in cartridges if row["active"] and row["operational"]]),
             "source_states": {
