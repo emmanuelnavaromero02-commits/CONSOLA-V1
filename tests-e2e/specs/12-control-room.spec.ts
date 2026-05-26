@@ -14,6 +14,14 @@ async function csrfToken(page: Page): Promise<string> {
   return token || "";
 }
 
+async function controlRoomDashboard(page: Page) {
+  const response = await page.request.get(`${LEGACY}/api/control-room/dashboard`, {
+    timeout: 30_000,
+  });
+  expect(response.status(), "control-room dashboard API must respond").toBe(200);
+  return response.json();
+}
+
 test.describe("Control Room OMEGA on FastAPI :8000", () => {
   test("loads hydrated operational cockpit from :8000 without :3000 calls", async ({
     authedPage: page,
@@ -33,9 +41,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       }
     });
 
-    const dashboardResponse = await page.request.get(`${LEGACY}/api/control-room/dashboard`);
-    expect(dashboardResponse.status(), "control-room dashboard API must respond").toBe(200);
-    const dashboard = await dashboardResponse.json();
+    const dashboard = await controlRoomDashboard(page);
     expect(dashboard.cartridges.length, "active cartridges must come from backend catalog").toBeGreaterThan(0);
     expect(dashboard.summary.active_connectors, "dashboard must distinguish commercial connectors").toBeGreaterThan(0);
     expect(dashboard.summary.active_modules, "dashboard must expose operational modules").toBeGreaterThan(0);
@@ -45,6 +51,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
     await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^finanzas\s+\d+/i }).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByText(/conectores .* modulos operativos/i).first()).toBeVisible();
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista portfolio/i);
     await expect(page.getByRole("button", { name: /refrescar/i })).toBeEnabled({
@@ -77,25 +86,35 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
     await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^finanzas\s+\d+/i }).first()).toBeVisible({
+      timeout: 30_000,
+    });
 
     await page.getByRole("button", { name: /^finanzas\s+\d+/i }).first().click();
     await expect(page).toHaveURL(/\/control-room\?domain=Finanzas/);
     await expect(page.getByRole("heading", { name: /^finanzas$/i, level: 1 })).toBeVisible();
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de dominio/i);
+    await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/vista exclusiva/i);
+    await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/datasets/i);
+    await expect(page.getByLabel(/lecciones aprendidas del contexto/i)).toContainText(/reglas visibles/i);
+    await expect(page.getByText(/actualizado/i).first()).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toContainText(/finanzas/i);
 
     await page.getByRole("button", { name: /margen y facturacion\s+\d+/i }).first().click();
     await expect(page).toHaveURL(/\/control-room\?module=replicon_finance/);
     await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
+    await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/Margen y Facturacion/i);
     await expect(page.getByText(/estado del modulo/i)).toBeVisible();
     await expect(page.getByLabel(/estado por dominio/i)).toContainText(/margen y facturacion/i);
+    await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/pnl_mensual/i);
 
     await page.goto(`${LEGACY}/control-room?module=replicon_finance`, {
       waitUntil: "domcontentloaded",
     });
     await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
+    await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/replicon/i);
 
     expect(forbidden3000, "control-room navigation must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room navigation must not emit console.error").toEqual([]);
@@ -104,9 +123,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
   test("runs item -> decision -> approval -> audit without relying on :3000", async ({
     authedPage: page,
   }) => {
-    const dashboardResponse = await page.request.get(`${LEGACY}/api/control-room/dashboard`);
-    expect(dashboardResponse.status(), "control-room dashboard API must respond").toBe(200);
-    const dashboard = await dashboardResponse.json();
+    const dashboard = await controlRoomDashboard(page);
     expect(dashboard.items.length, "dashboard must expose at least one real operational item").toBeGreaterThan(0);
     const targetItem = dashboard.items[0];
     const csrf = await csrfToken(page);
@@ -139,6 +156,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
     await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^finanzas\s+\d+/i }).first()).toBeVisible({
+      timeout: 30_000,
+    });
 
     const targetButton = page.getByRole("button", {
       name: new RegExp(
@@ -171,6 +191,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     const optionStateResponse = await page.request.get(
       `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}`,
+      { timeout: 30_000 },
     );
     expect(optionStateResponse.status(), "selected option must be persisted in backend").toBe(200);
     const optionState = await optionStateResponse.json();
@@ -202,6 +223,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
 
     const activityResponse = await page.request.get(
       `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/activity`,
+      { timeout: 30_000 },
     );
     expect(activityResponse.status(), "control-room item must expose visible activity trail").toBe(200);
     const activity = await activityResponse.json();
@@ -212,7 +234,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(activityTypes).toContain("action_dry_run");
     expect(activityTypes).toContain("approved");
 
-    const auditResponse = await page.request.get(`${LEGACY}/security/audit`);
+    const auditResponse = await page.request.get(`${LEGACY}/security/audit`, {
+      timeout: 30_000,
+    });
     expect(auditResponse.status(), "/security/audit must expose the audit trail").toBe(200);
     const auditEvents = await auditResponse.json();
     expect(Array.isArray(auditEvents)).toBe(true);
@@ -223,6 +247,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
 
     const lessonsResponse = await page.request.get(
       `${LEGACY}/api/control-room/lessons?cartridge_id=${encodeURIComponent(targetItem.cartridge)}&anomaly_type=${encodeURIComponent(targetItem.anomaly_type)}`,
+      { timeout: 30_000 },
     );
     expect(lessonsResponse.status(), "approval must expose persisted lessons").toBe(200);
     const lessons = await lessonsResponse.json();

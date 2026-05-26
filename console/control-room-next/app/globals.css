@@ -274,6 +274,11 @@ p {
   font-weight: 900;
 }
 
+.header-actions .freshness-pill {
+  color: #0369a1;
+  background: #eff6ff;
+}
+
 .tool-button,
 .primary-action,
 .secondary-action,
@@ -450,6 +455,140 @@ p {
   font-weight: 900;
 }
 
+.context-mini-grid .info-block span,
+.context-mini-grid .info-block strong {
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
+}
+
+.context-ops {
+  max-width: 1308px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.75fr) minmax(240px, 0.55fr);
+  gap: 16px;
+  margin: 0 auto 20px;
+}
+
+.context-ops-main,
+.priority-card,
+.module-rail,
+.domain-insight-panel,
+.source-row,
+.lesson-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.context-ops-main {
+  padding: 22px;
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f8fafc 70%);
+}
+
+.context-ops-main h2,
+.domain-insight-header h2 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.context-ops-main p,
+.priority-card p,
+.domain-insight-header span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.context-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.priority-card {
+  display: grid;
+  align-content: start;
+  gap: 11px;
+  padding: 20px;
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%);
+}
+
+.priority-card > svg {
+  width: 34px;
+  height: 34px;
+  color: var(--green);
+}
+
+.priority-card h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.priority-card p {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.priority-card .primary-action {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+.module-rail {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+}
+
+.module-rail > div {
+  display: grid;
+  gap: 8px;
+}
+
+.module-rail button {
+  min-width: 0;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-soft);
+  text-align: left;
+}
+
+.module-rail button:hover,
+.module-rail button:focus-visible {
+  border-color: rgba(37, 99, 235, 0.36);
+  background: #eff6ff;
+  outline: none;
+}
+
+.module-rail strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.module-rail em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .summary-card {
   min-height: 98px;
   display: grid;
@@ -575,11 +714,10 @@ p {
 
 .omega-cycle strong {
   min-width: 0;
-  overflow: hidden;
   font-size: 11px;
   line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .omega-cycle em {
@@ -797,6 +935,58 @@ p {
   border-radius: 8px;
   background: #fff;
   box-shadow: var(--shadow);
+}
+
+.domain-insight-panel {
+  max-width: 1308px;
+  margin: 0 auto 30px;
+  padding: 20px;
+}
+
+.domain-insight-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.module-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.module-bar-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+}
+
+.module-bar-row span,
+.source-row em,
+.lesson-card span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.module-bar-row > div {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e5e7eb;
+}
+
+.module-bar-row em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.module-bar-row strong {
+  font-size: 12px;
+  text-align: right;
 }
 
 .financial-panel.muted {
@@ -1140,6 +1330,142 @@ p {
   gap: 10px;
 }
 
+.source-inventory {
+  display: grid;
+  gap: 10px;
+}
+
+.source-row {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 72px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.source-row > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.source-row strong,
+.source-row em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-row em {
+  grid-column: 2;
+  margin-top: 3px;
+  font-style: normal;
+}
+
+.source-row > span {
+  justify-self: start;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 99px;
+  color: #475569;
+  background: #eef2ff;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.source-row.unavailable > span,
+.source-row.missing > span,
+.source-row.invalid_schema > span,
+.source-row.blocked > span,
+.source-row.no_permission > span {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.source-row.empty > span {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.source-row > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lessons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.lesson-card {
+  display: grid;
+  gap: 11px;
+  padding: 16px;
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.lesson-card > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lesson-card svg {
+  width: 17px;
+  height: 17px;
+  color: var(--blue);
+}
+
+.lesson-card strong {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.lesson-card dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.lesson-card dl div {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.lesson-card dt {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.lesson-card dd {
+  min-width: 0;
+  overflow: hidden;
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .anomaly-card {
   overflow: hidden;
 }
@@ -1366,6 +1692,13 @@ p {
 
 .info-block strong {
   font-size: 13px;
+}
+
+.context-mini-grid .info-block span,
+.context-mini-grid .info-block strong {
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
 }
 
 .mode-cards {
