@@ -285,6 +285,8 @@ interface Dashboard {
     critical: number;
     attention: number;
     open_decisions: number;
+    active_connectors?: number;
+    active_modules?: number;
     active_cartridges: number;
     operational_cartridges: number;
     source_states: Record<SourceState, number>;
@@ -331,6 +333,16 @@ interface FinancialSummary {
   oldest_backlog_days: number;
   purchase_spend: number;
   risk_projects: FinancialRisk[];
+}
+
+interface ActiveContext {
+  level: "portfolio" | "domain" | "module";
+  title: string;
+  eyebrow: string;
+  subtitle: string;
+  domainLabel?: string;
+  moduleId?: string;
+  moduleLabel?: string;
 }
 
 const severityLabels: Record<Severity, string> = {
@@ -439,6 +451,40 @@ function activityDescription(entry: ActivityEntry): string {
   return entry.status || entry.type;
 }
 
+function controlRoomUrl(nextDomain: string, nextModule: string): string {
+  const params = new URLSearchParams();
+  if (nextModule !== "all") {
+    params.set("module", nextModule);
+  } else if (nextDomain !== "all") {
+    params.set("domain", nextDomain);
+  }
+  const query = params.toString();
+  return query ? `/control-room?${query}` : "/control-room";
+}
+
+function pushControlRoomUrl(nextDomain: string, nextModule: string): void {
+  if (typeof window === "undefined") return;
+  window.history.pushState(null, "", controlRoomUrl(nextDomain, nextModule));
+}
+
+function cycleCountsForItems(items: ControlItem[]): Record<string, number> {
+  const counts = Object.fromEntries(defaultOmegaSteps.map((step) => [step.id, 0])) as Record<string, number>;
+  items.forEach((item) => {
+    counts.signals += 1;
+    if (item.status === "open" || item.status === "in_review") counts.investigation += 1;
+    if (item.status === "in_review" || item.selected_option_id) counts.options += 1;
+    if (item.decision_id || ["decision_created", "approved", "resolved"].includes(item.status)) counts.decision += 1;
+    if (item.status === "approved" || item.status === "resolved") {
+      counts.execution += 1;
+      counts.control += 1;
+      counts.lessons += 1;
+    } else if (item.status === "dismissed") {
+      counts.control += 1;
+    }
+  });
+  return counts;
+}
+
 export default function ControlRoomPage() {
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState("");
@@ -456,6 +502,7 @@ export default function ControlRoomPage() {
   const [activityByItem, setActivityByItem] = useState<Record<string, ActivityPayload>>({});
   const [activityLoading, setActivityLoading] = useState("");
   const [activityError, setActivityError] = useState("");
+  const [urlHydrated, setUrlHydrated] = useState(false);
 
   const load = useCallback(async (preferredId?: string) => {
     setError("");
@@ -512,7 +559,31 @@ export default function ControlRoomPage() {
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const items = useMemo(() => dashboard?.items ?? [], [dashboard]);
-  const activeCartridges = cartridges.filter((item) => item.active && !item.operational);
+  const activeModules = cartridges.filter((item) => item.active && !item.operational);
+  const activeConnectorCount = dashboard?.summary.active_connectors
+    ?? new Set(activeModules.map((item) => item.connector_id || item.id)).size;
+  const activeModuleCount = dashboard?.summary.active_modules ?? activeModules.length;
+
+  useEffect(() => {
+    if (urlHydrated || !dashboard) return undefined;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const moduleParam = params.get("module");
+      const domainParam = params.get("domain");
+      if (moduleParam) {
+        const selectedModule = cartridges.find((item) => item.id === moduleParam);
+        if (selectedModule) {
+          setDomain(selectedModule.domain);
+          setCartridge(selectedModule.id);
+        }
+      } else if (domainParam && domains.some((item) => item.label === domainParam)) {
+        setDomain(domainParam);
+        setCartridge("all");
+      }
+      setUrlHydrated(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [cartridges, dashboard, domains, urlHydrated]);
 
   const filtered = useMemo(() => items.filter((item) => (
     (domain === "all" || item.domain === domain)
@@ -520,10 +591,80 @@ export default function ControlRoomPage() {
     && (cartridge === "all" || (item.module_id || item.cartridge) === cartridge)
   )), [cartridge, domain, items, severity]);
 
+  const contextSources = useMemo(() => (dashboard?.sources ?? []).filter((source) => (
+    (domain === "all" || source.domain === domain)
+    && (cartridge === "all" || source.module_id === cartridge)
+  )), [cartridge, dashboard?.sources, domain]);
+
+  const contextModules = useMemo(() => cartridges.filter((item) => (
+    item.active
+    && !item.operational
+    && (domain === "all" || item.domain === domain)
+    && (cartridge === "all" || item.id === cartridge)
+  )), [cartridge, cartridges, domain]);
+  const contextSourceStates = useMemo(() => {
+    const states = {
+      ok: 0,
+      empty: 0,
+      missing: 0,
+      unavailable: 0,
+      invalid_schema: 0,
+      blocked: 0,
+      no_permission: 0,
+    } satisfies Record<SourceState, number>;
+    contextSources.forEach((source) => {
+      states[source.status] = (states[source.status] ?? 0) + 1;
+    });
+    return states;
+  }, [contextSources]);
+
   const groupedItems = useMemo(() => domains.map((group) => ({
     domain: group,
     items: filtered.filter((item) => item.domain === group.label),
   })).filter((group) => group.items.length > 0), [domains, filtered]);
+
+  const visibleDomains = useMemo(() => domains
+    .filter((item) => item.modules.length > 0)
+    .filter((item) => domain === "all" || item.label === domain)
+    .map((item) => (cartridge === "all" ? item : {
+      ...item,
+      modules: item.modules.filter((module) => module.id === cartridge),
+    }))
+    .filter((item) => item.modules.length > 0), [cartridge, domain, domains]);
+
+  const contextCycleCounts = useMemo(() => (
+    domain === "all" && cartridge === "all" && severity === "all"
+      ? dashboard?.summary.cycle_counts
+      : cycleCountsForItems(filtered)
+  ), [cartridge, dashboard?.summary.cycle_counts, domain, filtered, severity]);
+
+  const contextCritical = filtered.filter((item) => item.severity === "critical").length;
+  const contextAttention = filtered.filter((item) => item.severity === "high" || item.severity === "medium").length;
+  const contextDecisionCount = domain === "all" && cartridge === "all" && severity === "all"
+    ? dashboard?.summary.open_decisions ?? 0
+    : filtered.filter((item) => Boolean(item.decision_id)).length;
+  const selectedDomain = domains.find((item) => item.label === domain);
+  const selectedModule = cartridges.find((item) => item.id === cartridge);
+  const activeContext: ActiveContext = selectedModule && cartridge !== "all" ? {
+    level: "module",
+    title: selectedModule.label,
+    eyebrow: "Modulo operativo",
+    subtitle: `${selectedModule.domain} · ${selectedModule.connector_label || selectedModule.connector_id || selectedModule.id}`,
+    domainLabel: selectedModule.domain,
+    moduleId: selectedModule.id,
+    moduleLabel: selectedModule.label,
+  } : selectedDomain && domain !== "all" ? {
+    level: "domain",
+    title: selectedDomain.label,
+    eyebrow: "Dominio operativo",
+    subtitle: `${selectedDomain.cartridge_count} modulos · ${filtered.length} senales`,
+    domainLabel: selectedDomain.label,
+  } : {
+    level: "portfolio",
+    title: "Dashboard Operativo",
+    eyebrow: "Sala de Control OMEGA",
+    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} modulos operativos`,
+  };
 
   const selected = filtered.find((item) => item.id === selectedId)
     || items.find((item) => item.id === selectedId)
@@ -727,36 +868,52 @@ export default function ControlRoomPage() {
     }
   }
 
+  function navigateAll() {
+    setDomain("all");
+    setCartridge("all");
+    setDetailOpen(false);
+    pushControlRoomUrl("all", "all");
+  }
+
+  function navigateDomain(nextDomain: string) {
+    if (nextDomain === "all") {
+      navigateAll();
+      return;
+    }
+    setDomain(nextDomain);
+    setCartridge("all");
+    setDetailOpen(false);
+    pushControlRoomUrl(nextDomain, "all");
+  }
+
+  function navigateModule(nextModule: string, nextDomain: string) {
+    setDomain(nextDomain);
+    setCartridge(nextModule);
+    setDetailOpen(false);
+    pushControlRoomUrl(nextDomain, nextModule);
+  }
+
   return (
     <main className="app-shell">
       <Sidebar
         domains={domains}
         cartridges={cartridges}
         totalItems={dashboard?.summary.total_items ?? 0}
-        activeCartridges={activeCartridges.length}
+        activeConnectors={activeConnectorCount}
+        activeModules={activeModuleCount}
         domain={domain}
         cartridge={cartridge}
-        onAll={() => {
-          setDomain("all");
-          setCartridge("all");
-          setDetailOpen(false);
-        }}
-        onDomain={(nextDomain) => {
-          setDomain(nextDomain);
-          setCartridge("all");
-          setDetailOpen(false);
-        }}
-        onCartridge={(nextCartridge, nextDomain) => {
-          setDomain(nextDomain);
-          setCartridge((current) => (current === nextCartridge ? "all" : nextCartridge));
-          setDetailOpen(false);
-        }}
+        onAll={navigateAll}
+        onDomain={navigateDomain}
+        onCartridge={navigateModule}
       />
 
       <section className="main-surface">
         <Header
+          context={activeContext}
           period={dashboard?.period || "Periodo operativo"}
-          activeCartridges={activeCartridges.length}
+          activeConnectors={activeConnectorCount}
+          activeModules={activeModuleCount}
           loading={state === "loading"}
           onRefresh={() => void load()}
         />
@@ -802,14 +959,23 @@ export default function ControlRoomPage() {
           <DashboardView
             dashboard={dashboard}
             state={state}
-            domains={domains}
+            domains={visibleDomains}
+            context={activeContext}
+            contextSources={contextSources}
+            contextSourceStates={contextSourceStates}
+            contextModules={contextModules}
+            contextCycleCounts={contextCycleCounts}
+            contextCritical={contextCritical}
+            contextAttention={contextAttention}
+            contextDecisionCount={contextDecisionCount}
             domain={domain}
+            cartridge={cartridge}
             severity={severity}
             groupedItems={groupedItems}
             filteredCount={filtered.length}
             openCount={filtered.filter(activeOpen).length}
             collapsed={collapsed}
-            onDomain={setDomain}
+            onDomain={navigateDomain}
             onSeverity={setSeverity}
             onToggleDomain={toggleDomain}
             onOpenItem={openItem}
@@ -824,7 +990,8 @@ function Sidebar({
   domains,
   cartridges,
   totalItems,
-  activeCartridges,
+  activeConnectors,
+  activeModules,
   domain,
   cartridge,
   onAll,
@@ -834,7 +1001,8 @@ function Sidebar({
   domains: Domain[];
   cartridges: Cartridge[];
   totalItems: number;
-  activeCartridges: number;
+  activeConnectors: number;
+  activeModules: number;
   domain: string;
   cartridge: string;
   onAll: () => void;
@@ -888,31 +1056,36 @@ function Sidebar({
       ))}
 
       <footer className="sidebar-footer">
-        {activeCartridges} cartuchos · DuckDB + Parquet
+        {activeConnectors} conectores · {activeModules} modulos
       </footer>
     </aside>
   );
 }
 
 function Header({
+  context,
   period,
-  activeCartridges,
+  activeConnectors,
+  activeModules,
   loading,
   onRefresh,
 }: {
+  context: ActiveContext;
   period: string;
-  activeCartridges: number;
+  activeConnectors: number;
+  activeModules: number;
   loading: boolean;
   onRefresh: () => void;
 }) {
   return (
     <header className="header">
       <div>
-        <h1>Dashboard Operativo</h1>
-        <p>{period}</p>
+        <span className="header-eyebrow">{context.eyebrow}</span>
+        <h1>{context.title}</h1>
+        <p>Sala de Control / {context.level === "portfolio" ? "Todos" : context.title} · {period}</p>
       </div>
       <div className="header-actions">
-        <span>{activeCartridges} cartuchos</span>
+        <span>{activeConnectors} conectores · {activeModules} modulos operativos</span>
         <button className="tool-button" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 aria-hidden className="spin" /> : <RefreshCcw aria-hidden />}
           Refrescar
@@ -926,7 +1099,16 @@ function DashboardView({
   dashboard,
   state,
   domains,
+  context,
+  contextSources,
+  contextSourceStates,
+  contextModules,
+  contextCycleCounts,
+  contextCritical,
+  contextAttention,
+  contextDecisionCount,
   domain,
+  cartridge,
   severity,
   groupedItems,
   filteredCount,
@@ -940,7 +1122,16 @@ function DashboardView({
   dashboard: Dashboard | null;
   state: LoadState;
   domains: Domain[];
+  context: ActiveContext;
+  contextSources: SourceStatus[];
+  contextSourceStates: Record<SourceState, number>;
+  contextModules: Cartridge[];
+  contextCycleCounts?: Record<string, number>;
+  contextCritical: number;
+  contextAttention: number;
+  contextDecisionCount: number;
   domain: string;
+  cartridge: string;
   severity: Severity | "all";
   groupedItems: Array<{ domain: Domain; items: ControlItem[] }>;
   filteredCount: number;
@@ -951,6 +1142,7 @@ function DashboardView({
   onToggleDomain: (domainId: string) => void;
   onOpenItem: (item: ControlItem) => void;
 }) {
+  const contextIsPortfolio = context.level === "portfolio" && severity === "all";
   return (
     <div className="content">
       <div className="tabs" role="group" aria-label="Filtro por dominio">
@@ -974,21 +1166,30 @@ function DashboardView({
         </label>
       </div>
 
+      <ContextPanel
+        context={context}
+        sourceCount={contextSources.length}
+        moduleCount={contextModules.length}
+        itemCount={filteredCount}
+        openCount={openCount}
+        severity={severity}
+      />
+
       <section className="summary-row" aria-label="Resumen ejecutivo">
-        <SummaryCard icon={Gauge} label="Senales" value={dashboard?.summary.total_items ?? "..."} />
-        <SummaryCard icon={AlertTriangle} label="Criticas" value={dashboard?.summary.critical ?? 0} tone="critical" />
-        <SummaryCard icon={Activity} label="Atencion" value={dashboard?.summary.attention ?? 0} tone="attention" />
-        <SummaryCard icon={FileCheck2} label="Decisiones" value={dashboard?.summary.open_decisions ?? 0} />
+        <SummaryCard icon={Gauge} label="Senales" value={contextIsPortfolio ? dashboard?.summary.total_items ?? "..." : filteredCount} />
+        <SummaryCard icon={AlertTriangle} label="Criticas" value={contextIsPortfolio ? dashboard?.summary.critical ?? 0 : contextCritical} tone="critical" />
+        <SummaryCard icon={Activity} label="Atencion" value={contextIsPortfolio ? dashboard?.summary.attention ?? 0 : contextAttention} tone="attention" />
+        <SummaryCard icon={FileCheck2} label={contextIsPortfolio ? "Decisiones abiertas" : "Con decision"} value={contextDecisionCount} />
       </section>
 
       <section className="operations-strip" aria-label="Ciclo y salud operativa">
         <OmegaCycleBar
           steps={dashboard?.omega_steps ?? defaultOmegaSteps}
-          counts={dashboard?.summary.cycle_counts}
+          counts={contextCycleCounts}
         />
         <SourceHealthPanel
-          sourceStates={dashboard?.summary.source_states}
-          totalSources={dashboard?.sources.length ?? 0}
+          sourceStates={contextSourceStates}
+          totalSources={contextSources.length}
         />
         <ThresholdPanel thresholds={dashboard?.summary.thresholds} />
         <LearningPanel lessons={dashboard?.summary.lessons} />
@@ -997,7 +1198,7 @@ function DashboardView({
       <FinancialPanel financial={dashboard?.summary.financial} />
 
       <section className="section-block" aria-label="Estado por dominio">
-        <p className="section-kicker">Estado por dominio</p>
+        <p className="section-kicker">{cartridge === "all" ? "Estado por dominio" : "Estado del modulo"}</p>
         <div className="domain-list">
           {domains.filter((item) => item.modules.length > 0).map((item) => (
             <DomainSection
@@ -1051,6 +1252,44 @@ function DashboardView({
         </div>
       </section>
     </div>
+  );
+}
+
+function ContextPanel({
+  context,
+  sourceCount,
+  moduleCount,
+  itemCount,
+  openCount,
+  severity,
+}: {
+  context: ActiveContext;
+  sourceCount: number;
+  moduleCount: number;
+  itemCount: number;
+  openCount: number;
+  severity: Severity | "all";
+}) {
+  const label = context.level === "portfolio"
+    ? "Vista portfolio"
+    : context.level === "domain"
+      ? "Vista de dominio"
+      : "Vista de modulo";
+  return (
+    <section className={`context-panel ${context.level}`} aria-label="Contexto activo">
+      <div>
+        <p className="section-kicker">{label}</p>
+        <h2>{context.title}</h2>
+        <span>{context.subtitle}</span>
+      </div>
+      <dl>
+        <div><dt>Modulos</dt><dd>{moduleCount}</dd></div>
+        <div><dt>Fuentes</dt><dd>{sourceCount}</dd></div>
+        <div><dt>Senales</dt><dd>{itemCount}</dd></div>
+        <div><dt>Abiertas</dt><dd>{openCount}</dd></div>
+      </dl>
+      {severity !== "all" ? <em>Filtro activo: {severityLabels[severity]}</em> : null}
+    </section>
   );
 }
 
