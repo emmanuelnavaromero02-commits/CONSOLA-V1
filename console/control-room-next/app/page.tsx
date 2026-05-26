@@ -12,6 +12,7 @@ import {
   ChevronRight,
   CircleDot,
   CircleDollarSign,
+  Clock3,
   ClipboardCheck,
   FileCheck2,
   Filter,
@@ -22,6 +23,7 @@ import {
   RefreshCcw,
   ShieldCheck,
   Send,
+  UserPlus,
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -329,6 +331,12 @@ interface ControlAlert {
   title: string;
   message: string;
   status: string;
+  owner?: string | null;
+  note?: string | null;
+  reason?: string | null;
+  acknowledged_at?: string | null;
+  assigned_at?: string | null;
+  snoozed_until?: string | null;
   threshold_state?: string;
   lesson_count?: number;
   impact_estimate?: number | null;
@@ -502,6 +510,14 @@ const alertTypeLabels: Record<string, string> = {
   learned_pattern: "Patron aprendido",
   critical_signal: "Senal critica",
   watchlist: "Watchlist",
+};
+
+const alertStatusLabels: Record<string, string> = {
+  open: "Abierta",
+  acknowledged: "Reconocida",
+  snoozed: "Pospuesta",
+  assigned: "Asignada",
+  false_positive: "Falso positivo",
 };
 
 function csrfToken(): string {
@@ -695,6 +711,8 @@ export default function ControlRoomPage() {
   const [thresholdSaving, setThresholdSaving] = useState(false);
   const [thresholdSaveError, setThresholdSaveError] = useState("");
   const [thresholdSaveMessage, setThresholdSaveMessage] = useState("");
+  const [alertActionError, setAlertActionError] = useState("");
+  const [alertActionMessage, setAlertActionMessage] = useState("");
 
   const load = useCallback(async (
     preferredId?: string,
@@ -1288,6 +1306,42 @@ export default function ControlRoomPage() {
     }
   }
 
+  async function operateAlert(
+    alert: ControlAlert,
+    operation: "ack" | "snooze" | "assign" | "false-positive",
+  ) {
+    const labels = {
+      ack: "Alerta reconocida y enviada a investigacion.",
+      snooze: "Alerta pospuesta 24h; queda visible con estado operativo.",
+      assign: "Alerta asignada al usuario actual.",
+      "false-positive": "Alerta cerrada como falso positivo.",
+    };
+    const bodyByOperation = {
+      ack: { note: "Reconocida desde cola operativa" },
+      snooze: { hours: 24, note: "Pospuesta 24h desde cola operativa" },
+      assign: { note: "Asignada desde cola operativa" },
+      "false-positive": { reason: "Marcado falso positivo desde Sala de Control" },
+    };
+    setBusyAction(`alert:${operation}:${alert.item_id}`);
+    setAlertActionError("");
+    setAlertActionMessage("");
+    try {
+      const payload = await apiJson<{ alert?: ControlAlert | null; item: ControlItem }>(
+        `/api/control-room/alerts/${encodeURIComponent(alert.item_id)}/${operation}`,
+        {
+          method: "POST",
+          body: JSON.stringify(bodyByOperation[operation]),
+        },
+      );
+      setAlertActionMessage(labels[operation]);
+      refreshAfterMutation(payload.item);
+    } catch (err) {
+      setAlertActionError(err instanceof Error ? err.message : "No se pudo operar la alerta");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   function navigateAll() {
     setDomain("all");
     setCartridge("all");
@@ -1409,6 +1463,9 @@ export default function ControlRoomPage() {
             thresholdSaving={thresholdSaving}
             thresholdSaveError={thresholdSaveError}
             thresholdSaveMessage={thresholdSaveMessage}
+            alertActionError={alertActionError}
+            alertActionMessage={alertActionMessage}
+            busyAction={busyAction}
             contextCycleCounts={contextCycleCounts}
             contextCritical={contextCritical}
             contextAttention={contextAttention}
@@ -1424,6 +1481,7 @@ export default function ControlRoomPage() {
             onCartridge={navigateModule}
             onSeverity={setSeverity}
             onSaveThreshold={saveThreshold}
+            onOperateAlert={operateAlert}
             onToggleDomain={toggleDomain}
             onOpenItem={openItem}
           />
@@ -1579,6 +1637,9 @@ function DashboardView({
   thresholdSaving,
   thresholdSaveError,
   thresholdSaveMessage,
+  alertActionError,
+  alertActionMessage,
+  busyAction,
   contextCycleCounts,
   contextCritical,
   contextAttention,
@@ -1594,6 +1655,7 @@ function DashboardView({
   onCartridge,
   onSeverity,
   onSaveThreshold,
+  onOperateAlert,
   onToggleDomain,
   onOpenItem,
 }: {
@@ -1616,6 +1678,9 @@ function DashboardView({
   thresholdSaving: boolean;
   thresholdSaveError: string;
   thresholdSaveMessage: string;
+  alertActionError: string;
+  alertActionMessage: string;
+  busyAction: string;
   contextCycleCounts?: Record<string, number>;
   contextCritical: number;
   contextAttention: number;
@@ -1631,6 +1696,7 @@ function DashboardView({
   onCartridge: (cartridge: string, domain: string) => void;
   onSeverity: (severity: Severity | "all") => void;
   onSaveThreshold: (draft: ThresholdDraft) => void;
+  onOperateAlert: (alert: ControlAlert, operation: "ack" | "snooze" | "assign" | "false-positive") => void;
   onToggleDomain: (domainId: string) => void;
   onOpenItem: (item: ControlItem) => void;
 }) {
@@ -1681,8 +1747,12 @@ function DashboardView({
       <AlertQueuePanel
         context={context}
         alerts={contextAlerts}
+        busyAction={busyAction}
+        actionError={alertActionError}
+        actionMessage={alertActionMessage}
+        onOperateAlert={onOperateAlert}
         onOpenItem={onOpenItem}
-        items={groupedItems.flatMap((group) => group.items)}
+        items={dashboard?.items ?? groupedItems.flatMap((group) => group.items)}
       />
 
       <section className="summary-row" aria-label="Resumen ejecutivo">
@@ -1918,11 +1988,19 @@ function AlertQueuePanel({
   context,
   alerts,
   items,
+  busyAction,
+  actionError,
+  actionMessage,
+  onOperateAlert,
   onOpenItem,
 }: {
   context: ActiveContext;
   alerts: ControlAlert[];
   items: ControlItem[];
+  busyAction: string;
+  actionError: string;
+  actionMessage: string;
+  onOperateAlert: (alert: ControlAlert, operation: "ack" | "snooze" | "assign" | "false-positive") => void;
   onOpenItem: (item: ControlItem) => void;
 }) {
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -1942,16 +2020,23 @@ function AlertQueuePanel({
           Push-ready
         </div>
       </div>
+      {actionMessage ? <p className="alert-action-message" role="status">{actionMessage}</p> : null}
+      {actionError ? <p className="alert-action-message error" role="alert">{actionError}</p> : null}
       {topAlerts.length ? (
         <div className="alert-grid">
           {topAlerts.map((alert) => {
             const item = itemById.get(alert.item_id);
+            const busyPrefix = `alert:`;
+            const snoozedUntil = alert.snoozed_until ? fmtDate(alert.snoozed_until) : "";
             return (
               <article className={`alert-card ${alert.severity}`} key={alert.id}>
                 <div className="alert-card-top">
                   <span className={`severity-pill ${alert.severity}`}>{severityLabels[alert.severity]}</span>
                   <strong>Prioridad {alert.priority_score}</strong>
                 </div>
+                <span className={`alert-status-pill ${alert.status}`}>
+                  {alertStatusLabels[alert.status] || alert.status}
+                </span>
                 <h3>{alert.title}</h3>
                 <p>{alert.message}</p>
                 <dl>
@@ -1959,6 +2044,13 @@ function AlertQueuePanel({
                   <div><dt>Modulo</dt><dd>{alert.module}</dd></div>
                   <div><dt>Entrega</dt><dd>{alert.delivery?.status || "not_configured"}</dd></div>
                 </dl>
+                {alert.owner || snoozedUntil ? (
+                  <p className="alert-meta-line">
+                    {alert.owner ? `Owner: ${alert.owner}` : ""}
+                    {alert.owner && snoozedUntil ? " · " : ""}
+                    {snoozedUntil ? `Pospuesta hasta ${snoozedUntil}` : ""}
+                  </p>
+                ) : null}
                 <div className="alert-driver-row">
                   {(alert.drivers || []).slice(0, 3).map((driver) => (
                     <span key={`${alert.id}-${driver.label}`}>
@@ -1967,15 +2059,53 @@ function AlertQueuePanel({
                     </span>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className="tool-button"
-                  disabled={!item}
-                  onClick={() => item && onOpenItem(item)}
-                >
-                  <Bell aria-hidden />
-                  Abrir alerta
-                </button>
+                <div className="alert-card-actions">
+                  <button
+                    type="button"
+                    className="tool-button"
+                    disabled={!item || busyAction.startsWith(busyPrefix)}
+                    onClick={() => item && onOpenItem(item)}
+                  >
+                    <Bell aria-hidden />
+                    Abrir
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-button"
+                    disabled={busyAction !== "" || alert.status === "acknowledged"}
+                    onClick={() => onOperateAlert(alert, "ack")}
+                  >
+                    {busyAction === `alert:ack:${alert.item_id}` ? <Loader2 aria-hidden className="spin" /> : <CheckCircle2 aria-hidden />}
+                    Reconocer
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-button"
+                    disabled={busyAction !== "" || alert.status === "snoozed"}
+                    onClick={() => onOperateAlert(alert, "snooze")}
+                  >
+                    {busyAction === `alert:snooze:${alert.item_id}` ? <Loader2 aria-hidden className="spin" /> : <Clock3 aria-hidden />}
+                    Posponer 24h
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-button"
+                    disabled={busyAction !== ""}
+                    onClick={() => onOperateAlert(alert, "assign")}
+                  >
+                    {busyAction === `alert:assign:${alert.item_id}` ? <Loader2 aria-hidden className="spin" /> : <UserPlus aria-hidden />}
+                    Asignarme
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-button danger"
+                    disabled={busyAction !== ""}
+                    onClick={() => onOperateAlert(alert, "false-positive")}
+                  >
+                    {busyAction === `alert:false-positive:${alert.item_id}` ? <Loader2 aria-hidden className="spin" /> : <XCircle aria-hidden />}
+                    Falso positivo
+                  </button>
+                </div>
               </article>
             );
           })}

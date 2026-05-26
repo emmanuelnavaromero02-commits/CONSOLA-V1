@@ -673,6 +673,23 @@ p {
   height: 16px;
 }
 
+.alert-action-message {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  border-radius: 8px;
+  color: #047857;
+  background: #ecfdf5;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.alert-action-message.error {
+  border-color: rgba(239, 68, 68, 0.28);
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
 .alert-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -719,6 +736,28 @@ p {
   white-space: nowrap;
 }
 
+.alert-status-pill {
+  justify-self: start;
+  padding: 5px 9px;
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  border-radius: 999px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 1000;
+}
+
+.alert-status-pill.acknowledged,
+.alert-status-pill.assigned {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.alert-status-pill.snoozed {
+  color: #92400e;
+  background: #fffbeb;
+}
+
 .alert-card h3 {
   min-width: 0;
   margin: 0;
@@ -732,6 +771,15 @@ p {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.alert-card .alert-meta-line {
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .alert-card dl {
@@ -773,8 +821,22 @@ p {
   font-weight: 900;
 }
 
-.alert-card .tool-button {
-  justify-self: start;
+.alert-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alert-card-actions .tool-button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.tool-button.danger {
+  border-color: rgba(239, 68, 68, 0.22);
+  color: #b91c1c;
+  background: #fff7f7;
 }
 
 .summary-card {
