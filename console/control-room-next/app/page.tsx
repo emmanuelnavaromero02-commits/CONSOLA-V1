@@ -236,9 +236,14 @@ interface ControlChecklistItem {
   id: string;
   desc: string;
   owner: string;
+  status?: "open" | "in_progress" | "closed" | "blocked" | string;
   st: string;
   impact: string;
   days: number;
+  due_at?: string;
+  note?: string;
+  updated_at?: string;
+  updated_by?: string;
 }
 
 interface Omega {
@@ -1134,6 +1139,35 @@ export default function ControlRoomPage() {
     }
   }
 
+  async function updateControl(
+    item: ControlItem,
+    control: ControlChecklistItem,
+    status: "in_progress" | "closed" | "blocked",
+  ) {
+    setBusyAction(`control:${item.id}:${control.id}:${status}`);
+    setActionError("");
+    try {
+      const payload = await apiJson<{ item: ControlItem; control: ControlChecklistItem }>(
+        `/api/control-room/items/${encodeURIComponent(item.id)}/control/${encodeURIComponent(control.id)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            status,
+            owner: control.owner,
+            note: status === "closed"
+              ? `Control ${control.id} confirmado desde Sala de Control`
+              : `Control ${control.id} actualizado desde Sala de Control`,
+          }),
+        },
+      );
+      refreshAfterMutation(payload.item);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "No se pudo actualizar el control");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function createLesson(item: ControlItem, rule: string) {
     setBusyAction(`lesson:${item.id}`);
     setActionError("");
@@ -1434,6 +1468,7 @@ export default function ControlRoomPage() {
             onCreateDecision={createDecision}
             onSelectOption={selectOption}
             onRecordStep={recordStep}
+            onUpdateControl={updateControl}
             onPreview={previewAction}
             onDryRun={dryRunAction}
             onExecute={executeLive}
@@ -2831,6 +2866,7 @@ function DetailPage({
   onCreateDecision,
   onSelectOption,
   onRecordStep,
+  onUpdateControl,
   onPreview,
   onDryRun,
   onExecute,
@@ -2854,6 +2890,7 @@ function DetailPage({
   onCreateDecision: (item: ControlItem) => void;
   onSelectOption: (item: ControlItem, optionId: string) => void;
   onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
+  onUpdateControl: (item: ControlItem, control: ControlChecklistItem, status: "in_progress" | "closed" | "blocked") => void;
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
@@ -2972,6 +3009,7 @@ function DetailPage({
           onCreateDecision={onCreateDecision}
           onSelectOption={onSelectOption}
           onRecordStep={onRecordStep}
+          onUpdateControl={onUpdateControl}
           onPreview={onPreview}
           onDryRun={onDryRun}
           onExecute={onExecute}
@@ -3150,6 +3188,7 @@ function ManualFlow({
   onCreateDecision,
   onSelectOption,
   onRecordStep,
+  onUpdateControl,
   onPreview,
   onDryRun,
   onExecute,
@@ -3165,6 +3204,7 @@ function ManualFlow({
   onCreateDecision: (item: ControlItem) => void;
   onSelectOption: (item: ControlItem, optionId: string) => void;
   onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
+  onUpdateControl: (item: ControlItem, control: ControlChecklistItem, status: "in_progress" | "closed" | "blocked") => void;
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
@@ -3236,7 +3276,7 @@ function ManualFlow({
             item={item}
             busyAction={busyAction}
             actionError={actionError}
-            onRecordStep={onRecordStep}
+            onUpdateControl={onUpdateControl}
           />
         ) : null}
         {tab === 5 ? (
@@ -3523,34 +3563,58 @@ function ControlPanel({
   item,
   busyAction,
   actionError,
-  onRecordStep,
+  onUpdateControl,
 }: {
   item: ControlItem;
   busyAction: string;
   actionError: string;
-  onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
+  onUpdateControl: (item: ControlItem, control: ControlChecklistItem, status: "in_progress" | "closed" | "blocked") => void;
 }) {
   const controls = item.omega.control.items || [];
   return (
     <div className="control-list">
       {controls.map((control) => (
-        <article className="control-row" key={control.id}>
-          <strong>{control.desc}</strong>
+        <article className={`control-row ${control.status || ""}`} key={control.id}>
+          <div className="control-row-header">
+            <strong>{control.desc}</strong>
+            <span className={`control-status-pill ${control.status || "open"}`}>{control.st}</span>
+          </div>
           <dl>
             <div><dt>Owner</dt><dd>{control.owner}</dd></div>
             <div><dt>Estado</dt><dd>{control.st}</dd></div>
             <div><dt>Impacto</dt><dd>{control.impact}</dd></div>
-            <div><dt>Dias</dt><dd>{control.days}</dd></div>
+            <div><dt>Vence</dt><dd>{control.due_at ? fmtDate(control.due_at) : `${control.days} dias`}</dd></div>
           </dl>
-          <button
-            type="button"
-            className="secondary-action"
-            onClick={() => onRecordStep(item, "control", control.desc, control.id)}
-            disabled={busyAction !== ""}
-          >
-            {busyAction === `step:${item.id}:control:${control.id}` ? <Loader2 aria-hidden className="spin" /> : <ClipboardCheck aria-hidden />}
-            Confirmar control
-          </button>
+          {control.note ? <p className="control-note">{control.note}</p> : null}
+          <div className="control-actions">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => onUpdateControl(item, control, "in_progress")}
+              disabled={busyAction !== "" || control.status === "in_progress"}
+            >
+              {busyAction === `control:${item.id}:${control.id}:in_progress` ? <Loader2 aria-hidden className="spin" /> : <Activity aria-hidden />}
+              Tomar seguimiento
+            </button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => onUpdateControl(item, control, "closed")}
+              disabled={busyAction !== ""}
+            >
+              {busyAction === `control:${item.id}:${control.id}:closed` ? <Loader2 aria-hidden className="spin" /> : <ClipboardCheck aria-hidden />}
+              Confirmar control
+            </button>
+            <button
+              type="button"
+              className="ghost-action"
+              onClick={() => onUpdateControl(item, control, "blocked")}
+              disabled={busyAction !== "" || control.status === "blocked"}
+            >
+              {busyAction === `control:${item.id}:${control.id}:blocked` ? <Loader2 aria-hidden className="spin" /> : <XCircle aria-hidden />}
+              Bloquear
+            </button>
+          </div>
         </article>
       ))}
       {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}

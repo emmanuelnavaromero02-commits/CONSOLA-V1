@@ -321,6 +321,21 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByText(/control confirmado/i).first()).toBeVisible({
       timeout: 15_000,
     });
+    const controlStateResponse = await page.request.get(
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}`,
+      { timeout: 30_000 },
+    );
+    expect(controlStateResponse.status(), "control item state must be persisted").toBe(200);
+    const controlState = await controlStateResponse.json();
+    expect(
+      controlState.omega.control.items.some((control: { id?: string; status?: string; owner?: string; due_at?: string }) => (
+        control.id === "refresh"
+        && control.status === "closed"
+        && Boolean(control.owner)
+        && Boolean(control.due_at)
+      )),
+      "control follow-up must persist status, owner and due date",
+    ).toBe(true);
     await page.getByRole("tab", { name: /reglas/i }).click();
     const manualLesson = `Leccion E2E ${Date.now()}: validar owner antes de aprobar`;
     await page.getByLabel(/nueva leccion persistida/i).fill(manualLesson);

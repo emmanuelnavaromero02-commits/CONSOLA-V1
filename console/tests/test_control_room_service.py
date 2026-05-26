@@ -879,6 +879,93 @@ async def test_record_item_step_writes_operational_event_and_audit():
 
 
 @pytest.mark.asyncio
+async def test_update_item_control_persists_control_state_and_audits():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = None
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.update_item_control(
+            anomaly["id"],
+            "refresh",
+            {"status": "closed", "owner": "ops-owner@example.com", "note": "validated refresh"},
+            USER,
+            fetcher=sample_fetcher,
+        )
+
+    assert result["updated"] is True
+    assert result["control"]["id"] == "refresh"
+    assert result["control"]["status"] == "closed"
+    assert result["control"]["owner"] == "ops-owner@example.com"
+    assert result["item"]["control_state"]["refresh"]["status"] == "closed"
+    metadata_payloads = [
+        arg
+        for call in mock_pool.execute.call_args_list
+        for arg in call.args
+        if isinstance(arg, str) and "control_state" in arg
+    ]
+    assert any("validated refresh" in payload for payload in metadata_payloads)
+    assert any(
+        len(call.args) > 4 and call.args[4] == "control_checked"
+        for call in mock_pool.execute.call_args_list
+    )
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.control.update"
+    assert audit_event.await_args.kwargs["critical"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_item_control_rejects_invalid_control_or_status():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = None
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+    ):
+        with pytest.raises(HTTPException) as missing_exc:
+            await control_room_service.update_item_control(
+                anomaly["id"],
+                "unknown",
+                {"status": "closed"},
+                USER,
+                fetcher=sample_fetcher,
+            )
+        with pytest.raises(HTTPException) as status_exc:
+            await control_room_service.update_item_control(
+                anomaly["id"],
+                "refresh",
+                {"status": "maybe"},
+                USER,
+                fetcher=sample_fetcher,
+            )
+
+    assert missing_exc.value.status_code == 404
+    assert status_exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_create_item_lesson_persists_manual_lesson_and_audits():
     anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
     lesson_row = {

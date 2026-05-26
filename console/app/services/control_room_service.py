@@ -41,6 +41,13 @@ EXECUTION_STATUSES = {
     "failed",
     "executed",
 }
+CONTROL_ITEM_STATUSES = {"open", "in_progress", "closed", "blocked"}
+CONTROL_ITEM_STATUS_LABELS = {
+    "open": "abierto",
+    "in_progress": "en seguimiento",
+    "closed": "cerrado",
+    "blocked": "bloqueado",
+}
 
 ACTIVITY_LABELS = {
     "signals_opened": "Senal abierta",
@@ -49,6 +56,7 @@ ACTIVITY_LABELS = {
     "decision_reviewed": "Decision revisada",
     "execution_reviewed": "Ejecucion revisada",
     "control_checked": "Control confirmado",
+    "control_updated": "Control actualizado",
     "option_selected": "Opcion seleccionada",
     "decision_created": "Decision creada",
     "action_preview": "Preview generado",
@@ -2231,6 +2239,83 @@ def _source_state_item(source: ControlRoomSource, status: str, error: str | None
     return item
 
 
+def _control_state(item: dict[str, Any]) -> dict[str, Any]:
+    raw = item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
+    normalized: dict[str, Any] = {}
+    for control_id, value in raw.items():
+        if not isinstance(value, dict):
+            continue
+        state = str(value.get("status") or value.get("state") or "").strip()
+        if state not in CONTROL_ITEM_STATUSES:
+            state = "open"
+        normalized[str(control_id)] = {
+            **value,
+            "status": state,
+            "st": CONTROL_ITEM_STATUS_LABELS[state],
+        }
+    return normalized
+
+
+def _default_control_items(
+    item: dict[str, Any],
+    *,
+    status: str,
+    decision_id: Any,
+    approved: bool,
+) -> list[dict[str, Any]]:
+    module_owner = item.get("module") or item.get("cartridge") or "operaciones"
+    base_days = 1 if approved else 3
+    now = datetime.now(UTC)
+    return [
+        {
+            "id": "refresh",
+            "desc": "Confirmar que el siguiente refresh conserva o corrige la senal.",
+            "owner": module_owner,
+            "status": "closed" if status in TERMINAL_ITEM_STATUSES else "open",
+            "st": "cerrado" if status in TERMINAL_ITEM_STATUSES else "abierto",
+            "impact": item.get("impact") or "Riesgo operativo",
+            "days": base_days,
+            "due_at": (now + timedelta(days=base_days)).isoformat(),
+        },
+        {
+            "id": "audit",
+            "desc": "Mantener evidencia ligada a decision_actions y audit_events.",
+            "owner": "omega",
+            "status": "closed" if decision_id else "open",
+            "st": "listo" if decision_id else "pendiente",
+            "impact": "Trazabilidad",
+            "days": 0 if decision_id else 2,
+            "due_at": (now + timedelta(days=0 if decision_id else 2)).isoformat(),
+        },
+    ]
+
+
+def _control_items_for_item(
+    item: dict[str, Any],
+    *,
+    status: str,
+    decision_id: Any,
+    approved: bool,
+) -> list[dict[str, Any]]:
+    control_state = _control_state(item)
+    controls: list[dict[str, Any]] = []
+    for control in _default_control_items(item, status=status, decision_id=decision_id, approved=approved):
+        override = control_state.get(str(control["id"]), {})
+        next_status = str(override.get("status") or control.get("status") or "open")
+        if next_status not in CONTROL_ITEM_STATUSES:
+            next_status = "open"
+        controls.append({
+            **control,
+            **override,
+            "id": str(control["id"]),
+            "status": next_status,
+            "st": CONTROL_ITEM_STATUS_LABELS.get(next_status, str(control.get("st") or next_status)),
+            "owner": override.get("owner") or control.get("owner"),
+            "due_at": override.get("due_at") or control.get("due_at"),
+        })
+    return controls
+
+
 def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
     decision_id = item.get("decision_id")
     status = item.get("status") or "open"
@@ -2296,9 +2381,17 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
     lesson_count = int(item.get("lesson_count") or 0)
     priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
     alert_state = _alert_state(item)
+    control_items = _control_items_for_item(
+        item,
+        status=status,
+        decision_id=decision_id,
+        approved=approved,
+    )
+    control_closed = all(str(control.get("status")) == "closed" for control in control_items)
     return {
         **item,
         "alert_state": alert_state,
+        "control_state": _control_state(item),
         "impact_estimate": impact.get("estimate"),
         "impact_currency": impact.get("currency"),
         "impact_status": impact.get("status"),
@@ -2384,25 +2477,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "control": {
                 "owner": item.get("module") or item.get("cartridge"),
                 "cadence": "Proximo refresh operativo",
-                "status": "cerrado" if status in TERMINAL_ITEM_STATUSES else "abierto",
-                "items": [
-                    {
-                        "id": "refresh",
-                        "desc": "Confirmar que el siguiente refresh conserva o corrige la senal.",
-                        "owner": item.get("module") or item.get("cartridge") or "operaciones",
-                        "st": "cerrado" if status in TERMINAL_ITEM_STATUSES else "abierto",
-                        "impact": item.get("impact") or "Riesgo operativo",
-                        "days": 1 if approved else 3,
-                    },
-                    {
-                        "id": "audit",
-                        "desc": "Mantener evidencia ligada a decision_actions y audit_events.",
-                        "owner": "omega",
-                        "st": "listo" if decision_id else "pendiente",
-                        "impact": "Trazabilidad",
-                        "days": 0 if decision_id else 2,
-                    },
-                ],
+                "status": "cerrado" if control_closed else "abierto",
+                "items": control_items,
             },
             "lessons": {
                 "rules": lessons,
@@ -2479,6 +2555,9 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
     alert_state = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
     if alert_state:
         metadata["alert_state"] = alert_state
+    control_state = item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
+    if control_state:
+        metadata["control_state"] = control_state
     return metadata
 
 
@@ -2724,6 +2803,7 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
             "thresholds_applied": metadata.get("thresholds_applied") or item.get("thresholds_applied") or [],
             "threshold_state": metadata.get("threshold_state") or item.get("threshold_state") or "default",
             "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else item.get("alert_state"),
+            "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else item.get("control_state"),
             "lessons": metadata.get("lessons"),
             "first_seen_at": state.get("first_seen_at"),
             "last_seen_at": state.get("last_seen_at"),
@@ -3211,6 +3291,7 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
         "selected_option_id": public_row.get("selected_option_id") or metadata.get("selected_option_id"),
         "execution_status": public_row.get("execution_status") or metadata.get("execution_status"),
         "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else {},
+        "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else {},
         "lessons": metadata.get("lessons"),
         "first_seen_at": public_row.get("first_seen_at"),
         "last_seen_at": public_row.get("last_seen_at"),
@@ -3791,6 +3872,130 @@ async def record_item_step(
         "step_id": step,
         "event_type": event_type,
         "item": _with_omega(item),
+    }
+
+
+async def update_item_control(
+    item_id: str,
+    control_id: str,
+    body: dict[str, Any],
+    user: dict,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    control_key = str(control_id or "").strip()
+    if not control_key:
+        raise HTTPException(400, "control_id is required")
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    current_controls = item.get("omega", {}).get("control", {}).get("items") or []
+    control = next((row for row in current_controls if str(row.get("id")) == control_key), None)
+    if not control:
+        raise HTTPException(404, "control item not found")
+
+    next_status = str(body.get("status") or body.get("state") or "closed").strip()
+    if next_status not in CONTROL_ITEM_STATUSES:
+        raise HTTPException(400, "invalid control status")
+    due_at = body.get("due_at")
+    parsed_due = _parse_utc_datetime(due_at)
+    if parsed_due:
+        due_at = parsed_due.isoformat()
+    elif body.get("days") is not None:
+        try:
+            due_at = (datetime.now(UTC) + timedelta(days=max(0, int(body.get("days"))))).isoformat()
+        except (TypeError, ValueError):
+            due_at = control.get("due_at")
+    else:
+        due_at = control.get("due_at")
+
+    owner = str(body.get("owner") or body.get("owner_email") or control.get("owner") or user.get("email") or "operaciones").strip()
+    note = str(body.get("note") or "").strip()[:500]
+    now = datetime.now(UTC).isoformat()
+    existing_state = _control_state(item)
+    next_control = {
+        **control,
+        **existing_state.get(control_key, {}),
+        "id": control_key,
+        "status": next_status,
+        "st": CONTROL_ITEM_STATUS_LABELS[next_status],
+        "owner": owner,
+        "due_at": due_at,
+        "note": note,
+        "updated_at": now,
+        "updated_by": user.get("email") or "user",
+    }
+    next_state = {
+        **existing_state,
+        control_key: next_control,
+    }
+    item_status = str(item.get("status") or "open")
+    target_status = item_status if item_status in TERMINAL_ITEM_STATUSES else "in_review"
+    pool = await auth.pool()
+    workspace_id = _workspace_id(user)
+    await _ensure_item_row(pool, user=user, item=item, status=target_status)
+    try:
+        await pool.execute(
+            """
+            UPDATE control_room_items
+               SET status = CASE
+                       WHEN status = ANY($4::text[]) THEN status
+                       ELSE $5::text
+                   END,
+                   metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $2
+               AND item_id = $3
+            """,
+            json.dumps({"control_state": next_state}),
+            workspace_id,
+            item["id"],
+            sorted(TERMINAL_ITEM_STATUSES),
+            target_status,
+        )
+    except Exception:
+        pass
+    event_type = "control_updated" if next_status != "closed" else "control_checked"
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type=event_type,
+        metadata={
+            "control_id": control_key,
+            "control_status": next_status,
+            "owner": owner,
+            "due_at": due_at,
+            "note": note,
+        },
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.control.update",
+        resource_type="control_room_item",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "control_id": control_key,
+            "control_status": next_status,
+            "owner": owner,
+            "due_at": due_at,
+            "item": item,
+        },
+        critical=True,
+    )
+    public_item = _with_omega({**item, "status": target_status, "control_state": next_state})
+    updated_control = next(
+        row for row in public_item.get("omega", {}).get("control", {}).get("items", [])
+        if str(row.get("id")) == control_key
+    )
+    return {
+        "updated": True,
+        "control": updated_control,
+        "item": public_item,
     }
 
 
