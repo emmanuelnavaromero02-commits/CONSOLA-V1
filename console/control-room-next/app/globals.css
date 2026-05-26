@@ -229,6 +229,7 @@ p {
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(10px);
+  flex-wrap: wrap;
 }
 
 .header h1 {
@@ -277,6 +278,38 @@ p {
 .header-actions .freshness-pill {
   color: #0369a1;
   background: #eff6ff;
+}
+
+.header-actions .live-pill {
+  gap: 7px;
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+.header-actions .live-pill svg {
+  width: 14px;
+  height: 14px;
+}
+
+.header-actions .live-pill.warning {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.header-actions .next-refresh-pill {
+  color: #475569;
+  background: #f8fafc;
+}
+
+.sync-warning {
+  flex-basis: 100%;
+  margin: -8px 0 0 auto;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .tool-button,
@@ -1335,10 +1368,65 @@ p {
   gap: 10px;
 }
 
+.source-state-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.source-state-chips span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 99px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.source-state-chips strong {
+  min-width: 20px;
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 99px;
+  color: #0f172a;
+  background: #e2e8f0;
+  font-size: 10px;
+}
+
+.source-state-chips .ok {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+.source-state-chips .empty {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.source-state-chips .missing,
+.source-state-chips .invalid_schema,
+.source-state-chips .unavailable,
+.source-state-chips .blocked,
+.source-state-chips .no_permission {
+  color: #991b1b;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
 .source-row {
   min-height: 64px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px 72px;
+  grid-template-columns: minmax(0, 1fr) 150px 90px 128px;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
@@ -1378,6 +1466,13 @@ p {
   font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.source-row > small {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .source-row.unavailable > span,
@@ -2600,6 +2695,14 @@ button:disabled {
 
   .action-row {
     grid-template-columns: 1fr;
+  }
+
+  .source-row {
+    grid-template-columns: 1fr;
+  }
+
+  .source-row > small {
+    text-align: left;
   }
 
   .primary-action,

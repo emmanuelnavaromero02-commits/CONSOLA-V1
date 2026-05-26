@@ -45,6 +45,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.cartridges.length, "active cartridges must come from backend catalog").toBeGreaterThan(0);
     expect(dashboard.summary.active_connectors, "dashboard must distinguish commercial connectors").toBeGreaterThan(0);
     expect(dashboard.summary.active_modules, "dashboard must expose operational modules").toBeGreaterThan(0);
+    expect(dashboard.meta?.live_mode, "dashboard must expose live refresh mode").toBe("polling");
+    expect(dashboard.meta?.refresh_interval_seconds, "dashboard must publish polling interval").toBe(30);
+    expect(dashboard.sources.every((source: { checked_at?: string }) => Boolean(source.checked_at))).toBe(true);
 
     const response = await page.goto(`${LEGACY}/control-room`, {
       waitUntil: "domcontentloaded",
@@ -59,10 +62,19 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("button", { name: /refrescar/i })).toBeEnabled({
       timeout: 15_000,
     });
+    await expect(page.getByText(/vivo 30s/i).first()).toBeVisible();
+    await expect(page.getByText(/siguiente/i).first()).toBeVisible();
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toBeVisible();
     await expect(page.getByText(/conectores .* modulos/i).first()).toBeVisible();
+
+    const refreshResponse = page.waitForResponse((apiResponse) => (
+      apiResponse.url().includes("/api/control-room/dashboard") && apiResponse.status() === 200
+    ));
+    await page.getByRole("button", { name: /refrescar/i }).click();
+    await refreshResponse;
+    await expect(page.getByText(/actualizado/i).first()).toBeVisible();
 
     expect(forbidden3000, "control-room assets and APIs must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room must not emit console.error").toEqual([]);
@@ -96,6 +108,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de dominio/i);
     await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/vista exclusiva/i);
     await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/datasets/i);
+    await expect(page.getByLabel(/estados de fuentes del contexto/i)).toContainText(/Operativa/i);
     await expect(page.getByLabel(/lecciones aprendidas del contexto/i)).toContainText(/reglas visibles/i);
     await expect(page.getByText(/actualizado/i).first()).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toContainText(/finanzas/i);

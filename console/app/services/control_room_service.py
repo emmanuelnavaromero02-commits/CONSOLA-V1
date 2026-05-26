@@ -18,6 +18,7 @@ from app.services.security_context import build_security_context, rls_user_conte
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500").rstrip("/")
 
 ACTIVE_INSTALLATION_STATUSES = {"ready", "active"}
+CONTROL_ROOM_REFRESH_INTERVAL_SECONDS = 30
 TERMINAL_ITEM_STATUSES = {"approved", "dismissed", "resolved"}
 ITEM_STATUSES = {"open", "in_review", "decision_created", "approved", "dismissed", "resolved"}
 SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -1226,6 +1227,7 @@ async def _fetch_source(
     fetcher: DatasetFetcher,
     limit_per_source: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    checked_at = datetime.now(UTC).isoformat()
     try:
         rows = await fetcher(source.dataset, user, limit_per_source)
     except HTTPException as exc:
@@ -1240,6 +1242,7 @@ async def _fetch_source(
             "status": status,
             "error": str(exc.detail),
             "count": 0,
+            "checked_at": checked_at,
         }
     except Exception as exc:
         return [], {
@@ -1252,6 +1255,7 @@ async def _fetch_source(
             "status": "unavailable",
             "error": str(exc),
             "count": 0,
+            "checked_at": checked_at,
         }
 
     if rows and source.normalizer == "standard_anomaly":
@@ -1270,6 +1274,7 @@ async def _fetch_source(
                 "status": "invalid_schema",
                 "error": f"missing expected fields: {source.entity_id_field}/{source.entity_label_field}",
                 "count": len(rows),
+                "checked_at": checked_at,
             }
     return rows, {
         "dataset": source.dataset,
@@ -1280,6 +1285,7 @@ async def _fetch_source(
         "module": source.module_label,
         "status": "empty" if not rows else "ok",
         "count": len(rows),
+        "checked_at": checked_at,
     }
 
 
@@ -2508,6 +2514,7 @@ async def _collect_items(
                     "status": "blocked",
                     "error": str(installation.get("error_message") or installation.get("current_step") or ""),
                     "count": 0,
+                    "checked_at": datetime.now(UTC).isoformat(),
                 }
                 rows_by_dataset[source.dataset] = []
                 sources.append(source_status)
@@ -2640,6 +2647,7 @@ async def dashboard(
     limit_per_source: int = 1000,
     persist: bool = True,
 ) -> dict[str, Any]:
+    generated_at = datetime.now(UTC)
     payload = await _collect_items(
         user,
         fetcher=fetcher,
@@ -2720,11 +2728,18 @@ async def dashboard(
     domains = [_domain_payload(domain, modules, items, sources) for domain in domain_labels]
 
     return {
+        "meta": {
+            "generated_at": generated_at.isoformat(),
+            "refresh_interval_seconds": CONTROL_ROOM_REFRESH_INTERVAL_SECONDS,
+            "live_mode": "polling",
+            "source_count": len(sources),
+            "item_count": len(items),
+        },
         "workspace": {
             "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
             "workspace_id": workspace_id,
         },
-        "period": datetime.now(UTC).strftime("%B %Y"),
+        "period": generated_at.strftime("%B %Y"),
         "omega_steps": OMEGA_STEPS,
         "summary": {
             "total_items": len(items),
