@@ -365,6 +365,44 @@ async def test_dashboard_workspace_threshold_can_suppress_default_signal():
 
 
 @pytest.mark.asyncio
+async def test_dashboard_surfaces_persisted_lessons_by_pattern():
+    lesson_row = {
+        "id": 31,
+        "item_id": "historic-item",
+        "cartridge_id": "sap_hcm",
+        "anomaly_type": "terminated_but_active",
+        "rule": "Cuando un empleado terminado sigue activo, bloquear acceso antes del cierre de nomina.",
+        "source_decision_id": 42,
+        "confidence": 0.86,
+        "metadata": {"source_dataset": "employees_anomalies"},
+        "created_at": datetime(2026, 5, 21, 9, 30, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetch = AsyncMock(side_effect=[[], [], [lesson_row]])
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=sample_fetcher)
+
+    item = next(item for item in result["items"] if item["anomaly_type"] == "terminated_but_active")
+    assert item["lesson_count"] == 1
+    assert item["related_lessons"][0]["source_decision_id"] == 42
+    assert "bloquear acceso" in item["omega"]["lessons"]["rules"][0]
+    assert result["summary"]["lessons"]["total"] == 1
+    assert result["summary"]["lessons"]["by_cartridge"] == {"sap_hcm": 1}
+    assert result["summary"]["lessons"]["top_patterns"][0]["anomaly_type"] == "terminated_but_active"
+
+
+@pytest.mark.asyncio
 async def test_dashboard_keeps_active_empty_cartridges_visible_and_creates_source_items():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -750,6 +788,39 @@ async def test_thresholds_are_workspace_scoped_and_audited():
     assert "workspace-A" in args
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.threshold.upsert"
+
+
+@pytest.mark.asyncio
+async def test_list_lessons_is_workspace_scoped_and_returns_summary():
+    lesson_row = {
+        "id": 8,
+        "item_id": "item-1",
+        "cartridge_id": "replicon",
+        "anomaly_type": "low_margin",
+        "rule": "Si margen cae por debajo del umbral, pedir revision de billing antes del refresh.",
+        "source_decision_id": 77,
+        "confidence": 0.9,
+        "metadata": {},
+        "created_at": datetime(2026, 5, 20, 10, 0, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = [lesson_row]
+
+    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+        result = await control_room_service.list_lessons(
+            USER,
+            cartridge_id="replicon",
+            anomaly_type="low_margin",
+        )
+
+    assert result["lessons"][0]["cartridge_id"] == "replicon"
+    assert result["summary"]["total"] == 1
+    assert result["summary"]["top_patterns"][0]["avg_confidence"] == 0.9
+    sql, *args = mock_pool.fetch.call_args.args
+    assert "workspace_id = $1" in sql
+    assert "cartridge_id = $2" in sql
+    assert "anomaly_type = $3" in sql
+    assert args[:3] == ["workspace-A", "replicon", "low_margin"]
 
 
 @pytest.mark.asyncio

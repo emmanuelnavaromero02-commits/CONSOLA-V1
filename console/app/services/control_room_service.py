@@ -935,6 +935,127 @@ async def _load_threshold_rows(user: dict | None, *, enabled_only: bool = True) 
         return []
 
 
+def _lesson_to_public(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    data["metadata"] = _details(data.get("metadata"))
+    data["confidence"] = _num(data.get("confidence")) or 0.0
+    return data
+
+
+async def _load_lesson_rows(
+    user: dict | None,
+    *,
+    cartridge_id: str | None = None,
+    anomaly_type: str | None = None,
+    item_id: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    workspace_id = _workspace_id(user)
+    pool = await auth.pool()
+    params: list[Any] = [workspace_id]
+    where = ["workspace_id = $1"]
+    if cartridge_id:
+        params.append(cartridge_id)
+        where.append(f"cartridge_id = ${len(params)}")
+    if anomaly_type:
+        params.append(anomaly_type)
+        where.append(f"anomaly_type = ${len(params)}")
+    if item_id:
+        params.append(item_id)
+        where.append(f"item_id = ${len(params)}")
+    params.append(max(1, min(int(limit or 100), 500)))
+    try:
+        rows = await pool.fetch(
+            f"""
+            SELECT id, item_id, cartridge_id, anomaly_type, rule,
+                   source_decision_id, confidence, metadata, created_at
+              FROM control_room_lessons
+             WHERE {' AND '.join(where)}
+             ORDER BY created_at DESC
+             LIMIT ${len(params)}
+            """,
+            *params,
+        )
+        return [_lesson_to_public(row) for row in rows]
+    except Exception:
+        return []
+
+
+def _lesson_insights(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_cartridge: dict[str, int] = {}
+    patterns: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        cartridge_id = str(row.get("cartridge_id") or "unknown")
+        anomaly_type = str(row.get("anomaly_type") or "control_room_item")
+        by_cartridge[cartridge_id] = by_cartridge.get(cartridge_id, 0) + 1
+        key = (cartridge_id, anomaly_type)
+        pattern = patterns.setdefault(
+            key,
+            {
+                "cartridge_id": cartridge_id,
+                "anomaly_type": anomaly_type,
+                "count": 0,
+                "confidence_total": 0.0,
+                "latest_rule": "",
+                "last_seen_at": row.get("created_at"),
+            },
+        )
+        pattern["count"] += 1
+        pattern["confidence_total"] += float(row.get("confidence") or 0.0)
+        if not pattern.get("latest_rule"):
+            pattern["latest_rule"] = row.get("rule") or ""
+            pattern["last_seen_at"] = row.get("created_at")
+
+    top_patterns = []
+    for pattern in patterns.values():
+        count = int(pattern["count"] or 0)
+        confidence = float(pattern.pop("confidence_total", 0.0))
+        pattern["avg_confidence"] = round(confidence / count, 2) if count else 0.0
+        top_patterns.append(pattern)
+    top_patterns.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("cartridge_id") or "")))
+    return {
+        "total": len(rows),
+        "recent": rows[:5],
+        "by_cartridge": by_cartridge,
+        "top_patterns": top_patterns[:5],
+    }
+
+
+def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    if not lesson_rows:
+        return [
+            _with_omega({**item, "related_lessons": item.get("related_lessons") or [], "lesson_count": 0})
+            for item in items
+        ]
+
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        related = [
+            row
+            for row in lesson_rows
+            if row.get("item_id") == item.get("id")
+            or (
+                row.get("cartridge_id") == item.get("cartridge")
+                and row.get("anomaly_type") == item.get("anomaly_type")
+            )
+        ]
+        rules: list[str] = []
+        for row in related:
+            rule = str(row.get("rule") or "").strip()
+            if rule and rule not in rules:
+                rules.append(rule)
+        enriched.append(_with_omega({
+            **item,
+            "related_lessons": related[:5],
+            "lesson_count": len(related),
+            "learned_rules": rules[:5],
+        }))
+    enriched.sort(key=_status_sort_key)
+    return enriched
+
+
 def _threshold_map(rows: Iterable[dict[str, Any]]) -> ThresholdMap:
     thresholds: ThresholdMap = {}
     for row in rows:
@@ -1677,11 +1798,16 @@ def _cycle_counts(items: Iterable[dict[str, Any]]) -> dict[str, int]:
 
 
 def _lessons_for_item(item: dict[str, Any]) -> list[str]:
-    existing = item.get("lessons")
-    if isinstance(existing, list):
-        cleaned = [str(rule).strip() for rule in existing if str(rule).strip()]
-        if cleaned:
-            return cleaned
+    cleaned: list[str] = []
+    for key in ("lessons", "learned_rules"):
+        existing = item.get(key)
+        if isinstance(existing, list):
+            for rule in existing:
+                text = str(rule).strip()
+                if text and text not in cleaned:
+                    cleaned.append(text)
+    if cleaned:
+        return cleaned
     return [
         f"Si {item.get('source_dataset')} genera {item.get('anomaly_type')}, abrir revision OMEGA.",
         "Toda aprobacion debe quedar ligada a decision_actions y audit_events.",
@@ -2054,6 +2180,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "selected_option_id": selected_option_id,
         "execution_status": execution_status,
         "action_templates": action_templates,
+        "related_lessons": item.get("related_lessons") or [],
+        "lesson_count": int(item.get("lesson_count") or 0),
         "omega": {
             "signals": {
                 "source": item.get("source_dataset"),
@@ -2497,6 +2625,9 @@ async def dashboard(
     installations = payload["installations"]
     financial = payload["financial"]
     thresholds = payload.get("thresholds") or []
+    lesson_rows = await _load_lesson_rows(user, limit=200)
+    lesson_summary = _lesson_insights(lesson_rows)
+    items = _attach_lessons_to_items(items, lesson_rows)
 
     by_severity = _severity_counts(items)
     by_cartridge: dict[str, int] = {}
@@ -2598,6 +2729,7 @@ async def dashboard(
                 },
                 "items_with_thresholds": sum(1 for item in items if item.get("thresholds_applied")),
             },
+            "lessons": lesson_summary,
         },
         "domains": domains,
         "cartridges": cartridges,
@@ -2647,6 +2779,7 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
             "SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND status = 'open'",
             workspace_id,
         ) or 0)
+    lesson_rows = await _load_lesson_rows(user, limit=100)
     return {
         "total_anomalies": len(items),
         "by_severity": by_severity,
@@ -2659,6 +2792,7 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
             "active": sum(1 for row in collected.get("thresholds", []) if row.get("enabled", True)),
             "total": len(collected.get("thresholds", [])),
         },
+        "lessons": _lesson_insights(lesson_rows),
     }
 
 
@@ -3623,26 +3757,21 @@ async def upsert_threshold(
     return {"threshold": public}
 
 
-async def list_lessons(user: dict, *, cartridge_id: str | None = None) -> dict[str, Any]:
-    workspace_id = _workspace_id(user)
-    pool = await auth.pool()
-    params: list[Any] = [workspace_id]
-    where = ["workspace_id = $1"]
-    if cartridge_id:
-        params.append(cartridge_id)
-        where.append(f"cartridge_id = ${len(params)}")
-    try:
-        rows = await pool.fetch(
-            f"""
-            SELECT id, item_id, cartridge_id, anomaly_type, rule,
-                   source_decision_id, confidence, metadata, created_at
-              FROM control_room_lessons
-             WHERE {' AND '.join(where)}
-             ORDER BY created_at DESC
-             LIMIT 100
-            """,
-            *params,
-        )
-        return {"lessons": [_row_to_public(row) for row in rows]}
-    except Exception:
-        return {"lessons": [], "status": "unavailable"}
+async def list_lessons(
+    user: dict,
+    *,
+    cartridge_id: str | None = None,
+    anomaly_type: str | None = None,
+    item_id: str | None = None,
+) -> dict[str, Any]:
+    lessons = await _load_lesson_rows(
+        user,
+        cartridge_id=cartridge_id,
+        anomaly_type=anomaly_type,
+        item_id=item_id,
+        limit=100,
+    )
+    return {
+        "lessons": lessons,
+        "summary": _lesson_insights(lessons),
+    }
