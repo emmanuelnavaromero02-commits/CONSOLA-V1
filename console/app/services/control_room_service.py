@@ -4,7 +4,7 @@ import base64
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Iterable
 
 import httpx
@@ -58,6 +58,10 @@ ACTIVITY_LABELS = {
     "lesson_recorded": "Leccion registrada",
     "dismissed": "Item descartado",
     "reopened": "Item reabierto",
+    "alert_acknowledged": "Alerta reconocida",
+    "alert_snoozed": "Alerta pospuesta",
+    "alert_assigned": "Alerta asignada",
+    "alert_false_positive": "Falso positivo cerrado",
 }
 
 OMEGA_STEP_EVENT_TYPES = {
@@ -2291,8 +2295,10 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
     lessons = _lessons_for_item(item)
     lesson_count = int(item.get("lesson_count") or 0)
     priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
+    alert_state = _alert_state(item)
     return {
         **item,
+        "alert_state": alert_state,
         "impact_estimate": impact.get("estimate"),
         "impact_currency": impact.get("currency"),
         "impact_status": impact.get("status"),
@@ -2426,6 +2432,56 @@ def _alert_type_for_item(item: dict[str, Any]) -> str:
     return "critical_signal" if item.get("severity") in {"critical", "high"} else "watchlist"
 
 
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _alert_state(item: dict[str, Any]) -> dict[str, Any]:
+    raw = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    state = str(raw.get("state") or "open")
+    if state not in {"open", "acknowledged", "snoozed", "assigned", "false_positive"}:
+        state = "open"
+    snoozed_until = raw.get("snoozed_until")
+    if state == "snoozed":
+        parsed = _parse_utc_datetime(snoozed_until)
+        if parsed and parsed <= datetime.now(UTC):
+            state = "open"
+    return {
+        **raw,
+        "state": state,
+    }
+
+
+def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str, Any]:
+    metadata = {
+        "module": item.get("module"),
+        "description": item.get("description"),
+        "recommendation": item.get("recommendation"),
+        "root_cause": item.get("root_cause"),
+        "impact": item.get("impact"),
+        "details": item.get("details") if isinstance(item.get("details"), dict) else {},
+        "sql": item.get("sql"),
+        "impact_payload": impact,
+        "thresholds_applied": item.get("thresholds_applied") or [],
+        "threshold_state": item.get("threshold_state") or "default",
+    }
+    alert_state = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    if alert_state:
+        metadata["alert_state"] = alert_state
+    return metadata
+
+
 def _alert_message(item: dict[str, Any], alert_type: str) -> str:
     if alert_type == "source_health":
         details = item.get("details") if isinstance(item.get("details"), dict) else {}
@@ -2446,6 +2502,10 @@ def _alert_message(item: dict[str, Any], alert_type: str) -> str:
 def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
     if str(item.get("status") or "open") in TERMINAL_ITEM_STATUSES:
         return None
+    alert_state = _alert_state(item)
+    alert_status = str(alert_state.get("state") or "open")
+    if alert_status == "false_positive":
+        return None
     priority = item.get("priority") if isinstance(item.get("priority"), dict) else _priority_payload(item)
     score = int(priority.get("score") or item.get("priority_score") or 0)
     alert_type = _alert_type_for_item(item)
@@ -2460,6 +2520,13 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
     severity = str(priority.get("band") or item.get("severity") or "medium")
     if severity not in ALERT_SEVERITY_WEIGHT:
         severity = "medium"
+    delivery_status = {
+        "open": "not_configured",
+        "acknowledged": "acknowledged",
+        "assigned": "assigned",
+        "snoozed": "snoozed",
+    }.get(alert_status, "not_configured")
+    push_ready = alert_status != "snoozed"
     return {
         "id": f"alert:{item.get('id')}",
         "item_id": item.get("id"),
@@ -2474,7 +2541,13 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "source_dataset": item.get("source_dataset"),
         "title": item.get("title"),
         "message": _alert_message(item, alert_type),
-        "status": "open",
+        "status": alert_status,
+        "owner": alert_state.get("owner"),
+        "note": alert_state.get("note"),
+        "reason": alert_state.get("reason"),
+        "acknowledged_at": alert_state.get("acknowledged_at"),
+        "assigned_at": alert_state.get("assigned_at"),
+        "snoozed_until": alert_state.get("snoozed_until"),
         "threshold_state": threshold_state,
         "lesson_count": int(item.get("lesson_count") or 0),
         "impact_estimate": item.get("impact_estimate"),
@@ -2482,14 +2555,16 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "recommended_action": item.get("recommendation"),
         "drivers": priority.get("drivers") or [],
         "route_key": f"{item.get('cartridge')}:{item.get('anomaly_type')}:{item.get('module_id') or item.get('cartridge')}",
-        "push_ready": True,
+        "push_ready": push_ready,
         "delivery": {
-            "status": "not_configured",
+            "status": delivery_status,
             "channels": ["email", "slack", "teams"],
-            "reason": "Push externo queda preparado; no se envia en V1.",
+            "reason": "Push externo queda preparado; no se envia en V1."
+            if alert_status == "open"
+            else f"Alerta en estado {alert_status}; no hay push externo en V1.",
         },
         "created_at": item.get("first_seen_at") or item.get("detected_at") or datetime.now(UTC).isoformat(),
-        "updated_at": item.get("last_seen_at") or datetime.now(UTC).isoformat(),
+        "updated_at": alert_state.get("updated_at") or item.get("last_seen_at") or datetime.now(UTC).isoformat(),
     }
 
 
@@ -2504,13 +2579,16 @@ def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
     by_type: dict[str, int] = {}
     by_domain: dict[str, int] = {}
     by_severity: dict[str, int] = {}
+    by_status: dict[str, int] = {}
     for alert in alerts:
         alert_type = str(alert.get("alert_type") or "watchlist")
         domain = str(alert.get("domain") or "unknown")
         severity = str(alert.get("severity") or "medium")
+        status = str(alert.get("status") or "open")
         by_type[alert_type] = by_type.get(alert_type, 0) + 1
         by_domain[domain] = by_domain.get(domain, 0) + 1
         by_severity[severity] = by_severity.get(severity, 0) + 1
+        by_status[status] = by_status.get(status, 0) + 1
     return {
         "alerts": alerts,
         "summary": {
@@ -2523,6 +2601,7 @@ def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
             "by_type": by_type,
             "by_domain": by_domain,
             "by_severity": by_severity,
+            "by_status": by_status,
             "top": alerts[:5],
         },
     }
@@ -2596,18 +2675,7 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
                     item.get("entity_id"),
                     item.get("entity_label"),
                     item.get("anomaly_type"),
-                    json.dumps({
-                        "module": item.get("module"),
-                        "description": item.get("description"),
-                        "recommendation": item.get("recommendation"),
-                        "root_cause": item.get("root_cause"),
-                        "impact": item.get("impact"),
-                        "details": item.get("details") if isinstance(item.get("details"), dict) else {},
-                        "sql": item.get("sql"),
-                        "impact_payload": impact,
-                        "thresholds_applied": item.get("thresholds_applied") or [],
-                        "threshold_state": item.get("threshold_state") or "default",
-                    }),
+                    json.dumps(_metadata_for_item(item, impact)),
                     impact.get("estimate"),
                     impact.get("currency") or "USD",
                     impact.get("confidence"),
@@ -2655,6 +2723,7 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
             "execution_status": state.get("execution_status") or metadata.get("execution_status"),
             "thresholds_applied": metadata.get("thresholds_applied") or item.get("thresholds_applied") or [],
             "threshold_state": metadata.get("threshold_state") or item.get("threshold_state") or "default",
+            "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else item.get("alert_state"),
             "lessons": metadata.get("lessons"),
             "first_seen_at": state.get("first_seen_at"),
             "last_seen_at": state.get("last_seen_at"),
@@ -3141,6 +3210,7 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
         "threshold_state": metadata.get("threshold_state") or "default",
         "selected_option_id": public_row.get("selected_option_id") or metadata.get("selected_option_id"),
         "execution_status": public_row.get("execution_status") or metadata.get("execution_status"),
+        "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else {},
         "lessons": metadata.get("lessons"),
         "first_seen_at": public_row.get("first_seen_at"),
         "last_seen_at": public_row.get("last_seen_at"),
@@ -3496,18 +3566,7 @@ async def _ensure_item_row(pool: Any, *, user: dict, item: dict[str, Any], statu
             item.get("entity_id"),
             item.get("entity_label"),
             item.get("anomaly_type"),
-            json.dumps({
-                "module": item.get("module"),
-                "description": item.get("description"),
-                "recommendation": item.get("recommendation"),
-                "root_cause": item.get("root_cause"),
-                "impact": item.get("impact"),
-                "details": item.get("details") if isinstance(item.get("details"), dict) else {},
-                "sql": item.get("sql"),
-                "impact_payload": impact,
-                "thresholds_applied": item.get("thresholds_applied") or [],
-                "threshold_state": item.get("threshold_state") or "default",
-            }),
+            json.dumps(_metadata_for_item(item, impact)),
             impact.get("estimate"),
             impact.get("currency") or "USD",
             impact.get("confidence"),
@@ -4231,6 +4290,215 @@ async def reopen_item(
         critical=True,
     )
     return {"reopened": True, "item": _with_omega({**item, "status": "open", "decision_id": None})}
+
+
+def _snoozed_until_from_body(body: dict[str, Any] | None) -> str:
+    body = body if isinstance(body, dict) else {}
+    explicit = _parse_utc_datetime(body.get("snoozed_until"))
+    if explicit:
+        return explicit.isoformat()
+    try:
+        hours = int(body.get("hours") or body.get("snooze_hours") or 24)
+    except (TypeError, ValueError):
+        hours = 24
+    hours = max(1, min(hours, 24 * 14))
+    return (datetime.now(UTC) + timedelta(hours=hours)).isoformat()
+
+
+async def _operate_alert(
+    item_id: str,
+    user: dict,
+    *,
+    next_state: str,
+    event_type: str,
+    audit_action: str,
+    body: dict[str, Any] | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    if next_state not in {"acknowledged", "snoozed", "assigned", "false_positive"}:
+        raise HTTPException(400, "invalid alert operation")
+    body = body if isinstance(body, dict) else {}
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    current_status = str(item.get("status") or "open")
+    if current_status in TERMINAL_ITEM_STATUSES and next_state != "false_positive":
+        raise HTTPException(409, "terminal control room item has no active alert")
+    if not _alert_for_item(item) and next_state != "false_positive":
+        raise HTTPException(404, "active alert not found")
+
+    now = datetime.now(UTC).isoformat()
+    existing_state = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    owner_email = str(body.get("owner_email") or body.get("owner") or user.get("email") or "").strip()
+    note = str(body.get("note") or "").strip()
+    reason = str(body.get("reason") or "").strip()
+    alert_state = {
+        **existing_state,
+        "state": next_state,
+        "updated_at": now,
+        "updated_by": user.get("email") or "user",
+    }
+    if note:
+        alert_state["note"] = note
+    if reason:
+        alert_state["reason"] = reason
+    if next_state == "acknowledged":
+        alert_state["acknowledged_at"] = existing_state.get("acknowledged_at") or now
+    elif next_state == "snoozed":
+        alert_state["snoozed_until"] = _snoozed_until_from_body(body)
+        alert_state["snoozed_at"] = now
+    elif next_state == "assigned":
+        alert_state["owner"] = owner_email or "operaciones"
+        alert_state["assigned_at"] = now
+    elif next_state == "false_positive":
+        alert_state["false_positive_at"] = now
+        alert_state["reason"] = reason or "Marcado como falso positivo desde Sala de Control"
+
+    target_status = "dismissed" if next_state == "false_positive" else (
+        current_status if current_status not in {"open", ""} else "in_review"
+    )
+    pool = await auth.pool()
+    workspace_id = _workspace_id(user)
+    await _ensure_item_row(pool, user=user, item=item, status=target_status)
+    try:
+        await pool.execute(
+            """
+            UPDATE control_room_items
+               SET status = CASE
+                       WHEN $5::text = 'dismissed' THEN 'dismissed'
+                       WHEN status = ANY($4::text[]) THEN status
+                       ELSE $5::text
+                   END,
+                   metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                   dismissed_at = CASE
+                       WHEN $5::text = 'dismissed' THEN COALESCE(dismissed_at, NOW())
+                       ELSE dismissed_at
+                   END,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $2
+               AND item_id = $3
+            """,
+            json.dumps({"alert_state": alert_state}),
+            workspace_id,
+            item["id"],
+            sorted(TERMINAL_ITEM_STATUSES),
+            target_status,
+        )
+    except Exception:
+        pass
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type=event_type,
+        metadata={"alert_state": alert_state, "note": note, "reason": reason},
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action=audit_action,
+        resource_type="control_room_alert",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={"alert_state": alert_state, "item": item},
+        critical=next_state == "false_positive",
+    )
+    public_item = _with_omega({**item, "status": target_status, "alert_state": alert_state})
+    return {
+        "ok": True,
+        "alert": _alert_for_item(public_item),
+        "item": public_item,
+    }
+
+
+async def acknowledge_alert(
+    item_id: str,
+    user: dict,
+    *,
+    body: dict[str, Any] | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    return await _operate_alert(
+        item_id,
+        user,
+        next_state="acknowledged",
+        event_type="alert_acknowledged",
+        audit_action="control_room.alert.acknowledge",
+        body=body,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+
+
+async def snooze_alert(
+    item_id: str,
+    user: dict,
+    *,
+    body: dict[str, Any] | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    return await _operate_alert(
+        item_id,
+        user,
+        next_state="snoozed",
+        event_type="alert_snoozed",
+        audit_action="control_room.alert.snooze",
+        body=body,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+
+
+async def assign_alert(
+    item_id: str,
+    user: dict,
+    *,
+    body: dict[str, Any] | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    return await _operate_alert(
+        item_id,
+        user,
+        next_state="assigned",
+        event_type="alert_assigned",
+        audit_action="control_room.alert.assign",
+        body=body,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+
+
+async def mark_alert_false_positive(
+    item_id: str,
+    user: dict,
+    *,
+    body: dict[str, Any] | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    return await _operate_alert(
+        item_id,
+        user,
+        next_state="false_positive",
+        event_type="alert_false_positive",
+        audit_action="control_room.alert.false_positive",
+        body=body,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
 
 
 async def list_alerts(

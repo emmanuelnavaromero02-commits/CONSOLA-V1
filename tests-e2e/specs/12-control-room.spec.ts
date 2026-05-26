@@ -88,6 +88,19 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/push-ready/i);
+    const alertQueue = page.getByLabel(/cola de alertas operativas/i);
+    await alertQueue.getByRole("button", { name: /reconocer/i }).first().click();
+    await expect(alertQueue.getByText(/alerta reconocida/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await alertQueue.getByRole("button", { name: /posponer 24h/i }).first().click();
+    await expect(alertQueue.getByText(/alerta pospuesta 24h/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await alertQueue.getByRole("button", { name: /asignarme/i }).first().click();
+    await expect(alertQueue.getByText(/alerta asignada/i)).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
     await expect(page.getByLabel(/anomalias detectadas/i)).toBeVisible();
     await expect(page.getByLabel(/umbrales configurables del contexto/i)).toBeVisible();

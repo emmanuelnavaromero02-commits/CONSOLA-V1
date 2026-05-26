@@ -1238,3 +1238,127 @@ async def test_reopen_item_resets_terminal_state_and_records_audit_event():
     assert any("UPDATE control_room_items" in call.args[0] for call in mock_pool.execute.call_args_list)
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["action"] == "control_room.reopen"
+
+
+@pytest.mark.asyncio
+async def test_acknowledge_alert_persists_alert_state_and_records_audit_event():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.acknowledge_alert(
+            anomaly["id"],
+            USER,
+            body={"note": "triage started"},
+            fetcher=sample_fetcher,
+        )
+
+    assert result["item"]["status"] == "in_review"
+    assert result["item"]["alert_state"]["state"] == "acknowledged"
+    assert result["alert"]["status"] == "acknowledged"
+    assert result["alert"]["delivery"]["status"] == "acknowledged"
+    metadata_payloads = [
+        arg
+        for call in mock_pool.execute.call_args_list
+        for arg in call.args
+        if isinstance(arg, str) and "alert_state" in arg
+    ]
+    assert any("acknowledged" in payload for payload in metadata_payloads)
+    assert any(
+        len(call.args) > 4 and call.args[4] == "alert_acknowledged"
+        for call in mock_pool.execute.call_args_list
+    )
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.alert.acknowledge"
+    assert audit_event.await_args.kwargs["resource_type"] == "control_room_alert"
+
+
+@pytest.mark.asyncio
+async def test_snooze_and_assign_alert_update_delivery_contract():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        snoozed = await control_room_service.snooze_alert(
+            anomaly["id"],
+            USER,
+            body={"hours": 24},
+            fetcher=sample_fetcher,
+        )
+        assigned = await control_room_service.assign_alert(
+            anomaly["id"],
+            USER,
+            body={"owner_email": "owner@example.com"},
+            fetcher=sample_fetcher,
+        )
+
+    assert snoozed["alert"]["status"] == "snoozed"
+    assert snoozed["alert"]["push_ready"] is False
+    assert snoozed["alert"]["delivery"]["status"] == "snoozed"
+    assert snoozed["alert"]["snoozed_until"]
+    assert assigned["alert"]["status"] == "assigned"
+    assert assigned["alert"]["owner"] == "owner@example.com"
+    assert assigned["alert"]["delivery"]["status"] == "assigned"
+    assert audit_event.await_count == 2
+    assert [call.kwargs["action"] for call in audit_event.await_args_list] == [
+        "control_room.alert.snooze",
+        "control_room.alert.assign",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_false_positive_alert_dismisses_item_and_removes_alert():
+    anomaly = (await control_room_service.list_anomalies(USER, fetcher=sample_fetcher))["anomalies"][0]
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.mark_alert_false_positive(
+            anomaly["id"],
+            USER,
+            body={"reason": "validated duplicate signal"},
+            fetcher=sample_fetcher,
+        )
+
+    assert result["item"]["status"] == "dismissed"
+    assert result["item"]["alert_state"]["state"] == "false_positive"
+    assert result["alert"] is None
+    assert any(
+        len(call.args) > 4 and call.args[4] == "alert_false_positive"
+        for call in mock_pool.execute.call_args_list
+    )
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.alert.false_positive"
+    assert audit_event.await_args.kwargs["critical"] is True

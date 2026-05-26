@@ -30,6 +30,82 @@ async def control_room_alerts(user: dict = Depends(require_authenticated)):
     return await control_room_service.list_alerts(user)
 
 
+@router.post(
+    "/alerts/{item_id}/ack",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_acknowledge_alert(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.acknowledge_alert(
+        item_id,
+        user,
+        body=body if isinstance(body, dict) else {},
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
+    "/alerts/{item_id}/snooze",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_snooze_alert(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.snooze_alert(
+        item_id,
+        user,
+        body=body if isinstance(body, dict) else {},
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
+    "/alerts/{item_id}/assign",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_assign_alert(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.assign_alert(
+        item_id,
+        user,
+        body=body if isinstance(body, dict) else {},
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
+    "/alerts/{item_id}/false-positive",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_false_positive_alert(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.mark_alert_false_positive(
+        item_id,
+        user,
+        body=body if isinstance(body, dict) else {},
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
 @router.get("/anomalies", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_anomalies(user: dict = Depends(require_authenticated)):
     return await control_room_service.list_anomalies(user)
