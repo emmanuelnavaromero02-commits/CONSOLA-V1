@@ -1,7 +1,7 @@
 # v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
-# Replicon was unpinned; pin fastapi explicitly so the starlette
-# floor stays satisfiable.
-fastapi>=0.136.1
+# Replicon pins fastapi explicitly so the starlette floor stays
+# satisfiable and pip-audit does not resolve unsafe patch releases.
+fastapi==0.136.1
 starlette>=1.0.1
 # v1.43.4 (DevOps R1 follow-up): mirror the SAP cartridges' lower
 # bounds so the 4 cartridges run on the same versions of the
