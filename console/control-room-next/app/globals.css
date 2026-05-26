@@ -908,6 +908,7 @@ p {
 .anomaly-card,
 .source-panel,
 .detail-hero,
+.activity-timeline,
 .timeline,
 .manual-shell,
 .state-panel {
@@ -1442,6 +1443,110 @@ p {
   gap: 12px;
 }
 
+.activity-timeline {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.activity-timeline header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.activity-timeline header > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.activity-timeline header svg {
+  width: 42px;
+  height: 42px;
+  padding: 10px;
+  border-radius: 8px;
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.activity-timeline h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.activity-timeline header > span {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 99px;
+  color: #475569;
+  background: var(--surface-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.activity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.activity-entry {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.activity-marker {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 99px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 4px #e2e8f0;
+}
+
+.activity-entry.execution .activity-marker {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px #dbeafe;
+}
+
+.activity-entry.decision_action .activity-marker {
+  background: var(--green);
+  box-shadow: 0 0 0 4px #d1fae5;
+}
+
+.activity-entry strong {
+  display: block;
+  font-size: 14px;
+}
+
+.activity-entry p {
+  margin: 4px 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.activity-entry em,
+.activity-empty,
+.activity-error {
+  color: #8b96a8;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.activity-error {
+  color: #991b1b;
+}
+
 .auto-run-button {
   min-height: 46px;
   display: inline-flex;
@@ -1938,6 +2043,7 @@ button:disabled {
 @media (max-width: 760px) {
   .header,
   .anomaly-heading,
+  .activity-timeline header,
   .bottom-nav {
     align-items: flex-start;
     flex-direction: column;

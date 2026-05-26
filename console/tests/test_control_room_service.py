@@ -698,6 +698,87 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
 
 
 @pytest.mark.asyncio
+async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trail():
+    persisted_item = {
+        "item_id": "item-activity",
+        "cartridge_id": "replicon",
+        "domain": "Finanzas",
+        "source_dataset": "pnl_mensual",
+        "item_kind": "anomaly",
+        "title": "Margen bajo",
+        "severity": "high",
+        "status": "approved",
+        "decision_id": 77,
+        "entity_kind": "Proyecto",
+        "entity_id": "P-1",
+        "entity_label": "Proyecto Norte",
+        "anomaly_type": "low_margin",
+        "metadata": {
+            "description": "Margen menor a umbral",
+            "recommendation": "Revisar billing",
+            "root_cause": "Costo mayor al esperado",
+            "impact": "Riesgo de margen",
+        },
+        "first_seen_at": datetime(2026, 5, 20, 9, 0, 0),
+        "last_seen_at": datetime(2026, 5, 20, 10, 0, 0),
+        "resolved_at": None,
+        "dismissed_at": None,
+        "impact_estimate": 21000,
+        "impact_currency": "USD",
+        "confidence": 0.82,
+        "priority_score": 86,
+        "selected_option_id": "remediate",
+        "execution_status": "dry_run_validated",
+    }
+    event_rows = [{
+        "id": 11,
+        "item_id": "item-activity",
+        "event_type": "approved",
+        "actor_email": "ops@example.com",
+        "metadata": {"decision_id": 77},
+        "created_at": datetime(2026, 5, 20, 10, 4, 0),
+    }]
+    execution_rows = [{
+        "id": 12,
+        "item_id": "item-activity",
+        "template_id": "prepare_billing_review",
+        "mode": "dry_run",
+        "status": "validated",
+        "payload": {"target": "replicon"},
+        "result": {"message": "Dry-run validado. V1 no escribe en sistemas externos."},
+        "error": None,
+        "actor_email": "ops@example.com",
+        "created_at": datetime(2026, 5, 20, 10, 3, 0),
+        "completed_at": datetime(2026, 5, 20, 10, 3, 1),
+    }]
+    decision_rows = [{
+        "id": 13,
+        "decision_id": 77,
+        "action_text": "Decision creada desde Sala de Control",
+        "note": "Revisar billing",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 2, 0),
+    }]
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow.return_value = persisted_item
+    mock_pool.fetch = AsyncMock(side_effect=[event_rows, execution_rows, decision_rows])
+
+    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+        result = await control_room_service.get_item_activity("item-activity", USER)
+
+    assert result["counts"] == {"events": 1, "executions": 1, "decision_actions": 1, "total": 3}
+    assert [entry["kind"] for entry in result["activity"]] == ["event", "execution", "decision_action"]
+    assert result["activity"][0]["label"] == "Aprobacion registrada"
+    assert result["activity"][1]["label"] == "Dry-run validado"
+    assert result["activity"][1]["payload"] == {"target": "replicon"}
+    assert result["activity"][2]["metadata"]["decision_id"] == 77
+    event_sql, workspace_id, item_id = mock_pool.fetch.call_args_list[0].args
+    assert "workspace_id = $1" in event_sql
+    assert workspace_id == "workspace-A"
+    assert item_id == "item-activity"
+
+
+@pytest.mark.asyncio
 async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test

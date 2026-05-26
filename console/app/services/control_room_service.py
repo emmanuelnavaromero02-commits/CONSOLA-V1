@@ -40,6 +40,18 @@ EXECUTION_STATUSES = {
     "executed",
 }
 
+ACTIVITY_LABELS = {
+    "option_selected": "Opcion seleccionada",
+    "decision_created": "Decision creada",
+    "action_preview": "Preview generado",
+    "action_dry_run": "Dry-run validado",
+    "action_blocked": "Ejecucion bloqueada",
+    "approved": "Aprobacion registrada",
+    "lesson_recorded": "Leccion registrada",
+    "dismissed": "Item descartado",
+    "reopened": "Item reabierto",
+}
+
 ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
     "restore_data_source": {
         "template_id": "restore_data_source",
@@ -2897,6 +2909,146 @@ async def _item_for_mutation(
     if persisted:
         return persisted
     return await get_item(item_id, user, fetcher=fetcher)
+
+
+def _event_to_activity(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    event_type = str(data.get("event_type") or "event")
+    metadata = _details(data.get("metadata"))
+    return {
+        "id": f"event:{data.get('id')}",
+        "kind": "event",
+        "type": event_type,
+        "label": ACTIVITY_LABELS.get(event_type, event_type.replace("_", " ").title()),
+        "status": event_type,
+        "actor": data.get("actor_email") or "sistema",
+        "at": data.get("created_at"),
+        "metadata": metadata,
+    }
+
+
+def _execution_to_activity(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    mode = str(data.get("mode") or "execution")
+    status = str(data.get("status") or "")
+    label_by_mode = {
+        "preview": "Preview generado",
+        "dry_run": "Dry-run validado",
+        "execute_live": "Ejecucion productiva",
+    }
+    return {
+        "id": f"execution:{data.get('id')}",
+        "kind": "execution",
+        "type": mode,
+        "label": label_by_mode.get(mode, mode.replace("_", " ").title()),
+        "status": status,
+        "actor": data.get("actor_email") or "sistema",
+        "at": data.get("created_at"),
+        "metadata": {
+            "template_id": data.get("template_id"),
+            "completed_at": data.get("completed_at"),
+        },
+        "payload": _details(data.get("payload")),
+        "result": _details(data.get("result")),
+        "error": data.get("error"),
+    }
+
+
+def _decision_action_to_activity(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    label = str(data.get("action_text") or "Accion de decision")
+    return {
+        "id": f"decision_action:{data.get('id')}",
+        "kind": "decision_action",
+        "type": "decision_action",
+        "label": label,
+        "status": "recorded",
+        "actor": data.get("actor") or "user",
+        "at": data.get("ts"),
+        "metadata": {
+            "decision_id": data.get("decision_id"),
+            "note": data.get("note"),
+        },
+    }
+
+
+async def get_item_activity(
+    item_id: str,
+    user: dict,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    workspace_id = _workspace_id(user)
+    pool = await auth.pool()
+    event_rows: list[Any] = []
+    execution_rows: list[Any] = []
+    decision_action_rows: list[Any] = []
+    try:
+        event_rows = await pool.fetch(
+            """
+            SELECT id, item_id, event_type, actor_email, metadata, created_at
+              FROM control_room_item_events
+             WHERE workspace_id = $1
+               AND item_id = $2
+             ORDER BY created_at DESC
+             LIMIT 50
+            """,
+            workspace_id,
+            item["id"],
+        )
+    except Exception:
+        event_rows = []
+    try:
+        execution_rows = await pool.fetch(
+            """
+            SELECT id, item_id, template_id, mode, status, payload, result,
+                   error, actor_email, created_at, completed_at
+              FROM control_room_action_executions
+             WHERE workspace_id = $1
+               AND item_id = $2
+             ORDER BY created_at DESC
+             LIMIT 50
+            """,
+            workspace_id,
+            item["id"],
+        )
+    except Exception:
+        execution_rows = []
+    if item.get("decision_id"):
+        try:
+            decision_action_rows = await pool.fetch(
+                """
+                SELECT da.id, da.decision_id, da.action_text, da.note, da.actor, da.ts
+                  FROM decision_actions da
+                  JOIN decisions d ON d.id = da.decision_id
+                 WHERE d.workspace_id = $1
+                   AND da.decision_id = $2
+                 ORDER BY da.ts DESC
+                 LIMIT 50
+                """,
+                workspace_id,
+                int(item["decision_id"]),
+            )
+        except Exception:
+            decision_action_rows = []
+
+    activity = [
+        *(_event_to_activity(row) for row in event_rows),
+        *(_execution_to_activity(row) for row in execution_rows),
+        *(_decision_action_to_activity(row) for row in decision_action_rows),
+    ]
+    activity.sort(key=lambda entry: str(entry.get("at") or ""), reverse=True)
+    return {
+        "item_id": item["id"],
+        "activity": activity,
+        "counts": {
+            "events": len(event_rows),
+            "executions": len(execution_rows),
+            "decision_actions": len(decision_action_rows),
+            "total": len(activity),
+        },
+    }
 
 
 async def _record_item_event(

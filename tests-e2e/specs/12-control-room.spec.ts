@@ -114,6 +114,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("tab", { name: /ejecucion/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /control/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /reglas/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: /bitacora operativa/i })).toBeVisible();
     await page.getByRole("tab", { name: /opciones/i }).click();
     await expect(page.getByText(/score/i).first()).toBeVisible();
     const exceptionOption = page.getByRole("button", { name: /aprobar excepcion temporal/i });
@@ -149,6 +150,21 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("button", { name: /recomendacion aprobada/i })).toBeVisible({
       timeout: 15_000,
     });
+    await expect(page.getByText(/aprobacion registrada/i)).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const activityResponse = await page.request.get(
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/activity`,
+    );
+    expect(activityResponse.status(), "control-room item must expose visible activity trail").toBe(200);
+    const activity = await activityResponse.json();
+    expect(activity.counts.total, "activity trail must have persisted operational events").toBeGreaterThanOrEqual(5);
+    const activityTypes = activity.activity.map((entry: { type?: string }) => entry.type);
+    expect(activityTypes).toContain("option_selected");
+    expect(activityTypes).toContain("action_preview");
+    expect(activityTypes).toContain("action_dry_run");
+    expect(activityTypes).toContain("approved");
 
     const auditResponse = await page.request.get(`${LEGACY}/security/audit`);
     expect(auditResponse.status(), "/security/audit must expose the audit trail").toBe(200);

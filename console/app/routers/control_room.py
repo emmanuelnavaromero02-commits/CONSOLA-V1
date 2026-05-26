@@ -40,6 +40,11 @@ async def control_room_item_impact(item_id: str, user: dict = Depends(require_au
     return await control_room_service.get_item_impact(item_id, user)
 
 
+@router.get("/items/{item_id}/activity", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_item_activity(item_id: str, user: dict = Depends(require_authenticated)):
+    return await control_room_service.get_item_activity(item_id, user)
+
+
 @router.get("/anomalies/{anomaly_id}", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_anomaly_detail(anomaly_id: str, user: dict = Depends(require_authenticated)):
     return await control_room_service.get_anomaly(anomaly_id, user)

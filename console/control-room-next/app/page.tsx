@@ -165,6 +165,31 @@ interface LessonPattern {
   last_seen_at?: string;
 }
 
+interface ActivityEntry {
+  id: string;
+  kind: "event" | "execution" | "decision_action";
+  type: string;
+  label: string;
+  status?: string;
+  actor?: string;
+  at?: string;
+  metadata?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string | null;
+}
+
+interface ActivityPayload {
+  item_id: string;
+  activity: ActivityEntry[];
+  counts: {
+    events: number;
+    executions: number;
+    decision_actions: number;
+    total: number;
+  };
+}
+
 interface ControlChecklistItem {
   id: string;
   desc: string;
@@ -391,6 +416,29 @@ function activeOpen(item: ControlItem): boolean {
   return !terminalStatuses.has(item.status);
 }
 
+function metadataText(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `${value.length} registros`;
+  }
+  return "Evidencia guardada";
+}
+
+function activityDescription(entry: ActivityEntry): string {
+  if (entry.error) return entry.error;
+  const message = entry.result?.message;
+  if (typeof message === "string" && message) return message;
+  if (entry.metadata?.note) return metadataText(entry.metadata.note);
+  if (entry.metadata?.option_id) return `Opcion ${metadataText(entry.metadata.option_id)}`;
+  if (entry.metadata?.decision_id) return `Decision #${metadataText(entry.metadata.decision_id)}`;
+  if (entry.metadata?.template_id) return `Template ${metadataText(entry.metadata.template_id)}`;
+  if (entry.metadata?.lessons) return `Lecciones: ${metadataText(entry.metadata.lessons)}`;
+  return entry.status || entry.type;
+}
+
 export default function ControlRoomPage() {
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState("");
@@ -405,6 +453,9 @@ export default function ControlRoomPage() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busyAction, setBusyAction] = useState("");
   const [actionError, setActionError] = useState("");
+  const [activityByItem, setActivityByItem] = useState<Record<string, ActivityPayload>>({});
+  const [activityLoading, setActivityLoading] = useState("");
+  const [activityError, setActivityError] = useState("");
 
   const load = useCallback(async (preferredId?: string) => {
     setError("");
@@ -417,6 +468,22 @@ export default function ControlRoomPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo cargar la sala de control");
       setState("error");
+    }
+  }, []);
+
+  const loadActivity = useCallback(async (itemId: string) => {
+    if (!itemId) return;
+    setActivityError("");
+    setActivityLoading(itemId);
+    try {
+      const payload = await apiJson<ActivityPayload>(
+        `/api/control-room/items/${encodeURIComponent(itemId)}/activity`,
+      );
+      setActivityByItem((current) => ({ ...current, [itemId]: payload }));
+    } catch (err) {
+      setActivityError(err instanceof Error ? err.message : "No se pudo cargar la bitacora operativa");
+    } finally {
+      setActivityLoading((current) => (current === itemId ? "" : current));
     }
   }, []);
 
@@ -463,6 +530,14 @@ export default function ControlRoomPage() {
     || filtered[0]
     || null;
 
+  useEffect(() => {
+    if (!detailOpen || !selected?.id) return undefined;
+    const timer = window.setTimeout(() => {
+      void loadActivity(selected.id);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [detailOpen, loadActivity, selected?.id]);
+
   function openItem(item: ControlItem) {
     setSelectedId(item.id);
     setDetailOpen(true);
@@ -494,6 +569,12 @@ export default function ControlRoomPage() {
     });
   }
 
+  function refreshAfterMutation(nextItem: ControlItem) {
+    mergeDashboardItem(nextItem);
+    void load(nextItem.id);
+    void loadActivity(nextItem.id);
+  }
+
   async function createDecision(item: ControlItem) {
     setBusyAction(`decision:${item.id}`);
     setActionError("");
@@ -502,8 +583,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/decision`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo crear la decision");
     } finally {
@@ -519,8 +599,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/action-preview`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo generar el preview");
     } finally {
@@ -536,8 +615,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/action-dry-run`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo validar el dry-run");
     } finally {
@@ -553,8 +631,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/execute`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Write-back externo bloqueado para V1");
     } finally {
@@ -573,7 +650,7 @@ export default function ControlRoomPage() {
           { method: "POST", body: JSON.stringify({ option_id: "remediate" }) },
         );
         working = selectedPayload.item;
-        mergeDashboardItem(working);
+        refreshAfterMutation(working);
       }
       if (!working.decision_id) {
         const decisionPayload = await apiJson<{ decision: { id: number }; item: ControlItem }>(
@@ -581,20 +658,19 @@ export default function ControlRoomPage() {
           { method: "POST", body: JSON.stringify({}) },
         );
         working = decisionPayload.item;
-        mergeDashboardItem(working);
+        refreshAfterMutation(working);
       }
       const previewPayload = await apiJson<{ item: ControlItem }>(
         `/api/control-room/items/${encodeURIComponent(working.id)}/action-preview`,
         { method: "POST", body: JSON.stringify({}) },
       );
       working = previewPayload.item;
-      mergeDashboardItem(working);
+      refreshAfterMutation(working);
       const dryRunPayload = await apiJson<{ item: ControlItem }>(
         `/api/control-room/items/${encodeURIComponent(working.id)}/action-dry-run`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      mergeDashboardItem(dryRunPayload.item);
-      void load(dryRunPayload.item.id);
+      refreshAfterMutation(dryRunPayload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo completar el modo automatico seguro");
     } finally {
@@ -611,8 +687,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/option`,
         { method: "POST", body: JSON.stringify({ option_id: optionId }) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo seleccionar la opcion");
     } finally {
@@ -628,8 +703,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/approve`,
         { method: "POST", body: JSON.stringify(item.decision_id ? { decision_id: item.decision_id } : {}) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo aprobar la recomendacion");
     } finally {
@@ -645,8 +719,7 @@ export default function ControlRoomPage() {
         `/api/control-room/items/${encodeURIComponent(item.id)}/dismiss`,
         { method: "POST", body: JSON.stringify({ reason: "Descartado desde Sala de Control" }) },
       );
-      mergeDashboardItem(payload.item);
-      void load(payload.item.id);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo descartar el item");
     } finally {
@@ -706,6 +779,9 @@ export default function ControlRoomPage() {
             manualTab={manualTab}
             busyAction={busyAction}
             actionError={actionError}
+            activity={activityByItem[selected.id]}
+            activityLoading={activityLoading === selected.id}
+            activityError={activityError}
             onBack={() => {
               setDetailOpen(false);
               setDetailMode(null);
@@ -1320,6 +1396,9 @@ function DetailPage({
   manualTab,
   busyAction,
   actionError,
+  activity,
+  activityLoading,
+  activityError,
   onBack,
   onMode,
   onManualTab,
@@ -1338,6 +1417,9 @@ function DetailPage({
   manualTab: number;
   busyAction: string;
   actionError: string;
+  activity?: ActivityPayload;
+  activityLoading: boolean;
+  activityError: string;
   onBack: () => void;
   onMode: (mode: DetailMode) => void;
   onManualTab: (index: number) => void;
@@ -1405,6 +1487,12 @@ function DetailPage({
       <ImpactDetail item={item} />
 
       <OmegaCycleBar steps={omegaSteps} activeStep={activeStep} onStep={jumpToStep} />
+
+      <ActivityTimeline
+        activity={activity}
+        loading={activityLoading}
+        error={activityError}
+      />
 
       {mode === null ? (
         <section className="mode-cards" aria-label="Seleccion de modo">
@@ -1501,6 +1589,48 @@ function ImpactDetail({ item }: { item: ControlItem }) {
           ))}
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function ActivityTimeline({
+  activity,
+  loading,
+  error,
+}: {
+  activity?: ActivityPayload;
+  loading: boolean;
+  error: string;
+}) {
+  const entries = activity?.activity ?? [];
+  return (
+    <section className="activity-timeline" aria-label="Bitacora operativa">
+      <header>
+        <div>
+          <Activity aria-hidden />
+          <div>
+            <p className="section-kicker">Bitacora operativa</p>
+            <h3>Acciones separadas y auditadas</h3>
+          </div>
+        </div>
+        <span>{loading ? "Cargando" : `${activity?.counts.total ?? 0} eventos`}</span>
+      </header>
+      {error ? <p className="activity-error" role="alert">{error}</p> : null}
+      {!loading && !entries.length ? (
+        <p className="activity-empty">Aun no hay acciones registradas para esta senal.</p>
+      ) : null}
+      <div className="activity-list">
+        {entries.slice(0, 8).map((entry) => (
+          <article className={`activity-entry ${entry.kind}`} key={entry.id}>
+            <span className="activity-marker" aria-hidden />
+            <div>
+              <strong>{entry.label}</strong>
+              <p>{activityDescription(entry)}</p>
+              <em>{fmtDate(entry.at || "")} · {entry.actor || "sistema"}</em>
+            </div>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
