@@ -371,7 +371,8 @@ const statusLabels: Record<string, string> = {
   resolved: "Resuelto",
 };
 
-const manualTabs = ["Investigacion", "Opciones", "Ejecucion", "Control", "Reglas"];
+const manualTabs = ["Investigacion", "Opciones", "Decision", "Ejecucion", "Control", "Reglas"];
+const manualStepIds = ["investigation", "options", "decision", "execution", "control", "lessons"];
 const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const defaultOmegaSteps = [
   { id: "signals", label: "Senales" },
@@ -780,6 +781,7 @@ export default function ControlRoomPage() {
     setDetailMode(null);
     setManualTab(0);
     setActionError("");
+    void recordStep(item, "signals", "Senal abierta desde el dashboard", undefined, true);
   }
 
   function toggleDomain(domainId: string) {
@@ -810,6 +812,52 @@ export default function ControlRoomPage() {
     void load(nextItem.id);
     void loadActivity(nextItem.id);
     void loadLessons();
+  }
+
+  async function recordStep(
+    item: ControlItem,
+    stepId: string,
+    note = "",
+    controlId?: string,
+    silent = false,
+  ) {
+    if (!silent) {
+      setBusyAction(`step:${item.id}:${stepId}:${controlId || ""}`);
+      setActionError("");
+    }
+    try {
+      const payload = await apiJson<{ item: ControlItem }>(
+        `/api/control-room/items/${encodeURIComponent(item.id)}/step`,
+        {
+          method: "POST",
+          body: JSON.stringify({ step_id: stepId, note, control_id: controlId || "" }),
+        },
+      );
+      mergeDashboardItem(payload.item);
+      void loadActivity(item.id);
+    } catch (err) {
+      if (!silent) {
+        setActionError(err instanceof Error ? err.message : "No se pudo registrar el paso OMEGA");
+      }
+    } finally {
+      if (!silent) setBusyAction("");
+    }
+  }
+
+  async function createLesson(item: ControlItem, rule: string) {
+    setBusyAction(`lesson:${item.id}`);
+    setActionError("");
+    try {
+      const payload = await apiJson<{ item: ControlItem }>(
+        `/api/control-room/items/${encodeURIComponent(item.id)}/lessons`,
+        { method: "POST", body: JSON.stringify({ rule }) },
+      );
+      refreshAfterMutation(payload.item);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "No se pudo guardar la leccion");
+    } finally {
+      setBusyAction("");
+    }
   }
 
   async function createDecision(item: ControlItem) {
@@ -881,6 +929,7 @@ export default function ControlRoomPage() {
     setActionError("");
     try {
       let working = item;
+      await recordStep(working, "investigation", "Modo automatico seguro inicio investigacion", undefined, true);
       if (!terminalStatuses.has(working.status) && working.selected_option_id !== "remediate") {
         const selectedPayload = await apiJson<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(working.id)}/option`,
@@ -889,6 +938,7 @@ export default function ControlRoomPage() {
         working = selectedPayload.item;
         refreshAfterMutation(working);
       }
+      await recordStep(working, "options", "Modo automatico selecciono opcion recomendada", undefined, true);
       if (!working.decision_id) {
         const decisionPayload = await apiJson<{ decision: { id: number }; item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(working.id)}/decision`,
@@ -897,6 +947,7 @@ export default function ControlRoomPage() {
         working = decisionPayload.item;
         refreshAfterMutation(working);
       }
+      await recordStep(working, "decision", "Modo automatico preparo decision auditada", undefined, true);
       const previewPayload = await apiJson<{ item: ControlItem }>(
         `/api/control-room/items/${encodeURIComponent(working.id)}/action-preview`,
         { method: "POST", body: JSON.stringify({}) },
@@ -908,6 +959,7 @@ export default function ControlRoomPage() {
         { method: "POST", body: JSON.stringify({}) },
       );
       refreshAfterMutation(dryRunPayload.item);
+      await recordStep(dryRunPayload.item, "execution", "Modo automatico completo preview y dry-run", undefined, true);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo completar el modo automatico seguro");
     } finally {
@@ -1045,12 +1097,14 @@ export default function ControlRoomPage() {
             onManualTab={setManualTab}
             onCreateDecision={createDecision}
             onSelectOption={selectOption}
+            onRecordStep={recordStep}
             onPreview={previewAction}
             onDryRun={dryRunAction}
             onExecute={executeLive}
             onRunAuto={runAuto}
             onApprove={approve}
             onDismiss={dismiss}
+            onCreateLesson={createLesson}
           />
         ) : (
           <DashboardView
@@ -2014,12 +2068,14 @@ function DetailPage({
   onManualTab,
   onCreateDecision,
   onSelectOption,
+  onRecordStep,
   onPreview,
   onDryRun,
   onExecute,
   onRunAuto,
   onApprove,
   onDismiss,
+  onCreateLesson,
 }: {
   item: ControlItem;
   omegaSteps: Array<{ id: string; label: string }>;
@@ -2035,21 +2091,24 @@ function DetailPage({
   onManualTab: (index: number) => void;
   onCreateDecision: (item: ControlItem) => void;
   onSelectOption: (item: ControlItem, optionId: string) => void;
+  onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
   onRunAuto: (item: ControlItem) => void;
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
+  onCreateLesson: (item: ControlItem, rule: string) => void;
 }) {
   const activeStep = mode === null
     ? "signals"
     : mode === "auto"
       ? "execution"
-      : ["investigation", "options", item.decision_id ? "execution" : "decision", "control", "lessons"][manualTab] || "investigation";
+      : manualStepIds[manualTab] || "investigation";
 
   function jumpToStep(stepId: string) {
     if (stepId === "signals") {
+      onRecordStep(item, "signals", "Senal abierta desde el ciclo OMEGA", undefined, true);
       onMode(null);
       onManualTab(0);
       return;
@@ -2059,10 +2118,11 @@ function DetailPage({
       investigation: 0,
       options: 1,
       decision: 2,
-      execution: 2,
-      control: 3,
-      lessons: 4,
+      execution: 3,
+      control: 4,
+      lessons: 5,
     };
+    onRecordStep(item, stepId, `Paso ${stepId} abierto desde el ciclo OMEGA`, undefined, true);
     onManualTab(tabByStep[stepId] ?? 0);
   }
 
@@ -2111,7 +2171,14 @@ function DetailPage({
             <strong>Modo automatico</strong>
             <span>OMEGA ejecuta el recorrido recomendado y deja trazabilidad.</span>
           </button>
-          <button type="button" className="mode-card manual" onClick={() => onMode("manual")}>
+          <button
+            type="button"
+            className="mode-card manual"
+            onClick={() => {
+              onMode("manual");
+              onRecordStep(item, "investigation", "Modo manual iniciado", undefined, true);
+            }}
+          >
             <Layers3 aria-hidden />
             <strong>Modo manual</strong>
             <span>Revisa investigacion, opciones, ejecucion, control y reglas paso a paso.</span>
@@ -2142,11 +2209,13 @@ function DetailPage({
           onTab={onManualTab}
           onCreateDecision={onCreateDecision}
           onSelectOption={onSelectOption}
+          onRecordStep={onRecordStep}
           onPreview={onPreview}
           onDryRun={onDryRun}
           onExecute={onExecute}
           onApprove={onApprove}
           onDismiss={onDismiss}
+          onCreateLesson={onCreateLesson}
         />
       ) : null}
     </section>
@@ -2268,11 +2337,13 @@ function AutoFlow({
 }) {
   const selectedOption = item.omega.options.find((option) => option.selected) || item.omega.options[0];
   const steps = [
+    { title: "Senales", text: `${item.source_dataset} · ${item.severity}`, done: true },
     { title: "Investigacion", text: item.omega.investigation.root_cause || item.root_cause || "Pendiente", done: true },
-    { title: "Opciones evaluadas", text: selectedOption ? `${selectedOption.action || selectedOption.label} · score ${selectedOption.score}` : "Sin opcion", done: Boolean(selectedOption) },
+    { title: "Opciones", text: selectedOption ? `${selectedOption.action || selectedOption.label} · score ${selectedOption.score}` : "Sin opcion", done: Boolean(selectedOption) },
     { title: "Decision", text: item.decision_id ? `Decision #${item.decision_id}` : "Lista para crear decision", done: Boolean(item.decision_id) },
-    { title: "Preview / dry-run", text: item.execution_status === "dry_run_validated" ? "Dry-run validado sin write-back" : "Pendiente de validacion segura", done: item.execution_status === "dry_run_validated" },
-    { title: "Reglas aprendidas", text: item.omega.lessons.rules[0] || "Regla pendiente", done: terminalStatuses.has(item.status) },
+    { title: "Ejecucion", text: item.execution_status === "dry_run_validated" ? "Dry-run validado sin write-back" : "Pendiente de validacion segura", done: item.execution_status === "dry_run_validated" },
+    { title: "Control", text: item.omega.control.status || "Seguimiento abierto", done: terminalStatuses.has(item.status) },
+    { title: "Lecciones", text: item.omega.lessons.rules[0] || "Regla pendiente", done: (item.lesson_count || 0) > 0 || terminalStatuses.has(item.status) },
   ];
   return (
     <section className="timeline">
@@ -2316,11 +2387,13 @@ function ManualFlow({
   onTab,
   onCreateDecision,
   onSelectOption,
+  onRecordStep,
   onPreview,
   onDryRun,
   onExecute,
   onApprove,
   onDismiss,
+  onCreateLesson,
 }: {
   item: ControlItem;
   tab: number;
@@ -2329,12 +2402,19 @@ function ManualFlow({
   onTab: (index: number) => void;
   onCreateDecision: (item: ControlItem) => void;
   onSelectOption: (item: ControlItem, optionId: string) => void;
+  onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
+  onCreateLesson: (item: ControlItem, rule: string) => void;
 }) {
+  function selectTab(index: number) {
+    onTab(index);
+    onRecordStep(item, manualStepIds[index] || "investigation", `Paso ${manualTabs[index]} abierto`, undefined, true);
+  }
+
   return (
     <section className="manual-shell">
       <div className="tab-bar" role="tablist" aria-label="Pasos manuales">
@@ -2345,7 +2425,7 @@ function ManualFlow({
             aria-selected={tab === index}
             className={tab === index ? "active" : ""}
             key={label}
-            onClick={() => onTab(index)}
+            onClick={() => selectTab(index)}
           >
             {label}
           </button>
@@ -2353,7 +2433,14 @@ function ManualFlow({
       </div>
 
       <div className="panel">
-        {tab === 0 ? <InvestigationPanel item={item} /> : null}
+        {tab === 0 ? (
+          <InvestigationPanel
+            item={item}
+            busyAction={busyAction}
+            actionError={actionError}
+            onRecordStep={onRecordStep}
+          />
+        ) : null}
         {tab === 1 ? (
           <OptionsPanel
             item={item}
@@ -2362,24 +2449,46 @@ function ManualFlow({
           />
         ) : null}
         {tab === 2 ? (
-          <ExecutionPanel
+          <DecisionPanel
             item={item}
             busyAction={busyAction}
             actionError={actionError}
             onCreateDecision={onCreateDecision}
+            onRecordStep={onRecordStep}
+            onDismiss={onDismiss}
+          />
+        ) : null}
+        {tab === 3 ? (
+          <ExecutionPanel
+            item={item}
+            busyAction={busyAction}
+            actionError={actionError}
             onPreview={onPreview}
             onDryRun={onDryRun}
             onExecute={onExecute}
             onApprove={onApprove}
-            onDismiss={onDismiss}
           />
         ) : null}
-        {tab === 3 ? <ControlPanel item={item} /> : null}
-        {tab === 4 ? <RulesPanel item={item} /> : null}
+        {tab === 4 ? (
+          <ControlPanel
+            item={item}
+            busyAction={busyAction}
+            actionError={actionError}
+            onRecordStep={onRecordStep}
+          />
+        ) : null}
+        {tab === 5 ? (
+          <RulesPanel
+            item={item}
+            busyAction={busyAction}
+            actionError={actionError}
+            onCreateLesson={onCreateLesson}
+          />
+        ) : null}
       </div>
 
       <div className="bottom-nav">
-        <button type="button" onClick={() => onTab(Math.max(0, tab - 1))} disabled={tab === 0}>
+        <button type="button" onClick={() => selectTab(Math.max(0, tab - 1))} disabled={tab === 0}>
           Anterior
         </button>
         <div>
@@ -2387,7 +2496,7 @@ function ManualFlow({
             <span className={index === tab ? "active" : ""} key={label} />
           ))}
         </div>
-        <button type="button" onClick={() => onTab(Math.min(manualTabs.length - 1, tab + 1))} disabled={tab === manualTabs.length - 1}>
+        <button type="button" onClick={() => selectTab(Math.min(manualTabs.length - 1, tab + 1))} disabled={tab === manualTabs.length - 1}>
           Siguiente
         </button>
       </div>
@@ -2395,14 +2504,38 @@ function ManualFlow({
   );
 }
 
-function InvestigationPanel({ item }: { item: ControlItem }) {
+function InvestigationPanel({
+  item,
+  busyAction,
+  actionError,
+  onRecordStep,
+}: {
+  item: ControlItem;
+  busyAction: string;
+  actionError: string;
+  onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
+}) {
   return (
-    <div className="panel-grid">
-      <PanelRow label="Causa probable" value={item.omega.investigation.root_cause || item.root_cause || "Pendiente"} />
-      <PanelRow label="Impacto" value={item.omega.investigation.impact || item.impact || "Riesgo operativo"} />
-      <PanelRow label="Recomendacion" value={item.recommendation} />
-      {item.sql ? <SqlToggle sql={item.sql} /> : null}
-    </div>
+    <>
+      <div className="panel-grid">
+        <PanelRow label="Causa probable" value={item.omega.investigation.root_cause || item.root_cause || "Pendiente"} />
+        <PanelRow label="Impacto" value={item.omega.investigation.impact || item.impact || "Riesgo operativo"} />
+        <PanelRow label="Recomendacion" value={item.recommendation} />
+        {item.sql ? <SqlToggle sql={item.sql} /> : null}
+      </div>
+      <div className="step-action-footer">
+        <button
+          type="button"
+          className="primary-action"
+          onClick={() => onRecordStep(item, "investigation", "Investigacion revisada por usuario")}
+          disabled={busyAction !== ""}
+        >
+          {busyAction === `step:${item.id}:investigation:` ? <Loader2 aria-hidden className="spin" /> : <CheckCircle2 aria-hidden />}
+          Registrar investigacion revisada
+        </button>
+        {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
+      </div>
+    </>
   );
 }
 
@@ -2447,26 +2580,90 @@ function OptionsPanel({
   );
 }
 
-function ExecutionPanel({
+function DecisionPanel({
   item,
   busyAction,
   actionError,
   onCreateDecision,
-  onPreview,
-  onDryRun,
-  onExecute,
-  onApprove,
+  onRecordStep,
   onDismiss,
 }: {
   item: ControlItem;
   busyAction: string;
   actionError: string;
   onCreateDecision: (item: ControlItem) => void;
+  onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
+  onDismiss: (item: ControlItem) => void;
+}) {
+  const selectedOption = item.omega.options.find((option) => option.selected);
+  const decisionReady = Boolean(item.decision_id);
+  return (
+    <div className="decision-panel">
+      <article className="decision-card">
+        <p className="section-kicker">Decision OMEGA</p>
+        <h3>{decisionReady ? `Decision #${item.decision_id}` : "Decision pendiente"}</h3>
+        <p>
+          {selectedOption
+            ? `${selectedOption.action || selectedOption.label}: ${selectedOption.recommendation}`
+            : "Selecciona una opcion antes de crear la decision."}
+        </p>
+        <dl>
+          <div><dt>Estado</dt><dd>{statusLabels[item.status] || item.status}</dd></div>
+          <div><dt>Opcion</dt><dd>{selectedOption?.label || "Sin seleccionar"}</dd></div>
+          <div><dt>Prioridad</dt><dd>{item.priority_score ?? 0}/100</dd></div>
+          <div><dt>Impacto</dt><dd>{item.impact_status === "ok" ? fmtMoney(item.impact_estimate) : "No calculable"}</dd></div>
+        </dl>
+      </article>
+      <div className="decision-actions">
+        <button
+          type="button"
+          className="primary-action"
+          onClick={() => onCreateDecision(item)}
+          disabled={decisionReady || busyAction !== ""}
+        >
+          {busyAction === `decision:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <FileCheck2 aria-hidden />}
+          {decisionReady ? `Decision #${item.decision_id}` : "Crear decision"}
+        </button>
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => onRecordStep(item, "decision", "Decision revisada sin cambio")}
+          disabled={busyAction !== ""}
+        >
+          {busyAction === `step:${item.id}:decision:` ? <Loader2 aria-hidden className="spin" /> : <CheckCircle2 aria-hidden />}
+          Registrar revision
+        </button>
+        <button
+          type="button"
+          className="ghost-action"
+          onClick={() => onDismiss(item)}
+          disabled={terminalStatuses.has(item.status) || busyAction !== ""}
+        >
+          {busyAction === `dismiss:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <XCircle aria-hidden />}
+          Descartar
+        </button>
+        {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function ExecutionPanel({
+  item,
+  busyAction,
+  actionError,
+  onPreview,
+  onDryRun,
+  onExecute,
+  onApprove,
+}: {
+  item: ControlItem;
+  busyAction: string;
+  actionError: string;
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
   onApprove: (item: ControlItem) => void;
-  onDismiss: (item: ControlItem) => void;
 }) {
   return (
     <div className="execution-list">
@@ -2501,16 +2698,18 @@ function ExecutionPanel({
           )}
         </article>
       ))}
-      <ActionStrip
-        item={item}
-        busyAction={busyAction}
-        actionError={actionError}
-        onCreateDecision={onCreateDecision}
-        onPreview={onPreview}
-        onDryRun={onDryRun}
-        onApprove={onApprove}
-        onDismiss={onDismiss}
-      />
+      <div className="step-action-footer">
+        <button
+          type="button"
+          className="primary-action"
+          onClick={() => onApprove(item)}
+          disabled={item.status === "approved" || busyAction !== ""}
+        >
+          {busyAction === `approve:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <ClipboardCheck aria-hidden />}
+          {item.status === "approved" ? "Recomendacion aprobada" : "Aprobar recomendacion"}
+        </button>
+        {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
+      </div>
     </div>
   );
 }
@@ -2558,7 +2757,17 @@ function ExecutionBridge({
   );
 }
 
-function ControlPanel({ item }: { item: ControlItem }) {
+function ControlPanel({
+  item,
+  busyAction,
+  actionError,
+  onRecordStep,
+}: {
+  item: ControlItem;
+  busyAction: string;
+  actionError: string;
+  onRecordStep: (item: ControlItem, stepId: string, note?: string, controlId?: string, silent?: boolean) => void;
+}) {
   const controls = item.omega.control.items || [];
   return (
     <div className="control-list">
@@ -2571,14 +2780,35 @@ function ControlPanel({ item }: { item: ControlItem }) {
             <div><dt>Impacto</dt><dd>{control.impact}</dd></div>
             <div><dt>Dias</dt><dd>{control.days}</dd></div>
           </dl>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => onRecordStep(item, "control", control.desc, control.id)}
+            disabled={busyAction !== ""}
+          >
+            {busyAction === `step:${item.id}:control:${control.id}` ? <Loader2 aria-hidden className="spin" /> : <ClipboardCheck aria-hidden />}
+            Confirmar control
+          </button>
         </article>
       ))}
+      {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
     </div>
   );
 }
 
-function RulesPanel({ item }: { item: ControlItem }) {
+function RulesPanel({
+  item,
+  busyAction,
+  actionError,
+  onCreateLesson,
+}: {
+  item: ControlItem;
+  busyAction: string;
+  actionError: string;
+  onCreateLesson: (item: ControlItem, rule: string) => void;
+}) {
   const related = item.related_lessons || [];
+  const [draftRule, setDraftRule] = useState(item.omega.lessons.rules[0] || "");
   return (
     <div className="rules-list">
       {related.length ? (
@@ -2598,6 +2828,32 @@ function RulesPanel({ item }: { item: ControlItem }) {
       {item.omega.lessons.rules.map((rule) => (
         <PanelRow key={rule} label="Regla aprendida" value={rule} />
       ))}
+      <form
+        className="lesson-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const rule = draftRule.trim();
+          if (rule) onCreateLesson(item, rule);
+        }}
+      >
+        <label htmlFor={`lesson-${item.id}`}>Nueva leccion persistida</label>
+        <textarea
+          id={`lesson-${item.id}`}
+          value={draftRule}
+          onChange={(event) => setDraftRule(event.target.value)}
+          rows={3}
+          placeholder="Ej. Si esta senal reaparece, validar owner y evidencia antes de aprobar."
+        />
+        <button
+          type="submit"
+          className="primary-action"
+          disabled={busyAction !== "" || draftRule.trim().length < 8}
+        >
+          {busyAction === `lesson:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <BookOpen aria-hidden />}
+          Guardar leccion
+        </button>
+        {actionError ? <p className="action-error" role="alert">{actionError}</p> : null}
+      </form>
     </div>
   );
 }
