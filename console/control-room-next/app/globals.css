@@ -572,7 +572,8 @@ p {
 
 .source-health-track .missing,
 .source-health-track .invalid,
-.source-health-track .unavailable {
+.source-health-track .unavailable,
+.source-health-track .blocked {
   background: var(--red);
 }
 
@@ -1045,7 +1046,9 @@ p {
 }
 
 .source-dot.unavailable,
-.source-dot.invalid_schema {
+.source-dot.invalid_schema,
+.source-dot.blocked,
+.source-dot.no_permission {
   background: var(--red);
 }
 

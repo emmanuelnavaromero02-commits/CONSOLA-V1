@@ -26,13 +26,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 
 type Severity = "critical" | "high" | "medium" | "low";
-type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema";
+type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
+type SourceRollup = SourceState | "attention" | "inactive" | "no_sources";
 type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;
 
 interface SourceStatus {
   dataset: string;
   cartridge: string;
+  connector_id?: string;
+  module_id?: string;
   domain: string;
   module: string;
   status: SourceState;
@@ -50,12 +53,14 @@ interface Kpi {
 
 interface DomainModule {
   id: string;
+  connector_id?: string;
   label: string;
   domain: string;
   accent: string;
+  description?: string;
   item_count: number;
   critical_count: number;
-  source_status: "ok" | "empty" | "attention" | "inactive" | "no_sources";
+  source_status: SourceRollup;
   kpis: Kpi[];
 }
 
@@ -71,16 +76,19 @@ interface Domain {
 
 interface Cartridge {
   id: string;
+  connector_id?: string;
+  connector_label?: string;
   label: string;
   domain: string;
   accent: string;
+  description?: string;
   status: string;
   current_step?: string;
   active: boolean;
   operational: boolean;
   item_count: number;
   critical_count: number;
-  source_status: "ok" | "empty" | "attention" | "inactive" | "no_sources";
+  source_status: SourceRollup;
   datasets: SourceStatus[];
 }
 
@@ -166,7 +174,9 @@ interface ControlItem {
   kind: "anomaly" | "control_item" | "source_state";
   domain: string;
   module: string;
+  module_id?: string;
   cartridge: string;
+  connector_id?: string;
   source_dataset: string;
   entity_kind: string;
   entity_id: string;
@@ -392,7 +402,7 @@ export default function ControlRoomPage() {
   const filtered = useMemo(() => items.filter((item) => (
     (domain === "all" || item.domain === domain)
     && (severity === "all" || item.severity === severity)
-    && (cartridge === "all" || item.cartridge === cartridge)
+    && (cartridge === "all" || (item.module_id || item.cartridge) === cartridge)
   )), [cartridge, domain, items, severity]);
 
   const groupedItems = useMemo(() => domains.map((group) => ({
@@ -998,6 +1008,8 @@ function SourceHealthPanel({
     { key: "missing", label: "Faltantes", tone: "missing" },
     { key: "invalid_schema", label: "Invalidas", tone: "invalid" },
     { key: "unavailable", label: "No disponibles", tone: "unavailable" },
+    { key: "blocked", label: "Bloqueadas", tone: "blocked" },
+    { key: "no_permission", label: "Sin permiso", tone: "blocked" },
   ];
   const total = Math.max(
     totalSources,

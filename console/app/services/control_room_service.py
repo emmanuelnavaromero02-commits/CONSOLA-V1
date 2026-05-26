@@ -115,6 +115,11 @@ class ControlRoomSource:
     entity_label_field: str
     kind: str = "anomaly"
     normalizer: str = "standard_anomaly"
+    module_id: str | None = None
+
+    @property
+    def visible_module_id(self) -> str:
+        return self.module_id or self.cartridge
 
 
 @dataclass(frozen=True)
@@ -125,6 +130,12 @@ class ControlRoomModule:
     accent: str
     sources: tuple[ControlRoomSource, ...] = ()
     operational: bool = False
+    module_id: str | None = None
+    description: str = ""
+
+    @property
+    def visible_id(self) -> str:
+        return self.module_id or self.cartridge
 
 
 MODULES: tuple[ControlRoomModule, ...] = (
@@ -142,8 +153,125 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_kind="Empleado",
                 entity_id_field="pernr",
                 entity_label_field="full_name",
+                module_id="sap_hcm",
+            ),
+            ControlRoomSource(
+                dataset="headcount_by_department",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Personal",
+                entity_kind="Departamento",
+                entity_id_field="department",
+                entity_label_field="department",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm",
+            ),
+            ControlRoomSource(
+                dataset="headcount_by_costcenter",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Personal",
+                entity_kind="Centro de costo",
+                entity_id_field="cost_center",
+                entity_label_field="cost_center",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm",
             ),
         ),
+        module_id="sap_hcm",
+        description="Calidad, composicion y maestros de personal SAP HCM.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Nomina",
+        domain="Nomina",
+        accent="#ef4444",
+        sources=(
+            ControlRoomSource(
+                dataset="workforce_cost_monthly",
+                cartridge="sap_hcm",
+                domain="Nomina",
+                module_label="Nomina",
+                entity_kind="Centro de costo",
+                entity_id_field="cost_center",
+                entity_label_field="cost_center",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_payroll",
+            ),
+        ),
+        module_id="sap_hcm_payroll",
+        description="Costos de fuerza laboral y senales base para control de nomina.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Ausencias",
+        domain="Recursos Humanos",
+        accent="#a855f7",
+        sources=(
+            ControlRoomSource(
+                dataset="absence_by_type_and_month",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Ausencias",
+                entity_kind="Tipo de ausencia",
+                entity_id_field="absence_type",
+                entity_label_field="absence_type",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_absences",
+            ),
+            ControlRoomSource(
+                dataset="absence_balance_by_employee",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Ausencias",
+                entity_kind="Empleado",
+                entity_id_field="pernr",
+                entity_label_field="pernr",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_absences",
+            ),
+        ),
+        module_id="sap_hcm_absences",
+        description="Tendencias y saldos de ausentismo para HR Ops.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Estructura Org",
+        domain="Recursos Humanos",
+        accent="#6d28d9",
+        sources=(
+            ControlRoomSource(
+                dataset="manager_hierarchy",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Manager",
+                entity_id_field="manager_pernr",
+                entity_label_field="manager_name",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_org",
+            ),
+            ControlRoomSource(
+                dataset="headcount_by_position_type",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Posicion",
+                entity_id_field="position_type",
+                entity_label_field="position_type",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_org",
+            ),
+        ),
+        module_id="sap_hcm_org",
+        description="Jerarquia, span de control y estructura organizacional SAP HCM.",
     ),
     ControlRoomModule(
         cartridge="sap_successfactors",
@@ -159,8 +287,125 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_kind="Empleado",
                 entity_id_field="user_id",
                 entity_label_field="full_name",
+                module_id="sap_successfactors",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_headcount_by_department",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Employee Central",
+                entity_kind="Departamento",
+                entity_id_field="department",
+                entity_label_field="department",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_turnover_by_period",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Employee Central",
+                entity_kind="Periodo",
+                entity_id_field="period",
+                entity_label_field="period",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors",
             ),
         ),
+        module_id="sap_successfactors",
+        description="Employee Central, headcount, rotacion y calidad de datos.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Reclutamiento",
+        domain="Recursos Humanos",
+        accent="#a78bfa",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_recruitment_funnel",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Reclutamiento",
+                entity_kind="Requisicion",
+                entity_id_field="job_req_id",
+                entity_label_field="job_req_id",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_recruiting",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_recruitment_pipeline",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Reclutamiento",
+                entity_kind="Pipeline",
+                entity_id_field="job_req_id",
+                entity_label_field="job_req_id",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_recruiting",
+            ),
+        ),
+        module_id="sap_successfactors_recruiting",
+        description="Embudo, requisiciones y senales de cobertura de vacantes.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Desempeno",
+        domain="Recursos Humanos",
+        accent="#7c3aed",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_compensation_distribution",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Desempeno",
+                entity_kind="Grupo",
+                entity_id_field="department",
+                entity_label_field="department",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_performance",
+            ),
+        ),
+        module_id="sap_successfactors_performance",
+        description="Compensacion disponible y senales relacionadas con desempeno.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Estructura Org",
+        domain="Recursos Humanos",
+        accent="#6d28d9",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_manager_hierarchy",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Manager",
+                entity_id_field="manager_id",
+                entity_label_field="manager_name",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_org",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_org_structure",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Unidad",
+                entity_id_field="org_unit",
+                entity_label_field="org_unit",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_org",
+            ),
+        ),
+        module_id="sap_successfactors_org",
+        description="Jerarquia, unidades y estructura organizacional SuccessFactors.",
     ),
     ControlRoomModule(
         cartridge="sap_s4hana",
@@ -176,7 +421,30 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_kind="Business Partner",
                 entity_id_field="business_partner",
                 entity_label_field="full_name",
+                module_id="sap_s4hana",
             ),
+            ControlRoomSource(
+                dataset="gl_balance_by_account",
+                cartridge="sap_s4hana",
+                domain="Finanzas",
+                module_label="ERP Core",
+                entity_kind="Cuenta",
+                entity_id_field="gl_account",
+                entity_label_field="gl_account",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana",
+            ),
+        ),
+        module_id="sap_s4hana",
+        description="Maestros financieros, business partners y balance base S/4HANA.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Ventas",
+        domain="Ventas",
+        accent="#8b5cf6",
+        sources=(
             ControlRoomSource(
                 dataset="revenue_by_customer",
                 cartridge="sap_s4hana",
@@ -187,6 +455,7 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_label_field="customer_code",
                 kind="control_item",
                 normalizer="s4_revenue",
+                module_id="sap_s4hana_sales",
             ),
             ControlRoomSource(
                 dataset="open_sales_orders",
@@ -198,7 +467,18 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_label_field="customer_code",
                 kind="control_item",
                 normalizer="s4_backlog",
+                module_id="sap_s4hana_sales",
             ),
+        ),
+        module_id="sap_s4hana_sales",
+        description="Revenue, backlog y senales comerciales S/4HANA.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Compras",
+        domain="Compras",
+        accent="#f59e0b",
+        sources=(
             ControlRoomSource(
                 dataset="purchase_spend_by_supplier",
                 cartridge="sap_s4hana",
@@ -209,8 +489,77 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_label_field="supplier_code",
                 kind="control_item",
                 normalizer="s4_supplier_spend",
+                module_id="sap_s4hana_procurement",
             ),
         ),
+        module_id="sap_s4hana_procurement",
+        description="Gasto por proveedor y controles de compras.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Cuentas por Cobrar",
+        domain="Finanzas",
+        accent="#14b8a6",
+        sources=(
+            ControlRoomSource(
+                dataset="overdue_billing",
+                cartridge="sap_s4hana",
+                domain="Finanzas",
+                module_label="Cuentas por Cobrar",
+                entity_kind="Factura",
+                entity_id_field="billing_document",
+                entity_label_field="billing_document",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana_ar",
+            ),
+        ),
+        module_id="sap_s4hana_ar",
+        description="Cartera vencida, facturacion y aging comercial.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Presupuestos",
+        domain="Presupuestos",
+        accent="#0891b2",
+        sources=(
+            ControlRoomSource(
+                dataset="cost_center_expense",
+                cartridge="sap_s4hana",
+                domain="Presupuestos",
+                module_label="Presupuestos",
+                entity_kind="Centro de costo",
+                entity_id_field="cost_center",
+                entity_label_field="cost_center",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana_budget",
+            ),
+        ),
+        module_id="sap_s4hana_budget",
+        description="Gasto por centro de costo como base para control presupuestal.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Inventario",
+        domain="Operacion",
+        accent="#22c55e",
+        sources=(
+            ControlRoomSource(
+                dataset="inventory_movement_summary",
+                cartridge="sap_s4hana",
+                domain="Operacion",
+                module_label="Inventario",
+                entity_kind="Material",
+                entity_id_field="material",
+                entity_label_field="material",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana_inventory",
+            ),
+        ),
+        module_id="sap_s4hana_inventory",
+        description="Movimientos de inventario y senales de operacion S/4HANA.",
     ),
     ControlRoomModule(
         cartridge="replicon",
@@ -228,6 +577,7 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_label_field="consultor",
                 kind="control_item",
                 normalizer="replicon_allocation",
+                module_id="replicon",
             ),
             ControlRoomSource(
                 dataset="consultor_timesheet_semanal",
@@ -239,30 +589,103 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 entity_label_field="consultor",
                 kind="control_item",
                 normalizer="replicon_timesheet",
+                module_id="replicon",
             ),
+            ControlRoomSource(
+                dataset="project_progress_history",
+                cartridge="replicon",
+                domain="Operacion",
+                module_label="Servicios Profesionales",
+                entity_kind="Proyecto",
+                entity_id_field="proyecto",
+                entity_label_field="project_name",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon",
+            ),
+        ),
+        module_id="replicon",
+        description="Asignacion, timesheets y delivery de servicios profesionales.",
+    ),
+    ControlRoomModule(
+        cartridge="replicon",
+        label="Margen y Facturacion",
+        domain="Finanzas",
+        accent="#0ea5e9",
+        sources=(
             ControlRoomSource(
                 dataset="pnl_mensual",
                 cartridge="replicon",
                 domain="Finanzas",
-                module_label="P&L",
+                module_label="Margen y Facturacion",
                 entity_kind="Proyecto",
                 entity_id_field="proyecto",
                 entity_label_field="project_name",
                 kind="control_item",
                 normalizer="replicon_pnl",
+                module_id="replicon_finance",
             ),
+            ControlRoomSource(
+                dataset="pnl_detalle_consultor",
+                cartridge="replicon",
+                domain="Finanzas",
+                module_label="Margen y Facturacion",
+                entity_kind="Consultor",
+                entity_id_field="consultor",
+                entity_label_field="consultor",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon_finance",
+            ),
+            ControlRoomSource(
+                dataset="costo_consultor_mensual",
+                cartridge="replicon",
+                domain="Finanzas",
+                module_label="Margen y Facturacion",
+                entity_kind="Consultor",
+                entity_id_field="consultor",
+                entity_label_field="consultor",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon_finance",
+            ),
+        ),
+        module_id="replicon_finance",
+        description="P&L, WIP, costo y facturacion de servicios.",
+    ),
+    ControlRoomModule(
+        cartridge="replicon",
+        label="Skills y Staffing",
+        domain="Recursos Humanos",
+        accent="#38bdf8",
+        sources=(
             ControlRoomSource(
                 dataset="analytic_skill_gap_by_manager",
                 cartridge="replicon",
                 domain="Recursos Humanos",
-                module_label="Skills",
+                module_label="Skills y Staffing",
                 entity_kind="Manager",
                 entity_id_field="manager_name",
                 entity_label_field="manager_name",
                 kind="control_item",
                 normalizer="replicon_skill_gap",
+                module_id="replicon_skills",
+            ),
+            ControlRoomSource(
+                dataset="fact_empleado_skills",
+                cartridge="replicon",
+                domain="Recursos Humanos",
+                module_label="Skills y Staffing",
+                entity_kind="Empleado",
+                entity_id_field="empleado",
+                entity_label_field="empleado",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon_skills",
             ),
         ),
+        module_id="replicon_skills",
+        description="Brechas de skill, staffing y capacidad consultiva.",
     ),
     ControlRoomModule(
         cartridge="platform",
@@ -270,6 +693,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
         domain="Operacion",
         accent="#64748b",
         operational=True,
+        module_id="platform",
+        description="Salud operativa de pipelines, fuentes y plataforma.",
     ),
 )
 
@@ -446,6 +871,10 @@ def _module_by_cartridge() -> dict[str, ControlRoomModule]:
     return {module.cartridge: module for module in MODULES}
 
 
+def _module_by_visible_id() -> dict[str, ControlRoomModule]:
+    return {module.visible_id: module for module in MODULES}
+
+
 def _all_sources() -> tuple[ControlRoomSource, ...]:
     sources: list[ControlRoomSource] = []
     for module in MODULES:
@@ -492,21 +921,19 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
             LEFT JOIN marketplace_products mp ON mp.cartridge_id = ci.cartridge_id
             WHERE ci.tenant_id = $1
               AND ci.workspace_id = $2
-              AND ci.status = ANY($3::text[])
               AND NOT EXISTS (
                   SELECT 1
                     FROM user_cartridge_overrides uco
                    WHERE uco.tenant_id = ci.tenant_id
                      AND uco.workspace_id = ci.workspace_id
                      AND uco.cartridge_id = ci.cartridge_id
-                     AND uco.user_id = $4
+                     AND uco.user_id = $3
                      AND uco.mode = 'deny'
               )
             ORDER BY lower(COALESCE(mp.name, c.name, ci.cartridge_id))
             """,
             tenant_id,
             workspace_id,
-            sorted(ACTIVE_INSTALLATION_STATUSES),
             (user or {}).get("id"),
         )
         return [_row_to_public(row) for row in rows]
@@ -538,6 +965,8 @@ async def _fetch_source(
         return [], {
             "dataset": source.dataset,
             "cartridge": source.cartridge,
+            "connector_id": source.cartridge,
+            "module_id": source.visible_module_id,
             "domain": source.domain,
             "module": source.module_label,
             "status": status,
@@ -548,6 +977,8 @@ async def _fetch_source(
         return [], {
             "dataset": source.dataset,
             "cartridge": source.cartridge,
+            "connector_id": source.cartridge,
+            "module_id": source.visible_module_id,
             "domain": source.domain,
             "module": source.module_label,
             "status": "unavailable",
@@ -564,6 +995,8 @@ async def _fetch_source(
             return [], {
                 "dataset": source.dataset,
                 "cartridge": source.cartridge,
+                "connector_id": source.cartridge,
+                "module_id": source.visible_module_id,
                 "domain": source.domain,
                 "module": source.module_label,
                 "status": "invalid_schema",
@@ -573,6 +1006,8 @@ async def _fetch_source(
     return rows, {
         "dataset": source.dataset,
         "cartridge": source.cartridge,
+        "connector_id": source.cartridge,
+        "module_id": source.visible_module_id,
         "domain": source.domain,
         "module": source.module_label,
         "status": "empty" if not rows else "ok",
@@ -598,7 +1033,9 @@ def _base_item(source: ControlRoomSource, row: dict[str, Any], item_type: str, e
         "kind": source.kind,
         "domain": source.domain,
         "module": source.module_label,
+        "module_id": source.visible_module_id,
         "cartridge": source.cartridge,
+        "connector_id": source.cartridge,
         "source_dataset": source.dataset,
         "entity_kind": source.entity_kind,
         "entity_id": entity_id,
@@ -1185,18 +1622,22 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
 def _source_state_item(source: ControlRoomSource, status: str, error: str | None = None) -> dict[str, Any] | None:
     if status == "ok":
         return None
-    severity = "high" if status in {"unavailable", "invalid_schema"} else "medium"
+    severity = "high" if status in {"unavailable", "invalid_schema", "blocked", "no_permission"} else "medium"
     title_by_status = {
         "empty": "Fuente sin datos materializados",
         "missing": "Dataset requerido no registrado",
         "unavailable": "Fuente operativa no disponible",
         "invalid_schema": "Dataset con contrato invalido",
+        "blocked": "Cartucho inactivo o bloqueado",
+        "no_permission": "Cartucho sin permiso para este usuario",
     }
     description_by_status = {
         "empty": f"{source.dataset} existe pero no tiene filas para el workspace activo.",
         "missing": f"{source.dataset} no esta disponible en el catalogo del workspace activo.",
         "unavailable": f"{source.dataset} no pudo consultarse desde Refinement.",
         "invalid_schema": f"{source.dataset} no cumple el contrato esperado por la Sala de Control.",
+        "blocked": f"{source.module_label} esta instalado pero no esta activo para el workspace.",
+        "no_permission": f"{source.module_label} no esta permitido para este usuario.",
     }
     item = _base_item(
         source,
@@ -1550,13 +1991,44 @@ async def _collect_items(
             for module in MODULES
             if module.sources
         ]
-    active = {str(row.get("cartridge_id")) for row in installations}
-    modules = [module for module in MODULES if module.cartridge in active]
+    installation_by_cartridge = {
+        str(row.get("cartridge_id")): row
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+    }
+    installed = set(installation_by_cartridge)
+    active = {
+        cartridge_id
+        for cartridge_id, row in installation_by_cartridge.items()
+        if str(row.get("installation_status") or "ready") in ACTIVE_INSTALLATION_STATUSES
+    }
+    modules = [module for module in MODULES if module.cartridge in installed]
 
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
     for module in modules:
+        installation = installation_by_cartridge.get(module.cartridge, {})
+        if module.cartridge not in active:
+            for source in module.sources:
+                source_status = {
+                    "dataset": source.dataset,
+                    "cartridge": source.cartridge,
+                    "connector_id": source.cartridge,
+                    "module_id": source.visible_module_id,
+                    "domain": source.domain,
+                    "module": source.module_label,
+                    "status": "blocked",
+                    "error": str(installation.get("error_message") or installation.get("current_step") or ""),
+                    "count": 0,
+                }
+                rows_by_dataset[source.dataset] = []
+                sources.append(source_status)
+                if include_source_state_items:
+                    source_item = _source_state_item(source, "blocked", source_status.get("error"))
+                    if source_item:
+                        items.append(source_item)
+            continue
         for source in module.sources:
             rows, source_status = await _fetch_source(source, user, fetcher, limit_per_source)
             rows_by_dataset[source.dataset] = rows if source_status["status"] == "ok" else []
@@ -1589,6 +2061,27 @@ def _severity_counts(items: Iterable[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _source_rollup_status(module_sources: list[dict[str, Any]]) -> str:
+    if not module_sources:
+        return "no_sources"
+    priority = [
+        "no_permission",
+        "blocked",
+        "invalid_schema",
+        "unavailable",
+        "missing",
+        "empty",
+        "ok",
+    ]
+    statuses = {str(source.get("status") or "no_sources") for source in module_sources}
+    if statuses == {"ok"}:
+        return "ok"
+    for status in priority:
+        if status in statuses:
+            return status
+    return "attention"
+
+
 def _domain_payload(
     domain: str,
     modules: list[ControlRoomModule],
@@ -1599,22 +2092,25 @@ def _domain_payload(
     domain_items = [item for item in items if item["domain"] == domain]
     module_payload = []
     for module in domain_modules:
-        module_sources = [source for source in sources if source["cartridge"] == module.cartridge and source.get("domain") == domain]
-        module_items = [item for item in domain_items if item["cartridge"] == module.cartridge]
+        module_sources = [
+            source
+            for source in sources
+            if source.get("module_id") == module.visible_id and source.get("domain") == domain
+        ]
+        module_items = [
+            item
+            for item in domain_items
+            if item.get("module_id", item.get("cartridge")) == module.visible_id
+        ]
         source_count = sum(int(source.get("count") or 0) for source in module_sources)
-        source_status = "inactive"
-        if module_sources:
-            if any(source["status"] in {"unavailable", "invalid_schema"} for source in module_sources):
-                source_status = "attention"
-            elif any(source["status"] in {"empty", "missing"} for source in module_sources):
-                source_status = "empty"
-            else:
-                source_status = "ok"
+        source_status = _source_rollup_status(module_sources)
         module_payload.append({
-            "id": module.cartridge,
+            "id": module.visible_id,
+            "connector_id": module.cartridge,
             "label": module.label,
             "domain": domain,
             "accent": module.accent,
+            "description": module.description,
             "item_count": len(module_items),
             "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
             "source_status": source_status,
@@ -1623,7 +2119,7 @@ def _domain_payload(
                     "label": "Registros fuente",
                     "value": source_count,
                     "tone": "neutral",
-                    "bad": source_status in {"attention", "empty"},
+                    "bad": source_status not in {"ok", "no_sources"},
                     "sql": " UNION ALL ".join(
                         f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
                         for source in module_sources
@@ -1644,7 +2140,7 @@ def _domain_payload(
         "accent": DOMAIN_ACCENTS.get(domain, "#64748b"),
         "item_count": len(domain_items),
         "critical_count": sum(1 for item in domain_items if item["severity"] == "critical"),
-        "cartridge_count": len({module.cartridge for module in domain_modules}),
+        "cartridge_count": len({module.visible_id for module in domain_modules}),
         "modules": module_payload,
     }
 
@@ -1687,30 +2183,35 @@ async def dashboard(
     except Exception:
         open_decisions = 0
 
-    module_by_id = _module_by_cartridge()
+    installation_by_cartridge = {
+        str(row.get("cartridge_id")): row
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+    }
     cartridges = []
-    for row in installations:
-        cartridge_id = str(row.get("cartridge_id"))
-        module = module_by_id.get(cartridge_id)
-        module_items = [item for item in items if item["cartridge"] == cartridge_id]
-        module_sources = [source for source in sources if source["cartridge"] == cartridge_id]
-        source_status = "no_sources"
-        if module_sources:
-            if any(source["status"] in {"unavailable", "invalid_schema"} for source in module_sources):
-                source_status = "attention"
-            elif any(source["status"] in {"empty", "missing"} for source in module_sources):
-                source_status = "empty"
-            else:
-                source_status = "ok"
+    for module in modules:
+        row = installation_by_cartridge.get(module.cartridge, {})
+        cartridge_id = module.visible_id
+        module_items = [
+            item
+            for item in items
+            if item.get("module_id", item.get("cartridge")) == module.visible_id
+        ]
+        module_sources = [source for source in sources if source.get("module_id") == module.visible_id]
+        source_status = _source_rollup_status(module_sources)
+        installation_status = str(row.get("installation_status") or "ready")
         cartridges.append({
             "id": cartridge_id,
-            "label": row.get("label") or (module.label if module else cartridge_id),
-            "domain": module.domain if module else "Otros",
-            "accent": module.accent if module else "#64748b",
-            "status": row.get("installation_status") or "ready",
+            "connector_id": module.cartridge,
+            "connector_label": row.get("label") or module.cartridge,
+            "label": module.label,
+            "domain": module.domain,
+            "accent": module.accent,
+            "description": module.description,
+            "status": installation_status,
             "current_step": row.get("current_step"),
-            "active": str(row.get("installation_status") or "ready") in ACTIVE_INSTALLATION_STATUSES,
-            "operational": bool(module.operational) if module else False,
+            "active": installation_status in ACTIVE_INSTALLATION_STATUSES,
+            "operational": bool(module.operational),
             "item_count": len(module_items),
             "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
             "source_status": source_status,
@@ -1747,7 +2248,7 @@ async def dashboard(
             "operational_cartridges": len([row for row in cartridges if row["active"] and row["operational"]]),
             "source_states": {
                 status: sum(1 for source in sources if source["status"] == status)
-                for status in ["ok", "empty", "missing", "unavailable", "invalid_schema"]
+                for status in ["ok", "empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"]
             },
             "cycle_counts": _cycle_counts(items),
             "financial": financial,
