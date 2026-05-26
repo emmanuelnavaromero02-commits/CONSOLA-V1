@@ -1109,6 +1109,7 @@ _RBAC_DEPENDENCY_PREFIXES = (
     "/api/decisions",
     "/api/datasets",
     "/api/apps",
+    "/api/control-room",
     "/api/admin/users",
     "/api/pipeline",
     "/api/pipeline_runs",
@@ -2319,22 +2320,74 @@ async def api_lineage(cartridge: str | None = None, user: dict = Depends(require
 
 # ── Analytic Apps ─────────────────────────────────────────────────────────────
 
-@app.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
-async def serve_app(name: str, user: dict = Depends(require_permission("apps.read"))):
-    """Redirect published analytic apps into the Workspace sandbox.
+def _workspace_server_url() -> str:
+    raw = os.environ.get("WORKSPACE_INTERNAL_URL") or os.environ.get("WORKSPACE_BACKEND_URL")
+    if raw:
+        return raw.rstrip("/")
+    public = os.environ.get("WORKSPACE_PUBLIC_URL") or os.environ.get("WORKSPACE_URL")
+    if Path("/.dockerenv").exists() and public and re.match(r"^https?://(localhost|127\.0\.0\.1)(:|/|$)", public):
+        return "http://workspace:8001"
+    if public:
+        return public.rstrip("/")
+    if _is_production_env():
+        logger.warning("WORKSPACE_INTERNAL_URL is not configured in production")
+        return ""
+    return "http://localhost:8001"
 
-    Direct Console serving bypasses the Workspace iframe sandbox and dataset
-    bridge. Keep the public URL stable, but land in Workspace where app reads
-    are scoped by the authenticated session.
+
+async def _proxy_workspace_app(request: Request, name: str, *, content: bool = False) -> Response:
+    """Serve published analytic apps through Console while preserving Workspace sandboxing.
+
+    Workspace still owns the app wrapper, content bridge and dataset visibility
+    checks. Console only proxies the HTML so users stay on the same :8000
+    origin as the rest of the console.
     """
-    workspace_url = _public_url(
-        "WORKSPACE_PUBLIC_URL",
-        fallback_env="WORKSPACE_URL",
-        development_default="http://localhost:8001",
-    )
+    workspace_url = _workspace_server_url()
     if not workspace_url:
-        raise HTTPException(503, "workspace public URL is not configured")
-    return RedirectResponse(f"{workspace_url}/apps/{quote(name, safe='')}", status_code=307)
+        raise HTTPException(503, "workspace internal URL is not configured")
+    suffix = "/content" if content else ""
+    upstream_headers = {
+        key: value
+        for key, value in {
+            "cookie": request.headers.get("cookie"),
+            "authorization": request.headers.get("authorization"),
+            "x-workspace-id": request.headers.get("x-workspace-id"),
+            "accept": request.headers.get("accept"),
+            "user-agent": request.headers.get("user-agent"),
+        }.items()
+        if value
+    }
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
+        r = await c.get(
+            f"{workspace_url}/apps/{quote(name, safe='')}{suffix}",
+            headers=upstream_headers,
+        )
+    response_headers = {
+        key: value
+        for key, value in r.headers.items()
+        if key.lower() in {
+            "content-security-policy",
+            "content-type",
+            "referrer-policy",
+            "x-content-type-options",
+            "x-frame-options",
+        }
+    }
+    return Response(content=r.content, status_code=r.status_code, headers=response_headers)
+
+
+@app.get("/apps/{name}/content", dependencies=[Depends(require_permission("apps.read"))])
+async def serve_app_content_proxy(
+    request: Request,
+    name: str,
+    user: dict = Depends(require_permission("apps.read")),
+):
+    return await _proxy_workspace_app(request, name, content=True)
+
+
+@app.get("/apps/{name}", dependencies=[Depends(require_permission("apps.read"))])
+async def serve_app(name: str, request: Request, user: dict = Depends(require_permission("apps.read"))):
+    return await _proxy_workspace_app(request, name)
 
 
 @app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])

@@ -330,8 +330,7 @@ _APPS_CONTENT_CSP = (
     "connect-src 'none'; "
     "frame-ancestors 'self'; "
     "base-uri 'none'; "
-    "form-action 'none'; "
-    "navigate-to 'none'"
+    "form-action 'none'"
 )
 
 
