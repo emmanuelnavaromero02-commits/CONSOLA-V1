@@ -427,6 +427,12 @@ async def test_dashboard_keeps_active_empty_cartridges_visible_and_creates_sourc
     assert replicon["source_status"] == "empty"
     assert any(item["kind"] == "source_state" and item["cartridge"] == "replicon" for item in result["items"])
     assert result["omega_steps"][0]["label"] == "Senales"
+    assert result["meta"]["live_mode"] == "polling"
+    assert result["meta"]["refresh_interval_seconds"] == 30
+    assert result["meta"]["source_count"] == len(result["sources"])
+    assert result["meta"]["item_count"] == len(result["items"])
+    assert result["meta"]["generated_at"]
+    assert all(source["checked_at"] for source in result["sources"])
 
 
 @pytest.mark.asyncio
@@ -526,6 +532,7 @@ async def test_dashboard_marks_paused_connector_modules_blocked_without_fetching
     assert all(item["active"] is False for item in result["cartridges"])
     assert {item["source_status"] for item in result["cartridges"]} == {"blocked"}
     assert result["summary"]["source_states"]["blocked"] == len(result["sources"])
+    assert all(source["checked_at"] for source in result["sources"])
 
 
 @pytest.mark.asyncio

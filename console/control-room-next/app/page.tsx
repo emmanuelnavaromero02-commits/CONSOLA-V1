@@ -31,6 +31,7 @@ type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema"
 type SourceRollup = SourceState | "attention" | "inactive" | "no_sources";
 type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;
+type RefreshReason = "initial" | "manual" | "poll" | "mutation";
 
 interface SourceStatus {
   dataset: string;
@@ -42,6 +43,7 @@ interface SourceStatus {
   status: SourceState;
   count: number;
   error?: string;
+  checked_at?: string;
 }
 
 interface Kpi {
@@ -269,6 +271,13 @@ interface ControlItem {
 }
 
 interface Dashboard {
+  meta?: {
+    generated_at?: string;
+    refresh_interval_seconds?: number;
+    live_mode?: "polling" | string;
+    source_count?: number;
+    item_count?: number;
+  };
   workspace: {
     tenant_id?: string;
     workspace_id: string;
@@ -373,6 +382,7 @@ const statusLabels: Record<string, string> = {
 
 const manualTabs = ["Investigacion", "Opciones", "Decision", "Ejecucion", "Control", "Reglas"];
 const manualStepIds = ["investigation", "options", "decision", "execution", "control", "lessons"];
+const DEFAULT_REFRESH_INTERVAL_SECONDS = 30;
 const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const defaultOmegaSteps = [
   { id: "signals", label: "Senales" },
@@ -383,6 +393,19 @@ const defaultOmegaSteps = [
   { id: "control", label: "Control" },
   { id: "lessons", label: "Lecciones" },
 ];
+
+const sourceStateLabels: Record<SourceState | SourceRollup, string> = {
+  ok: "Operativa",
+  empty: "Vacia",
+  missing: "Faltante",
+  unavailable: "No disponible",
+  invalid_schema: "Schema invalido",
+  blocked: "Bloqueada",
+  no_permission: "Sin permiso",
+  attention: "Atencion",
+  inactive: "Inactiva",
+  no_sources: "Sin fuentes",
+};
 
 function csrfToken(): string {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
@@ -474,6 +497,21 @@ function timeAgo(value: Date | null, tick = 0): string {
   return `hace ${hours}h`;
 }
 
+function timeUntil(value: Date | null, tick = 0): string {
+  void tick;
+  if (!value) return "pendiente";
+  const seconds = Math.max(0, Math.ceil((value.getTime() - Date.now()) / 1000));
+  if (seconds <= 1) return "ahora";
+  if (seconds < 60) return `en ${seconds}s`;
+  return `en ${Math.ceil(seconds / 60)}m`;
+}
+
+function parseDate(value?: string): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function dedupeLessons(lessons: Lesson[]): Lesson[] {
   const seen = new Set<string>();
   const unique: Lesson[] = [];
@@ -540,24 +578,41 @@ export default function ControlRoomPage() {
   const [urlHydrated, setUrlHydrated] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
+  const [syncError, setSyncError] = useState("");
   const [clockTick, setClockTick] = useState(0);
   const [lessonsPayload, setLessonsPayload] = useState<LessonsPayload | null>(null);
   const [lessonsLoading, setLessonsLoading] = useState(false);
   const [lessonsError, setLessonsError] = useState("");
 
-  const load = useCallback(async (preferredId?: string) => {
-    setError("");
+  const load = useCallback(async (
+    preferredId?: string,
+    options: { background?: boolean; reason?: RefreshReason } = {},
+  ) => {
+    const background = Boolean(options.background);
+    void options.reason;
+    if (!background) setError("");
     setRefreshing(true);
-    setState((current) => (current === "ready" ? current : "loading"));
+    setState((current) => (current === "ready" || background ? current : "loading"));
     try {
-      const nextDashboard = await apiJson<Dashboard>("/api/control-room/dashboard");
+      const nextDashboard = await apiJson<Dashboard>("/api/control-room/dashboard", { cache: "no-store" });
       setDashboard(nextDashboard);
       setSelectedId((current) => preferredId || current || nextDashboard.items[0]?.id || "");
-      setLastUpdatedAt(new Date());
+      const generatedAt = parseDate(nextDashboard.meta?.generated_at) || new Date();
+      const refreshSeconds = nextDashboard.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS;
+      setLastUpdatedAt(generatedAt);
+      setNextRefreshAt(new Date(Date.now() + refreshSeconds * 1000));
+      setSyncError("");
       setState("ready");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo cargar la sala de control");
-      setState("error");
+      const message = err instanceof Error ? err.message : "No se pudo cargar la sala de control";
+      if (background) {
+        setSyncError(message);
+        setState((current) => (current === "loading" ? "error" : current));
+      } else {
+        setError(message);
+        setState("error");
+      }
     } finally {
       setRefreshing(false);
     }
@@ -581,7 +636,7 @@ export default function ControlRoomPage() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void load();
+      void load(undefined, { reason: "initial" });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [load]);
@@ -589,7 +644,7 @@ export default function ControlRoomPage() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       setClockTick((current) => current + 1);
-    }, 15_000);
+    }, 5_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -726,7 +781,10 @@ export default function ControlRoomPage() {
         params.set("cartridge_id", selectedConnectorId);
       }
       const query = params.toString();
-      const payload = await apiJson<LessonsPayload>(`/api/control-room/lessons${query ? `?${query}` : ""}`);
+      const payload = await apiJson<LessonsPayload>(
+        `/api/control-room/lessons${query ? `?${query}` : ""}`,
+        { cache: "no-store" },
+      );
       setLessonsPayload(payload);
     } catch (err) {
       setLessonsError(err instanceof Error ? err.message : "No se pudieron cargar lecciones");
@@ -744,14 +802,16 @@ export default function ControlRoomPage() {
   }, [domain, cartridge, loadLessons, state]);
 
   useEffect(() => {
+    if (state !== "ready") return undefined;
+    const refreshSeconds = dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        void load(selectedId);
+        void load(selectedId, { background: true, reason: "poll" });
         void loadLessons();
       }
-    }, 30_000);
+    }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [load, loadLessons, selectedId]);
+  }, [dashboard?.meta?.refresh_interval_seconds, load, loadLessons, selectedId, state]);
 
   const contextLessons = useMemo(() => {
     const itemIds = new Set(filtered.map((item) => item.id));
@@ -809,7 +869,7 @@ export default function ControlRoomPage() {
 
   function refreshAfterMutation(nextItem: ControlItem) {
     mergeDashboardItem(nextItem);
-    void load(nextItem.id);
+    void load(nextItem.id, { background: true, reason: "mutation" });
     void loadActivity(nextItem.id);
     void loadLessons();
   }
@@ -1064,7 +1124,11 @@ export default function ControlRoomPage() {
           activeModules={activeModuleCount}
           loading={state === "loading" || refreshing}
           lastUpdated={timeAgo(lastUpdatedAt, clockTick)}
-          onRefresh={() => void load()}
+          nextRefresh={timeUntil(nextRefreshAt, clockTick)}
+          syncError={syncError}
+          liveMode={dashboard?.meta?.live_mode || "polling"}
+          refreshSeconds={dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS}
+          onRefresh={() => void load(selectedId, { reason: "manual" })}
         />
 
         {state === "error" ? (
@@ -1225,6 +1289,10 @@ function Header({
   activeModules,
   loading,
   lastUpdated,
+  nextRefresh,
+  syncError,
+  liveMode,
+  refreshSeconds,
   onRefresh,
 }: {
   context: ActiveContext;
@@ -1233,6 +1301,10 @@ function Header({
   activeModules: number;
   loading: boolean;
   lastUpdated: string;
+  nextRefresh: string;
+  syncError: string;
+  liveMode: string;
+  refreshSeconds: number;
   onRefresh: () => void;
 }) {
   return (
@@ -1243,13 +1315,19 @@ function Header({
         <p>Sala de Control / {context.level === "portfolio" ? "Todos" : context.title} · {period}</p>
       </div>
       <div className="header-actions">
+        <span className={`live-pill ${syncError ? "warning" : ""}`}>
+          <Activity aria-hidden />
+          {syncError ? "Sync con alerta" : `${liveMode === "polling" ? "Vivo" : liveMode} ${refreshSeconds}s`}
+        </span>
         <span className="freshness-pill">Actualizado {lastUpdated}</span>
+        <span className="next-refresh-pill">Siguiente {nextRefresh}</span>
         <span>{activeConnectors} conectores · {activeModules} modulos operativos</span>
         <button className="tool-button" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 aria-hidden className="spin" /> : <RefreshCcw aria-hidden />}
           Refrescar
         </button>
       </div>
+      {syncError ? <p className="sync-warning" role="status">Ultimo refresh fallido: {syncError}</p> : null}
     </header>
   );
 }
@@ -1631,6 +1709,16 @@ function SourceInventoryPanel({
   context: ActiveContext;
   sources: SourceStatus[];
 }) {
+  const stateOrder: SourceState[] = ["ok", "empty", "missing", "invalid_schema", "unavailable", "blocked", "no_permission"];
+  const counts = stateOrder.reduce((acc, state) => {
+    acc[state] = sources.filter((source) => source.status === state).length;
+    return acc;
+  }, {} as Record<SourceState, number>);
+  const sortedSources = [...sources].sort((left, right) => (
+    stateOrder.indexOf(left.status) - stateOrder.indexOf(right.status)
+    || left.module.localeCompare(right.module)
+    || left.dataset.localeCompare(right.dataset)
+  ));
   return (
     <section className="section-block" aria-label="Inventario de fuentes">
       <div className="anomaly-heading">
@@ -1640,16 +1728,24 @@ function SourceInventoryPanel({
         </div>
         <span>{sources.length} datasets</span>
       </div>
+      <div className="source-state-chips" aria-label="Estados de fuentes del contexto">
+        {stateOrder.map((state) => (
+          <span className={state} key={state}>
+            {sourceStateLabels[state]} <strong>{counts[state]}</strong>
+          </span>
+        ))}
+      </div>
       <div className="source-inventory">
-        {sources.length ? sources.map((source) => (
+        {sortedSources.length ? sortedSources.map((source) => (
           <article className={`source-row ${source.status}`} key={`${source.module_id}-${source.dataset}`}>
             <div>
               <span className={`source-dot ${source.status}`} aria-hidden />
               <strong>{source.dataset}</strong>
               <em>{source.module} · {source.cartridge}</em>
             </div>
-            <span>{source.status}</span>
-            <strong>{source.count}</strong>
+            <span>{sourceStateLabels[source.status]}</span>
+            <strong>{source.count} filas</strong>
+            <small>{source.checked_at ? `Revisada ${timeAgo(parseDate(source.checked_at), 0)}` : "Sin revision"}</small>
             {source.error ? <p>{source.error}</p> : null}
           </article>
         )) : (
@@ -1987,7 +2083,7 @@ function DomainSection({ domain, collapsed, onToggle }: { domain: Domain; collap
       <button type="button" className="domain-header" onClick={onToggle} aria-expanded={!collapsed}>
         <span className="domain-color" aria-hidden />
         <strong>{domain.label}</strong>
-        <em>{domain.cartridge_count} cartuchos · {domain.item_count} items</em>
+        <em>{domain.cartridge_count} modulos · {domain.item_count} items</em>
         <ChevronDown aria-hidden className={collapsed ? "collapsed" : ""} />
       </button>
       {!collapsed ? (
