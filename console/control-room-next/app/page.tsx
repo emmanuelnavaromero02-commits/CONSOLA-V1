@@ -311,6 +311,16 @@ interface Dashboard {
   items: ControlItem[];
 }
 
+interface LessonsPayload {
+  lessons: Lesson[];
+  summary: {
+    total: number;
+    recent: Lesson[];
+    by_cartridge?: Record<string, number>;
+    top_patterns?: LessonPattern[];
+  };
+}
+
 interface FinancialRisk {
   label: string;
   owner: string;
@@ -451,6 +461,30 @@ function activityDescription(entry: ActivityEntry): string {
   return entry.status || entry.type;
 }
 
+function timeAgo(value: Date | null, tick = 0): string {
+  void tick;
+  if (!value) return "Sin actualizar";
+  const seconds = Math.max(0, Math.floor((Date.now() - value.getTime()) / 1000));
+  if (seconds < 10) return "ahora";
+  if (seconds < 60) return `hace ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `hace ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `hace ${hours}h`;
+}
+
+function dedupeLessons(lessons: Lesson[]): Lesson[] {
+  const seen = new Set<string>();
+  const unique: Lesson[] = [];
+  lessons.forEach((lesson) => {
+    const key = String(lesson.id || `${lesson.item_id}:${lesson.cartridge_id}:${lesson.anomaly_type}:${lesson.rule}`);
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(lesson);
+  });
+  return unique;
+}
+
 function controlRoomUrl(nextDomain: string, nextModule: string): string {
   const params = new URLSearchParams();
   if (nextModule !== "all") {
@@ -503,18 +537,28 @@ export default function ControlRoomPage() {
   const [activityLoading, setActivityLoading] = useState("");
   const [activityError, setActivityError] = useState("");
   const [urlHydrated, setUrlHydrated] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [clockTick, setClockTick] = useState(0);
+  const [lessonsPayload, setLessonsPayload] = useState<LessonsPayload | null>(null);
+  const [lessonsLoading, setLessonsLoading] = useState(false);
+  const [lessonsError, setLessonsError] = useState("");
 
   const load = useCallback(async (preferredId?: string) => {
     setError("");
+    setRefreshing(true);
     setState((current) => (current === "ready" ? current : "loading"));
     try {
       const nextDashboard = await apiJson<Dashboard>("/api/control-room/dashboard");
       setDashboard(nextDashboard);
       setSelectedId((current) => preferredId || current || nextDashboard.items[0]?.id || "");
+      setLastUpdatedAt(new Date());
       setState("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo cargar la sala de control");
       setState("error");
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
@@ -535,25 +579,17 @@ export default function ControlRoomPage() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function hydrate() {
-      setError("");
-      try {
-        const nextDashboard = await apiJson<Dashboard>("/api/control-room/dashboard");
-        if (cancelled) return;
-        setDashboard(nextDashboard);
-        setSelectedId((current) => current || nextDashboard.items[0]?.id || "");
-        setState("ready");
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "No se pudo cargar la sala de control");
-        setState("error");
-      }
-    }
-    void hydrate();
-    return () => {
-      cancelled = true;
-    };
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClockTick((current) => current + 1);
+    }, 15_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -602,6 +638,7 @@ export default function ControlRoomPage() {
     && (domain === "all" || item.domain === domain)
     && (cartridge === "all" || item.id === cartridge)
   )), [cartridge, cartridges, domain]);
+  const contextConnectorIds = useMemo(() => new Set(contextModules.map((item) => item.connector_id || item.id)), [contextModules]);
   const contextSourceStates = useMemo(() => {
     const states = {
       ok: 0,
@@ -626,10 +663,17 @@ export default function ControlRoomPage() {
   const visibleDomains = useMemo(() => domains
     .filter((item) => item.modules.length > 0)
     .filter((item) => domain === "all" || item.label === domain)
-    .map((item) => (cartridge === "all" ? item : {
-      ...item,
-      modules: item.modules.filter((module) => module.id === cartridge),
-    }))
+    .map((item) => {
+      const modules = cartridge === "all" ? item.modules : item.modules.filter((module) => module.id === cartridge);
+      if (cartridge === "all") return item;
+      return {
+        ...item,
+        modules,
+        item_count: modules.reduce((sum, module) => sum + module.item_count, 0),
+        critical_count: modules.reduce((sum, module) => sum + module.critical_count, 0),
+        cartridge_count: modules.length,
+      };
+    })
     .filter((item) => item.modules.length > 0), [cartridge, domain, domains]);
 
   const contextCycleCounts = useMemo(() => (
@@ -670,6 +714,57 @@ export default function ControlRoomPage() {
     || items.find((item) => item.id === selectedId)
     || filtered[0]
     || null;
+  const selectedConnectorId = selectedModule?.connector_id || "";
+
+  const loadLessons = useCallback(async () => {
+    setLessonsLoading(true);
+    setLessonsError("");
+    try {
+      const params = new URLSearchParams();
+      if (selectedConnectorId) {
+        params.set("cartridge_id", selectedConnectorId);
+      }
+      const query = params.toString();
+      const payload = await apiJson<LessonsPayload>(`/api/control-room/lessons${query ? `?${query}` : ""}`);
+      setLessonsPayload(payload);
+    } catch (err) {
+      setLessonsError(err instanceof Error ? err.message : "No se pudieron cargar lecciones");
+    } finally {
+      setLessonsLoading(false);
+    }
+  }, [selectedConnectorId]);
+
+  useEffect(() => {
+    if (state !== "ready") return;
+    const timer = window.setTimeout(() => {
+      void loadLessons();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [domain, cartridge, loadLessons, state]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void load(selectedId);
+        void loadLessons();
+      }
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [load, loadLessons, selectedId]);
+
+  const contextLessons = useMemo(() => {
+    const itemIds = new Set(filtered.map((item) => item.id));
+    const anomalyKeys = new Set(filtered.map((item) => `${item.cartridge}:${item.anomaly_type}`));
+    const itemLessons = filtered.flatMap((item) => item.related_lessons || []);
+    const apiLessons = lessonsPayload?.lessons || [];
+    return dedupeLessons([...itemLessons, ...apiLessons]).filter((lesson) => {
+      if (domain === "all" && cartridge === "all") return true;
+      if (itemIds.has(lesson.item_id)) return true;
+      const key = `${lesson.cartridge_id}:${lesson.anomaly_type}`;
+      if (cartridge !== "all") return anomalyKeys.has(key);
+      return contextConnectorIds.has(lesson.cartridge_id) && (anomalyKeys.size === 0 || anomalyKeys.has(key));
+    });
+  }, [cartridge, contextConnectorIds, domain, filtered, lessonsPayload?.lessons]);
 
   useEffect(() => {
     if (!detailOpen || !selected?.id) return undefined;
@@ -714,6 +809,7 @@ export default function ControlRoomPage() {
     mergeDashboardItem(nextItem);
     void load(nextItem.id);
     void loadActivity(nextItem.id);
+    void loadLessons();
   }
 
   async function createDecision(item: ControlItem) {
@@ -914,7 +1010,8 @@ export default function ControlRoomPage() {
           period={dashboard?.period || "Periodo operativo"}
           activeConnectors={activeConnectorCount}
           activeModules={activeModuleCount}
-          loading={state === "loading"}
+          loading={state === "loading" || refreshing}
+          lastUpdated={timeAgo(lastUpdatedAt, clockTick)}
           onRefresh={() => void load()}
         />
 
@@ -959,11 +1056,15 @@ export default function ControlRoomPage() {
           <DashboardView
             dashboard={dashboard}
             state={state}
-            domains={visibleDomains}
+            allDomains={domains}
+            visibleDomains={visibleDomains}
             context={activeContext}
             contextSources={contextSources}
             contextSourceStates={contextSourceStates}
             contextModules={contextModules}
+            contextLessons={contextLessons}
+            lessonsLoading={lessonsLoading}
+            lessonsError={lessonsError}
             contextCycleCounts={contextCycleCounts}
             contextCritical={contextCritical}
             contextAttention={contextAttention}
@@ -976,6 +1077,7 @@ export default function ControlRoomPage() {
             openCount={filtered.filter(activeOpen).length}
             collapsed={collapsed}
             onDomain={navigateDomain}
+            onCartridge={navigateModule}
             onSeverity={setSeverity}
             onToggleDomain={toggleDomain}
             onOpenItem={openItem}
@@ -1068,6 +1170,7 @@ function Header({
   activeConnectors,
   activeModules,
   loading,
+  lastUpdated,
   onRefresh,
 }: {
   context: ActiveContext;
@@ -1075,6 +1178,7 @@ function Header({
   activeConnectors: number;
   activeModules: number;
   loading: boolean;
+  lastUpdated: string;
   onRefresh: () => void;
 }) {
   return (
@@ -1085,6 +1189,7 @@ function Header({
         <p>Sala de Control / {context.level === "portfolio" ? "Todos" : context.title} · {period}</p>
       </div>
       <div className="header-actions">
+        <span className="freshness-pill">Actualizado {lastUpdated}</span>
         <span>{activeConnectors} conectores · {activeModules} modulos operativos</span>
         <button className="tool-button" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 aria-hidden className="spin" /> : <RefreshCcw aria-hidden />}
@@ -1098,11 +1203,15 @@ function Header({
 function DashboardView({
   dashboard,
   state,
-  domains,
+  allDomains,
+  visibleDomains,
   context,
   contextSources,
   contextSourceStates,
   contextModules,
+  contextLessons,
+  lessonsLoading,
+  lessonsError,
   contextCycleCounts,
   contextCritical,
   contextAttention,
@@ -1115,17 +1224,22 @@ function DashboardView({
   openCount,
   collapsed,
   onDomain,
+  onCartridge,
   onSeverity,
   onToggleDomain,
   onOpenItem,
 }: {
   dashboard: Dashboard | null;
   state: LoadState;
-  domains: Domain[];
+  allDomains: Domain[];
+  visibleDomains: Domain[];
   context: ActiveContext;
   contextSources: SourceStatus[];
   contextSourceStates: Record<SourceState, number>;
   contextModules: Cartridge[];
+  contextLessons: Lesson[];
+  lessonsLoading: boolean;
+  lessonsError: string;
   contextCycleCounts?: Record<string, number>;
   contextCritical: number;
   contextAttention: number;
@@ -1138,6 +1252,7 @@ function DashboardView({
   openCount: number;
   collapsed: Set<string>;
   onDomain: (domain: string) => void;
+  onCartridge: (cartridge: string, domain: string) => void;
   onSeverity: (severity: Severity | "all") => void;
   onToggleDomain: (domainId: string) => void;
   onOpenItem: (item: ControlItem) => void;
@@ -1149,7 +1264,7 @@ function DashboardView({
         <button type="button" className={domain === "all" ? "active" : ""} onClick={() => onDomain("all")}>
           Todos
         </button>
-        {domains.filter((item) => item.modules.length > 0).map((item) => (
+        {allDomains.filter((item) => item.modules.length > 0).map((item) => (
           <button type="button" key={item.label} className={domain === item.label ? "active" : ""} onClick={() => onDomain(item.label)}>
             {item.label} <em>{item.item_count}</em>
           </button>
@@ -1175,6 +1290,16 @@ function DashboardView({
         severity={severity}
       />
 
+      <ContextOperations
+        context={context}
+        modules={contextModules}
+        sources={contextSources}
+        items={groupedItems.flatMap((group) => group.items)}
+        lessons={contextLessons}
+        onOpenItem={onOpenItem}
+        onCartridge={onCartridge}
+      />
+
       <section className="summary-row" aria-label="Resumen ejecutivo">
         <SummaryCard icon={Gauge} label="Senales" value={contextIsPortfolio ? dashboard?.summary.total_items ?? "..." : filteredCount} />
         <SummaryCard icon={AlertTriangle} label="Criticas" value={contextIsPortfolio ? dashboard?.summary.critical ?? 0 : contextCritical} tone="critical" />
@@ -1192,15 +1317,21 @@ function DashboardView({
           totalSources={contextSources.length}
         />
         <ThresholdPanel thresholds={dashboard?.summary.thresholds} />
-        <LearningPanel lessons={dashboard?.summary.lessons} />
+        <LearningPanel lessons={dashboard?.summary.lessons} contextLessons={contextLessons} loading={lessonsLoading} />
       </section>
 
-      <FinancialPanel financial={dashboard?.summary.financial} />
+      <ContextInsightPanel
+        context={context}
+        modules={contextModules}
+        sources={contextSources}
+        items={groupedItems.flatMap((group) => group.items)}
+        financial={dashboard?.summary.financial}
+      />
 
       <section className="section-block" aria-label="Estado por dominio">
         <p className="section-kicker">{cartridge === "all" ? "Estado por dominio" : "Estado del modulo"}</p>
         <div className="domain-list">
-          {domains.filter((item) => item.modules.length > 0).map((item) => (
+          {visibleDomains.filter((item) => item.modules.length > 0).map((item) => (
             <DomainSection
               key={item.id}
               domain={item}
@@ -1210,6 +1341,15 @@ function DashboardView({
           ))}
         </div>
       </section>
+
+      <SourceInventoryPanel context={context} sources={contextSources} />
+
+      <LessonsBoard
+        context={context}
+        lessons={contextLessons}
+        loading={lessonsLoading}
+        error={lessonsError}
+      />
 
       <section className="section-block" aria-label="Anomalias detectadas">
         <div className="anomaly-heading">
@@ -1289,6 +1429,229 @@ function ContextPanel({
         <div><dt>Abiertas</dt><dd>{openCount}</dd></div>
       </dl>
       {severity !== "all" ? <em>Filtro activo: {severityLabels[severity]}</em> : null}
+    </section>
+  );
+}
+
+function ContextOperations({
+  context,
+  modules,
+  sources,
+  items,
+  lessons,
+  onOpenItem,
+  onCartridge,
+}: {
+  context: ActiveContext;
+  modules: Cartridge[];
+  sources: SourceStatus[];
+  items: ControlItem[];
+  lessons: Lesson[];
+  onOpenItem: (item: ControlItem) => void;
+  onCartridge: (cartridge: string, domain: string) => void;
+}) {
+  const topItem = [...items].sort((left, right) => (
+    (right.priority_score || 0) - (left.priority_score || 0)
+    || right.severity_weight - left.severity_weight
+  ))[0];
+  const sourceRisk = sources.filter((source) => source.status !== "ok").length;
+  const approved = items.filter((item) => item.status === "approved" || item.status === "resolved").length;
+  return (
+    <section className="context-ops" aria-label="Panel operativo contextual">
+      <article className="context-ops-main">
+        <p className="section-kicker">Centro operativo</p>
+        <h2>{context.level === "portfolio" ? "Portfolio completo" : context.title}</h2>
+        <p>
+          {context.level === "portfolio"
+            ? "Vista consolidada de todos los dominios activos, con fuentes reales y estados operativos."
+            : "Vista exclusiva del contexto seleccionado: solo muestra modulos, fuentes, senales y aprendizaje relacionados."}
+        </p>
+        <div className="context-mini-grid">
+          <InfoBlock label="Modulos en vista" value={`${modules.length}`} />
+          <InfoBlock label="Fuentes con riesgo" value={`${sourceRisk}`} />
+          <InfoBlock label="Aprobadas" value={`${approved}`} />
+          <InfoBlock label="Lecciones" value={`${lessons.length}`} />
+        </div>
+      </article>
+
+      <article className="priority-card">
+        <p className="section-kicker">Siguiente accion</p>
+        {topItem ? (
+          <>
+            <span className={`severity-pill ${topItem.severity}`}>{severityLabels[topItem.severity]}</span>
+            <h3>{topItem.title}</h3>
+            <p>{topItem.description}</p>
+            <button type="button" className="primary-action" onClick={() => onOpenItem(topItem)}>
+              Investigar senal
+              <ArrowRight aria-hidden />
+            </button>
+          </>
+        ) : (
+          <>
+            <CheckCircle2 aria-hidden />
+            <h3>Sin senales abiertas</h3>
+            <p>El contexto no tiene anomalías/control items visibles con los datos actuales.</p>
+          </>
+        )}
+      </article>
+
+      <article className="module-rail" aria-label="Modulos del contexto">
+        <p className="section-kicker">Modulos</p>
+        <div>
+          {modules.slice(0, 6).map((module) => (
+            <button
+              type="button"
+              key={module.id}
+              onClick={() => onCartridge(module.id, module.domain)}
+              style={{ "--accent": module.accent } as CSSProperties}
+            >
+              <span className="sidebar-dot" aria-hidden />
+              <strong>{module.label}</strong>
+              <em>{module.item_count} senales</em>
+            </button>
+          ))}
+        </div>
+      </article>
+    </section>
+  );
+}
+
+function ContextInsightPanel({
+  context,
+  modules,
+  sources,
+  items,
+  financial,
+}: {
+  context: ActiveContext;
+  modules: Cartridge[];
+  sources: SourceStatus[];
+  items: ControlItem[];
+  financial?: FinancialSummary;
+}) {
+  const moneyContext = context.level === "portfolio"
+    || context.domainLabel === "Finanzas"
+    || context.domainLabel === "Compras"
+    || context.domainLabel === "Ventas"
+    || context.domainLabel === "Presupuestos"
+    || context.moduleId === "replicon_finance";
+  if (moneyContext) {
+    return <FinancialPanel financial={financial} />;
+  }
+  const openItems = items.filter(activeOpen).length;
+  const readySources = sources.filter((source) => source.status === "ok").length;
+  const totalRows = sources.reduce((sum, source) => sum + Number(source.count || 0), 0);
+  const maxModuleItems = Math.max(...modules.map((module) => module.item_count), 1);
+  return (
+    <section className="domain-insight-panel" aria-label="Lectura operativa del contexto">
+      <div className="domain-insight-header">
+        <div>
+          <p className="section-kicker">Lectura operativa</p>
+          <h2>{context.title}</h2>
+          <span>{readySources}/{sources.length} fuentes operativas · {openItems} senales abiertas</span>
+        </div>
+        <div className="financial-margin">
+          <span>Registros</span>
+          <strong>{totalRows}</strong>
+        </div>
+      </div>
+      <div className="module-bars">
+        {modules.map((module) => (
+          <div className="module-bar-row" key={module.id}>
+            <span>{module.label}</span>
+            <div aria-hidden>
+              <em style={{ width: `${Math.max(4, Math.round((module.item_count / maxModuleItems) * 100))}%`, background: module.accent }} />
+            </div>
+            <strong>{module.item_count}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceInventoryPanel({
+  context,
+  sources,
+}: {
+  context: ActiveContext;
+  sources: SourceStatus[];
+}) {
+  return (
+    <section className="section-block" aria-label="Inventario de fuentes">
+      <div className="anomaly-heading">
+        <div>
+          <p className="section-kicker">Fuentes del contexto</p>
+          <h2>{context.title}</h2>
+        </div>
+        <span>{sources.length} datasets</span>
+      </div>
+      <div className="source-inventory">
+        {sources.length ? sources.map((source) => (
+          <article className={`source-row ${source.status}`} key={`${source.module_id}-${source.dataset}`}>
+            <div>
+              <span className={`source-dot ${source.status}`} aria-hidden />
+              <strong>{source.dataset}</strong>
+              <em>{source.module} · {source.cartridge}</em>
+            </div>
+            <span>{source.status}</span>
+            <strong>{source.count}</strong>
+            {source.error ? <p>{source.error}</p> : null}
+          </article>
+        )) : (
+          <div className="state-panel">
+            <AlertTriangle aria-hidden />
+            <span>No hay fuentes visibles para este contexto.</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LessonsBoard({
+  context,
+  lessons,
+  loading,
+  error,
+}: {
+  context: ActiveContext;
+  lessons: Lesson[];
+  loading: boolean;
+  error: string;
+}) {
+  return (
+    <section className="section-block" aria-label="Lecciones aprendidas del contexto">
+      <div className="anomaly-heading">
+        <div>
+          <p className="section-kicker">Lecciones aprendidas</p>
+          <h2>{lessons.length} reglas visibles para {context.title}</h2>
+        </div>
+        <span>{loading ? "Actualizando" : "Memoria operativa"}</span>
+      </div>
+      {error ? <p className="activity-error" role="alert">{error}</p> : null}
+      <div className="lessons-grid">
+        {lessons.slice(0, 6).map((lesson) => (
+          <article className="lesson-card" key={`${lesson.id || lesson.item_id}-${lesson.rule}`}>
+            <div>
+              <BookOpen aria-hidden />
+              <span>{lesson.cartridge_id} · {lesson.anomaly_type}</span>
+            </div>
+            <strong>{lesson.rule}</strong>
+            <dl>
+              <div><dt>Decision</dt><dd>{lesson.source_decision_id ? `#${lesson.source_decision_id}` : "N/D"}</dd></div>
+              <div><dt>Confianza</dt><dd>{Math.round((lesson.confidence || 0) * 100)}%</dd></div>
+              <div><dt>Fecha</dt><dd>{fmtDate(lesson.created_at || "")}</dd></div>
+            </dl>
+          </article>
+        ))}
+        {!loading && !lessons.length ? (
+          <div className="state-panel">
+            <BookOpen aria-hidden />
+            <span>Sin lecciones persistidas para este contexto todavia.</span>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -1439,20 +1802,28 @@ function ThresholdPanel({
 
 function LearningPanel({
   lessons,
+  contextLessons,
+  loading,
 }: {
   lessons?: Dashboard["summary"]["lessons"];
+  contextLessons: Lesson[];
+  loading: boolean;
 }) {
   const total = lessons?.total ?? 0;
   const topPattern = lessons?.top_patterns?.[0];
-  const recent = lessons?.recent?.[0];
+  const recent = contextLessons[0] || lessons?.recent?.[0];
   return (
     <section className="learning-panel" aria-label="Lecciones aprendidas">
       <div className="learning-title">
         <p className="section-kicker">Aprendizaje</p>
-        <strong><BookOpen aria-hidden /> {total}</strong>
+        <strong><BookOpen aria-hidden /> {contextLessons.length || total}</strong>
       </div>
       <p>
-        {topPattern
+        {loading
+          ? "Actualizando memoria operativa..."
+          : contextLessons.length
+            ? `${contextLessons.length} lecciones visibles en este contexto`
+            : topPattern
           ? `${topPattern.cartridge_id} · ${topPattern.anomaly_type} (${topPattern.count})`
           : "Sin lecciones persistidas todavia"}
       </p>
