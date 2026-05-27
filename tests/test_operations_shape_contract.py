@@ -118,8 +118,8 @@ def test_ts_client_uses_patch_for_update_user():
 
 
 def test_ts_client_lists_audit_at_security_path():
-    """The Audit page MUST hit /security/audit (the catch-all
-    proxy at /security/[...path]) — NOT /api/audit/log."""
+    """The Audit page MUST hit /security/audit directly on FastAPI,
+    NOT /api/audit/log."""
     src = _read(TS_CLIENT)
     assert '"/security/audit"' in src
     assert "/api/audit" not in src

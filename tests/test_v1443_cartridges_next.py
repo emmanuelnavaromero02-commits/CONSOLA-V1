@@ -5,18 +5,16 @@ appearance, password eye toggle) is out of scope for the CI sandbox
 and falls to the Mac validation checklist in the PR body.
 
 Covered:
-  * console-next/src/lib/cartridges.ts exports the 5 typed helpers
-    against the backend endpoints (list, schema, save, test, delete).
+  * console-next/src/lib/cartridges.ts exports typed helpers against
+    the backend endpoints (list, schema, save, test, delete, activate).
   * useCartridges hooks use the shared TanStack `cartridges` root key
     so mutations invalidate the grid.
   * StatusBadge renders the 4 documented states.
-  * CartridgeCard navigates to /cartridges/[id] via a Link.
+  * CartridgeCard navigates to /cartridges/viewer?id=... via a Link.
   * CredentialsForm is built with react-hook-form + zod, password
     fields have an eye toggle, AlertDialog confirms delete.
   * Pages exist for grid and detail.
-  * Build outputs a /cartridges route and /cartridges/[id] dynamic
-    route (we can't run next build from pytest, but we can verify the
-    files that produce those routes are present).
+  * Build outputs /cartridges and /cartridges/viewer static routes.
 """
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ def _read(path: Path) -> str:
 def test_cartridges_api_helpers_exist():
     src = _read(NEXT_SRC / "lib/cartridges.ts")
     for fn in ("listCartridges", "getConnectorSchema", "saveCredentials",
-               "testConnection", "deleteCredentials"):
+               "testConnection", "deleteCredentials", "activateCartridge"):
         assert f"export async function {fn}" in src, (
             f"lib/cartridges.ts missing helper {fn}"
         )
@@ -50,6 +48,8 @@ def test_cartridges_helpers_target_correct_endpoints():
     assert "/connector_schema" in src
     assert "/credentials" in src
     assert "/test_connection" in src
+    assert "/api/marketplace/products/" in src
+    assert "/activate" in src
 
 
 def test_cartridges_api_helper_handles_dict_form_schema():
@@ -58,7 +58,8 @@ def test_cartridges_api_helper_handles_dict_form_schema():
     shapes or the form refuses to render for those cartridges."""
     src = _read(NEXT_SRC / "lib/cartridges.ts")
     assert "Object.entries(data)" in src
-    assert "Array.isArray(data?.fields)" in src
+    assert "Array.isArray(data.fields)" in src
+    assert "isRecord(data)" in src
 
 
 # ── Hooks ───────────────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ def test_status_badge_renders_four_states():
 def test_cartridge_card_navigates_to_detail():
     src = _read(NEXT_SRC / "components/cartridges/CartridgeCard.tsx")
     assert "next/link" in src
-    assert "/cartridges/${id}" in src
+    assert "/cartridges/viewer?id=" in src
 
 
 def test_test_connection_result_shows_both_outcomes():
@@ -183,11 +184,11 @@ def test_cartridges_grid_page_exists():
     assert "isLoading" in src and "isError" in src
 
 
-def test_cartridge_detail_page_exists_and_uses_dynamic_param():
-    page = NEXT_SRC / "app/(shell)/cartridges/[id]/page.tsx"
+def test_cartridge_detail_page_exists_and_uses_query_param():
+    page = NEXT_SRC / "app/(shell)/cartridges/viewer/page.tsx"
     assert page.exists()
     src = _read(page)
-    assert "useParams" in src
+    assert "useSearchParams" in src
     assert "useConnectorSchema" in src
     assert "CredentialsForm" in src
 

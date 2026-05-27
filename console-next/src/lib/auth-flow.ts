@@ -5,33 +5,28 @@
  * the FastAPI backend on :8000, and Chrome's CORS preflight
  * dance kept stripping Allow-Origin even after R-Mac-3 moved
  * CORSMiddleware to OUTERMOST. The R-Mac-4 pivot drops CORS
- * from the picture entirely: the Next.js app serves
- * `/login-proxy`, `/auth/login`, `/api/*` AS ITSELF and
- * forwards to FastAPI inside the docker network.
+ * from the picture entirely: FastAPI serves the static Next export
+ * and the browser stays on FastAPI's same origin. This static build
+ * no longer relies on Next.js route handlers or a proxy layer.
  *
  * Discovered CSRF dance — unchanged on the wire, just same-origin
  * now:
  *
- *   1. GET  /login-proxy   → Next proxy → FastAPI /login → sets
+ *   1. GET  /login         → FastAPI /login → sets
  *                             csrf_token cookie on this domain
  *                             (browser stores it because the
- *                             response came from :3000, not
- *                             cross-origin from :8000).
- *   2. POST /auth/login    → Next proxy → FastAPI /auth/login
+ *                             response came from the same origin).
+ *   2. POST /auth/login    → FastAPI /auth/login
  *                             with X-CSRF-Token + JSON body.
  *   3. Response 200        → mod_session + refresh_token cookies
  *                             land on this domain, browser
  *                             retains them without any CORS
  *                             credentialed-request negotiation.
  *
- * NOT using the axios instance from lib/api.ts because:
- *   - the login flow is the ONLY non-mutation request that needs
- *     a tight 2-step sequence (GET → POST), so plumbing it through
- *     the interceptor would obscure the discovered contract;
- *   - axios's `withCredentials` doesn't always survive Next.js
- *     route handlers / SSR transitions; fetch with `credentials:
- *     "include"` is the documented browser-side default.
+ * Uses the central same-origin fetch helper so login emits the same
+ * request-id and credential semantics as the authenticated modules.
  */
+import { apiFetch } from "@/lib/api";
 import { readCookie } from "@/lib/cookies";
 
 export interface LoginError extends Error {
@@ -73,22 +68,15 @@ async function readCookieEventually(name: string): Promise<string | null> {
  * useful message on any failure path (no CSRF cookie, 401, 5xx,
  * network error). On success returns the parsed JSON body.
  *
- * Both URLs are RELATIVE — the browser resolves them against the
- * Next.js origin (typically http://localhost:3000), and the
- * Next.js server-side proxy forwards to FastAPI. No cross-origin
- * request ever leaves the tab.
+ * Both URLs are relative to the FastAPI origin serving the static app.
  */
 export async function loginUser(email: string, password: string): Promise<unknown> {
-  // Step 1: GET /login-proxy to seed the csrf_token cookie. We
-  // hit `/login-proxy` instead of `/login` because the Next.js
-  // app has its own client-rendered /login page; the proxy
-  // route lives under a different path so they don't collide.
+  // Step 1: GET /login to seed the csrf_token cookie.
   let csrfResponse: Response;
   const csrfTimeout = timeoutSignal();
   try {
-    csrfResponse = await fetch("/login-proxy", {
+    csrfResponse = await apiFetch("/login", {
       method: "GET",
-      credentials: "include",
       signal: csrfTimeout.signal,
     });
   } catch {
@@ -117,18 +105,16 @@ export async function loginUser(email: string, password: string): Promise<unknow
   }
 
   // Step 2: POST /auth/login with the CSRF header. Goes through
-  // the /auth/[...path] catch-all proxy.
+  // FastAPI receives this directly on the same origin.
   let response: Response;
   const loginTimeout = timeoutSignal();
   try {
-    response = await fetch("/auth/login", {
+    response = await apiFetch("/auth/login", {
       method: "POST",
-      credentials: "include",
       headers: {
-        "Content-Type": "application/json",
         "X-CSRF-Token":  csrfToken,
       },
-      body: JSON.stringify({ email, password }),
+      json: { email, password },
       signal: loginTimeout.signal,
     });
   } catch {

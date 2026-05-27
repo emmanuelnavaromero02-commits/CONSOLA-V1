@@ -1,18 +1,13 @@
 /**
  * v1.44.4 Group 1 — Operations API client.
  *
- * Thin axios wrappers against the REAL backend endpoints
- * documented in ./types.ts. The shared ``api`` instance from
- * @/lib/api handles CSRF + cookies + same-origin proxy.
+ * Thin typed wrappers against the REAL backend endpoints documented
+ * in ./types.ts. The shared ``api`` client from @/lib/api handles
+ * CSRF, cookies and request IDs on same-origin FastAPI calls.
  *
  * NOTE on the /security/audit path: that router is mounted at
- * the bare /security prefix (NOT /api/security). The same-origin
- * proxy at console-next/src/app/api/[...path]/route.ts only
- * catches /api/* paths, so calls to /security/audit need to go
- * through a different proxy route. For Task D scope we route
- * them through axios directly — the global same-origin proxy
- * at console-next/src/proxy.ts won't redirect /security/*
- * because it's an authenticated path with a session cookie.
+ * the bare /security prefix (NOT /api/security), so it is intentionally
+ * requested as a relative FastAPI URL.
  */
 import { api } from "@/lib/api";
 import type {

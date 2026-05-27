@@ -1,11 +1,10 @@
 /**
  * v1.44.3.2.2 spec 00 — CSP smoke check.
  *
- * Codex's Mac diagnostic surfaced that v1.44.2's CSP set
- * ``script-src 'self'`` which blocked Next.js 14's hydration
- * inline-bootstrap script. Result: /login rendered a skeleton
- * forever, the form never mounted, and ALL 319 E2E tests failed
- * because Playwright couldn't find the email/password inputs.
+ * Codex's Mac diagnostic surfaced that a stale CSP could block
+ * the exported Next.js bootstrap. Result: /login rendered a
+ * skeleton forever, the form never mounted, and the E2E suite
+ * cascaded because Playwright couldn't find the inputs.
  *
  * This file runs FIRST (filename starts with 00-) so a regression
  * to the broken CSP fails loudly before the rest of the suite
@@ -53,20 +52,30 @@ test.describe("CSP smoke — Next.js must hydrate", () => {
   });
 
   test("/login response carries a non-blocking CSP", async ({ request }) => {
-    // Static HTTP check — no browser. Confirms the CSP value
-    // INCLUDES the hydration-friendly directives we set in
-    // next.config.mjs after the R-Mac fix.
+    // Static HTTP check — no browser. Confirms the CSP value allows
+    // the exported bootstrap through hash-based script allowances
+    // without opening script-src to unsafe inline/eval execution.
     const response = await request.get("/login");
     const csp = response.headers()["content-security-policy"] || "";
     // In dev mode next.config.mjs returns no headers — that's fine,
     // dev never trips the bug. Only assert when CSP is present.
     if (!csp) return;
-    expect(csp,
-      "script-src must allow 'unsafe-inline' so Next.js bootstrap can run",
-    ).toMatch(/script-src[^;]*'unsafe-inline'/);
-    expect(csp,
-      "script-src must allow 'unsafe-eval' so App Router runtime can run",
-    ).toMatch(/script-src[^;]*'unsafe-eval'/);
+    const scriptSrc = csp
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("script-src")) || "";
+    expect(scriptSrc,
+      "script-src must allow same-origin bundles",
+    ).toMatch(/(?:^|\s)'self'(?:\s|$)/);
+    expect(scriptSrc,
+      "script-src must include hashes for the exported bootstrap",
+    ).toMatch(/'sha256-[A-Za-z0-9+/=]+'/);
+    expect(scriptSrc,
+      "script-src must not reopen inline script execution",
+    ).not.toContain("'unsafe-inline'");
+    expect(scriptSrc,
+      "script-src must not require eval in the static export",
+    ).not.toContain("'unsafe-eval'");
     // And the defenses that matter against clickjacking / form-hijacking
     // STAY in place — that's what the audit actually cared about.
     expect(csp).toMatch(/frame-ancestors 'none'/);

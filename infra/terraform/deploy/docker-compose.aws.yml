@@ -182,33 +182,6 @@ services:
       retries: 5
       start_period: 30s
 
-  console_next:
-    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next:${IMAGE_TAG:?IMAGE_TAG is required}
-    container_name: mode_console_next
-    env_file:
-      - path: ${AWS_ENV_FILE:-.env}
-        required: false
-    environment:
-      NODE_ENV: production
-      BACKEND_INTERNAL_URL: http://console:8000
-      API_INTERNAL_URL: http://console:8000
-      NEXT_PUBLIC_LEGACY_CONSOLE_URL: ${CONSOLE_URL:?CONSOLE_URL is required}
-    ports:
-      - "3000:3000"
-    networks:
-      - modecissions_net
-    depends_on:
-      console:
-        condition: service_healthy
-    restart: unless-stopped
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
   workspace:
     image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/workspace:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: mode_workspace

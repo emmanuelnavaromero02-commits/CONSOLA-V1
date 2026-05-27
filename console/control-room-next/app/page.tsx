@@ -2122,6 +2122,7 @@ function AlertQueuePanel({
   const topAlerts = alerts.slice(0, 6);
   const critical = alerts.filter((alert) => alert.severity === "critical").length;
   const pushReady = alerts.filter((alert) => alert.push_ready).length;
+  const routeLabel = pushReady > 0 ? "Push-ready" : "Cola interna";
   return (
     <section className="alert-queue-panel" aria-label="Cola de alertas operativas">
       <div className="alert-queue-header">
@@ -2132,7 +2133,7 @@ function AlertQueuePanel({
         </div>
         <div className="alert-route-pill">
           <Send aria-hidden />
-          Push-ready
+          {routeLabel}
         </div>
       </div>
       {actionMessage ? <p className="alert-action-message" role="status">{actionMessage}</p> : null}

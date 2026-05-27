@@ -1970,6 +1970,15 @@ def _external_writeback_enabled() -> bool:
     }
 
 
+def _external_delivery_enabled() -> bool:
+    return os.environ.get("CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _impact_payload(
     *,
     item: dict[str, Any],
@@ -2879,7 +2888,13 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "assigned": "assigned",
         "snoozed": "snoozed",
     }.get(alert_status, "not_configured")
-    push_ready = alert_status != "snoozed"
+    delivery_enabled = _external_delivery_enabled()
+    push_ready = delivery_enabled and alert_status == "open"
+    delivery_reason = (
+        "Push externo habilitado para conectores de delivery."
+        if push_ready
+        else "Push externo deshabilitado en V1 hasta configurar conectores de delivery."
+    )
     return {
         "id": f"alert:{item.get('id')}",
         "item_id": item.get("id"),
@@ -2912,9 +2927,10 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "delivery": {
             "status": delivery_status,
             "channels": ["email", "slack", "teams"],
-            "reason": "Push externo queda preparado; no se envia en V1."
+            "enabled": delivery_enabled,
+            "reason": delivery_reason
             if alert_status == "open"
-            else f"Alerta en estado {alert_status}; no hay push externo en V1.",
+            else f"Alerta en estado {alert_status}; {delivery_reason}",
         },
         "created_at": item.get("first_seen_at") or item.get("detected_at") or datetime.now(UTC).isoformat(),
         "updated_at": alert_state.get("updated_at") or item.get("last_seen_at") or datetime.now(UTC).isoformat(),

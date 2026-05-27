@@ -1,9 +1,10 @@
 "use client";
 
 import { useKpis } from "@/lib/hooks/useKpis";
-import { useCartridgeList } from "@/lib/hooks/useCartridges";
+import { useActivateCartridge, useCartridgeList } from "@/lib/hooks/useCartridges";
 import { CartridgeCard } from "@/components/cartridges/CartridgeCard";
 import type { ConnectionStatus } from "@/components/cartridges/StatusBadge";
+import { toast } from "sonner";
 
 const META: Record<
   string,
@@ -45,6 +46,7 @@ const META: Record<
 export default function CartridgesPage() {
   const list = useCartridgeList();
   const kpis = useKpis();
+  const activate = useActivateCartridge();
 
   const statusFor = (id: string): ConnectionStatus => {
     const info = kpis.data?.data_freshness?.[id];
@@ -52,6 +54,16 @@ export default function CartridgesPage() {
     if (info.status === "never") return "unconfigured";
     if (info.status === "very_stale") return "failed";
     return "connected";
+  };
+
+  const activateOne = async (id: string) => {
+    try {
+      const result = await activate.mutateAsync(id);
+      const status = result.installation?.status || result.installation?.access_status || "solicitado";
+      toast.success(`${META[id]?.name ?? id}: activación enviada (${status}).`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo activar el cartucho.");
+    }
   };
 
   return (
@@ -106,6 +118,8 @@ export default function CartridgesPage() {
                 name={META[id]?.name ?? id}
                 description={META[id]?.description ?? ""}
                 status={statusFor(id)}
+                activating={activate.isPending && activate.variables === id}
+                onActivate={activateOne}
               />
             ))}
       </section>

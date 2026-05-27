@@ -140,8 +140,6 @@ jobs:
         include:
           - service: console
             context: ./console
-          - service: console-next
-            context: ./console-next
           - service: workspace
             context: ./workspace
           - service: refinement

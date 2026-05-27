@@ -35,13 +35,12 @@ jobs:
 
       - name: Configure E2E credentials
         run: |
-          # Split architecture (beta): Next.js frontend on :3000 (official,
-          # temporary) + FastAPI backend on :8000 hosting APIs and the
-          # Control Room. NOT forced 8000-only.
+          # Static export architecture: FastAPI on :8000 serves the console,
+          # APIs, legacy pages, and the Control Room from the same origin.
           {
             echo "TEST_EMAIL=emmanuel@local.ai"
             echo "TEST_PASSWORD=Admin123!"
-            echo "BASE_URL=http://127.0.0.1:3000"
+            echo "BASE_URL=http://127.0.0.1:8000"
             echo "LEGACY_URL=http://127.0.0.1:8000"
             echo "BACKEND_URL=http://127.0.0.1:8000"
             echo "CONTROL_ROOM_URL=http://127.0.0.1:8000/control-room"
@@ -87,6 +86,5 @@ jobs:
         run: |
           docker compose -f infra/docker-compose.yml ps
           docker logs mode_console --tail 120 2>&1 || true
-          docker logs omega_console_next --tail 120 2>&1 || true
           docker logs mode_airflow --tail 160 2>&1 || true
           docker logs mode_airflow_scheduler --tail 160 2>&1 || true

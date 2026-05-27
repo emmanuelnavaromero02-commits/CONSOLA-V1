@@ -420,10 +420,11 @@ async def test_dashboard_exposes_push_ready_alert_queue_with_priority_drivers():
     alerts = result["alerts"]
     assert alerts
     assert result["summary"]["alerts"]["total"] == len(alerts)
-    assert result["summary"]["alerts"]["push_ready"] == len(alerts)
+    assert result["summary"]["alerts"]["push_ready"] == 0
     top = alerts[0]
-    assert top["push_ready"] is True
+    assert top["push_ready"] is False
     assert top["delivery"]["status"] == "not_configured"
+    assert top["delivery"]["enabled"] is False
     assert top["priority_score"] >= alerts[-1]["priority_score"]
     assert any(driver["label"] == "Severidad" for driver in top["drivers"])
     threshold_alert = next(alert for alert in alerts if alert["alert_type"] == "threshold_breach")

@@ -1,16 +1,16 @@
 """Sprint v1.44.3.2.2 R-Mac follow-up — login flow CSRF + CORS guards.
 
-Codex's Mac run uncovered that the Next.js login page POSTed to
+Codex's Mac run uncovered that the migrated login page POSTed to
 /api/auth/login while the real endpoint is /auth/login + requires
 a CSRF double-submit-cookie round-trip. Compounded by backend CORS
-that only listed :8000 (not :3000) and didn't allow the
-X-CSRF-Token header.
+that didn't allow the X-CSRF-Token header.
 
 This file pins the four contracts the hotfix establishes:
   1. lib/auth-flow.ts implements the 2-step CSRF dance.
   2. login/page.tsx calls loginUser, NOT the old api.post path.
-  3. lib/api.ts auto-attaches X-CSRF-Token on non-GET requests.
-  4. Backend CORS allows :3000 + X-CSRF-Token header.
+  3. lib/api.ts auto-attaches X-CSRF-Token and X-Request-ID on
+     non-GET same-origin requests.
+  4. Backend still allows local-dev CORS for transitional tooling.
 
 Browser-level verification belongs to tests-e2e/specs/00-csp-smoke
 + 01-login-deep on the Mac; this file is the CI-runnable contract.
@@ -72,9 +72,11 @@ def test_auth_flow_sends_csrf_header_and_credentials():
         src, re.DOTALL | re.MULTILINE,
     )
     text = body.group(0) if body else ""
+    api_src = _read(API_TS)
     assert '"X-CSRF-Token"' in text
-    assert 'credentials: "include"' in text, (
-        "fetch must use credentials:'include' so the csrf_token cookie "
+    assert "apiFetch" in text
+    assert 'credentials: init.credentials ?? "include"' in api_src, (
+        "apiFetch must use credentials:'include' so the csrf_token cookie "
         "round-trips between GET /login and POST /auth/login"
     )
 
@@ -135,36 +137,30 @@ def test_api_ts_has_readCookie_helper():
 
 
 def test_api_ts_attaches_csrf_token_on_mutations():
-    """The axios interceptor reads csrf_token from document.cookie
+    """The central fetch wrapper reads csrf_token from document.cookie
     and adds X-CSRF-Token on every non-GET request. Without this,
     every POST/PUT/DELETE the hooks fire 403s."""
     src = _read(API_TS)
-    assert "api.interceptors.request.use" in src
-    block = re.search(
-        r"api\.interceptors\.request\.use\([\s\S]*?\}\);",
-        src,
-    )
-    assert block
-    body = block.group(0)
+    assert "export async function apiFetch" in src
     # Mutating methods are gated.
-    assert '"GET"' in body
+    assert 'method !== "GET" && method !== "HEAD"' in src
     # Token attached as X-CSRF-Token.
-    assert '"X-CSRF-Token"' in body
+    assert '"X-CSRF-Token"' in src
+    assert '"X-Request-ID"' in src
     # Reads from the helper.
-    assert "readCookie" in body
+    assert "readCookie" in src
 
 
-def test_api_ts_keeps_withCredentials_for_cookie_round_trip():
+def test_api_ts_keeps_credentials_include_for_cookie_round_trip():
     src = _read(API_TS)
-    assert "withCredentials: true" in src
+    assert 'credentials: init.credentials ?? "include"' in src
 
 
-# ── Backend CORS: allows :3000 + X-CSRF-Token ───────────────────────────
+# ── Backend CORS: same-origin static console + workspace origin ─────────
 
 
-def test_main_py_cors_default_includes_3000_and_8000():
-    """The Python default must include the Next.js :3000 origin so
-    a fresh local-dev box doesn't need a manual env export."""
+def test_main_py_cors_default_excludes_3000_and_includes_8000_8001():
+    """The Python default should keep only FastAPI + workspace local origins."""
     src = _read(MAIN_PY)
     block = re.search(
         r"def _allowed_origins.*?(?=^def |^app\.|\Z)",
@@ -172,8 +168,9 @@ def test_main_py_cors_default_includes_3000_and_8000():
     )
     assert block
     body = block.group(0)
-    assert "http://localhost:3000" in body
+    assert "http://localhost:3000" not in body
     assert "http://localhost:8000" in body
+    assert "http://localhost:8001" in body
 
 
 def test_main_py_cors_allows_x_csrf_token_header():
@@ -206,8 +203,9 @@ def test_compose_pins_ALLOWED_ORIGINS_for_console_service():
     assert block
     body = block.group(0)
     assert "ALLOWED_ORIGINS" in body
-    assert "http://localhost:3000" in body
+    assert "http://localhost:3000" not in body
     assert "http://localhost:8000" in body
+    assert "http://localhost:8001" in body
 
 
 # ── Coexistence: hooks still use /api/* paths (unchanged) ───────────────

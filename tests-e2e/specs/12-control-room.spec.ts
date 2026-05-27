@@ -51,7 +51,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.summary.active_connectors, "dashboard must distinguish commercial connectors").toBeGreaterThan(0);
     expect(dashboard.summary.active_modules, "dashboard must expose operational modules").toBeGreaterThan(0);
     expect(dashboard.summary.alerts.total, "dashboard must expose operational alert queue").toBeGreaterThan(0);
-    expect(dashboard.summary.alerts.push_ready, "alerts must be push-ready without external delivery").toBeGreaterThan(0);
+    expect(dashboard.summary.alerts.push_ready, "external push must stay disabled until delivery connectors exist").toBe(0);
     const alertsResponse = await page.request.get(`${LEGACY}/api/control-room/alerts`, { timeout: 30_000 });
     expect(alertsResponse.status(), "control-room alerts API must respond").toBe(200);
     const alertsPayload = await alertsResponse.json();
@@ -99,7 +99,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByText(/write-back bloqueado v1/i).first()).toBeVisible();
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
-    await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/push-ready/i);
+    await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/cola interna/i);
     const alertQueue = page.getByLabel(/cola de alertas operativas/i);
     await alertQueue.getByRole("button", { name: /reconocer/i }).first().click();
     await expect(alertQueue.getByText(/alerta reconocida/i)).toBeVisible({

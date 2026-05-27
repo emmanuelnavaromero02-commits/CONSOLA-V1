@@ -86,7 +86,7 @@ fi
 # ── 5. Required host ports free ────────────────────────────────────────
 echo ""
 echo "Ports (must be free before 'make up'):"
-PORTS="3000 8000 8001 8010 8082 8088 8300 8500 9001 8025 8201 8202 8203 8204 15432"
+PORTS="8000 8001 8010 8082 8088 8300 8500 9001 8025 8201 8202 8203 8204 15432"
 port_in_use() {
     local p="$1"
     if command -v ss >/dev/null 2>&1; then
@@ -112,7 +112,7 @@ for p in ${PORTS}; do
     fi
 done
 if [ "${PORT_TOOL_MISSING}" = "1" ]; then
-    warn "no ss/lsof to check ports — verify 3000/8000 are free manually"
+    warn "no ss/lsof to check ports — verify 8000/8001 are free manually"
 elif [ -n "${BUSY_PORTS}" ]; then
     warn "ports already in use:${BUSY_PORTS} — stop the conflicting process or run 'make down' first"
 else
@@ -122,11 +122,10 @@ fi
 # ── URLs the operator will use after 'make up' ─────────────────────────
 echo ""
 echo "Once the stack is up, the demo surfaces live at:"
-echo "  • Frontend (Next.js, official temporary):  http://localhost:3000"
+echo "  • Console (FastAPI static export):         http://localhost:8000"
 echo "  • Control Room (FastAPI backend):          http://localhost:8000/control-room"
 echo "  • Backend health (no auth):                http://localhost:8000/healthz"
 echo "  • Backend readiness (deps):                http://localhost:8000/readyz"
-echo "  • Frontend health:                         http://localhost:3000/api/health"
 echo "  Local seed login: emmanuel@local.ai / Admin123!  (rotate before real data)"
 
 # ── Verdict ────────────────────────────────────────────────────────────

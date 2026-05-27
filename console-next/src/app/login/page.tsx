@@ -6,10 +6,9 @@ import { loginUser, type LoginError } from "@/lib/auth-flow";
 /**
  * v1.44.2 — login screen.
  *
- * v1.44.3.2.2 (R-Mac): used to POST /api/auth/login via the axios
- * client; the real endpoint is /auth/login AND requires a CSRF
- * round-trip Codex's diagnostic uncovered. Both fixes land in
- * lib/auth-flow.ts:loginUser — this component just calls it.
+ * v1.44.3.2.2 (R-Mac): the real endpoint is /auth/login and requires
+ * a CSRF round-trip. That flow lives in lib/auth-flow.ts:loginUser;
+ * this component just calls it.
  *
  * Keep this page dependency-light: it is the public gateway and
  * carries a strict first-load JS budget in E2E.

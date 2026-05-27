@@ -33,14 +33,11 @@ jobs:
             --output-format=github \
             console workspace vault refinement mcp-infra cartridges
 
-      - name: ruff format --check
+      - name: ruff format --check (advisory)
+        continue-on-error: true
         run: |
-          # Format check only — we surface drift but don't fail the
-          # build at first introduction. Flip ``|| true`` off once
-          # the codebase is consistently auto-formatted.
           ruff format --check \
-            console workspace vault refinement mcp-infra cartridges \
-            || true
+            console workspace vault refinement mcp-infra cartridges
 
   console-next:
     runs-on: ubuntu-latest
@@ -65,8 +62,10 @@ jobs:
       - name: TypeScript
         run: npm --prefix console-next run typecheck
 
-      - name: Production build
-        run: npm --prefix console-next run build
+      - name: Static export served by FastAPI
+        run: |
+          npm --prefix console-next run export:copy
+          git diff --exit-code -- console/app/static/console-next
 
   control-room-next:
     runs-on: ubuntu-latest
@@ -88,5 +87,7 @@ jobs:
       - name: TypeScript
         run: npm --prefix console/control-room-next run typecheck
 
-      - name: Static export build
-        run: npm --prefix console/control-room-next run build
+      - name: Static export served by FastAPI is fresh
+        run: |
+          npm --prefix console/control-room-next run export:copy
+          git diff --exit-code -- console/app/static/control-room

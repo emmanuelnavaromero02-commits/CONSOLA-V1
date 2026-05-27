@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  activateCartridge,
   deleteCredentials,
   getConnectorSchema,
   listCartridges,
@@ -61,6 +62,17 @@ export function useDeleteCredentials(cartridgeId: string) {
     mutationFn: () => deleteCredentials(cartridgeId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [ROOT_KEY] });
+    },
+  });
+}
+
+export function useActivateCartridge() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cartridgeId: string) => activateCartridge(cartridgeId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [ROOT_KEY] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "kpis"] });
     },
   });
 }

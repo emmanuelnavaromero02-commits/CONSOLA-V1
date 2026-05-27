@@ -32,7 +32,7 @@
  *   GET    /security/audit
  *     → list of { id, user_id, user_email, action,
  *                 resource_type, resource_id, details, ip,
- *                 created_at }
+ *                 request_id, created_at }
  *     Permission: security.audit.read
  *
  *   GET    /api/vault/connections/{cartridge}
@@ -103,6 +103,7 @@ export interface AuditEvent {
   resource_id:    string | null;
   details:        Record<string, unknown> | null;
   ip:             string | null;
+  request_id:     string | null;
   created_at:     string | null;
 }
 

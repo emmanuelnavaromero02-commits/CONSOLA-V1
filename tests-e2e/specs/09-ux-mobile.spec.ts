@@ -38,7 +38,9 @@ test.describe("Mobile viewport — primary pages render", () => {
   test("cartridges grid stacks to a single column on mobile",
     async ({ page }) => {
       await page.goto("/cartridges");
-      const tile = page.locator('a[href^="/cartridges/"]').first();
+      const tile = page
+        .locator('a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]')
+        .first();
       await expect(tile).toBeVisible({ timeout: 15_000 });
       const box = await tile.boundingBox();
       const viewport = page.viewportSize();
@@ -48,7 +50,7 @@ test.describe("Mobile viewport — primary pages render", () => {
 
   test("interactive buttons meet ≥44×44 px touch-target minimum",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto("/cartridges/viewer?id=replicon");
       const buttons = page.locator("button:visible");
       const count = Math.min(await buttons.count(), 8);
       for (let i = 0; i < count; i++) {
@@ -246,7 +248,9 @@ test.describe("Touch interactions", () => {
   test("cartridge tile button hit zone covers the full card on mobile",
     async ({ page }) => {
       await page.goto("/cartridges");
-      const tile = page.locator('a[href^="/cartridges/"]').first();
+      const tile = page
+        .locator('a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]')
+        .first();
       await expect(tile).toBeVisible({ timeout: 15_000 });
       const box = await tile.boundingBox();
       expect(box?.height ?? 0).toBeGreaterThan(80);

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/LogoutButton";
+import { api } from "@/lib/api";
 import { legacyConsoleUrl } from "@/lib/legacy-url";
 import { cn } from "@/lib/utils";
 
@@ -32,11 +33,12 @@ interface NavItem {
  * first-class external link rather than reimplemented inside Next.
  */
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",  label: "Panel",        icon: "▦" },
-  { href: "/copilot",    label: "Copiloto",     icon: "◈" },
-  { href: "/cartridges", label: "Cartuchos",    icon: "□" },
-  { href: "/studio",     label: "Studio",       icon: "◇" },
-  { href: "/operations", label: "Operaciones",  icon: "⚙" },
+  { href: "/dashboard",  label: "Panel",       icon: "▦" },
+  { href: "/copilot",    label: "Copiloto",    icon: "◈" },
+  { href: "/cartridges", label: "Cartuchos",   icon: "□" },
+  { href: "/monitor",    label: "Monitor",     icon: "▤" },
+  { href: "/studio",     label: "Studio",      icon: "◇" },
+  { href: "/operations", label: "Operaciones", icon: "⚙" },
   { href: legacyConsoleUrl("/control-room"), label: "Control Room", icon: "◉", external: true },
 ];
 
@@ -106,10 +108,9 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!email) {
-      fetch("/auth/me", { credentials: "include" })
-        .then((response) => (response.ok ? response.json() : null))
+      api.get<{ email?: string; user?: { email?: string } }>("/auth/me")
         .then((body) => {
-          const nextEmail = body?.email || body?.user?.email;
+          const nextEmail = body.data.email || body.data.user?.email;
           if (typeof nextEmail === "string" && nextEmail) {
             try {
               window.localStorage.setItem("omega_user_email", nextEmail);

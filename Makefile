@@ -32,7 +32,7 @@ demo-check:
 	@echo "  1) make preflight"
 	@echo "  2) docker compose -f infra/docker-compose.yml config -q"
 	@echo "  3) make up"
-	@echo "  4) curl :8000/healthz  &&  curl :3000/api/health"
+	@echo "  4) curl :8000/healthz"
 	@echo "  5) make smoke"
 	@echo "  6) make test"
 	@echo "  7) cd tests-e2e && npx playwright test specs/12-control-room.spec.ts"
@@ -72,11 +72,9 @@ smoke:
 	@bash scripts/smoke_test.sh
 
 # Sprint v1.44.3.2: Playwright browser-driven E2E suite.
-# Validates Next.js console (port 3000), legacy HTML console (port 8000),
-# backend API contracts, and external service reachability against a
-# running stack. The runner asserts both consoles are reachable before
-# the suite starts so a failed connection produces a clear precondition
-# error instead of an obscure test timeout.
+# Validates the FastAPI-served static console (port 8000), legacy HTML
+# routes, backend API contracts, and external service reachability
+# against a running stack.
 # Configuration: edit tests-e2e/.env (copied from tests-e2e/.env.example
 # on first run). The HTML report lands at tests-e2e/playwright-report/.
 e2e:

@@ -1,10 +1,10 @@
 /**
  * v1.44.3.2 spec 06 — Legacy HTML pages (admin surfaces).
  *
- * Smoke checks: every admin page that's still served from the
- * FastAPI console must load with HTTP 200 and render its primary
- * content region. These pages live at /iam (users), /operations,
- * /monitor, /workspace, /me, /settings, and /security.
+ * Smoke checks: every admin page served by the FastAPI console
+ * must load with HTTP 200 and render its primary content region.
+ * Some paths are now static Next.js exports, but they still run
+ * same-origin on :8000.
  *
  * v1.44.3.3 Task F: the v1.44.3.2 spec asserted on /audit
  * directly but console/app/routers/security.py exposes the audit
@@ -13,8 +13,6 @@
  * page: the payload depends on the current audit stream and must
  * not rely on a specific event action being present.
  *
- * Per the v1.44.2 brief these pages stay HTML for now (Next.js
- * migration is scoped to user-facing flows only).
  */
 import { test, expect } from "../fixtures/auth";
 
@@ -28,7 +26,7 @@ interface LegacyPage {
 
 const PAGES: LegacyPage[] = [
   { path: "/iam",            needle: /usuarios|users|iam/i,     label: "iam (users)" },
-  { path: "/operations",     needle: /operations|operación/i,   label: "operations" },
+  { path: "/operations",     needle: /operations|operaci[oó]n(?:es)?/i, label: "operations" },
   { path: "/monitor",        needle: /monitor/i,                label: "monitor" },
   { path: "/me",             needle: /perfil|profile|me/i,      label: "me" },
   { path: "/settings",       needle: /settings|ajustes/i,       label: "settings" },
@@ -81,7 +79,9 @@ test.describe("Legacy navigation surface", () => {
       // surface the copilot — this test pins one of the legacy
       // pages and looks for a /copilot link OR the FAB.
       await page.goto(`${LEGACY}/monitor`);
-      const link = page.locator('a[href="/copilot"], a[href$="/copilot"], button[data-fab="copilot"]');
+      const link = page.locator(
+        'a[href="/copilot"], a[href="/copilot/"], a[href$="/copilot"], a[href$="/copilot/"], button[data-fab="copilot"]',
+      );
       await expect(link.first()).toBeAttached({ timeout: 10_000 });
     },
   );

@@ -1,19 +1,13 @@
+"use client";
+
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+
 import { ChatLayout } from "@/components/workspace/ChatLayout";
 
-type SearchParams =
-  | Record<string, string | string[] | undefined>
-  | Promise<Record<string, string | string[] | undefined>>;
-
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-export default async function CopilotPage({
-  searchParams,
-}: {
-  searchParams?: SearchParams;
-}) {
-  const params = await Promise.resolve(searchParams ?? {});
+function CopilotShell() {
+  const params = useSearchParams();
+  const prompt = params.get("prompt") ?? undefined;
 
   return (
     <div
@@ -23,7 +17,15 @@ export default async function CopilotPage({
         minHeight: "calc(100vh - 56px)",
       }}
     >
-      <ChatLayout initialPrompt={first(params.prompt)} />
+      <ChatLayout initialPrompt={prompt} />
     </div>
+  );
+}
+
+export default function CopilotPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Cargando copiloto...</div>}>
+      <CopilotShell />
+    </Suspense>
   );
 }

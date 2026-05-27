@@ -6,6 +6,7 @@ const nextConfig = {
   trailingSlash: true,
   poweredByHeader: false,
   images: { unoptimized: true },
+  generateBuildId: async () => "control-room-static",
 };
 
 export default nextConfig;

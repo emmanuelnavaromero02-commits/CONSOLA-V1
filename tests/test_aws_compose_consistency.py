@@ -170,6 +170,7 @@ def test_release_workflow_validates_before_publishing_images():
     assert "docker compose --env-file infra/.env.example" in src
     assert "docker-compose.cartridges.yml" in src
     assert "npm --prefix console-next run typecheck" in src
+    assert "npm --prefix console-next run export:copy" in src
 
 
 def test_start_script_honors_cartridge_overlay_flag():
@@ -350,21 +351,7 @@ def test_aws_healthcheck_test_command_is_well_formed():
     )
 
 
-# ── v1.44.2 R-Mac-3: healthchecks must address 127.0.0.1, not localhost ──
-#
-# Codex's Mac re-validation caught the console_next healthcheck reporting
-# the container unhealthy even though the Next.js server was responding
-# correctly. Root cause:
-#   * Alpine's musl resolver returns ``::1`` (IPv6 loopback) first for
-#     the literal ``localhost``.
-#   * busybox wget on Alpine does NOT fall back to a second AF on
-#     connection refused.
-#   * Next.js standalone with HOSTNAME="0.0.0.0" binds IPv4 only.
-#   * The wget at the IPv6 address fails → container marked unhealthy.
-# Switching the URL to ``http://127.0.0.1:…`` sidesteps the resolver
-# entirely. The fix is identical across every healthcheck so a future
-# image switch (alpine ↔ slim ↔ distroless) doesn't reintroduce the
-# regression silently.
+# ── Healthchecks and removed console_next runtime ───────────────────────
 
 
 def _services_from(compose_path: Path) -> dict:
@@ -389,22 +376,17 @@ def _healthcheck_test_strings(services: dict) -> list[tuple[str, str]]:
     return out
 
 
-def test_console_next_healthcheck_uses_ipv4():
-    """The reported bug: omega_console_next stayed unhealthy because
-    its wget hit ``localhost``. Lock the IPv4 literal."""
-    svcs = _services_from(REPO / "infra/docker-compose.yml")
-    cn = svcs.get("console_next")
-    assert cn, "console_next service missing from infra/docker-compose.yml"
-    test = cn.get("healthcheck", {}).get("test", [])
-    joined = " ".join(test) if isinstance(test, list) else str(test)
-    assert "localhost" not in joined, (
-        "console_next healthcheck must not address ``localhost`` — "
-        "Alpine resolves it to ::1 first, Next.js listens IPv4-only. "
-        f"Got: {joined!r}"
-    )
-    assert "127.0.0.1:3000" in joined, (
-        f"console_next healthcheck must address 127.0.0.1:3000; got: {joined!r}"
-    )
+def test_console_next_runtime_removed_from_compose_and_release():
+    local = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
+    aws = AWS.read_text(encoding="utf-8")
+    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    dockerfile = REPO / "console-next/Dockerfile"
+    assert "console_next:" not in local
+    assert "console_next:" not in aws
+    assert "3000:3000" not in local
+    assert "3000:3000" not in aws
+    assert "service: console-next" not in workflow
+    assert not dockerfile.exists()
 
 
 def test_no_healthcheck_uses_localhost_string():
@@ -443,17 +425,3 @@ def test_aws_compose_does_not_default_public_urls_to_localhost():
         "should come from CONSOLE_URL / WORKSPACE_PUBLIC_URL / *_PUBLIC_URL, "
         "and internal calls should use compose service DNS."
     )
-
-
-def test_console_next_dockerfile_healthcheck_uses_ipv4():
-    """The Dockerfile's own HEALTHCHECK (when the image runs outside
-    compose, e.g. ``docker run``) must follow the same convention."""
-    src = (REPO / "console-next/Dockerfile").read_text(encoding="utf-8")
-    # Extract just the HEALTHCHECK CMD line.
-    m = re.search(r"HEALTHCHECK[^\n]*\n\s*CMD\s+([^\n]+)", src)
-    assert m, "console-next/Dockerfile missing HEALTHCHECK ... CMD"
-    cmd = m.group(1)
-    assert "localhost" not in cmd, (
-        f"Dockerfile HEALTHCHECK must use 127.0.0.1; got: {cmd!r}"
-    )
-    assert "127.0.0.1:3000" in cmd
