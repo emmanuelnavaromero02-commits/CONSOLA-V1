@@ -1,24 +1,16 @@
 # OMEGA E2E Test Suite (Playwright)
 
 Browser-driven end-to-end tests for the OMEGA console. Validates the
-Next.js frontend (port 3000), the legacy HTML console (port 8000), the
-FastAPI backend (port 8000), and external service surfaces (Airflow
-8082, Superset 8088, MinIO 9001, Mailhog 8025, MCP cartridges
-8201-8204).
+FastAPI-served static console (port 8000), the backend APIs, and external
+service surfaces (Airflow 8082, Superset 8088, MinIO 9001, Mailhog 8025,
+MCP cartridges 8201-8204).
 
-## Architecture (beta, split)
+## Architecture (static export)
 
-This phase runs a **split** stack — the suite reflects it on purpose and
-is **not** forced 8000-only (forcing every spec onto :8000 currently
-fails ~109 tests):
-
-- **`:3000` — Next.js frontend** (official, *temporary* frontend).
-  `login` / `dashboard` / `cartridges` / `copilot` / `studio` specs run
-  here via `BASE_URL`.
-- **`:8000` — FastAPI backend** — APIs, legacy HTML pages, and the
-  **Control Room** at `http://localhost:8000/control-room`
-  (`CONTROL_ROOM_URL`). The Control Room specs target `:8000` and assert
-  they never call `:3000`.
+The React console is exported as static assets and served by FastAPI on
+`:8000`. Browser routes, legacy HTML pages, APIs, and the Control Room all
+share the same origin; the suite asserts that the runtime no longer calls
+or depends on `:3000`.
 
 Sprint v1.44.3.3+ — active regression suite. The tests fail loudly when
 the corresponding surface is broken and are wired into CI through
@@ -40,8 +32,8 @@ The `.env` is gitignored. Required keys:
 |---|---|---|
 | `TEST_EMAIL` | `emmanuel@local.ai` | Must exist in the `users` table |
 | `TEST_PASSWORD` | `Admin123!` | Plaintext — bcrypt'd by the backend for local-dev seed only |
-| `BASE_URL` | `http://localhost:3000` | Next.js frontend (official, temporary) |
-| `LEGACY_URL` | `http://localhost:8000` | FastAPI backend (HTML pages + APIs) |
+| `BASE_URL` | `http://localhost:8000` | FastAPI-served console |
+| `LEGACY_URL` | `http://localhost:8000` | FastAPI console |
 | `BACKEND_URL` | `http://localhost:8000` | Alias used by `fixtures/auth.ts` |
 | `CONTROL_ROOM_URL` | `http://localhost:8000/control-room` | Control Room on the backend (:8000) |
 | `AIRFLOW_URL` | `http://localhost:8082` | **Local compose uses :8082, not :8080** |
@@ -60,8 +52,8 @@ npx playwright test
 
 The runner enforces preconditions before invoking Playwright:
 - `tests-e2e/.env` must exist (copied from `.env.example` automatically with a warning)
-- Next.js must respond at `${BASE_URL}/api/health`
-- Legacy console must respond at `${LEGACY_URL}/healthz`
+- FastAPI must respond at `${BASE_URL}/healthz`
+- Legacy console paths must respond at `${LEGACY_URL}`
 - Chromium browser must be installed (auto-installs if missing)
 
 ## Reports
@@ -82,10 +74,10 @@ Open the file (auto-opens in an interactive shell) for:
 
 | File | What it covers |
 |---|---|
-| `01-login.spec.ts` | Next.js `/login` flow + middleware redirect |
-| `02-dashboard.spec.ts` | Next.js `/dashboard` KPIs + freshness table |
-| `03-cartridges.spec.ts` | Next.js `/cartridges` grid + dynamic form |
-| `04-copilot.spec.ts` | Next.js `/copilot` chat shell, input, and conversation sidebar |
+| `01-login.spec.ts` | Static console `/login` flow + auth redirect |
+| `02-dashboard.spec.ts` | Static console `/dashboard` KPIs + freshness table |
+| `03-cartridges.spec.ts` | Static console `/cartridges` grid + activation flow |
+| `04-copilot.spec.ts` | Static console `/copilot` chat shell, input, and conversation sidebar |
 | `05-studio.spec.ts` | Legacy `/studio` — pins the user-reported broken buttons |
 | `06-html-pages.spec.ts` | Legacy `/audit`, `/iam`, `/operations`, `/monitor`, etc. |
 | `07-api-endpoints.spec.ts` | FastAPI contracts (auth gate + shape validation) |

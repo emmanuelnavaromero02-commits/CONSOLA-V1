@@ -1,78 +1,135 @@
-/**
- * v1.44.3.2.2 R-Mac-4 — single axios client for both server-
- * and client-side Next.js code.
- *
- * Browser-side requests hit the SAME ORIGIN as the Next.js app
- * (typically http://localhost:3000), and the Next.js catch-all
- * proxy at /api/[...path] forwards each call to the FastAPI
- * backend over the docker network. So baseURL is empty — every
- * `api.get("/api/dashboard/kpis")` resolves to
- * `http://localhost:3000/api/dashboard/kpis`, gets handled by
- * the Next.js server-side route handler, and returns whatever
- * FastAPI emitted. No cross-origin request ever leaves the tab.
- *
- * Server-side (RSC, route handlers, server actions) needs to
- * talk to the backend directly — there's no browser to
- * intercept the relative path, and routing through our own
- * proxy would deadlock the Next.js runtime. So when window is
- * undefined we use BACKEND_INTERNAL_URL (→ http://console:8000
- * in docker).
- *
- * The browser axios instance auto-attaches the ``X-CSRF-Token``
- * header on every non-GET request by reading the ``csrf_token``
- * cookie that FastAPI seeds on GET /login (proxied via
- * /login-proxy). With ``withCredentials: true`` the cookie
- * itself round-trips automatically — the interceptor just
- * echoes the value as a header so the backend's
- * double-submit-cookie CSRF check passes.
- *
- * NEVER put API keys or secrets in NEXT_PUBLIC_* — those values
- * ship to the browser. Enforced by
- * tests/test_v1442_nextjs_scaffold.py.
- */
-import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
 import { readCookie } from "@/lib/cookies";
-
-const isServer = typeof window === "undefined";
-
-// Server-side fetches go direct to FastAPI inside the docker
-// network. Browser fetches use the empty baseURL so they resolve
-// against the Next.js origin and hit the same-origin proxy.
-const baseURL = isServer
-  ? (process.env.BACKEND_INTERNAL_URL
-      || process.env.API_INTERNAL_URL
-      || "http://console:8000")
-  : "";
-
-export const api: AxiosInstance = axios.create({
-  baseURL,
-  withCredentials: true,
-  timeout: 15_000,
-  headers: { "Content-Type": "application/json" },
-});
 
 export { readCookie };
 
-// v1.44.3.2.2 R-Mac: every non-GET request that goes through this
-// axios instance carries the X-CSRF-Token header. The backend's
-// double-submit-cookie check compares this header against the
-// csrf_token cookie value; without it every POST/PUT/DELETE 403s.
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const method = (config.method || "get").toUpperCase();
-  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    const token = readCookie("csrf_token");
-    if (token) {
-      config.headers = config.headers || {};
-      // axios v1 InternalAxiosRequestConfig.headers is a
-      // AxiosHeaders proxy; bracket assignment is the supported
-      // way to add a custom header that survives the request build.
-      (config.headers as Record<string, string>)["X-CSRF-Token"] = token;
-    }
-  }
-  return config;
-});
+export interface ApiResponse<T> {
+  data: T;
+  status: number;
+  headers: Headers;
+  requestId: string;
+}
 
-/** Cheap discriminator for axios errors. */
-export function isApiError(value: unknown): value is { response?: { status?: number; data?: unknown }; message: string } {
+export interface ApiError extends Error {
+  status?: number;
+  data?: unknown;
+  requestId?: string;
+}
+
+type JsonBody = unknown;
+
+export type ApiFetchInit = Omit<RequestInit, "body"> & {
+  body?: BodyInit | null;
+  json?: JsonBody;
+};
+
+function makeRequestId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function csrfToken(): string | null {
+  return readCookie("csrf_token");
+}
+
+function toApiError(message: string, status?: number, data?: unknown, requestId?: string): ApiError {
+  const error = new Error(message) as ApiError;
+  error.status = status;
+  error.data = data;
+  error.requestId = requestId;
+  return error;
+}
+
+async function parsePayload(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json().catch(() => null);
+  }
+  const text = await response.text().catch(() => "");
+  return text || null;
+}
+
+export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const requestId = makeRequestId();
+  const headers = new Headers(init.headers);
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
+  if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", requestId);
+
+  let body = init.body ?? undefined;
+  if (init.json !== undefined) {
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    body = JSON.stringify(init.json);
+  }
+
+  if (method !== "GET" && method !== "HEAD") {
+    const csrf = csrfToken();
+    if (csrf && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrf);
+  }
+
+  return fetch(path, {
+    ...init,
+    method,
+    credentials: init.credentials ?? "include",
+    headers,
+    body,
+  });
+}
+
+function errorMessage(status: number, payload: unknown): string {
+  if (payload && typeof payload === "object" && "detail" in payload) {
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  if (typeof payload === "string" && payload.trim()) return payload;
+  if (status === 401) return "Sesión expirada o no autenticada.";
+  if (status === 403) return "No tienes permisos para esta acción.";
+  if (status === 404) return "Recurso no encontrado.";
+  if (status >= 500) return "El backend no pudo completar la solicitud.";
+  return `HTTP ${status}`;
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: JsonBody,
+): Promise<ApiResponse<T>> {
+  const requestId = makeRequestId();
+  let response: Response;
+  try {
+    response = await apiFetch(path, { method, headers: { "X-Request-ID": requestId }, json: body });
+  } catch (error) {
+    throw toApiError(
+      error instanceof Error ? error.message : "Error de red",
+      undefined,
+      undefined,
+      requestId,
+    );
+  }
+
+  const responseRequestId = response.headers.get("x-request-id") || requestId;
+  const parsed = await parsePayload(response);
+  if (!response.ok) {
+    throw toApiError(errorMessage(response.status, parsed), response.status, parsed, responseRequestId);
+  }
+
+  return {
+    data: parsed as T,
+    status: response.status,
+    headers: response.headers,
+    requestId: responseRequestId,
+  };
+}
+
+export const api = {
+  get: <T = unknown>(path: string) => request<T>("GET", path),
+  post: <T = unknown>(path: string, body?: JsonBody) => request<T>("POST", path, body),
+  put: <T = unknown>(path: string, body?: JsonBody) => request<T>("PUT", path, body),
+  patch: <T = unknown>(path: string, body?: JsonBody) => request<T>("PATCH", path, body),
+  delete: <T = unknown>(path: string, body?: JsonBody) => request<T>("DELETE", path, body),
+};
+
+export function isApiError(value: unknown): value is ApiError {
   return typeof value === "object" && value !== null && "message" in value;
 }

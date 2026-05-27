@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
     ip            TEXT,
     user_agent    TEXT,
     status        TEXT,
+    request_id    TEXT,
     metadata      JSONB,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

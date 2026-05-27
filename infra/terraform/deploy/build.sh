@@ -26,7 +26,7 @@ fi
 echo "IMAGE_TAG=${IMAGE_TAG}"
 
 docker compose -f docker-compose.aws.yml pull \
-  console console_next workspace refinement vault mcp-infra airflow airflow-scheduler
+  console workspace refinement vault mcp-infra airflow airflow-scheduler
 
 if [[ "${DEPLOY_CARTRIDGES_SAME_HOST:-false}" == "true" ]]; then
   docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml pull \

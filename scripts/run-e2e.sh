@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # v1.44.3.2 — OMEGA E2E test runner.
 #
-# Validates preconditions (Next.js + legacy console reachable,
+# Validates preconditions (FastAPI-served console reachable,
 # tests-e2e/.env present, Chromium installed), then runs the
 # Playwright suite and surfaces the HTML report.
 #
@@ -57,21 +57,20 @@ if [ -z "${INTERNAL_API_KEY:-}" ] && [ -f "${ROOT}/infra/.env" ]; then
     export INTERNAL_API_KEY
 fi
 
-# Split architecture (beta): Next.js frontend on :3000 is the official
-# temporary frontend; FastAPI backend on :8000 hosts the APIs and the
-# Control Room. This is intentional — the suite is NOT forced 8000-only.
-BASE_URL="${BASE_URL:-http://localhost:3000}"
+# Static export architecture: FastAPI on :8000 serves the console, APIs,
+# legacy pages, and Control Room from the same origin.
+BASE_URL="${BASE_URL:-http://localhost:8000}"
 LEGACY_URL="${LEGACY_URL:-http://localhost:8000}"
 CONTROL_ROOM_URL="${CONTROL_ROOM_URL:-${LEGACY_URL}/control-room}"
 
 echo ""
 echo "Preconditions:"
 
-# Next.js frontend healthcheck (official temporary frontend, :3000)
-if curl -sS --max-time 5 -o /dev/null "${BASE_URL}/api/health" 2>/dev/null; then
-    echo "  ✅ Next.js frontend reachable at ${BASE_URL}"
+# FastAPI-served static console healthcheck.
+if curl -sS --max-time 5 -o /dev/null "${BASE_URL}/healthz" 2>/dev/null; then
+    echo "  ✅ FastAPI-served console reachable at ${BASE_URL}"
 else
-    echo "  ❌ Next.js frontend NOT reachable at ${BASE_URL}/api/health"
+    echo "  ❌ FastAPI-served console NOT reachable at ${BASE_URL}/healthz"
     echo "     Bring up the stack with: make up"
     exit 1
 fi

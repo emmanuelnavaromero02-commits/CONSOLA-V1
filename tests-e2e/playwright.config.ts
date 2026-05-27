@@ -27,7 +27,7 @@ loadLocalEnv();
  * collects.
  *
  * Key additions over v1.44.3.2:
- *   - globalSetup logs in ONCE via the Next.js form and persists
+  *   - globalSetup logs in ONCE via the FastAPI-served static form and persists
  *     storage state to .auth/session.json. Every spec downstream
  *     reuses the session (no per-test login = faster + dodges the
  *     auth rate limiter).
@@ -63,7 +63,7 @@ export default defineConfig({
   ],
   globalSetup: "./global-setup.ts",
   use: {
-    baseURL: process.env.BASE_URL || "http://localhost:3000",
+    baseURL: process.env.BASE_URL || "http://localhost:8000",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
     trace: "retain-on-failure",

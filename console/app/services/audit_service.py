@@ -2,9 +2,27 @@ import json
 import logging
 from typing import Any
 
+from app.middleware.request_id import request_id_var
 from app.services import auth
 
 logger = logging.getLogger(__name__)
+
+
+async def _audit_events_has_request_id(pool) -> bool:
+    return bool(
+        await pool.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'audit_events'
+                   AND column_name = 'request_id'
+            )
+            """
+        )
+    )
+
 
 async def record_event(
     user_id: int | None = None,
@@ -15,6 +33,7 @@ async def record_event(
     ip: str | None = None,
     user_agent: str | None = None,
     status: str | None = None,
+    request_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     *,
     # Sprint v1.41.0 (copilot scaffolding): when the future copilot invokes
@@ -53,40 +72,72 @@ async def record_event(
             return
         meta_json = json.dumps(metadata) if metadata is not None else None
         tool_args_json = json.dumps(tool_args) if tool_args is not None else None
+        event_request_id = request_id or request_id_var.get()
+        has_request_id = await _audit_events_has_request_id(pool)
 
-        await pool.execute(
-            # v1.43.2 Claude B5: ON CONFLICT DO NOTHING swallows
-            # exact-duplicate inserts (same user/action/resource at
-            # the same created_at timestamp) so a retry of the same
-            # admin action no longer inflates the forensic trail.
-            # The constraint audit_events_dedup_uniq is added by
-            # migration 44.
-            """
-            INSERT INTO audit_events
-            (user_id, email, action, resource_type, resource_id,
-             ip, user_agent, status, metadata,
-             tool_name, tool_args, tool_result_status, risk_level, conversation_id)
-            VALUES ($1, $2, $3, $4, $5,
-                    $6, $7, $8, $9::jsonb,
-                    $10, $11::jsonb, $12, $13, $14)
-            ON CONFLICT (user_id, action, resource_id, created_at)
-              DO NOTHING
-            """,
-            user_id,
-            email,
-            action,
-            resource_type,
-            resource_id,
-            ip,
-            user_agent,
-            status,
-            meta_json,
-            tool_name,
-            tool_args_json,
-            tool_result_status,
-            risk_level,
-            conversation_id,
-        )
+        if has_request_id:
+            await pool.execute(
+                # v1.43.2 Claude B5: ON CONFLICT DO NOTHING swallows
+                # exact-duplicate inserts (same user/action/resource at
+                # the same created_at timestamp) so a retry of the same
+                # admin action no longer inflates the forensic trail.
+                # The constraint audit_events_dedup_uniq is added by
+                # migration 44.
+                """
+                INSERT INTO audit_events
+                (user_id, email, action, resource_type, resource_id,
+                 ip, user_agent, status, request_id, metadata,
+                 tool_name, tool_args, tool_result_status, risk_level, conversation_id)
+                VALUES ($1, $2, $3, $4, $5,
+                        $6, $7, $8, $9, $10::jsonb,
+                        $11, $12::jsonb, $13, $14, $15)
+                ON CONFLICT (user_id, action, resource_id, created_at)
+                  DO NOTHING
+                """,
+                user_id,
+                email,
+                action,
+                resource_type,
+                resource_id,
+                ip,
+                user_agent,
+                status,
+                event_request_id,
+                meta_json,
+                tool_name,
+                tool_args_json,
+                tool_result_status,
+                risk_level,
+                conversation_id,
+            )
+        else:
+            await pool.execute(
+                """
+                INSERT INTO audit_events
+                (user_id, email, action, resource_type, resource_id,
+                 ip, user_agent, status, metadata,
+                 tool_name, tool_args, tool_result_status, risk_level, conversation_id)
+                VALUES ($1, $2, $3, $4, $5,
+                        $6, $7, $8, $9::jsonb,
+                        $10, $11::jsonb, $12, $13, $14)
+                ON CONFLICT (user_id, action, resource_id, created_at)
+                  DO NOTHING
+                """,
+                user_id,
+                email,
+                action,
+                resource_type,
+                resource_id,
+                ip,
+                user_agent,
+                status,
+                meta_json,
+                tool_name,
+                tool_args_json,
+                tool_result_status,
+                risk_level,
+                conversation_id,
+            )
     except Exception as e:
         logger.error(f"Failed to record audit event: {e}", exc_info=True)
         if critical:

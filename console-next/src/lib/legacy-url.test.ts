@@ -24,16 +24,14 @@ describe("legacyConsoleUrl (Control Room nav link contract)", () => {
     expect(legacyConsoleUrl("/control-room")).toBe("http://localhost:8000/control-room");
   });
 
-  it("falls back to the same-origin /legacy redirector when the env is unset", async () => {
-    // The /legacy/[[...path]] route forwards to the backend at runtime, so the
-    // Control Room link still reaches :8000 even without a build-time base.
+  it("falls back to same-origin FastAPI paths when the env is unset", async () => {
     const { legacyConsoleUrl } = await loadWithEnv("");
-    expect(legacyConsoleUrl("/control-room")).toBe("/legacy/control-room");
+    expect(legacyConsoleUrl("/control-room")).toBe("/control-room");
   });
 
   it("rejects a non-http(s) base (e.g. javascript:) and falls back", async () => {
     const { legacyConsoleUrl } = await loadWithEnv("javascript:alert(1)");
-    expect(legacyConsoleUrl("/control-room")).toBe("/legacy/control-room");
+    expect(legacyConsoleUrl("/control-room")).toBe("/control-room");
   });
 
   it("always resolves to a /control-room-suffixed target", async () => {

@@ -61,6 +61,7 @@ V22_CSRF_FIXES = frozenset({
     ("/api/admin/users/invite",                     "POST"),
     ("/api/admin/users/{user_id}/reinvite",         "POST"),
     ("/api/admin/users/{user_id}/send-reset",       "POST"),
+    ("/auth/refresh",                               "POST"),
     # 2 routes that had neither auth nor CSRF — v1.22 added both
     ("/monitoring/invoke",                          "POST"),
     ("/api/dags/parse",                             "POST"),
@@ -78,10 +79,6 @@ CSRF_EXEMPT_BY_DESIGN = frozenset({
     # Legacy compat alias for /auth/login. It delegates through the
     # real handler and carries the same require_csrf dependency.
     ("/api/auth/login",     "POST"),
-    # Refresh-token POSTs validate via the refresh cookie itself, not
-    # CSRF. The flow is HttpOnly cookie in + new access token out, with
-    # the cookie's own SameSite=Lax protection as the CSRF substitute.
-    ("/auth/refresh",       "POST"),
     # Activation accepts a one-time invite token in the body — the
     # token IS the credential, no cookie / no CSRF needed.
     ("/auth/activate",      "POST"),

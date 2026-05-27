@@ -1,0 +1,6 @@
+1:"$Sreact.fragment"
+3:I[97367,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js"],"OutletBoundary"]
+4:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":["$L2",null,["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"console-next-static"}
+5:null
+2:E{"digest":"NEXT_REDIRECT;replace;/dashboard;307;"}

@@ -13,14 +13,14 @@
  * This module exports a single ``legacyConsoleUrl(path)`` helper
  * that:
  *   - rejects anything that isn't http(s)://
- *   - falls back to the same-origin /legacy redirector if the env
- *     value fails validation, avoiding localhost links in deployed
- *     builds without baking an AWS hostname into the client bundle
+ *   - falls back to same-origin FastAPI paths if the env value fails
+ *     validation, avoiding localhost links in deployed builds without
+ *     baking an AWS hostname into the client bundle
  *   - guarantees the returned string starts with the validated
  *     base so downstream renderers don't have to defend on their
  *     own.
  */
-const DEFAULT_LEGACY = "/legacy";
+const DEFAULT_LEGACY = "";
 
 
 function validateBase(raw: string | undefined | null): string {

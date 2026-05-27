@@ -144,9 +144,8 @@ test.describe("Dashboard — Freshness table", () => {
     await page.goto("/dashboard");
     const link = page.locator('table a[href^="/cartridges/"]').first();
     await expect(link).toBeVisible({ timeout: 15_000 });
-    const href = await link.getAttribute("href");
     await link.click();
-    await page.waitForURL(`**${href}`, { timeout: 10_000 });
+    await page.waitForURL(/\/cartridges\/viewer\/?\?id=[a-z_]+/, { timeout: 10_000 });
   });
 });
 
@@ -216,7 +215,7 @@ test.describe("Dashboard — internal navigation", () => {
 
   test("navigate from dashboard to /workspace copilot", async ({ page }) => {
     await page.goto("/dashboard");
-    const link = page.locator('a[href="/workspace"]').first();
+    const link = page.locator('a[href="/workspace"], a[href="/workspace/"]').first();
     await expect(link).toBeVisible({ timeout: 10_000 });
     await link.click();
     await page.waitForURL(/\/workspace/, { timeout: 10_000 });

@@ -9,6 +9,11 @@
 import { test, expect } from "../fixtures/auth";
 
 const CARTRIDGES = ["replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const cartridgeViewer = (id: string) => `/cartridges/viewer?id=${id}`;
+const cartridgeViewerLink = (id: string) =>
+  `a[href="/cartridges/viewer?id=${id}"], a[href="/cartridges/viewer/?id=${id}"]`;
+const cartridgeViewerLinks =
+  'a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]';
 
 test.describe("Cartridges grid — coverage of all 4", () => {
   test("renders the 'Cartuchos' h1", async ({ page }) => {
@@ -19,10 +24,10 @@ test.describe("Cartridges grid — coverage of all 4", () => {
   });
 
   for (const cart of CARTRIDGES) {
-    test(`tile for ${cart} renders and links to /cartridges/${cart}`,
+    test(`tile for ${cart} renders and links to /cartridges/viewer?id=${cart}`,
       async ({ page }) => {
         await page.goto("/cartridges");
-        const link = page.locator(`a[href="/cartridges/${cart}"]`).first();
+        const link = page.locator(cartridgeViewerLink(cart)).first();
         await expect(link).toBeVisible({ timeout: 15_000 });
       },
     );
@@ -30,7 +35,7 @@ test.describe("Cartridges grid — coverage of all 4", () => {
 
   test("grid has exactly 4 cartridge tiles", async ({ page }) => {
     await page.goto("/cartridges");
-    const tiles = page.locator('a[href^="/cartridges/"]:not([href="/cartridges"])');
+    const tiles = page.locator(cartridgeViewerLinks);
     // Allow >4 in case the dashboard freshness card also appears,
     // but at least the canonical 4 must be present.
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
@@ -73,7 +78,7 @@ test.describe("Cartridge detail — schema-driven form", () => {
   for (const cart of CARTRIDGES) {
     test(`${cart} detail page loads schema + renders form`,
       async ({ page }) => {
-        await page.goto(`/cartridges/${cart}`);
+        await page.goto(cartridgeViewer(cart));
         await expect(page.locator("form")).toBeVisible({ timeout: 15_000 });
         const fields = await page.locator("form input, form select").count();
         expect(fields,
@@ -83,15 +88,15 @@ test.describe("Cartridge detail — schema-driven form", () => {
     );
 
     test(`${cart} breadcrumb back to /cartridges`, async ({ page }) => {
-      await page.goto(`/cartridges/${cart}`);
+      await page.goto(cartridgeViewer(cart));
       const crumb = page.locator('nav[aria-label="breadcrumb"]');
       await expect(crumb).toBeVisible({ timeout: 15_000 });
-      const back = crumb.locator('a[href="/cartridges"]');
+      const back = crumb.locator('a[href="/cartridges"], a[href="/cartridges/"]');
       await expect(back).toBeVisible();
     });
 
     test(`${cart} has Save + Test + Delete buttons`, async ({ page }) => {
-      await page.goto(`/cartridges/${cart}`);
+      await page.goto(cartridgeViewer(cart));
       await expect(
         page.getByRole("button", { name: /guardar credenciales/i }),
       ).toBeVisible({ timeout: 15_000 });
@@ -108,7 +113,7 @@ test.describe("Cartridge detail — schema-driven form", () => {
 test.describe("Cartridge detail — interactions (Replicon)", () => {
   test("Save with empty form: required fields surface errors",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       await page.getByRole("button", { name: /guardar credenciales/i }).click();
       await page.waitForTimeout(800);
       // Either react-hook-form renders an inline error OR the
@@ -126,7 +131,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 
   test("password field has eye toggle that flips aria-label",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       const pwdField = page.locator('input[type="password"]').first();
       if (!(await pwdField.isVisible({ timeout: 10_000 }).catch(() => false))) {
         test.fail(true, "no password field in replicon schema");
@@ -143,7 +148,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 
   test("Test connection with NO creds in vault: shows useful error",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       const testBtn = page.getByRole("button", { name: /probar conexión/i });
       await testBtn.click();
       // The TestConnectionResult component renders OK/error with a
@@ -157,7 +162,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 
   test("Delete with no credentials: confirm dialog still opens",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       await page.getByRole("button", { name: /borrar credenciales/i }).click();
       await expect(
         page.getByRole("dialog", { name: /borrar credenciales/i }),
@@ -167,7 +172,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 
   test("Delete dialog auto-focuses Cancel button (v1.44.3 R1 regression guard)",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       await page.getByRole("button", { name: /borrar credenciales/i }).click();
       const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
       await expect(dialog).toBeVisible({ timeout: 5_000 });
@@ -180,7 +185,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 
   test("Delete dialog: ESC closes without firing the delete",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       await page.getByRole("button", { name: /borrar credenciales/i }).click();
       const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
       await expect(dialog).toBeVisible({ timeout: 5_000 });
@@ -202,7 +207,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
 
   test("Delete dialog: backdrop click closes (also non-destructive)",
     async ({ page }) => {
-      await page.goto("/cartridges/replicon");
+      await page.goto(cartridgeViewer("replicon"));
       await page.getByRole("button", { name: /borrar credenciales/i }).click();
       const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
       await expect(dialog).toBeVisible({ timeout: 5_000 });
@@ -218,7 +223,7 @@ test.describe("Cartridge detail — backend round-trip with fake creds", () => {
   // Vault and then delete cleanly — leaving the cartridge in the
   // SAME state as before the test ran.
   test("Save → toast.success appears + invalidates grid", async ({ page }) => {
-    await page.goto("/cartridges/replicon");
+    await page.goto(cartridgeViewer("replicon"));
     // Fill REQUIRED fields with throwaway values. The replicon
     // schema typically has base_url + username + password — we
     // populate by filling EVERY required field.

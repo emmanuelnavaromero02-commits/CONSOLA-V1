@@ -1,10 +1,10 @@
 /**
  * v1.44.4 Task A — Copilot API client.
  *
- * Thin axios wrapper that returns the typed response shapes
- * defined in ./types.ts. Re-uses the shared ``api`` instance
- * from ``@/lib/api`` so CSRF + cookie + baseURL semantics stay
- * consistent with the rest of the Next.js console.
+ * Thin same-origin wrapper that returns the typed response shapes
+ * defined in ./types.ts. Re-uses the shared ``api`` client from
+ * ``@/lib/api`` so CSRF, session cookies and request IDs stay
+ * consistent with the rest of the static console.
  *
  * Backend reality (see types.ts module doc for the audit
  * findings):
@@ -16,7 +16,7 @@
  *   - getWorkflow returns ``{workflow, steps}`` (NOT a flat
  *     Workflow); the typed wrapper preserves both.
  */
-import { api, readCookie } from "@/lib/api";
+import { api, apiFetch } from "@/lib/api";
 import type {
   Conversation,
   ConversationDetailResponse,
@@ -104,27 +104,16 @@ function parseSseFrame(frame: string): { event: string; data: unknown } | null {
 }
 
 
-function csrfHeaders(): HeadersInit {
-  const token = readCookie("csrf_token");
-  return token ? { "X-CSRF-Token": token } : {};
-}
-
-
 export async function streamMessage(
   conversationId: string,
   message: string,
   handlers: StreamMessageHandlers = {},
 ): Promise<SendMessageResponse> {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/copilot/chat/${encodeURIComponent(conversationId)}/stream`,
     {
       method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...csrfHeaders(),
-      },
-      body: JSON.stringify({ message }),
+      json: { message },
     },
   );
 

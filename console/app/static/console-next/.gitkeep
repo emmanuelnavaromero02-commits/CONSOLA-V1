@@ -1,0 +1,12 @@
+# v1.44.2 R-Mac-1 — placeholder so the public/ directory exists in
+# git, so the Dockerfile multi-stage COPY succeeds.
+#
+# Codex's Mac validation of PR #151 caught:
+#   COPY --from=build /app/public ./public
+# failing in Dockerfile:36 because console-next/public/ wasn't on
+# disk. Without the directory the docker build aborts → omega_console_next
+# never starts → smoke 0/34.
+#
+# Next.js convention: public/ holds untouched-by-the-bundler static
+# assets (favicon, robots.txt, OG images). Empty for now; team can
+# drop favicon.ico / favicon.svg here without code changes.

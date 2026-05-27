@@ -35,7 +35,7 @@ function formatAge(ageHours: number | null): string {
 
 /**
  * "Frescura de datos" — one row per cartridge, click navigates to
- * /cartridges/<id>. Loading state renders three skeleton rows so the
+ * /cartridges/viewer?id=<id>. Loading state renders three skeleton rows so the
  * table's height stays stable across polls.
  */
 export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
@@ -100,7 +100,7 @@ export function FreshnessTable({ rows, loading }: FreshnessTableProps) {
                 >
                   <td className="px-5 py-3">
                     <Link
-                      href={`/cartridges/${row.cartridge}`}
+                      href={`/cartridges/viewer?id=${encodeURIComponent(row.cartridge)}`}
                       className="inline-flex min-h-[36px] items-center font-medium hover:underline"
                     >
                       {row.cartridge}

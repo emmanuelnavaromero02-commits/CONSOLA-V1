@@ -23,13 +23,16 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: console-next/package-lock.json
+          cache-dependency-path: |
+            console-next/package-lock.json
+            console/control-room-next/package-lock.json
 
       - name: Install validation dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest pyyaml
           npm --prefix console-next ci
+          npm --prefix console/control-room-next ci
 
       - name: Static release tests
         run: |
@@ -59,11 +62,19 @@ jobs:
       - name: Console Next typecheck
         run: npm --prefix console-next run typecheck
 
-      - name: Console Next lint, unit tests, and build
+      - name: Console Next lint, unit tests, and static export
         run: |
           npm --prefix console-next run lint
           npm --prefix console-next run test
-          npm --prefix console-next run build
+          npm --prefix console-next run export:copy
+          git diff --exit-code -- console/app/static/console-next
+
+      - name: Control Room Next lint, typecheck, and served static export
+        run: |
+          npm --prefix console/control-room-next run lint
+          npm --prefix console/control-room-next run typecheck
+          npm --prefix console/control-room-next run export:copy
+          git diff --exit-code -- console/app/static/control-room
 
   build-and-push:
     needs: validate-release
@@ -74,8 +85,6 @@ jobs:
         include:
           - service: console
             context: ./console
-          - service: console-next
-            context: ./console-next
           - service: workspace
             context: ./workspace
           - service: refinement

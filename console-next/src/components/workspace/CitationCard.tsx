@@ -29,7 +29,7 @@ function safeHref(value: unknown): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
-  // Same-origin path reference (e.g. "/cartridges/replicon").
+  // Same-origin path reference (e.g. "/cartridges/viewer?id=replicon").
   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
     return trimmed;
   }

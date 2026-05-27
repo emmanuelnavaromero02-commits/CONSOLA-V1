@@ -165,6 +165,7 @@ async def get_audit_events(user: dict = Depends(require_permission("security.aud
         _select_column(audit_columns, "resource_id", "NULL::text", table_alias="a"),
         _select_column(audit_columns, "metadata", "NULL::jsonb", "details", table_alias="a"),
         _select_column(audit_columns, "ip", "NULL::text", table_alias="a"),
+        _select_column(audit_columns, "request_id", "NULL::text", table_alias="a"),
         _select_column(audit_columns, "created_at", "NULL::timestamptz", table_alias="a"),
     ]
     order_expr = "a.created_at DESC" if "created_at" in audit_columns else "a.id DESC"
