@@ -135,13 +135,9 @@ def _allowed_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip() and origin.strip() != "*"]
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins(),
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Internal-Api-Key", "x-api-key", "x-internal-service"],
-)
+# CORS is registered at the BOTTOM of this module (after every other
+# middleware) so it ends up OUTERMOST in the ASGI stack — see the note next
+# to that add_middleware call for why preflight ordering matters.
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -702,7 +698,7 @@ def _app_wrapper_html(name: str, datasets_used: list[str]) -> str:
             // the workspace top origin, so it can read the (non-HttpOnly)
             // csrf_token cookie and echo it back. The sandboxed app iframe
             // cannot, which is exactly the boundary we want.
-            const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            const csrfMatch = document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);
             if (csrfMatch) headers["X-CSRF-Token"] = decodeURIComponent(csrfMatch[1]);
           }}
           const response = await fetch(url.pathname + url.search, {{
@@ -1162,3 +1158,24 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
 # auth middleware never reach its send-wrapper and the X-Request-ID
 # header is lost.
 app.add_middleware(RequestIDMiddleware)
+
+# CORS MUST be the OUTERMOST middleware so OPTIONS preflight requests are
+# answered by CORS itself BEFORE auth_middleware can 401 them — otherwise a
+# cross-origin browser call that needs to send X-CSRF-Token never gets past
+# the preflight. Starlette reverses user_middleware when building the stack,
+# so the LAST add_middleware call ends up outermost (mirrors the console
+# CORS-ordering hotfix). PATCH is listed because /api/decisions/{id} is a
+# PATCH mutation; X-CSRF-Token because require_csrf reads the double-submit
+# token from that header on cross-origin mutations.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Internal-Api-Key", "x-api-key", "x-internal-service",
+        "X-CSRF-Token",
+    ],
+)

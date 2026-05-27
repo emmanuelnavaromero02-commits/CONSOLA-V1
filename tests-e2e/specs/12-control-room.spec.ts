@@ -2,6 +2,11 @@ import { test, expect } from "../fixtures/auth";
 import type { Page } from "@playwright/test";
 
 const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
+// Control Room lives on the FastAPI backend. Honour CONTROL_ROOM_URL so the
+// documented env var is actually wired; default keeps it on :8000. The
+// "no :3000 calls" assertions below enforce the invariant regardless of how
+// this is configured.
+const CONTROL_ROOM = process.env.CONTROL_ROOM_URL || `${LEGACY}/control-room`;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -70,7 +75,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(seedThresholdResponse.status(), "control-room threshold seed must be accepted").toBe(200);
 
-    const response = await page.goto(`${LEGACY}/control-room`, {
+    const response = await page.goto(CONTROL_ROOM, {
       waitUntil: "domcontentloaded",
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
@@ -169,7 +174,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       if (url.port === "3000") forbidden3000.push(request.url());
     });
 
-    const response = await page.goto(`${LEGACY}/control-room`, {
+    const response = await page.goto(CONTROL_ROOM, {
       waitUntil: "domcontentloaded",
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
@@ -199,7 +204,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/estado por dominio/i)).toContainText(/margen y facturacion/i);
     await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/pnl_mensual/i);
 
-    await page.goto(`${LEGACY}/control-room?module=replicon_finance`, {
+    await page.goto(`${CONTROL_ROOM}?module=replicon_finance`, {
       waitUntil: "domcontentloaded",
     });
     await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
@@ -275,7 +280,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       }
     });
 
-    const response = await page.goto(`${LEGACY}/control-room`, {
+    const response = await page.goto(CONTROL_ROOM, {
       waitUntil: "domcontentloaded",
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);

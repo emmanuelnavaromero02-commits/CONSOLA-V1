@@ -201,3 +201,24 @@ def test_get_routes_do_not_require_csrf():
                 for dep in route.dependant.dependencies
             )
             assert not has, f"GET {path} should not require CSRF"
+
+
+def test_cors_preflight_allows_csrf_header_before_auth():
+    """A cross-origin browser mutation needs X-CSRF-Token through the CORS
+    preflight. CORS must be outermost so the OPTIONS request is answered
+    before auth_middleware can 401 it (the v1.42 ordering trap)."""
+    main = _load_main()
+    client = TestClient(main.app)
+    r = client.options(
+        "/api/decisions",
+        headers={
+            "Origin": "http://localhost:8000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-csrf-token, content-type",
+        },
+    )
+    assert r.status_code == 200, f"preflight should be answered by CORS, got {r.status_code}"
+    allow_headers = (r.headers.get("access-control-allow-headers") or "").lower()
+    assert "x-csrf-token" in allow_headers, allow_headers
+    allow_methods = (r.headers.get("access-control-allow-methods") or "").upper()
+    assert "PATCH" in allow_methods, allow_methods
