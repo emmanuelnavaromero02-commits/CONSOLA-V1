@@ -311,6 +311,23 @@ async def control_room_action_dry_run(
 
 
 @router.post(
+    "/items/{item_id}/auto-run",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_auto_run_item(
+    item_id: str,
+    request: Request,
+    user: dict = Depends(require_authenticated),
+):
+    return await control_room_service.run_auto_item(
+        item_id,
+        user,
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+@router.post(
     "/items/{item_id}/execute",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
 )

@@ -62,6 +62,7 @@ ACTIVITY_LABELS = {
     "action_preview": "Preview generado",
     "action_dry_run": "Dry-run validado",
     "action_blocked": "Ejecucion bloqueada",
+    "auto_run_completed": "Modo automatico completado",
     "approved": "Aprobacion registrada",
     "lesson_recorded": "Leccion registrada",
     "lesson_applied": "Leccion aplicada",
@@ -141,6 +142,76 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
         "description": "Construye payload de revision para revenue, backlog, compras o maestro S/4.",
         "action_kind": "sap_review",
         "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_s4_revenue_review": {
+        "template_id": "prepare_s4_revenue_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision comercial S/4",
+        "description": "Prepara evidencia de revenue, backlog, pedido y owner comercial.",
+        "action_kind": "s4_revenue_review",
+        "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_s4_business_partner_review": {
+        "template_id": "prepare_s4_business_partner_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision de business partner",
+        "description": "Prepara evidencia de maestro BP, datos fiscales, direccion y bloqueo preventivo.",
+        "action_kind": "s4_business_partner_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_s4_procurement_review": {
+        "template_id": "prepare_s4_procurement_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision de compras S/4",
+        "description": "Prepara evidencia de proveedor, gasto, contrato y aprobaciones.",
+        "action_kind": "s4_procurement_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_hcm_access_review": {
+        "template_id": "prepare_hcm_access_review",
+        "cartridge_id": "sap_hcm",
+        "label": "Preparar revision HCM acceso/nomina",
+        "description": "Prepara baja, bloqueo de usuario, evidencia de posicion y posible cola de nomina.",
+        "action_kind": "hcm_access_review",
+        "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_hcm_org_review": {
+        "template_id": "prepare_hcm_org_review",
+        "cartridge_id": "sap_hcm",
+        "label": "Preparar revision organizacional HCM",
+        "description": "Prepara evidencia de centro de costo, posicion, jefe y estructura.",
+        "action_kind": "hcm_org_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_successfactors_review": {
+        "template_id": "prepare_successfactors_review",
+        "cartridge_id": "sap_successfactors",
+        "label": "Preparar revision SuccessFactors",
+        "description": "Prepara evidencia de empleado, manager, departamento, job code y aprobador.",
+        "action_kind": "successfactors_employee_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_successfactors_recruiting_review": {
+        "template_id": "prepare_successfactors_recruiting_review",
+        "cartridge_id": "sap_successfactors",
+        "label": "Preparar revision recruiting SF",
+        "description": "Prepara evidencia de requisicion, vacante, etapa y owner.",
+        "action_kind": "successfactors_recruiting_review",
+        "risk_level": "medium",
         "mode_default": "dry_run",
         "requires_approval": True,
     },
@@ -2108,6 +2179,68 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
                 explanation="Exposicion de compras bajo revision, no ahorro garantizado.",
             )
 
+    if cartridge == "sap_s4hana" and anomaly_type in {"missing_address", "missing_tax_id", "duplicate_business_partner"}:
+        exposure = (
+            _num(details.get("open_value"))
+            or _num(details.get("balance_usd"))
+            or _num(details.get("exposure_usd"))
+            or _num(details.get("total_spend"))
+        )
+        if exposure is not None and exposure > 0:
+            return _impact_payload(
+                item=item,
+                estimate=exposure,
+                status="ok",
+                confidence=0.52,
+                drivers=[
+                    {"label": "Exposicion BP", "value": round(exposure, 2), "currency": "USD"},
+                    {"label": "Tipo maestro", "value": anomaly_type},
+                ],
+                formula="open_value | balance_usd | exposure_usd | total_spend",
+                explanation="Usa exposicion comercial/proveedor disponible para el maestro BP.",
+            )
+
+    if cartridge == "sap_hcm" and anomaly_type == "terminated_but_active":
+        monthly_cost = (
+            _num(details.get("monthly_cost_usd"))
+            or _num(details.get("salary_monthly_usd"))
+            or _num(details.get("costo_mensual_usd"))
+        )
+        if monthly_cost is not None and monthly_cost > 0:
+            return _impact_payload(
+                item=item,
+                estimate=monthly_cost * 3,
+                status="ok",
+                confidence=0.66,
+                drivers=[
+                    {"label": "Costo mensual empleado", "value": round(monthly_cost, 2), "currency": "USD"},
+                    {"label": "Ventana control", "value": 3, "unit": "meses"},
+                ],
+                formula="monthly_cost_usd * 3 meses de exposicion",
+                explanation="Estima cola de costo/acceso para empleado terminado pero activo.",
+            )
+
+    if cartridge == "sap_successfactors" and anomaly_type in {"missing_manager", "missing_department", "missing_job_code"}:
+        affected = (
+            _num(details.get("affected_employees"))
+            or _num(details.get("direct_reports"))
+            or _num(details.get("headcount"))
+        )
+        monthly_cost = _num(details.get("avg_monthly_cost_usd")) or _num(details.get("salary_monthly_usd"))
+        if affected is not None and monthly_cost is not None and affected > 0 and monthly_cost > 0:
+            return _impact_payload(
+                item=item,
+                estimate=affected * monthly_cost * 0.15,
+                status="ok",
+                confidence=0.48,
+                drivers=[
+                    {"label": "Personas afectadas", "value": round(affected, 2)},
+                    {"label": "Costo mensual promedio", "value": round(monthly_cost, 2), "currency": "USD"},
+                ],
+                formula="affected_employees * avg_monthly_cost_usd * 15%",
+                explanation="Proxy de riesgo operativo SF cuando hay base de costo y poblacion afectada.",
+            )
+
     monthly_cost = (
         _num(details.get("monthly_cost_usd"))
         or _num(details.get("salary_monthly_usd"))
@@ -2138,6 +2271,7 @@ def _impact_for_item(item: dict[str, Any]) -> dict[str, Any]:
 def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
     anomaly_type = str(item.get("anomaly_type") or "")
     cartridge = str(item.get("cartridge") or "")
+    module_id = str(item.get("module_id") or "")
     if item.get("kind") == "source_state":
         return ["restore_data_source", "create_followup_task", "request_owner_review"]
     if cartridge == "replicon":
@@ -2145,7 +2279,21 @@ def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
             return ["prepare_billing_review", "prepare_replicon_adjustment", "create_followup_task"]
         return ["prepare_replicon_adjustment", "request_owner_review", "create_followup_task"]
     if cartridge == "sap_s4hana":
+        if anomaly_type in {"negative_revenue", "aged_sales_backlog"} or module_id == "sap_s4hana_sales":
+            return ["prepare_s4_revenue_review", "prepare_sap_review", "create_followup_task"]
+        if anomaly_type in {"missing_address", "missing_tax_id", "duplicate_business_partner"}:
+            return ["prepare_s4_business_partner_review", "prepare_sap_review", "create_followup_task"]
+        if anomaly_type == "supplier_spend_concentration" or module_id == "sap_s4hana_procurement":
+            return ["prepare_s4_procurement_review", "prepare_sap_review", "create_followup_task"]
         return ["prepare_sap_review", "request_owner_review", "create_followup_task"]
+    if cartridge == "sap_hcm":
+        if anomaly_type == "terminated_but_active":
+            return ["prepare_hcm_access_review", "request_owner_review", "create_followup_task"]
+        return ["prepare_hcm_org_review", "request_owner_review", "create_followup_task"]
+    if cartridge == "sap_successfactors":
+        if module_id == "sap_successfactors_recruiting":
+            return ["prepare_successfactors_recruiting_review", "prepare_successfactors_review", "create_followup_task"]
+        return ["prepare_successfactors_review", "request_owner_review", "create_followup_task"]
     return ["request_owner_review", "create_followup_task"]
 
 
@@ -2158,8 +2306,115 @@ def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
     return templates[0] if templates else dict(ACTION_TEMPLATES["request_owner_review"])
 
 
+def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    action_kind = str(template.get("action_kind") or "owner_review")
+    base = {
+        "action_kind": action_kind,
+        "template_id": template.get("template_id"),
+        "entity": {
+            "kind": item.get("entity_kind"),
+            "id": item.get("entity_id"),
+            "label": item.get("entity_label"),
+        },
+        "source_dataset": item.get("source_dataset"),
+        "severity": item.get("severity"),
+        "recommendation": item.get("recommendation"),
+        "writeback": {
+            "enabled": False,
+            "mode": "preview_dry_run_only",
+        },
+    }
+    if action_kind == "billing_review":
+        return {
+            **base,
+            "replicon": {
+                "project": details.get("project_name") or details.get("proyecto") or item.get("entity_label"),
+                "revenue_manager": details.get("revenue_manager"),
+                "revenue_usd": _num(details.get("revenue_usd")),
+                "margin_pct": _num(details.get("margen_bruto_pct")),
+                "wip_usd": _num(details.get("wip_usd")),
+                "billing_gap_usd": _num(details.get("billing_gap_usd")),
+            },
+            "prepared_actions": [
+                "validar WIP y facturacion contra contrato",
+                "confirmar owner financiero",
+                "preparar ajuste Replicon sin ejecutarlo",
+            ],
+        }
+    if action_kind == "replicon_adjustment":
+        return {
+            **base,
+            "replicon": {
+                "consultant": details.get("consultant_name") or details.get("consultor") or item.get("entity_label"),
+                "project": details.get("project_name") or details.get("proyecto"),
+                "allocation_pct": _num(details.get("pct_asignacion")),
+                "billable_hours": _num(details.get("billable_hours")),
+                "non_billable_hours": _num(details.get("horas_no_facturables")),
+            },
+            "prepared_actions": [
+                "validar asignacion/timesheet",
+                "preparar ajuste para owner",
+            ],
+        }
+    if action_kind in {"s4_revenue_review", "s4_business_partner_review", "s4_procurement_review", "sap_review"}:
+        return {
+            **base,
+            "sap_s4hana": {
+                "business_partner": details.get("business_partner"),
+                "customer": details.get("customer_code") or details.get("customer_name"),
+                "supplier": details.get("supplier_code") or details.get("supplier_name"),
+                "open_value": _num(details.get("open_value")),
+                "revenue": _num(details.get("revenue")),
+                "spend": _num(details.get("total_spend")),
+            },
+            "prepared_actions": [
+                "validar maestro/partida en SAP",
+                "adjuntar evidencia a decision",
+                "bloquear write-back hasta aprobacion",
+            ],
+        }
+    if action_kind in {"hcm_access_review", "hcm_org_review"}:
+        return {
+            **base,
+            "sap_hcm": {
+                "pernr": details.get("pernr") or item.get("entity_id"),
+                "position": details.get("position") or details.get("plans"),
+                "cost_center": details.get("cost_center") or details.get("kostl"),
+                "monthly_cost_usd": _num(details.get("monthly_cost_usd") or details.get("salary_monthly_usd")),
+            },
+            "prepared_actions": [
+                "validar baja/posicion/centro de costo",
+                "preparar bloqueo o correccion para aprobacion",
+            ],
+        }
+    if action_kind in {"successfactors_employee_review", "successfactors_recruiting_review"}:
+        return {
+            **base,
+            "sap_successfactors": {
+                "user_id": details.get("user_id") or item.get("entity_id"),
+                "manager": details.get("manager_id") or details.get("manager"),
+                "department": details.get("department"),
+                "job_code": details.get("job_code"),
+                "requisition": details.get("requisition_id"),
+            },
+            "prepared_actions": [
+                "validar owner en SuccessFactors",
+                "preparar correccion o excepcion auditada",
+            ],
+        }
+    return {
+        **base,
+        "prepared_actions": [
+            "solicitar revision de owner",
+            "mantener evidencia y fecha de control",
+        ],
+    }
+
+
 def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]) -> dict[str, Any]:
     impact = _impact_for_item(item)
+    action_payload = _action_payload_for_template(item, template)
     return {
         "mode": mode,
         "external_writeback_enabled": _external_writeback_enabled(),
@@ -2181,12 +2436,14 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
             "selected_option_id": item.get("selected_option_id"),
         },
         "impact": impact,
+        "action_payload": action_payload,
         "operations": [
             {
                 "operation": template.get("action_kind"),
                 "status": "preview" if mode == "preview" else "validated",
                 "requires_approval": True,
                 "external_write": False,
+                "payload": action_payload,
                 "evidence": {
                     "sql": item.get("sql"),
                     "recommendation": item.get("recommendation"),
@@ -4375,6 +4632,132 @@ async def action_dry_run(
     )
     public_item = _with_omega({**item, "execution_status": "dry_run_validated"})
     return {"execution": execution, "payload": payload, "result": result, "item": public_item}
+
+
+async def run_auto_item(
+    item_id: str,
+    user: dict,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    if item.get("status") in TERMINAL_ITEM_STATUSES:
+        raise HTTPException(409, "terminal control room item cannot run automatic mode")
+
+    steps: list[dict[str, Any]] = []
+    investigation = await record_item_step(
+        item_id,
+        "investigation",
+        user,
+        note="Modo automatico: investigacion iniciada",
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+    steps.append({"step": "investigation", "event": investigation.get("event_type")})
+
+    selected = await select_item_option(
+        item_id,
+        "remediate",
+        user,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+    item = selected["item"]
+    steps.append({"step": "options", "option_id": "remediate"})
+
+    if not item.get("decision_id"):
+        decision = await create_decision_for_item(
+            item_id,
+            user,
+            ip=ip,
+            user_agent=user_agent,
+            fetcher=fetcher,
+        )
+        item = decision["item"]
+    else:
+        decision = {"decision": {"id": item.get("decision_id")}, "item": item}
+    steps.append({"step": "decision", "decision_id": item.get("decision_id")})
+
+    template_id = _primary_template_for_item(item)["template_id"]
+    preview = await action_preview(
+        item_id,
+        user,
+        template_id=template_id,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+    dry_run = await action_dry_run(
+        item_id,
+        user,
+        template_id=template_id,
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+    item = dry_run["item"]
+    steps.append({"step": "execution", "template_id": template_id, "status": item.get("execution_status")})
+
+    control = await record_item_step(
+        item_id,
+        "control",
+        user,
+        note="Modo automatico: dry-run validado y control abierto",
+        ip=ip,
+        user_agent=user_agent,
+        fetcher=fetcher,
+    )
+    steps.append({"step": "control", "event": control.get("event_type")})
+
+    pool = await auth.pool()
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="auto_run_completed",
+        metadata={
+            "steps": steps,
+            "decision_id": item.get("decision_id"),
+            "template_id": template_id,
+            "execution_status": item.get("execution_status"),
+            "external_write": False,
+        },
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.auto_run",
+        resource_type="control_room_item",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "steps": steps,
+            "decision_id": item.get("decision_id"),
+            "template_id": template_id,
+            "preview_execution_id": preview.get("execution", {}).get("id"),
+            "dry_run_execution_id": dry_run.get("execution", {}).get("id"),
+            "external_write": False,
+        },
+        critical=True,
+    )
+    return {
+        "auto_run": {
+            "completed": True,
+            "stopped_before_writeback": True,
+            "steps": steps,
+            "template_id": template_id,
+        },
+        "decision": decision.get("decision"),
+        "preview": preview.get("result"),
+        "dry_run": dry_run.get("result"),
+        "item": _with_omega(item),
+    }
 
 
 async def execute_item(
