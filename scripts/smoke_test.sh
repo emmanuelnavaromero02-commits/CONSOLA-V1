@@ -36,6 +36,26 @@ fetch_body() {
   curl -s --max-time 5 "$@"
 }
 
+# Classify an UNAUTHENTICATED probe against a protected endpoint HONESTLY,
+# so a DOWN service is never mislabelled as a security regression:
+#   000          → service down / no connection (start the stack) — NOT a gate result
+#   401 | 403    → auth gate working (request correctly rejected)
+#   5xx          → server error (service broken) — NOT a gate result
+#   anything else→ UNEXPECTED: the anonymous request was NOT rejected (real auth gap)
+auth_gate_check() {
+  local url="$1" label="$2" code
+  # curl already prints "000" via -w on connect failure; `|| true` keeps
+  # set -e happy without double-appending another 000.
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true)"
+  code="${code:-000}"
+  case "$code" in
+    000)         fail "${label}: service DOWN / no connection (000) — is the stack up? (not an auth result)" ;;
+    401|403)     pass "${label}: auth gate OK (unauthenticated rejected, ${code})" ;;
+    5[0-9][0-9]) fail "${label}: server error ${code} — service broken (not an auth result)" ;;
+    *)           fail "${label}: UNEXPECTED ${code} — anonymous request was NOT rejected (possible auth gap)" ;;
+  esac
+}
+
 # ── 1-5. /healthz on the 5 app services ────────────────────────────────
 for svc_port in console:8000 workspace:8001 mcp-infra:8010 vault:8300 refinement:8500; do
   svc="${svc_port%:*}"
@@ -67,23 +87,10 @@ for pair in "sap-hcm:8202" "sap-successfactors:8203" "sap-s4hana:8204"; do
   fi
 done
 
-# ── Replicon /mcp/tools without auth MUST be rejected ──
-code="$(curl -sS -o /dev/null -w '%{http_code}' \
-        http://localhost:8201/mcp/tools 2>/dev/null || echo 000)"
-if [ "$code" = "401" ] || [ "$code" = "403" ]; then
-  pass "replicon /mcp/tools rejects unauthenticated (got ${code})"
-else
-  fail "replicon /mcp/tools UNAUTHENTICATED — P0 security regression (got ${code})"
-fi
-
-# ── Replicon /skills/entities without auth MUST be rejected ──
-code="$(curl -sS -o /dev/null -w '%{http_code}' \
-        http://localhost:8201/skills/entities 2>/dev/null || echo 000)"
-if [ "$code" = "401" ] || [ "$code" = "403" ]; then
-  pass "replicon /skills/* rejects unauthenticated (got ${code})"
-else
-  fail "replicon /skills/* UNAUTHENTICATED — P0 security regression (got ${code})"
-fi
+# ── Replicon /mcp/tools and /skills/* without auth MUST be rejected ──
+# (honest classification: down vs auth-OK vs server-error vs real gap)
+auth_gate_check "http://localhost:8201/mcp/tools" "replicon /mcp/tools"
+auth_gate_check "http://localhost:8201/skills/entities" "replicon /skills/*"
 
 # ── Detect containers in restart loop ──
 restarting="$(docker ps --filter 'status=restarting' --format '{{.Names}}' 2>/dev/null)"
@@ -121,10 +128,13 @@ fi
 # "rejected" — accept either. A 2xx here would be a security regression.
 CODE="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' \
         -X POST http://localhost:8000/monitoring/invoke \
-        -H 'Content-Type: application/json' -d '{}')"
+        -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
+CODE="${CODE:-000}"
 case "$CODE" in
-  401|403) pass "auth gate working (POST /monitoring/invoke → ${CODE})" ;;
-  *)       fail "auth gate broken (POST /monitoring/invoke → ${CODE}, expected 401|403)" ;;
+  000)         fail "console DOWN / no connection (POST /monitoring/invoke → 000) — is the stack up? (not an auth result)" ;;
+  401|403)     pass "auth gate working (POST /monitoring/invoke → ${CODE})" ;;
+  5[0-9][0-9]) fail "console server error (POST /monitoring/invoke → ${CODE}) — service broken (not an auth result)" ;;
+  *)           fail "auth gate broken (POST /monitoring/invoke → ${CODE}, expected 401|403)" ;;
 esac
 
 # ── v1.43.4 (Codex C2): authenticated /mcp/tools must return tools ────

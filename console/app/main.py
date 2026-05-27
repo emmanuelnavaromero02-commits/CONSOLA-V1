@@ -1572,19 +1572,10 @@ async def auth_reset(request: Request, body: dict):
 
 
 def _console_version() -> str:
-    """Read the repo VERSION file (mounted at /app/VERSION in the image).
-    Returns ``unknown`` if it can't be read — never raises."""
-    candidates = [
-        Path("/app/VERSION"),
-        Path(__file__).resolve().parent.parent.parent / "VERSION",
-    ]
-    for p in candidates:
-        try:
-            if p.exists():
-                return p.read_text().strip() or "unknown"
-        except Exception:
-            continue
-    return "unknown"
+    """Deprecated shim — use app.version.app_version(). Kept so existing
+    call sites stay valid; delegates to the single source of truth."""
+    from app.version import app_version
+    return app_version()
 
 
 @app.get("/healthz")

@@ -303,6 +303,27 @@ p {
   background: #f8fafc;
 }
 
+/* Beta-8 runtime confidence pills */
+.header-actions .beta-pill {
+  color: #5b21b6;
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.header-actions .writeback-pill.blocked {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.header-actions .writeback-pill.enabled {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
 .sync-warning {
   flex-basis: 100%;
   margin: -8px 0 0 auto;

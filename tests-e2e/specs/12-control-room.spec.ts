@@ -95,6 +95,8 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     await expect(page.getByText(/vivo 30s/i).first()).toBeVisible();
     await expect(page.getByText(/siguiente/i).first()).toBeVisible();
+    // Beta-8 runtime confidence: write-back is visibly blocked in V1.
+    await expect(page.getByText(/write-back bloqueado v1/i).first()).toBeVisible();
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/push-ready/i);

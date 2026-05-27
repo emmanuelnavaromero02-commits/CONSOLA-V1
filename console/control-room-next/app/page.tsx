@@ -379,6 +379,9 @@ interface Dashboard {
     live_mode?: "polling" | string;
     source_count?: number;
     item_count?: number;
+    version?: string;
+    app_env?: string;
+    write_back_enabled?: boolean;
   };
   workspace: {
     tenant_id?: string;
@@ -1449,6 +1452,9 @@ export default function ControlRoomPage() {
           syncError={syncError}
           liveMode={dashboard?.meta?.live_mode || "polling"}
           refreshSeconds={dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS}
+          version={dashboard?.meta?.version}
+          appEnv={dashboard?.meta?.app_env}
+          writeBackEnabled={dashboard?.meta?.write_back_enabled ?? false}
           onRefresh={refreshAll}
           onAll={navigateAll}
           onDomain={navigateDomain}
@@ -1631,6 +1637,9 @@ function Header({
   syncError,
   liveMode,
   refreshSeconds,
+  version,
+  appEnv,
+  writeBackEnabled,
   onRefresh,
   onAll,
   onDomain,
@@ -1645,6 +1654,9 @@ function Header({
   syncError: string;
   liveMode: string;
   refreshSeconds: number;
+  version?: string;
+  appEnv?: string;
+  writeBackEnabled?: boolean;
   onRefresh: () => void;
   onAll: () => void;
   onDomain: (domain: string) => void;
@@ -1691,6 +1703,18 @@ function Header({
         </nav>
       </div>
       <div className="header-actions">
+        <span
+          className="beta-pill"
+          title={`Entorno: ${appEnv || "—"}${version ? ` · versión ${version}` : ""}`}
+        >
+          Beta{version ? ` ${version}` : ""}
+        </span>
+        <span
+          className={`writeback-pill ${writeBackEnabled ? "enabled" : "blocked"}`}
+          title="El write-back productivo está deshabilitado en V1: solo preview y dry-run."
+        >
+          {writeBackEnabled ? "Write-back ON" : "Write-back bloqueado V1"}
+        </span>
         <span className={`live-pill ${syncError ? "warning" : ""}`}>
           <Activity aria-hidden />
           {syncError ? "Sync con alerta" : `${liveMode === "polling" ? "Vivo" : liveMode} ${refreshSeconds}s`}
