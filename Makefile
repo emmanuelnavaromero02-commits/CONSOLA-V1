@@ -1,9 +1,11 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
 
-.PHONY: help up down nuke logs ps test smoke migrate rotate-keys e2e
+.PHONY: help up down nuke logs ps test smoke migrate rotate-keys e2e preflight demo-check
 
 help:
 	@echo "MODecissionsPaaS — targets:"
+	@echo "  make preflight    check Docker/compose/.env/ports BEFORE 'make up'"
+	@echo "  make demo-check   preflight + the demo validation order (runbook 09)"
 	@echo "  make up           bootstrap secrets and start the stack"
 	@echo "  make down         stop the stack"
 	@echo "  make nuke CONFIRM=NUKE"
@@ -15,6 +17,25 @@ help:
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make migrate      apply pending infra/init SQL migrations to running Postgres"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
+
+# Read-only preflight: Docker daemon, compose plugin, infra/.env, host
+# cryptography (bootstrap mints the Fernet key), occupied ports, and the
+# final demo URLs. Run it BEFORE 'make up' — it chains: make preflight && make up
+preflight:
+	@bash scripts/preflight.sh
+
+# Demo readiness helper: preflight, then the documented validation order.
+demo-check:
+	@bash scripts/preflight.sh || true
+	@echo ""
+	@echo "Demo validation order (see docs/runbook/09_demo_beta.md):"
+	@echo "  1) make preflight"
+	@echo "  2) docker compose -f infra/docker-compose.yml config -q"
+	@echo "  3) make up"
+	@echo "  4) curl :8000/healthz  &&  curl :3000/api/health"
+	@echo "  5) make smoke"
+	@echo "  6) make test"
+	@echo "  7) cd tests-e2e && npx playwright test specs/12-control-room.spec.ts"
 
 up:
 	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d

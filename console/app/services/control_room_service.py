@@ -11,6 +11,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.security import get_internal_api_key
+from app.version import app_version
 from app.services import audit_service, auth
 from app.services.security_context import build_security_context, rls_user_context
 
@@ -3367,6 +3368,12 @@ async def dashboard(
             "live_mode": "polling",
             "source_count": len(sources),
             "item_count": len(items),
+            # Beta-8: runtime confidence — the UI surfaces these so an
+            # operator sees the real version/env and that write-back is
+            # blocked, without trusting a hardcoded label.
+            "version": app_version(),
+            "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
+            "write_back_enabled": _external_writeback_enabled(),
         },
         "workspace": {
             "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
@@ -3480,6 +3487,86 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
         },
         "lessons": _lesson_insights(lesson_rows),
         "alerts": alert_summary,
+    }
+
+
+_ITEM_STATUSES = ("open", "in_review", "decision_created", "approved", "dismissed", "resolved")
+_ITEM_SEVERITIES = ("critical", "high", "medium", "low")
+
+
+async def ops_summary(user: dict | None) -> dict[str, Any]:
+    """Lightweight operational summary for the active workspace.
+
+    Reads ONLY the persisted control-room tables with cheap COUNT/GROUP BY
+    queries — it never runs the heavy dataset-fetch path that ``dashboard``
+    does, so it is safe to poll. Workspace-scoped, no secrets. Useful to
+    answer "does this workspace have data, alert pressure, lessons and
+    action executions?" without rendering the whole cockpit.
+
+    Note: the live alert queue and source states are computed from datasets
+    in ``dashboard`` — here ``items_by_severity`` (open items) is the cheap,
+    persisted proxy for alert pressure.
+    """
+    import os as _os
+
+    tenant_id, workspace_id = _workspace_scope(user)
+    pool = await auth.pool()
+
+    status_rows = await pool.fetch(
+        "SELECT status, COUNT(*) AS n FROM control_room_items "
+        "WHERE workspace_id = $1 GROUP BY status",
+        workspace_id,
+    )
+    items_by_status = {s: 0 for s in _ITEM_STATUSES}
+    for row in status_rows:
+        items_by_status[str(row["status"])] = int(row["n"])
+    total_items = sum(items_by_status.values())
+
+    severity_rows = await pool.fetch(
+        "SELECT severity, COUNT(*) AS n FROM control_room_items "
+        "WHERE workspace_id = $1 AND status = 'open' GROUP BY severity",
+        workspace_id,
+    )
+    open_by_severity = {s: 0 for s in _ITEM_SEVERITIES}
+    for row in severity_rows:
+        open_by_severity[str(row["severity"])] = int(row["n"])
+
+    exec_rows = await pool.fetch(
+        "SELECT status, COUNT(*) AS n FROM control_room_action_executions "
+        "WHERE workspace_id = $1 GROUP BY status",
+        workspace_id,
+    )
+    executions_by_status = {str(row["status"]): int(row["n"]) for row in exec_rows}
+
+    lessons_total = int(await pool.fetchval(
+        "SELECT COUNT(*) FROM control_room_lessons WHERE workspace_id = $1",
+        workspace_id,
+    ) or 0)
+    thresholds_total = int(await pool.fetchval(
+        "SELECT COUNT(*) FROM control_room_thresholds WHERE workspace_id = $1 AND enabled = TRUE",
+        workspace_id,
+    ) or 0)
+    last_item_at = await pool.fetchval(
+        "SELECT MAX(last_seen_at) FROM control_room_items WHERE workspace_id = $1",
+        workspace_id,
+    )
+
+    app_env = _os.environ.get("APP_ENV", "production").strip().lower()
+    writeback_enabled = _external_writeback_enabled()
+    return {
+        "version": app_version(),
+        "app_env": app_env,
+        "active_workspace": workspace_id,
+        "tenant": tenant_id,
+        "items": {"total": total_items, "by_status": items_by_status},
+        "open_items_by_severity": open_by_severity,
+        "action_executions": executions_by_status,
+        "lessons": lessons_total,
+        "thresholds_active": thresholds_total,
+        "last_item_seen_at": last_item_at.isoformat() if last_item_at else None,
+        "write_back_enabled": writeback_enabled,
+        "writeback_blocked_by_default": not writeback_enabled,
+        "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower() in {"1", "true", "yes", "on"},
     }
 
 

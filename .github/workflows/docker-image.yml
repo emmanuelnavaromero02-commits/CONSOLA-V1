@@ -77,6 +77,14 @@ jobs:
           E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
         run: pytest tests/ -q
 
+      # Beta-8: gate the per-cartridge suite too. The conftest shim that lets
+      # `import app` resolve to the right cartridge (and that fixed
+      # `pytest cartridges -q` from the repo root) was previously unprotected,
+      # so a regression could silently re-break it. Deps are already installed
+      # above.
+      - name: Run cartridges/ suite
+        run: pytest cartridges -q
+
   compose-validate:
     runs-on: ubuntu-latest
     steps:

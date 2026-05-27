@@ -281,3 +281,28 @@ def test_smoke_script_has_no_side_effects():
             f"smoke script contains state-changing curl call: {m.group(0)!r}. "
             f"Only POST /monitoring/invoke is allowed (and it's expected to 401/403)."
         )
+
+
+# ── Beta-8: honest auth-gate classification (down != security regression) ──
+
+def test_smoke_distinguishes_down_service_from_security_regression():
+    """A connection-refused (000) must NOT be reported as a security
+    regression. The honest classifier labels it as 'DOWN'."""
+    body = SCRIPT.read_text(encoding="utf-8")
+    assert "auth_gate_check" in body, "smoke must use the honest auth_gate_check helper"
+    # 000 path must say DOWN, not 'security regression'.
+    assert re.search(r"000\)\s*fail .*DOWN", body), (
+        "auth_gate_check must classify 000 as a DOWN service, not a gate result"
+    )
+    assert "P0 security regression" not in body, (
+        "smoke must no longer label an unreachable service as a 'P0 security "
+        "regression' — that confuses audits and demos (a real 2xx-on-anon "
+        "gap is still flagged via the UNEXPECTED branch)"
+    )
+
+
+def test_smoke_auth_gate_still_accepts_401_and_403():
+    body = SCRIPT.read_text(encoding="utf-8")
+    assert re.search(r"401\|403\)\s*pass", body), (
+        "auth_gate_check must still treat 401/403 as a working gate"
+    )
