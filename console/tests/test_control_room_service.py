@@ -288,6 +288,76 @@ async def test_dashboard_adds_real_impact_and_priority_without_inventing_money()
     assert hcm_item["impact_estimate"] is None
 
 
+def test_impact_calculator_uses_cart_specific_cost_basis_when_available():
+    hcm = {
+        "id": "hcm-1",
+        "kind": "anomaly",
+        "cartridge": "sap_hcm",
+        "anomaly_type": "terminated_but_active",
+        "severity": "critical",
+        "threshold_state": "default",
+        "details": {"salary_monthly_usd": 4200},
+    }
+    sf = {
+        "id": "sf-1",
+        "kind": "anomaly",
+        "cartridge": "sap_successfactors",
+        "anomaly_type": "missing_manager",
+        "severity": "medium",
+        "threshold_state": "default",
+        "details": {"affected_employees": 8, "avg_monthly_cost_usd": 3000},
+    }
+    bp = {
+        "id": "bp-1",
+        "kind": "anomaly",
+        "cartridge": "sap_s4hana",
+        "anomaly_type": "missing_address",
+        "severity": "high",
+        "threshold_state": "default",
+        "details": {"business_partner": "BP-1", "open_value": 50000},
+    }
+
+    hcm_impact = control_room_service._impact_for_item(hcm)  # noqa: SLF001
+    sf_impact = control_room_service._impact_for_item(sf)  # noqa: SLF001
+    bp_impact = control_room_service._impact_for_item(bp)  # noqa: SLF001
+
+    assert hcm_impact["estimate"] == 12600
+    assert "monthly_cost_usd * 3" in hcm_impact["formula"]
+    assert sf_impact["estimate"] == 3600
+    assert "affected_employees" in sf_impact["formula"]
+    assert bp_impact["estimate"] == 50000
+    assert bp_impact["drivers"][0]["label"] == "Exposicion BP"
+
+
+def test_action_templates_are_specific_by_cartridge_module_and_anomaly_type():
+    cases = [
+        (
+            {"kind": "anomaly", "cartridge": "sap_hcm", "anomaly_type": "terminated_but_active"},
+            "prepare_hcm_access_review",
+        ),
+        (
+            {"kind": "anomaly", "cartridge": "sap_successfactors", "module_id": "sap_successfactors_recruiting", "anomaly_type": "stale_requisition"},
+            "prepare_successfactors_recruiting_review",
+        ),
+        (
+            {"kind": "anomaly", "cartridge": "sap_s4hana", "anomaly_type": "missing_address"},
+            "prepare_s4_business_partner_review",
+        ),
+        (
+            {"kind": "anomaly", "cartridge": "sap_s4hana", "anomaly_type": "aged_sales_backlog"},
+            "prepare_s4_revenue_review",
+        ),
+        (
+            {"kind": "anomaly", "cartridge": "sap_s4hana", "anomaly_type": "supplier_spend_concentration"},
+            "prepare_s4_procurement_review",
+        ),
+    ]
+
+    for item, expected_template in cases:
+        templates = control_room_service._action_templates_for_item(item)  # noqa: SLF001
+        assert templates[0]["template_id"] == expected_template
+
+
 @pytest.mark.asyncio
 async def test_dashboard_applies_workspace_thresholds_to_detection_and_priority():
     threshold_row = {
@@ -760,6 +830,66 @@ async def test_action_preview_and_dry_run_are_persisted_and_audited():
     actions = [call.kwargs["action"] for call in audit_event.await_args_list]
     assert "control_room.action.preview" in actions
     assert "control_room.action.dry_run" in actions
+
+
+@pytest.mark.asyncio
+async def test_run_auto_item_executes_server_side_safe_flow_and_audits():
+    item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    selected_item = control_room_service._with_omega({**item, "selected_option_id": "remediate", "status": "in_review"})  # noqa: SLF001
+    decision_item = control_room_service._with_omega({**selected_item, "decision_id": 42, "status": "decision_created"})  # noqa: SLF001
+    dry_run_item = control_room_service._with_omega({**decision_item, "execution_status": "dry_run_validated"})  # noqa: SLF001
+    mock_pool = AsyncMock()
+    mock_pool.execute.return_value = None
+
+    with (
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(
+            control_room_service,
+            "record_item_step",
+            new=AsyncMock(side_effect=[
+                {"event_type": "investigation_reviewed"},
+                {"event_type": "control_checked"},
+            ]),
+        ) as record_step,
+        patch.object(control_room_service, "select_item_option", new=AsyncMock(return_value={"item": selected_item})) as select_option,
+        patch.object(
+            control_room_service,
+            "create_decision_for_item",
+            new=AsyncMock(return_value={"decision": {"id": 42}, "item": decision_item}),
+        ) as create_decision,
+        patch.object(
+            control_room_service,
+            "action_preview",
+            new=AsyncMock(return_value={"execution": {"id": 7}, "result": {"mode": "preview"}, "item": decision_item}),
+        ) as preview,
+        patch.object(
+            control_room_service,
+            "action_dry_run",
+            new=AsyncMock(return_value={"execution": {"id": 8}, "result": {"mode": "dry_run"}, "item": dry_run_item}),
+        ) as dry_run,
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.run_auto_item(item["id"], USER, fetcher=finance_fetcher)
+
+    assert result["auto_run"]["completed"] is True
+    assert result["auto_run"]["stopped_before_writeback"] is True
+    assert result["item"]["execution_status"] == "dry_run_validated"
+    select_option.assert_awaited_once()
+    create_decision.assert_awaited_once()
+    preview.assert_awaited_once()
+    dry_run.assert_awaited_once()
+    assert record_step.await_count == 2
+    assert any("auto_run_completed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.auto_run"
+    assert audit_event.await_args.kwargs["critical"] is True
 
 
 @pytest.mark.asyncio

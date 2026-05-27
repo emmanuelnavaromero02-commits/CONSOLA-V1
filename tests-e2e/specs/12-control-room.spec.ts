@@ -217,6 +217,40 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.items.length, "dashboard must expose at least one real operational item").toBeGreaterThan(0);
     const targetItem = dashboard.items[0];
     const csrf = await csrfToken(page);
+    const autoItem = dashboard.items.find((item: { id?: string; status?: string }) => (
+      item.id !== targetItem.id && !["approved", "dismissed", "resolved"].includes(String(item.status || ""))
+    ));
+    if (autoItem?.id) {
+      const autoResetResponse = await page.request.post(
+        `${LEGACY}/api/control-room/items/${encodeURIComponent(autoItem.id)}/reopen`,
+        {
+          headers: { "X-CSRF-Token": csrf },
+          data: { reason: "E2E reset before automatic mode" },
+        },
+      );
+      expect(autoResetResponse.status(), "auto-run item must be reopenable").toBe(200);
+      const autoRunResponse = await page.request.post(
+        `${LEGACY}/api/control-room/items/${encodeURIComponent(autoItem.id)}/auto-run`,
+        {
+          headers: { "X-CSRF-Token": csrf },
+          data: {},
+        },
+      );
+      expect(autoRunResponse.status(), "server-side automatic mode must complete safely").toBe(200);
+      const autoRun = await autoRunResponse.json();
+      expect(autoRun.auto_run.completed).toBe(true);
+      expect(autoRun.auto_run.stopped_before_writeback).toBe(true);
+      expect(autoRun.item.execution_status).toBe("dry_run_validated");
+      const autoActivityResponse = await page.request.get(
+        `${LEGACY}/api/control-room/items/${encodeURIComponent(autoItem.id)}/activity`,
+        { timeout: 30_000 },
+      );
+      expect(autoActivityResponse.status(), "auto-run activity must be visible").toBe(200);
+      const autoActivity = await autoActivityResponse.json();
+      const autoActivityTypes = autoActivity.activity.map((entry: { type?: string }) => entry.type);
+      expect(autoActivityTypes).toContain("auto_run_completed");
+      expect(autoActivityTypes).toContain("action_dry_run");
+    }
     const reopenResponse = await page.request.post(
       `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/reopen`,
       {

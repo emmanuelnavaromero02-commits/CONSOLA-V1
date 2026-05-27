@@ -1284,38 +1284,11 @@ export default function ControlRoomPage() {
     setBusyAction(`auto:${item.id}`);
     setActionError("");
     try {
-      let working = item;
-      await recordStep(working, "investigation", "Modo automatico seguro inicio investigacion", undefined, true);
-      if (!terminalStatuses.has(working.status) && working.selected_option_id !== "remediate") {
-        const selectedPayload = await apiJson<{ item: ControlItem }>(
-          `/api/control-room/items/${encodeURIComponent(working.id)}/option`,
-          { method: "POST", body: JSON.stringify({ option_id: "remediate" }) },
-        );
-        working = selectedPayload.item;
-        refreshAfterMutation(working);
-      }
-      await recordStep(working, "options", "Modo automatico selecciono opcion recomendada", undefined, true);
-      if (!working.decision_id) {
-        const decisionPayload = await apiJson<{ decision: { id: number }; item: ControlItem }>(
-          `/api/control-room/items/${encodeURIComponent(working.id)}/decision`,
-          { method: "POST", body: JSON.stringify({}) },
-        );
-        working = decisionPayload.item;
-        refreshAfterMutation(working);
-      }
-      await recordStep(working, "decision", "Modo automatico preparo decision auditada", undefined, true);
-      const previewPayload = await apiJson<{ item: ControlItem }>(
-        `/api/control-room/items/${encodeURIComponent(working.id)}/action-preview`,
+      const payload = await apiJson<{ item: ControlItem }>(
+        `/api/control-room/items/${encodeURIComponent(item.id)}/auto-run`,
         { method: "POST", body: JSON.stringify({}) },
       );
-      working = previewPayload.item;
-      refreshAfterMutation(working);
-      const dryRunPayload = await apiJson<{ item: ControlItem }>(
-        `/api/control-room/items/${encodeURIComponent(working.id)}/action-dry-run`,
-        { method: "POST", body: JSON.stringify({}) },
-      );
-      refreshAfterMutation(dryRunPayload.item);
-      await recordStep(dryRunPayload.item, "execution", "Modo automatico completo preview y dry-run", undefined, true);
+      refreshAfterMutation(payload.item);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "No se pudo completar el modo automatico seguro");
     } finally {
