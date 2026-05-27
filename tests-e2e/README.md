@@ -1,10 +1,24 @@
 # OMEGA E2E Test Suite (Playwright)
 
 Browser-driven end-to-end tests for the OMEGA console. Validates the
-Next.js console (port 3000), the legacy HTML console (port 8000), the
+Next.js frontend (port 3000), the legacy HTML console (port 8000), the
 FastAPI backend (port 8000), and external service surfaces (Airflow
 8082, Superset 8088, MinIO 9001, Mailhog 8025, MCP cartridges
 8201-8204).
+
+## Architecture (beta, split)
+
+This phase runs a **split** stack — the suite reflects it on purpose and
+is **not** forced 8000-only (forcing every spec onto :8000 currently
+fails ~109 tests):
+
+- **`:3000` — Next.js frontend** (official, *temporary* frontend).
+  `login` / `dashboard` / `cartridges` / `copilot` / `studio` specs run
+  here via `BASE_URL`.
+- **`:8000` — FastAPI backend** — APIs, legacy HTML pages, and the
+  **Control Room** at `http://localhost:8000/control-room`
+  (`CONTROL_ROOM_URL`). The Control Room specs target `:8000` and assert
+  they never call `:3000`.
 
 Sprint v1.44.3.3+ — active regression suite. The tests fail loudly when
 the corresponding surface is broken and are wired into CI through
@@ -26,8 +40,10 @@ The `.env` is gitignored. Required keys:
 |---|---|---|
 | `TEST_EMAIL` | `emmanuel@local.ai` | Must exist in the `users` table |
 | `TEST_PASSWORD` | `Admin123!` | Plaintext — bcrypt'd by the backend for local-dev seed only |
-| `BASE_URL` | `http://localhost:3000` | Next.js console |
-| `LEGACY_URL` | `http://localhost:8000` | FastAPI console |
+| `BASE_URL` | `http://localhost:3000` | Next.js frontend (official, temporary) |
+| `LEGACY_URL` | `http://localhost:8000` | FastAPI backend (HTML pages + APIs) |
+| `BACKEND_URL` | `http://localhost:8000` | Alias used by `fixtures/auth.ts` |
+| `CONTROL_ROOM_URL` | `http://localhost:8000/control-room` | Control Room on the backend (:8000) |
 | `AIRFLOW_URL` | `http://localhost:8082` | **Local compose uses :8082, not :8080** |
 | `SUPERSET_URL` | `http://localhost:8088` |  |
 | `MINIO_CONSOLE_URL` | `http://localhost:9001` |  |
@@ -74,6 +90,7 @@ Open the file (auto-opens in an interactive shell) for:
 | `06-html-pages.spec.ts` | Legacy `/audit`, `/iam`, `/operations`, `/monitor`, etc. |
 | `07-api-endpoints.spec.ts` | FastAPI contracts (auth gate + shape validation) |
 | `08-external-services.spec.ts` | Airflow/Superset/MinIO/Mailhog/MCP |
+| `12-control-room.spec.ts` | Control Room on FastAPI `:8000` — hydrated cockpit, decision/approval/audit flow; asserts **no `:3000` calls** |
 
 ## Interpreting failures
 

@@ -57,26 +57,31 @@ if [ -z "${INTERNAL_API_KEY:-}" ] && [ -f "${ROOT}/infra/.env" ]; then
     export INTERNAL_API_KEY
 fi
 
+# Split architecture (beta): Next.js frontend on :3000 is the official
+# temporary frontend; FastAPI backend on :8000 hosts the APIs and the
+# Control Room. This is intentional — the suite is NOT forced 8000-only.
 BASE_URL="${BASE_URL:-http://localhost:3000}"
 LEGACY_URL="${LEGACY_URL:-http://localhost:8000}"
+CONTROL_ROOM_URL="${CONTROL_ROOM_URL:-${LEGACY_URL}/control-room}"
 
 echo ""
 echo "Preconditions:"
 
-# Next.js healthcheck
+# Next.js frontend healthcheck (official temporary frontend, :3000)
 if curl -sS --max-time 5 -o /dev/null "${BASE_URL}/api/health" 2>/dev/null; then
-    echo "  ✅ Next.js console reachable at ${BASE_URL}"
+    echo "  ✅ Next.js frontend reachable at ${BASE_URL}"
 else
-    echo "  ❌ Next.js console NOT reachable at ${BASE_URL}/api/health"
+    echo "  ❌ Next.js frontend NOT reachable at ${BASE_URL}/api/health"
     echo "     Bring up the stack with: make up"
     exit 1
 fi
 
-# FastAPI healthcheck
+# FastAPI backend healthcheck (APIs + Control Room, :8000)
 if curl -sS --max-time 5 -o /dev/null "${LEGACY_URL}/healthz" 2>/dev/null; then
-    echo "  ✅ Legacy console reachable at ${LEGACY_URL}"
+    echo "  ✅ FastAPI backend reachable at ${LEGACY_URL}"
+    echo "     ↳ Control Room expected at ${CONTROL_ROOM_URL}"
 else
-    echo "  ❌ Legacy console NOT reachable at ${LEGACY_URL}/healthz"
+    echo "  ❌ FastAPI backend NOT reachable at ${LEGACY_URL}/healthz"
     exit 1
 fi
 

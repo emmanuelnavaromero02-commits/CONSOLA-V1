@@ -35,12 +35,16 @@ jobs:
 
       - name: Configure E2E credentials
         run: |
+          # Split architecture (beta): Next.js frontend on :3000 (official,
+          # temporary) + FastAPI backend on :8000 hosting APIs and the
+          # Control Room. NOT forced 8000-only.
           {
             echo "TEST_EMAIL=emmanuel@local.ai"
             echo "TEST_PASSWORD=Admin123!"
             echo "BASE_URL=http://127.0.0.1:3000"
             echo "LEGACY_URL=http://127.0.0.1:8000"
             echo "BACKEND_URL=http://127.0.0.1:8000"
+            echo "CONTROL_ROOM_URL=http://127.0.0.1:8000/control-room"
             echo "OPEN_REPORT=0"
           } > tests-e2e/.env
 

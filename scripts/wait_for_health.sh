@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Wait until the local OMEGA compose stack is ready for smoke/E2E.
+#
+# Split architecture (beta): waits for BOTH the Next.js frontend on
+# :3000 (official, temporary) AND the FastAPI backend on :8000 (APIs +
+# Control Room). This is intentional — the stack is not 8000-only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
