@@ -497,6 +497,16 @@ const statusLabels: Record<string, string> = {
 
 const manualTabs = ["Investigacion", "Opciones", "Decision", "Ejecucion", "Control", "Reglas"];
 const manualStepIds = ["investigation", "options", "decision", "execution", "control", "lessons"];
+// One-line purpose per manual OMEGA step so each tab reads as a real titled
+// section instead of bare controls.
+const manualStepPurpose = [
+  "Revisa causa probable, impacto y recomendacion antes de decidir.",
+  "Compara las acciones por impacto, tiempo, riesgo y score.",
+  "Crea o revisa la decision operativa ligada a esta senal.",
+  "Genera preview y valida en dry-run. Write-back productivo bloqueado en V1.",
+  "Da seguimiento a owners, estado y proximos pasos del control.",
+  "Persiste y aplica lecciones aprendidas a este patron.",
+];
 const DEFAULT_REFRESH_INTERVAL_SECONDS = 30;
 const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const defaultOmegaSteps = [
@@ -1440,6 +1450,8 @@ export default function ControlRoomPage() {
           liveMode={dashboard?.meta?.live_mode || "polling"}
           refreshSeconds={dashboard?.meta?.refresh_interval_seconds || DEFAULT_REFRESH_INTERVAL_SECONDS}
           onRefresh={refreshAll}
+          onAll={navigateAll}
+          onDomain={navigateDomain}
         />
 
         {state === "error" ? (
@@ -1620,6 +1632,8 @@ function Header({
   liveMode,
   refreshSeconds,
   onRefresh,
+  onAll,
+  onDomain,
 }: {
   context: ActiveContext;
   period: string;
@@ -1632,13 +1646,49 @@ function Header({
   liveMode: string;
   refreshSeconds: number;
   onRefresh: () => void;
+  onAll: () => void;
+  onDomain: (domain: string) => void;
 }) {
   return (
     <header className="header">
       <div>
         <span className="header-eyebrow">{context.eyebrow}</span>
         <h1>{context.title}</h1>
-        <p>Sala de Control / {context.level === "portfolio" ? "Todos" : context.title} · {period}</p>
+        <nav className="breadcrumb" aria-label="Ruta de navegacion">
+          <button
+            type="button"
+            className="crumb"
+            onClick={onAll}
+            aria-current={context.level === "portfolio" ? "page" : undefined}
+          >
+            Sala de Control
+          </button>
+          <span className="crumb-sep" aria-hidden>/</span>
+          {context.level === "portfolio" ? (
+            <span className="crumb current" aria-current="page">Todos</span>
+          ) : (
+            <>
+              {context.level === "domain" ? (
+                <span className="crumb current" aria-current="page">{context.domainLabel}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="crumb"
+                  onClick={() => context.domainLabel && onDomain(context.domainLabel)}
+                >
+                  {context.domainLabel}
+                </button>
+              )}
+              {context.level === "module" && context.moduleLabel ? (
+                <>
+                  <span className="crumb-sep" aria-hidden>/</span>
+                  <span className="crumb current" aria-current="page">{context.moduleLabel}</span>
+                </>
+              ) : null}
+            </>
+          )}
+          <span className="crumb-period">· {period}</span>
+        </nav>
       </div>
       <div className="header-actions">
         <span className={`live-pill ${syncError ? "warning" : ""}`}>
@@ -3245,6 +3295,12 @@ function ManualFlow({
         ))}
       </div>
 
+      <header className="step-header">
+        <span className="section-kicker">Paso {tab + 1} de {manualTabs.length}</span>
+        <h3>{manualTabs[tab]}</h3>
+        <p>{manualStepPurpose[tab]}</p>
+      </header>
+
       <div className="panel">
         {tab === 0 ? (
           <InvestigationPanel
@@ -3562,11 +3618,21 @@ function ExecutionBridge({
           {busyAction === `dryrun:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <ShieldCheck aria-hidden />}
           Dry-run
         </button>
-        <button type="button" className="ghost-action" onClick={() => onExecute(item)} disabled={busyAction !== ""}>
+        <button
+          type="button"
+          className="ghost-action"
+          onClick={() => onExecute(item)}
+          disabled={busyAction !== ""}
+          title="Write-back productivo deshabilitado en V1: solo preview y dry-run"
+        >
           {busyAction === `execute:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <Play aria-hidden />}
           Ejecutar
         </button>
       </div>
+      <p className="execution-note" role="note">
+        Preview y dry-run son seguros y auditados. <strong>Ejecutar</strong> haria write-back
+        productivo, deshabilitado en V1; el backend lo bloquea y registra el intento.
+      </p>
     </article>
   );
 }
