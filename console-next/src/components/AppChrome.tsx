@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/LogoutButton";
+import { legacyConsoleUrl } from "@/lib/legacy-url";
 import { cn } from "@/lib/utils";
 
 const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
@@ -14,21 +15,29 @@ interface NavItem {
   href:  string;
   label: string;
   icon:  string;
+  // External (absolute) target served by the FastAPI backend on :8000,
+  // rendered as a plain <a> instead of a Next.js <Link>.
+  external?: boolean;
 }
 
 /**
- * v1.44.4 Group 1 — primary navigation. Each entry maps to a
+ * v1.44.4 Group 1 — primary navigation. Internal entries map to a
  * real Next.js page; routes that only exist as legacy HTML on
  * :8000 (analytics, sub-modules under operations) are NOT
  * listed here until the Next.js page is wired so the navbar
  * never offers a dead link.
+ *
+ * Control Room is the exception: it stays on the FastAPI backend
+ * (:8000/control-room) for this phase, so it's surfaced here as a
+ * first-class external link rather than reimplemented inside Next.
  */
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",  label: "Panel",       icon: "▦" },
-  { href: "/copilot",    label: "Copiloto",    icon: "◈" },
-  { href: "/cartridges", label: "Cartuchos",   icon: "□" },
-  { href: "/studio",     label: "Studio",      icon: "◇" },
-  { href: "/operations", label: "Operaciones", icon: "⚙" },
+  { href: "/dashboard",  label: "Panel",        icon: "▦" },
+  { href: "/copilot",    label: "Copiloto",     icon: "◈" },
+  { href: "/cartridges", label: "Cartuchos",    icon: "□" },
+  { href: "/studio",     label: "Studio",       icon: "◇" },
+  { href: "/operations", label: "Operaciones",  icon: "⚙" },
+  { href: legacyConsoleUrl("/control-room"), label: "Control Room", icon: "◉", external: true },
 ];
 
 function userLabel(email: string): string {
@@ -206,23 +215,31 @@ export function AppChrome({ children }: { children: ReactNode }) {
           >
             <ul className="flex items-center gap-0.5">
               {NAV_ITEMS.map((item) => {
-                const active = isActive(pathname, item.href);
+                const active = !item.external && isActive(pathname, item.href);
+                const className = cn(
+                  "inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active
+                    ? "bg-accent/15 text-foreground"
+                    : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                );
                 return (
                   <li key={item.href}>
-                    <Link
-                      prefetch={false}
-                      href={item.href}
-                      aria-current={active ? "page" : undefined}
-                      className={cn(
-                        "inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        active
-                          ? "bg-accent/15 text-foreground"
-                          : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
-                      )}
-                    >
-                      <span aria-hidden className="text-sm leading-none">{item.icon}</span>
-                      {item.label}
-                    </Link>
+                    {item.external ? (
+                      <a href={item.href} rel="noopener noreferrer" className={className}>
+                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
+                        {item.label}
+                      </a>
+                    ) : (
+                      <Link
+                        prefetch={false}
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        className={className}
+                      >
+                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
+                        {item.label}
+                      </Link>
+                    )}
                   </li>
                 );
               })}
@@ -288,24 +305,37 @@ export function AppChrome({ children }: { children: ReactNode }) {
             >
               <ul className="space-y-1">
                 {NAV_ITEMS.map((item) => {
-                  const active = isActive(pathname, item.href);
+                  const active = !item.external && isActive(pathname, item.href);
+                  const className = cn(
+                    "flex min-h-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    active
+                      ? "bg-accent/20 text-foreground"
+                      : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                  );
                   return (
                     <li key={item.href}>
-                      <Link
-                        prefetch={false}
-                        href={item.href}
-                        onClick={() => setMobileOpen(false)}
-                        aria-current={active ? "page" : undefined}
-                        className={cn(
-                          "flex min-h-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          active
-                            ? "bg-accent/20 text-foreground"
-                            : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
-                        )}
-                      >
-                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
-                        {item.label}
-                      </Link>
+                      {item.external ? (
+                        <a
+                          href={item.href}
+                          rel="noopener noreferrer"
+                          onClick={() => setMobileOpen(false)}
+                          className={className}
+                        >
+                          <span aria-hidden className="text-sm leading-none">{item.icon}</span>
+                          {item.label}
+                        </a>
+                      ) : (
+                        <Link
+                          prefetch={false}
+                          href={item.href}
+                          onClick={() => setMobileOpen(false)}
+                          aria-current={active ? "page" : undefined}
+                          className={className}
+                        >
+                          <span aria-hidden className="text-sm leading-none">{item.icon}</span>
+                          {item.label}
+                        </Link>
+                      )}
                     </li>
                   );
                 })}

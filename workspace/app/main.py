@@ -22,12 +22,13 @@ from urllib.parse import quote
 
 import asyncpg
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.services import session as _session, consumer_assistant as _ca
+from app.services.csrf import require_csrf
 from app.services.rate_limiter import get_rate_limiter
 from app.security import get_internal_api_key
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
@@ -457,7 +458,7 @@ async def api_config(request: Request):
     return {"console_url": CONSOLE_URL}
 
 
-@app.post("/auth/logout")
+@app.post("/auth/logout", dependencies=[Depends(require_csrf)])
 async def auth_logout(request: Request):
     token = request.cookies.get(_session.COOKIE_NAME)
     if token:
@@ -469,7 +470,7 @@ async def auth_logout(request: Request):
 
 # ── Consumer chat ──────────────────────────────────────────────────────────
 
-@app.post("/workspace/chat")
+@app.post("/workspace/chat", dependencies=[Depends(require_csrf)])
 async def workspace_chat(request: Request, body: dict):
     user = require_user(request)
     message = (body.get("message") or "").strip()
@@ -479,14 +480,14 @@ async def workspace_chat(request: Request, body: dict):
     return await _ca.chat(message, history, user=user)
 
 
-@app.post("/workspace/chat/refresh-context")
+@app.post("/workspace/chat/refresh-context", dependencies=[Depends(require_csrf)])
 async def workspace_refresh(request: Request):
     require_user(request)
     _ca.invalidate_caches()
     return {"refreshed": True}
 
 
-@app.post("/workspace/chat/stream")
+@app.post("/workspace/chat/stream", dependencies=[Depends(require_csrf)])
 async def workspace_chat_stream(request: Request, body: dict):
     """SSE-style streaming chat: emits tool_use / tool_result / text / done / error
     events as the assistant runs, so the UI can show a live reasoning trail."""
@@ -697,6 +698,12 @@ def _app_wrapper_html(name: str, datasets_used: list[str]) -> str:
           if (method === "POST") {{
             headers["Content-Type"] = "application/json";
             requestBody = typeof msg.body === "string" ? msg.body : null;
+            // POST /api/data/*/query is CSRF-protected. The wrapper runs in
+            // the workspace top origin, so it can read the (non-HttpOnly)
+            // csrf_token cookie and echo it back. The sandboxed app iframe
+            // cannot, which is exactly the boundary we want.
+            const csrfMatch = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            if (csrfMatch) headers["X-CSRF-Token"] = decodeURIComponent(csrfMatch[1]);
           }}
           const response = await fetch(url.pathname + url.search, {{
             method,
@@ -807,7 +814,7 @@ async def api_data_options(request: Request, dataset: str, columns: str = ""):
     return options
 
 
-@app.post("/api/data/{dataset}/query")
+@app.post("/api/data/{dataset}/query", dependencies=[Depends(require_csrf)])
 async def api_data_query(request: Request, dataset: str, body: dict):
     """Filtered query against a gold dataset (mirrors console for app compat)."""
     user = require_user(request)
@@ -1020,7 +1027,7 @@ async def api_decisions_list(request: Request, status: str = "", overdue: str = 
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 
-@app.post("/api/decisions")
+@app.post("/api/decisions", dependencies=[Depends(require_csrf)])
 async def api_decisions_create(request: Request, body: dict):
     user = require_user(request)
     title = (body.get("title") or "").strip()
@@ -1065,7 +1072,7 @@ async def api_decisions_get(request: Request, decision_id: int):
     return out
 
 
-@app.patch("/api/decisions/{decision_id}")
+@app.patch("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
 async def api_decisions_update(request: Request, decision_id: int, body: dict):
     user = require_user(request)
     existing = await _dec_load(decision_id, user)
@@ -1111,7 +1118,7 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
     return _dec_row_to_dict(row)
 
 
-@app.delete("/api/decisions/{decision_id}")
+@app.delete("/api/decisions/{decision_id}", dependencies=[Depends(require_csrf)])
 async def api_decisions_delete(request: Request, decision_id: int):
     user = require_user(request)
     existing = await _dec_load(decision_id, user)
@@ -1128,7 +1135,7 @@ async def api_decisions_delete(request: Request, decision_id: int):
     return {"deleted": True, "id": decision_id}
 
 
-@app.post("/api/decisions/{decision_id}/actions")
+@app.post("/api/decisions/{decision_id}/actions", dependencies=[Depends(require_csrf)])
 async def api_decisions_add_action(request: Request, decision_id: int, body: dict):
     user = require_user(request)
     existing = await _dec_load(decision_id, user)
