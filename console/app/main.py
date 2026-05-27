@@ -1571,6 +1571,22 @@ async def auth_reset(request: Request, body: dict):
     return resp
 
 
+def _console_version() -> str:
+    """Read the repo VERSION file (mounted at /app/VERSION in the image).
+    Returns ``unknown`` if it can't be read — never raises."""
+    candidates = [
+        Path("/app/VERSION"),
+        Path(__file__).resolve().parent.parent.parent / "VERSION",
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                return p.read_text().strip() or "unknown"
+        except Exception:
+            continue
+    return "unknown"
+
+
 @app.get("/healthz")
 async def healthz():
     """Sprint v1.21 (F2): liveness probe for the compose healthcheck.
@@ -1578,8 +1594,17 @@ async def healthz():
     running. Used by infra/docker-compose.yml so dependent services
     wait on service_healthy instead of service_started, avoiding the
     boot race where console answers before its lifespan has wired the
-    DB pool."""
-    return {"ok": True, "service": "console"}
+    DB pool.
+
+    Carries ``version`` + ``app_env`` (no secrets) so an operator can
+    confirm WHAT is deployed without authenticating — useful for the
+    beta/demo runbook's health checks."""
+    return {
+        "ok": True,
+        "service": "console",
+        "version": _console_version(),
+        "app_env": _app_env(),
+    }
 
 
 async def _dependency_health(name: str, url: str, server: str | None = None) -> dict:
@@ -1647,18 +1672,7 @@ async def api_config(request: Request):
 
 @app.get("/api/system/info")
 async def system_info(user: dict = Depends(require_authenticated)):
-    candidates = [
-        Path("/app/VERSION"),
-        Path(__file__).resolve().parent.parent.parent / "VERSION",
-    ]
-    version = "unknown"
-    for p in candidates:
-        try:
-            if p.exists():
-                version = p.read_text().strip()
-                break
-        except Exception:
-            continue
+    version = _console_version()
     # v1.43.2 (Frontend R1 hardening): expose ``dev_mode`` so the UI
     # can hide CTAs that gate on dev-only mcp-infra tools (Studio
     # Deploy DAG, etc). Pre-v1.43.2 the console rendered those
