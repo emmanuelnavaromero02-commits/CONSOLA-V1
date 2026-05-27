@@ -84,6 +84,11 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       timeout: 30_000,
     });
     await expect(page.getByText(/conectores .* modulos operativos/i).first()).toBeVisible();
+    // Contextual breadcrumb: portfolio level shows "Sala de Control / Todos".
+    const breadcrumb = page.getByRole("navigation", { name: /ruta de navegacion/i });
+    await expect(breadcrumb).toBeVisible();
+    await expect(breadcrumb).toContainText(/sala de control/i);
+    await expect(breadcrumb).toContainText(/todos/i);
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista portfolio/i);
     await expect(page.getByRole("button", { name: /refrescar/i })).toBeEnabled({
       timeout: 15_000,
@@ -186,6 +191,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await page.getByRole("button", { name: /^finanzas\s+\d+/i }).first().click();
     await expect(page).toHaveURL(/\/control-room\?domain=Finanzas/);
     await expect(page.getByRole("heading", { name: /^finanzas$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: /ruta de navegacion/i })).toContainText(/finanzas/i);
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de dominio/i);
     await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/vista exclusiva/i);
     await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/datasets/i);
@@ -198,6 +204,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await page.getByRole("button", { name: /margen y facturacion\s+\d+/i }).first().click();
     await expect(page).toHaveURL(/\/control-room\?module=replicon_finance/);
     await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: /ruta de navegacion/i })).toContainText(/margen y facturacion/i);
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
     await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/Margen y Facturacion/i);
     await expect(page.getByText(/estado del modulo/i)).toBeVisible();
@@ -309,6 +316,8 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByRole("tab", { name: /ejecucion/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /control/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /reglas/i })).toBeVisible();
+    // Each manual step renders as a titled section ("Paso N de 6").
+    await expect(page.getByText(/paso 1 de 6/i)).toBeVisible();
     await expect(page.getByRole("region", { name: /bitacora operativa/i })).toBeVisible();
     await page.getByRole("button", { name: /registrar investigacion revisada/i }).click();
     await expect(page.getByText(/investigacion revisada/i).first()).toBeVisible({
@@ -338,6 +347,8 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
 
     await page.getByRole("tab", { name: /ejecucion/i }).click();
+    // Execution clarity: write-back productivo is disabled in V1.
+    await expect(page.getByText(/deshabilitado en v1/i).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /^preview$/i }).first()).toBeVisible();
     await page.getByRole("button", { name: /^preview$/i }).first().click();
     await expect(page.getByText(/preview_generated/i)).toBeVisible({
