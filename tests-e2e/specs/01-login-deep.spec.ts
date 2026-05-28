@@ -10,7 +10,7 @@ import { test, expect, request as pwRequest } from "@playwright/test";
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
-const FRONT = process.env.BASE_URL || "http://localhost:3000";
+const FRONT = process.env.BASE_URL || "http://localhost:8000";
 const BACKEND = process.env.LEGACY_URL || "http://localhost:8000";
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
 const PASSWORD = process.env.TEST_PASSWORD || "";
@@ -157,7 +157,7 @@ test.describe("Login — happy path", () => {
 });
 
 test.describe("Middleware + unauth redirects", () => {
-  for (const path of ["/dashboard", "/cartridges", "/cartridges/replicon", "/copilot"]) {
+  for (const path of ["/dashboard", "/cartridges", "/cartridges/viewer?id=replicon", "/copilot"]) {
     test(`unauthenticated ${path} → /login with ?next=`, async ({ page }) => {
       await page.context().clearCookies();
       await page.goto(path);

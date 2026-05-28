@@ -87,6 +87,13 @@ def test_upload_spec_rejects_unsafe_names(monkeypatch):
         cartridge_service.upload_spec("replicon", "../openapi.yaml", "ok")
 
 
+def test_upload_code_rejects_unsafe_names_before_minio(monkeypatch):
+    with pytest.raises(ValueError, match="invalid cartridge_id"):
+        cartridge_service.upload_code("../replicon", "extract.py", "ok")
+    with pytest.raises(ValueError, match="invalid filename"):
+        cartridge_service.upload_code("replicon", "../extract.py", "ok")
+
+
 def test_seed_sql_splitter_preserves_semicolons_inside_literals():
     statements = _split_sql_statements(
         "INSERT INTO analytic_apps (name, html) VALUES ('demo', '<script>a();</script>');"

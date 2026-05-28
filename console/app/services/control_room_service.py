@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,7 @@ from app.services.security_context import build_security_context, rls_user_conte
 
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500").rstrip("/")
+logger = logging.getLogger(__name__)
 
 ACTIVE_INSTALLATION_STATUSES = {"ready", "active"}
 CONTROL_ROOM_REFRESH_INTERVAL_SECONDS = 30
@@ -1318,16 +1320,18 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
             (user or {}).get("id"),
         )
         return [_row_to_public(row) for row in rows]
-    except Exception:
+    except Exception as exc:
+        logger.warning("control_room catalog unavailable; modules marked unavailable", exc_info=exc)
         allowed = _allowed_from_user(user)
         modules = MODULES if allowed is None else [module for module in MODULES if module.cartridge in allowed]
         return [
             {
                 "cartridge_id": module.cartridge,
-                "installation_status": "ready",
-                "current_step": "fallback",
+                "installation_status": "unavailable",
+                "current_step": "catalog_unavailable",
                 "label": module.label,
                 "category": "platform" if module.operational else "cartridge",
+                "error_message": "catalog unavailable; connector readiness not assumed",
             }
             for module in modules
         ]
@@ -1954,10 +1958,7 @@ def _lessons_for_item(item: dict[str, Any]) -> list[str]:
                     cleaned.append(text)
     if cleaned:
         return cleaned
-    return [
-        f"Si {item.get('source_dataset')} genera {item.get('anomaly_type')}, abrir revision OMEGA.",
-        "Toda aprobacion debe quedar ligada a decision_actions y audit_events.",
-    ]
+    return []
 
 
 def _external_writeback_enabled() -> bool:
@@ -2878,7 +2879,7 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "assigned": "assigned",
         "snoozed": "snoozed",
     }.get(alert_status, "not_configured")
-    push_ready = alert_status != "snoozed"
+    push_ready = False
     return {
         "id": f"alert:{item.get('id')}",
         "item_id": item.get("id"),
@@ -2910,8 +2911,8 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "push_ready": push_ready,
         "delivery": {
             "status": delivery_status,
-            "channels": ["email", "slack", "teams"],
-            "reason": "Push externo queda preparado; no se envia en V1."
+            "channels": [],
+            "reason": "Canal externo no configurado en V1; la alerta queda solo en cola interna."
             if alert_status == "open"
             else f"Alerta en estado {alert_status}; no hay push externo en V1.",
         },
@@ -3367,6 +3368,7 @@ async def dashboard(
             "live_mode": "polling",
             "source_count": len(sources),
             "item_count": len(items),
+            "external_writeback_enabled": _external_writeback_enabled(),
         },
         "workspace": {
             "tenant_id": (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id"),
@@ -4900,14 +4902,15 @@ async def approve_item(
         event_type="approved",
         metadata={"decision_id": decision_id, "action_id": dict(action).get("id")},
     )
-    await _record_item_event(
-        pool,
-        user=user,
-        item=item,
-        event_type="lesson_recorded",
-        metadata={"decision_id": decision_id, "lessons": lessons},
-    )
-    await _persist_lessons(pool, user=user, item=item, decision_id=decision_id, lessons=lessons)
+    if lessons:
+        await _record_item_event(
+            pool,
+            user=user,
+            item=item,
+            event_type="lesson_recorded",
+            metadata={"decision_id": decision_id, "lessons": lessons},
+        )
+        await _persist_lessons(pool, user=user, item=item, decision_id=decision_id, lessons=lessons)
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

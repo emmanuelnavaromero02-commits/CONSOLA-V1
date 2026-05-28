@@ -94,7 +94,8 @@ test.describe("Dashboard (Next.js, /dashboard)", () => {
     authedPage: page,
   }) => {
     await page.goto("/dashboard");
-    // The dashboard freshness table contains <Link href="/cartridges/<id>">
+    // The dashboard freshness table contains exported viewer links:
+    // <Link href="/cartridges/viewer?id=<id>">
     // entries — those are the documented affordance to navigate to
     // cartridges from the dashboard. If neither a topbar nor an
     // in-table link exists, the user is stranded.
@@ -102,15 +103,15 @@ test.describe("Dashboard (Next.js, /dashboard)", () => {
     await expect(directLinks.first()).toBeAttached({ timeout: 10_000 });
   });
 
-  test("clicking a cartridge link navigates to /cartridges/<id>", async ({
+  test("clicking a cartridge link navigates to /cartridges/viewer?id=<id>", async ({
     authedPage: page,
   }) => {
     await page.goto("/dashboard");
-    const link = page.locator('a[href^="/cartridges/"]').first();
+    const link = page.locator('a[href^="/cartridges/viewer"]').first();
     await expect(link).toBeVisible({ timeout: 10_000 });
     const href = await link.getAttribute("href");
-    expect(href).toMatch(/^\/cartridges\/[a-z_]+$/);
+    expect(href).toMatch(/^\/cartridges\/viewer\/?\?id=[a-z_]+$/);
     await link.click();
-    await page.waitForURL(/\/cartridges\/[a-z_]+/);
+    await page.waitForURL(/\/cartridges\/viewer\/?\?id=[a-z_]+/);
   });
 });

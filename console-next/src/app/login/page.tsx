@@ -6,10 +6,9 @@ import { loginUser, type LoginError } from "@/lib/auth-flow";
 /**
  * v1.44.2 — login screen.
  *
- * v1.44.3.2.2 (R-Mac): used to POST /api/auth/login via the axios
- * client; the real endpoint is /auth/login AND requires a CSRF
- * round-trip Codex's diagnostic uncovered. Both fixes land in
- * lib/auth-flow.ts:loginUser — this component just calls it.
+ * v1.44.3.2.2 (R-Mac): the real endpoint is /auth/login and requires
+ * a CSRF round-trip. That flow lives in lib/auth-flow.ts:loginUser;
+ * this component just calls it.
  *
  * Keep this page dependency-light: it is the public gateway and
  * carries a strict first-load JS budget in E2E.
@@ -31,10 +30,32 @@ export default function LoginPage() {
 function safeNextPath(): string {
   if (typeof window === "undefined") return "/dashboard";
   const nextPath = new URLSearchParams(window.location.search).get("next");
-  if (!nextPath || !nextPath.startsWith("/") || nextPath.startsWith("//")) {
-    return "/dashboard";
+  const referrer = document.referrer ? new URL(document.referrer, window.location.origin) : null;
+
+  if (nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//")) {
+    if (
+      referrer
+      && referrer.origin === window.location.origin
+      && referrer.pathname === nextPath
+      && referrer.search
+    ) {
+      return `${nextPath}${referrer.search}`;
+    }
+    return nextPath;
   }
-  return nextPath;
+
+  if (nextPath) {
+    try {
+      const url = new URL(nextPath);
+      const sameHost = url.protocol === window.location.protocol && url.hostname === window.location.hostname;
+      const trustedWorkspacePort = url.port === "8001" || url.port === "8000";
+      if (sameHost && trustedWorkspacePort) return url.href;
+    } catch {
+      return "/dashboard";
+    }
+  }
+
+  return "/dashboard";
 }
 
 function LoginCard() {
@@ -65,7 +86,7 @@ function LoginCard() {
       // status-specific human-readable message on every failure.
       await loginUser(email, password);
       window.localStorage.setItem("omega_user_email", email);
-      window.location.assign(safeNextPath());
+      window.location.replace(safeNextPath());
     } catch (err: unknown) {
       const e = err as LoginError;
       const message = e?.message || "No se pudo iniciar sesión. Intenta de nuevo.";

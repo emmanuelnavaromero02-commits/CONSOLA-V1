@@ -32,7 +32,7 @@
  *   GET    /security/audit
  *     → list of { id, user_id, user_email, action,
  *                 resource_type, resource_id, details, ip,
- *                 created_at }
+ *                 request_id, created_at }
  *     Permission: security.audit.read
  *
  *   GET    /api/vault/connections/{cartridge}
@@ -40,8 +40,8 @@
  *     Permission: vault.connections.read
  *
  *   GET    /api/vault/secrets/{scope}
- *     → { secrets: [...] }  (server emits Vault's native
- *       shape — secrets are masked unless reveal is called)
+ *     → { keys: [...] } from the Vault service today; the TS
+ *       client normalizes that into { secrets: [{ key }] }.
  *     Permission: vault.secrets.read_masked
  */
 
@@ -103,6 +103,7 @@ export interface AuditEvent {
   resource_id:    string | null;
   details:        Record<string, unknown> | null;
   ip:             string | null;
+  request_id:     string | null;
   created_at:     string | null;
 }
 
@@ -120,11 +121,18 @@ export interface AuditEvent {
  * Kept loose with an index signature so the UI doesn't break
  * if Vault adds a field.
  */
+export type VaultAuthMethod = "bearer_token" | "basic" | "api_key" | "none" | string;
+
+
 export interface VaultConnection {
-  id:              string;
+  id?:             string;
+  conn_id?:        string;
   cartridge?:      string;
   kind?:           string;
   label?:          string;
+  base_url?:       string | null;
+  auth_method?:    VaultAuthMethod | null;
+  token?:          string | null;
   created_at?:     string | null;
   rotated_at?:     string | null;
   last_used_at?:   string | null;
@@ -134,4 +142,33 @@ export interface VaultConnection {
 
 export interface VaultConnectionsResponse {
   connections: VaultConnection[];
+}
+
+
+export interface VaultConnectionPayload {
+  base_url:      string;
+  auth_method:   VaultAuthMethod;
+  token?:        string;
+  [key: string]: unknown;
+}
+
+
+export interface VaultSecret {
+  key?:          string;
+  name?:         string;
+  value?:        string | null;
+  masked?:       string | null;
+  created_at?:   string | null;
+  rotated_at?:   string | null;
+  [key: string]: unknown;
+}
+
+
+export interface VaultSecretsResponse {
+  secrets: VaultSecret[];
+}
+
+
+export interface VaultSecretPayload {
+  value: string;
 }

@@ -379,6 +379,7 @@ interface Dashboard {
     live_mode?: "polling" | string;
     source_count?: number;
     item_count?: number;
+    external_writeback_enabled?: boolean;
   };
   workspace: {
     tenant_id?: string;
@@ -1477,6 +1478,7 @@ export default function ControlRoomPage() {
             onPreview={previewAction}
             onDryRun={dryRunAction}
             onExecute={executeLive}
+            externalWritebackEnabled={Boolean(dashboard?.meta?.external_writeback_enabled)}
             onRunAuto={runAuto}
             onApprove={approve}
             onDismiss={dismiss}
@@ -2047,18 +2049,18 @@ function AlertQueuePanel({
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const topAlerts = alerts.slice(0, 6);
   const critical = alerts.filter((alert) => alert.severity === "critical").length;
-  const pushReady = alerts.filter((alert) => alert.push_ready).length;
+  const routedInternally = alerts.filter((alert) => alert.delivery?.status !== "snoozed").length;
   return (
     <section className="alert-queue-panel" aria-label="Cola de alertas operativas">
       <div className="alert-queue-header">
         <div>
           <p className="section-kicker">Alertas y prioridad</p>
           <h2>{alerts.length} alertas activas para {context.title}</h2>
-          <span>{pushReady} listas para ruteo · {critical} criticas · sin push externo en V1</span>
+          <span>{routedInternally} en cola interna · {critical} criticas · sin push externo en V1</span>
         </div>
         <div className="alert-route-pill">
           <Send aria-hidden />
-          Push-ready
+          Cola interna
         </div>
       </div>
       {actionMessage ? <p className="alert-action-message" role="status">{actionMessage}</p> : null}
@@ -2876,6 +2878,7 @@ function DetailPage({
   onPreview,
   onDryRun,
   onExecute,
+  externalWritebackEnabled,
   onRunAuto,
   onApprove,
   onDismiss,
@@ -2901,6 +2904,7 @@ function DetailPage({
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
+  externalWritebackEnabled: boolean;
   onRunAuto: (item: ControlItem) => void;
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
@@ -3021,6 +3025,7 @@ function DetailPage({
           onPreview={onPreview}
           onDryRun={onDryRun}
           onExecute={onExecute}
+          externalWritebackEnabled={externalWritebackEnabled}
           onApprove={onApprove}
           onDismiss={onDismiss}
           onCreateLesson={onCreateLesson}
@@ -3201,6 +3206,7 @@ function ManualFlow({
   onPreview,
   onDryRun,
   onExecute,
+  externalWritebackEnabled,
   onApprove,
   onDismiss,
   onCreateLesson,
@@ -3218,6 +3224,7 @@ function ManualFlow({
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
+  externalWritebackEnabled: boolean;
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
   onCreateLesson: (item: ControlItem, rule: string) => void;
@@ -3279,6 +3286,7 @@ function ManualFlow({
             onPreview={onPreview}
             onDryRun={onDryRun}
             onExecute={onExecute}
+            externalWritebackEnabled={externalWritebackEnabled}
             onApprove={onApprove}
           />
         ) : null}
@@ -3469,6 +3477,7 @@ function ExecutionPanel({
   onPreview,
   onDryRun,
   onExecute,
+  externalWritebackEnabled,
   onApprove,
 }: {
   item: ControlItem;
@@ -3477,6 +3486,7 @@ function ExecutionPanel({
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
+  externalWritebackEnabled: boolean;
   onApprove: (item: ControlItem) => void;
 }) {
   return (
@@ -3487,6 +3497,7 @@ function ExecutionPanel({
         onPreview={onPreview}
         onDryRun={onDryRun}
         onExecute={onExecute}
+        externalWritebackEnabled={externalWritebackEnabled}
       />
       {item.omega.execution.actions.map((action) => (
         <article className="action-row" key={action.id}>
@@ -3534,12 +3545,14 @@ function ExecutionBridge({
   onPreview,
   onDryRun,
   onExecute,
+  externalWritebackEnabled,
 }: {
   item: ControlItem;
   busyAction: string;
   onPreview: (item: ControlItem) => void;
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
+  externalWritebackEnabled: boolean;
 }) {
   const template = item.action_templates?.[0];
   return (
@@ -3547,7 +3560,7 @@ function ExecutionBridge({
       <div>
         <p className="section-kicker">Execution bridge V1</p>
         <h3>{template?.label || "Accion segura"}</h3>
-        <span>{template?.description || "Preview y dry-run auditados antes de cualquier escritura externa."}</span>
+        <span>{template?.description || "Preview y dry-run auditados; write-back externo requiere conector habilitado."}</span>
       </div>
       <div className="execution-state">
         <strong>{item.execution_status || "not_started"}</strong>
@@ -3562,9 +3575,9 @@ function ExecutionBridge({
           {busyAction === `dryrun:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <ShieldCheck aria-hidden />}
           Dry-run
         </button>
-        <button type="button" className="ghost-action" onClick={() => onExecute(item)} disabled={busyAction !== ""}>
+        <button type="button" className="ghost-action" onClick={() => onExecute(item)} disabled={busyAction !== "" || !externalWritebackEnabled}>
           {busyAction === `execute:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <Play aria-hidden />}
-          Ejecutar
+          Write-back
         </button>
       </div>
     </article>

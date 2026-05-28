@@ -4,11 +4,11 @@ v1.44.1 backend hooks that it consumes.
 Browser-level runtime exercise (login → dashboard → KPI poll) is
 out of scope for the CI sandbox; this file is the static contract
 that:
-  * The Next.js scaffold has the deps + config + Dockerfile + compose
-    entry the brief documents.
+  * The Next.js scaffold has the deps + static-export config the brief
+    documents.
   * No API key / secret leaks into a NEXT_PUBLIC_* env name.
-  * The auth middleware protects every route except an explicit
-    public allowlist.
+  * FastAPI serves the static export and protects routes with its
+    existing auth/RBAC dependencies.
   * The dashboard hook + components consume the v1.44.1 KpiPayload
     shape.
 
@@ -46,7 +46,7 @@ def test_package_json_present_and_parseable():
     # Standard Next.js + companion deps.
     for dep in ("next", "react", "react-dom"):
         assert dep in pkg["dependencies"], f"missing dep {dep}"
-    for dep in ("@tanstack/react-query", "axios", "sonner", "lucide-react",
+    for dep in ("@tanstack/react-query", "sonner", "lucide-react",
                 "tailwind-merge", "clsx", "zustand"):
         assert dep in pkg["dependencies"], (
             f"v1.44.2 brief deps: missing {dep!r}"
@@ -77,12 +77,13 @@ def test_tsconfig_has_path_alias():
     assert tsc["compilerOptions"]["strict"] is True
 
 
-def test_next_config_uses_standalone_output():
+def test_next_config_uses_static_export_output():
     src = _read(NEXT_ROOT / "next.config.mjs")
-    assert 'output: "standalone"' in src, (
-        "next.config.mjs must use output:'standalone' so the Dockerfile "
-        "can ship the runtime bundle without node_modules"
+    assert 'output: "export"' in src, (
+        "next.config.mjs must use output:'export' so FastAPI can serve "
+        "the compiled files without a Node.js runtime"
     )
+    assert 'assetPrefix: "/static/console-next"' in src
 
 
 def test_next_config_disables_powered_by_header():
@@ -92,30 +93,11 @@ def test_next_config_disables_powered_by_header():
     )
 
 
-def test_next_config_emits_csp_with_defenses_intact():
-    """Production CSP keeps the enterprise defenses and only allows the script
-    relaxations the current Next App Router runtime needs until nonce middleware
-    lands."""
+def test_next_config_does_not_emit_runtime_headers():
+    """Static export cannot depend on Next.js runtime header hooks."""
     src = _read(NEXT_ROOT / "next.config.mjs")
-    assert "Content-Security-Policy" in src
-    code = re.sub(r"//.*?$|/\*.*?\*/", "", src, flags=re.MULTILINE | re.DOTALL)
-
-    # Required defenses on the CSP value literal (not in comments).
-    for directive in (
-        "frame-ancestors 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-        "default-src 'self'",
-        "connect-src 'self'",
-    ):
-        assert directive in code, (
-            f"next.config.mjs CSP must declare {directive!r} — that's the "
-            "real audit-relevant defense, not script-src strictness."
-        )
-    assert "'unsafe-inline'" in code
-    assert "'unsafe-eval'" in code
-    assert "ws://localhost" not in code
-    assert "wss://localhost" not in code
+    assert "headers(" not in src
+    assert "rewrites(" not in src
 
 
 # ── Tailwind / styles ────────────────────────────────────────────────────
@@ -142,43 +124,40 @@ def test_tailwind_config_uses_class_dark_mode():
     )
 
 
-# ── Proxy ────────────────────────────────────────────────────────────────
+# ── Static FastAPI serving ───────────────────────────────────────────────
 
 
-def test_proxy_redirects_unauthenticated_to_login():
-    src = _read(SRC / "proxy.ts")
-    assert "NextResponse.redirect" in src
-    assert "/login" in src
-    # The redirect target must include the original path as `?next=`
-    # so the post-login bounce is correct.
-    assert "next" in src and "searchParams.set" in src
-    assert "`${pathname}${req.nextUrl.search}`" in src
+def test_next_proxy_is_absent_for_static_export():
+    assert not (SRC / "proxy.ts").exists()
+    assert not (SRC / "lib/proxy.ts").exists()
 
 
-def test_proxy_treats_login_and_health_as_public():
-    src = _read(SRC / "proxy.ts")
-    # Both routes must be in the public allowlist or skipped via prefix.
-    assert '"/login"' in src
-    assert "/api/health" in src
+def test_next_route_handlers_are_absent_for_static_export():
+    for path in (
+        SRC / "app/api/[...path]/route.ts",
+        SRC / "app/auth/[...path]/route.ts",
+        SRC / "app/login-proxy/route.ts",
+        SRC / "app/legacy/[[...path]]/route.ts",
+        SRC / "app/security/[...path]/route.ts",
+    ):
+        assert not path.exists(), f"{path.relative_to(REPO)} must not exist"
 
 
-def test_proxy_checks_for_auth_cookie_not_jwt_decode():
-    """The Next proxy runs at the edge and shouldn't decode JWT signing
-    keys. Cookie presence is enough — full verification happens
-    server-side in route handlers / RSC fetches."""
-    src = _read(SRC / "proxy.ts")
-    # Reads cookies …
-    assert "req.cookies.get" in src
-    # … and does NOT import a JWT library at the edge.
-    assert "jsonwebtoken" not in src
-    assert "jose" not in src or "import * as jose" not in src
+def test_fastapi_pages_router_serves_console_next_export():
+    src = _read(REPO / "console/app/routers/pages.py")
+    assert "CONSOLE_NEXT_STATIC" in src
+    assert "_console_next_response" in src
+    assert "set_csrf_cookie" in src
+    for route in ('"/dashboard"', '"/cartridges"', '"/copilot"', '"/monitor"', '"/viewer"'):
+        assert route in src
 
 
-def test_legacy_redirector_sanitizes_path_segments():
-    src = _read(SRC / "app/legacy/[[...path]]/route.ts")
-    assert "encodeURIComponent(segment)" in src
-    assert 'segment !== ".."' in src
-    assert '!segment.includes(":")' in src
+def test_fastapi_console_next_csp_hashes_inline_next_scripts():
+    src = _read(REPO / "console/app/routers/pages.py")
+    assert "_INLINE_SCRIPT_RE" in src
+    assert "hashlib.sha256" in src
+    assert "'sha256-" in src
+    assert "frame-ancestors" in src
 
 
 def test_copilot_initial_prompt_is_visible_and_sendable():
@@ -191,52 +170,35 @@ def test_copilot_initial_prompt_is_visible_and_sendable():
 # ── lib/api.ts — server vs browser base URL ──────────────────────────────
 
 
-def test_api_client_uses_internal_url_server_side():
-    """Server-side (RSC / route handlers) must talk to FastAPI
-    directly over the docker network. v1.44.3.2.2 R-Mac-4 renamed
-    the env var from API_INTERNAL_URL to BACKEND_INTERNAL_URL but
-    kept the old name as a fallback so a half-migrated compose
-    file still works — accept either."""
+def test_api_client_has_no_server_side_base_url():
+    """Static export has no server-side data plane; all browser calls are
+    relative to the FastAPI origin serving the HTML."""
     src = _read(SRC / "lib/api.ts")
-    assert "BACKEND_INTERNAL_URL" in src or "API_INTERNAL_URL" in src, (
-        "lib/api.ts must use BACKEND_INTERNAL_URL (or the legacy "
-        "API_INTERNAL_URL) when running server-side — talks to "
-        "FastAPI over the docker network"
-    )
+    assert "BACKEND_INTERNAL_URL" not in src
+    assert "API_INTERNAL_URL" not in src
 
 
-def test_api_client_browser_uses_same_origin_proxy():
-    """v1.44.3.2.2 R-Mac-4: the browser axios instance must NOT
-    point at the backend's public origin (the old
-    NEXT_PUBLIC_API_BASE / NEXT_PUBLIC_BACKEND_URL chain). Every
-    browser request now goes same-origin to the Next.js app
-    (:3000) and is forwarded by the catch-all proxy at
-    app/api/[...path] / app/auth/[...path]. Regression guard
-    against anyone re-adding the cross-origin URL — that would
-    bring CORS back as a failure surface."""
+def test_api_client_browser_uses_same_origin_fastapi_fetch():
+    """The browser client must not point at a public backend origin or
+    rely on a Next.js proxy. Relative fetches hit FastAPI directly."""
     src = _read(SRC / "lib/api.ts")
-    # The browser branch sits inside an `isServer` ternary; the
-    # else-branch must resolve to an empty string (same-origin).
     assert 'NEXT_PUBLIC_API_BASE' not in src, (
-        "lib/api.ts must not reference NEXT_PUBLIC_API_BASE — the "
-        "browser uses the same-origin Next.js proxy now."
+        "lib/api.ts must not reference NEXT_PUBLIC_API_BASE."
     )
     assert 'NEXT_PUBLIC_BACKEND_URL' not in src, (
-        "lib/api.ts must not reference NEXT_PUBLIC_BACKEND_URL — "
-        "the browser uses the same-origin Next.js proxy now."
+        "lib/api.ts must not reference NEXT_PUBLIC_BACKEND_URL."
     )
-    # Sanity check: the browser baseURL is literally empty string.
-    assert ': ""' in src or ": ''" in src or '""' in src, (
-        "lib/api.ts must set baseURL to '' on the browser branch "
-        "so axios resolves against the Next.js origin."
-    )
+    assert "export async function apiFetch" in src
+    assert "fetch(path" in src
 
 
-def test_api_client_sends_credentials():
-    """The JWT is in an httpOnly cookie. axios must opt into sending
-    it (withCredentials) or the dashboard / KPI hooks return 401."""
+def test_api_client_sends_credentials_and_request_id():
+    """The JWT is in an httpOnly cookie and every request must be
+    auditable through X-Request-ID."""
     src = _read(SRC / "lib/api.ts")
-    assert "withCredentials: true" in src
+    assert 'credentials: init.credentials ?? "include"' in src
+    assert '"X-Request-ID"' in src
+    assert '"X-CSRF-Token"' in src
 
 
 # ── NEXT_PUBLIC_* leak guard ─────────────────────────────────────────────
@@ -248,8 +210,7 @@ def test_no_secrets_in_next_public_envs():
     never appear as NEXT_PUBLIC_*. Pre-flight check on the source
     files + the compose env block.
 
-    Searches every TS/TSX/JS file in console-next/src and the
-    docker-compose entry for the console_next service for the
+    Searches every TS/TSX/JS file in console-next/src for the
     forbidden patterns.
     """
     forbidden_substrings = (
@@ -272,68 +233,28 @@ def test_no_secrets_in_next_public_envs():
             if f"NEXT_PUBLIC_{forbidden}" in text:
                 bad.append(f"{file.relative_to(REPO)}: NEXT_PUBLIC_{forbidden}")
 
-    # Compose entry for console_next: every env line under that service
-    # MUST NOT start with NEXT_PUBLIC_<secret-name>. We grep narrowly.
-    compose = _read(COMPOSE)
-    service_block = re.search(
-        r"\n  console_next:\n(?P<body>(?:    .*\n|\n)+)", compose,
-    )
-    if service_block:
-        body = service_block.group("body")
-        for forbidden in forbidden_substrings:
-            if f"NEXT_PUBLIC_{forbidden}" in body:
-                bad.append(
-                    f"infra/docker-compose.yml console_next env: NEXT_PUBLIC_{forbidden}"
-                )
-
     assert not bad, (
         "v1.44.2 Security R1: NEXT_PUBLIC_* must never carry a secret "
         "name. Offenders:\n  " + "\n  ".join(bad)
     )
 
 
-# ── Dockerfile ───────────────────────────────────────────────────────────
+# ── Runtime removal ──────────────────────────────────────────────────────
 
 
-def test_dockerfile_present_and_multistage():
-    src = _read(NEXT_ROOT / "Dockerfile")
-    # Three named stages per the brief: deps → build → runner.
-    for stage in ("AS deps", "AS build", "AS runner"):
-        assert stage in src, f"Dockerfile missing stage {stage}"
+def test_console_next_has_no_runtime_dockerfile():
+    assert not (NEXT_ROOT / "Dockerfile").exists()
 
 
-def test_dockerfile_runs_as_non_root():
-    src = _read(NEXT_ROOT / "Dockerfile")
-    assert "adduser" in src and "nextjs" in src
-    assert "USER nextjs" in src
-
-
-def test_dockerfile_declares_healthcheck():
-    src = _read(NEXT_ROOT / "Dockerfile")
-    assert "HEALTHCHECK" in src
-    assert "/api/health" in src
-
-
-def test_dockerfile_disables_telemetry():
-    src = _read(NEXT_ROOT / "Dockerfile")
-    assert "NEXT_TELEMETRY_DISABLED=1" in src
-
-
-# ── R-Mac-1: public/ directory must exist for the Dockerfile COPY ────────
+# ── Static assets ────────────────────────────────────────────────────────
 
 
 def test_public_directory_exists_for_dockerfile_copy():
-    """Codex's Mac validation caught the Dockerfile's
-    ``COPY --from=build /app/public ./public`` failing because
-    console-next/public/ didn't exist on disk. Without the
-    directory the docker build aborts → omega_console_next never
-    starts → smoke 0/34. Lock the directory presence via a
-    .gitkeep so a future tree-prune can't reintroduce the
-    regression."""
+    """Keep public/ tracked for Next static assets even without a runtime
+    container."""
     pub = NEXT_ROOT / "public"
     assert pub.is_dir(), (
-        f"console-next/public/ must exist on disk for the "
-        f"Dockerfile multi-stage COPY at line ~36 to succeed"
+        "console-next/public/ must exist on disk"
     )
     # The COPY targets the directory itself — even a single
     # placeholder file (.gitkeep) is enough to make git track it.
@@ -347,56 +268,19 @@ def test_public_directory_exists_for_dockerfile_copy():
 # ── docker-compose entry ─────────────────────────────────────────────────
 
 
-def test_compose_declares_console_next_service():
+def test_compose_does_not_declare_console_next_service():
     src = _read(COMPOSE)
-    assert "console_next:" in src, "docker-compose must declare console_next service"
-    assert "omega_console_next" in src, "container_name must be omega_console_next"
-    assert "3000:3000" in src, "console_next must publish port 3000"
+    assert "console_next:" not in src
+    assert "omega_console_next" not in src
+    assert "3000:3000" not in src
 
 
-def test_compose_console_next_depends_on_console_healthy():
-    src = _read(COMPOSE)
-    block = re.search(
-        r"\n  console_next:.*?(?=\n  [a-z_-]+:\n|\Z)", src, re.DOTALL,
-    )
-    assert block, "console_next service block not found"
-    body = block.group(0)
-    # depends_on must use the long form with service_healthy — matches
-    # the v1.43.4 N3 hardening posture.
-    assert "depends_on:" in body
-    assert "condition: service_healthy" in body
-
-
-def test_compose_console_next_has_healthcheck():
-    src = _read(COMPOSE)
-    block = re.search(
-        r"\n  console_next:.*?(?=\n  [a-z_-]+:\n|\Z)", src, re.DOTALL,
-    )
-    body = block.group(0) if block else ""
-    assert "healthcheck:" in body
-    assert "/api/health" in body
-
-
-def test_compose_console_next_env_uses_internal_url():
-    """The console_next container must know where to forward
-    server-side proxy calls. v1.44.3.2.2 R-Mac-4 introduced
-    BACKEND_INTERNAL_URL as the canonical name (consumed by
-    lib/proxy.ts) and kept API_INTERNAL_URL as a fallback. Both
-    must point at the internal docker hostname so the proxy
-    talks to FastAPI over the docker network rather than the
-    public origin."""
-    src = _read(COMPOSE)
-    block = re.search(
-        r"\n  console_next:.*?(?=\n  [a-z_-]+:\n|\Z)", src, re.DOTALL,
-    )
-    body = block.group(0) if block else ""
-    assert "BACKEND_INTERNAL_URL:" in body, (
-        "compose console_next env must set BACKEND_INTERNAL_URL — "
-        "lib/proxy.ts reads it on every same-origin proxy call"
-    )
-    assert "http://console:8000" in body, (
-        "BACKEND_INTERNAL_URL must point at the internal docker hostname"
-    )
+def test_package_has_export_copy_script_for_fastapi_static_mount():
+    pkg = json.loads(_read(NEXT_ROOT / "package.json"))
+    script = pkg["scripts"]["export:copy"]
+    assert "npm run build" in script or "next build" in script
+    assert "../console/app/static/console-next" in script
+    assert "rm -rf ../console/app/static/console-next/studio" in script
 
 
 # ── Hook + components: shape contracts ───────────────────────────────────
@@ -440,8 +324,9 @@ def test_login_page_avoids_next_navigation_bundle():
 
 
 def test_existing_aws_compose_consistency_still_passes():
-    """The Next console is part of release/deploy now, not local-only."""
+    """The AWS compose no longer ships a console_next service."""
     src = _read(REPO / "infra/terraform/deploy/docker-compose.aws.yml")
-    assert "console_next:" in src
-    assert "ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next" in src
-    assert "BACKEND_INTERNAL_URL: http://console:8000" in src
+    assert "console_next:" not in src
+    assert "ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/console-next" not in src
+    assert "BACKEND_INTERNAL_URL" not in src
+    assert "API_INTERNAL_URL" not in src

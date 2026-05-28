@@ -83,6 +83,14 @@ def console_main(monkeypatch):
     async def revoke_refresh_token(token):
         auth_stub.revoked_refresh_tokens.append(token)
 
+    async def rotate_refresh_token(token):
+        user = await get_refresh_token_user(token)
+        if not user:
+            return None
+        await revoke_refresh_token(token)
+        new_token, expires = await create_refresh_token(user["id"])
+        return user, new_token, expires
+
     async def get_session_user(token):
         if token == "legacy-session-token":
             return dict(auth_stub.user)
@@ -161,6 +169,7 @@ def console_main(monkeypatch):
     auth_stub.create_session = create_session
     auth_stub.create_refresh_token = create_refresh_token
     auth_stub.get_refresh_token_user = get_refresh_token_user
+    auth_stub.rotate_refresh_token = rotate_refresh_token
     auth_stub.revoke_refresh_token = revoke_refresh_token
     auth_stub.get_session_user = get_session_user
     auth_stub.get_user_by_id = get_user_by_id
@@ -193,7 +202,11 @@ def console_main(monkeypatch):
     import app.services as _svc_pkg
     for attr, mod in [
         ("auth", service_stubs["app.services.auth"]),
+        ("assistant", service_stubs["app.services.assistant"]),
+        ("studio_assistant", service_stubs["app.services.studio_assistant"]),
         ("job_service", service_stubs["app.services.job_service"]),
+        ("tokens", service_stubs["app.services.tokens"]),
+        ("email_service", service_stubs["app.services.email_service"]),
         ("token_store", service_stubs["app.services.token_store"]),
         ("mcp_registry", service_stubs["app.services.mcp_registry"]),
         ("cartridge_service", service_stubs["app.services.cartridge_service"]),
@@ -651,11 +664,27 @@ def test_api_admin_users_create_with_admin_still_works(console_main):
     response = client.post(
         "/api/admin/users",
         headers={"Authorization": f"Bearer {token}"},
-        json={"email": "new@example.com", "password": "secret", "name": "New User"},
+        json={"email": "new@example.com", "password": "StrongSecret123", "name": "New User"},
     )
 
     assert response.status_code == 200
     assert response.json()["email"] == "new@example.com"
+
+
+def test_api_admin_users_create_rejects_short_password(console_main):
+    client = TestClient(console_main.app)
+    console_main._auth.user["role"] = "user"
+    console_main._auth.workspace_rows[0]["workspace_role"] = "admin"
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "user"})
+
+    response = client.post(
+        "/api/admin/users",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"email": "new@example.com", "password": "short", "name": "New User"},
+    )
+
+    assert response.status_code == 400
+    assert "12 caracteres" in response.json()["detail"]
 
 
 def test_api_admin_users_patch_with_admin_still_works(console_main):
@@ -742,8 +771,9 @@ def test_regular_pages_keep_anti_frame_headers(console_main):
 def test_refresh_issues_new_access_token_and_rotates_refresh(console_main):
     client = TestClient(console_main.app)
     client.cookies.set("refresh_token", "valid-refresh-token")
+    client.cookies.set("csrf_token", "test-csrf")
 
-    response = client.post("/auth/refresh")
+    response = client.post("/auth/refresh", headers={"X-CSRF-Token": "test-csrf"})
 
     assert response.status_code == 200
     body = response.json()

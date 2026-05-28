@@ -1147,7 +1147,9 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
 
     if tool == "list_datasets":
         sec = _require_security_permission(body, "datasets.read")
-        return {"datasets": [ds for ds in store.list_datasets() if _dataset_allowed(sec, ds)]}
+        datasets = [ds for ds in store.list_datasets() if _dataset_allowed(sec, ds)]
+        _annotate_staleness(datasets)
+        return {"datasets": datasets}
 
     if tool == "get_dataset_definition":
         ds = store.get_dataset(args["name"])

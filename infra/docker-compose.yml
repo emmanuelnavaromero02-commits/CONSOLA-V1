@@ -169,6 +169,7 @@ services:
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REFINEMENT_URL:    http://refinement:8500
       MCP_INFRA_URL:     http://mcp-infra:8010
+      VAULT_URL:         http://vault:8300
       CONSOLE_INTERNAL_URL: http://console:8000
       AGENT_RUNNER_TOKEN: ${AGENT_RUNNER_TOKEN:-}
       SUPERSET_URL:      http://superset:8088
@@ -204,12 +205,9 @@ services:
       JWT_ALGORITHM:     ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
       REDIS_URL:         ${REDIS_URL:-redis://redis:6379/0}
-      # v1.44.3.2.2 R-Mac: explicit CORS allowlist so the Next.js
-      # console on :3000 can hit the FastAPI backend on :8000.
-      # Override in prod to the public origins. The Python default
-      # already includes :3000 + :8000 for local-dev parity if this
-      # var isn't set, but pin it here so every env is deterministic.
-      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+      # Static console-next is served same-origin by FastAPI on :8000.
+      # Workspace keeps :8001 as the only local cross-origin browser client.
+      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:8000,http://localhost:8001}
     ports:
       - "8000:8000"
     volumes:
@@ -241,48 +239,6 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
-
-  # v1.44.2 — Next.js 14 frontend. Consumes the FastAPI /api/* surface
-  # via two URLs:
-  #   - server-side (RSC / route handlers): API_INTERNAL_URL → http://console:8000
-  #   - browser:                            NEXT_PUBLIC_API_BASE → ${CONSOLE_PUBLIC_URL}
-  # Container does NOT receive INTERNAL_API_KEY — it talks to the
-  # console with the user's session cookie (JWT httpOnly) only. The
-  # legacy admin pages still live under /static/* of the Python
-  # console; this container is additive.
-  console_next:
-    build:
-      context: ../console-next
-      dockerfile: Dockerfile
-    container_name: omega_console_next
-    environment:
-      NODE_ENV: production
-      # v1.44.3.2.2 R-Mac-4: the Next.js app proxies every browser
-      # call to the FastAPI backend server-side via the docker
-      # network (see console-next/src/app/api/[...path]/route.ts).
-      # BACKEND_INTERNAL_URL is the canonical name consumed by
-      # lib/proxy.ts; API_INTERNAL_URL stays as a fallback so older
-      # imports in lib/api.ts keep working through the transition.
-      # NEXT_PUBLIC_API_BASE is no longer needed — the browser
-      # never sees the backend's public origin — but we leave the
-      # var unset rather than removing the key to avoid surprising
-      # any one-off scripts that may grep for it in the meantime.
-      BACKEND_INTERNAL_URL: http://console:8000
-      API_INTERNAL_URL: http://console:8000
-      NEXT_PUBLIC_LEGACY_CONSOLE_URL: ${CONSOLE_URL:-http://localhost:8000}
-    ports:
-      - "3000:3000"
-    depends_on:
-      console:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    restart: unless-stopped
-
 
   workspace:
     build:

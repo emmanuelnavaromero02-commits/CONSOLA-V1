@@ -84,6 +84,31 @@ async def lookup(token: str, kind: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def consume_lookup(token: str, kind: str) -> dict | None:
+    """Atomically consume a valid token and return its user payload.
+
+    Use this for one-shot downloads or flows where a second request must not
+    be able to reuse the same token between lookup() and consume().
+    """
+    if not token:
+        return None
+    p = await _pool()
+    row = await p.fetchrow(
+        """UPDATE user_tokens t
+              SET used_at = NOW()
+             FROM users u
+            WHERE u.id = t.user_id
+              AND t.token = $1
+              AND t.kind = $2
+              AND t.used_at IS NULL
+              AND t.expires_at > NOW()
+            RETURNING t.user_id, t.expires_at, t.wg_client_id,
+                      u.email, u.name, u.role, u.is_active""",
+        token, kind,
+    )
+    return dict(row) if row else None
+
+
 async def consume(token: str) -> None:
     p = await _pool()
     await p.execute("UPDATE user_tokens SET used_at = NOW() WHERE token = $1", token)

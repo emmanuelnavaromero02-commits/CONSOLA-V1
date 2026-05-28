@@ -5,6 +5,7 @@ const nextConfig = {
   assetPrefix: "/control-room",
   trailingSlash: true,
   poweredByHeader: false,
+  generateBuildId: async () => "control-room-static",
   images: { unoptimized: true },
 };
 

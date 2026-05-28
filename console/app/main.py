@@ -13,10 +13,11 @@ import logging
 import os
 import re
 import secrets
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _app_env() -> str:
@@ -61,6 +63,19 @@ def _public_url(
         logger.warning("%s is not configured in production; omitting localhost fallback", env_name)
         return ""
     return development_default.rstrip("/")
+
+
+def _service_url(env_name: str, docker_default: str, development_default: str) -> str:
+    raw = os.environ.get(env_name)
+    if raw:
+        return raw.rstrip("/")
+    if _is_production_env():
+        return docker_default.rstrip("/")
+    return development_default.rstrip("/")
+
+
+def _vault_url() -> str:
+    return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
 
 
 from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest
@@ -314,14 +329,10 @@ app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
 
 
 def _allowed_origins() -> list[str]:
-    # v1.44.3.2.2 R-Mac: the Next.js console runs on :3000 and makes
-    # cross-origin POSTs to the FastAPI backend on :8000 (login,
-    # cartridges credentials, copilot mutations). The pre-Mac default
-    # only listed :8000 — Chrome blocked every Next.js → backend
-    # request with CORS preflight failures. Include :3000 in the
-    # default so a fresh local-dev box works without manual
-    # ALLOWED_ORIGINS export. Production MUST override via the env
-    # var (see prod fail-closed guard below).
+    # Static console-next is served same-origin by FastAPI on :8000.
+    # Keep workspace :8001 in the local default because it remains a
+    # legitimate browser client for credentialed workspace flows.
+    # Production MUST override via the env var (see prod fail-closed guard).
     raw_env = os.environ.get("ALLOWED_ORIGINS")
     app_env = os.environ.get("APP_ENV", "production").lower()
 
@@ -336,7 +347,7 @@ def _allowed_origins() -> list[str]:
             "default with allow_credentials=True."
         )
 
-    raw = raw_env if raw_env is not None else "http://localhost:3000,http://localhost:8000"
+    raw = raw_env if raw_env is not None else "http://localhost:8000,http://localhost:8001"
     # Phase-0 P1 fix: ALLOWED_ORIGINS="" (env var set but empty) used to be
     # accepted silently and produced an empty allowlist. That combination
     # plus allow_credentials=True is exactly the misconfiguration the
@@ -353,7 +364,7 @@ def _allowed_origins() -> list[str]:
             "ALLOWED_ORIGINS is set but empty; falling back to the "
             "localhost default. This is only safe in dev/test."
         )
-        raw = "http://localhost:3000,http://localhost:8000"
+        raw = "http://localhost:8000,http://localhost:8001"
     origins: list[str] = []
     for chunk in raw.split(","):
         origin = chunk.strip()
@@ -379,7 +390,7 @@ def _allowed_origins() -> list[str]:
 # the FIRST middleware on user_middleware and therefore the
 # INNERMOST in Starlette's reversed stack. Symptom Codex curl'd on
 # the Mac:
-#   $ curl -i -H "Origin: http://localhost:3000" http://localhost:8000/auth/login
+#   $ curl -i -H "Origin: http://localhost:8001" http://localhost:8000/auth/login
 #   → access-control-allow-credentials: true   ✓
 #   → access-control-allow-origin:    MISSING  ✗
 #
@@ -1297,14 +1308,14 @@ def _set_refresh_cookie(resp: JSONResponse, token: str, expires) -> None:
 # ── Auth routes ────────────────────────────────────────────────────────────────
 
 @app.get("/login")
-async def login_page():
+async def login_page(request: Request):
     # Seed the CSRF cookie so the page's POST /auth/login fetch can echo
     # it back without an extra round-trip. The cookie is re-issued on
     # every GET /login (cheap, and avoids a stale-token edge case when
     # the user keeps the tab open across logout/login).
-    response = FileResponse(STATIC / "login.html")
-    set_csrf_cookie(response)
-    return response
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "login/index.html")
 
 
 async def _login_response(request: Request, body: dict):
@@ -1352,21 +1363,36 @@ async def api_auth_login(request: Request, body: dict):
     return await auth_login(request, body)
 
 
-@app.post("/auth/refresh")
+@app.post("/auth/refresh", dependencies=[Depends(require_csrf)])
 async def auth_refresh(request: Request):
     refresh_token = request.cookies.get(_auth.REFRESH_COOKIE_NAME)
     # Hash a prefix of the token into the subject so per-token buckets isolate
     # spamming attempts without writing the secret material to Redis keys.
     subject = (refresh_token or "")[:16]
     await _rate_limit(request, "/auth/refresh", subject)
-    user = await _auth.get_refresh_token_user(refresh_token)
+    rotate_refresh_token = getattr(_auth, "rotate_refresh_token", None)
+    if callable(rotate_refresh_token):
+        rotated = await rotate_refresh_token(refresh_token)
+        if not rotated:
+            resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
+            resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
+            return resp
+        user, new_refresh_token, refresh_expires = rotated
+    else:
+        # Compatibility for unit-test doubles that predate atomic rotation.
+        user = await _auth.get_refresh_token_user(refresh_token)
+        if not user:
+            resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
+            resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
+            return resp
+        await _auth.revoke_refresh_token(refresh_token)
+        new_refresh_token, refresh_expires = await _auth.create_refresh_token(user["id"])
+
     if not user:
         resp = JSONResponse({"detail": "invalid refresh token"}, status_code=401)
         resp.delete_cookie(_auth.REFRESH_COOKIE_NAME, path="/")
         return resp
 
-    await _auth.revoke_refresh_token(refresh_token)
-    new_refresh_token, refresh_expires = await _auth.create_refresh_token(user["id"])
     access_token = _access_token_for_user(user)
     resp = JSONResponse({"access_token": access_token, "token_type": "bearer"})
     _set_refresh_cookie(resp, new_refresh_token, refresh_expires)
@@ -1451,6 +1477,28 @@ RESET_TTL_HOURS  = int(os.environ.get("RESET_TOKEN_TTL_HOURS",  "1"))
 VPN_TTL_HOURS    = int(os.environ.get("VPN_TOKEN_TTL_HOURS",   "72"))
 
 
+def _normalize_email_or_400(value: object | None, *, required_message: str = "email is required") -> str:
+    email = str(value or "").strip().lower()
+    if not email:
+        raise HTTPException(400, required_message)
+    if len(email) > 254 or not EMAIL_RE.fullmatch(email):
+        raise HTTPException(400, "invalid email")
+    return email
+
+
+def _password_min_length() -> int:
+    return int(getattr(_auth, "MIN_PASSWORD_LENGTH", 12))
+
+
+def _validate_password_or_400(password: object | None, *, field: str = "password") -> str:
+    password = str(password or "")
+    if not password:
+        raise HTTPException(400, f"{field} is required")
+    if len(password) < _password_min_length():
+        raise HTTPException(400, f"el password debe tener al menos {_password_min_length()} caracteres")
+    return password
+
+
 def _activation_link(token: str) -> str:
     return f"{APP_BASE_URL}/activate?token={token}"
 
@@ -1484,13 +1532,13 @@ async def auth_activate(request: Request, body: dict):
     await _rate_limit(request, "/auth/activate", token[:16])
     if not token or not pw:
         raise HTTPException(400, "token and new_password are required")
-    info = await _tokens.lookup(token, "invite")
+    _validate_password_or_400(pw, field="new_password")
+    info = await _tokens.consume_lookup(token, "invite")
     if not info:
         raise HTTPException(400, "token inválido o expirado")
     user = await _auth.activate_user(info["user_id"], pw)
     if not user:
         raise HTTPException(400, "el password debe tener al menos 12 caracteres")
-    await _tokens.consume(token)
     ip = request.client.host if request.client else None
     sess_token, expires = await _auth.create_session(user["id"], ip=ip)
     resp = JSONResponse({"activated": True, "user": user})
@@ -1554,13 +1602,13 @@ async def auth_reset(request: Request, body: dict):
     await _rate_limit(request, "/auth/reset-password", token[:16])
     if not token or not pw:
         raise HTTPException(400, "token and new_password are required")
-    info = await _tokens.lookup(token, "reset")
+    _validate_password_or_400(pw, field="new_password")
+    info = await _tokens.consume_lookup(token, "reset")
     if not info:
         raise HTTPException(400, "token inválido o expirado")
     user = await _auth.reset_password_to(info["user_id"], pw)
     if not user:
-        raise HTTPException(400, "el password debe tener al menos 8 caracteres")
-    await _tokens.consume(token)
+        raise HTTPException(400, f"el password debe tener al menos {_password_min_length()} caracteres")
     ip = request.client.host if request.client else None
     sess_token, expires = await _auth.create_session(user["id"], ip=ip)
     resp = JSONResponse({"reset": True, "user": user})
@@ -1617,7 +1665,7 @@ async def readyz():
     deps = {
         "refinement": (f"{REFINEMENT_URL.rstrip('/')}/healthz", "REFINEMENT"),
         "mcp-infra": (f"{os.environ.get('MCP_INFRA_URL', 'http://mcp-infra:8010').rstrip('/')}/healthz", "MCP_INFRA"),
-        "vault": (f"{os.environ.get('VAULT_URL', 'http://vault:8300').rstrip('/')}/healthz", "VAULT"),
+        "vault": (f"{_vault_url()}/healthz", "VAULT"),
     }
     for name, (url, server) in deps.items():
         checks[name] = await _dependency_health(name, url, server)
@@ -1682,12 +1730,9 @@ async def system_info(user: dict = Depends(require_authenticated)):
 @app.get("/me")
 async def viewer_me(request: Request):
     require_user(request)
-    # Ensure the page has a CSRF cookie before it tries to call
-    # POST /api/me/change-password — covers users who arrived via JWT
-    # or whose login-issued cookie expired between sessions.
-    response = FileResponse(STATIC / "me.html")
-    set_csrf_cookie(response)
-    return response
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "me/index.html")
 
 
 @app.get("/api/me")
@@ -2290,6 +2335,7 @@ async def api_lineage(cartridge: str | None = None, user: dict = Depends(require
             "type": d.get("layer", "silver"),
             "cartridge": d.get("cartridge", ""),
             "is_stale": bool(d.get("is_stale")),
+            "staleness_reason": d.get("staleness_reason"),
             "row_count": d.get("row_count"),
             "last_refresh": d.get("last_refresh"),
         }
@@ -2563,7 +2609,7 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(require_authenticated)):
     """Proxy to Vault — returns masked connection config for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
-    vault_url = os.environ.get("VAULT_URL", "http://vault:8300")
+    vault_url = _vault_url()
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         try:
             r = await c.get(f"{vault_url}/connections/{cartridge_id}")
@@ -3366,7 +3412,10 @@ async def studio_create_cartridge(body: dict):
     existing = await cartridge_service.get_cartridge(cid)
     if existing:
         raise HTTPException(409, f"Cartridge '{cid}' already exists")
-    manifest = await cartridge_service.create_cartridge(cid, name, body.get("description", ""))
+    try:
+        manifest = await cartridge_service.create_cartridge(cid, name, body.get("description", ""))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return manifest
 
 
@@ -3384,7 +3433,10 @@ async def studio_update_cartridge(cartridge_id: str, body: dict, user: dict = De
     _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
-    return await cartridge_service.update_cartridge(cartridge_id, body)
+    try:
+        return await cartridge_service.update_cartridge(cartridge_id, body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/studio/cartridges/{cartridge_id}/spec", dependencies=[Depends(require_csrf), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
@@ -3394,7 +3446,10 @@ async def studio_upload_spec(cartridge_id: str, file: UploadFile = File(...), us
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
     content = (await file.read()).decode("utf-8", errors="replace")
-    key = cartridge_service.upload_spec(cartridge_id, file.filename or "spec.yaml", content)
+    try:
+        key = cartridge_service.upload_spec(cartridge_id, file.filename or "spec.yaml", content)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {"uploaded": key, "filename": file.filename, "size": len(content)}
 
 
@@ -3418,7 +3473,10 @@ async def studio_export_cartridge(
     _require_cartridge_visible(user, cartridge_id)
     if not await cartridge_service.get_cartridge(cartridge_id):
         raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
-    zip_bytes = await cartridge_service.export_cartridge(cartridge_id)
+    try:
+        zip_bytes = await cartridge_service.export_cartridge(cartridge_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return Response(
         content=zip_bytes,
         media_type="application/zip",
@@ -3511,11 +3569,11 @@ async def studio_page():
 
 @app.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
 async def marketplace_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
 async def customer_cartridges_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get(
     "/admin/installations",
@@ -3524,7 +3582,7 @@ async def customer_cartridges_page():
     ],
 )
 async def admin_installations_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get(
     "/admin/licenses",
@@ -3533,7 +3591,7 @@ async def admin_installations_page():
     ],
 )
 async def admin_licenses_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
 async def api_marketplace_products(user: dict = Depends(require_authenticated)):
@@ -3719,21 +3777,32 @@ async def api_admin_installation_reactivate(installation_id: str, user: dict = D
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+def _viewer_redirect(request: Request, viewer_type: str, **params: str) -> RedirectResponse:
+    query = dict(request.query_params)
+    query["type"] = viewer_type
+    for key, value in params.items():
+        if value:
+            query[key] = value
+    return RedirectResponse(url=f"/viewer?{urlencode(query)}", status_code=307)
+
+
 @app.get("/viewer/pipeline", dependencies=[Depends(require_permission("monitor.read"))])
-async def viewer_pipeline():
-    return FileResponse(STATIC / "viewers" / "pipeline.html")
+async def viewer_pipeline(request: Request):
+    return _viewer_redirect(request, "pipeline")
 
 @app.get("/viewer/vault", dependencies=[Depends(require_permission("vault.connections.read"))])
-async def viewer_vault():
-    return FileResponse(STATIC / "viewers" / "vault.html")
+async def viewer_vault(request: Request):
+    return _viewer_redirect(request, "vault")
 
 @app.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
-async def explorer_page():
-    return FileResponse(STATIC / "explorer.html")
+async def explorer_page(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "explorer/index.html")
 
 @app.get("/viewer/lineage", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_lineage():
-    return FileResponse(STATIC / "viewers" / "lineage.html")
+async def viewer_lineage(request: Request):
+    return _viewer_redirect(request, "lineage")
 
 @app.get("/rag", dependencies=[Depends(require_admin)])
 async def rag_page():
@@ -3749,7 +3818,9 @@ async def rag_page():
 @app.get("/agents", dependencies=[Depends(require_admin)])
 async def viewer_agents(request: Request):
     require_admin(request)
-    return FileResponse(STATIC / "agents.html")
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "agents/index.html")
 
 
 @app.get("/api/agents", dependencies=[Depends(require_admin)])
@@ -3954,7 +4025,7 @@ async def api_agent_run_detail(request: Request, run_id: int):
 
 # ── Vault proxy ───────────────────────────────────────────────────────────────
 
-_VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
+_VAULT_URL = _vault_url()
 _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
 @app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
@@ -4959,8 +5030,10 @@ def _dec_row_to_dict(row) -> dict:
 
 
 @app.get("/decisions", dependencies=[Depends(require_admin)])
-async def viewer_decisions():
-    return FileResponse(STATIC / "decisions.html")
+async def viewer_decisions(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "decisions/index.html")
 
 
 def _current_workspace_id(user: dict) -> str | None:
@@ -5223,7 +5296,11 @@ def _assignable_role(value: str | None, actor_user: dict | None = None) -> str:
 
 @app.get("/api/users")
 async def api_users_list(user: dict = Depends(require_permission("iam.users.read"))):
-    return {"users": await _auth.list_users(active_only=True)}
+    users = await _auth.list_users(active_only=True)
+    if _is_global_iam_admin(user):
+        return {"users": users}
+    visible_ids = await _visible_user_ids_for_admin(user, users)
+    return {"users": [u for u in users if u.get("id") in visible_ids]}
 
 
 # ── Admin user management ───────────────────────────────────────────────────
@@ -5232,7 +5309,7 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
     # Compatibility URL, but not a separate users app anymore:
     # /admin/users now enters the IAM ecosystem and opens the Users tab.
-    return FileResponse(STATIC / "iam.html")
+    return RedirectResponse(url="/operations/users", status_code=307)
 
 
 def _is_global_iam_admin(user: dict | None) -> bool:
@@ -5245,6 +5322,19 @@ def _session_workspace_ids(user: dict | None) -> set[str]:
         for w in ((user or {}).get("workspaces") or [])
         if w.get("workspace_id")
     }
+
+
+def _workspace_scope_db_unavailable(exc: BaseException) -> bool:
+    message = str(exc)
+    asyncpg_module = sys.modules.get("asyncpg")
+    return (
+        isinstance(exc, RuntimeError)
+        and "DATABASE_URL is not configured" in message
+    ) or (
+        isinstance(exc, AttributeError)
+        and "create_pool" in message
+        and getattr(asyncpg_module, "__name__", "") == "stub"
+    )
 
 
 async def _workspace_rows_from_auth_stub(user_id: int) -> list[dict]:
@@ -5263,8 +5353,8 @@ async def _workspace_rows_from_auth_stub(user_id: int) -> list[dict]:
 async def _target_user_workspace_ids(user_id: int) -> set[str]:
     try:
         pool = await _get_db_pool()
-    except RuntimeError as exc:
-        if "DATABASE_URL is not configured" not in str(exc):
+    except (RuntimeError, AttributeError) as exc:
+        if not _workspace_scope_db_unavailable(exc):
             raise
         rows = await _workspace_rows_from_auth_stub(user_id)
         return {str(row["workspace_id"]) for row in rows if row.get("workspace_id")}
@@ -5283,8 +5373,8 @@ async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> se
         return set()
     try:
         pool = await _get_db_pool()
-    except RuntimeError as exc:
-        if "DATABASE_URL is not configured" not in str(exc):
+    except (RuntimeError, AttributeError) as exc:
+        if not _workspace_scope_db_unavailable(exc):
             raise
         visible: set[int] = set()
         admin_id = admin_user.get("id")
@@ -5303,6 +5393,24 @@ async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> se
         workspace_ids,
     )
     return {int(row["user_id"]) for row in rows}
+
+
+async def _set_workspace_role_for_user(user_id: int, workspace_id: str, role: str) -> None:
+    pool = await _get_db_pool()
+    role_id = await pool.fetchval("SELECT id FROM roles WHERE name = $1", role)
+    if not role_id:
+        raise HTTPException(400, "invalid workspace role")
+    await pool.execute(
+        """
+        INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
+        VALUES ($1, $2::uuid, $3)
+        ON CONFLICT (user_id, workspace_id)
+        DO UPDATE SET role_id = EXCLUDED.role_id
+        """,
+        user_id,
+        workspace_id,
+        role_id,
+    )
 
 
 async def _assert_can_use_workspace(admin_user: dict, workspace_id: str | None) -> None:
@@ -5338,13 +5446,17 @@ async def api_admin_users_list(admin_user: dict = Depends(require_permission("ia
 
 @app.post("/api/admin/users", dependencies=[Depends(require_csrf)])
 async def api_admin_users_create(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
-    email = (body.get("email") or "").strip().lower()
-    pw    = body.get("password") or ""
-    if not email or not pw:
+    email_raw = body.get("email")
+    pw = body.get("password") or ""
+    if not email_raw or not pw:
         raise HTTPException(400, "email and password are required")
+    email = _normalize_email_or_400(email_raw)
+    pw = _validate_password_or_400(pw)
     if await _auth.get_user_by_email(email):
         raise HTTPException(409, f"user with email {email} already exists")
-    role = _assignable_role(body.get("role"), admin_user)
+    requested_role = _assignable_role(body.get("role"), admin_user)
+    platform_role = requested_role if _is_global_iam_admin(admin_user) else "user"
+    workspace_role = requested_role if not _is_global_iam_admin(admin_user) else None
     workspace_id = (
         (body.get("workspace_id") or admin_user.get("active_workspace_id") or "").strip()
         or None
@@ -5357,7 +5469,7 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
             "email": email,
             "password": pw,
             "name": body.get("name"),
-            "role": role,
+            "role": platform_role,
         }
         # Test doubles from older auth contracts may not expose workspace_id;
         # production auth.create_user does and assigns the membership in the
@@ -5365,6 +5477,12 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
         if "workspace_id" in inspect.signature(_auth.create_user).parameters:
             create_user_kwargs["workspace_id"] = workspace_id
         target_user = await _auth.create_user(**create_user_kwargs)
+        if workspace_role and target_user.get("id"):
+            try:
+                await _set_workspace_role_for_user(int(target_user["id"]), workspace_id, workspace_role)
+            except (RuntimeError, AttributeError) as exc:
+                if not _workspace_scope_db_unavailable(exc):
+                    raise
     except RuntimeError as exc:
         # create_user assigns workspace membership in the same transaction;
         # surface a clear 500 when the RBAC seed (workspaces/roles) is missing.
@@ -5372,7 +5490,7 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
-        metadata={"role": role, "workspace_id": workspace_id},
+        metadata={"role": platform_role, "workspace_role": workspace_role, "workspace_id": workspace_id},
     )
     return target_user
 
@@ -5384,17 +5502,39 @@ async def api_admin_users_update(user_id: int, body: dict, request: Request, adm
         raise HTTPException(400, "you cannot demote or disable your own account")
     await _assert_can_manage_target_user(admin_user, user_id)
     before = await _auth.get_user_by_id(user_id)
-    password_changed = bool(body.get("password"))
+    password = None
+    if "password" in body:
+        password = _validate_password_or_400(body.get("password"))
+    password_changed = password is not None
+    role_update = body.get("role")
+    workspace_role = None
+    platform_role_update = None
+    if role_update:
+        requested_role = _assignable_role(role_update, admin_user)
+        if _is_global_iam_admin(admin_user):
+            platform_role_update = requested_role
+        else:
+            workspace_role = requested_role
     target_user = await _auth.update_user(
         user_id,
         name=body.get("name"),
-        role=_assignable_role(body.get("role"), admin_user) if body.get("role") else None,
+        role=platform_role_update,
         is_active=body.get("is_active"),
-        password=body.get("password"),
+        password=password,
         escalation_notify=body.get("escalation_notify") if "escalation_notify" in body else None,
     )
     if not target_user:
         raise HTTPException(404, "user not found")
+    if workspace_role:
+        workspace_id = str(admin_user.get("active_workspace_id") or "")
+        if not workspace_id:
+            raise HTTPException(400, "active workspace is required")
+        try:
+            await _set_workspace_role_for_user(user_id, workspace_id, workspace_role)
+        except (RuntimeError, AttributeError) as exc:
+            if not _workspace_scope_db_unavailable(exc):
+                raise
+        target_user["workspace_role"] = workspace_role
     action = "user.updated"
     if before and before.get("role") != target_user.get("role"):
         action = "user.role_changed"
@@ -5479,7 +5619,8 @@ def _pack_vpn_conf(conf_text: str, email: str) -> tuple[bytes, str]:
 
 
 def _safe_filename(email: str) -> str:
-    return email.replace("@", "_").replace("/", "_").replace("..", "_")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(email or "user")).strip("._-")
+    return (cleaned or "user")[:120]
 
 
 async def _create_vpn_config_link(user_id: int, email: str) -> dict:
@@ -5515,14 +5656,13 @@ async def _issue_vpn_for_user(user_id: int, email: str, name: str | None) -> dic
 
 @app.get("/vpn-config/{token}")
 async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
-    info = await _tokens.lookup(token, "vpn")
+    info = await _tokens.consume_lookup(token, "vpn")
     if not info or not info.get("wg_client_id"):
         raise HTTPException(404, "Link invalido o ya utilizado")
     try:
         cfg = await _vpn.get_config(info["wg_client_id"])
     except _vpn.VPNError as exc:
         raise HTTPException(502, f"No se pudo obtener la configuracion VPN: {exc}") from exc
-    await _tokens.consume(token)
     safe = _safe_filename(info.get("email") or "user")
     return Response(
         content=cfg,
@@ -5559,9 +5699,7 @@ async def api_admin_users_vpn_reissue(
 async def api_admin_users_invite(body: dict, request: Request, admin_user: dict = Depends(require_permission("iam.users.write"))):
     """Invite a new user by email. Creates an inactive user with no password,
     issues an invitation token, and emails the activation link."""
-    email = (body.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(400, "email is required")
+    email = _normalize_email_or_400(body.get("email"))
     existing = await _auth.get_user_by_email(email)
     if existing:
         raise HTTPException(409, f"user with email {email} already exists")

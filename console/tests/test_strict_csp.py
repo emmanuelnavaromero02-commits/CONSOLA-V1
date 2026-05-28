@@ -34,10 +34,19 @@ os.environ.setdefault("MINIO_SECRET_KEY",  "test")
 
 
 def _main():
-    """Lazy app.main loader; pops any MagicMock stub a peer test left behind."""
+    """Lazy app.main loader; pops stale stubs or non-console app packages."""
     for _k in ("app.dependencies", "app.services.auth"):
         if isinstance(sys.modules.get(_k), MagicMock):
             sys.modules.pop(_k, None)
+    repo_root = Path(__file__).resolve().parents[2]
+    console_root = repo_root / "console"
+    loaded_main = sys.modules.get("app.main")
+    loaded_file = Path(str(getattr(loaded_main, "__file__", ""))).resolve() if loaded_main else None
+    if loaded_file and console_root not in loaded_file.parents:
+        for name in list(sys.modules):
+            if name == "app" or name.startswith("app."):
+                sys.modules.pop(name, None)
+    sys.path.insert(0, str(console_root))
     return importlib.import_module("app.main")
 
 

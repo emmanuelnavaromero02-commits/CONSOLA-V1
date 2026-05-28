@@ -8,6 +8,16 @@
 
 function escHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function fmt(s){ return s ? String(s).slice(0,16).replace('T',' ') : '—'; }
+function csrfToken(){
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+function jsonHeaders(){
+  return {'Content-Type':'application/json', 'X-CSRF-Token': csrfToken()};
+}
+function csrfHeaders(){
+  return {'X-CSRF-Token': csrfToken()};
+}
 
 // ── User bar ───────────────────────────────────────────────────────
 let ME = null;
@@ -23,7 +33,7 @@ async function loadMe() {
     <a href="#" data-action="logout">Salir</a>`;
 }
 async function doLogout(){
-  await fetch('/auth/logout', {method:'POST'});
+  await fetch('/auth/logout', {method:'POST', headers: csrfHeaders()});
   location.href = (CONSOLE_URL || '') + '/login';
 }
 let CONSOLE_URL = '';
@@ -245,7 +255,7 @@ async function sendMessage(){
   try {
     const r = await fetch('/workspace/chat/stream', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({ message: text, history: HISTORY }),
     });
     if (!r.ok) {
@@ -468,7 +478,7 @@ window.submitNewDecision = async function() {
   if (!title) { alert('El título es obligatorio'); return; }
   const aRaw = document.getElementById('nd-assignee').value;
   const r = await fetch('/api/decisions', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
+    method: 'POST', headers: jsonHeaders(),
     body: JSON.stringify({
       title,
       description: document.getElementById('nd-desc').value,
@@ -702,7 +712,7 @@ window.saveDecisionKpis = async function(id) {
   // Drop incomplete rows
   const cleaned = WORKING_KPIS.filter(k => k.dataset && k.column);
   const r = await fetch('/api/decisions/' + id, {
-    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    method: 'PATCH', headers: jsonHeaders(),
     body: JSON.stringify({ kpis: cleaned })
   });
   if (!r.ok) {
@@ -728,7 +738,7 @@ window.saveDecisionOverview = async function(id) {
   };
   if (!body.title) { alert('El título no puede estar vacío'); return; }
   const r = await fetch('/api/decisions/' + id, {
-    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(body)
   });
   if (!r.ok) {
     const e = await r.json().catch(()=>({}));
@@ -743,7 +753,7 @@ window.addDecisionAction = async function(id) {
   const txt = document.getElementById('ac-text').value.trim();
   if (!txt) return;
   const r = await fetch('/api/decisions/' + id + '/actions', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
+    method: 'POST', headers: jsonHeaders(),
     body: JSON.stringify({ action_text: txt })
   });
   if (!r.ok) { alert('Error: ' + r.statusText); return; }
@@ -755,7 +765,7 @@ window.addDecisionAction = async function(id) {
 
 window.deleteDecision = async function(id) {
   if (!confirm('¿Eliminar esta decisión y toda su bitácora? No se puede deshacer.')) return;
-  const r = await fetch('/api/decisions/' + id, { method: 'DELETE' });
+  const r = await fetch('/api/decisions/' + id, { method: 'DELETE', headers: csrfHeaders() });
   if (!r.ok) { alert('Error: ' + r.statusText); return; }
   closeModal();
   loadDecisions();

@@ -17,7 +17,7 @@ import { useAuditEvents } from "@/lib/operations/hooks";
  * GET /security/audit returns up to 100 events (server-imposed
  * LIMIT). The table supports:
  *   - free-text filter across user_email / action /
- *     resource_type / resource_id / ip
+ *     resource_type / resource_id / ip / request_id
  *   - per-row expandable detail panel showing the JSONB
  *     ``details`` payload
  *
@@ -41,6 +41,7 @@ function eventMatches(e: AuditEvent, q: string): boolean {
     e.resource_type,
     e.resource_id,
     e.ip,
+    e.request_id,
   ].some((v) => (v ?? "").toLowerCase().includes(needle));
 }
 
@@ -100,7 +101,7 @@ export function AuditTable() {
             setQuery(e.target.value);
             setExpanded(null);
           }}
-          placeholder="email, acción, recurso, IP…"
+          placeholder="email, acción, recurso, IP, request-id..."
           className="min-h-[44px] w-full max-w-md rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <span className="text-xs text-muted-foreground">
@@ -125,6 +126,7 @@ export function AuditTable() {
                 <th className="px-3 py-2 font-medium">Acción</th>
                 <th className="px-3 py-2 font-medium">Recurso</th>
                 <th className="px-3 py-2 font-medium">IP</th>
+                <th className="px-3 py-2 font-medium">Request</th>
               </tr>
             </thead>
             <tbody>
@@ -184,10 +186,13 @@ export function AuditTable() {
                       <td className="px-3 py-2 align-top font-mono text-xs text-muted-foreground">
                         {e.ip ?? "—"}
                       </td>
+                      <td className="px-3 py-2 align-top font-mono text-[11px] text-muted-foreground">
+                        {e.request_id ?? "—"}
+                      </td>
                     </tr>
                     {isOpen && hasDetails ? (
                       <tr className="border-t bg-muted/20">
-                        <td colSpan={6} className="px-3 py-3">
+                        <td colSpan={7} className="px-3 py-3">
                           <pre
                             aria-label="Detalles del evento"
                             tabIndex={0}

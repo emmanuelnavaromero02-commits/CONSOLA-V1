@@ -19,7 +19,7 @@ import { legacyConsoleUrl } from "@/lib/legacy-url";
  *                       /api/vault/connections/{cartridge}
  *   - Brief asked for:  Vault entries / Audit log / Users CRUD
  *                       / Workspaces CRUD / Settings / Monitor.
- *     Workspaces / Settings(workspace_id) / Monitor don't yet
+ *     Workspaces / Settings(workspace_id) don't yet
  *     exist as backend endpoints — they're documented as
  *     coming soon below rather than shipped as UI theater.
  *
@@ -67,11 +67,6 @@ const PENDING_MODULES = [
     title:       "Settings",
     description: "Preferencias por workspace (idioma, tono, branding).",
     legacyHref:  legacyConsoleUrl("/settings"),
-  },
-  {
-    title:       "Monitor",
-    description: "Estado de salud de los 18 servicios.",
-    legacyHref:  legacyConsoleUrl("/monitor"),
   },
 ];
 

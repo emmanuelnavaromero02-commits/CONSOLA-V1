@@ -1,18 +1,13 @@
 /**
  * v1.44.4 Group 1 — Operations API client.
  *
- * Thin axios wrappers against the REAL backend endpoints
- * documented in ./types.ts. The shared ``api`` instance from
- * @/lib/api handles CSRF + cookies + same-origin proxy.
+ * Thin typed wrappers against the REAL backend endpoints documented
+ * in ./types.ts. The shared ``api`` client from @/lib/api handles
+ * CSRF, cookies and request IDs on same-origin FastAPI calls.
  *
  * NOTE on the /security/audit path: that router is mounted at
- * the bare /security prefix (NOT /api/security). The same-origin
- * proxy at console-next/src/app/api/[...path]/route.ts only
- * catches /api/* paths, so calls to /security/audit need to go
- * through a different proxy route. For Task D scope we route
- * them through axios directly — the global same-origin proxy
- * at console-next/src/proxy.ts won't redirect /security/*
- * because it's an authenticated path with a session cookie.
+ * the bare /security prefix (NOT /api/security), so it is intentionally
+ * requested as a relative FastAPI URL.
  */
 import { api } from "@/lib/api";
 import type {
@@ -21,7 +16,12 @@ import type {
   CreateUserRequest,
   UpdateUserRequest,
   UsersListResponse,
+  VaultConnection,
+  VaultConnectionPayload,
   VaultConnectionsResponse,
+  VaultSecret,
+  VaultSecretPayload,
+  VaultSecretsResponse,
 } from "./types";
 
 
@@ -94,4 +94,74 @@ export async function listVaultConnections(
     `/api/vault/connections/${encodeURIComponent(cartridge)}`,
   );
   return { connections: data.connections ?? [] };
+}
+
+
+export async function revealVaultConnection(
+  cartridge: string,
+  connId: string,
+): Promise<VaultConnection> {
+  const { data } = await api.get<VaultConnection>(
+    `/api/vault/connections/${encodeURIComponent(cartridge)}/${encodeURIComponent(connId)}/reveal`,
+  );
+  return data;
+}
+
+
+export async function upsertVaultConnection(
+  cartridge: string,
+  connId: string,
+  payload: VaultConnectionPayload,
+): Promise<VaultConnection> {
+  const { data } = await api.put<VaultConnection>(
+    `/api/vault/connections/${encodeURIComponent(cartridge)}/${encodeURIComponent(connId)}`,
+    payload,
+  );
+  return data;
+}
+
+
+export async function deleteVaultConnection(
+  cartridge: string,
+  connId: string,
+): Promise<void> {
+  await api.delete(`/api/vault/connections/${encodeURIComponent(cartridge)}/${encodeURIComponent(connId)}`);
+}
+
+
+export async function listVaultSecrets(scope: string): Promise<VaultSecretsResponse> {
+  const { data } = await api.get<VaultSecretsResponse | { keys?: string[] }>(
+    `/api/vault/secrets/${encodeURIComponent(scope)}`,
+  );
+  if ("secrets" in data && Array.isArray(data.secrets)) {
+    return { secrets: data.secrets };
+  }
+  const keys = "keys" in data && Array.isArray(data.keys) ? data.keys : [];
+  return { secrets: keys.map((key) => ({ key, masked: "••••••••••" })) };
+}
+
+
+export async function revealVaultSecret(scope: string, key: string): Promise<VaultSecret> {
+  const { data } = await api.get<VaultSecret>(
+    `/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/reveal`,
+  );
+  return data;
+}
+
+
+export async function upsertVaultSecret(
+  scope: string,
+  key: string,
+  payload: VaultSecretPayload,
+): Promise<VaultSecret> {
+  const { data } = await api.put<VaultSecret>(
+    `/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`,
+    payload,
+  );
+  return data;
+}
+
+
+export async function deleteVaultSecret(scope: string, key: string): Promise<void> {
+  await api.delete(`/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`);
 }

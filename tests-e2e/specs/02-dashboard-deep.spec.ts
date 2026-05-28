@@ -125,7 +125,7 @@ test.describe("Dashboard — Freshness table", () => {
 
   test("each row has a cartridge link", async ({ page }) => {
     await page.goto("/dashboard");
-    const links = page.locator('table a[href^="/cartridges/"]');
+    const links = page.locator('table a[href^="/cartridges/viewer"]');
     await expect(links.first()).toBeVisible({ timeout: 15_000 });
     const count = await links.count();
     expect(count).toBeGreaterThanOrEqual(4);
@@ -142,7 +142,7 @@ test.describe("Dashboard — Freshness table", () => {
 
   test("click on freshness row navigates to detail page", async ({ page }) => {
     await page.goto("/dashboard");
-    const link = page.locator('table a[href^="/cartridges/"]').first();
+    const link = page.locator('table a[href^="/cartridges/viewer"]').first();
     await expect(link).toBeVisible({ timeout: 15_000 });
     const href = await link.getAttribute("href");
     await link.click();
@@ -205,7 +205,7 @@ test.describe("Dashboard — internal navigation", () => {
 
   test("navigate from dashboard to /cartridges via link", async ({ page }) => {
     await page.goto("/dashboard");
-    const link = page.locator('a[href="/cartridges"], a[href^="/cartridges/"]').first();
+    const link = page.locator('a[href="/cartridges"], a[href^="/cartridges/viewer"]').first();
     if (!(await link.isVisible({ timeout: 10_000 }).catch(() => false))) {
       test.fail(true, "no link to /cartridges from /dashboard — UX gap");
       return;

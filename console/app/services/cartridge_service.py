@@ -323,6 +323,7 @@ async def list_cartridges() -> list[dict]:
 
 async def create_cartridge(cartridge_id: str, name: str, description: str = "") -> dict:
     """Register a new cartridge. Raises if it already exists."""
+    cartridge_id = _validate_cartridge_id(cartridge_id)
     conn = await _pg()
     try:
         existing = await conn.fetchrow(
@@ -341,6 +342,7 @@ async def create_cartridge(cartridge_id: str, name: str, description: str = "") 
 
 async def update_cartridge(cartridge_id: str, updates: dict) -> dict:
     """Update top-level cartridge fields."""
+    cartridge_id = _validate_cartridge_id(cartridge_id)
     allowed = {"name", "version", "description", "pattern", "category", "bronze_path"}
     fields  = {k: v for k, v in updates.items() if k in allowed}
     if not fields:
@@ -494,15 +496,20 @@ def upload_spec(cartridge_id: str, filename: str, content: str) -> str:
 
 
 def upload_code(cartridge_id: str, filename: str, content: str) -> str:
+    cartridge_id = _validate_cartridge_id(cartridge_id)
+    filename = _validate_plain_filename(filename)
     c   = _minio()
     _ensure_bucket(c)
     key = f"cartridges/{cartridge_id}/{filename}"
     raw = content.encode("utf-8")
+    if len(raw) > _MAX_IMPORT_MEMBER_BYTES:
+        raise ValueError("code upload too large")
     c.put_object(_MINIO_BUCKET, key, io.BytesIO(raw), len(raw), content_type="text/plain")
     return key
 
 
 def list_specs(cartridge_id: str) -> list[str]:
+    cartridge_id = _validate_cartridge_id(cartridge_id)
     c      = _minio()
     prefix = f"cartridges/{cartridge_id}/specs/"
     try:
@@ -525,6 +532,7 @@ async def export_cartridge(cartridge_id: str) -> bytes:
       specs/*          — spec files from MinIO
     Self-contained and re-importable on a fresh installation.
     """
+    cartridge_id = _validate_cartridge_id(cartridge_id)
     manifest = await get_cartridge(cartridge_id)
     if not manifest:
         raise ValueError(f"Cartridge '{cartridge_id}' not found")

@@ -1,7 +1,7 @@
 /**
  * Read a browser cookie by name. Kept dependency-free so public pages
  * such as /login can perform the CSRF dance without pulling the full
- * axios API client into their first-load bundle.
+ * authenticated data layer into their first-load bundle.
  */
 export function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;

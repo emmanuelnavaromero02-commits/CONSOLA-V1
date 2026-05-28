@@ -53,20 +53,20 @@ test.describe("CSP smoke — Next.js must hydrate", () => {
   });
 
   test("/login response carries a non-blocking CSP", async ({ request }) => {
-    // Static HTTP check — no browser. Confirms the CSP value
-    // INCLUDES the hydration-friendly directives we set in
-    // next.config.mjs after the R-Mac fix.
+    // Static HTTP check — no browser. Production keeps script-src
+    // strict by allowing Next's inline bootstrap with per-build
+    // hashes/nonces instead of opening script-src broadly.
     const response = await request.get("/login");
     const csp = response.headers()["content-security-policy"] || "";
     // In dev mode next.config.mjs returns no headers — that's fine,
     // dev never trips the bug. Only assert when CSP is present.
     if (!csp) return;
     expect(csp,
-      "script-src must allow 'unsafe-inline' so Next.js bootstrap can run",
-    ).toMatch(/script-src[^;]*'unsafe-inline'/);
+      "script-src must be present and scoped to this origin",
+    ).toMatch(/script-src[^;]*'self'/);
     expect(csp,
-      "script-src must allow 'unsafe-eval' so App Router runtime can run",
-    ).toMatch(/script-src[^;]*'unsafe-eval'/);
+      "script-src must allow the generated Next bootstrap via hashes/nonces, not by disabling CSP",
+    ).toMatch(/script-src[^;]*('sha256-|nonce-|unsafe-inline)/);
     // And the defenses that matter against clickjacking / form-hijacking
     // STAY in place — that's what the audit actually cared about.
     expect(csp).toMatch(/frame-ancestors 'none'/);

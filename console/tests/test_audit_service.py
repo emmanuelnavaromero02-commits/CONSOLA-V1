@@ -8,12 +8,14 @@ from app.services.audit_service import record_event
 @pytest.mark.asyncio
 async def test_record_event_success():
     mock_pool = AsyncMock()
+    mock_pool.fetchval.side_effect = ["audit_events", True]
     with patch("app.services.audit_service.auth.pool", return_value=mock_pool):
         await record_event(
             user_id=1,
             email="test@example.com",
             action="login",
             resource_type="auth",
+            request_id="rid-test",
             metadata={"key": "value"}
         )
         # Give the background task a moment to execute
@@ -26,7 +28,8 @@ async def test_record_event_success():
         assert args[2] == "test@example.com"  # email
         assert args[3] == "login"  # action
         assert args[4] == "auth"  # resource_type
-        assert args[9] == '{"key": "value"}'  # metadata
+        assert args[9] == "rid-test"  # request_id
+        assert args[10] == '{"key": "value"}'  # metadata
 
 @pytest.mark.asyncio
 async def test_record_event_db_failure_no_exception():

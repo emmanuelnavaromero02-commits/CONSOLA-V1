@@ -1,8 +1,8 @@
-"""Sprint v1.44.3.2.2 R-Mac-3 — runtime CORS contract for Next.js.
+"""Sprint v1.44.3.2.2 R-Mac-3 — runtime CORS contract for Workspace.
 
 Codex's Mac reproduced the failure mode:
 
-  $ curl -i -H "Origin: http://localhost:3000" http://localhost:8000/auth/login
+  $ curl -i -H "Origin: http://localhost:8001" http://localhost:8000/auth/login
   → access-control-allow-credentials: true   ✓
   → access-control-allow-origin:    MISSING  ✗
 
@@ -98,7 +98,7 @@ def test_options_preflight_returns_allow_origin(client):
     r = client.options(
         "/auth/login",
         headers={
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:8001",
             "Access-Control-Request-Method":  "POST",
             "Access-Control-Request-Headers": "X-CSRF-Token,Content-Type",
         },
@@ -108,7 +108,7 @@ def test_options_preflight_returns_allow_origin(client):
         f"the CORS middleware short-circuit is not firing. Verify "
         f"CORSMiddleware is OUTERMOST in the stack."
     )
-    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:8001"
     assert "POST" in r.headers.get("access-control-allow-methods", "")
     allow_headers = r.headers.get("access-control-allow-headers", "")
     assert "X-CSRF-Token".lower() in allow_headers.lower()
@@ -120,7 +120,7 @@ def test_options_preflight_caches_for_an_hour(client):
     r = client.options(
         "/auth/login",
         headers={
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:8001",
             "Access-Control-Request-Method": "POST",
         },
     )
@@ -147,17 +147,17 @@ def test_options_preflight_for_disallowed_origin_returns_no_allow_origin(client)
 
 
 def test_get_login_includes_access_control_allow_origin(client):
-    """GET /login from the Next.js origin must come back with
-    Allow-Origin. This is the request the Next.js loginUser helper
+    """GET /login from the Workspace origin must come back with
+    Allow-Origin. This is the request the Workspace loginUser helper
     fires first to seed the csrf_token cookie."""
     r = client.get(
         "/login",
-        headers={"Origin": "http://localhost:3000"},
+        headers={"Origin": "http://localhost:8001"},
     )
     # The page itself returns whatever it returns (200 HTML, 302
     # redirect, etc.) — the CORS header is what matters.
-    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000", (
-        f"GET /login Origin=:3000 returned headers: {dict(r.headers)} — "
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:8001", (
+        f"GET /login Origin=:8001 returned headers: {dict(r.headers)} — "
         f"Allow-Origin missing. CORS middleware ordering may be wrong."
     )
 
@@ -170,14 +170,14 @@ def test_post_auth_login_with_origin_returns_allow_origin(client):
         "/auth/login",
         json={"email": "nobody@invalid.local", "password": "wrong"},
         headers={
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:8001",
             "Content-Type": "application/json",
         },
     )
     # Status will be 4xx (no creds) but that's expected. We only
     # care about the CORS header round-trip.
-    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000", (
-        f"POST /auth/login Origin=:3000 missing Allow-Origin (status="
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:8001", (
+        f"POST /auth/login Origin=:8001 missing Allow-Origin (status="
         f"{r.status_code}, headers={dict(r.headers)})"
     )
 
@@ -187,7 +187,7 @@ def test_credentials_true_in_response(client):
     the browser accepts the Set-Cookie header from /auth/login."""
     r = client.get(
         "/login",
-        headers={"Origin": "http://localhost:3000"},
+        headers={"Origin": "http://localhost:8001"},
     )
     assert r.headers.get("access-control-allow-credentials") == "true"
 
@@ -202,7 +202,7 @@ def test_x_csrf_token_in_allow_headers(client):
     r = client.options(
         "/auth/login",
         headers={
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:8001",
             "Access-Control-Request-Method":  "POST",
             "Access-Control-Request-Headers": "X-CSRF-Token",
         },
@@ -214,10 +214,10 @@ def test_x_csrf_token_in_allow_headers(client):
 def test_expose_headers_includes_set_cookie_and_csrf(client):
     """expose_headers lets the browser READ Set-Cookie + X-CSRF-Token
     from credentialed cross-origin responses. Without it the
-    Next.js console can't echo the cookie value back."""
+    Workspace console can't echo the cookie value back."""
     r = client.get(
         "/login",
-        headers={"Origin": "http://localhost:3000"},
+        headers={"Origin": "http://localhost:8001"},
     )
     expose = r.headers.get("access-control-expose-headers", "").lower()
     assert "set-cookie" in expose, (

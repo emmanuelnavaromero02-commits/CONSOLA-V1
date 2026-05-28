@@ -28,7 +28,7 @@ interface LegacyPage {
 
 const PAGES: LegacyPage[] = [
   { path: "/iam",            needle: /usuarios|users|iam/i,     label: "iam (users)" },
-  { path: "/operations",     needle: /operations|operación/i,   label: "operations" },
+  { path: "/operations",     needle: /operaciones|operations|operación/i, label: "operations" },
   { path: "/monitor",        needle: /monitor/i,                label: "monitor" },
   { path: "/me",             needle: /perfil|profile|me/i,      label: "me" },
   { path: "/settings",       needle: /settings|ajustes/i,       label: "settings" },
@@ -81,7 +81,7 @@ test.describe("Legacy navigation surface", () => {
       // surface the copilot — this test pins one of the legacy
       // pages and looks for a /copilot link OR the FAB.
       await page.goto(`${LEGACY}/monitor`);
-      const link = page.locator('a[href="/copilot"], a[href$="/copilot"], button[data-fab="copilot"]');
+      const link = page.locator('a[href="/copilot"], a[href="/copilot/"], a[href$="/copilot"], a[href$="/copilot/"], button[data-fab="copilot"]');
       await expect(link.first()).toBeAttached({ timeout: 10_000 });
     },
   );

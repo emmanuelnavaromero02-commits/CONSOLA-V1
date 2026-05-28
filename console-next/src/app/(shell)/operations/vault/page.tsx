@@ -3,11 +3,9 @@ import { VaultConnectionsTable } from "@/components/operations/VaultConnectionsT
 /**
  * v1.44.4 Group 1 — Operations · Vault.
  *
- * Read-only inventory of connections per cartridge against
- * /api/vault/connections/{cartridge}. Requires
- * ``vault.connections.read`` (server-enforced); the table
- * surfaces the backend's permission error if a non-admin
- * reaches this page directly.
+ * Full TSX Vault surface against the FastAPI same-origin
+ * endpoints: list/reveal/upsert/delete connections and secrets
+ * with CSRF + X-Request-ID handled by the shared API client.
  */
 export default function VaultPage() {
   return (
@@ -15,8 +13,8 @@ export default function VaultPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Vault</h1>
         <p className="text-sm text-muted-foreground">
-          Conexiones almacenadas por cartucho. Las credenciales viven
-          en el servicio de Vault — esta vista solo muestra metadatos.
+          Conexiones, API keys y secrets por cartucho/scope con revelado
+          controlado y acciones auditadas.
         </p>
       </header>
 

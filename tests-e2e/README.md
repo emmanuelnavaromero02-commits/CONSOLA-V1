@@ -1,8 +1,7 @@
 # OMEGA E2E Test Suite (Playwright)
 
 Browser-driven end-to-end tests for the OMEGA console. Validates the
-Next.js console (port 3000), the legacy HTML console (port 8000), the
-FastAPI backend (port 8000), and external service surfaces (Airflow
+FastAPI-served static console (port 8000), the backend APIs, and external service surfaces (Airflow
 8082, Superset 8088, MinIO 9001, Mailhog 8025, MCP cartridges
 8201-8204).
 
@@ -26,7 +25,7 @@ The `.env` is gitignored. Required keys:
 |---|---|---|
 | `TEST_EMAIL` | `emmanuel@local.ai` | Must exist in the `users` table |
 | `TEST_PASSWORD` | `Admin123!` | Plaintext — bcrypt'd by the backend for local-dev seed only |
-| `BASE_URL` | `http://localhost:3000` | Next.js console |
+| `BASE_URL` | `http://localhost:8000` | FastAPI-served console |
 | `LEGACY_URL` | `http://localhost:8000` | FastAPI console |
 | `AIRFLOW_URL` | `http://localhost:8082` | **Local compose uses :8082, not :8080** |
 | `SUPERSET_URL` | `http://localhost:8088` |  |

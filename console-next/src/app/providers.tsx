@@ -22,10 +22,15 @@ export function Providers({ children }: { children: ReactNode }) {
             retry: (failureCount, error: unknown) => {
               // Don't retry 4xx — those are deterministic. Retry once
               // on 5xx / network.
-              const status =
-                typeof error === "object" && error && "response" in error
-                  ? (error as { response?: { status?: number } }).response?.status
-                  : undefined;
+              const status = typeof error === "object" && error
+                ? (
+                    "status" in error && typeof error.status === "number"
+                      ? error.status
+                      : "response" in error
+                        ? (error as { response?: { status?: number } }).response?.status
+                        : undefined
+                  )
+                : undefined;
               if (status && status >= 400 && status < 500) return false;
               return failureCount < 1;
             },

@@ -10,8 +10,8 @@ import { test, expect } from "../fixtures/auth";
 test.describe("Cartridges grid (Next.js, /cartridges)", () => {
   test("renders the 4-cartridge grid", async ({ authedPage: page }) => {
     await page.goto("/cartridges");
-    // Each tile is a <Link href="/cartridges/<id>"> — count them.
-    const tiles = page.locator('a[href^="/cartridges/"]');
+    // Each tile exposes a static-export-safe query-param viewer link.
+    const tiles = page.locator('a[href^="/cartridges/viewer"]');
     await expect(tiles.first()).toBeVisible({ timeout: 10_000 });
     const count = await tiles.count();
     expect(count,
@@ -21,7 +21,10 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
 
   test("each tile shows name + status badge", async ({ authedPage: page }) => {
     await page.goto("/cartridges");
-    const firstTile = page.locator('a[href^="/cartridges/"]').first();
+    const firstTile = page
+      .locator('a[href^="/cartridges/viewer"]')
+      .first()
+      .locator("xpath=ancestor::article[1]");
     await expect(firstTile).toBeVisible({ timeout: 10_000 });
     const text = (await firstTile.innerText()).trim();
     // The brief documents one of these 4 status labels.
@@ -30,24 +33,23 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
     ).toMatch(/conectado|sin probar|sin configurar|falló/i);
   });
 
-  test("clicking Replicon navigates to /cartridges/replicon", async ({
+  test("clicking Replicon navigates to /cartridges/viewer?id=replicon", async ({
     authedPage: page,
   }) => {
     await page.goto("/cartridges");
-    const repliconLink = page.locator('a[href="/cartridges/replicon"]');
+    const repliconLink = page.locator('a[href="/cartridges/viewer?id=replicon"], a[href="/cartridges/viewer/?id=replicon"]');
     await expect(repliconLink.first()).toBeVisible({ timeout: 10_000 });
     await repliconLink.first().click();
-    await page.waitForURL("**/cartridges/replicon", { timeout: 10_000 });
-    // The detail page renders a breadcrumb back to /cartridges.
-    await expect(page.locator('nav[aria-label="breadcrumb"]')).toBeVisible();
+    await page.waitForURL(/\/cartridges\/viewer\/?\?id=replicon/, { timeout: 10_000 });
+    await expect(page.locator("form")).toBeVisible({ timeout: 15_000 });
   });
 });
 
-test.describe("Cartridge detail (Next.js, /cartridges/[id])", () => {
+test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
   test("the form renders real <input> elements (not stub rectangles)", async ({
     authedPage: page,
   }) => {
-    await page.goto("/cartridges/replicon");
+    await page.goto("/cartridges/viewer?id=replicon");
     // The dynamic form builds at least one labelled input — count
     // the form inputs after the schema load resolves.
     await expect(page.locator("form")).toBeVisible({ timeout: 15_000 });
@@ -60,7 +62,7 @@ test.describe("Cartridge detail (Next.js, /cartridges/[id])", () => {
   test("'Probar conexión' button is present and clickable", async ({
     authedPage: page,
   }) => {
-    await page.goto("/cartridges/replicon");
+    await page.goto("/cartridges/viewer?id=replicon");
     const btn = page.getByRole("button", { name: /probar conexión/i });
     await expect(btn).toBeVisible({ timeout: 15_000 });
     await expect(btn).toBeEnabled();
@@ -69,7 +71,7 @@ test.describe("Cartridge detail (Next.js, /cartridges/[id])", () => {
   test("'Guardar credenciales' button is present", async ({
     authedPage: page,
   }) => {
-    await page.goto("/cartridges/replicon");
+    await page.goto("/cartridges/viewer?id=replicon");
     await expect(
       page.getByRole("button", { name: /guardar credenciales/i }),
     ).toBeVisible({ timeout: 15_000 });
@@ -78,7 +80,7 @@ test.describe("Cartridge detail (Next.js, /cartridges/[id])", () => {
   test("'Borrar credenciales' opens the confirm dialog", async ({
     authedPage: page,
   }) => {
-    await page.goto("/cartridges/replicon");
+    await page.goto("/cartridges/viewer?id=replicon");
     const deleteBtn = page.getByRole("button", { name: /borrar credenciales/i });
     await expect(deleteBtn).toBeVisible({ timeout: 15_000 });
     await deleteBtn.click();

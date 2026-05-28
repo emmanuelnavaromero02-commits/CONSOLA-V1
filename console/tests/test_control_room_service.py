@@ -400,7 +400,7 @@ async def test_dashboard_applies_workspace_thresholds_to_detection_and_priority(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_exposes_push_ready_alert_queue_with_priority_drivers():
+async def test_dashboard_exposes_internal_alert_queue_with_priority_drivers():
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -420,10 +420,11 @@ async def test_dashboard_exposes_push_ready_alert_queue_with_priority_drivers():
     alerts = result["alerts"]
     assert alerts
     assert result["summary"]["alerts"]["total"] == len(alerts)
-    assert result["summary"]["alerts"]["push_ready"] == len(alerts)
+    assert result["summary"]["alerts"]["push_ready"] == 0
     top = alerts[0]
-    assert top["push_ready"] is True
+    assert top["push_ready"] is False
     assert top["delivery"]["status"] == "not_configured"
+    assert top["delivery"]["channels"] == []
     assert top["priority_score"] >= alerts[-1]["priority_score"]
     assert any(driver["label"] == "Severidad" for driver in top["drivers"])
     threshold_alert = next(alert for alert in alerts if alert["alert_type"] == "threshold_breach")
@@ -1422,6 +1423,7 @@ async def test_approve_persists_lessons_to_lessons_table():
             ]),
         ),
         patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()),
+        patch.object(control_room_service, "_lessons_for_item", return_value=["Regla aprendida explicita"]),
     ):
         await control_room_service.approve_anomaly(
             anomaly["id"],

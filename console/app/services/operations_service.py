@@ -37,13 +37,22 @@ def _base_url(env_name: str, default: str) -> str:
     return os.environ.get(env_name, default).rstrip("/")
 
 
+def _service_url(env_name: str, docker_default: str, development_default: str) -> str:
+    raw = os.environ.get(env_name)
+    if raw:
+        return raw.rstrip("/")
+    if os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+        return docker_default.rstrip("/")
+    return development_default.rstrip("/")
+
+
 def service_probes() -> dict[str, str]:
     return {
         "console":            f"{_base_url('CONSOLE_INTERNAL_URL', 'http://console:8000')}/api/system/info",
         "workspace":          f"{_base_url('WORKSPACE_INTERNAL_URL', 'http://workspace:8001')}/healthz",
         "refinement":         f"{_base_url('REFINEMENT_URL', 'http://refinement:8500')}/healthz",
         "mcp-infra":          f"{_base_url('MCP_INFRA_URL', 'http://mcp-infra:8010')}/healthz",
-        "vault":              f"{_base_url('VAULT_URL', 'http://vault:8300')}/healthz",
+        "vault":              f"{_service_url('VAULT_URL', 'http://vault:8300', 'http://127.0.0.1:8300')}/healthz",
         "replicon":           f"{_base_url('REPLICON_URL', 'http://replicon:8201')}/health",
         "sap-hcm":            f"{_base_url('SAP_HCM_URL', 'http://sap-hcm:8202')}/health",
         "sap-successfactors": f"{_base_url('SAP_SUCCESSFACTORS_URL', 'http://sap-successfactors:8203')}/health",

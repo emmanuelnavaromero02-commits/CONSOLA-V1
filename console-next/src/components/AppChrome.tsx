@@ -5,15 +5,17 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/LogoutButton";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
+const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/activate"];
 const THEME_STORAGE_KEY = "mod-theme";
 
 interface NavItem {
-  href:  string;
-  label: string;
-  icon:  string;
+  href:   string;
+  label:  string;
+  icon:   string;
+  active?: string[];
 }
 
 /**
@@ -24,11 +26,22 @@ interface NavItem {
  * never offers a dead link.
  */
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",  label: "Panel",       icon: "▦" },
-  { href: "/copilot",    label: "Copiloto",    icon: "◈" },
-  { href: "/cartridges", label: "Cartuchos",   icon: "□" },
-  { href: "/studio",     label: "Studio",      icon: "◇" },
-  { href: "/operations", label: "Operaciones", icon: "⚙" },
+  { href: "/dashboard",            label: "Panel",       icon: "▦" },
+  { href: "/workspace",            label: "Workspace",   icon: "◌" },
+  { href: "/control-room",         label: "Control Room", icon: "◎" },
+  { href: "/copilot",              label: "Copiloto",    icon: "◈" },
+  { href: "/agents",               label: "Agentes",     icon: "◇" },
+  { href: "/cartridges",           label: "Cartuchos",   icon: "□" },
+  { href: "/monitor",              label: "Monitor",     icon: "▤" },
+  { href: "/viewer?type=lineage",  label: "Linaje",      icon: "◇", active: ["/viewer"] },
+  { href: "/explorer",             label: "Explorer",    icon: "▱" },
+  { href: "/decisions",            label: "Decisiones",  icon: "✓" },
+  { href: "/studio",               label: "Studio",      icon: "◇" },
+  { href: "/operations",           label: "Operaciones", icon: "⚙", active: ["/operations", "/operations/users", "/operations/audit"] },
+  { href: "/operations/vault",     label: "Vault",       icon: "◉", active: ["/operations/vault"] },
+  { href: "/security",             label: "Seguridad",   icon: "◒" },
+  { href: "/settings",             label: "Settings",    icon: "⚙" },
+  { href: "/my-access",            label: "Mi acceso",   icon: "◎" },
 ];
 
 function userLabel(email: string): string {
@@ -37,7 +50,13 @@ function userLabel(email: string): string {
   return trimmed.split("@")[0] || trimmed;
 }
 
-function isActive(pathname: string, href: string): boolean {
+function navPath(href: string): string {
+  return href.split("?")[0] || href;
+}
+
+function isActive(pathname: string, item: NavItem): boolean {
+  const href = navPath(item.href);
+  if (item.active?.some((path) => pathname === path || pathname.startsWith(path + "/"))) return true;
   if (pathname === href) return true;
   // A nested route under the nav target counts as active so
   // /operations/users highlights "Operaciones".
@@ -97,10 +116,9 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!email) {
-      fetch("/auth/me", { credentials: "include" })
-        .then((response) => (response.ok ? response.json() : null))
+      api.get<{ email?: string; user?: { email?: string } }>("/auth/me")
         .then((body) => {
-          const nextEmail = body?.email || body?.user?.email;
+          const nextEmail = body.data.email || body.data.user?.email;
           if (typeof nextEmail === "string" && nextEmail) {
             try {
               window.localStorage.setItem("omega_user_email", nextEmail);
@@ -202,11 +220,11 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
           <nav
             aria-label="Navegación principal"
-            className="ml-2 hidden flex-1 md:flex"
+            className="ml-2 hidden min-w-0 flex-1 md:flex"
           >
-            <ul className="flex items-center gap-0.5">
+            <ul className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
               {NAV_ITEMS.map((item) => {
-                const active = isActive(pathname, item.href);
+                const active = isActive(pathname, item);
                 return (
                   <li key={item.href}>
                     <Link
@@ -288,7 +306,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
             >
               <ul className="space-y-1">
                 {NAV_ITEMS.map((item) => {
-                  const active = isActive(pathname, item.href);
+                  const active = isActive(pathname, item);
                   return (
                     <li key={item.href}>
                       <Link

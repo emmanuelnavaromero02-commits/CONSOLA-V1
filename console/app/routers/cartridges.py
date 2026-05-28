@@ -77,7 +77,20 @@ def _cartridge_internal_headers() -> dict[str, str]:
 # reads INTERNAL_API_KEY_CONSOLE_TO_VAULT — we mirror that here so the
 # new /cartridges/{id}/credentials endpoints land on the same audited
 # vault surface as the existing PUT /api/vault/connections/* path.
-_VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
+def _app_env() -> str:
+    return os.environ.get("APP_ENV", "production").strip().lower()
+
+
+def _vault_url() -> str:
+    raw = os.environ.get("VAULT_URL")
+    if raw:
+        return raw.rstrip("/")
+    if _app_env() in {"production", "prod"}:
+        return "http://vault:8300"
+    return "http://127.0.0.1:8300"
+
+
+_VAULT_URL = _vault_url()
 
 
 def _vault_headers() -> dict[str, str]:

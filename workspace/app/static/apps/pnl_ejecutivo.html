@@ -93,6 +93,10 @@ function showError(msg) {
   el.hidden = false;
 }
 function clearError() { $('err').hidden = true; }
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
 
 function fiscalYearFromMes(mes) {
   if (!mes) return null;
@@ -120,7 +124,7 @@ async function loadOptions() {
   try {
     const r = await fetch('/api/data/pnl_mensual/query', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
       body: JSON.stringify({ filters: {}, limit: 5000, columns: ['mes'] }),
     });
     const rows = await r.json();
@@ -218,7 +222,7 @@ async function runQuery() {
   try {
     const r = await fetch('/api/data/pnl_mensual/query', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
       body: JSON.stringify({
         filters: buildFilters(),
         limit: 10000,

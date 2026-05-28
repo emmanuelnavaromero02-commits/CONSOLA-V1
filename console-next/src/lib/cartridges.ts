@@ -10,7 +10,7 @@
  *
  * All routes are RBAC-gated server-side (cartridges.* or
  * vault.connections.write) and CSRF-gated on mutations. The cookie
- * is forwarded via the shared axios `withCredentials: true`.
+ * is carried by the shared same-origin API client.
  */
 import { api } from "@/lib/api";
 
@@ -46,54 +46,115 @@ export interface TestConnectionResult {
   latency_ms: number;
 }
 
+export interface CartridgeActivation {
+  installation?: {
+    id?: string;
+    cartridge_id?: string;
+    status?: string;
+    access_status?: string;
+    usable?: boolean;
+  };
+  product?: unknown;
+  [key: string]: unknown;
+}
+
 export const KNOWN_CARTRIDGES = ["replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
 export type CartridgeId = typeof KNOWN_CARTRIDGES[number];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function isFieldType(value: unknown): value is FieldType {
+  return ["string", "url", "password", "select", "boolean", "number"].includes(String(value));
+}
+
+function fieldFromSpec(name: string, spec: unknown): ConnectorField {
+  const source = isRecord(spec) ? spec : {};
+  const field: ConnectorField = {
+    name,
+    type: isFieldType(source.type) ? source.type : "string",
+  };
+  const label = text(source.label);
+  const description = text(source.description);
+  const pattern = text(source.pattern);
+  if (label) field.label = label;
+  if (description) field.description = description;
+  if (pattern) field.pattern = pattern;
+  if (typeof source.required === "boolean") field.required = source.required;
+  if (typeof source.default === "string" || typeof source.default === "number" || typeof source.default === "boolean") {
+    field.default = source.default;
+  }
+  if (typeof source.min_length === "number") field.min_length = source.min_length;
+  if (typeof source.max_length === "number") field.max_length = source.max_length;
+  if (Array.isArray(source.options)) {
+    field.options = source.options.flatMap((option) => {
+      if (!isRecord(option) || typeof option.value !== "string") return [];
+      return [{ value: option.value, label: text(option.label) ?? option.value }];
+    });
+  }
+  return field;
+}
+
 export async function listCartridges(): Promise<{ cartridges: string[] }> {
-  const { data } = await api.get("/api/cartridges");
+  const { data } = await api.get<{ cartridges: string[] }>("/api/cartridges");
   return data;
 }
 
 export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
-  const { data } = await api.get(`/api/cartridges/${encodeURIComponent(id)}/connector_schema`);
+  const { data } = await api.get<unknown>(`/api/cartridges/${encodeURIComponent(id)}/connector_schema`);
   // Tolerate both shapes — ``{ fields: [...] }`` AND the older
   // ``{ field_a: {...}, field_b: {...} }`` dict form.
-  if (Array.isArray(data?.fields)) return data;
-  if (data?.connector && typeof data.connector === "object") {
+  if (isRecord(data) && Array.isArray(data.fields)) {
+    return {
+      fields: data.fields.map((field, index) => (
+        isRecord(field) && typeof field.name === "string"
+          ? fieldFromSpec(field.name, field)
+          : fieldFromSpec(`field_${index + 1}`, field)
+      )),
+      name: text(data.name),
+      description: text(data.description),
+    };
+  }
+  if (isRecord(data) && isRecord(data.connector)) {
     const connector = data.connector;
+    const apiSpec = isRecord(connector.api) ? connector.api : {};
+    const authSpec = isRecord(connector.auth) ? connector.auth : {};
     const fields: ConnectorField[] = [];
-    if (connector.api?.base_url_env) {
+    const baseUrlEnv = text(apiSpec.base_url_env);
+    if (baseUrlEnv) {
       fields.push({
         name: "base_url",
         type: "url",
         label: "Base URL",
-        description: connector.api.base_url_env,
+        description: baseUrlEnv,
         required: true,
       });
     }
-    if (connector.auth?.type === "bearer_token") {
+    if (authSpec.type === "bearer_token") {
       fields.push({
         name: "token",
         type: "password",
         label: "Bearer token",
-        description: connector.auth.env_var || "API token",
+        description: text(authSpec.env_var) || "API token",
         required: true,
       });
     }
     return {
       fields,
-      name: connector.name,
-      description: connector.description,
+      name: text(connector.name),
+      description: text(connector.description),
     };
   }
-  if (data && typeof data === "object") {
+  if (isRecord(data)) {
     const fields: ConnectorField[] = Object.entries(data)
       .filter(([k]) => !["name", "description"].includes(k))
-      .map(([name, spec]) => ({
-        name,
-        ...(typeof spec === "object" && spec !== null ? spec : {}),
-      })) as ConnectorField[];
-    return { fields, name: data.name, description: data.description };
+      .map(([name, spec]) => fieldFromSpec(name, spec));
+    return { fields, name: text(data.name), description: text(data.description) };
   }
   return { fields: [] };
 }
@@ -102,7 +163,7 @@ export async function saveCredentials(
   id: string,
   payload: Record<string, string | number | boolean>,
 ): Promise<{ ok: true; encrypted_count: number; conn_id: string }> {
-  const { data } = await api.post(
+  const { data } = await api.post<{ ok: true; encrypted_count: number; conn_id: string }>(
     `/api/cartridges/${encodeURIComponent(id)}/credentials`,
     payload,
   );
@@ -110,15 +171,23 @@ export async function saveCredentials(
 }
 
 export async function testConnection(id: string): Promise<TestConnectionResult> {
-  const { data } = await api.post(
+  const { data } = await api.post<TestConnectionResult>(
     `/api/cartridges/${encodeURIComponent(id)}/test_connection`,
   );
   return data;
 }
 
 export async function deleteCredentials(id: string): Promise<{ ok: true }> {
-  const { data } = await api.delete(
+  const { data } = await api.delete<{ ok: true }>(
     `/api/cartridges/${encodeURIComponent(id)}/credentials`,
+  );
+  return data;
+}
+
+export async function activateCartridge(id: string): Promise<CartridgeActivation> {
+  const { data } = await api.post<CartridgeActivation>(
+    `/api/marketplace/products/${encodeURIComponent(id)}/activate`,
+    {},
   );
   return data;
 }

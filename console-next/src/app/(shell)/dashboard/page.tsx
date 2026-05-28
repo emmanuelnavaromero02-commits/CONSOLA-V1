@@ -8,6 +8,18 @@ import { FreshnessTable } from "@/components/dashboard/FreshnessTable";
 import { BriefingSection } from "@/components/dashboard/BriefingSection";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 
+const MODULE_LINKS = [
+  { href: "/workspace", label: "Workspace", detail: "Chat, apps y decisiones" },
+  { href: "/control-room", label: "Control Room", detail: "Señales y ejecución" },
+  { href: "/viewer?type=lineage", label: "Linaje", detail: "Grafo de dependencias" },
+  { href: "/agents", label: "Agentes", detail: "Tools, agenda y runs" },
+  { href: "/operations/vault", label: "Vault", detail: "API keys y secrets" },
+  { href: "/explorer", label: "Explorer", detail: "Buckets y objetos" },
+  { href: "/monitor", label: "Monitor", detail: "Jobs y watermarks" },
+  { href: "/decisions", label: "Decisiones", detail: "Compromisos" },
+  { href: "/settings", label: "Settings", detail: "Configuración" },
+];
+
 /**
  * v1.44.3.3 R-Mac Mini-fix: backend KPI counts come through
  * the JSON envelope as numbers (``int(...)`` in
@@ -80,6 +92,19 @@ export default function DashboardPage() {
           KPIs so a returning operator sees actionable alerts the
           moment they land. Polls every 60 s. */}
       <BriefingSection />
+
+      <section aria-label="Módulos principales" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {MODULE_LINKS.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className="rounded-lg border bg-card p-4 transition-colors hover:border-primary hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="block text-sm font-semibold">{item.label}</span>
+            <span className="mt-1 block text-xs text-muted-foreground">{item.detail}</span>
+          </Link>
+        ))}
+      </section>
 
       {isError ? (
         // v1.44.3.3 R-Mac-Round-3 Task E: ``role="alert"`` so

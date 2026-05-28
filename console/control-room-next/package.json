@@ -6,6 +6,7 @@
   "scripts": {
     "build": "next build",
     "export:copy": "npm run build && rm -rf ../app/static/control-room && cp -R out ../app/static/control-room",
+    "verify:static": "npm run export:copy && git diff --exit-code -- ../app/static/control-room",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },

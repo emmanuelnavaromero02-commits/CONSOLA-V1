@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
+import re
 from collections.abc import AsyncIterator
+from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -11,15 +16,106 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from app.dependencies import require_admin
 from app.dependencies import require_authenticated
 from app.services import audit_service
-from app.services.csrf import require_csrf
-from app.services.permissions import require_permission
+from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie
+from app.services.permissions import has_permission, require_permission
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 CONTROL_ROOM_STATIC = STATIC / "control-room"
+CONSOLE_NEXT_STATIC = STATIC / "console-next"
 WORKSPACE_INTERNAL_URL = os.environ.get("WORKSPACE_INTERNAL_URL", "http://workspace:8001").rstrip("/")
+_INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+_DATA_VIEWERS = {"schema", "datasets", "dataset", "semantic", "semantic-layer", "lineage"}
+_VAULT_VIEWERS = {"vault"}
 
 router = APIRouter(tags=["Pages"])
+
+
+def _console_next_file(path: str = "index.html") -> Path:
+    root = CONSOLE_NEXT_STATIC.resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=503, detail="console-next frontend is not built")
+    candidate = (root / path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="console-next asset not found") from exc
+    if candidate.is_dir():
+        candidate = candidate / "index.html"
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="console-next asset not found")
+    return candidate
+
+
+@lru_cache(maxsize=128)
+def _console_next_csp_cached(
+    path: str,
+    mtime_ns: int,
+    size: int,
+    frame_ancestors: str = "'none'",
+) -> str:
+    html = Path(path).read_text(encoding="utf-8")
+    hashes = []
+    for body in _INLINE_SCRIPT_RE.findall(html):
+        if not body.strip():
+            continue
+        digest = hashlib.sha256(body.encode("utf-8")).digest()
+        hashes.append(base64.b64encode(digest).decode("ascii"))
+    script_src = "script-src 'self'" + "".join(f" 'sha256-{value}'" for value in hashes)
+    return (
+        "default-src 'self'; "
+        f"{script_src}; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data:; "
+        "connect-src 'self'; "
+        f"frame-ancestors {frame_ancestors}; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+
+def _console_next_csp(path: str, frame_ancestors: str = "'none'") -> str:
+    stat = Path(path).stat()
+    return _console_next_csp_cached(path, stat.st_mtime_ns, stat.st_size, frame_ancestors)
+
+
+def _console_next_response(request: Request, path: str = "index.html", *, frame_ancestors: str = "'none'") -> FileResponse:
+    page = _console_next_file(path)
+    response = FileResponse(
+        page,
+        headers={"Content-Security-Policy": _console_next_csp(str(page), frame_ancestors)},
+    )
+    set_csrf_cookie(response, request.cookies.get(CSRF_COOKIE_NAME))
+    return response
+
+
+def _viewer_permission(viewer_type: str | None) -> str:
+    normalized = (viewer_type or "jobs").strip().lower()
+    if normalized in _DATA_VIEWERS:
+        return "datasets.read"
+    if normalized in _VAULT_VIEWERS:
+        return "vault.connections.read"
+    return "monitor.read"
+
+
+async def _require_viewer_permission(request: Request) -> dict:
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    permission = _viewer_permission(request.query_params.get("type"))
+    if not has_permission(user, permission):
+        raise HTTPException(status_code=403, detail=f"permission required: {permission}")
+    return user
+
+
+def _viewer_redirect(request: Request, viewer_type: str, **params: str) -> RedirectResponse:
+    query = dict(request.query_params)
+    query["type"] = viewer_type
+    for key, value in params.items():
+        if value:
+            query[key] = value
+    return RedirectResponse(url=f"/viewer?{urlencode(query)}", status_code=307)
 
 
 def _workspace_headers(request: Request) -> dict[str, str]:
@@ -94,17 +190,22 @@ async def _workspace_stream_proxy(request: Request, path: str) -> StreamingRespo
 
 @router.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/dashboard", status_code=307)
 
 
 @router.get("/monitor", dependencies=[Depends(require_permission("monitor.read"))])
-async def monitor_page():
-    return FileResponse(STATIC / "monitor.html")
+async def monitor_page(request: Request):
+    return _console_next_response(request, "monitor/index.html")
+
+
+@router.get("/dashboard", dependencies=[Depends(require_authenticated)])
+async def dashboard_page(request: Request):
+    return _console_next_response(request, "dashboard/index.html")
 
 
 @router.get("/security", dependencies=[Depends(require_permission("security.audit.read"))])
-async def security_page():
-    return FileResponse(STATIC / "security.html")
+async def security_page(request: Request):
+    return _console_next_response(request, "security/index.html")
 
 
 def _control_room_file(path: str = "index.html") -> Path:
@@ -144,15 +245,15 @@ async def control_room_asset(asset_path: str):
 # implied; the page renders strictly what /api/me/access returns and the
 # backend continues to enforce every action it offers as a link.
 @router.get("/my-access", dependencies=[Depends(require_authenticated)])
-async def my_access_page():
-    return FileResponse(STATIC / "my_access.html")
+async def my_access_page(request: Request):
+    return _console_next_response(request, "my-access/index.html")
 
 
 # Spanish alias for the same page so the navigation copy stays bilingual
 # with the rest of the console.
 @router.get("/mis-accesos", dependencies=[Depends(require_authenticated)])
 async def mis_accesos_page():
-    return FileResponse(STATIC / "my_access.html")
+    return RedirectResponse(url="/my-access", status_code=307)
 
 
 # Sprint v1.5 — admin-only gate on the IAM / Settings / Operations panels
@@ -164,60 +265,94 @@ async def mis_accesos_page():
     dependencies=[Depends(require_permission("iam.users.read")), Depends(require_admin)],
 )
 async def iam_page():
-    return FileResponse(STATIC / "iam.html")
+    return RedirectResponse(url="/operations/users", status_code=307)
 
 
 @router.get(
     "/settings",
     dependencies=[Depends(require_permission("settings.read")), Depends(require_admin)],
 )
-async def settings_page():
-    return FileResponse(STATIC / "settings.html")
+async def settings_page(request: Request):
+    return _console_next_response(request, "settings/index.html")
 
 
 @router.get(
     "/operations",
     dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
 )
-async def operations_page():
-    return FileResponse(STATIC / "operations.html")
+async def operations_page(request: Request):
+    return _console_next_response(request, "operations/index.html")
+
+
+@router.get(
+    "/operations/users",
+    dependencies=[Depends(require_permission("iam.users.read")), Depends(require_admin)],
+)
+async def operations_users_page(request: Request):
+    return _console_next_response(request, "operations/users/index.html")
+
+
+@router.get(
+    "/operations/audit",
+    dependencies=[Depends(require_permission("security.audit.read")), Depends(require_admin)],
+)
+async def operations_audit_page(request: Request):
+    return _console_next_response(request, "operations/audit/index.html")
+
+
+@router.get(
+    "/operations/vault",
+    dependencies=[Depends(require_permission("vault.connections.read")), Depends(require_admin)],
+)
+async def operations_vault_page(request: Request):
+    return _console_next_response(request, "operations/vault/index.html")
 
 
 # Viewer pages are operational read surfaces. They stay permission-gated so
 # Monitor can deep-link into them without showing buttons the backend rejects.
 @router.get("/viewer/jobs", dependencies=[Depends(require_permission("monitor.read"))])
-async def viewer_jobs():
-    return FileResponse(STATIC / "viewers" / "jobs.html")
+async def viewer_jobs(request: Request):
+    return _viewer_redirect(request, "jobs")
 
 
 @router.get("/viewer/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
-async def viewer_job(job_id: str):
-    return FileResponse(STATIC / "viewers" / "job.html")
+async def viewer_job(job_id: str, request: Request):
+    return _viewer_redirect(request, "job", id=job_id)
 
 
 @router.get("/viewer/schema", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_schema():
-    return FileResponse(STATIC / "viewers" / "schema.html")
+async def viewer_schema(request: Request):
+    return _viewer_redirect(request, "schema")
 
 
 @router.get("/viewer/datasets", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_datasets():
-    return FileResponse(STATIC / "viewers" / "datasets.html")
+async def viewer_datasets(request: Request):
+    return _viewer_redirect(request, "datasets")
 
 
 @router.get("/viewer/datasets/{name}", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_dataset(name: str):
-    return FileResponse(STATIC / "viewers" / "dataset.html")
+async def viewer_dataset(name: str, request: Request):
+    return _viewer_redirect(request, "dataset", name=name)
+
+
+@router.get("/lineage", dependencies=[Depends(require_permission("datasets.read"))])
+async def lineage_page(request: Request):
+    return _viewer_redirect(request, "lineage")
+
+
+@router.get("/linaje", dependencies=[Depends(require_permission("datasets.read"))])
+async def linaje_page(request: Request):
+    return _viewer_redirect(request, "lineage")
 
 
 @router.get("/viewer/semantic", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_semantic():
-    return FileResponse(STATIC / "viewers" / "semantic.html")
+async def viewer_semantic(request: Request):
+    return _viewer_redirect(request, "semantic")
 
 
 @router.get("/apps-gallery", dependencies=[Depends(require_permission("apps.read"))])
-async def apps_gallery():
-    return FileResponse(STATIC / "apps_gallery.html")
+async def apps_gallery(request: Request):
+    return _console_next_response(request, "apps-gallery/index.html")
 
 
 # Sprint v1.41.0 — auditor P1 operativa: cartridge wizard page.
@@ -225,11 +360,16 @@ async def apps_gallery():
     "/cartridges",
     dependencies=[Depends(require_permission("cartridges.read")), Depends(require_admin)],
 )
-async def cartridges_page():
-    # The standalone /cartridges credentials UI duplicated the better
-    # Vault flow. Keep the URL as a compatibility alias, but make the
-    # canonical credential editor /viewer/vault.
-    return RedirectResponse(url="/viewer/vault", status_code=307)
+async def cartridges_page(request: Request):
+    return _console_next_response(request, "cartridges/index.html")
+
+
+@router.get(
+    "/cartridges/viewer",
+    dependencies=[Depends(require_permission("cartridges.read")), Depends(require_admin)],
+)
+async def cartridges_viewer_page(request: Request):
+    return _console_next_response(request, "cartridges/viewer/index.html")
 
 
 # Workspace shell: apps, decisions, datasets and assistant stay under the
@@ -239,10 +379,8 @@ async def cartridges_page():
     "/workspace",
     dependencies=[Depends(require_permission("workspace.access"))],
 )
-async def workspace_page():
-    # Canonical :8000 workspace surface: apps, decisions, datasets and the
-    # consumer assistant. It is served by console so users stay in the base UI.
-    return FileResponse(STATIC / "workspace.html")
+async def workspace_page(request: Request):
+    return _console_next_response(request, "workspace/index.html")
 
 
 @router.post(
@@ -309,5 +447,10 @@ async def workspace_chat_stream_proxy(request: Request, user: dict = Depends(req
     "/copilot",
     dependencies=[Depends(require_permission("copilot.use"))],
 )
-async def copilot_page():
-    return FileResponse(STATIC / "copilot.html")
+async def copilot_page(request: Request):
+    return _console_next_response(request, "copilot/index.html")
+
+
+@router.get("/viewer", dependencies=[Depends(_require_viewer_permission)])
+async def viewer_page(request: Request):
+    return _console_next_response(request, "viewer/index.html", frame_ancestors="'self'")

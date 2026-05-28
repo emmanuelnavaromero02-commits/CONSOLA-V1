@@ -509,6 +509,52 @@ async def create_refresh_token(user_id: int) -> tuple[str, datetime]:
     return token, expires
 
 
+async def rotate_refresh_token(token: str) -> tuple[dict, str, datetime] | None:
+    """Atomically revoke one refresh token and issue the replacement.
+
+    This closes the race where two concurrent /auth/refresh requests could
+    both validate the same still-unrevoked token before either one wrote
+    revoked_at.
+    """
+    if not token:
+        return None
+    new_token = generate_refresh_token()
+    new_expires = datetime.now(timezone.utc) + REFRESH_TOKEN_LIFETIME
+    p = await pool()
+    async with p.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """UPDATE refresh_tokens rt
+                      SET revoked_at = NOW()
+                     FROM users u
+                    WHERE u.id = rt.user_id
+                      AND rt.token_hash = $1
+                      AND rt.revoked_at IS NULL
+                      AND rt.expires_at > NOW()
+                      AND u.is_active = TRUE
+                    RETURNING rt.user_id,
+                              u.email, u.name, u.role, u.is_active, u.must_change_password""",
+                hash_refresh_token(token),
+            )
+            if not row:
+                return None
+            await conn.execute(
+                "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+                row["user_id"],
+                hash_refresh_token(new_token),
+                new_expires,
+            )
+    user = {
+        "id": row["user_id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "is_active": row["is_active"],
+        "must_change_password": row["must_change_password"],
+    }
+    return user, new_token, new_expires
+
+
 async def get_refresh_token_user(token: str) -> dict | None:
     if not token:
         return None
