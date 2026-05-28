@@ -3561,11 +3561,11 @@ async def studio_page():
 
 @app.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
 async def marketplace_page():
-    return RedirectResponse(url="/cartridges", status_code=307)
+    return FileResponse(STATIC / "index.html")
 
 @app.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
 async def customer_cartridges_page():
-    return RedirectResponse(url="/cartridges", status_code=307)
+    return FileResponse(STATIC / "index.html")
 
 @app.get(
     "/admin/installations",
@@ -3574,7 +3574,7 @@ async def customer_cartridges_page():
     ],
 )
 async def admin_installations_page():
-    return RedirectResponse(url="/cartridges", status_code=307)
+    return FileResponse(STATIC / "index.html")
 
 @app.get(
     "/admin/licenses",
@@ -3583,7 +3583,7 @@ async def admin_installations_page():
     ],
 )
 async def admin_licenses_page():
-    return RedirectResponse(url="/cartridges", status_code=307)
+    return FileResponse(STATIC / "index.html")
 
 @app.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
 async def api_marketplace_products(user: dict = Depends(require_authenticated)):
