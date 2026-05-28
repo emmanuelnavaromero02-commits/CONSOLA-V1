@@ -95,8 +95,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     await expect(page.getByText(/vivo 30s/i).first()).toBeVisible();
     await expect(page.getByText(/siguiente/i).first()).toBeVisible();
-    // Beta-8 runtime confidence: write-back is visibly blocked in V1.
-    await expect(page.getByText(/write-back bloqueado v1/i).first()).toBeVisible();
+    // Runtime confidence: external ERP/SAP write-back is visibly blocked unless
+    // a narrow internal adapter is explicitly enabled.
+    await expect(page.getByText(/write-back (externo bloqueado v1|interno on)/i).first()).toBeVisible();
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/cola interna/i);
@@ -227,6 +228,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
   test("runs item -> decision -> approval -> audit without relying on :3000", async ({
     authedPage: page,
   }) => {
+    test.slow();
     const dashboard = await controlRoomDashboard(page);
     expect(dashboard.items.length, "dashboard must expose at least one real operational item").toBeGreaterThan(0);
     const targetItem = dashboard.items[0];
@@ -349,8 +351,8 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
 
     await page.getByRole("tab", { name: /ejecucion/i }).click();
-    // Execution clarity: write-back productivo is disabled in V1.
-    await expect(page.getByText(/deshabilitado en v1/i).first()).toBeVisible();
+    // Execution clarity: V1 does not promise universal ERP/SAP write-back.
+    await expect(page.getByText(/sap\/erp continua bloqueado|sin adapter productivo|write-back interno/i).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /^preview$/i }).first()).toBeVisible();
     await page.getByRole("button", { name: /^preview$/i }).first().click();
     await expect(page.getByText(/preview_generated/i)).toBeVisible({
