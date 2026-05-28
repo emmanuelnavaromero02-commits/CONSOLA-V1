@@ -17,7 +17,7 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -3772,21 +3772,30 @@ async def api_admin_installation_reactivate(installation_id: str, user: dict = D
     except marketplace_service.MarketplaceError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+def _viewer_redirect(request: Request, viewer_type: str, **params: str) -> RedirectResponse:
+    query = dict(request.query_params)
+    query["type"] = viewer_type
+    for key, value in params.items():
+        if value:
+            query[key] = value
+    return RedirectResponse(url=f"/viewer?{urlencode(query)}", status_code=307)
+
+
 @app.get("/viewer/pipeline", dependencies=[Depends(require_permission("monitor.read"))])
-async def viewer_pipeline():
-    return FileResponse(STATIC / "viewers" / "pipeline.html")
+async def viewer_pipeline(request: Request):
+    return _viewer_redirect(request, "pipeline")
 
 @app.get("/viewer/vault", dependencies=[Depends(require_permission("vault.connections.read"))])
-async def viewer_vault():
-    return FileResponse(STATIC / "viewers" / "vault.html")
+async def viewer_vault(request: Request):
+    return _viewer_redirect(request, "vault")
 
 @app.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
 async def explorer_page():
     return FileResponse(STATIC / "explorer.html")
 
 @app.get("/viewer/lineage", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_lineage():
-    return FileResponse(STATIC / "viewers" / "lineage.html")
+async def viewer_lineage(request: Request):
+    return _viewer_redirect(request, "lineage")
 
 @app.get("/rag", dependencies=[Depends(require_admin)])
 async def rag_page():
@@ -4731,7 +4740,7 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticat
         job = await job_service.get_scoped(job_id, user=user)
         entity = (job.get("args") or {}).get("entity", "")
         return {
-            "url":     f"{CONSOLE_URL}/viewer/jobs/{job_id}",
+            "url":     f"{CONSOLE_URL}/viewer?type=job&id={quote(str(job_id), safe='')}",
             "label":   f"Ver job {job_id}" + (f" — {entity}" if entity else ""),
             "status":  job.get("status", "unknown"),
             "message": job.get("message", ""),
@@ -4739,40 +4748,40 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticat
 
     if tool == "view_jobs":
         return {
-            "url":   f"{CONSOLE_URL}/viewer/jobs",
+            "url":   f"{CONSOLE_URL}/viewer?type=jobs",
             "label": "Ver todos los jobs",
         }
 
     if tool == "view_schema":
         source = args["source"]
         return {
-            "url":   f"{CONSOLE_URL}/viewer/schema?source={source}",
+            "url":   f"{CONSOLE_URL}/viewer?type=schema&source={quote(str(source), safe='')}",
             "label": f"Ver schema de {source}",
         }
 
     if tool == "view_dataset":
         name = args["name"]
         return {
-            "url":   f"{CONSOLE_URL}/viewer/datasets/{name}",
+            "url":   f"{CONSOLE_URL}/viewer?type=dataset&name={quote(str(name), safe='')}",
             "label": f"Ver dataset {name}",
         }
 
     if tool == "view_datasets":
         return {
-            "url":   f"{CONSOLE_URL}/viewer/datasets",
+            "url":   f"{CONSOLE_URL}/viewer?type=datasets",
             "label": "Ver todos los datasets",
         }
 
     if tool == "view_semantic":
         cartridge = args.get("cartridge", "replicon")
         return {
-            "url":   f"{CONSOLE_URL}/viewer/semantic?cartridge={cartridge}",
+            "url":   f"{CONSOLE_URL}/viewer?type=semantic&cartridge={quote(str(cartridge), safe='')}",
             "label": f"Ver modelo semantico de {cartridge}",
         }
 
     if tool == "view_pipeline":
         return {
-            "url":   f"{CONSOLE_URL}/viewer/pipeline",
+            "url":   f"{CONSOLE_URL}/viewer?type=pipeline",
             "label": "Pipeline Monitor — Bronze → Silver → Gold",
         }
 

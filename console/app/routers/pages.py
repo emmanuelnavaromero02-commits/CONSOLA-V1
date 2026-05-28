@@ -7,16 +7,17 @@ import re
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from app.dependencies import require_admin
 from app.dependencies import require_authenticated
 from app.services import audit_service
 from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie
-from app.services.permissions import require_permission
+from app.services.permissions import has_permission, require_permission
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
@@ -24,6 +25,8 @@ CONTROL_ROOM_STATIC = STATIC / "control-room"
 CONSOLE_NEXT_STATIC = STATIC / "console-next"
 WORKSPACE_INTERNAL_URL = os.environ.get("WORKSPACE_INTERNAL_URL", "http://workspace:8001").rstrip("/")
 _INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+_DATA_VIEWERS = {"schema", "datasets", "dataset", "semantic", "semantic-layer", "lineage"}
+_VAULT_VIEWERS = {"vault"}
 
 router = APIRouter(tags=["Pages"])
 
@@ -75,6 +78,34 @@ def _console_next_response(request: Request, path: str = "index.html", *, frame_
     )
     set_csrf_cookie(response, request.cookies.get(CSRF_COOKIE_NAME))
     return response
+
+
+def _viewer_permission(viewer_type: str | None) -> str:
+    normalized = (viewer_type or "jobs").strip().lower()
+    if normalized in _DATA_VIEWERS:
+        return "datasets.read"
+    if normalized in _VAULT_VIEWERS:
+        return "vault.connections.read"
+    return "monitor.read"
+
+
+async def _require_viewer_permission(request: Request) -> dict:
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="authentication required")
+    permission = _viewer_permission(request.query_params.get("type"))
+    if not has_permission(user, permission):
+        raise HTTPException(status_code=403, detail=f"permission required: {permission}")
+    return user
+
+
+def _viewer_redirect(request: Request, viewer_type: str, **params: str) -> RedirectResponse:
+    query = dict(request.query_params)
+    query["type"] = viewer_type
+    for key, value in params.items():
+        if value:
+            query[key] = value
+    return RedirectResponse(url=f"/viewer?{urlencode(query)}", status_code=307)
 
 
 def _workspace_headers(request: Request) -> dict[str, str]:
@@ -270,33 +301,33 @@ async def operations_vault_page(request: Request):
 # Viewer pages are operational read surfaces. They stay permission-gated so
 # Monitor can deep-link into them without showing buttons the backend rejects.
 @router.get("/viewer/jobs", dependencies=[Depends(require_permission("monitor.read"))])
-async def viewer_jobs():
-    return FileResponse(STATIC / "viewers" / "jobs.html")
+async def viewer_jobs(request: Request):
+    return _viewer_redirect(request, "jobs")
 
 
 @router.get("/viewer/jobs/{job_id}", dependencies=[Depends(require_permission("monitor.read"))])
-async def viewer_job(job_id: str):
-    return FileResponse(STATIC / "viewers" / "job.html")
+async def viewer_job(job_id: str, request: Request):
+    return _viewer_redirect(request, "job", id=job_id)
 
 
 @router.get("/viewer/schema", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_schema():
-    return FileResponse(STATIC / "viewers" / "schema.html")
+async def viewer_schema(request: Request):
+    return _viewer_redirect(request, "schema")
 
 
 @router.get("/viewer/datasets", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_datasets():
-    return FileResponse(STATIC / "viewers" / "datasets.html")
+async def viewer_datasets(request: Request):
+    return _viewer_redirect(request, "datasets")
 
 
 @router.get("/viewer/datasets/{name}", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_dataset(name: str):
-    return FileResponse(STATIC / "viewers" / "dataset.html")
+async def viewer_dataset(name: str, request: Request):
+    return _viewer_redirect(request, "dataset", name=name)
 
 
 @router.get("/viewer/semantic", dependencies=[Depends(require_permission("datasets.read"))])
-async def viewer_semantic():
-    return FileResponse(STATIC / "viewers" / "semantic.html")
+async def viewer_semantic(request: Request):
+    return _viewer_redirect(request, "semantic")
 
 
 @router.get("/apps-gallery", dependencies=[Depends(require_permission("apps.read"))])
@@ -402,6 +433,6 @@ async def copilot_page(request: Request):
     return _console_next_response(request, "copilot/index.html")
 
 
-@router.get("/viewer", dependencies=[Depends(require_permission("monitor.read"))])
+@router.get("/viewer", dependencies=[Depends(_require_viewer_permission)])
 async def viewer_page(request: Request):
     return _console_next_response(request, "viewer/index.html", frame_ancestors="'self'")
