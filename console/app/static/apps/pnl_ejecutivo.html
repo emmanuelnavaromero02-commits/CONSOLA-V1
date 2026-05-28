@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>P&L Ejecutivo</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<title>P&amp;L Ejecutivo</title>
 <style>
   :root{--bg:#f5f7fa;--bg2:#ffffff;--bg3:#eef2f7;--border:#d8dee8;--text:#0f172a;--text2:#334155;--blue:#0a6ed1;--green:#117a3d;--red:#b3261e;--amber:#b06d00;--danger-soft:rgba(179,38,30,.08);--on-primary:#fff}
   :root[data-theme="dark"]{--bg:#0f1822;--bg2:#182331;--bg3:#1f2c3d;--border:rgba(226,232,240,.14);--text:#e6edf6;--text2:#c5cfdc;--blue:#4ea3e0;--green:#4cb27b;--red:#e0716b;--amber:#d4a042;--danger-soft:rgba(224,113,107,.14);--on-primary:#0f172a}
@@ -34,8 +33,9 @@
   .placeholder{text-align:center;padding:48px 20px;color:var(--text2);font-size:12px;line-height:1.7}
   .err{color:var(--red);font-size:11px;padding:8px 12px;background:var(--danger-soft);border-radius:4px;border:1px solid var(--red);margin-top:8px}
   .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
+  .chart-frame{min-height:280px}
+  canvas{display:block;width:100%;height:260px}
   @keyframes spin{to{transform:rotate(360deg)}}
-  canvas{max-height:260px}
 </style>
 </head>
 <body>
@@ -71,186 +71,17 @@
       <h2>KPIs del periodo seleccionado</h2>
       <div id="kpis" class="kpis"></div>
     </div>
-    <div class="panel">
+    <div class="panel chart-frame">
       <h2>Evolución mensual de revenue y margen</h2>
-      <canvas id="chart"></canvas>
+      <canvas id="chart" width="960" height="260"></canvas>
     </div>
     <div class="panel">
       <h2>Detalle por mes</h2>
-      <div id="tbl-wrap" style="overflow-x:auto"></div>
+      <div id="tbl-wrap"></div>
     </div>
   </div>
 
-<script>
-const $ = (id) => document.getElementById(id);
-const fmt$ = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-const fmtPct = (n) => n == null ? '—' : Number(n).toFixed(1) + '%';
-let chartInst = null;
-
-function showError(msg) {
-  const el = $('err');
-  el.textContent = msg;
-  el.hidden = false;
-}
-function clearError() { $('err').hidden = true; }
-
-function fiscalYearFromMes(mes) {
-  if (!mes) return null;
-  const [y, m] = String(mes).split('-').map(Number);
-  if (!y || !m) return null;
-  return m >= 3 ? y : y - 1;
-}
-
-async function loadOptions() {
-  try {
-    const r = await fetch('/api/data/pnl_mensual/options?columns=revenue_manager,cliente', { credentials: 'same-origin' });
-    if (!r.ok) throw new Error('No se pudo cargar el catálogo de filtros');
-    const opts = await r.json();
-    const rmSel = $('f-rm');
-    (opts.revenue_manager || []).sort().forEach((v) => {
-      const o = document.createElement('option'); o.value = v; o.textContent = v; rmSel.appendChild(o);
-    });
-    const clSel = $('f-cl');
-    (opts.cliente || []).sort().forEach((v) => {
-      const o = document.createElement('option'); o.value = v; o.textContent = v; clSel.appendChild(o);
-    });
-  } catch (e) {
-    showError(e.message);
-  }
-  try {
-    const r = await fetch('/api/data/pnl_mensual/query', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filters: {}, limit: 5000, columns: ['mes'] }),
-    });
-    const rows = await r.json();
-    if (Array.isArray(rows)) {
-      const fys = [...new Set(rows.map((r) => fiscalYearFromMes(r.mes)).filter(Boolean))].sort().reverse();
-      const fySel = $('f-fy');
-      fys.forEach((y) => {
-        const o = document.createElement('option'); o.value = String(y); o.textContent = `AF${y} (mar-${y} / feb-${y + 1})`;
-        fySel.appendChild(o);
-      });
-    }
-  } catch (_) { /* leave FY empty — user can still filter */ }
-}
-
-function buildFilters() {
-  const f = {};
-  if ($('f-rm').value) f.revenue_manager = $('f-rm').value;
-  if ($('f-fy').value) f.fiscal_year     = Number($('f-fy').value);
-  if ($('f-cl').value) f.cliente         = $('f-cl').value;
-  return f;
-}
-
-function aggregate(rows) {
-  const totals = { revenue_usd: 0, costo_total: 0, margen_bruto_usd: 0, horas_facturables: 0, horas_totales: 0 };
-  const byMes = {};
-  rows.forEach((r) => {
-    totals.revenue_usd      += Number(r.revenue_usd || 0);
-    totals.costo_total      += Number(r.costo_total || 0);
-    totals.margen_bruto_usd += Number(r.margen_bruto_usd || 0);
-    totals.horas_facturables += Number(r.horas_facturables || 0);
-    totals.horas_totales    += Number(r.horas_totales || 0);
-    const m = r.mes;
-    if (!m) return;
-    byMes[m] = byMes[m] || { mes: m, revenue_usd: 0, costo_total: 0, margen_bruto_usd: 0 };
-    byMes[m].revenue_usd      += Number(r.revenue_usd || 0);
-    byMes[m].costo_total      += Number(r.costo_total || 0);
-    byMes[m].margen_bruto_usd += Number(r.margen_bruto_usd || 0);
-  });
-  totals.margen_pct = totals.revenue_usd ? (totals.margen_bruto_usd / totals.revenue_usd * 100) : null;
-  totals.utilizacion_pct = totals.horas_totales ? (totals.horas_facturables / totals.horas_totales * 100) : null;
-  const months = Object.values(byMes).sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
-  months.forEach((m) => { m.margen_pct = m.revenue_usd ? (m.margen_bruto_usd / m.revenue_usd * 100) : null; });
-  return { totals, months };
-}
-
-function renderKpis(t) {
-  const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : 'neu';
-  $('kpis').innerHTML = `
-    <div class="kpi"><div class="kpi-label">Revenue</div><div class="kpi-val ${cls(t.revenue_usd)}">${fmt$(t.revenue_usd)}</div></div>
-    <div class="kpi"><div class="kpi-label">Costo total</div><div class="kpi-val">${fmt$(t.costo_total)}</div></div>
-    <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-val ${cls(t.margen_bruto_usd)}">${fmt$(t.margen_bruto_usd)}</div></div>
-    <div class="kpi"><div class="kpi-label">% Margen</div><div class="kpi-val ${cls(t.margen_pct || 0)}">${fmtPct(t.margen_pct)}</div></div>
-    <div class="kpi"><div class="kpi-label">Utilización</div><div class="kpi-val neu">${fmtPct(t.utilizacion_pct)}</div></div>
-  `;
-}
-
-function renderTable(months) {
-  if (!months.length) { $('tbl-wrap').innerHTML = '<p style="color:var(--text2);font-size:11px">Sin filas.</p>'; return; }
-  const head = `<tr><th class="left">Mes</th><th>Revenue</th><th>Costo</th><th>Margen</th><th>% Margen</th></tr>`;
-  const body = months.map((m) =>
-    `<tr><td class="left">${m.mes}</td><td>${fmt$(m.revenue_usd)}</td><td>${fmt$(m.costo_total)}</td><td>${fmt$(m.margen_bruto_usd)}</td><td>${fmtPct(m.margen_pct)}</td></tr>`
-  ).join('');
-  $('tbl-wrap').innerHTML = `<table>${head}${body}</table>`;
-}
-
-function renderChart(months) {
-  const ctx = $('chart').getContext('2d');
-  const css = getComputedStyle(document.documentElement);
-  const color = (name) => css.getPropertyValue(name).trim();
-  if (chartInst) chartInst.destroy();
-  chartInst = new Chart(ctx, {
-    data: {
-      labels: months.map((m) => m.mes),
-      datasets: [
-        { type: 'bar',  label: 'Revenue',       data: months.map((m) => m.revenue_usd),      backgroundColor: color('--blue'), yAxisID: 'y' },
-        { type: 'bar',  label: 'Margen bruto',  data: months.map((m) => m.margen_bruto_usd), backgroundColor: color('--green'), yAxisID: 'y' },
-        { type: 'line', label: '% Margen',      data: months.map((m) => m.margen_pct),       borderColor: color('--amber'), backgroundColor: color('--amber'), yAxisID: 'y1', tension: 0.25 },
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      scales: {
-        y:  { position: 'left',  ticks: { callback: (v) => '$' + v.toLocaleString() } },
-        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: (v) => v + '%' } },
-      },
-    },
-  });
-}
-
-async function runQuery() {
-  clearError();
-  const btn = $('btn-run');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Consultando…';
-  try {
-    const r = await fetch('/api/data/pnl_mensual/query', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filters: buildFilters(),
-        limit: 10000,
-        columns: ['mes', 'revenue_usd', 'costo_total', 'margen_bruto_usd', 'horas_facturables', 'horas_totales'],
-      }),
-    });
-    if (!r.ok) throw new Error('Error al consultar el dataset (' + r.status + ')');
-    const rows = await r.json();
-    if (!Array.isArray(rows)) throw new Error('Respuesta inesperada del servidor');
-    if (!rows.length) {
-      $('placeholder').textContent = 'La consulta no devolvió filas. Ajusta los filtros.';
-      $('placeholder').hidden = false;
-      $('results').hidden = true;
-      return;
-    }
-    const { totals, months } = aggregate(rows);
-    renderKpis(totals);
-    renderTable(months);
-    renderChart(months);
-    $('placeholder').hidden = true;
-    $('results').hidden = false;
-  } catch (e) {
-    showError(e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Ver resultados';
-  }
-}
-
-$('btn-run').addEventListener('click', runQuery);
-loadOptions();
-</script>
+  <script src="/static/js/apps/pnl_ejecutivo.js" defer></script>
   <script src="/static/js/theme-switch.js" defer></script>
 </body>
 </html>
