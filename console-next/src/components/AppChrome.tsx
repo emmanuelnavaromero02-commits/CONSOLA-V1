@@ -6,40 +6,41 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { api } from "@/lib/api";
-import { legacyConsoleUrl } from "@/lib/legacy-url";
 import { cn } from "@/lib/utils";
 
-const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password"];
+const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/activate"];
 const THEME_STORAGE_KEY = "mod-theme";
 
 interface NavItem {
-  href:  string;
-  label: string;
-  icon:  string;
-  // External (absolute) target served by the FastAPI backend on :8000,
-  // rendered as a plain <a> instead of a Next.js <Link>.
-  external?: boolean;
+  href:   string;
+  label:  string;
+  icon:   string;
+  active?: string[];
 }
 
 /**
- * v1.44.4 Group 1 — primary navigation. Internal entries map to a
- * real Next.js page; routes that only exist as legacy HTML on
- * :8000 (analytics, sub-modules under operations) are NOT
- * listed here until the Next.js page is wired so the navbar
- * never offers a dead link.
- *
- * Control Room is the exception: it stays on the FastAPI backend
- * (:8000/control-room) for this phase, so it's surfaced here as a
- * first-class external link rather than reimplemented inside Next.
+ * v1.44.4 Group 1 — primary navigation. Each entry maps to a real
+ * console surface served by FastAPI on the same origin. Static-exported
+ * pages stay in console-next; Studio/control-room/legacy bridge pages
+ * keep their existing backend contracts.
  */
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",  label: "Panel",       icon: "▦" },
-  { href: "/copilot",    label: "Copiloto",    icon: "◈" },
-  { href: "/cartridges", label: "Cartuchos",   icon: "□" },
-  { href: "/monitor",    label: "Monitor",     icon: "▤" },
-  { href: "/studio",     label: "Studio",      icon: "◇" },
-  { href: "/operations", label: "Operaciones", icon: "⚙" },
-  { href: legacyConsoleUrl("/control-room"), label: "Control Room", icon: "◉", external: true },
+  { href: "/dashboard",           label: "Panel",        icon: "▦" },
+  { href: "/workspace",           label: "Workspace",    icon: "◌" },
+  { href: "/control-room",        label: "Control Room", icon: "◎" },
+  { href: "/copilot",             label: "Copiloto",     icon: "◈" },
+  { href: "/agents",              label: "Agentes",      icon: "◇" },
+  { href: "/cartridges",          label: "Cartuchos",    icon: "□" },
+  { href: "/monitor",             label: "Monitor",      icon: "▤" },
+  { href: "/viewer?type=lineage", label: "Linaje",       icon: "◇", active: ["/viewer", "/lineage", "/linaje"] },
+  { href: "/explorer",            label: "Explorer",     icon: "▱" },
+  { href: "/decisions",           label: "Decisiones",   icon: "✓" },
+  { href: "/studio",              label: "Studio",       icon: "◇" },
+  { href: "/operations",          label: "Operaciones",  icon: "⚙", active: ["/operations", "/operations/users", "/operations/audit"] },
+  { href: "/operations/vault",    label: "Vault",        icon: "◉", active: ["/operations/vault"] },
+  { href: "/security",            label: "Seguridad",    icon: "◒" },
+  { href: "/settings",            label: "Settings",     icon: "⚙" },
+  { href: "/my-access",           label: "Mi acceso",    icon: "◎" },
 ];
 
 function userLabel(email: string): string {
@@ -48,7 +49,13 @@ function userLabel(email: string): string {
   return trimmed.split("@")[0] || trimmed;
 }
 
-function isActive(pathname: string, href: string): boolean {
+function navPath(href: string): string {
+  return href.split("?")[0] || href;
+}
+
+function isActive(pathname: string, item: NavItem): boolean {
+  if (item.active) return item.active.includes(pathname);
+  const href = navPath(item.href);
   if (pathname === href) return true;
   // A nested route under the nav target counts as active so
   // /operations/users highlights "Operaciones".
@@ -212,35 +219,27 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
           <nav
             aria-label="Navegación principal"
-            className="ml-2 hidden flex-1 md:flex"
+            className="ml-2 hidden min-w-0 flex-1 md:flex"
           >
-            <ul className="flex items-center gap-0.5">
+            <ul className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
               {NAV_ITEMS.map((item) => {
-                const active = !item.external && isActive(pathname, item.href);
-                const className = cn(
-                  "inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "bg-accent/15 text-foreground"
-                    : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
-                );
+                const active = isActive(pathname, item);
                 return (
                   <li key={item.href}>
-                    {item.external ? (
-                      <a href={item.href} rel="noopener noreferrer" className={className}>
-                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
-                        {item.label}
-                      </a>
-                    ) : (
-                      <Link
-                        prefetch={false}
-                        href={item.href}
-                        aria-current={active ? "page" : undefined}
-                        className={className}
-                      >
-                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
-                        {item.label}
-                      </Link>
-                    )}
+                    <Link
+                      prefetch={false}
+                      href={item.href}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        active
+                          ? "bg-accent/15 text-foreground"
+                          : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                      )}
+                    >
+                      <span aria-hidden className="text-sm leading-none">{item.icon}</span>
+                      {item.label}
+                    </Link>
                   </li>
                 );
               })}
@@ -306,37 +305,24 @@ export function AppChrome({ children }: { children: ReactNode }) {
             >
               <ul className="space-y-1">
                 {NAV_ITEMS.map((item) => {
-                  const active = !item.external && isActive(pathname, item.href);
-                  const className = cn(
-                    "flex min-h-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    active
-                      ? "bg-accent/20 text-foreground"
-                      : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
-                  );
+                  const active = isActive(pathname, item);
                   return (
                     <li key={item.href}>
-                      {item.external ? (
-                        <a
-                          href={item.href}
-                          rel="noopener noreferrer"
-                          onClick={() => setMobileOpen(false)}
-                          className={className}
-                        >
-                          <span aria-hidden className="text-sm leading-none">{item.icon}</span>
-                          {item.label}
-                        </a>
-                      ) : (
-                        <Link
-                          prefetch={false}
-                          href={item.href}
-                          onClick={() => setMobileOpen(false)}
-                          aria-current={active ? "page" : undefined}
-                          className={className}
-                        >
-                          <span aria-hidden className="text-sm leading-none">{item.icon}</span>
-                          {item.label}
-                        </Link>
-                      )}
+                      <Link
+                        prefetch={false}
+                        href={item.href}
+                        onClick={() => setMobileOpen(false)}
+                        aria-current={active ? "page" : undefined}
+                        className={cn(
+                          "flex min-h-[44px] items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active
+                            ? "bg-accent/20 text-foreground"
+                            : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
+                        )}
+                      >
+                        <span aria-hidden className="text-sm leading-none">{item.icon}</span>
+                        {item.label}
+                      </Link>
                     </li>
                   );
                 })}

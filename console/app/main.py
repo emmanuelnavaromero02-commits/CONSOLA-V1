@@ -65,6 +65,21 @@ def _public_url(
     return development_default.rstrip("/")
 
 
+def _running_in_container() -> bool:
+    return Path("/.dockerenv").exists() or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+
+
+def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
+    raw = os.environ.get(env_name)
+    if raw:
+        return raw.rstrip("/")
+    return docker_default.rstrip("/") if _running_in_container() else local_default.rstrip("/")
+
+
+def _vault_url() -> str:
+    return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
+
+
 from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest
 from app.services import cartridge_service
 from app.services import marketplace_service
@@ -1668,7 +1683,7 @@ async def readyz():
     deps = {
         "refinement": (f"{REFINEMENT_URL.rstrip('/')}/healthz", "REFINEMENT"),
         "mcp-infra": (f"{os.environ.get('MCP_INFRA_URL', 'http://mcp-infra:8010').rstrip('/')}/healthz", "MCP_INFRA"),
-        "vault": (f"{os.environ.get('VAULT_URL', 'http://vault:8300').rstrip('/')}/healthz", "VAULT"),
+        "vault": (f"{_vault_url()}/healthz", "VAULT"),
     }
     for name, (url, server) in deps.items():
         checks[name] = await _dependency_health(name, url, server)
@@ -2601,7 +2616,7 @@ async def api_data_query_filtered(dataset: str, body: dict, request: Request):
 async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(require_authenticated)):
     """Proxy to Vault — returns masked connection config for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
-    vault_url = os.environ.get("VAULT_URL", "http://vault:8300")
+    vault_url = _vault_url()
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
         try:
             r = await c.get(f"{vault_url}/connections/{cartridge_id}")
@@ -4017,7 +4032,7 @@ async def api_agent_run_detail(request: Request, run_id: int):
 
 # ── Vault proxy ───────────────────────────────────────────────────────────────
 
-_VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
+_VAULT_URL = _vault_url()
 _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
 @app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
