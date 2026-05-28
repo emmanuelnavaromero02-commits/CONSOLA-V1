@@ -21,6 +21,7 @@ from fastmcp import FastMCP
 # mcp-infra/app/tools/_validators.py so the platform speaks one
 # language about what "a safe identifier" is.
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_MAX_QUERY_LIMIT = 5000
 
 
 def _validate_identifier(value: str, kind: str) -> str:
@@ -41,6 +42,29 @@ def _validate_bounded_int(value, kind: str, lo: int, hi: int) -> int:
     if coerced < lo or coerced > hi:
         raise ValueError(f"{kind} must be {lo}..{hi}, got {coerced}")
     return coerced
+
+
+def _query_limit(value: int | str | None, default: int = 100) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("limit must be a positive integer")
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be a positive integer") from exc
+    if coerced < 1:
+        raise ValueError("limit must be a positive integer")
+    return min(coerced, _MAX_QUERY_LIMIT)
+
+
+def _s4hana_allowed_kb_prefixes() -> tuple[str, str, str]:
+    bucket = settings.minio_bucket
+    return (
+        f"s3://{bucket}/raw/sap_s4hana/",
+        f"s3://{bucket}/silver/sap_s4hana/",
+        f"s3://{bucket}/gold/sap_s4hana/",
+    )
 
 from app.core.config import settings
 from app.core import job_runner
@@ -305,7 +329,7 @@ def run_kb(kb_id: str) -> dict[str, Any]:
 @mcp.tool()
 def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
     """
-    Run arbitrary DuckDB SQL against SAP S/4HANA Bronze/Silver Parquet data.
+    Run read-only DuckDB SQL against SAP S/4HANA Bronze/Silver/Gold Parquet data.
     The query runs in-process via DuckDB with MinIO S3 access pre-configured.
     Use {bucket} as a placeholder for the MinIO bucket name.
 
@@ -314,20 +338,19 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/sap_s4hana/TimeEntry/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
-    from app.core.sql_guard import has_limit_clause, validate_kb_sql
+    from app.core.sql_guard import validate_kb_sql
 
-    limit = min(limit, 5000)
+    try:
+        limit = _query_limit(limit)
+    except ValueError as exc:
+        return {"error": "invalid_limit", "reason": str(exc)}
+
     resolved = sql.replace("{bucket}", settings.minio_bucket)
-    allowed_prefixes = (
-        f"s3://{settings.minio_bucket}/raw/sap_s4hana/",
-        f"s3://{settings.minio_bucket}/silver/sap_s4hana/",
-    )
-    ok, err = validate_kb_sql(resolved, allowed_prefixes)
+    ok, err = validate_kb_sql(resolved, _s4hana_allowed_kb_prefixes())
     if not ok:
         return {"error": "sql_blocked", "reason": err}
-    # Inject LIMIT if the query doesn't already have one
-    if not has_limit_clause(resolved):
-        resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
+
+    resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()
         try:
@@ -341,33 +364,28 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
             "rows":    [dict(zip(columns, r)) for r in rows],
             "count":   len(rows),
         }
-    except Exception as exc:
-        return {"error": str(exc), "sql": resolved}
+    except Exception:
+        return {"error": "query_failed", "reason": "DuckDB query failed"}
 
 
 # ── Custom tools loader ───────────────────────────────────────────────────────
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
     """Register a SQL-query custom tool on the mcp instance."""
-    from app.core.sql_guard import has_limit_clause, validate_kb_sql
+    from app.core.sql_guard import validate_kb_sql
 
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
-    allowed_prefixes = (
-        f"s3://{settings.minio_bucket}/raw/sap_s4hana/",
-        f"s3://{settings.minio_bucket}/silver/sap_s4hana/",
-    )
-    ok, err = validate_kb_sql(resolved_sql, allowed_prefixes)
+    ok, err = validate_kb_sql(resolved_sql, _s4hana_allowed_kb_prefixes())
     if not ok:
-        def _blocked_tool_fn() -> dict[str, Any]:
-            return {"error": "sql_blocked", "reason": err}
+        def _blocked_tool_fn(reason: str | None = err) -> dict[str, Any]:
+            return {"error": "sql_blocked", "reason": reason}
 
         _blocked_tool_fn.__name__ = name
         _blocked_tool_fn.__doc__ = description or f"Blocked custom SQL tool: {name}"
         mcp.add_tool(_blocked_tool_fn)
         return
 
-    if not has_limit_clause(resolved_sql):
-        resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
+    resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
 
     def _tool_fn() -> dict[str, Any]:
         conn = _get_duckdb_connection()
@@ -375,6 +393,8 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
             rel = conn.execute(resolved_sql)
             columns = [d[0] for d in rel.description]
             rows = rel.fetchall()
+        except Exception:
+            return {"error": "query_failed", "reason": "DuckDB query failed"}
         finally:
             conn.close()
         return {"columns": columns, "rows": [dict(zip(columns, r)) for r in rows], "count": len(rows)}
