@@ -184,8 +184,9 @@ def test_rag_csp_is_strict():
     assert "'unsafe-inline'" not in _csp_for("/rag").split("style-src", 1)[0]
 
 
-def test_control_room_csp_allows_next_static_hydration_only_on_control_room():
+def test_control_room_fallback_csp_is_strict_for_scripts():
     csp = _csp_for("/control-room")
     script_seg = csp.split("style-src", 1)[0]
-    assert "script-src 'self' 'unsafe-inline'" in script_seg, csp
+    assert "script-src 'self'" in script_seg, csp
+    assert "'unsafe-inline'" not in script_seg, csp
     assert "frame-ancestors 'none'" in csp, csp

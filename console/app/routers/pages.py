@@ -224,19 +224,27 @@ def _control_room_file(path: str = "index.html") -> Path:
     return candidate
 
 
+def _control_room_response(path: str = "index.html") -> FileResponse:
+    page = _control_room_file(path)
+    headers = {}
+    if page.suffix.lower() == ".html":
+        headers["Content-Security-Policy"] = _console_next_csp(str(page), "'none'")
+    return FileResponse(page, headers=headers)
+
+
 @router.get("/control-room", dependencies=[Depends(require_permission("workspace.access"))])
 async def control_room_page():
-    return FileResponse(_control_room_file())
+    return _control_room_response()
 
 
 @router.get("/control-room/", dependencies=[Depends(require_permission("workspace.access"))])
 async def control_room_page_slash():
-    return FileResponse(_control_room_file())
+    return _control_room_response()
 
 
 @router.get("/control-room/{asset_path:path}", dependencies=[Depends(require_permission("workspace.access"))])
 async def control_room_asset(asset_path: str):
-    return FileResponse(_control_room_file(asset_path or "index.html"))
+    return _control_room_response(asset_path or "index.html")
 
 
 # Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of
