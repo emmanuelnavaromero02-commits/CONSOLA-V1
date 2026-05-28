@@ -7,19 +7,26 @@
 ## Pre-requisitos
 
 - Stack OMEGA arriba y healthy (`docker compose ps`).
-- Credenciales de bootstrap admin (creado por `console/app/bootstrap_admin.py`
-  al primer boot, vía variables `BOOTSTRAP_ADMIN_EMAIL` y
-  `BOOTSTRAP_ADMIN_PASSWORD`).
+- Credenciales de bootstrap admin creadas manualmente con
+  `console/app/bootstrap_admin.py` después de que `console` esté healthy.
 - MailHog (mail capturador local) accesible en
   http://localhost:8025 — los mails de invitación caen ahí.
 
 ## Pasos
 
-### 1. Login como bootstrap admin
+### 1. Crear y entrar como bootstrap admin
 
-Abre http://localhost:8000/login e ingresa con las credenciales
-`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` que pusiste en
-`.env`.
+Ejecuta el bootstrap manual con un password fuerte de un solo uso:
+
+```bash
+docker compose -f infra/docker-compose.yml exec \
+  -e BOOTSTRAP_ADMIN_PASSWORD='<password-temporal-fuerte>' \
+  -e BOOTSTRAP_ADMIN_NAME='System Administrator' \
+  console python -m app.bootstrap_admin admin@your-domain.test
+```
+
+Abre http://localhost:8000/login e ingresa con el email y password
+usados en ese comando. Cambia el password después del primer login.
 
 Verificación: te lleva al home con la cabecera mostrando el rol
 **admin**.

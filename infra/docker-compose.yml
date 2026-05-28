@@ -232,9 +232,9 @@ services:
       postgres:
         condition: service_healthy
       mcp-infra:
-        condition: service_started
+        condition: service_healthy
       mailhog:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -285,9 +285,9 @@ services:
       postgres:
         condition: service_healthy
       refinement:
-        condition: service_started
+        condition: service_healthy
       mcp-infra:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -688,7 +688,7 @@ services:
       minio:
         condition: service_healthy
       airflow:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       # Sprint v1.21 (F2): liveness probe so dependent services can
       # wait on `condition: service_healthy`. The image is

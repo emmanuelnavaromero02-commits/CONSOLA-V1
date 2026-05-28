@@ -23,6 +23,7 @@ AIRFLOW_SECRET_KEY="$(openssl rand -hex 32)"
 POSTGRES_PASSWORD="$(openssl rand -hex 16)"
 MINIO_SECRET_KEY="$(openssl rand -hex 16)"
 SUPERSET_ADMIN_PASSWORD="$(openssl rand -hex 16)"
+SUPERSET_SERVICE_PASSWORD="$(openssl rand -hex 16)"
 AIRFLOW_ADMIN_PASSWORD="$(openssl rand -hex 16)"
 AGENT_RUNNER_TOKEN="$(openssl rand -hex 32)"
 
@@ -86,6 +87,7 @@ AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD}
+SUPERSET_SERVICE_PASSWORD=${SUPERSET_SERVICE_PASSWORD}
 AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
 AGENT_RUNNER_TOKEN=${AGENT_RUNNER_TOKEN}
 
@@ -128,6 +130,15 @@ FIELD_ENCRYPTION_KEY=${FIELD_ENCRYPTION_KEY}
 
 # === Admin usernames ===
 SUPERSET_ADMIN_USER=admin
+SUPERSET_SERVICE_USER=omega_service
+SUPERSET_TALISMAN_ENABLED=true
+SUPERSET_CSRF_ENABLED=true
+SUPERSET_RATELIMIT_ENABLED=true
+SUPERSET_RATELIMIT_STORAGE_URI=redis://redis:6379/1
+SUPERSET_ENABLE_PROXY_FIX=true
+SUPERSET_SESSION_COOKIE_SECURE=true
+SUPERSET_SESSION_COOKIE_SAMESITE=Lax
+SUPERSET_FORCE_HTTPS=true
 AIRFLOW_ADMIN_USER=admin
 
 # === JWT runtime ===
@@ -138,9 +149,18 @@ ACCESS_TOKEN_EXPIRE_MINUTES=15
 SMTP_HOST=mailhog
 SMTP_PORT=1025
 SMTP_FROM=noreply@modecissions.local
+SMTP_FROM_DOMAIN=modecissions.local
 SMTP_USER=
 SMTP_PASSWORD=
 SMTP_USE_TLS=false
+ADMIN_EMAIL=
+
+# === VPN config delivery (WireGuard / wg-easy) ===
+VPN_API_URL=
+VPN_API_PASSWORD=
+VPN_TOKEN_TTL_HOURS=72
+VPN_CLIENT_ALLOWED_IPS=10.0.0.0/16,10.8.0.0/24
+VPN_CLIENT_STRIP_DNS=true
 
 # === CORS / public URLs ===
 ALLOWED_ORIGINS=http://localhost:8000,http://localhost:8001
@@ -148,6 +168,18 @@ CONSOLE_URL=http://localhost:8000
 WORKSPACE_PUBLIC_URL=http://localhost:8001
 AIRFLOW_PUBLIC_URL=http://localhost:8082
 SUPERSET_PUBLIC_URL=http://localhost:8088
+
+# === Internal service URLs / DSNs ===
+DATABASE_URL=postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD}@postgres:5432/modecissions
+GOLD_DATABASE_URL=postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD}@postgres_gold:5433/modecissions_gold
+REFINEMENT_URL=http://refinement:8500
+MCP_INFRA_URL=http://mcp-infra:8010
+AIRFLOW_URL=http://airflow:8080
+VAULT_URL=http://vault:8300
+REPLICON_URL=http://replicon:8201
+SAP_HCM_URL=http://sap-hcm:8202
+SAP_S4HANA_URL=http://sap-s4hana:8204
+SAP_SUCCESSFACTORS_URL=http://sap-successfactors:8203
 
 # === Token TTLs ===
 INVITE_TOKEN_TTL_HOURS=72
@@ -160,6 +192,7 @@ SQL_LLM_MODEL=claude-sonnet-4-6
 GEMINI_CACHE_ENABLED=true
 
 # === Replicon ===
+REPLICON_API_TOKEN=
 REPLICON_BASE_URL=https://na5.replicon.com/analytics
 REPLICON_USE_DEMO=false
 REPLICON_MOCK_USER_COUNT=
@@ -191,14 +224,53 @@ SAP_HCM_BASE_URL=
 SAP_HCM_CLIENT_MANDANT=
 SAP_S4_USER=
 SAP_S4_PASS=
+SAP_S4_BASE_URL=
+SAP_S4_CLIENT_MANDANT=100
+SAP_S4_API_KEY=
 OUTLOOK_APP_PASSWORD=
+OUTLOOK_RECEIVER_EMAIL=devnull@modecissions.local
+OUTLOOK_SENDER_EMAIL=devnull@modecissions.local
 
 # === S3 / DB extras (optional) ===
 S3_BUCKET_NAME=
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
+AWS_DEFAULT_REGION=us-east-1
 PG_DSN=
-MINIO_ROOT_PASSWORD=
+PG_HOST=postgres
+PG_PORT=5432
+PG_DB=modecissions
+PG_USER=omega_mcp_infra
+PG_PASSWORD=${OMEGA_MCP_INFRA_PASSWORD}
+PG_GOLD_HOST=postgres_gold
+PG_GOLD_PORT=5433
+PG_GOLD_DB=modecissions_gold
+PG_GOLD_USER=omega_refinement_gold
+PG_GOLD_PASSWORD=${OMEGA_REFINEMENT_GOLD_PASSWORD}
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=minio
+MINIO_BUCKET=lakehouse
+MINIO_SECURE=false
+MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+
+# === App env ===
+# Local compose intentionally opts into development. Production deploys
+# must set APP_ENV=production or leave it unset so code fails closed.
+APP_ENV=development
+ALLOW_RCE_TOOLS=false
+RATE_LIMIT_ENABLED=true
+TRUSTED_PROXY_IPS=
+COOKIE_SECURE=
+CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false
+CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY=false
+
+# === Bootstrap admin (manual first boot only) ===
+# Uncomment for:
+#   docker compose exec -e BOOTSTRAP_ADMIN_PASSWORD console python -m app.bootstrap_admin <email>
+# BOOTSTRAP_ADMIN_EMAIL=admin@your-domain.test
+# BOOTSTRAP_ADMIN_PASSWORD=
+# BOOTSTRAP_ADMIN_NAME=System Administrator
 EOF
 
 echo "infra/.env generated. Next: make up"

@@ -140,3 +140,60 @@ def test_long_running_service_has_healthcheck(service):
         f"docker compose ps will hide its real state"
     )
     assert hc.get("test"), f"{service} healthcheck has no test field"
+
+
+def test_critical_local_dependencies_use_service_healthy():
+    """Critical local dependencies must not regress to service_started."""
+    services = _compose_doc()["services"]
+    critical_targets = {
+        "airflow",
+        "console",
+        "mailhog",
+        "mcp-infra",
+        "minio",
+        "postgres",
+        "postgres_gold",
+        "redis",
+        "refinement",
+        "vault",
+        "workspace",
+    }
+    offenders: list[str] = []
+    for service, body in services.items():
+        deps = body.get("depends_on")
+        if deps is None:
+            continue
+        if isinstance(deps, list):
+            for target in deps:
+                if target in critical_targets:
+                    offenders.append(f"{service} -> {target}: bare depends_on")
+            continue
+        assert isinstance(deps, dict), f"{service} depends_on must be list or dict"
+        for target, spec in deps.items():
+            if target not in critical_targets:
+                continue
+            condition = spec.get("condition") if isinstance(spec, dict) else None
+            if condition != "service_healthy":
+                offenders.append(f"{service} -> {target}: {condition!r}")
+    assert not offenders, (
+        "Critical local dependencies must wait for service_healthy:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_service_healthy_dependencies_have_healthchecks():
+    """Every dependency waited on as healthy must expose a real healthcheck."""
+    services = _compose_doc()["services"]
+    offenders: list[str] = []
+    for service, body in services.items():
+        deps = body.get("depends_on") or {}
+        if not isinstance(deps, dict):
+            continue
+        for target, spec in deps.items():
+            if not isinstance(spec, dict) or spec.get("condition") != "service_healthy":
+                continue
+            target_body = services.get(target) or {}
+            healthcheck = target_body.get("healthcheck")
+            if not healthcheck or not healthcheck.get("test"):
+                offenders.append(f"{service} waits on {target}, but {target} has no healthcheck")
+    assert not offenders, "\n".join(offenders)
