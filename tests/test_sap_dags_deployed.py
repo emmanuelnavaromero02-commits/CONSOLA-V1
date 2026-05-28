@@ -124,10 +124,8 @@ def test_no_root_sap_cartridge_dag_copies():
     mounts. Root-level runtime copies drift from the cartridge sources and
     caused stale zombie DAGs to survive after regeneration.
     """
-    allowed_legacy = {"sap_hcm_extract.py"}
     leftovers = sorted(
         path.relative_to(REPO_ROOT)
         for path in AIRFLOW_DAGS.glob("sap_*.py")
-        if path.name not in allowed_legacy
     )
     assert leftovers == [], f"unexpected root SAP DAG copies: {leftovers!r}"
