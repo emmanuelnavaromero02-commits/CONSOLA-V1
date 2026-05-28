@@ -32,6 +32,11 @@ def _compose_doc():
     return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
 
 
+def _healthcheck_command(service: str) -> str:
+    cmd = _compose_doc()["services"][service]["healthcheck"]["test"]
+    return " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+
+
 @pytest.mark.parametrize("service", sorted(APP_SERVICES_WITH_PORTS))
 def test_app_service_has_healthcheck(service):
     """Every in-scope app service declares a healthcheck block."""
@@ -48,9 +53,8 @@ def test_app_service_healthcheck_targets_healthz_on_correct_port(service, port):
     port silently fails forever — start_period: 20s masks it until
     retries are exhausted, then dependent services never start."""
     hc = _compose_doc()["services"][service]["healthcheck"]
-    cmd = hc["test"]
     # `test:` can be either ["CMD", arg1, arg2, …] or ["CMD-SHELL", "string"]
-    joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+    joined = _healthcheck_command(service)
     assert "/healthz" in joined, (
         f"{service} healthcheck does not call /healthz: {joined!r}"
     )
@@ -68,13 +72,30 @@ def test_all_healthchecks_use_python_not_wget_or_curl():
     doc = _compose_doc()
     bad = []
     for svc in APP_SERVICES_WITH_PORTS:
-        cmd = doc["services"][svc]["healthcheck"]["test"]
-        joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        joined = _healthcheck_command(svc)
         if joined.startswith("CMD wget") or "CMD-SHELL wget" in joined:
             bad.append(f"{svc} uses wget but images don't ship it: {joined!r}")
         elif joined.startswith("CMD curl") or "CMD-SHELL curl" in joined:
             bad.append(f"{svc} uses curl but images don't ship it: {joined!r}")
     assert not bad, "\n".join(bad)
+
+
+@pytest.mark.parametrize(
+    "service,port,database",
+    [
+        ("postgres", 5432, "modecissions"),
+        ("postgres_gold", 5433, "modecissions_gold"),
+    ],
+)
+def test_postgres_healthchecks_use_tcp_listener(service, port, database):
+    """Init containers connect through service hostnames over TCP.
+    Socket-only pg_isready can go green while Postgres is still in
+    its first-boot temporary server, racing airflow-init/superset-init."""
+    joined = _healthcheck_command(service)
+    assert "pg_isready" in joined
+    assert "-h 127.0.0.1" in joined
+    assert f"-p {port}" in joined
+    assert f"-d {database}" in joined
 
 
 @pytest.mark.parametrize("service", sorted(APP_SERVICES_WITH_PORTS))

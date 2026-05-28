@@ -101,7 +101,7 @@ else
 fi
 
 # ── 6. Postgres pg_isready ─────────────────────────────────────────────
-if docker exec mode_postgres pg_isready -U postgres -q 2>/dev/null; then
+if docker exec mode_postgres pg_isready -h 127.0.0.1 -p 5432 -U postgres -q 2>/dev/null; then
   pass "postgres ready"
 else
   fail "postgres NOT ready"
