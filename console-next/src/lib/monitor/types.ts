@@ -86,3 +86,90 @@ export interface SemanticPayload {
   server?: Record<string, unknown>;
   entities?: Record<string, SemanticEntity[]> | SemanticEntity[];
 }
+
+export interface DatasetSummary {
+  name: string;
+  layer?: string | null;
+  cartridge?: string | null;
+  source_entity?: string | null;
+  column_count?: number | null;
+  column_mapping?: Record<string, string> | null;
+  row_count?: number | null;
+  is_stale?: boolean | null;
+  staleness_reason?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_refresh?: string | null;
+  sources?: string[] | null;
+}
+
+export interface DatasetDetail extends DatasetSummary {
+  sql?: string | null;
+  source_load_date?: string | null;
+  source_batch_id?: string | null;
+  columns?: Array<Record<string, unknown>> | null;
+}
+
+export interface DatasetLineageRow {
+  created_at?: string | null;
+  source_batch_id?: string | null;
+  row_count?: number | null;
+  storage_uri?: string | null;
+  [key: string]: unknown;
+}
+
+export type DataRow = Record<string, unknown>;
+
+export interface SourceSchemaPayload {
+  partitions?: {
+    partitions?: string[];
+    latest?: string | null;
+    sql_latest?: string | null;
+    [key: string]: unknown;
+  };
+  preview?: {
+    columns?: string[];
+    rows?: DataRow[];
+    result?: DataRow[];
+    [key: string]: unknown;
+  };
+}
+
+export interface LineageNode {
+  id: string;
+  label?: string | null;
+  type?: string | null;
+  cartridge?: string | null;
+  is_stale?: boolean | null;
+  staleness_reason?: string | null;
+  row_count?: number | null;
+  last_refresh?: string | null;
+}
+
+export interface LineageEdge {
+  from: string;
+  to: string;
+}
+
+export interface LineagePayload {
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+}
+
+export interface VaultConnection {
+  conn_id: string;
+  base_url?: string | null;
+  auth_method?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface VaultSecret {
+  key: string;
+  value?: string | null;
+  masked_value?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}

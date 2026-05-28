@@ -107,6 +107,15 @@ DATA_VIEWER_PATHS = [
     "/viewer/semantic",
 ]
 
+DIRECT_VIEWER_SHELL_PATHS = [
+    ("/viewer?type=jobs", VIEWER_USER, 200),
+    ("/viewer?type=datasets", VIEWER_USER, 200),
+    ("/viewer?type=lineage", VIEWER_USER, 200),
+    ("/viewer?type=vault", SECURITY_ADMIN_USER, 200),
+    ("/viewer?type=datasets", SECURITY_ADMIN_USER, 403),
+    ("/viewer?type=vault", VIEWER_USER, 403),
+]
+
 
 # ─── Admin can reach every protected page ────────────────────────────
 
@@ -166,6 +175,15 @@ def test_security_admin_without_dataset_permission_cannot_open_data_viewers(path
     assert r.status_code in (401, 403), (
         f"security_admin unexpectedly reached data viewer {path}: "
         f"{r.status_code} {r.text}"
+    )
+
+
+@pytest.mark.parametrize("path,user,expected_status", DIRECT_VIEWER_SHELL_PATHS)
+def test_direct_viewer_shell_enforces_type_permission(path, user, expected_status):
+    client = _build_app(user)
+    r = client.get(path)
+    assert r.status_code == expected_status, (
+        f"{user['role']} got {r.status_code} for {path}; expected {expected_status}: {r.text}"
     )
 
 
