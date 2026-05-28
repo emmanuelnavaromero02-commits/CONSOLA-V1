@@ -80,6 +80,15 @@ def test_postgres_version_matches_local():
     )
 
 
+def test_postgres_healthchecks_probe_tcp_in_local_and_aws():
+    """Airflow/Superset init containers connect over compose networking.
+    Keep both compose files from regressing to socket-only pg_isready."""
+    for path in (LOCAL, AWS):
+        text = path.read_text(encoding="utf-8")
+        assert "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d modecissions" in text
+        assert "pg_isready -h 127.0.0.1 -p 5433 -U postgres -d modecissions_gold" in text
+
+
 def test_superset_version_matches_local():
     """Same lock for Superset — easy to forget when bumping locally."""
     local_ss = _versions_of(_images(LOCAL), "apache/superset")

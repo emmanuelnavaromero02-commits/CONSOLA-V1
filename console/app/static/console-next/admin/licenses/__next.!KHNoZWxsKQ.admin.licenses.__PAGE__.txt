@@ -1,0 +1,6 @@
+1:"$Sreact.fragment"
+2:I[75985,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js","/static/console-next/_next/static/chunks/0qnnzs6592ux_.js","/static/console-next/_next/static/chunks/0s7w9ak5wf11h.js","/static/console-next/_next/static/chunks/06_h97ib3htb1.js","/static/console-next/_next/static/chunks/0qw1fpha97_1j.js"],"MarketplaceConsole"]
+3:I[97367,["/static/console-next/_next/static/chunks/01xlw8hd842-c.js","/static/console-next/_next/static/chunks/00-csyj9a6t-x.js"],"OutletBoundary"]
+4:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"mode":"admin","title":"Licencias e instalaciones"}],[["$","script","script-0",{"src":"/static/console-next/_next/static/chunks/0qw1fpha97_1j.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"console-next-static"}
+5:null

@@ -23,6 +23,7 @@ import type { LucideIcon } from "lucide-react";
 import { JobTable } from "@/components/monitor/JobTable";
 import { PipelineTable } from "@/components/monitor/PipelineTable";
 import { StatusPill } from "@/components/monitor/StatusPill";
+import { cn } from "@/lib/utils";
 import {
   useDatasetDetail,
   useDatasetLineage,
@@ -835,46 +836,377 @@ function DatasetLineageTable({ rows }: { rows: DatasetLineageRow[] }) {
 }
 
 function LineagePanel({ nodes, edges }: { nodes: LineageNode[]; edges: LineageEdge[] }) {
+  const [selectedId, setSelectedId] = useState<string | null>(nodes[0]?.id ?? null);
+  const [layerFilter, setLayerFilter] = useState("all");
+  const [cartridgeFilter, setCartridgeFilter] = useState("all");
+
   if (!nodes.length) {
     return <EmptyPanel icon={GitBranch} title="Sin lineage" detail="No hay nodos visibles para el filtro actual." />;
   }
-  const incomingCounts = new Map<string, number>();
-  const outgoingCounts = new Map<string, number>();
-  edges.forEach((edge) => {
-    incomingCounts.set(edge.to, (incomingCounts.get(edge.to) ?? 0) + 1);
-    outgoingCounts.set(edge.from, (outgoingCounts.get(edge.from) ?? 0) + 1);
-  });
-  const groups = ["raw", "silver", "gold"].map((type) => ({
-    type,
-    rows: nodes.filter((node) => (node.type || "silver") === type),
-  }));
+
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const cartridges = Array.from(new Set(nodes.map((node) => node.cartridge).filter(Boolean) as string[])).sort();
+  const visibleNodes = nodes.filter((node) => (
+    (layerFilter === "all" || normaliseLayer(node.type) === layerFilter) &&
+    (cartridgeFilter === "all" || node.cartridge === cartridgeFilter)
+  ));
+  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  const visibleEdges = edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to));
+  const selectedNode = selectedId && visibleIds.has(selectedId) ? nodeById.get(selectedId) : visibleNodes[0];
+  const incoming = selectedNode ? edges.filter((edge) => edge.to === selectedNode.id) : [];
+  const outgoing = selectedNode ? edges.filter((edge) => edge.from === selectedNode.id) : [];
+  const upstreamIds = selectedNode ? collectReachable(selectedNode.id, edges, "upstream") : new Set<string>();
+  const downstreamIds = selectedNode ? collectReachable(selectedNode.id, edges, "downstream") : new Set<string>();
+  const chart = layoutLineageGraph(visibleNodes, visibleEdges);
+
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-      {groups.map((group) => (
-        <section key={group.type} className="space-y-3 rounded-lg border bg-card p-4">
-          <h2 className="text-base font-semibold uppercase tracking-wider">{group.type}</h2>
-          {group.rows.length ? group.rows.map((node) => (
-            <article key={node.id} className="space-y-2 rounded-md border bg-background p-3">
-              <div className="flex items-start justify-between gap-2">
+    <div className="space-y-4">
+      <section className="rounded-lg border bg-card p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <MetricBox label="Nodos" value={visibleNodes.length} />
+            <MetricBox label="Dependencias" value={visibleEdges.length} />
+            <MetricBox label="Gold" value={visibleNodes.filter((node) => normaliseLayer(node.type) === "gold").length} />
+            <MetricBox label="Stale" value={visibleNodes.filter((node) => node.is_stale).length} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs font-medium text-muted-foreground">
+              Cartucho
+              <select
+                value={cartridgeFilter}
+                onChange={(event) => {
+                  setCartridgeFilter(event.target.value);
+                  setSelectedId(null);
+                }}
+                className="ml-2 min-h-[40px] rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="all">Todos</option>
+                {cartridges.map((cartridge) => (
+                  <option key={cartridge} value={cartridge}>{cartridge}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Capa
+              <select
+                value={layerFilter}
+                onChange={(event) => {
+                  setLayerFilter(event.target.value);
+                  setSelectedId(null);
+                }}
+                className="ml-2 min-h-[40px] rounded-md border bg-background px-2 text-sm text-foreground"
+              >
+                <option value="all">Todas</option>
+                <option value="raw">raw</option>
+                <option value="silver">silver</option>
+                <option value="gold">gold</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-lg border bg-card" aria-label="Grafo operativo de linaje">
+        <div className="border-b px-4 py-3">
+          <h2 className="text-base font-semibold">Grafo operativo</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Selecciona un nodo para ver entradas, salidas e impacto.</p>
+        </div>
+        <div className="overflow-auto bg-muted/20 p-3">
+          <svg
+            className="min-h-[520px] w-full"
+            viewBox={`0 0 ${chart.width} ${chart.height}`}
+            role="img"
+            aria-label="Grafo de linaje con flechas direccionales"
+          >
+            <defs>
+              <marker
+                id="lineage-arrow-muted"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="7"
+                markerHeight="7"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" className="fill-muted-foreground" />
+              </marker>
+              <marker
+                id="lineage-arrow-impact"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="8"
+                markerHeight="8"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" className="fill-primary" />
+              </marker>
+              <marker
+                id="lineage-arrow-source"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="8"
+                markerHeight="8"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" className="fill-warning" />
+              </marker>
+            </defs>
+            {chart.laneLabels.map((lane) => (
+              <g key={lane.label}>
+                <text x={lane.x} y={32} className="fill-muted-foreground text-[12px] font-semibold uppercase tracking-wider">
+                  {lane.label}
+                </text>
+                <line x1={lane.x} y1={44} x2={lane.x + 220} y2={44} className="stroke-border" />
+              </g>
+            ))}
+            {chart.edges.map((edge) => {
+              const relation = selectedNode
+                ? edgeSelectionRelation(edge, selectedNode.id, upstreamIds, downstreamIds)
+                : "unrelated";
+              return (
+                <path
+                  key={`${edge.from}->${edge.to}`}
+                  d={edge.path}
+                  markerEnd={
+                    relation === "incoming" || relation === "upstream"
+                      ? "url(#lineage-arrow-source)"
+                      : relation === "outgoing" || relation === "downstream"
+                        ? "url(#lineage-arrow-impact)"
+                        : "url(#lineage-arrow-muted)"
+                  }
+                  className={cn(
+                    "fill-none transition-opacity",
+                    relation === "outgoing" ? "stroke-primary stroke-[5] opacity-100" : "",
+                    relation === "downstream" ? "stroke-primary stroke-[3.5] opacity-90" : "",
+                    relation === "incoming" ? "stroke-warning stroke-[5] opacity-100" : "",
+                    relation === "upstream" ? "stroke-warning stroke-[3.5] opacity-90" : "",
+                    relation === "unrelated" ? "stroke-muted-foreground stroke-2 opacity-10" : "",
+                  )}
+                  data-lineage-relation={relation}
+                />
+              );
+            })}
+            {chart.nodes.map((item) => {
+              const node = item.node;
+              const selected = selectedNode?.id === node.id;
+              const upstream = !selected && upstreamIds.has(node.id);
+              const downstream = !selected && downstreamIds.has(node.id);
+              const unrelated = Boolean(selectedNode) && !selected && !upstream && !downstream;
+              return (
+                <g
+                  key={node.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Seleccionar ${node.label || node.id}`}
+                  transform={`translate(${item.x} ${item.y})`}
+                  className={cn("cursor-pointer outline-none transition-opacity", unrelated ? "opacity-35" : "opacity-100")}
+                  onClick={() => setSelectedId(node.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedId(node.id);
+                    }
+                  }}
+                >
+                  <rect
+                    width={220}
+                    height={68}
+                    rx={8}
+                    className={cn(
+                      "stroke-border",
+                      selected ? "fill-primary/10 stroke-primary stroke-[4]" : "fill-background stroke-[1.5]",
+                      downstream ? "fill-primary/10 stroke-primary stroke-[3]" : "",
+                      upstream ? "fill-warning/10 stroke-warning stroke-[3]" : "",
+                      node.is_stale ? "stroke-warning" : "",
+                    )}
+                  />
+                  <text x={14} y={24} className="fill-foreground text-[12px] font-semibold">
+                    {shortText(node.label || node.id, 28)}
+                  </text>
+                  <text x={14} y={44} className="fill-muted-foreground text-[10px]">
+                    {shortText(`${node.cartridge || "sin cartucho"} · ${normaliseLayer(node.type)}`, 34)}
+                  </text>
+                  <text x={14} y={59} className="fill-muted-foreground text-[10px]">
+                    {node.row_count != null ? `${Number(node.row_count).toLocaleString("es")} filas` : formatDate(node.last_refresh) || "sin refresh"}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+        <article className="space-y-3 rounded-lg border bg-card p-4">
+          <h2 className="text-base font-semibold">Nodo seleccionado</h2>
+          {selectedNode ? (
+            <>
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h3 className="break-words text-sm font-medium">{node.label || node.id}</h3>
-                  <p className="text-xs text-muted-foreground">{node.cartridge || "sin cartucho"}</p>
+                  <h3 className="break-words text-lg font-semibold">{selectedNode.label || selectedNode.id}</h3>
+                  <p className="font-mono text-xs text-muted-foreground">{selectedNode.id}</p>
                 </div>
-                <StatusPill status={node.is_stale ? "stale" : "fresh"} />
+                <StatusPill status={selectedNode.is_stale ? "stale" : "fresh"} />
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                <span>Entrada: {incomingCounts.get(node.id) ?? 0}</span>
-                <span>Salida: {outgoingCounts.get(node.id) ?? 0}</span>
-                <span>Filas: {node.row_count ?? "-"}</span>
-                <span>{formatDate(node.last_refresh)}</span>
-              </div>
-              {node.staleness_reason ? <p className="text-xs text-warning">{node.staleness_reason}</p> : null}
-            </article>
-          )) : (
-            <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin nodos.</p>
+              <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                <DetailItem label="Capa" value={normaliseLayer(selectedNode.type)} />
+                <DetailItem label="Cartucho" value={selectedNode.cartridge || "-"} />
+                <DetailItem label="Filas" value={selectedNode.row_count ?? "-"} />
+                <DetailItem label="Último refresh" value={formatDate(selectedNode.last_refresh) || "-"} />
+              </dl>
+              {selectedNode.staleness_reason ? (
+                <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+                  {selectedNode.staleness_reason}
+                </p>
+              ) : null}
+              {selectedNode.id.startsWith("ds:") ? (
+                <Link
+                  href={`/viewer?type=dataset&name=${encodeURIComponent(selectedNode.id.slice(3))}`}
+                  className="inline-flex min-h-[44px] items-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5"
+                >
+                  Abrir dataset
+                </Link>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Selecciona un nodo del grafo.</p>
           )}
-        </section>
-      ))}
+        </article>
+        <article className="space-y-4 rounded-lg border bg-card p-4">
+          <h2 className="text-base font-semibold">Dependencias</h2>
+          {selectedNode ? (
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <MetricBox label="Entrantes" value={incoming.length} />
+              <MetricBox label="Salientes" value={outgoing.length} />
+              <MetricBox label="Origen upstream" value={upstreamIds.size} />
+              <MetricBox label="Impacto downstream" value={downstreamIds.size} />
+            </div>
+          ) : null}
+          <DependencyList title="Entrantes" edges={incoming} nodeById={nodeById} direction="from" />
+          <DependencyList title="Salientes" edges={outgoing} nodeById={nodeById} direction="to" />
+        </article>
+      </section>
+    </div>
+  );
+}
+
+function normaliseLayer(value: string | null | undefined): string {
+  const layer = String(value || "silver").toLowerCase();
+  if (layer === "raw" || layer === "gold") return layer;
+  return "silver";
+}
+
+function shortText(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, Math.max(0, max - 1))}...` : value;
+}
+
+type ReachDirection = "upstream" | "downstream";
+type EdgeSelectionRelation = "incoming" | "outgoing" | "upstream" | "downstream" | "unrelated";
+
+function collectReachable(startId: string, edges: LineageEdge[], direction: ReachDirection): Set<string> {
+  const visited = new Set<string>();
+  const queue = [startId];
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) continue;
+    const nextIds = edges.flatMap((edge) => {
+      if (direction === "downstream" && edge.from === current) return [edge.to];
+      if (direction === "upstream" && edge.to === current) return [edge.from];
+      return [];
+    });
+    nextIds.forEach((id) => {
+      if (id === startId || visited.has(id)) return;
+      visited.add(id);
+      queue.push(id);
+    });
+  }
+  return visited;
+}
+
+function edgeSelectionRelation(
+  edge: LineageEdge,
+  selectedId: string,
+  upstreamIds: Set<string>,
+  downstreamIds: Set<string>,
+): EdgeSelectionRelation {
+  if (edge.from === selectedId) return "outgoing";
+  if (edge.to === selectedId) return "incoming";
+  if (downstreamIds.has(edge.from) && downstreamIds.has(edge.to)) return "downstream";
+  if (upstreamIds.has(edge.from) && upstreamIds.has(edge.to)) return "upstream";
+  return "unrelated";
+}
+
+function layoutLineageGraph(nodes: LineageNode[], edges: LineageEdge[]) {
+  const laneOrder = ["raw", "silver", "gold"];
+  const laneX: Record<string, number> = { raw: 36, silver: 336, gold: 636 };
+  const rowHeight = 96;
+  const top = 70;
+  const grouped: Record<string, LineageNode[]> = { raw: [], silver: [], gold: [] };
+  nodes.forEach((node) => grouped[normaliseLayer(node.type)].push(node));
+  laneOrder.forEach((lane) => grouped[lane].sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id))));
+  const positioned = laneOrder.flatMap((lane) => (
+    grouped[lane].map((node, index) => ({
+      node,
+      x: laneX[lane],
+      y: top + index * rowHeight,
+    }))
+  ));
+  const pos = new Map(positioned.map((item) => [item.node.id, item]));
+  const maxRows = Math.max(1, ...laneOrder.map((lane) => grouped[lane].length));
+  return {
+    width: 900,
+    height: Math.max(560, top + maxRows * rowHeight + 40),
+    laneLabels: laneOrder.map((lane) => ({ label: lane, x: laneX[lane] })),
+    nodes: positioned,
+    edges: edges.flatMap((edge) => {
+      const from = pos.get(edge.from);
+      const to = pos.get(edge.to);
+      if (!from || !to) return [];
+      const startX = from.x + 220;
+      const startY = from.y + 34;
+      const endX = to.x;
+      const endY = to.y + 34;
+      const mid = Math.max(18, Math.abs(endX - startX) / 2);
+      return [{
+        ...edge,
+        path: `M ${startX} ${startY} C ${startX + mid} ${startY}, ${endX - mid} ${endY}, ${endX - 8} ${endY}`,
+      }];
+    }),
+  };
+}
+
+function DependencyList({
+  title,
+  edges,
+  nodeById,
+  direction,
+}: {
+  title: string;
+  edges: LineageEdge[];
+  nodeById: Map<string, LineageNode>;
+  direction: "from" | "to";
+}) {
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {edges.length ? (
+        <ul className="space-y-2">
+          {edges.map((edge) => {
+            const peerId = direction === "from" ? edge.from : edge.to;
+            const peer = nodeById.get(peerId);
+            return (
+              <li key={`${title}:${edge.from}:${edge.to}`} className="rounded-md border bg-background p-3 text-sm">
+                <span className="font-medium">{peer?.label || peerId}</span>
+                <span className="ml-2 text-xs text-muted-foreground">{normaliseLayer(peer?.type)} {edge.relation || ""}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">Sin dependencias {title.toLowerCase()}.</p>
+      )}
     </div>
   );
 }

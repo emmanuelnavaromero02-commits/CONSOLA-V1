@@ -93,7 +93,7 @@ export function DecisionsBoard() {
     },
   });
 
-  const rows = decisions.data ?? [];
+  const rows = useMemo(() => decisions.data ?? [], [decisions.data]);
   const selected = useMemo<Decision | null>(() => {
     if (detail.data) return detail.data;
     return rows.find((row) => row.id === selectedId) ?? null;

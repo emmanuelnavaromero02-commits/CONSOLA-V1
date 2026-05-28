@@ -110,6 +110,13 @@ export interface AgentRecord {
   slug?: string | null;
   cartridge_id?: string | null;
   description?: string | null;
+  instructions?: string | null;
+  personality?: string | null;
+  model?: string | null;
+  max_tokens?: number | null;
+  temperature?: number | null;
+  rag_filter?: Record<string, unknown> | null;
+  extra?: Record<string, unknown> | null;
   is_active?: boolean | null;
   allowed_tools?: string[] | null;
   created_at?: string | null;
@@ -118,6 +125,59 @@ export interface AgentRecord {
 
 export interface AgentsResponse {
   agents: AgentRecord[];
+}
+
+export interface AgentToolCatalogItem {
+  name: string;
+  description?: string;
+  category?: string;
+  risk?: string;
+}
+
+export interface AgentToolCatalogResponse {
+  servers: Record<string, AgentToolCatalogItem[]>;
+}
+
+export interface AgentPayload {
+  cartridge_id: string;
+  slug: string;
+  name: string;
+  description: string;
+  instructions: string;
+  personality: string;
+  allowed_tools: string[];
+  rag_filter: Record<string, unknown>;
+  model: string;
+  max_tokens: number;
+  temperature: number;
+  extra: Record<string, unknown>;
+  is_active: boolean;
+}
+
+export interface AgentRunRecord {
+  id: number | string;
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  n_tool_calls?: number | null;
+  out_chars?: number | null;
+  input_messages?: unknown;
+  output_text?: string | null;
+  tool_calls?: unknown;
+  error_message?: string | null;
+}
+
+export interface AgentRunsResponse {
+  runs: AgentRunRecord[];
+}
+
+export interface AgentInvokeResponse {
+  run_id?: number | string;
+  output_text?: string;
+  text?: string;
+  tool_calls?: unknown;
+  error_message?: string | null;
+  [key: string]: unknown;
 }
 
 export interface MeAccessResponse {
@@ -279,6 +339,21 @@ export async function listAgents(): Promise<AgentRecord[]> {
   return data.agents ?? [];
 }
 
+export async function listAgentToolCatalog(): Promise<Record<string, AgentToolCatalogItem[]>> {
+  const { data } = await api.get<AgentToolCatalogResponse>("/api/agents/_tool-catalog");
+  return data.servers ?? {};
+}
+
+export async function createAgent(payload: AgentPayload): Promise<AgentRecord> {
+  const { data } = await api.post<AgentRecord>("/api/agents", payload);
+  return data;
+}
+
+export async function updateAgent(id: string, payload: Partial<AgentPayload>): Promise<AgentRecord> {
+  const { data } = await api.patch<AgentRecord>(`/api/agents/${encodeURIComponent(id)}`, payload);
+  return data;
+}
+
 export async function updateAgentStatus(id: string, isActive: boolean): Promise<AgentRecord> {
   const { data } = await api.patch<AgentRecord>(`/api/agents/${encodeURIComponent(id)}`, {
     is_active: isActive,
@@ -288,6 +363,26 @@ export async function updateAgentStatus(id: string, isActive: boolean): Promise<
 
 export async function deleteAgent(id: string): Promise<void> {
   await api.delete(`/api/agents/${encodeURIComponent(id)}`);
+}
+
+export async function listAgentRuns(id: string, limit = 30): Promise<AgentRunRecord[]> {
+  const { data } = await api.get<AgentRunsResponse>(
+    `/api/agents/${encodeURIComponent(id)}/runs${queryString({ limit })}`,
+  );
+  return data.runs ?? [];
+}
+
+export async function getAgentRun(runId: number | string): Promise<AgentRunRecord> {
+  const { data } = await api.get<AgentRunRecord>(`/api/agent-runs/${encodeURIComponent(String(runId))}`);
+  return data;
+}
+
+export async function invokeAgent(id: string, message: string, history: Array<Record<string, string>> = []): Promise<AgentInvokeResponse> {
+  const { data } = await api.post<AgentInvokeResponse>(
+    `/api/agents/${encodeURIComponent(id)}/invoke`,
+    { message, history },
+  );
+  return data;
 }
 
 export async function getMeAccess(): Promise<MeAccessResponse> {

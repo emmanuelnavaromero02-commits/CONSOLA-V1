@@ -12,26 +12,47 @@ def test_marketplace_has_no_standalone_html_page():
     assert not (ROOT / "console/app/static/marketplace.html").exists()
 
 
-def test_marketplace_route_uses_existing_console_shell():
+def test_marketplace_routes_use_console_next_export():
     main = read("console/app/main.py")
     assert '@app.get("/marketplace"' in main
     assert '@app.get("/customer/cartridges"' in main
     assert '"/admin/installations"' in main
-    assert 'FileResponse(STATIC / "index.html")' in main
+    assert '_console_next_response(request, "marketplace/index.html")' in main
+    assert '_console_next_response(request, "customer/cartridges/index.html")' in main
+    assert '_console_next_response(request, "admin/installations/index.html")' in main
+    assert '_console_next_response(request, "admin/licenses/index.html")' in main
 
 
-def test_marketplace_js_mounts_inside_home_shell():
-    js = read("console/app/static/js/marketplace.js")
-    assert "renderTopbar" in js
-    assert "home-shell marketplace-view" in js
-    assert "market-shell" not in js
-    assert "/api/marketplace/products" in js
-    assert "/api/marketplace/products/${encodeURIComponent(cartridgeId)}/request" in js
-    assert "/api/admin/installations" in js
-    assert "data-admin-action" in js
-    assert "data-access-toggle" in js
-    assert "data-user-access" in js
-    assert "/access/${encodeURIComponent(userId)}" in js
+def test_marketplace_next_surface_keeps_customer_and_admin_flows():
+    lib = read("console-next/src/lib/marketplace.ts")
+    component = read("console-next/src/components/marketplace/MarketplaceConsole.tsx")
+    app_chrome = read("console-next/src/components/AppChrome.tsx")
+    for endpoint in (
+        "/api/marketplace/products",
+        "/api/customer/cartridges",
+        "/api/marketplace/products/${encodeURIComponent(cartridgeId)}/request",
+        "/api/marketplace/installations/${encodeURIComponent(installationId)}/retry",
+        "/api/admin/installations",
+        "/api/admin/installations/${encodeURIComponent(installationId)}/access",
+        "/api/admin/installations/${encodeURIComponent(installationId)}/access/${encodeURIComponent(userId)}",
+    ):
+        assert endpoint in lib
+    for action in ("approve", "pause", "revoke", "reactivate"):
+        assert action in component
+    assert 'href: "/marketplace"' in app_chrome
+    assert 'permission: "marketplace.read"' in app_chrome
+    assert 'can_admin_marketplace' in component
+
+
+def test_marketplace_next_static_pages_exist_after_export():
+    static = ROOT / "console/app/static/console-next"
+    for page in (
+        "marketplace/index.html",
+        "customer/cartridges/index.html",
+        "admin/installations/index.html",
+        "admin/licenses/index.html",
+    ):
+        assert (static / page).exists()
 
 
 def test_marketplace_css_is_scoped_to_console_view():

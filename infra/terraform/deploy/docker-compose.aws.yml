@@ -46,7 +46,7 @@ services:
     # the implicit "container started" semantics that race-condition
     # boot order.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d modecissions"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -68,7 +68,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d modecissions_gold -p 5433"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5433 -U postgres -d modecissions_gold"]
       interval: 5s
       timeout: 5s
       retries: 20

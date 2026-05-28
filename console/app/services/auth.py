@@ -357,7 +357,20 @@ async def change_own_password(user_id: int, current_password: str,
 
 async def delete_user(user_id: int) -> bool:
     p = await pool()
-    res = await p.execute("DELETE FROM users WHERE id = $1", user_id)
+    async with p.acquire() as conn:
+        async with conn.transaction():
+            exists = await conn.fetchval("SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", user_id)
+            if not exists:
+                return False
+            await conn.execute("DELETE FROM user_workspace_roles WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM user_sessions WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
+            try:
+                res = await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+            except asyncpg.ForeignKeyViolationError as exc:
+                raise RuntimeError(
+                    "user has retained activity; deactivate the account instead of deleting it"
+                ) from exc
     return res != "DELETE 0"
 
 

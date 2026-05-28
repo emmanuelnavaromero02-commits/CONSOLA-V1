@@ -3575,12 +3575,16 @@ async def studio_page():
     return FileResponse(STATIC / "studio.html")
 
 @app.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
-async def marketplace_page():
-    return FileResponse(STATIC / "index.html")
+async def marketplace_page(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "marketplace/index.html")
 
 @app.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
-async def customer_cartridges_page():
-    return FileResponse(STATIC / "index.html")
+async def customer_cartridges_page(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "customer/cartridges/index.html")
 
 @app.get(
     "/admin/installations",
@@ -3588,8 +3592,10 @@ async def customer_cartridges_page():
         Depends(require_permission("marketplace.admin")),
     ],
 )
-async def admin_installations_page():
-    return FileResponse(STATIC / "index.html")
+async def admin_installations_page(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "admin/installations/index.html")
 
 @app.get(
     "/admin/licenses",
@@ -3597,8 +3603,10 @@ async def admin_installations_page():
         Depends(require_permission("marketplace.admin")),
     ],
 )
-async def admin_licenses_page():
-    return FileResponse(STATIC / "index.html")
+async def admin_licenses_page(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "admin/licenses/index.html")
 
 @app.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
 async def api_marketplace_products(user: dict = Depends(require_authenticated)):
@@ -5589,7 +5597,10 @@ async def api_admin_users_delete(
     if user_id == admin_user["id"]:
         raise HTTPException(400, "you cannot delete your own account")
     await _assert_can_manage_target_user(admin_user, user_id)
-    ok = await _auth.delete_user(user_id)
+    try:
+        ok = await _auth.delete_user(user_id)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if not ok:
         raise HTTPException(404, "user not found")
     await _audit.record_event(
