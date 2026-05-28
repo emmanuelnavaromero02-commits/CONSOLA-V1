@@ -82,3 +82,9 @@ def test_bootstrap_admin_uses_env_password(monkeypatch):
         "name": "Admin User",
         "role": "admin",
     }]
+
+
+def test_env_example_matches_bootstrap_admin_name_contract():
+    src = (REPO_ROOT / "infra/.env.example").read_text(encoding="utf-8")
+    assert "BOOTSTRAP_ADMIN_NAME=" in src
+    assert "BOOTSTRAP_ADMIN_FULL_NAME=" not in src

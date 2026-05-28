@@ -12,7 +12,7 @@ landed:
   * scripts/cleanup_env_backups.sh is executable, idempotent, and
     refuses to overwrite existing backups (Codex H6).
   * infra/.env.example documents BOOTSTRAP_ADMIN_EMAIL / _PASSWORD /
-    _FULL_NAME so the runbook 02 first-boot flow works without
+    _NAME so the runbook 02 first-boot flow works without
     silent failure (Claude H5).
   * infra/sync_dag_sources.py is gone — it was dead code with no
     callers (Claude M7).
@@ -33,6 +33,12 @@ REPO = Path(__file__).resolve().parents[1]
 
 def _runbook_01() -> str:
     return (REPO / "docs/runbook/01_arrancar_desde_cero.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def _runbook_02() -> str:
+    return (REPO / "docs/runbook/02_primer_tenant.md").read_text(
         encoding="utf-8"
     )
 
@@ -135,6 +141,10 @@ def _env_example() -> str:
     return (REPO / "infra/.env.example").read_text(encoding="utf-8")
 
 
+def _bootstrap_sh() -> str:
+    return (REPO / "infra/bootstrap.sh").read_text(encoding="utf-8")
+
+
 def test_env_example_documents_bootstrap_admin_email():
     src = _env_example()
     assert re.search(
@@ -149,11 +159,112 @@ def test_env_example_documents_bootstrap_admin_password():
     ), "infra/.env.example missing BOOTSTRAP_ADMIN_PASSWORD"
 
 
-def test_env_example_documents_bootstrap_admin_full_name():
+def test_env_example_documents_bootstrap_admin_name():
     src = _env_example()
     assert re.search(
-        r"^BOOTSTRAP_ADMIN_FULL_NAME=", src, re.MULTILINE
-    ), "infra/.env.example missing BOOTSTRAP_ADMIN_FULL_NAME"
+        r"^BOOTSTRAP_ADMIN_NAME=", src, re.MULTILINE
+    ), "infra/.env.example missing BOOTSTRAP_ADMIN_NAME"
+    assert "BOOTSTRAP_ADMIN_FULL_NAME" not in src, (
+        "infra/.env.example must match console/app/bootstrap_admin.py, "
+        "which reads BOOTSTRAP_ADMIN_NAME"
+    )
+
+
+def test_env_example_documents_runtime_env_contract():
+    src = _env_example()
+    required = {
+        "DATABASE_URL",
+        "GOLD_DATABASE_URL",
+        "MCP_INFRA_URL",
+        "REFINEMENT_URL",
+        "AIRFLOW_URL",
+        "VAULT_URL",
+        "REPLICON_URL",
+        "SAP_HCM_URL",
+        "SAP_S4HANA_URL",
+        "SAP_SUCCESSFACTORS_URL",
+        "INTERNAL_API_KEY",
+        "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE",
+        "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
+        "CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY",
+        "RATE_LIMIT_ENABLED",
+        "TRUSTED_PROXY_IPS",
+        "BOOTSTRAP_ADMIN_EMAIL",
+        "BOOTSTRAP_ADMIN_PASSWORD",
+        "BOOTSTRAP_ADMIN_NAME",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "S3_BUCKET_NAME",
+        "MINIO_ENDPOINT",
+        "MINIO_ACCESS_KEY",
+        "MINIO_SECRET_KEY",
+        "MINIO_BUCKET",
+        "MINIO_SECURE",
+        "POSTGRES_PASSWORD",
+        "OMEGA_CONSOLE_PASSWORD",
+        "OMEGA_REFINEMENT_GOLD_PASSWORD",
+        "OMEGA_MCP_INFRA_PASSWORD",
+        "PG_HOST",
+        "PG_PORT",
+        "PG_DB",
+        "PG_USER",
+        "PG_PASSWORD",
+    }
+    missing = [
+        name for name in sorted(required)
+        if not re.search(rf"^{re.escape(name)}=", src, re.MULTILINE)
+    ]
+    assert not missing, f"infra/.env.example missing runtime keys: {missing}"
+
+
+def test_bootstrap_sh_emits_runtime_env_contract():
+    src = _bootstrap_sh()
+    required = {
+        "SUPERSET_SERVICE_PASSWORD",
+        "DATABASE_URL",
+        "GOLD_DATABASE_URL",
+        "MCP_INFRA_URL",
+        "REFINEMENT_URL",
+        "AIRFLOW_URL",
+        "VAULT_URL",
+        "REPLICON_URL",
+        "SAP_HCM_URL",
+        "SAP_S4HANA_URL",
+        "SAP_SUCCESSFACTORS_URL",
+        "RATE_LIMIT_ENABLED",
+        "TRUSTED_PROXY_IPS",
+        "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
+        "CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY",
+        "MINIO_ENDPOINT",
+        "MINIO_ACCESS_KEY",
+        "MINIO_BUCKET",
+        "MINIO_SECURE",
+        "PG_HOST",
+        "PG_PASSWORD",
+        "BOOTSTRAP_ADMIN_NAME",
+    }
+    missing = [name for name in sorted(required) if f"{name}=" not in src]
+    assert not missing, f"infra/bootstrap.sh missing runtime keys: {missing}"
+
+
+def test_local_superset_bootstrap_does_not_force_https_on_http_port():
+    """Local compose exposes Superset over HTTP on :8088.
+
+    If bootstrap emits HTTPS-forcing cookies/Talisman flags here, the UI
+    redirects http://localhost:8088 to https://localhost:8088 even though
+    the local container is not serving TLS. That breaks the E2E Superset
+    reachability and Studio "Abrir Superset" checks.
+    """
+    for label, src in {
+        "infra/.env.example": _env_example(),
+        "infra/bootstrap.sh": _bootstrap_sh(),
+    }.items():
+        assert re.search(r"^SUPERSET_SESSION_COOKIE_SECURE=false$", src, re.MULTILINE), (
+            f"{label} must keep local Superset cookies HTTP-compatible"
+        )
+        assert re.search(r"^SUPERSET_FORCE_HTTPS=false$", src, re.MULTILINE), (
+            f"{label} must not force HTTPS for local http://localhost:8088"
+        )
 
 
 def test_env_example_bootstrap_admin_block_warns_against_committing():
@@ -170,6 +281,18 @@ def test_env_example_bootstrap_admin_block_warns_against_committing():
     block = block_match.group(0)
     assert "NEVER commit" in block or "never commit" in block.lower()
     assert "first" in block.lower() and "boot" in block.lower()
+    assert "reject" in block.lower(), (
+        "Bootstrap password placeholder is public; .env.example must say "
+        "the bootstrap CLI rejects it until replaced"
+    )
+
+
+def test_runbook_02_documents_manual_bootstrap_admin_cli():
+    src = _runbook_02()
+    assert "python -m app.bootstrap_admin" in src
+    assert "BOOTSTRAP_ADMIN_PASSWORD" in src
+    assert "BOOTSTRAP_ADMIN_NAME" in src
+    assert "al primer boot" not in src.lower()
 
 
 # ── Claude M7: dead code removed ──────────────────────────────────────────

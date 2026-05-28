@@ -88,6 +88,45 @@ def test_console_auth_is_production_defaults_true(monkeypatch):
     assert auth._is_production() is True
 
 
+def test_console_dependencies_default_to_production(monkeypatch):
+    for env in (
+        "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
+        "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
+    ):
+        monkeypatch.setenv(env, "x" * 32)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    deps = _isolated_import("console", "app.dependencies")
+    assert deps._is_production_env() is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_cartridge_dataset_fallback_denied_when_env_unset(monkeypatch):
+    for env in (
+        "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
+        "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
+    ):
+        monkeypatch.setenv(env, "x" * 32)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    deps = _isolated_import("console", "app.dependencies")
+
+    class Pool:
+        async def fetchval(self, *_args, **_kwargs):
+            return None
+
+        async def fetch(self, *_args, **_kwargs):
+            raise AssertionError("datasets fallback must stay disabled by default")
+
+    async def pool():
+        return Pool()
+
+    monkeypatch.setattr(deps._auth, "pool", pool)
+    assert await deps._workspace_cartridges("workspace-1") == []
+
+
 def test_vault_is_production_defaults_true(monkeypatch):
     # Same story as auth.py: vault/app/main.py invokes
     # _require_pair_keys_in_production() at import. Satisfy keys first.

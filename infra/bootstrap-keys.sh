@@ -80,4 +80,4 @@ for key in "${DB_KEYS[@]}"; do
   fi
 done
 
-echo "[bootstrap-keys] Done. 20 keys ensured in ${ENV_FILE} (${added} new)"
+echo "[bootstrap-keys] Done. $((${#KEYS[@]} + ${#DB_KEYS[@]})) keys ensured in ${ENV_FILE} (${added} new)"

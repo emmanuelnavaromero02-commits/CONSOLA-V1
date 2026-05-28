@@ -1,4 +1,4 @@
-"""Defensive guard for SAP S/4HANA ad-hoc Knowledge Bit SQL."""
+"""Defensive guard for SAP SuccessFactors ad-hoc Knowledge Bit SQL."""
 from __future__ import annotations
 
 import re

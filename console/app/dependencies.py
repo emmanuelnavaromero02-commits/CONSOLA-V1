@@ -16,7 +16,7 @@ _GLOBAL_ADMIN_ROLES = {"admin", "owner", "super_admin"}
 
 
 def _is_production_env() -> bool:
-    value = os.environ.get("APP_ENV") or os.environ.get("ENVIRONMENT") or "development"
+    value = os.environ.get("APP_ENV") or os.environ.get("ENVIRONMENT") or "production"
     return value.strip().lower() in {"prod", "production", "staging"}
 
 

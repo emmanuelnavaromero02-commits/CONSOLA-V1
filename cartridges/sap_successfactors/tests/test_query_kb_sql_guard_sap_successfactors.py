@@ -11,12 +11,11 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("INTERNAL_API_KEY", "test-secret-key-not-default")
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
-
-PREFIX = "s3://lakehouse/raw/sap_hcm/"
+PREFIX = "s3://lakehouse/raw/sap_successfactors/"
 PREFIXES = (
     PREFIX,
-    "s3://lakehouse/silver/sap_hcm/",
-    "s3://lakehouse/gold/sap_hcm/",
+    "s3://lakehouse/silver/sap_successfactors/",
+    "s3://lakehouse/gold/sap_successfactors/",
 )
 
 
@@ -31,10 +30,10 @@ def _validate_kb_sql(sql: str):
     [
         "SELECT 1 AS ok",
         "WITH x AS (SELECT 1 AS ok) SELECT * FROM x",
-        "SELECT * FROM read_parquet('s3://lakehouse/raw/sap_hcm/Employee/*.parquet')",
-        'SELECT * FROM read_parquet("s3://lakehouse/raw/sap_hcm/TimeEntry/**/*.parquet")',
-        "SELECT * FROM read_parquet('s3://lakehouse/silver/sap_hcm/kb_headcount/*.parquet')",
-        "SELECT * FROM read_parquet('s3://lakehouse/gold/sap_hcm/headcount_by_department/*.parquet')",
+        "SELECT * FROM read_parquet('s3://lakehouse/raw/sap_successfactors/User/*.parquet')",
+        'SELECT * FROM read_parquet("s3://lakehouse/raw/sap_successfactors/EmpJob/**/*.parquet")',
+        "SELECT * FROM read_parquet('s3://lakehouse/silver/sap_successfactors/kb_headcount/*.parquet')",
+        "SELECT * FROM read_parquet('s3://lakehouse/gold/sap_successfactors/sap_successfactors_headcount_by_department/*.parquet')",
     ],
 )
 def test_validate_kb_sql_allows_safe_reads(sql):
@@ -54,8 +53,9 @@ def test_validate_kb_sql_allows_safe_reads(sql):
         ("SELECT * FROM read_csv('file:///etc/passwd')", "S3 prefixes"),
         ("SELECT * FROM read_parquet('/etc/passwd')", "S3 prefixes"),
         ("SELECT * FROM read_parquet('../secret.parquet')", "S3 prefixes"),
-        ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_hcm/../secret.parquet')", "traversal"),
-        ("SELECT * FROM read_parquet('s3://other/raw/sap_hcm/x.parquet')", "path must start"),
+        ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_successfactors/../secret.parquet')", "traversal"),
+        ("SELECT * FROM read_parquet('s3://other/raw/sap_successfactors/x.parquet')", "path must start"),
+        ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_hcm/x.parquet')", "path must start"),
         ("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_s4hana/x.parquet')", "path must start"),
         ("SELECT * FROM read_parquet(['file:///etc/passwd'])", "direct string literal"),
         ("SELECT * FROM parquet_scan('/etc/passwd')", "parquet_scan"),
@@ -141,14 +141,16 @@ def test_query_kb_error_response_does_not_leak_resolved_sql_or_paths(monkeypatch
 
     class LeakyConnection:
         def execute(self, sql: str):
-            raise RuntimeError(f"boom while reading {sql} from s3://lakehouse/raw/sap_hcm/User/x.parquet")
+            raise RuntimeError(f"boom while reading {sql} from s3://lakehouse/raw/sap_successfactors/User/x.parquet")
 
         def close(self):
             pass
 
     monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda: LeakyConnection())
 
-    result = mcp_server.query_kb("SELECT * FROM read_parquet('s3://{bucket}/raw/sap_hcm/User/*.parquet')")
+    result = mcp_server.query_kb(
+        "SELECT * FROM read_parquet('s3://{bucket}/raw/sap_successfactors/User/*.parquet')"
+    )
 
     rendered = repr(result)
     assert result == {"error": "query_failed", "reason": "DuckDB query failed"}
@@ -163,7 +165,7 @@ def test_custom_sql_tool_blocks_invalid_sql(monkeypatch):
     monkeypatch.setattr(mcp_server.mcp, "add_tool", lambda fn: registered.append(fn))
 
     mcp_server._make_sql_tool(
-        "unsafe_hcm_tool",
+        "unsafe_successfactors_tool",
         "Unsafe tool",
         "SELECT * FROM read_parquet('file:///etc/passwd')",
     )
@@ -174,9 +176,9 @@ def test_custom_sql_tool_blocks_invalid_sql(monkeypatch):
     assert "S3 prefix" in result["reason"]
 
 
-def test_existing_hcm_kb_sql_passes_guard():
+def test_existing_successfactors_kb_sql_passes_guard():
     repo_root = Path(__file__).resolve().parents[3]
-    kb_path = repo_root / "cartridges" / "sap_hcm" / "app" / "config" / "knowledge_bits.yaml"
+    kb_path = repo_root / "cartridges" / "sap_successfactors" / "app" / "config" / "knowledge_bits.yaml"
     kbs = yaml.safe_load(kb_path.read_text(encoding="utf-8")).get("knowledge_bits", [])
     assert kbs
 
@@ -190,4 +192,6 @@ def test_limit_detection_ignores_strings():
     from app.core.sql_guard import has_limit_clause
 
     assert has_limit_clause("SELECT * FROM x LIMIT 10") is True
-    assert has_limit_clause("SELECT * FROM read_parquet('s3://lakehouse/raw/sap_hcm/unlimited.parquet')") is False
+    assert has_limit_clause(
+        "SELECT * FROM read_parquet('s3://lakehouse/raw/sap_successfactors/unlimited.parquet')"
+    ) is False
