@@ -247,6 +247,26 @@ def test_bootstrap_sh_emits_runtime_env_contract():
     assert not missing, f"infra/bootstrap.sh missing runtime keys: {missing}"
 
 
+def test_local_superset_bootstrap_does_not_force_https_on_http_port():
+    """Local compose exposes Superset over HTTP on :8088.
+
+    If bootstrap emits HTTPS-forcing cookies/Talisman flags here, the UI
+    redirects http://localhost:8088 to https://localhost:8088 even though
+    the local container is not serving TLS. That breaks the E2E Superset
+    reachability and Studio "Abrir Superset" checks.
+    """
+    for label, src in {
+        "infra/.env.example": _env_example(),
+        "infra/bootstrap.sh": _bootstrap_sh(),
+    }.items():
+        assert re.search(r"^SUPERSET_SESSION_COOKIE_SECURE=false$", src, re.MULTILINE), (
+            f"{label} must keep local Superset cookies HTTP-compatible"
+        )
+        assert re.search(r"^SUPERSET_FORCE_HTTPS=false$", src, re.MULTILINE), (
+            f"{label} must not force HTTPS for local http://localhost:8088"
+        )
+
+
 def test_env_example_bootstrap_admin_block_warns_against_committing():
     """The placeholder values in .env.example are deliberately weak.
     The surrounding comment must remind operators to rotate before
