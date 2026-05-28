@@ -202,7 +202,11 @@ def console_main(monkeypatch):
     import app.services as _svc_pkg
     for attr, mod in [
         ("auth", service_stubs["app.services.auth"]),
+        ("assistant", service_stubs["app.services.assistant"]),
+        ("studio_assistant", service_stubs["app.services.studio_assistant"]),
         ("job_service", service_stubs["app.services.job_service"]),
+        ("tokens", service_stubs["app.services.tokens"]),
+        ("email_service", service_stubs["app.services.email_service"]),
         ("token_store", service_stubs["app.services.token_store"]),
         ("mcp_registry", service_stubs["app.services.mcp_registry"]),
         ("cartridge_service", service_stubs["app.services.cartridge_service"]),
