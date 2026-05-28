@@ -205,10 +205,8 @@ test.describe("Dashboard — internal navigation", () => {
   test("navigate from dashboard to /cartridges via link", async ({ page }) => {
     await page.goto("/dashboard");
     const link = page.locator('a[href="/cartridges"], a[href^="/cartridges/"]').first();
-    if (!(await link.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.fail(true, "no link to /cartridges from /dashboard — UX gap");
-      return;
-    }
+    await expect(link, "dashboard must expose a visible /cartridges navigation link")
+      .toBeVisible({ timeout: 10_000 });
     await link.click();
     await page.waitForURL(/\/cartridges/, { timeout: 10_000 });
   });
