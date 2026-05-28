@@ -149,6 +149,7 @@ export interface LineageNode {
 export interface LineageEdge {
   from: string;
   to: string;
+  relation?: string | null;
 }
 
 export interface LineagePayload {

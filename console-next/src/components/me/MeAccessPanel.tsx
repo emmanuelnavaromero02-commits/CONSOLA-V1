@@ -1,16 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { changeOwnPassword, getMeAccess, getMeProfile } from "@/lib/admin-surfaces";
+
+const MIN_PASSWORD_LENGTH = 12;
 
 function boolLabel(value?: boolean): string {
   return value ? "Sí" : "No";
 }
 
 export function MeAccessPanel() {
+  const queryClient = useQueryClient();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -28,11 +32,15 @@ export function MeAccessPanel() {
   });
   const changePassword = useMutation({
     mutationFn: changeOwnPassword,
-    onSuccess: () => {
+    onSuccess: async () => {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setFormMessage("Password actualizado correctamente.");
+      setFormMessage("Password actualizado correctamente. Ya puedes continuar.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["me", "access"] }),
+        queryClient.invalidateQueries({ queryKey: ["me", "profile"] }),
+      ]);
     },
     onError: () => setFormMessage("No se pudo actualizar el password."),
   });
@@ -43,8 +51,8 @@ export function MeAccessPanel() {
       setFormMessage("Los passwords nuevos no coinciden.");
       return;
     }
-    if (newPassword.length < 8) {
-      setFormMessage("El nuevo password debe tener al menos 8 caracteres.");
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      setFormMessage(`El nuevo password debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`);
       return;
     }
     changePassword.mutate({
@@ -107,7 +115,7 @@ export function MeAccessPanel() {
 
       {profile.data?.must_change_password ? (
         <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          Debes cambiar tu password antes de continuar usando la aplicación.
+          Debes cambiar tu password antes de continuar usando la aplicación. Usa la contraseña temporal como password actual.
         </p>
       ) : null}
 
@@ -158,12 +166,21 @@ export function MeAccessPanel() {
             Guardar password
           </button>
           {formMessage ? (
-            <p
-              role="status"
-              className={changePassword.isError ? "text-sm text-destructive" : "text-sm text-emerald-700 dark:text-emerald-300"}
-            >
-              {formMessage}
-            </p>
+            <div role="status" className="flex flex-wrap items-center gap-3">
+              <p
+                className={changePassword.isError ? "text-sm text-destructive" : "text-sm text-emerald-700 dark:text-emerald-300"}
+              >
+                {formMessage}
+              </p>
+              {changePassword.isSuccess ? (
+                <Link
+                  href="/dashboard"
+                  className="inline-flex min-h-[36px] items-center rounded-md border px-3 text-xs font-medium hover:bg-accent/5"
+                >
+                  Ir al panel
+                </Link>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </section>

@@ -60,10 +60,11 @@ export interface UsersListResponse {
 }
 
 export interface CreateUserRequest {
-  email:    string;
-  password: string;
-  name?:    string;
-  role?:    UserRole;
+  email:        string;
+  password:     string;
+  name?:        string;
+  role?:        UserRole;
+  workspace_id: string;
 }
 
 export interface UpdateUserRequest {

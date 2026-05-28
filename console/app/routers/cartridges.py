@@ -56,8 +56,11 @@ def _require_cartridge_visible(user: dict | None, cartridge: str) -> None:
 
 
 def _cartridge_url(cartridge: str, path: str) -> str:
+    port = _CARTRIDGE_PORTS[cartridge]
+    if not _running_in_container():
+        return f"http://127.0.0.1:{port}{path}"
     host = cartridge.replace("_", "-")
-    return f"http://{host}:{_CARTRIDGE_PORTS[cartridge]}{path}"
+    return f"http://{host}:{port}{path}"
 
 
 def _cartridge_internal_headers() -> dict[str, str]:

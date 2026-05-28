@@ -2,20 +2,25 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { api } from "@/lib/api";
+import { getMeAccess, type MeAccessResponse } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
 
 const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/activate"];
 const THEME_STORAGE_KEY = "mod-theme";
 
 interface NavItem {
-  href:   string;
-  label:  string;
-  icon:   string;
-  active?: string[];
+  href:        string;
+  label:       string;
+  icon:        string;
+  active?:     string[];
+  permission?: string;
+  capability?: string;
+  adminOnly?:  boolean;
 }
 
 /**
@@ -26,20 +31,22 @@ interface NavItem {
  */
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard",           label: "Panel",        icon: "▦" },
-  { href: "/workspace",           label: "Workspace",    icon: "◌" },
-  { href: "/control-room",        label: "Control Room", icon: "◎" },
-  { href: "/copilot",             label: "Copiloto",     icon: "◈" },
-  { href: "/agents",              label: "Agentes",      icon: "◇" },
-  { href: "/cartridges",          label: "Cartuchos",    icon: "□" },
-  { href: "/monitor",             label: "Monitor",      icon: "▤" },
-  { href: "/viewer?type=lineage", label: "Linaje",       icon: "◇", active: ["/viewer", "/lineage", "/linaje"] },
-  { href: "/explorer",            label: "Explorer",     icon: "▱" },
-  { href: "/decisions",           label: "Decisiones",   icon: "✓" },
-  { href: "/studio",              label: "Studio",       icon: "◇" },
-  { href: "/operations",          label: "Operaciones",  icon: "⚙", active: ["/operations", "/operations/users", "/operations/audit"] },
-  { href: "/operations/vault",    label: "Vault",        icon: "◉", active: ["/operations/vault"] },
-  { href: "/security",            label: "Seguridad",    icon: "◒" },
-  { href: "/settings",            label: "Settings",     icon: "⚙" },
+  { href: "/workspace",           label: "Workspace",    icon: "◌", permission: "workspace.access" },
+  { href: "/control-room",        label: "Control Room", icon: "◎", permission: "workspace.access" },
+  { href: "/marketplace",         label: "Marketplace",  icon: "◧", permission: "marketplace.read", active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses"] },
+  { href: "/apps-gallery",        label: "Apps",         icon: "▥", permission: "apps.read" },
+  { href: "/copilot",             label: "Copiloto",     icon: "◈", permission: "copilot.use" },
+  { href: "/agents",              label: "Agentes",      icon: "◇", adminOnly: true },
+  { href: "/cartridges",          label: "Cartuchos",    icon: "□", permission: "cartridges.read", adminOnly: true },
+  { href: "/monitor",             label: "Monitor",      icon: "▤", permission: "monitor.read" },
+  { href: "/viewer?type=lineage", label: "Linaje",       icon: "◇", active: ["/viewer", "/lineage", "/linaje"], permission: "datasets.read" },
+  { href: "/explorer",            label: "Explorer",     icon: "▱", permission: "pipelines.read" },
+  { href: "/decisions",           label: "Decisiones",   icon: "✓", adminOnly: true },
+  { href: "/studio",              label: "Studio",       icon: "◇", permission: "studio.read" },
+  { href: "/operations",          label: "Operaciones",  icon: "⚙", active: ["/operations", "/operations/users", "/operations/audit"], permission: "operations.read", adminOnly: true },
+  { href: "/operations/vault",    label: "Vault",        icon: "◉", active: ["/operations/vault"], permission: "vault.connections.read", adminOnly: true },
+  { href: "/security",            label: "Seguridad",    icon: "◒", permission: "security.audit.read" },
+  { href: "/settings",            label: "Settings",     icon: "⚙", permission: "settings.read", adminOnly: true },
   { href: "/my-access",           label: "Mi acceso",    icon: "◎" },
 ];
 
@@ -60,6 +67,18 @@ function isActive(pathname: string, item: NavItem): boolean {
   // A nested route under the nav target counts as active so
   // /operations/users highlights "Operaciones".
   return pathname.startsWith(href + "/");
+}
+
+function canShowNavItem(item: NavItem, access: MeAccessResponse | undefined): boolean {
+  if (!item.permission && !item.capability && !item.adminOnly) return true;
+  if (!access) return false;
+  const permissions = new Set(access.permissions ?? []);
+  const capabilities = access.ui_capabilities ?? {};
+  const isPlatformAdmin = access.role?.is_platform_admin === true;
+  if (item.adminOnly && !isPlatformAdmin) return false;
+  if (item.permission && !permissions.has(item.permission)) return false;
+  if (item.capability && capabilities[item.capability] !== true) return false;
+  return true;
 }
 
 function resolveThemePreference(value: string | null): "light" | "dark" {
@@ -107,6 +126,13 @@ export function AppChrome({ children }: { children: ReactNode }) {
     resolveThemePreference(readThemePreference()) === "dark"
   ));
   const [mobileOpen,   setMobileOpen]   = useState(false);
+  const access = useQuery({
+    queryKey: ["me", "access"],
+    queryFn: getMeAccess,
+    enabled: !isPublic,
+    staleTime: 60_000,
+  });
+  const visibleNavItems = NAV_ITEMS.filter((item) => canShowNavItem(item, access.data));
 
   // Refs for the mobile-drawer accessibility plumbing
   // (focus management on open + restoration on close).
@@ -222,7 +248,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
             className="ml-2 hidden min-w-0 flex-1 md:flex"
           >
             <ul className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
-              {NAV_ITEMS.map((item) => {
+              {visibleNavItems.map((item) => {
                 const active = isActive(pathname, item);
                 return (
                   <li key={item.href}>
@@ -304,7 +330,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
               className="flex-1 overflow-y-auto p-2"
             >
               <ul className="space-y-1">
-                {NAV_ITEMS.map((item) => {
+                {visibleNavItems.map((item) => {
                   const active = isActive(pathname, item);
                   return (
                     <li key={item.href}>

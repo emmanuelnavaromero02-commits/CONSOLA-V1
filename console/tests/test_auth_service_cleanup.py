@@ -86,6 +86,57 @@ async def test_close_pool_closes_and_resets_global_pool(auth_module):
 
 
 @pytest.mark.anyio
+async def test_delete_user_removes_workspace_memberships_before_user(auth_module, monkeypatch):
+    class Ctx:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def __init__(self):
+            self.statements = []
+
+        def transaction(self):
+            return Ctx(None)
+
+        async def fetchval(self, query, user_id):
+            self.statements.append(query)
+            return True
+
+        async def execute(self, query, user_id):
+            self.statements.append(query)
+            if query == "DELETE FROM users WHERE id = $1":
+                return "DELETE 1"
+            return "DELETE 0"
+
+    class FakePool:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def acquire(self):
+            return Ctx(self.conn)
+
+    conn = FakeConn()
+
+    async def fake_pool():
+        return FakePool(conn)
+
+    monkeypatch.setattr(auth_module, "pool", fake_pool)
+
+    assert await auth_module.delete_user(123) is True
+    assert conn.statements.index("DELETE FROM user_workspace_roles WHERE user_id = $1") < conn.statements.index(
+        "DELETE FROM users WHERE id = $1"
+    )
+    assert "DELETE FROM user_sessions WHERE user_id = $1" in conn.statements
+    assert "DELETE FROM refresh_tokens WHERE user_id = $1" in conn.statements
+
+
+@pytest.mark.anyio
 async def test_remaining_service_close_pools_close_and_reset(monkeypatch):
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
 
