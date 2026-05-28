@@ -122,6 +122,21 @@ interface OmegaAction {
   auto?: boolean;
 }
 
+interface WritebackCapability {
+  supported: boolean;
+  mode: string;
+  target: string;
+  external: boolean;
+  requires_flag: boolean;
+  requires_confirmation: boolean;
+  requires_decision: boolean;
+  requires_dry_run: boolean;
+  permission: string;
+  status: string;
+  description?: string;
+  reason?: string;
+}
+
 interface ActionTemplate {
   template_id: string;
   cartridge_id: string;
@@ -131,6 +146,7 @@ interface ActionTemplate {
   risk_level: string;
   mode_default: string;
   requires_approval: boolean;
+  writeback?: WritebackCapability;
 }
 
 interface ImpactDriver {
@@ -271,6 +287,10 @@ interface Omega {
     label: string;
   };
   execution: {
+    status?: string;
+    external_writeback_enabled?: boolean;
+    supported_writeback_templates?: string[];
+    templates?: ActionTemplate[];
     actions: OmegaAction[];
   };
   control: {
@@ -581,6 +601,10 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail);
   }
   return response.json() as Promise<T>;
+}
+
+function executionTemplate(item: ControlItem): ActionTemplate | undefined {
+  return item.action_templates?.find((template) => template.writeback?.supported) || item.action_templates?.[0];
 }
 
 function fmtDate(value: string): string {
@@ -1246,12 +1270,13 @@ export default function ControlRoomPage() {
   }
 
   async function previewAction(item: ControlItem) {
+    const template = executionTemplate(item);
     setBusyAction(`preview:${item.id}`);
     setActionError("");
     try {
       const payload = await apiJson<{ item: ControlItem }>(
         `/api/control-room/items/${encodeURIComponent(item.id)}/action-preview`,
-        { method: "POST", body: JSON.stringify({}) },
+        { method: "POST", body: JSON.stringify({ template_id: template?.template_id }) },
       );
       refreshAfterMutation(payload.item);
     } catch (err) {
@@ -1262,12 +1287,13 @@ export default function ControlRoomPage() {
   }
 
   async function dryRunAction(item: ControlItem) {
+    const template = executionTemplate(item);
     setBusyAction(`dryrun:${item.id}`);
     setActionError("");
     try {
       const payload = await apiJson<{ item: ControlItem }>(
         `/api/control-room/items/${encodeURIComponent(item.id)}/action-dry-run`,
-        { method: "POST", body: JSON.stringify({}) },
+        { method: "POST", body: JSON.stringify({ template_id: template?.template_id }) },
       );
       refreshAfterMutation(payload.item);
     } catch (err) {
@@ -1278,12 +1304,28 @@ export default function ControlRoomPage() {
   }
 
   async function executeLive(item: ControlItem) {
+    const template = executionTemplate(item);
+    if (!template?.writeback?.supported) {
+      setActionError(template?.writeback?.reason || "Este template no tiene adapter de write-back productivo.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Ejecutar write-back interno real: se creara un seguimiento operativo en decision_actions. No se escribira en ERP.",
+    );
+    if (!confirmed) return;
     setBusyAction(`execute:${item.id}`);
     setActionError("");
     try {
       const payload = await apiJson<{ item: ControlItem }>(
         `/api/control-room/items/${encodeURIComponent(item.id)}/execute`,
-        { method: "POST", body: JSON.stringify({}) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            template_id: template.template_id,
+            confirm_execute: true,
+            idempotency_key: `${item.id}:${template.template_id}`,
+          }),
+        },
       );
       refreshAfterMutation(payload.item);
     } catch (err) {
@@ -1711,9 +1753,9 @@ function Header({
         </span>
         <span
           className={`writeback-pill ${writeBackEnabled ? "enabled" : "blocked"}`}
-          title="El write-back productivo está deshabilitado en V1: solo preview y dry-run."
+          title="V1 solo soporta write-back interno auditado para seguimiento operativo; ERP/SAP sigue bloqueado."
         >
-          {writeBackEnabled ? "Write-back ON" : "Write-back bloqueado V1"}
+          {writeBackEnabled ? "Write-back interno ON" : "Write-back externo bloqueado V1"}
         </span>
         <span className={`live-pill ${syncError ? "warning" : ""}`}>
           <Activity aria-hidden />
@@ -3622,7 +3664,17 @@ function ExecutionBridge({
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
 }) {
-  const template = item.action_templates?.[0];
+  const template = executionTemplate(item);
+  const writeback = template?.writeback;
+  const flagEnabled = Boolean(item.omega.execution.external_writeback_enabled);
+  const dryRunReady = item.execution_status === "dry_run_validated";
+  const decisionReady = Boolean(item.decision_id);
+  const executable = Boolean(writeback?.supported && flagEnabled && dryRunReady && decisionReady);
+  const writebackState = writeback?.supported
+    ? flagEnabled
+      ? "Write-back interno listo con confirmacion"
+      : "Write-back interno soportado; flag apagado"
+    : "Sin adapter productivo para este template";
   return (
     <article className="execution-bridge">
       <div>
@@ -3632,7 +3684,7 @@ function ExecutionBridge({
       </div>
       <div className="execution-state">
         <strong>{item.execution_status || "not_started"}</strong>
-        <em>Write-back productivo bloqueado</em>
+        <em>{writebackState}</em>
       </div>
       <div className="execution-buttons">
         <button type="button" className="secondary-action" onClick={() => onPreview(item)} disabled={busyAction !== ""}>
@@ -3645,18 +3697,22 @@ function ExecutionBridge({
         </button>
         <button
           type="button"
-          className="ghost-action"
+          className={executable ? "primary-action" : "ghost-action"}
           onClick={() => onExecute(item)}
-          disabled={busyAction !== ""}
-          title="Write-back productivo deshabilitado en V1: solo preview y dry-run"
+          disabled={busyAction !== "" || !executable}
+          title={
+            executable
+              ? "Crea un seguimiento operativo real en decision_actions; no escribe en ERP"
+              : writeback?.reason || "Requiere flag, decision y dry-run validado"
+          }
         >
           {busyAction === `execute:${item.id}` ? <Loader2 aria-hidden className="spin" /> : <Play aria-hidden />}
-          Ejecutar
+          {writeback?.supported ? "Ejecutar interno" : "No soportado"}
         </button>
       </div>
       <p className="execution-note" role="note">
-        Preview y dry-run son seguros y auditados. <strong>Ejecutar</strong> haria write-back
-        productivo, deshabilitado en V1; el backend lo bloquea y registra el intento.
+        Preview y dry-run son seguros y auditados. <strong>Ejecutar interno</strong> solo crea
+        seguimiento operativo en decision_actions con confirmacion; SAP/ERP continua bloqueado.
       </p>
     </article>
   );

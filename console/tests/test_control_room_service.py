@@ -1252,21 +1252,18 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
-    mock_pool.fetchrow = AsyncMock(side_effect=[
-        None,
-        {
-            "id": 3,
-            "workspace_id": "workspace-A",
-            "item_id": item["id"],
-            "template_id": "request_owner_review",
-            "mode": "execute_live",
-            "status": "blocked",
-            "payload": {},
-            "result": {},
-            "created_at": datetime(2026, 5, 20, 10, 2, 0),
-            "completed_at": datetime(2026, 5, 20, 10, 2, 1),
-        },
-    ])
+    mock_pool.fetchrow = AsyncMock(return_value={
+        "id": 3,
+        "workspace_id": "workspace-A",
+        "item_id": item["id"],
+        "template_id": "request_owner_review",
+        "mode": "execute_live",
+        "status": "blocked",
+        "payload": {},
+        "result": {},
+        "created_at": datetime(2026, 5, 20, 10, 2, 0),
+        "completed_at": datetime(2026, 5, 20, 10, 2, 1),
+    })
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
@@ -1278,6 +1275,7 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
                 {"cartridge_id": "replicon", "installation_status": "ready", "label": "Replicon"},
             ]),
         ),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
         patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
@@ -1285,6 +1283,524 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
 
     assert exc.value.status_code == 409
     assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
+
+
+def _executed_item(item: dict, *, status: str = "decision_created") -> dict:
+    return control_room_service._with_omega({  # noqa: SLF001 - targeted execution fixture
+        **item,
+        "decision_id": 42,
+        "status": status,
+        "execution_status": "dry_run_validated",
+    })
+
+
+def _execution_row(item: dict, *, status: str = "executed", result: dict | None = None) -> dict:
+    return {
+        "id": 33,
+        "workspace_id": "workspace-A",
+        "item_id": item["id"],
+        "template_id": "create_followup_task",
+        "mode": "execute_live",
+        "status": status,
+        "payload": {"idempotency_key": "idem-1"},
+        "result": result or {"ok": True, "target": "decision_actions", "idempotency_key": "idem-1"},
+        "error": None,
+        "actor_email": "ops@example.com",
+        "created_at": datetime(2026, 5, 20, 10, 2, 0),
+        "completed_at": datetime(2026, 5, 20, 10, 2, 1),
+    }
+
+
+class _AcquireContext:
+    def __init__(self, conn):
+        self.conn = conn
+
+    async def __aenter__(self):
+        self.conn.acquired = True
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.conn.released = True
+        return False
+
+
+class _TransactionContext:
+    def __init__(self, conn):
+        self.conn = conn
+
+    async def __aenter__(self):
+        self.conn.transaction_entered = True
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.conn.transaction_exited = True
+        self.conn.transaction_error = exc_type
+        return False
+
+
+class _TransactionalConn:
+    def __init__(self, fetchrow_side_effect):
+        self.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
+        self.fetch = AsyncMock(return_value=[])
+        self.fetchval = AsyncMock(return_value=0)
+        self.execute = AsyncMock()
+        self.acquired = False
+        self.released = False
+        self.transaction_entered = False
+        self.transaction_exited = False
+        self.transaction_error = None
+
+    def transaction(self):
+        return _TransactionContext(self)
+
+
+class _TransactionalPool:
+    def __init__(self, *, pool_fetchrow_side_effect, conn_fetchrow_side_effect):
+        self.fetchrow = AsyncMock(side_effect=pool_fetchrow_side_effect)
+        self.fetch = AsyncMock(return_value=[])
+        self.fetchval = AsyncMock(return_value=0)
+        self.execute = AsyncMock()
+        self.conn = _TransactionalConn(conn_fetchrow_side_effect)
+
+    def acquire(self):
+        return _AcquireContext(self.conn)
+
+
+@pytest.mark.asyncio
+async def test_execute_live_supported_followup_writes_decision_action_and_audits(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    action_row = {
+        "id": 101,
+        "decision_id": 42,
+        "action_text": "Seguimiento operativo Control Room",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 2, 0),
+    }
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=[
+        None,
+        None,
+        {"id": 42},
+        action_row,
+        _execution_row(item),
+    ])
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.execute_item(
+            item["id"],
+            USER,
+            template_id="create_followup_task",
+            confirm_execute=True,
+            idempotency_key="idem-1",
+            fetcher=finance_fetcher,
+        )
+
+    assert result["executed"] is True
+    assert result["idempotent"] is False
+    assert result["result"]["target"] == "decision_actions"
+    assert result["decision_action"]["id"] == 101
+    assert result["item"]["execution_status"] == "executed"
+    assert any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+    assert any("pg_advisory_xact_lock" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any("UPDATE control_room_items" in call.args[0] and "execution_status = 'executed'" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute"
+    assert audit_event.await_args.kwargs["metadata"]["target"] == "decision_actions"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    action_row = {
+        "id": 101,
+        "decision_id": 42,
+        "action_text": "Seguimiento operativo Control Room",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 2, 0),
+    }
+    pool = _TransactionalPool(
+        pool_fetchrow_side_effect=[None],
+        conn_fetchrow_side_effect=[None, {"id": 42}, action_row, _execution_row(item)],
+    )
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+    ):
+        result = await control_room_service.execute_item(
+            item["id"],
+            USER,
+            template_id="create_followup_task",
+            confirm_execute=True,
+            idempotency_key="idem-1",
+            fetcher=finance_fetcher,
+        )
+
+    assert result["executed"] is True
+    assert pool.conn.acquired is True
+    assert pool.conn.released is True
+    assert pool.conn.transaction_entered is True
+    assert pool.conn.transaction_exited is True
+    assert pool.conn.transaction_error is None
+    assert any("pg_advisory_xact_lock" in call.args[0] for call in pool.conn.execute.call_args_list)
+    assert any("INSERT INTO audit_events" in call.args[0] for call in pool.conn.execute.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_live_supported_followup_is_idempotent(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item))
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.execute_item(
+            item["id"],
+            USER,
+            template_id="create_followup_task",
+            confirm_execute=True,
+            idempotency_key="idem-1",
+            fetcher=finance_fetcher,
+        )
+
+    assert result["executed"] is True
+    assert result["idempotent"] is True
+    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+    audit_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_live_idempotent_replay_still_requires_confirmation(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                idempotency_key="idem-1",
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 409
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "explicit_confirmation_required"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="prepare_billing_review",
+                confirm_execute=True,
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 501
+    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "unsupported_writeback_template"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_requires_explicit_confirmation(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 409
+    assert "confirmation" in str(exc.value.detail)
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "explicit_confirmation_required"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_requires_dry_run_before_internal_writeback(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = control_room_service._with_omega({  # noqa: SLF001
+        **base_item,
+        "decision_id": 42,
+        "status": "decision_created",
+        "execution_status": "preview_generated",
+    })
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=[None, _execution_row(item, status="blocked")])
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                confirm_execute=True,
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 409
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "dry_run_required"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_rejects_approved_terminal_item(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item, status="approved")
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                confirm_execute=True,
+                idempotency_key="idem-1",
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 409
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "terminal_item"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=[None, None, None, _execution_row(item, status="blocked")])
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                confirm_execute=True,
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 404
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "decision_workspace_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_idempotency_lookup_failure_blocks_before_writeback(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=[RuntimeError("lookup down"), _execution_row(item, status="blocked")])
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                confirm_execute=True,
+                idempotency_key="idem-1",
+                fetcher=finance_fetcher,
+            )
+
+    assert exc.value.status_code == 503
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "idempotency_lookup_failed"
+    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    action_row = {
+        "id": 101,
+        "decision_id": 42,
+        "action_text": "Seguimiento operativo Control Room",
+        "note": "ok",
+        "actor": "ops@example.com",
+        "ts": datetime(2026, 5, 20, 10, 2, 0),
+    }
+    pool = _TransactionalPool(
+        pool_fetchrow_side_effect=[None],
+        conn_fetchrow_side_effect=[None, {"id": 42}, action_row, _execution_row(item)],
+    )
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(
+            control_room_service,
+            "_record_writeback_audit_event",
+            new=AsyncMock(side_effect=RuntimeError("audit failed")),
+        ) as audit_event,
+    ):
+        with pytest.raises(RuntimeError, match="audit failed"):
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                confirm_execute=True,
+                idempotency_key="idem-1",
+                fetcher=finance_fetcher,
+            )
+
+    audit_event.assert_awaited_once()
+    assert pool.conn.transaction_entered is True
+    assert pool.conn.transaction_exited is True
+    assert pool.conn.transaction_error is RuntimeError
 
 
 @pytest.mark.asyncio

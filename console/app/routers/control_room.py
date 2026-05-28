@@ -335,7 +335,11 @@ async def control_room_auto_run_item(
 
 @router.post(
     "/items/{item_id}/execute",
-    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("control_room.write")),
+        Depends(require_permission("control_room.execute")),
+    ],
 )
 async def control_room_execute_item(
     item_id: str,
@@ -343,11 +347,19 @@ async def control_room_execute_item(
     body: dict = Body(default_factory=dict),
     user: dict = Depends(require_authenticated),
 ):
-    template_id = body.get("template_id") if isinstance(body, dict) else None
+    template_id = None
+    confirm_execute = False
+    idempotency_key = None
+    if isinstance(body, dict):
+        template_id = body.get("template_id")
+        confirm_execute = body.get("confirm_execute") or body.get("confirmation")
+        idempotency_key = body.get("idempotency_key")
     return await control_room_service.execute_item(
         item_id,
         user,
         template_id=str(template_id) if template_id else None,
+        confirm_execute=confirm_execute,
+        idempotency_key=str(idempotency_key).strip()[:128] if idempotency_key else None,
         ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )

@@ -9,14 +9,15 @@
 
 OMEGA **detecta** anomalías operativas, ayuda a **investigar**, propone
 **opciones**, registra una **decisión**, deja **aprobar**, corre **dry-run**
-seguro y **audita** todo el recorrido. El Control Room es el cockpit de ese
-ciclo.
+seguro, ejecuta el primer **write-back interno auditado** y **audita** todo el
+recorrido. El Control Room es el cockpit de ese ciclo.
 
 **Lo que la demo NO hace (no lo prometas):**
 
-- ❌ **No hay write-back productivo.** "Ejecutar" en el Control Room está
-  bloqueado en V1: el backend rechaza la escritura externa y registra el
-  intento. Solo preview y dry-run son operativos.
+- ❌ **No hay write-back externo universal.** V1 solo soporta el flujo
+  `create_followup_task`: crea un seguimiento operativo real en
+  `decision_actions` después de decisión, dry-run y confirmación explícita.
+  Cualquier otro template queda bloqueado y auditado.
 - ❌ **No hay ejecución SAP real.** No se escribe a SAP/Replicon ni a
   ningún sistema externo.
 - ❌ **No es "todo en 8000".** La arquitectura de esta fase es **split**:
@@ -167,4 +168,5 @@ Ver [07 Debug fallos](07_debug_fallos.md) y `docker compose -f infra/docker-comp
 - [ ] Login con el usuario seed entra a `:3000` y el link "Control Room"
       abre `:8000/control-room`.
 - [ ] En el Control Room: navegás dominio/módulo, abrís un item, ves los 7
-      pasos OMEGA, y "Ejecutar" muestra el bloqueo de write-back V1.
+      pasos OMEGA, y "Ejecutar interno" solo queda habilitado para
+      `create_followup_task` con flag, decisión, dry-run y confirmación.

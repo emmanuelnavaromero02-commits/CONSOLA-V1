@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Iterable
 import httpx
 from fastapi import HTTPException
 
+from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.version import app_version
 from app.services import audit_service, auth
@@ -63,6 +64,7 @@ ACTIVITY_LABELS = {
     "action_preview": "Preview generado",
     "action_dry_run": "Dry-run validado",
     "action_blocked": "Ejecucion bloqueada",
+    "action_executed": "Write-back interno ejecutado",
     "auto_run_completed": "Modo automatico completado",
     "approved": "Aprobacion registrada",
     "lesson_recorded": "Leccion registrada",
@@ -74,6 +76,8 @@ ACTIVITY_LABELS = {
     "alert_assigned": "Alerta asignada",
     "alert_false_positive": "Falso positivo cerrado",
 }
+
+SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES = {"create_followup_task"}
 
 OMEGA_STEP_EVENT_TYPES = {
     "signals": "signals_opened",
@@ -1979,6 +1983,43 @@ def _external_delivery_enabled() -> bool:
     }
 
 
+def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
+    template_id = str(template.get("template_id") or "")
+    if template_id in SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES:
+        return {
+            "supported": True,
+            "mode": "internal_followup_task",
+            "target": "decision_actions",
+            "external": False,
+            "requires_flag": True,
+            "requires_confirmation": True,
+            "requires_decision": True,
+            "requires_dry_run": True,
+            "permission": "control_room.execute",
+            "status": "supported",
+            "description": "Crea un seguimiento operativo real en la bitacora de decisiones; no escribe en ERP.",
+        }
+    return {
+        "supported": False,
+        "mode": "unsupported",
+        "target": str(template.get("cartridge_id") or "external_system"),
+        "external": True,
+        "requires_flag": True,
+        "requires_confirmation": True,
+        "requires_decision": True,
+        "requires_dry_run": True,
+        "permission": "control_room.execute",
+        "status": "unsupported",
+        "reason": "No hay adapter productivo aprobado para este template.",
+    }
+
+
+def _template_with_writeback(template: dict[str, Any]) -> dict[str, Any]:
+    public_template = dict(template)
+    public_template["writeback"] = _writeback_capability(public_template)
+    return public_template
+
+
 def _impact_payload(
     *,
     item: dict[str, Any],
@@ -2308,7 +2349,11 @@ def _template_ids_for_item(item: dict[str, Any]) -> list[str]:
 
 
 def _action_templates_for_item(item: dict[str, Any]) -> list[dict[str, Any]]:
-    return [dict(ACTION_TEMPLATES[template_id]) for template_id in _template_ids_for_item(item) if template_id in ACTION_TEMPLATES]
+    return [
+        _template_with_writeback(ACTION_TEMPLATES[template_id])
+        for template_id in _template_ids_for_item(item)
+        if template_id in ACTION_TEMPLATES
+    ]
 
 
 def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -2319,6 +2364,7 @@ def _primary_template_for_item(item: dict[str, Any]) -> dict[str, Any]:
 def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
     action_kind = str(template.get("action_kind") or "owner_review")
+    writeback = _writeback_capability(template)
     base = {
         "action_kind": action_kind,
         "template_id": template.get("template_id"),
@@ -2330,10 +2376,7 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
         "source_dataset": item.get("source_dataset"),
         "severity": item.get("severity"),
         "recommendation": item.get("recommendation"),
-        "writeback": {
-            "enabled": False,
-            "mode": "preview_dry_run_only",
-        },
+        "writeback": writeback,
     }
     if action_kind == "billing_review":
         return {
@@ -2425,6 +2468,7 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
 def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]) -> dict[str, Any]:
     impact = _impact_for_item(item)
     action_payload = _action_payload_for_template(item, template)
+    writeback = _writeback_capability(template)
     return {
         "mode": mode,
         "external_writeback_enabled": _external_writeback_enabled(),
@@ -2447,13 +2491,16 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
         },
         "impact": impact,
         "action_payload": action_payload,
+        "writeback": writeback,
         "operations": [
             {
                 "operation": template.get("action_kind"),
-                "status": "preview" if mode == "preview" else "validated",
+                "status": "pending_execution" if mode == "execute_live" else "preview" if mode == "preview" else "validated",
                 "requires_approval": True,
-                "external_write": False,
+                "external_write": bool(writeback.get("external")),
+                "internal_write": bool(writeback.get("supported")) and not bool(writeback.get("external")),
                 "payload": action_payload,
+                "writeback": writeback,
                 "evidence": {
                     "sql": item.get("sql"),
                     "recommendation": item.get("recommendation"),
@@ -2465,6 +2512,7 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
             "human_approval_required": True,
             "writeback_blocked_by_default": True,
             "feature_flag": "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
+            "supported_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
         },
     }
 
@@ -2703,6 +2751,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "execution": {
                 "status": execution_status,
                 "external_writeback_enabled": _external_writeback_enabled(),
+                "supported_writeback_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
                 "templates": action_templates,
                 "actions": [
                     {
@@ -2730,6 +2779,15 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                         "label": action_label,
                         "done": approved,
                         "approved": approved,
+                        "auto": False,
+                    },
+                    {
+                        "id": "internal_writeback",
+                        "sys": "omega",
+                        "act": "Crear seguimiento operativo interno",
+                        "label": "Write-back interno soportado",
+                        "done": execution_status == "executed",
+                        "approved": execution_status == "executed",
                         "auto": False,
                     },
                     {
@@ -3840,6 +3898,7 @@ async def _record_item_event(
     item: dict[str, Any],
     event_type: str,
     metadata: dict[str, Any],
+    critical: bool = False,
 ) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
     try:
@@ -3860,6 +3919,8 @@ async def _record_item_event(
             json.dumps(metadata),
         )
     except Exception:
+        if critical:
+            raise
         return
 
 
@@ -3919,6 +3980,7 @@ async def _record_action_execution(
     payload: dict[str, Any],
     result: dict[str, Any],
     error: str | None = None,
+    critical: bool = False,
 ) -> dict[str, Any]:
     tenant_id, workspace_id = _workspace_scope(user)
     try:
@@ -3945,6 +4007,8 @@ async def _record_action_execution(
         )
         return _row_to_public(row)
     except Exception:
+        if critical:
+            raise
         return {
             "id": None,
             "workspace_id": workspace_id,
@@ -3961,7 +4025,14 @@ async def _record_action_execution(
         }
 
 
-async def _set_execution_status(pool: Any, *, user: dict, item: dict[str, Any], execution_status: str) -> None:
+async def _set_execution_status(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    execution_status: str,
+    critical: bool = False,
+) -> None:
     workspace_id = _workspace_id(user)
     try:
         await pool.execute(
@@ -3979,10 +4050,19 @@ async def _set_execution_status(pool: Any, *, user: dict, item: dict[str, Any], 
             json.dumps({"execution_status": execution_status}),
         )
     except Exception:
+        if critical:
+            raise
         return
 
 
-async def _ensure_item_row(pool: Any, *, user: dict, item: dict[str, Any], status: str = "open") -> None:
+async def _ensure_item_row(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    status: str = "open",
+    critical: bool = False,
+) -> None:
     tenant_id, workspace_id = _workspace_scope(user)
     impact = _impact_for_item(item)
     try:
@@ -4037,6 +4117,8 @@ async def _ensure_item_row(pool: Any, *, user: dict, item: dict[str, Any], statu
             sorted(TERMINAL_ITEM_STATUSES),
         )
     except Exception:
+        if critical:
+            raise
         return
 
 
@@ -4863,11 +4945,380 @@ async def run_auto_item(
     }
 
 
+def _confirmed_for_execute(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"execute", "confirm", "confirmed", "true", "yes", "1"}
+    return False
+
+
+def _supports_transactional_acquire(pool: Any) -> bool:
+    acquire = getattr(pool, "acquire", None)
+    return callable(acquire) and not type(pool).__module__.startswith("unittest.mock")
+
+
+async def _record_writeback_audit_event(
+    db: Any,
+    *,
+    user: dict,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    ip: str | None,
+    user_agent: str | None,
+    status: str,
+    metadata: dict[str, Any],
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO audit_events
+        (user_id, email, action, resource_type, resource_id,
+         ip, user_agent, status, request_id, metadata)
+        VALUES ($1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10::jsonb)
+        """,
+        user.get("id"),
+        user.get("email"),
+        action,
+        resource_type,
+        resource_id,
+        ip,
+        user_agent,
+        status,
+        request_id_var.get(),
+        json.dumps(metadata),
+    )
+
+
+async def _record_execute_block(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    message: str,
+    error: str,
+    ip: str | None,
+    user_agent: str | None,
+) -> None:
+    result = {
+        "ok": False,
+        "mode": "execute_live",
+        "external_write": False,
+        "internal_write": False,
+        "blocked": True,
+        "message": message,
+    }
+    execution = await _record_action_execution(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute_live",
+        status="blocked",
+        payload=payload,
+        result=result,
+        error=error,
+        critical=True,
+    )
+    await _set_execution_status(pool, user=user, item=item, execution_status="blocked", critical=True)
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="action_blocked",
+        metadata={"template_id": template["template_id"], "execution_id": execution.get("id"), "reason": error},
+        critical=True,
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.action.execute.blocked",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="blocked",
+        metadata={"template_id": template["template_id"], "result": result, "reason": error},
+        critical=True,
+    )
+
+
+async def _existing_executed_writeback(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    idempotency_key: str | None,
+    critical: bool = False,
+) -> dict[str, Any] | None:
+    workspace_id = _workspace_id(user)
+    try:
+        if idempotency_key:
+            row = await pool.fetchrow(
+                """
+                SELECT id, item_id, template_id, mode, status, payload, result,
+                       error, actor_email, created_at, completed_at
+                  FROM control_room_action_executions
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                   AND template_id = $3
+                   AND mode = 'execute_live'
+                   AND status = 'executed'
+                   AND (payload->>'idempotency_key' = $4 OR result->>'idempotency_key' = $4)
+                 ORDER BY created_at DESC
+                 LIMIT 1
+                """,
+                workspace_id,
+                item["id"],
+                template["template_id"],
+                idempotency_key,
+            )
+        else:
+            row = await pool.fetchrow(
+                """
+                SELECT id, item_id, template_id, mode, status, payload, result,
+                       error, actor_email, created_at, completed_at
+                  FROM control_room_action_executions
+                 WHERE workspace_id = $1
+                   AND item_id = $2
+                   AND template_id = $3
+                   AND mode = 'execute_live'
+                   AND status = 'executed'
+                 ORDER BY created_at DESC
+                 LIMIT 1
+                """,
+                workspace_id,
+                item["id"],
+                template["template_id"],
+            )
+    except Exception:
+        if critical:
+            raise
+        return None
+    return _row_to_public(row) if row else None
+
+
+async def _execute_internal_followup_task(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    idempotency_key: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict[str, Any]:
+    if _supports_transactional_acquire(pool):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                return await _execute_internal_followup_task_tx(
+                    conn,
+                    user=user,
+                    item=item,
+                    template=template,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                    ip=ip,
+                    user_agent=user_agent,
+                )
+    return await _execute_internal_followup_task_tx(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        payload=payload,
+        idempotency_key=idempotency_key,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+
+async def _execute_internal_followup_task_tx(
+    db: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    idempotency_key: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict[str, Any]:
+    workspace_id = _workspace_id(user)
+    await db.execute(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        f"control_room_writeback:{workspace_id}:{item['id']}:{template['template_id']}",
+    )
+    existing = await _existing_executed_writeback(
+        db,
+        user=user,
+        item=item,
+        template=template,
+        idempotency_key=None,
+        critical=True,
+    )
+    if existing:
+        existing_result = _details(existing.get("result"))
+        public_item = _with_omega({**item, "execution_status": "executed"})
+        return {
+            "executed": True,
+            "idempotent": True,
+            "execution": existing,
+            "payload": _details(existing.get("payload")) or payload,
+            "result": {**existing_result, "idempotent": True},
+            "item": public_item,
+        }
+    decision_id = int(item["decision_id"])
+    visible = await db.fetchrow(
+        "SELECT id FROM decisions WHERE id = $1 AND workspace_id = $2",
+        decision_id,
+        workspace_id,
+    )
+    if not visible:
+        await _record_execute_block(
+            db,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="La decision no pertenece al workspace activo.",
+            error="decision_workspace_mismatch",
+        )
+        raise HTTPException(404, "decision not found for active workspace")
+
+    action_text = f"Seguimiento operativo Control Room: {item['title']}"
+    note = (
+        f"Template {template['template_id']} ejecutado sobre {item.get('cartridge')} / "
+        f"{item.get('source_dataset')}. Target interno: decision_actions. "
+        f"Entidad: {item.get('entity_label') or item.get('entity_id')}. "
+        "No se escribio en ERP."
+    )
+    action = await db.fetchrow(
+        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+           VALUES ($1, $2, $3, $4)
+           RETURNING *""",
+        decision_id,
+        action_text,
+        note,
+        user.get("email") or "user",
+    )
+    public_action = _row_to_public(action)
+    before = {
+        "execution_status": item.get("execution_status") or "not_started",
+        "status": item.get("status") or "open",
+        "decision_id": decision_id,
+    }
+    after = {
+        "execution_status": "executed",
+        "target": "decision_actions",
+        "decision_action_id": public_action.get("id"),
+    }
+    result = {
+        "ok": True,
+        "mode": "execute_live",
+        "executed": True,
+        "external_write": False,
+        "internal_write": True,
+        "target": "decision_actions",
+        "adapter": "internal_followup_task",
+        "decision_id": decision_id,
+        "decision_action_id": public_action.get("id"),
+        "idempotency_key": idempotency_key,
+        "before": before,
+        "after": after,
+        "message": "Seguimiento operativo creado en decision_actions; no se escribio en ERP.",
+    }
+    execution = await _record_action_execution(
+        db,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute_live",
+        status="executed",
+        payload={**payload, "idempotency_key": idempotency_key},
+        result=result,
+        critical=True,
+    )
+    await db.execute(
+        """
+        UPDATE control_room_items
+           SET execution_status = 'executed',
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               last_seen_at = NOW()
+         WHERE workspace_id = $1
+           AND item_id = $2
+        """,
+        workspace_id,
+        item["id"],
+        json.dumps({
+            "execution_status": "executed",
+            "writeback_result": {
+                "adapter": "internal_followup_task",
+                "target": "decision_actions",
+                "decision_action_id": public_action.get("id"),
+                "execution_id": execution.get("id"),
+            },
+        }),
+    )
+    await _record_item_event(
+        db,
+        user=user,
+        item=item,
+        event_type="action_executed",
+        metadata={
+            "template_id": template["template_id"],
+            "execution_id": execution.get("id"),
+            "decision_id": decision_id,
+            "decision_action_id": public_action.get("id"),
+            "target": "decision_actions",
+        },
+        critical=True,
+    )
+    await _record_writeback_audit_event(
+        db,
+        user=user,
+        action="control_room.action.execute",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "template_id": template["template_id"],
+            "target": "decision_actions",
+            "decision_id": decision_id,
+            "decision_action_id": public_action.get("id"),
+            "execution_id": execution.get("id"),
+            "before": before,
+            "after": after,
+        },
+    )
+    public_item = _with_omega({**item, "execution_status": "executed"})
+    return {
+        "executed": True,
+        "idempotent": False,
+        "execution": execution,
+        "payload": payload,
+        "result": result,
+        "decision_action": public_action,
+        "item": public_item,
+    }
+
+
 async def execute_item(
     item_id: str,
     user: dict,
     *,
     template_id: str | None = None,
+    confirm_execute: Any = False,
+    idempotency_key: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
     fetcher: DatasetFetcher = query_dataset_rows,
@@ -4876,48 +5327,150 @@ async def execute_item(
     template = _resolve_template(item, template_id)
     payload = _execution_payload(item, "execute_live", template)
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review")
+    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
     if not _external_writeback_enabled():
-        result = {
-            "ok": False,
-            "mode": "execute_live",
-            "external_write": False,
-            "blocked": True,
-            "message": "Write-back externo deshabilitado para V1.",
-        }
-        execution = await _record_action_execution(
+        await _record_execute_block(
             pool,
             user=user,
             item=item,
             template=template,
-            mode="execute_live",
-            status="blocked",
             payload=payload,
-            result=result,
+            ip=ip,
+            user_agent=user_agent,
+            message="Write-back productivo deshabilitado por feature flag.",
             error="CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false",
         )
-        await _set_execution_status(pool, user=user, item=item, execution_status="blocked")
-        await _record_item_event(
+        raise HTTPException(409, "external write-back is disabled for Control Room V1")
+
+    capability = _writeback_capability(template)
+    if not capability.get("supported"):
+        await _record_execute_block(
             pool,
             user=user,
             item=item,
-            event_type="action_blocked",
-            metadata={"template_id": template["template_id"], "execution_id": execution.get("id")},
-        )
-        await audit_service.record_event(
-            user_id=user.get("id"),
-            email=user.get("email"),
-            action="control_room.action.execute.blocked",
-            resource_type="control_room_item",
-            resource_id=item_id,
+            template=template,
+            payload=payload,
             ip=ip,
             user_agent=user_agent,
-            status="blocked",
-            metadata={"template_id": template["template_id"], "result": result},
+            message="No hay adapter productivo aprobado para este template.",
+            error="unsupported_writeback_template",
+        )
+        raise HTTPException(501, "write-back template is not supported in Control Room V1")
+
+    if not _confirmed_for_execute(confirm_execute):
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="Confirmacion explicita requerida antes de ejecutar write-back.",
+            error="explicit_confirmation_required",
+        )
+        raise HTTPException(409, "explicit execution confirmation is required")
+
+    if not item.get("decision_id"):
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="Se requiere decision aprobada antes del write-back interno.",
+            error="decision_required",
+        )
+        raise HTTPException(409, "decision is required before execution")
+
+    if str(item.get("status") or "") in TERMINAL_ITEM_STATUSES:
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="Item cerrado no puede ejecutar write-back.",
+            error="terminal_item",
+        )
+        raise HTTPException(409, "terminal control room item cannot execute write-back")
+
+    try:
+        existing = await _existing_executed_writeback(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
             critical=True,
         )
-        raise HTTPException(409, "external write-back is disabled for Control Room V1")
-    raise HTTPException(501, "live write-back connector is not implemented in V1")
+    except Exception as exc:
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="No se pudo validar idempotencia antes del write-back interno.",
+            error="idempotency_lookup_failed",
+        )
+        raise HTTPException(503, "write-back idempotency lookup failed") from exc
+    if existing:
+        existing_result = _details(existing.get("result"))
+        public_item = _with_omega({**item, "execution_status": "executed"})
+        return {
+            "executed": True,
+            "idempotent": True,
+            "execution": existing,
+            "payload": _details(existing.get("payload")) or payload,
+            "result": {**existing_result, "idempotent": True},
+            "item": public_item,
+        }
+
+    if str(item.get("execution_status") or "not_started") != "dry_run_validated":
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="Se requiere dry-run validado antes del write-back interno.",
+            error="dry_run_required",
+        )
+        raise HTTPException(409, "dry-run validation is required before execution")
+
+    if str(template.get("template_id") or "") == "create_followup_task":
+        return await _execute_internal_followup_task(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+            ip=ip,
+            user_agent=user_agent,
+        )
+
+    await _record_execute_block(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        payload=payload,
+        ip=ip,
+        user_agent=user_agent,
+        message="No hay adapter productivo aprobado para este template.",
+        error="unsupported_writeback_template",
+    )
+    raise HTTPException(501, "write-back template is not supported in Control Room V1")
 
 
 async def create_decision_for_anomaly(
