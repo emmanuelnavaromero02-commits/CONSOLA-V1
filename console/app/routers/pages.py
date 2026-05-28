@@ -180,7 +180,7 @@ async def _workspace_stream_proxy(request: Request, path: str) -> StreamingRespo
 
 @router.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/dashboard", status_code=307)
 
 
 @router.get("/monitor", dependencies=[Depends(require_permission("monitor.read"))])
@@ -194,8 +194,8 @@ async def dashboard_page(request: Request):
 
 
 @router.get("/security", dependencies=[Depends(require_permission("security.audit.read"))])
-async def security_page():
-    return FileResponse(STATIC / "security.html")
+async def security_page(request: Request):
+    return _console_next_response(request, "security/index.html")
 
 
 def _control_room_file(path: str = "index.html") -> Path:
@@ -235,15 +235,15 @@ async def control_room_asset(asset_path: str):
 # implied; the page renders strictly what /api/me/access returns and the
 # backend continues to enforce every action it offers as a link.
 @router.get("/my-access", dependencies=[Depends(require_authenticated)])
-async def my_access_page():
-    return FileResponse(STATIC / "my_access.html")
+async def my_access_page(request: Request):
+    return _console_next_response(request, "my-access/index.html")
 
 
 # Spanish alias for the same page so the navigation copy stays bilingual
 # with the rest of the console.
 @router.get("/mis-accesos", dependencies=[Depends(require_authenticated)])
 async def mis_accesos_page():
-    return FileResponse(STATIC / "my_access.html")
+    return RedirectResponse(url="/my-access", status_code=307)
 
 
 # Sprint v1.5 — admin-only gate on the IAM / Settings / Operations panels
@@ -255,15 +255,15 @@ async def mis_accesos_page():
     dependencies=[Depends(require_permission("iam.users.read")), Depends(require_admin)],
 )
 async def iam_page():
-    return FileResponse(STATIC / "iam.html")
+    return RedirectResponse(url="/operations/users", status_code=307)
 
 
 @router.get(
     "/settings",
     dependencies=[Depends(require_permission("settings.read")), Depends(require_admin)],
 )
-async def settings_page():
-    return FileResponse(STATIC / "settings.html")
+async def settings_page(request: Request):
+    return _console_next_response(request, "settings/index.html")
 
 
 @router.get(
@@ -331,8 +331,8 @@ async def viewer_semantic(request: Request):
 
 
 @router.get("/apps-gallery", dependencies=[Depends(require_permission("apps.read"))])
-async def apps_gallery():
-    return FileResponse(STATIC / "apps_gallery.html")
+async def apps_gallery(request: Request):
+    return _console_next_response(request, "apps-gallery/index.html")
 
 
 # Sprint v1.41.0 — auditor P1 operativa: cartridge wizard page.
@@ -359,10 +359,8 @@ async def cartridges_viewer_page(request: Request):
     "/workspace",
     dependencies=[Depends(require_permission("workspace.access"))],
 )
-async def workspace_page():
-    # Canonical :8000 workspace surface: apps, decisions, datasets and the
-    # consumer assistant. It is served by console so users stay in the base UI.
-    return FileResponse(STATIC / "workspace.html")
+async def workspace_page(request: Request):
+    return _console_next_response(request, "workspace/index.html")
 
 
 @router.post(

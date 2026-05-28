@@ -1722,12 +1722,9 @@ async def system_info(user: dict = Depends(require_authenticated)):
 @app.get("/me")
 async def viewer_me(request: Request):
     require_user(request)
-    # Ensure the page has a CSRF cookie before it tries to call
-    # POST /api/me/change-password — covers users who arrived via JWT
-    # or whose login-issued cookie expired between sessions.
-    response = FileResponse(STATIC / "me.html")
-    set_csrf_cookie(response)
-    return response
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "me/index.html")
 
 
 @app.get("/api/me")
@@ -3564,11 +3561,11 @@ async def studio_page():
 
 @app.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
 async def marketplace_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
 async def customer_cartridges_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get(
     "/admin/installations",
@@ -3577,7 +3574,7 @@ async def customer_cartridges_page():
     ],
 )
 async def admin_installations_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get(
     "/admin/licenses",
@@ -3586,7 +3583,7 @@ async def admin_installations_page():
     ],
 )
 async def admin_licenses_page():
-    return FileResponse(STATIC / "index.html")
+    return RedirectResponse(url="/cartridges", status_code=307)
 
 @app.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
 async def api_marketplace_products(user: dict = Depends(require_authenticated)):
@@ -3790,8 +3787,10 @@ async def viewer_vault(request: Request):
     return _viewer_redirect(request, "vault")
 
 @app.get("/explorer", dependencies=[Depends(require_permission("pipelines.read"))])
-async def explorer_page():
-    return FileResponse(STATIC / "explorer.html")
+async def explorer_page(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "explorer/index.html")
 
 @app.get("/viewer/lineage", dependencies=[Depends(require_permission("datasets.read"))])
 async def viewer_lineage(request: Request):
@@ -3811,7 +3810,9 @@ async def rag_page():
 @app.get("/agents", dependencies=[Depends(require_admin)])
 async def viewer_agents(request: Request):
     require_admin(request)
-    return FileResponse(STATIC / "agents.html")
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "agents/index.html")
 
 
 @app.get("/api/agents", dependencies=[Depends(require_admin)])
@@ -5021,8 +5022,10 @@ def _dec_row_to_dict(row) -> dict:
 
 
 @app.get("/decisions", dependencies=[Depends(require_admin)])
-async def viewer_decisions():
-    return FileResponse(STATIC / "decisions.html")
+async def viewer_decisions(request: Request):
+    from app.routers.pages import _console_next_response
+
+    return _console_next_response(request, "decisions/index.html")
 
 
 def _current_workspace_id(user: dict) -> str | None:
@@ -5298,7 +5301,7 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
     # Compatibility URL, but not a separate users app anymore:
     # /admin/users now enters the IAM ecosystem and opens the Users tab.
-    return FileResponse(STATIC / "iam.html")
+    return RedirectResponse(url="/operations/users", status_code=307)
 
 
 def _is_global_iam_admin(user: dict | None) -> bool:
