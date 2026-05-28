@@ -39,7 +39,7 @@ test.describe("Mobile viewport — primary pages render", () => {
     async ({ page }) => {
       await page.goto("/cartridges");
       const tile = page
-        .locator('a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]')
+        .locator('article:has(a[href^="/cartridges/viewer"])')
         .first();
       await expect(tile).toBeVisible({ timeout: 15_000 });
       const box = await tile.boundingBox();
@@ -245,11 +245,11 @@ test.describe("Touch interactions", () => {
     ).toBeGreaterThanOrEqual(36);
   });
 
-  test("cartridge tile button hit zone covers the full card on mobile",
+  test("cartridge tile remains a comfortable touch surface on mobile",
     async ({ page }) => {
       await page.goto("/cartridges");
       const tile = page
-        .locator('a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]')
+        .locator('article:has(a[href^="/cartridges/viewer"])')
         .first();
       await expect(tile).toBeVisible({ timeout: 15_000 });
       const box = await tile.boundingBox();

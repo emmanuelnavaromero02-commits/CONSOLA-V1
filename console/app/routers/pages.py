@@ -48,7 +48,12 @@ def _console_next_file(path: str = "index.html") -> Path:
 
 
 @lru_cache(maxsize=128)
-def _console_next_csp(path: str, frame_ancestors: str = "'none'") -> str:
+def _console_next_csp_cached(
+    path: str,
+    mtime_ns: int,
+    size: int,
+    frame_ancestors: str = "'none'",
+) -> str:
     html = Path(path).read_text(encoding="utf-8")
     hashes = []
     for body in _INLINE_SCRIPT_RE.findall(html):
@@ -68,6 +73,11 @@ def _console_next_csp(path: str, frame_ancestors: str = "'none'") -> str:
         "base-uri 'self'; "
         "form-action 'self'"
     )
+
+
+def _console_next_csp(path: str, frame_ancestors: str = "'none'") -> str:
+    stat = Path(path).stat()
+    return _console_next_csp_cached(path, stat.st_mtime_ns, stat.st_size, frame_ancestors)
 
 
 def _console_next_response(request: Request, path: str = "index.html", *, frame_ancestors: str = "'none'") -> FileResponse:
@@ -323,6 +333,16 @@ async def viewer_datasets(request: Request):
 @router.get("/viewer/datasets/{name}", dependencies=[Depends(require_permission("datasets.read"))])
 async def viewer_dataset(name: str, request: Request):
     return _viewer_redirect(request, "dataset", name=name)
+
+
+@router.get("/lineage", dependencies=[Depends(require_permission("datasets.read"))])
+async def lineage_page(request: Request):
+    return _viewer_redirect(request, "lineage")
+
+
+@router.get("/linaje", dependencies=[Depends(require_permission("datasets.read"))])
+async def linaje_page(request: Request):
+    return _viewer_redirect(request, "lineage")
 
 
 @router.get("/viewer/semantic", dependencies=[Depends(require_permission("datasets.read"))])

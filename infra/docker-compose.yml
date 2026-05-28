@@ -175,6 +175,7 @@ services:
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REFINEMENT_URL:    http://refinement:8500
       MCP_INFRA_URL:     http://mcp-infra:8010
+      VAULT_URL:         http://vault:8300
       CONSOLE_INTERNAL_URL: http://console:8000
       AGENT_RUNNER_TOKEN: ${AGENT_RUNNER_TOKEN:-}
       SUPERSET_URL:      http://superset:8088

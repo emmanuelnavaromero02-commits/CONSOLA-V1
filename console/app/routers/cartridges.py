@@ -72,12 +72,27 @@ def _cartridge_internal_headers() -> dict[str, str]:
     }
 
 
+def _running_in_container() -> bool:
+    return Path("/.dockerenv").exists() or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+
+
+def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
+    raw = os.environ.get(env_name)
+    if raw:
+        return raw.rstrip("/")
+    return docker_default.rstrip("/") if _running_in_container() else local_default.rstrip("/")
+
+
+def _vault_url() -> str:
+    return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
+
+
 # v1.44.1: vault sits behind its own internal-API-key pair. The legacy
 # /api/vault/* proxy uses console/app/main.py::_hdr_for("VAULT") which
 # reads INTERNAL_API_KEY_CONSOLE_TO_VAULT — we mirror that here so the
 # new /cartridges/{id}/credentials endpoints land on the same audited
 # vault surface as the existing PUT /api/vault/connections/* path.
-_VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300")
+_VAULT_URL = _vault_url()
 
 
 def _vault_headers() -> dict[str, str]:
