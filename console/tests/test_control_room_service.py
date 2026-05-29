@@ -1294,12 +1294,18 @@ def _executed_item(item: dict, *, status: str = "decision_created") -> dict:
     })
 
 
-def _execution_row(item: dict, *, status: str = "executed", result: dict | None = None) -> dict:
+def _execution_row(
+    item: dict,
+    *,
+    status: str = "executed",
+    result: dict | None = None,
+    template_id: str = "create_followup_task",
+) -> dict:
     return {
         "id": 33,
         "workspace_id": "workspace-A",
         "item_id": item["id"],
-        "template_id": "create_followup_task",
+        "template_id": template_id,
         "mode": "execute_live",
         "status": status,
         "payload": {"idempotency_key": "idem-1"},
@@ -1542,7 +1548,7 @@ async def test_execute_live_idempotent_replay_still_requires_confirmation(monkey
 
 
 @pytest.mark.asyncio
-async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeypatch):
+async def test_execute_live_external_template_without_adapter_fails_and_audits(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
         USER,
@@ -1553,14 +1559,22 @@ async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeyp
     ))["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetchrow = AsyncMock(side_effect=[
+        None,
+        _execution_row(
+            item,
+            status="failed",
+            template_id="prepare_billing_review",
+            result={"ok": False, "adapter": "prepare_billing_review"},
+        ),
+    ])
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.execute_item(
@@ -1572,8 +1586,78 @@ async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeyp
             )
 
     assert exc.value.status_code == 501
-    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "unsupported_writeback_template"
+    assert "No write-back adapter registered" in str(exc.value.detail)
+    assert any("INSERT INTO control_room_action_executions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+    assert any("action_failed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute"
+    assert audit_event.await_args.kwargs["status"] == "failure"
+    assert audit_event.await_args.kwargs["metadata"]["error_type"] == "NotImplementedError"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_external_template_uses_registered_adapter(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+
+    class ExternalBillingAdapter(control_room_service.BaseAdapter):
+        def execute(self, action_data: dict, credentials: dict) -> control_room_service.ExecutionResult:
+            assert action_data["template_type"] == "prepare_billing_review"
+            assert credentials["cartridge_id"] == "replicon"
+            return control_room_service.ExecutionResult(
+                ok=True,
+                status="executed",
+                message="External write-back ok",
+                data={"external_id": "WB-1"},
+            )
+
+    monkeypatch.setattr(
+        control_room_service.WriteBackAdapterFactory,
+        "_registry",
+        {"prepare_billing_review": ExternalBillingAdapter},
+    )
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=[
+        None,
+        _execution_row(
+            item,
+            template_id="prepare_billing_review",
+            result={"ok": True, "target": "replicon", "adapter": "ExternalBillingAdapter"},
+        ),
+    ])
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.execute_item(
+            item["id"],
+            USER,
+            template_id="prepare_billing_review",
+            confirm_execute=True,
+            idempotency_key="idem-ext-1",
+            fetcher=finance_fetcher,
+        )
+
+    assert result["executed"] is True
+    assert result["result"]["external_write"] is True
+    assert result["result"]["adapter"] == "ExternalBillingAdapter"
+    assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
+    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+    assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["status"] == "success"
+    assert audit_event.await_args.kwargs["metadata"]["target"] == "replicon"
 
 
 @pytest.mark.asyncio
