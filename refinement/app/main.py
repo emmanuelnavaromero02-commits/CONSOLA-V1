@@ -393,8 +393,9 @@ def _strip_sql_comments(sql: str) -> str:
 
 
 def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict]:
-    msg = str(exc)
-    lower = msg.lower()
+    error_text = " ".join(str(part) for part in getattr(exc, "args", ()) or (type(exc).__name__,))
+    lower = error_text.lower()
+    request_id = _log_internal_error(exc, f"duckdb materialization failed for dataset {dataset_name}")
     missing_parquet = (
         ("no files found" in lower and ("read_parquet" in lower or "s3://" in lower))
         or ("404" in lower and ("lakehouse/" in lower or "http://minio" in lower or "minio:" in lower))
@@ -406,7 +407,8 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
                 f"Dataset '{dataset_name}' no encuentra archivos Parquet para una fuente. "
                 "Ejecuta primero la extracción o materializa la dependencia upstream."
             ),
-            "detail": msg,
+            "detail": "Error interno",
+            "request_id": request_id,
         }
     if "404 (not found)" in lower and ("read_parquet" in lower or "lakehouse/" in lower or "s3://" in lower):
         return 409, {
@@ -415,7 +417,8 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
                 f"Dataset '{dataset_name}' necesita una fuente Silver/Gold que todavía "
                 "no existe. Materializa primero sus dependencias y vuelve a intentar."
             ),
-            "detail": msg,
+            "detail": "Error interno",
+            "request_id": request_id,
         }
     if "table with name" in lower and "does not exist" in lower:
         return 409, {
@@ -424,18 +427,21 @@ def _friendly_duckdb_error(exc: Exception, dataset_name: str) -> tuple[int, dict
                 f"Dataset '{dataset_name}' referencia una tabla que no existe. "
                 "Selecciona una fuente válida o materializa la tabla upstream."
             ),
-            "detail": msg,
+            "detail": "Error interno",
+            "request_id": request_id,
         }
     if "catalog error" in lower:
         return 422, {
             "code": "duckdb_catalog_error",
             "message": f"No se pudo resolver el catálogo para '{dataset_name}'.",
-            "detail": msg,
+            "detail": "Error interno",
+            "request_id": request_id,
         }
     return 422, {
         "code": "materialization_failed",
         "message": f"No se pudo materializar '{dataset_name}'.",
-        "detail": msg,
+        "detail": "Error interno",
+        "request_id": request_id,
     }
 
 

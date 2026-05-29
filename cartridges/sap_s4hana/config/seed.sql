@@ -10,7 +10,7 @@ VALUES (
     'sap_s4hana',
     'SAP S/4HANA Core',
     '1.0.0',
-    'SAP S/4HANA on-premise / S4HANA — extrae datos maestros de empleados, estructura organizacional, ausencias y horarios.',
+    'SAP S/4HANA on-premise / S4HANA — extrae ventas, facturación, clientes, proveedores, pedidos y datos financieros.',
     'dag-based',
     'cartridge',
     'raw/sap_s4hana/{entity}/load_date={date}/'
@@ -30,18 +30,15 @@ ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
 -- ── Entities ──────────────────────────────────────────────────────────────────
 -- The real S/4HANA OData entities, mirroring infra/init/77_sap_entity_alignment.sql
--- and cartridges/sap_s4hana/app/config/entities.yaml. Previously this block held a
--- clone of the SAP HCM business entities (EmployeeMaster, PersonalData, ...), which
--- never matched entities.yaml; re-importing the cartridge re-seeded those junk rows
--- and undid migration 77's alignment. This UPSERT now seeds the 25 correct rows on
--- (cartridge_id, entity); any leftover HCM rows are pruned by migration 77 (a fresh
--- install has none). Metadata (odata_entity / mode / watermark / page_size /
--- date_field) is inherited from entities.yaml.
+-- and cartridges/sap_s4hana/app/config/entities.yaml. This UPSERT seeds the 25
+-- correct commercial, procurement, finance and inventory rows on (cartridge_id,
+-- entity). Metadata (odata_entity / mode / watermark / page_size / date_field)
+-- is inherited from entities.yaml.
 INSERT INTO entity_config
     (cartridge_id, entity, odata_entity, display_name, description, mode,
      watermark_field, watermark_format, page_size, date_field, dag_id, enabled, trigger_type)
 VALUES
-    ('sap_s4hana', 'BusinessPartner', 'API_BUSINESS_PARTNER/A_BusinessPartner', 'BusinessPartner', 'Business Partner header (customers, vendors, employees).', 'incremental', 'LastChangeDate', 'iso8601', 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
+    ('sap_s4hana', 'BusinessPartner', 'API_BUSINESS_PARTNER/A_BusinessPartner', 'BusinessPartner', 'Business Partner header (customers and vendors).', 'incremental', 'LastChangeDate', 'iso8601', 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
     ('sap_s4hana', 'Customer', 'API_BUSINESS_PARTNER/A_Customer', 'Customer', 'Customer master.', 'incremental', 'LastChangeDate', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
     ('sap_s4hana', 'Supplier', 'API_BUSINESS_PARTNER/A_Supplier', 'Supplier', 'Supplier (vendor) master.', 'incremental', 'LastChangeDate', NULL, 500, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
     ('sap_s4hana', 'BusinessPartnerAddress', 'API_BUSINESS_PARTNER/A_BusinessPartnerAddress', 'BusinessPartnerAddress', 'Business partner addresses.', 'incremental', 'LastChangeDate', NULL, 1000, NULL, 'sap_s4hana_extract', TRUE, 'manual'),
@@ -80,11 +77,20 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         trigger_type     = EXCLUDED.trigger_type;
 
 -- ── Semantic vocabulary ───────────────────────────────────────────────────────
+DELETE FROM semantic_terms
+WHERE cartridge_id = 'sap_s4hana'
+  AND term NOT IN ('ventas', 'facturación', 'BusinessPartner', 'SalesOrder', 'revenue');
+
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
-    ('sap_s4hana', 'headcount activo', 'Número de empleados activos hoy', 'EmployeeMaster WHERE Endda >= CURRENT_DATE AND Begda <= CURRENT_DATE'),
-    ('sap_s4hana', 'ausencia', 'Días de ausencia', 'LeaveAbsence.Abwtg')
-ON CONFLICT (cartridge_id, term) DO NOTHING;
+    ('sap_s4hana', 'ventas', 'Pedidos de venta y valor comercial por periodo', 'SalesOrder JOIN SalesOrderItem'),
+    ('sap_s4hana', 'facturación', 'Facturas de proveedor y documentos contables relacionados', 'SupplierInvoice JOIN JournalEntryItem'),
+    ('sap_s4hana', 'BusinessPartner', 'Clientes y proveedores registrados como business partners', 'BusinessPartner'),
+    ('sap_s4hana', 'SalesOrder', 'Cabeceras y líneas de pedidos de venta', 'SalesOrder JOIN SalesOrderItem'),
+    ('sap_s4hana', 'revenue', 'Ingresos por cliente y periodo derivados de pedidos y facturación', 'SalesOrderItem.NetAmount')
+ON CONFLICT (cartridge_id, term) DO UPDATE
+    SET definition = EXCLUDED.definition,
+        maps_to    = EXCLUDED.maps_to;
 
 -- ── Specialized agents ────────────────────────────────────────────────────────
 -- Mirrored in infra/init/86_sap_s4hana_agents_seed.sql for fresh DB installs. The
