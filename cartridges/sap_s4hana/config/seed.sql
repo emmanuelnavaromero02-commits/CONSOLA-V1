@@ -77,10 +77,6 @@ ON CONFLICT (cartridge_id, entity) DO UPDATE
         trigger_type     = EXCLUDED.trigger_type;
 
 -- ── Semantic vocabulary ───────────────────────────────────────────────────────
-DELETE FROM semantic_terms
-WHERE cartridge_id = 'sap_s4hana'
-  AND term NOT IN ('ventas', 'facturación', 'BusinessPartner', 'SalesOrder', 'revenue');
-
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)
 VALUES
     ('sap_s4hana', 'ventas', 'Pedidos de venta y valor comercial por periodo', 'SalesOrder JOIN SalesOrderItem'),
