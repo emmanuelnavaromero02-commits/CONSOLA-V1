@@ -40,6 +40,7 @@ The `.env` is gitignored. Required keys:
 | `SUPERSET_URL` | `http://localhost:8088` |  |
 | `MINIO_CONSOLE_URL` | `http://localhost:9001` |  |
 | `MAILHOG_URL` | `http://localhost:8025` |  |
+| `E2E_LIVE_LLM` | `0` | Set to `1` only when live Anthropic/Gemini credentials are valid and you want paid/external LLM probes |
 
 ## Running
 
@@ -102,7 +103,12 @@ triage:
    likely a compose port drift. Check `infra/docker-compose.yml`
    `ports:` mappings for the service in question.
 
-4. **Explicit expected failures** (`test.fail(true, …)`) → tracked
+4. **LLM live probes skipped** (`11-copilot-deep.spec.ts`) → normal
+   release-smoke behavior unless `E2E_LIVE_LLM=1` is set with a
+   known-good Anthropic or Gemini key. The non-LLM Copilot API/UI
+   contract remains covered.
+
+5. **Explicit expected failures** (`test.fail(true, …)`) → tracked
    deferrals. Once the missing surface lands, remove the marker so the
    suite fails again on regressions.
 

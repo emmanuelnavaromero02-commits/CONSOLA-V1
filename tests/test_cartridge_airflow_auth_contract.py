@@ -19,7 +19,6 @@ SAP_DAGS = (
     "cartridges/sap_s4hana/dags/sap_s4hana_extract_all.py",
     "cartridges/sap_successfactors/dags/sap_successfactors_extract.py",
     "cartridges/sap_successfactors/dags/sap_successfactors_extract_all.py",
-    "airflow/dags/sap_hcm_extract.py",
 )
 
 
