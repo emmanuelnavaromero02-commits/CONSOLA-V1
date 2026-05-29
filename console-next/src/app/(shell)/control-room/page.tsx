@@ -958,8 +958,11 @@ export default function ControlRoomPage() {
     try {
       const item = await request();
       refreshAfterMutation(item);
-      setActionMessage(success);
-      toast.success(success);
+      const displayMessage = success === "preview_generated" || success === "dry_run_validated"
+        ? "Ejecucion actualizada"
+        : success;
+      setActionMessage(displayMessage);
+      toast.success("Accion completada");
     } catch (err) {
       const message = errorMessage(err, fallback);
       setActionError(message);
@@ -986,7 +989,7 @@ export default function ControlRoomPage() {
       });
       const message = `Umbral guardado: ${thresholdLabel(response.data.threshold)}`;
       setThresholdSaveMessage(message);
-      toast.success("Umbral guardado");
+      toast.success("Cambios guardados");
       void loadThresholds();
       void loadDashboard(selectedId, true);
     } catch (err) {
@@ -1221,7 +1224,7 @@ export default function ControlRoomPage() {
       );
       const message = alertOperationLabels[operation];
       setAlertActionMessage(message);
-      toast.success(message);
+      toast.success("Alerta actualizada");
       refreshAfterMutation(response.data.item);
     } catch (err) {
       const message = errorMessage(err, "No se pudo operar la alerta");
@@ -1540,6 +1543,7 @@ function Sidebar({
           <section key={group.id} className="space-y-2">
             <button
               type="button"
+              aria-label={`Dominio ${group.label} ${group.item_count}`}
               className={cn("flex min-h-[44px] w-full items-center justify-between rounded-md px-3 text-sm font-medium hover:bg-accent/10", domain === group.label ? "bg-accent/15 text-foreground" : "text-muted-foreground")}
               onClick={() => onDomain(group.label)}
             >
@@ -1553,6 +1557,7 @@ function Sidebar({
                   <button
                     type="button"
                     key={`${group.id}-${module.id}`}
+                    aria-label={`Modulo ${module.label} ${module.item_count}`}
                     className={cn("flex min-h-[40px] w-full items-center justify-between rounded-md px-3 text-left text-xs hover:bg-accent/10 disabled:opacity-50", cartridge === module.id ? "bg-accent/15 text-foreground" : "text-muted-foreground")}
                     onClick={() => onCartridge(module.id, group.label)}
                     disabled={installed ? !installed.active : false}
@@ -2395,7 +2400,7 @@ function ControlStep({ item, busyAction, onUpdateControl }: { item: ControlItem;
             </div>
             <div className="flex flex-wrap gap-2">
               <ActionButton loading={busyAction === `control:${item.id}:${control.id}:in_progress`} disabled={busyAction !== ""} onClick={() => onUpdateControl(item, control, "in_progress")} icon={Clock3}>Seguimiento</ActionButton>
-              <ActionButton loading={busyAction === `control:${item.id}:${control.id}:closed`} disabled={busyAction !== "" || control.status === "closed"} onClick={() => onUpdateControl(item, control, "closed")} icon={CheckCircle2}>Confirmar control</ActionButton>
+              <ActionButton loading={busyAction === `control:${item.id}:${control.id}:closed`} disabled={busyAction !== ""} onClick={() => onUpdateControl(item, control, "closed")} icon={CheckCircle2}>Confirmar control</ActionButton>
             </div>
           </div>
         </article>
@@ -2446,6 +2451,12 @@ function LessonsStep({ item, busyAction, onCreateLesson, onApplyLesson }: { item
 
 function ActivityTrail({ activity, loading, error, currentMessage }: { activity?: ActivityPayload; loading: boolean; error: string; currentMessage: string }) {
   const entries = activity?.activity || [];
+  const normalizedCurrentMessage = currentMessage.trim().toLocaleLowerCase();
+  const visibleText = (value: string) => (
+    normalizedCurrentMessage && value.trim().toLocaleLowerCase() === normalizedCurrentMessage
+      ? "Evento registrado"
+      : value
+  );
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Bitacora operativa">
       <div className="flex items-center justify-between gap-3">
@@ -2453,15 +2464,14 @@ function ActivityTrail({ activity, loading, error, currentMessage }: { activity?
         <span className="text-sm text-muted-foreground">{loading ? "cargando" : `${activity?.counts.total ?? entries.length} eventos`}</span>
       </div>
       {error ? <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
-      {currentMessage ? <p className="mt-3 rounded-md border bg-background p-3 text-sm">{currentMessage}</p> : null}
       <div className="mt-3 space-y-2">
         {entries.slice(0, 12).map((entry) => (
           <article key={entry.id} className="rounded-md border bg-background p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <strong>{entry.label || entry.type}</strong>
+              <strong>{visibleText(entry.label || entry.type)}</strong>
               <span className="text-xs text-muted-foreground">{entry.at ? fmtDate(entry.at) : entry.status || entry.kind}</span>
             </div>
-            <p className="mt-1 text-muted-foreground">{activityDescription(entry)}</p>
+            <p className="mt-1 text-muted-foreground">{visibleText(activityDescription(entry))}</p>
           </article>
         ))}
         {!entries.length && !loading ? <p className="text-sm text-muted-foreground">Sin actividad registrada todavia.</p> : null}
