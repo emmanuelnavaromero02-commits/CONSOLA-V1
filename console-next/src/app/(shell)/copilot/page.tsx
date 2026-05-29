@@ -10,13 +10,7 @@ function CopilotShell() {
   const prompt = params.get("prompt") ?? undefined;
 
   return (
-    <div
-      className="flex flex-col bg-background"
-      style={{
-        height: "calc(100vh - 56px)",
-        minHeight: "calc(100vh - 56px)",
-      }}
-    >
+    <div className="flex h-[calc(100vh-56px)] min-h-[calc(100vh-56px)] flex-col bg-background md:h-screen md:min-h-screen">
       <ChatLayout initialPrompt={prompt} />
     </div>
   );

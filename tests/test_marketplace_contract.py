@@ -26,7 +26,10 @@ def test_marketplace_routes_use_console_next_export():
 def test_marketplace_next_surface_keeps_customer_and_admin_flows():
     lib = read("console-next/src/lib/marketplace.ts")
     component = read("console-next/src/components/marketplace/MarketplaceConsole.tsx")
-    app_chrome = read("console-next/src/components/AppChrome.tsx")
+    navigation = read("console-next/src/components/AppChrome.tsx")
+    sidebar = ROOT / "console-next/src/components/AppSidebar.tsx"
+    if sidebar.exists():
+        navigation += "\n" + sidebar.read_text(encoding="utf-8")
     for endpoint in (
         "/api/marketplace/products",
         "/api/customer/cartridges",
@@ -39,8 +42,8 @@ def test_marketplace_next_surface_keeps_customer_and_admin_flows():
         assert endpoint in lib
     for action in ("approve", "pause", "revoke", "reactivate"):
         assert action in component
-    assert 'href: "/marketplace"' in app_chrome
-    assert 'permission: "marketplace.read"' in app_chrome
+    assert 'href: "/marketplace"' in navigation
+    assert 'permission: "marketplace.read"' in navigation
     assert 'can_admin_marketplace' in component
 
 
