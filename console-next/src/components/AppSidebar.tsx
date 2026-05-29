@@ -221,7 +221,7 @@ export function AppSidebar({
         </label>
       </div>
 
-      <nav aria-label="Servicios de la plataforma" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+      <nav aria-label="Navegación principal" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
         {itemCount === 0 ? (
           <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
             Sin servicios visibles.
