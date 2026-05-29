@@ -4,13 +4,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, Moon, Sun, UserCircle } from "lucide-react";
 
 import { AppSidebar } from "@/components/AppSidebar";
+import { LogoutButton } from "@/components/auth/LogoutButton";
 import { api } from "@/lib/api";
-import { getMeAccess } from "@/lib/admin-surfaces";
+import { getMeAccess, type MeAccessResponse } from "@/lib/admin-surfaces";
+import { cn } from "@/lib/utils";
 
 const PUBLIC_PREFIXES = ["/login", "/forgot-password", "/reset-password", "/activate"];
 const THEME_STORAGE_KEY = "mod-theme";
+const SIDEBAR_STORAGE_KEY = "omega-sidebar-collapsed";
 
 function resolveThemePreference(value: string | null): "light" | "dark" {
   if (value === "dark") return "dark";
@@ -41,12 +45,132 @@ function readThemePreference(): string {
   }
 }
 
+function readSidebarCollapsedPreference(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 function applyThemePreference(themePreference: string): "light" | "dark" {
   const resolvedTheme = resolveThemePreference(themePreference);
   document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
   document.documentElement.dataset.theme = resolvedTheme;
   document.documentElement.dataset.themePreference = themePreference;
   return resolvedTheme;
+}
+
+function userLabel(email: string): string {
+  const trimmed = email.trim();
+  if (!trimmed) return "Usuario";
+  return trimmed.split("@")[0] || trimmed;
+}
+
+function canSeeSettings(access: MeAccessResponse | undefined): boolean {
+  if (!access) return false;
+  return access.role?.is_platform_admin === true || (access.permissions ?? []).includes("settings.read");
+}
+
+function UserMenu({
+  email,
+  dark,
+  access,
+  onToggleDark,
+}: {
+  email: string;
+  dark: boolean;
+  access?: MeAccessResponse;
+  onToggleDark: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function onPointerDown(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex min-h-[44px] max-w-[220px] items-center gap-2 rounded-md border bg-card px-3 text-sm font-medium text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <UserCircle aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="hidden min-w-0 truncate sm:inline">{userLabel(email)}</span>
+        <ChevronDown aria-hidden className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Menú de usuario"
+          className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg"
+        >
+          <div className="border-b px-3 py-2">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Cuenta</p>
+            <p className="mt-1 truncate text-sm font-medium">{userLabel(email)}</p>
+          </div>
+          <div className="p-1">
+            <Link
+              prefetch={false}
+              href="/my-access"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex min-h-[40px] items-center rounded-md px-3 text-sm hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Mi acceso
+            </Link>
+            {canSeeSettings(access) ? (
+              <Link
+                prefetch={false}
+                href="/settings"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex min-h-[40px] items-center rounded-md px-3 text-sm hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Ajustes globales
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onToggleDark();
+                setOpen(false);
+              }}
+              className="flex min-h-[40px] w-full items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {dark ? <Sun aria-hidden className="h-4 w-4" /> : <Moon aria-hidden className="h-4 w-4" />}
+              {dark ? "Modo claro" : "Modo oscuro"}
+            </button>
+            <LogoutButton className="flex min-h-[40px] w-full items-center justify-start rounded-md px-3 text-sm hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50" />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function AppChrome({ children }: { children: ReactNode }) {
@@ -57,6 +181,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
     resolveThemePreference(readThemePreference()) === "dark"
   ));
   const [mobileOpen,   setMobileOpen]   = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsedPreference);
   const access = useQuery({
     queryKey: ["me", "access"],
     queryFn: getMeAccess,
@@ -133,23 +258,40 @@ export function AppChrome({ children }: { children: ReactNode }) {
     });
   }
 
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(next));
+      } catch {
+        /* best-effort persistence */
+      }
+      return next;
+    });
+  }
+
   if (isPublic) return <>{children}</>;
 
   return (
     <>
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow md:left-72"
+        className={cn(
+          "sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow",
+          sidebarCollapsed ? "md:left-24" : "md:left-72",
+        )}
       >
         Saltar al contenido
       </a>
       <AppSidebar
         pathname={pathname}
         access={access.data}
-        email={email}
-        dark={dark}
-        onToggleDark={toggleDarkMode}
-        className="fixed inset-y-0 left-0 z-30 hidden w-72 md:flex"
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
+        className={cn(
+          "fixed inset-y-0 left-0 z-30 hidden md:flex",
+          sidebarCollapsed ? "w-20" : "w-72",
+        )}
       />
       <header
         role="banner"
@@ -182,14 +324,12 @@ export function AppChrome({ children }: { children: ReactNode }) {
           </Link>
 
           <div className="ml-auto flex items-center gap-2 text-sm">
-            <button
-              type="button"
-              aria-label={dark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-              onClick={toggleDarkMode}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {dark ? "Claro" : "Oscuro"}
-            </button>
+            <UserMenu
+              email={email}
+              dark={dark}
+              access={access.data}
+              onToggleDark={toggleDarkMode}
+            />
           </div>
         </div>
       </header>
@@ -207,9 +347,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
           <AppSidebar
             pathname={pathname}
             access={access.data}
-            email={email}
-            dark={dark}
-            onToggleDark={toggleDarkMode}
+            collapsed={false}
             onNavigate={() => setMobileOpen(false)}
             closeButtonRef={drawerCloseRef}
             className="w-80 max-w-[86vw] shadow-xl"
@@ -222,7 +360,26 @@ export function AppChrome({ children }: { children: ReactNode }) {
         </div>
       ) : null}
 
-      <div id="main-content" className="min-w-0 md:pl-72">{children}</div>
+      <div
+        id="main-content"
+        className={cn(
+          "min-w-0 transition-[padding-left] duration-200",
+          sidebarCollapsed ? "md:pl-20" : "md:pl-72",
+        )}
+      >
+        <header
+          role="banner"
+          className="sticky top-0 z-20 hidden min-h-14 items-center justify-end border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:flex"
+        >
+          <UserMenu
+            email={email}
+            dark={dark}
+            access={access.data}
+            onToggleDark={toggleDarkMode}
+          />
+        </header>
+        {children}
+      </div>
     </>
   );
 }

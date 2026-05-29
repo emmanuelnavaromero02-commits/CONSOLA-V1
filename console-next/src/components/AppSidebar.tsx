@@ -11,24 +11,23 @@ import {
   Database,
   GitBranch,
   Gauge,
-  KeyRound,
   LayoutDashboard,
   Layers3,
   Monitor,
+  PanelLeftClose,
+  PanelLeftOpen,
   Package,
   Search,
   Settings,
   ShieldCheck,
   Sparkles,
   Table2,
-  UserCircle,
   Users,
   Workflow,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { LogoutButton } from "@/components/auth/LogoutButton";
 import type { MeAccessResponse } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
 
@@ -53,9 +52,8 @@ interface NavSection {
 interface AppSidebarProps {
   pathname: string;
   access?: MeAccessResponse;
-  email: string;
-  dark: boolean;
-  onToggleDark: () => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   onNavigate?: () => void;
   closeButtonRef?: Ref<HTMLButtonElement>;
   className?: string;
@@ -63,23 +61,15 @@ interface AppSidebarProps {
 
 const NAV_SECTIONS: NavSection[] = [
   {
-    title: "Principal",
+    title: "Núcleo",
     items: [
-      { href: "/dashboard", label: "Panel", icon: LayoutDashboard, section: "Principal", keywords: "dashboard inicio kpis" },
-      { href: "/workspace", label: "Workspace", icon: AppWindow, section: "Principal", permission: "workspace.access", keywords: "trabajo chat contexto" },
-      { href: "/control-room", label: "Control Room", icon: Monitor, section: "Principal", permission: "workspace.access", keywords: "control sala room operaciones" },
-      { href: "/marketplace", label: "Marketplace", icon: Package, section: "Principal", permission: "marketplace.read", active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses"], keywords: "market cartuchos licencias instalaciones" },
-      { href: "/apps-gallery", label: "Apps", icon: Boxes, section: "Principal", permission: "apps.read", keywords: "aplicaciones galeria" },
-      { href: "/monitor", label: "Monitor", icon: Activity, section: "Principal", permission: "monitor.read", keywords: "jobs pipeline salud" },
-    ],
-  },
-  {
-    title: "Copiloto",
-    items: [
-      { href: "/copilot", label: "Copiloto", icon: Bot, section: "Copiloto", permission: "copilot.use", matchNested: false, keywords: "chat agente ia streaming" },
-      { href: "/copilot/knowledge", label: "Conocimiento", icon: Layers3, section: "Copiloto", permission: "copilot.use", keywords: "rag conocimiento fuentes vectorial" },
-      { href: "/copilot/tokens", label: "Tokens", icon: Coins, section: "Copiloto", permission: "copilot.write", keywords: "costos llm consumo metricas" },
-      { href: "/agents", label: "Agentes", icon: Sparkles, section: "Copiloto", adminOnly: true, keywords: "automatizacion agentes tools" },
+      { href: "/dashboard", label: "Panel", icon: LayoutDashboard, section: "Núcleo", keywords: "dashboard inicio kpis" },
+      { href: "/workspace", label: "Espacio de Trabajo", icon: AppWindow, section: "Núcleo", permission: "workspace.access", keywords: "workspace trabajo chat contexto" },
+      { href: "/copilot", label: "Copiloto", icon: Bot, section: "Núcleo", permission: "copilot.use", matchNested: false, keywords: "chat agente ia streaming" },
+      { href: "/copilot/knowledge", label: "Conocimiento", icon: Layers3, section: "Núcleo", permission: "copilot.use", keywords: "rag conocimiento fuentes vectorial" },
+      { href: "/copilot/tokens", label: "Tokens", icon: Coins, section: "Núcleo", permission: "copilot.write", keywords: "costos llm consumo metricas" },
+      { href: "/marketplace", label: "Marketplace", icon: Package, section: "Núcleo", permission: "marketplace.read", active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses"], keywords: "market cartuchos licencias instalaciones" },
+      { href: "/apps-gallery", label: "Apps", icon: Boxes, section: "Núcleo", permission: "apps.read", keywords: "aplicaciones galeria" },
     ],
   },
   {
@@ -87,39 +77,34 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/data/catalog", label: "Catálogo", icon: Database, section: "Datos", active: ["/data", "/data/catalog"], permission: "datasets.read", keywords: "catalog datasets datos" },
       { href: "/data/lineage", label: "Linaje", icon: GitBranch, section: "Datos", active: ["/data/lineage", "/viewer", "/lineage", "/linaje"], permission: "datasets.read", keywords: "lineage linaje grafo dependencias" },
-      { href: "/data/bronze", label: "Bronze", icon: Table2, section: "Datos", permission: "datasets.write", keywords: "raw bronze query consultas" },
+      { href: "/data/bronze", label: "Consulta Bronce", icon: Table2, section: "Datos", permission: "datasets.write", keywords: "raw bronze query consultas" },
       { href: "/explorer", label: "Explorer", icon: Search, section: "Datos", permission: "pipelines.read", keywords: "explorar esquema datasets" },
       { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", permission: "studio.read", keywords: "studio semantic dag datasets" },
     ],
   },
   {
-    title: "Operación",
+    title: "Operaciones",
     items: [
-      { href: "/operations", label: "Operaciones", icon: Gauge, section: "Operación", permission: "operations.read", adminOnly: true, matchNested: false, keywords: "operaciones admin sistema" },
-      { href: "/operations/workflows", label: "Workflows", icon: Workflow, section: "Operación", permission: "operations.read", adminOnly: true, keywords: "flujos workflow ejecutar cancelar" },
-      { href: "/operations/metrics", label: "Métricas", icon: Activity, section: "Operación", permission: "operations.read", adminOnly: true, keywords: "metricas salud carga" },
-      { href: "/operations/vault", label: "Vault", icon: KeyRound, section: "Operación", permission: "vault.connections.read", adminOnly: true, keywords: "secretos conexiones vault" },
-      { href: "/cartridges", label: "Cartuchos", icon: Boxes, section: "Operación", permission: "cartridges.read", adminOnly: true, keywords: "plugins integraciones cartuchos" },
+      { href: "/control-room", label: "Control Room", icon: Monitor, section: "Operaciones", permission: "workspace.access", keywords: "control sala room operaciones" },
+      { href: "/monitor", label: "Monitor", icon: Activity, section: "Operaciones", permission: "monitor.read", keywords: "jobs pipeline salud" },
+      { href: "/operations/workflows", label: "Flujos de trabajo", icon: Workflow, section: "Operaciones", permission: "operations.read", adminOnly: true, keywords: "workflows flujos ejecutar cancelar" },
+      { href: "/operations/metrics", label: "Métricas", icon: Gauge, section: "Operaciones", permission: "operations.read", adminOnly: true, keywords: "metricas salud carga" },
+      { href: "/agents", label: "Agentes", icon: Sparkles, section: "Operaciones", adminOnly: true, keywords: "automatizacion agentes tools" },
+      { href: "/operations/vault", label: "Vault", icon: ShieldCheck, section: "Operaciones", permission: "vault.connections.read", adminOnly: true, keywords: "secretos conexiones vault" },
+      { href: "/cartridges", label: "Cartuchos", icon: Boxes, section: "Operaciones", permission: "cartridges.read", adminOnly: true, keywords: "plugins integraciones cartuchos" },
     ],
   },
   {
-    title: "Gobierno",
+    title: "Configuración/Admin",
     items: [
-      { href: "/operations/users", label: "Usuarios", icon: Users, section: "Gobierno", permission: "iam.users.read", adminOnly: true, keywords: "iam usuarios roles" },
-      { href: "/operations/audit", label: "Auditoría", icon: ShieldCheck, section: "Gobierno", permission: "security.audit.read", adminOnly: true, keywords: "logs auditoria seguridad" },
-      { href: "/security", label: "Seguridad", icon: ShieldCheck, section: "Gobierno", permission: "security.audit.read", keywords: "seguridad sesiones intentos" },
-      { href: "/decisions", label: "Decisiones", icon: GitBranch, section: "Gobierno", adminOnly: true, keywords: "decisiones approvals" },
-      { href: "/settings", label: "Settings", icon: Settings, section: "Gobierno", permission: "settings.read", adminOnly: true, keywords: "configuracion ajustes" },
-      { href: "/my-access", label: "Mi acceso", icon: UserCircle, section: "Gobierno", keywords: "perfil acceso permisos" },
+      { href: "/operations/audit", label: "Auditoría", icon: ShieldCheck, section: "Configuración/Admin", permission: "security.audit.read", adminOnly: true, keywords: "logs auditoria seguridad" },
+      { href: "/operations/users", label: "Usuarios", icon: Users, section: "Configuración/Admin", permission: "iam.users.read", adminOnly: true, keywords: "iam usuarios roles" },
+      { href: "/settings", label: "Ajustes", icon: Settings, section: "Configuración/Admin", permission: "settings.read", adminOnly: true, keywords: "configuracion settings ajustes" },
+      { href: "/security", label: "Seguridad", icon: ShieldCheck, section: "Configuración/Admin", permission: "security.audit.read", keywords: "seguridad sesiones intentos" },
+      { href: "/decisions", label: "Decisiones", icon: GitBranch, section: "Configuración/Admin", adminOnly: true, keywords: "decisiones approvals" },
     ],
   },
 ];
-
-function userLabel(email: string): string {
-  const trimmed = email.trim();
-  if (!trimmed) return "Usuario";
-  return trimmed.split("@")[0] || trimmed;
-}
 
 function navPath(href: string): string {
   return href.split("?")[0] || href;
@@ -154,9 +139,8 @@ function matchesQuery(item: NavItem, section: string, query: string): boolean {
 export function AppSidebar({
   pathname,
   access,
-  email,
-  dark,
-  onToggleDark,
+  collapsed = false,
+  onToggleCollapsed,
   onNavigate,
   closeButtonRef,
   className,
@@ -175,15 +159,20 @@ export function AppSidebar({
   ), [access, normalizedQuery]);
 
   const itemCount = sections.reduce((total, section) => total + section.items.length, 0);
+  const showLabels = !collapsed || Boolean(onNavigate);
 
   return (
-    <aside className={cn("flex h-full flex-col border-r bg-card text-card-foreground", className)}>
-      <header className="flex items-center justify-between border-b px-4 py-3">
+    <aside className={cn("flex h-full flex-col border-r bg-card text-card-foreground transition-[width] duration-200", className)}>
+      <header className={cn("flex items-center border-b py-3", showLabels ? "justify-between px-4" : "justify-center px-2")}>
         <Link
           prefetch={false}
           href="/dashboard"
           onClick={onNavigate}
-          className="flex min-h-[44px] items-center gap-2 font-semibold tracking-tight text-foreground"
+          className={cn(
+            "flex min-h-[44px] items-center gap-2 font-semibold tracking-tight text-foreground",
+            !showLabels && "justify-center",
+          )}
+          aria-label="OMEGA"
         >
           <span
             aria-hidden
@@ -191,7 +180,7 @@ export function AppSidebar({
           >
             Ω
           </span>
-          <span>OMEGA</span>
+          {showLabels ? <span>OMEGA</span> : null}
         </Link>
         {onNavigate ? (
           <button
@@ -203,36 +192,58 @@ export function AppSidebar({
           >
             <X aria-hidden className="h-5 w-5" />
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Expandir navegación" : "Colapsar navegación"}
+            className="hidden min-h-[44px] min-w-[44px] items-center justify-center rounded-md hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
+          >
+            {collapsed ? <PanelLeftOpen aria-hidden className="h-5 w-5" /> : <PanelLeftClose aria-hidden className="h-5 w-5" />}
+          </button>
+        )}
       </header>
 
-      <div className="border-b px-3 py-3">
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-medium uppercase text-muted-foreground">Servicios</span>
-          <div className="relative">
-            <Search aria-hidden className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="Buscar servicio"
-            />
-          </div>
-        </label>
+      <div className={cn("border-b py-3", showLabels ? "px-3" : "px-2")}>
+        {showLabels ? (
+          <label className="space-y-1 text-sm">
+            <span className="text-xs font-medium uppercase text-muted-foreground">Servicios</span>
+            <div className="relative">
+              <Search aria-hidden className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="min-h-[44px] w-full rounded-md border bg-background pl-9 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Buscar servicio"
+              />
+            </div>
+          </label>
+        ) : (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label="Expandir para buscar servicios"
+            className="inline-flex min-h-[44px] w-full items-center justify-center rounded-md border bg-background text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Search aria-hidden className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      <nav aria-label="Navegación principal" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+      <nav aria-label="Navegación principal" className={cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-3", showLabels ? "px-2" : "px-1.5")}>
         {itemCount === 0 ? (
           <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
             Sin servicios visibles.
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className={cn(showLabels ? "space-y-5" : "space-y-2")}>
             {sections.map((section) => (
               <section key={section.title} aria-label={section.title} className="space-y-1">
-                <h2 className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {section.title}
-                </h2>
+                {showLabels ? (
+                  <h2 className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {section.title}
+                  </h2>
+                ) : null}
                 <ul className="space-y-1">
                   {section.items.map((item) => {
                     const active = isActive(pathname, item);
@@ -244,15 +255,17 @@ export function AppSidebar({
                           href={item.href}
                           onClick={onNavigate}
                           aria-current={active ? "page" : undefined}
+                          title={showLabels ? undefined : item.label}
                           className={cn(
-                            "flex min-h-[42px] items-center gap-2 rounded-md px-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "flex min-h-[42px] items-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            showLabels ? "gap-2 px-2.5" : "justify-center px-2",
                             active
                               ? "bg-primary/10 text-primary ring-1 ring-primary/20"
                               : "text-muted-foreground hover:bg-accent/10 hover:text-foreground",
                           )}
                         >
                           <Icon aria-hidden className="h-4 w-4 shrink-0" />
-                          <span className="truncate">{item.label}</span>
+                          {showLabels ? <span className="truncate">{item.label}</span> : null}
                         </Link>
                       </li>
                     );
@@ -263,24 +276,6 @@ export function AppSidebar({
           </div>
         )}
       </nav>
-
-      <footer className="space-y-3 border-t p-3">
-        <div className="flex items-center gap-2 rounded-md bg-background px-3 py-2 text-sm">
-          <UserCircle aria-hidden className="h-4 w-4 text-muted-foreground" />
-          <span className="min-w-0 truncate text-muted-foreground">{userLabel(email)}</span>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            aria-label={dark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-            onClick={onToggleDark}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {dark ? "Claro" : "Oscuro"}
-          </button>
-          <LogoutButton className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50" />
-        </div>
-      </footer>
     </aside>
   );
 }
