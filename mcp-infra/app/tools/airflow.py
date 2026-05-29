@@ -4,6 +4,7 @@ Handles DAG management, triggers, status, logs, variables and dynamic DAG creati
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import os
 from pathlib import Path
@@ -25,6 +26,22 @@ _CARTRIDGE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 def _client() -> httpx.AsyncClient:
     headers = _request_headers()
     return httpx.AsyncClient(auth=_AUTH, timeout=30, headers=headers or None)
+
+
+async def _request_with_transport_retry(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    **kwargs,
+) -> httpx.Response:
+    for attempt in range(3):
+        try:
+            return await client.request(method, url, **kwargs)
+        except httpx.TransportError:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(0.25 * (attempt + 1))
+    raise RuntimeError("unreachable")
 
 
 def _request_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -97,7 +114,7 @@ def _rce_tools_explicitly_enabled() -> bool:
 )
 async def airflow_list_dags() -> dict:
     async with _client() as c:
-        r = await c.get(f"{_BASE}/api/v1/dags")
+        r = await _request_with_transport_retry(c, "GET", f"{_BASE}/api/v1/dags")
         r.raise_for_status()
         dags = r.json().get("dags", [])
     return {
@@ -141,12 +158,16 @@ async def airflow_trigger_dag(
     if dag_run_id:
         payload["dag_run_id"] = dag_run_id
     async with _client() as c:
-        r = await c.post(
+        r = await _request_with_transport_retry(
+            c,
+            "POST",
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
             json=payload,
         )
         if r.status_code == 409 and dag_run_id:
-            existing = await c.get(f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}")
+            existing = await _request_with_transport_retry(
+                c, "GET", f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
+            )
             existing.raise_for_status()
             data = existing.json()
             return {
@@ -181,7 +202,9 @@ async def airflow_trigger_dag(
 async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
-        r = await c.get(f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}")
+        r = await _request_with_transport_retry(
+            c, "GET", f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
+        )
         r.raise_for_status()
         data = r.json()
     return {
@@ -207,7 +230,9 @@ async def airflow_get_run_status(dag_id: str, dag_run_id: str) -> dict:
 async def airflow_get_task_logs(dag_id: str, dag_run_id: str, task_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
     async with httpx.AsyncClient(auth=_AUTH, timeout=60, headers=_request_headers()) as c:
-        r = await c.get(
+        r = await _request_with_transport_retry(
+            c,
+            "GET",
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
             f"/taskInstances/{task_id}/logs/1",
             headers=_request_headers({"Accept": "text/plain"}),
@@ -428,7 +453,7 @@ async def airflow_delete_dag(dag_id: str, cartridge_id: str | None = None) -> di
     # Delete from Airflow metadata DB
     try:
         async with _client() as c:
-            r = await c.delete(f"{_BASE}/api/v1/dags/{dag_id}")
+            r = await _request_with_transport_retry(c, "DELETE", f"{_BASE}/api/v1/dags/{dag_id}")
             deleted_db = r.status_code in (200, 204)
     except Exception:
         deleted_db = False
@@ -479,12 +504,16 @@ async def airflow_set_variable(key: str, value: str) -> dict:
             "Airflow Variables are persistent runtime configuration."
         )
     async with _client() as c:
-        r = await c.post(
+        r = await _request_with_transport_retry(
+            c,
+            "POST",
             f"{_BASE}/api/v1/variables",
             json={"key": key, "value": value},
         )
         if r.status_code == 409:          # already exists → patch
-            r = await c.patch(
+            r = await _request_with_transport_retry(
+                c,
+                "PATCH",
                 f"{_BASE}/api/v1/variables/{key}",
                 json={"key": key, "value": value},
             )
@@ -507,7 +536,9 @@ async def airflow_set_variable(key: str, value: str) -> dict:
 async def airflow_list_task_instances(dag_id: str, dag_run_id: str) -> dict:
     dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
-        r = await c.get(
+        r = await _request_with_transport_retry(
+            c,
+            "GET",
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances"
         )
         r.raise_for_status()
@@ -539,7 +570,9 @@ async def airflow_list_task_instances(dag_id: str, dag_run_id: str) -> dict:
 async def airflow_list_dag_runs(dag_id: str, limit: int = 10) -> dict:
     dag_id = _validate_dag_id(dag_id)
     async with _client() as c:
-        r = await c.get(
+        r = await _request_with_transport_retry(
+            c,
+            "GET",
             f"{_BASE}/api/v1/dags/{dag_id}/dagRuns",
             params={"limit": limit, "order_by": "-start_date"},
         )

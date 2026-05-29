@@ -769,6 +769,43 @@ def _to_oai_tools(tools: list[dict]) -> list[dict]:
     ]
 
 
+def _oai_message_value(msg: Any, key: str, default: Any = None) -> Any:
+    if isinstance(msg, dict):
+        return msg.get(key, default)
+    return getattr(msg, key, default)
+
+
+def _oai_tool_call_parts(tc: Any) -> tuple[str, str, dict]:
+    fn = tc.get("function") if isinstance(tc, dict) else getattr(tc, "function", None)
+    call_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+    if fn is None:
+        return str(call_id or "tool_call"), "", {}
+    name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", "")
+    raw_args = fn.get("arguments", {}) if isinstance(fn, dict) else getattr(fn, "arguments", {})
+    if isinstance(raw_args, str):
+        try:
+            args = json.loads(raw_args or "{}")
+        except json.JSONDecodeError:
+            args = {}
+    elif isinstance(raw_args, dict):
+        args = raw_args
+    else:
+        args = {}
+    return str(call_id or name or "tool_call"), str(name or ""), args
+
+
+def _oai_assistant_message_for_history(msg: Any) -> dict:
+    if isinstance(msg, dict):
+        return msg
+    if hasattr(msg, "model_dump"):
+        return msg.model_dump(exclude_none=True)
+    return {
+        "role": "assistant",
+        "content": _oai_message_value(msg, "content", "") or "",
+        "tool_calls": _oai_message_value(msg, "tool_calls", None),
+    }
+
+
 async def _openai_compat_chat(
     system: str,
     messages: list[dict],
@@ -804,7 +841,6 @@ async def _openai_compat_chat(
         response = await client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         msg    = choice.message
-        finish = choice.finish_reason or "stop"
 
         if response.usage:
             await token_store.record(
@@ -813,18 +849,25 @@ async def _openai_compat_chat(
                 response.usage.completion_tokens,
             )
 
-        if finish != "tool_calls" or not msg.tool_calls:
-            text = msg.content or ""
+        tool_calls = _oai_message_value(msg, "tool_calls") or []
+        if not tool_calls:
+            text = _oai_message_value(msg, "content", "") or ""
             await _emit(on_event, {"type": "text", "text": text})
             msgs.append({"role": "assistant", "content": text})
             return text, viewer_urls, msgs
 
-        msgs.append(msg)
-        for tc in msg.tool_calls:
-            fn   = tc.function
-            args = json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
-            server_id = tool_server_map.get(fn.name, "")
-            bare_name = fn.name.split("__", 1)[-1]
+        msgs.append(_oai_assistant_message_for_history(msg))
+        for tc in tool_calls:
+            tool_call_id, fn_name, args = _oai_tool_call_parts(tc)
+            if not fn_name:
+                msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps({"error": "invalid tool call"}),
+                })
+                continue
+            server_id = tool_server_map.get(fn_name, "")
+            bare_name = fn_name.split("__", 1)[-1]
             await _emit(on_event, {
                 "type":   "tool_use",
                 "tool":   bare_name,
@@ -838,6 +881,6 @@ async def _openai_compat_chat(
                 "tool":    bare_name,
                 "summary": _summarize_tool_result(result, bare_name),
             })
-            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
+            msgs.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(result)})
 
     return "(máximo de iteraciones alcanzado)", viewer_urls, msgs

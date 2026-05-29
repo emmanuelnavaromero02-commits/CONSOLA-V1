@@ -152,6 +152,7 @@ async def test_remaining_service_close_pools_close_and_reset(monkeypatch):
         ("app.services.job_service", "_pool"),
         ("app.services.token_store", "_pool"),
         ("app.services.mcp_registry", "_pool"),
+        ("app.services.agent_runtime", "_pool"),
     ]
 
     for module_name, pool_attr in modules:

@@ -152,6 +152,7 @@ _CARTRIDGE_READ_TOOLS = {
     "cartridge_get_semantic",
     "cartridge_search_term",
     "cartridge_get_manifest",
+    "cartridge_get_hints",
     "cartridge_list_entities",
     "cartridge_get_schema",
     "cartridge_get_run_logs",

@@ -207,6 +207,7 @@ async def lifespan(app: FastAPI):
         await token_store.close_pool()
         await mcp_registry.close_pool()
         await cartridge_service.close_pool()
+        await _agent_runtime.close_pool()
         await _close_main_pool()
         await _close_dec_pool()
 
@@ -2526,19 +2527,33 @@ async def api_data_options(dataset: str, columns: str = "", user: dict = Depends
             for col in cols]
     union_sql = " UNION ALL ".join(sqls) + f" ORDER BY col, val"
 
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "preview_transform",
-                             {
-                                 "sql": union_sql,
-                                 "limit": 5000,
-                                 "user_context": _rls_user_context(user),
-                             },
-                             user,
-                         ))
-    result = r.json()
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
+            r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
+                             json=_mcp_payload(
+                                 "preview_transform",
+                                 {
+                                     "sql": union_sql,
+                                     "limit": 5000,
+                                     "user_context": _rls_user_context(user),
+                                 },
+                                 user,
+                             ))
+    except httpx.TransportError as exc:
+        raise HTTPException(500, "Options backend unavailable") from exc
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, _upstream_error_detail(r, "Options backend failed"))
+    try:
+        result = r.json()
+    except ValueError as exc:
+        raise HTTPException(500, "Options backend returned invalid JSON") from exc
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(500, "Options backend failed")
+    if not isinstance(result, dict):
+        raise HTTPException(500, "Options backend returned invalid payload")
     rows = result.get("data", [])
+    if not rows:
+        return []
 
     # Group by column name
     options: dict = {col: [] for col in cols}
@@ -4779,11 +4794,15 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticat
     # no business seeing. CSRF added because this is a state-shaped
     # POST and could be called from a cross-origin form otherwise.
     tool = body.get("tool")
-    args = body.get("args", {})
+    args = body.get("args") or {}
+    if not isinstance(args, dict):
+        raise HTTPException(400, "args must be an object")
     _require_effective_permission(user, "monitor.read")
 
     if tool == "view_job":
-        job_id = args["job_id"]
+        job_id = args.get("job_id")
+        if not job_id:
+            raise HTTPException(400, "job_id is required")
         job = await job_service.get_scoped(job_id, user=user)
         entity = (job.get("args") or {}).get("entity", "")
         return {
@@ -4800,14 +4819,18 @@ async def monitoring_invoke(body: dict, user: dict = Depends(require_authenticat
         }
 
     if tool == "view_schema":
-        source = args["source"]
+        source = args.get("source")
+        if not source:
+            raise HTTPException(400, "source is required")
         return {
             "url":   f"{CONSOLE_URL}/viewer?type=schema&source={quote(str(source), safe='')}",
             "label": f"Ver schema de {source}",
         }
 
     if tool == "view_dataset":
-        name = args["name"]
+        name = args.get("name")
+        if not name:
+            raise HTTPException(400, "name is required")
         return {
             "url":   f"{CONSOLE_URL}/viewer?type=dataset&name={quote(str(name), safe='')}",
             "label": f"Ver dataset {name}",
@@ -5707,6 +5730,19 @@ async def _issue_vpn_for_user(user_id: int, email: str, name: str | None) -> dic
     return {"issued": True, "email_sent": sent, "wg_client_id": res["wg_client_id"]}
 
 
+async def _rollback_failed_invite(user_id: int, vpn_result: dict | None = None) -> None:
+    vpn_client_id = (vpn_result or {}).get("wg_client_id")
+    if vpn_client_id:
+        try:
+            await _vpn.delete_client(str(vpn_client_id))
+        except Exception:
+            logger.warning("invite rollback could not delete vpn client", exc_info=True)
+    try:
+        await _auth.delete_user(user_id)
+    except Exception:
+        logger.exception("invite rollback could not delete user_id=%s", user_id)
+
+
 @app.get("/vpn-config/{token}")
 async def get_vpn_config(token: str, user: dict | None = Depends(current_user)):
     info = await _tokens.consume_lookup(token, "vpn")
@@ -5784,21 +5820,28 @@ async def api_admin_users_invite(body: dict, request: Request, admin_user: dict 
         zip_bytes, vpn_password = _pack_vpn_conf(vpn_result["conf_text"], email)
         attachments.append((f"{_safe_filename(email)}.zip", zip_bytes, "application/zip"))
 
-    if vpn_result.get("issued"):
-        subject, html = _email.render_invitation_with_vpn(
-            target_user.get("name"),
-            email,
-            activation_link,
-            vpn_result["link"],
-            INVITE_TTL_HOURS,
-            VPN_TTL_HOURS,
-            vpn_password,
-        )
-        sent = await _email.send_email(email, subject, html, attachments=attachments)
-        vpn_result["email_sent"] = sent
-    else:
-        subject, html = _email.render_invitation(target_user.get("name"), email, activation_link, INVITE_TTL_HOURS)
-        sent = await _email.send_email(email, subject, html)
+    try:
+        if vpn_result.get("issued"):
+            subject, html = _email.render_invitation_with_vpn(
+                target_user.get("name"),
+                email,
+                activation_link,
+                vpn_result["link"],
+                INVITE_TTL_HOURS,
+                VPN_TTL_HOURS,
+                vpn_password,
+            )
+            sent = await _email.send_email(email, subject, html, attachments=attachments)
+            vpn_result["email_sent"] = sent
+        else:
+            subject, html = _email.render_invitation(target_user.get("name"), email, activation_link, INVITE_TTL_HOURS)
+            sent = await _email.send_email(email, subject, html)
+        if not sent:
+            raise RuntimeError("invitation email send failed")
+    except Exception as exc:
+        await _rollback_failed_invite(int(target_user["id"]), vpn_result)
+        logger.exception("invitation email failed; rolled back user_id=%s", target_user["id"])
+        raise HTTPException(500, "Invitation email delivery failed") from exc
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.invited", "user", str(target_user["id"]),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),

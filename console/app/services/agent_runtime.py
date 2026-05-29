@@ -138,6 +138,14 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def close_pool() -> None:
+    global _pool
+    async with _pool_lock:
+        if _pool is not None:
+            await _pool.close()
+            _pool = None
+
+
 # ── Loaders ──────────────────────────────────────────────────────────────────
 
 async def load_agent(agent_id: str) -> Agent | None:

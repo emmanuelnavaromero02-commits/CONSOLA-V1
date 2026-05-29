@@ -379,6 +379,25 @@ def cartridge_get_manifest(cartridge_id: str) -> dict[str, Any]:
     return {**header, "connections": connections, "dags": dags}
 
 
+@tool(
+    name="cartridge_get_hints",
+    description="Return assistant hints for one cartridge so business users can load scoped guidance.",
+    input_schema={
+        "type": "object",
+        "properties": {"cartridge_id": {"type": "string"}},
+        "required": ["cartridge_id"],
+    },
+)
+def cartridge_get_hints(cartridge_id: str) -> dict[str, Any]:
+    with _conn() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(assistant_hints, '') FROM cartridges WHERE id=%s",
+            (cartridge_id,),
+        )
+        row = cur.fetchone()
+    return {"cartridge_id": cartridge_id, "assistant_hints": (row[0] if row else "")}
+
+
 # ── Tool 0 · list_cartridges (discovery) ──────────────────────────────────────
 
 @tool(

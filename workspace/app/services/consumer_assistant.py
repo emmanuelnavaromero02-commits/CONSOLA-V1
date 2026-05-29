@@ -419,28 +419,37 @@ async def _cartridge_hints_block(user: dict | None) -> str:
         allowed = [
             str(cart).strip()
             for cart in (raw_allowed or [])
-            if re.fullmatch(r"[a-zA-Z0-9_\-]+", str(cart).strip() or "")
+            if str(cart).strip() == "*" or re.fullmatch(r"[a-zA-Z0-9_\-]+", str(cart).strip() or "")
         ]
         unrestricted = "*" in allowed
         if not unrestricted and "*" not in allowed and not allowed:
             _hints_text_by_scope[key] = ""
             _hints_ts = time.time()
             return ""
-        scope_clause = ""
-        if not unrestricted and "*" not in allowed:
-            quoted = ", ".join("'" + cart.replace("'", "''") + "'" for cart in allowed)
-            scope_clause = f" AND id IN ({quoted})"
+        candidates = allowed
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(f"{MCP_INFRA_URL}/mcp/invoke",
-                             json=_payload(
-                                 "postgres_execute_query",
-                                 {"sql": "SELECT id, COALESCE(assistant_hints,'') AS hints "
-                                         "FROM cartridges WHERE assistant_hints IS NOT NULL "
-                                         f"AND length(assistant_hints) > 0{scope_clause}"},
-                                 user,
-                             ),
-                             headers=_headers_for("mcp-infra"))
-            data = (r.json().get("result") or r.json()).get("rows") or []
+            if unrestricted:
+                r = await c.post(
+                    f"{MCP_INFRA_URL}/mcp/invoke",
+                    json=_payload("list_cartridges", {}, user),
+                    headers=_headers_for("mcp-infra"),
+                )
+                r.raise_for_status()
+                candidates = [
+                    str(row.get("id") or "").strip()
+                    for row in (r.json().get("result") or [])
+                    if isinstance(row, dict) and str(row.get("id") or "").strip()
+                ]
+            data = []
+            for cartridge_id in candidates:
+                r = await c.post(
+                    f"{MCP_INFRA_URL}/mcp/invoke",
+                    json=_payload("cartridge_get_hints", {"cartridge_id": cartridge_id}, user),
+                    headers=_headers_for("mcp-infra"),
+                )
+                r.raise_for_status()
+                result = r.json().get("result") or {}
+                data.append({"id": cartridge_id, "hints": result.get("assistant_hints") or ""})
         sections = []
         for row in data:
             h = (row.get("hints") or "").strip()
