@@ -313,6 +313,34 @@ async def viewer_dataset(name: str, request: Request):
     return _viewer_redirect(request, "dataset", name=name)
 
 
+@router.get("/data", dependencies=[Depends(require_permission("datasets.read"))])
+async def data_page():
+    return RedirectResponse(url="/data/catalog", status_code=307)
+
+
+@router.get("/data/", dependencies=[Depends(require_permission("datasets.read"))])
+async def data_page_slash():
+    return RedirectResponse(url="/data/catalog", status_code=307)
+
+
+@router.get("/data/catalog", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get("/data/catalog/", dependencies=[Depends(require_permission("datasets.read"))])
+async def data_catalog_page(request: Request):
+    return _console_next_response(request, "data/catalog/index.html")
+
+
+@router.get("/data/lineage", dependencies=[Depends(require_permission("datasets.read"))])
+@router.get("/data/lineage/", dependencies=[Depends(require_permission("datasets.read"))])
+async def data_lineage_page(request: Request):
+    return _console_next_response(request, "data/lineage/index.html")
+
+
+@router.get("/data/bronze", dependencies=[Depends(require_permission("datasets.write"))])
+@router.get("/data/bronze/", dependencies=[Depends(require_permission("datasets.write"))])
+async def data_bronze_page(request: Request):
+    return _console_next_response(request, "data/bronze/index.html")
+
+
 @router.get("/lineage", dependencies=[Depends(require_permission("datasets.read"))])
 async def lineage_page(request: Request):
     return _viewer_redirect(request, "lineage")

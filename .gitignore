@@ -43,6 +43,12 @@ secrets/
 
 # Data
 data/
+!console-next/src/app/(shell)/data/
+!console-next/src/app/(shell)/data/**
+!console-next/src/lib/data/
+!console-next/src/lib/data/**
+!console/app/static/console-next/data/
+!console/app/static/console-next/data/**
 *.parquet
 *.duckdb
 
