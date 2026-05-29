@@ -7,6 +7,11 @@ import {
   deleteUser,
   deleteVaultConnection,
   deleteVaultSecret,
+  cancelOperationWorkflow,
+  getOperationalMetrics,
+  getOperationsHealth,
+  getOperationWorkflow,
+  listOperationWorkflows,
   listAuditEvents,
   listUsers,
   listVaultConnections,
@@ -14,6 +19,7 @@ import {
   revealVaultConnection,
   revealVaultSecret,
   sendPasswordReset,
+  triggerOperationWorkflow,
   updateUser,
   upsertVaultConnection,
   upsertVaultSecret,
@@ -22,6 +28,11 @@ import type {
   AppUser,
   AuditEvent,
   CreateUserRequest,
+  OperationalMetrics,
+  OperationWorkflow,
+  OperationWorkflowActionResponse,
+  OperationWorkflowDetailResponse,
+  OperationsHealth,
   UpdateUserRequest,
   VaultConnection,
   VaultConnectionPayload,
@@ -142,5 +153,73 @@ export function useDeleteVaultSecret() {
   return useMutation<void, Error, { scope: string; key: string }>({
     mutationFn: ({ scope, key }) => deleteVaultSecret(scope, key),
     onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: ["operations", "vault", "secrets", vars.scope] }),
+  });
+}
+
+// ── Workflows ──────────────────────────────────────────────────────
+
+const ACTIVE_WORKFLOW_STATUSES = new Set(["planning", "running", "waiting_approval"]);
+
+export function useOperationWorkflows() {
+  return useQuery<OperationWorkflow[]>({
+    queryKey: ["operations", "workflows"],
+    queryFn: listOperationWorkflows,
+    staleTime: 15_000,
+    refetchInterval: (q) => {
+      const rows = q.state.data as OperationWorkflow[] | undefined;
+      return rows?.some((row) => ACTIVE_WORKFLOW_STATUSES.has(row.status)) ? 5_000 : false;
+    },
+  });
+}
+
+export function useOperationWorkflow(id: string | null) {
+  return useQuery<OperationWorkflowDetailResponse>({
+    queryKey: ["operations", "workflow", id],
+    queryFn: () => getOperationWorkflow(id as string),
+    enabled: Boolean(id),
+    refetchInterval: (q) => {
+      const data = q.state.data as OperationWorkflowDetailResponse | undefined;
+      return data && ACTIVE_WORKFLOW_STATUSES.has(data.workflow.status) ? 5_000 : false;
+    },
+  });
+}
+
+export function useTriggerOperationWorkflow() {
+  const qc = useQueryClient();
+  return useMutation<OperationWorkflowActionResponse, Error, OperationWorkflow>({
+    mutationFn: triggerOperationWorkflow,
+    onSuccess: (_data, workflow) => {
+      qc.invalidateQueries({ queryKey: ["operations", "workflows"] });
+      qc.invalidateQueries({ queryKey: ["operations", "workflow", workflow.id] });
+    },
+  });
+}
+
+export function useCancelOperationWorkflow() {
+  const qc = useQueryClient();
+  return useMutation<OperationWorkflowActionResponse, Error, string>({
+    mutationFn: cancelOperationWorkflow,
+    onSuccess: (_data, workflowId) => {
+      qc.invalidateQueries({ queryKey: ["operations", "workflows"] });
+      qc.invalidateQueries({ queryKey: ["operations", "workflow", workflowId] });
+    },
+  });
+}
+
+// ── Metrics ────────────────────────────────────────────────────────
+
+export function useOperationalMetrics() {
+  return useQuery<OperationalMetrics>({
+    queryKey: ["operations", "metrics"],
+    queryFn: getOperationalMetrics,
+    staleTime: 30_000,
+  });
+}
+
+export function useOperationsHealth() {
+  return useQuery<OperationsHealth>({
+    queryKey: ["operations", "health"],
+    queryFn: getOperationsHealth,
+    staleTime: 20_000,
   });
 }

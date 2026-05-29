@@ -286,6 +286,30 @@ async def operations_vault_page(request: Request):
     return _console_next_response(request, "operations/vault/index.html")
 
 
+@router.get(
+    "/operations/workflows",
+    dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
+)
+@router.get(
+    "/operations/workflows/",
+    dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
+)
+async def operations_workflows_page(request: Request):
+    return _console_next_response(request, "operations/workflows/index.html")
+
+
+@router.get(
+    "/operations/metrics",
+    dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
+)
+@router.get(
+    "/operations/metrics/",
+    dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
+)
+async def operations_metrics_page(request: Request):
+    return _console_next_response(request, "operations/metrics/index.html")
+
+
 # Viewer pages are operational read surfaces. They stay permission-gated so
 # Monitor can deep-link into them without showing buttons the backend rejects.
 @router.get("/viewer/jobs", dependencies=[Depends(require_permission("monitor.read"))])

@@ -23,6 +23,15 @@
  *   GET    /security/audit
  *     → list of audit events
  *
+ *   GET    /api/copilot/workflow
+ *   GET    /api/copilot/workflow/{workflow_id}
+ *   POST   /api/copilot/workflow/{workflow_id}/plan     (CSRF)
+ *   POST   /api/copilot/workflow/{workflow_id}/execute  (CSRF)
+ *   POST   /api/copilot/workflow/{workflow_id}/cancel   (CSRF)
+ *
+ *   GET    /api/metrics/operational
+ *   GET    /api/operations/health
+ *
  *   GET    /api/vault/connections/{cartridge}
  *   GET    /api/vault/connections/{cartridge}/{conn_id}/reveal
  *   PUT    /api/vault/connections/{cartridge}/{conn_id}
@@ -135,4 +144,99 @@ export interface VaultSecretsResponse {
 
 export interface VaultSecretPayload {
   value: string;
+}
+
+// ── Workflows ──────────────────────────────────────────────────────
+
+export type OperationWorkflowStatus =
+  | "planning"
+  | "running"
+  | "waiting_approval"
+  | "completed"
+  | "cancelled"
+  | "failed"
+  | string;
+
+export type OperationWorkflowStepStatus =
+  | "pending"
+  | "running"
+  | "waiting_approval"
+  | "completed"
+  | "failed"
+  | "skipped"
+  | string;
+
+export interface OperationWorkflow {
+  id:              string;
+  intent?:         string | null;
+  status:          OperationWorkflowStatus;
+  current_step?:   number | null;
+  error?:          string | null;
+  created_at?:     string | null;
+  finished_at?:    string | null;
+  conversation_id?: string | null;
+  plan?:           unknown;
+}
+
+export interface OperationWorkflowStep {
+  id?:          number | string;
+  workflow_id?: string;
+  step_idx:     number;
+  description?: string | null;
+  tool?:        string | null;
+  args?:        Record<string, unknown> | null;
+  result?:      unknown;
+  status:       OperationWorkflowStepStatus;
+  started_at?:  string | null;
+  finished_at?: string | null;
+}
+
+export interface OperationWorkflowListResponse {
+  workflows: OperationWorkflow[];
+}
+
+export interface OperationWorkflowDetailResponse {
+  workflow: OperationWorkflow;
+  steps: OperationWorkflowStep[];
+}
+
+export interface OperationWorkflowActionResponse {
+  ok?: boolean;
+  workflow_id?: string;
+  status?: OperationWorkflowStatus;
+  step_results?: unknown[];
+  error?: string | null;
+}
+
+// ── Metrics ────────────────────────────────────────────────────────
+
+export interface SlowEntityMetric {
+  cartridge_id?: string | null;
+  entity_name?: string | null;
+  avg_sec?: number | string | null;
+}
+
+export interface OperationalMetrics {
+  extractions_24h: number;
+  errors_24h: number;
+  avg_duration_seconds: number;
+  slowest_entities_7d: SlowEntityMetric[];
+  audit_events_24h: number;
+}
+
+export interface ServiceProbe {
+  name: string;
+  status: "up" | "down" | string;
+  code?: number | null;
+  error?: string | null;
+}
+
+export interface OperationsHealth {
+  version: string;
+  services: ServiceProbe[];
+  summary: {
+    total: number;
+    up: number;
+    down: number;
+  };
 }

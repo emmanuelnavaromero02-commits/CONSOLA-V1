@@ -1,8 +1,14 @@
-import { api } from "@/lib/api";
+import { api, isApiError } from "@/lib/api";
 import type {
   AppUser,
   AuditEvent,
   CreateUserRequest,
+  OperationalMetrics,
+  OperationWorkflow,
+  OperationWorkflowActionResponse,
+  OperationWorkflowDetailResponse,
+  OperationWorkflowListResponse,
+  OperationsHealth,
   UpdateUserRequest,
   UsersListResponse,
   VaultConnection,
@@ -128,4 +134,69 @@ export async function upsertVaultSecret(
 
 export async function deleteVaultSecret(scope: string, key: string): Promise<void> {
   await api.delete(`/api/vault/secrets/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`);
+}
+
+// ── Workflows ──────────────────────────────────────────────────────
+
+export async function listOperationWorkflows(): Promise<OperationWorkflow[]> {
+  const { data } = await api.get<OperationWorkflowListResponse>("/api/copilot/workflow");
+  return data.workflows ?? [];
+}
+
+export async function getOperationWorkflow(id: string): Promise<OperationWorkflowDetailResponse> {
+  const { data } = await api.get<OperationWorkflowDetailResponse>(
+    `/api/copilot/workflow/${encodeURIComponent(id)}`,
+  );
+  return {
+    workflow: data.workflow,
+    steps: data.steps ?? [],
+  };
+}
+
+export async function triggerOperationWorkflow(workflow: OperationWorkflow): Promise<OperationWorkflowActionResponse> {
+  const id = encodeURIComponent(workflow.id);
+  if (workflow.status === "planning") {
+    try {
+      await api.post(`/api/copilot/workflow/${id}/plan`, {});
+    } catch (error) {
+      if (!(isApiError(error) && error.status === 409)) {
+        throw error;
+      }
+    }
+  }
+  const { data } = await api.post<OperationWorkflowActionResponse>(
+    `/api/copilot/workflow/${id}/execute`,
+    {},
+  );
+  return data;
+}
+
+export async function cancelOperationWorkflow(workflowId: string): Promise<OperationWorkflowActionResponse> {
+  const { data } = await api.post<OperationWorkflowActionResponse>(
+    `/api/copilot/workflow/${encodeURIComponent(workflowId)}/cancel`,
+    {},
+  );
+  return data;
+}
+
+// ── Metrics ────────────────────────────────────────────────────────
+
+export async function getOperationalMetrics(): Promise<OperationalMetrics> {
+  const { data } = await api.get<OperationalMetrics>("/api/metrics/operational");
+  return {
+    extractions_24h: Number(data.extractions_24h ?? 0),
+    errors_24h: Number(data.errors_24h ?? 0),
+    avg_duration_seconds: Number(data.avg_duration_seconds ?? 0),
+    slowest_entities_7d: data.slowest_entities_7d ?? [],
+    audit_events_24h: Number(data.audit_events_24h ?? 0),
+  };
+}
+
+export async function getOperationsHealth(): Promise<OperationsHealth> {
+  const { data } = await api.get<OperationsHealth>("/api/operations/health");
+  return {
+    version: data.version ?? "unknown",
+    services: data.services ?? [],
+    summary: data.summary ?? { total: 0, up: 0, down: 0 },
+  };
 }

@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import {
+  Activity,
   ArrowRight,
   FileSearch,
   KeySquare,
   Users,
+  Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -54,6 +56,18 @@ const READY_MODULES: ModuleCard[] = [
     description: "Inspecciona las conexiones guardadas por cartucho.",
     icon:        KeySquare,
   },
+  {
+    href:        "/operations/workflows",
+    title:       "Workflows",
+    description: "Visualiza flujos, ejecútalos y cancela corridas activas.",
+    icon:        Workflow,
+  },
+  {
+    href:        "/operations/metrics",
+    title:       "Métricas",
+    description: "Salud de servicios, extracciones, errores y carga reciente.",
+    icon:        Activity,
+  },
 ];
 
 
@@ -73,7 +87,7 @@ const PENDING_MODULES = [
 
 export default function OperationsOverviewPage() {
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+    <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Operaciones</h1>
         <p className="text-sm text-muted-foreground">

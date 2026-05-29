@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
-import { FileSearch, KeySquare, ShieldCheck, Users } from "lucide-react";
+import { Activity, FileSearch, KeySquare, ShieldCheck, Users, Workflow } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,8 @@ interface SubNavItem {
  *   - Users (full CRUD against /api/admin/users)
  *   - Audit (read against /security/audit)
  *   - Vault (read connections against /api/vault/connections)
+ *   - Workflows (read/execute/cancel against /api/copilot/workflow)
+ *   - Metrics (read against /api/metrics and /api/operations/health)
  *
  * Workspaces / Monitor / Settings sub-pages are intentionally
  * absent — the backend endpoints don't exist yet (see audit
@@ -31,6 +33,8 @@ const ITEMS: SubNavItem[] = [
   { href: "/operations/users",  label: "Usuarios", icon: Users },
   { href: "/operations/audit",  label: "Auditoría", icon: FileSearch },
   { href: "/operations/vault",  label: "Vault",    icon: KeySquare },
+  { href: "/operations/workflows", label: "Workflows", icon: Workflow },
+  { href: "/operations/metrics",   label: "Métricas",  icon: Activity },
 ];
 
 
@@ -47,7 +51,7 @@ export function OperationsSubNav() {
       aria-label="Secciones de Operaciones"
       className="overflow-x-auto border-b"
     >
-      <ul className="mx-auto flex max-w-6xl items-center gap-1 px-6">
+      <ul className="mx-auto flex max-w-7xl items-center gap-1 px-6">
         {ITEMS.map((item) => {
           const Icon   = item.icon;
           const active = isActive(pathname, item.href);
