@@ -31,7 +31,7 @@ GEMINI_CACHE_ENABLED = os.environ.get("GEMINI_CACHE_ENABLED", "true").lower() ==
 
 _PROVIDER_DEFAULTS = {
     "anthropic": "claude-haiku-4-5-20251001",
-    "gemini":    "gemini-1.5-flash",
+    "gemini":    "gemini-2.5-flash",
     "ollama":    "llama3.2",
 }
 CHAT_MODEL = os.environ.get(

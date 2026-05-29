@@ -52,6 +52,7 @@ async def request_admin_help(
     what_is_needed: str,
     user_email: str = "",
     user_name: str = "",
+    **_: object,
 ) -> dict:
     recipients = _resolve_recipients()
     if not recipients:

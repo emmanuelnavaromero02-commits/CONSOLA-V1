@@ -89,6 +89,41 @@ async def consume(token: str) -> None:
     await p.execute("UPDATE user_tokens SET used_at = NOW() WHERE token = $1", token)
 
 
+async def consume_lookup(db, token: str | None = None, kind: str | None = None) -> dict | None:
+    """Atomically validate and consume a single-use token.
+
+    Supports both the current call shape ``consume_lookup(token, kind)`` and
+    the explicit test/service shape ``consume_lookup(db, token, kind)``.
+    """
+    if kind is None:
+        actual_token = str(db or "")
+        actual_kind = str(token or "")
+        executor = await _pool()
+    else:
+        actual_token = str(token or "")
+        actual_kind = str(kind or "")
+        executor = db if db is not None else await _pool()
+
+    if not actual_token or actual_kind not in ("invite", "reset", "vpn"):
+        return None
+
+    row = await executor.fetchrow(
+        """UPDATE user_tokens AS t
+              SET used_at = NOW()
+             FROM users AS u
+            WHERE t.user_id = u.id
+              AND t.token = $1
+              AND t.kind = $2
+              AND t.used_at IS NULL
+              AND t.expires_at > NOW()
+        RETURNING t.user_id, t.expires_at, t.wg_client_id,
+                  u.email, u.name, u.role, u.is_active""",
+        actual_token,
+        actual_kind,
+    )
+    return dict(row) if row else None
+
+
 async def cleanup_expired() -> int:
     p = await _pool()
     res = await p.execute("DELETE FROM user_tokens WHERE expires_at < NOW() - INTERVAL '7 days'")

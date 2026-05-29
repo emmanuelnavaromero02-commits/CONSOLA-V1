@@ -8,7 +8,7 @@ from app.services import operations_service
 
 async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
     role = (user or {}).get("role") or (user or {}).get("workspace_role")
-    if role != ROLE_ADMIN:
+    if role not in {ROLE_ADMIN, "owner", "super_admin"}:
         raise HTTPException(status_code=403, detail="admin role required")
     return user
 
