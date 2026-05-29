@@ -222,7 +222,9 @@ def test_workspace_and_mcp_are_scoped_to_active_cartridge_entitlements():
     assert "unrestricted = admin and not explicit_scope" not in assistant
     assert "if not unrestricted and \"*\" not in allowed" in assistant
     assert "explicit_scope = explicit_cartridges is not None" in security_context
-    assert "id IN (" in assistant
+    assert 'json=_payload("list_cartridges", {}, user)' in assistant
+    assert 'json=_payload("cartridge_get_hints", {"cartridge_id": cartridge_id}, user)' in assistant
+    assert '"postgres_execute_query"' not in assistant
     assert '_mcp_payload("list_datasets"' in workspace
     assert '_mcp_payload("get_schema"' in workspace
     assert "_is_unscoped_admin_context" in mcp
