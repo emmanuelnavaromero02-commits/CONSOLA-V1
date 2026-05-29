@@ -32,10 +32,10 @@ from typing import Any
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from requests.auth import HTTPBasicAuth
 
+from app.core.auth_factory import auth_trace, build_auth_headers, normalize_auth_method
 from app.core.config import settings
-from app.core.vault_client import get_secret_for_worker
+from app.core.vault_client import get_connection_for_worker, get_secret_for_worker
 
 logger = logging.getLogger(__name__)
 # urllib3 retry logger is noisy by default; INFO surfaces retries
@@ -94,6 +94,7 @@ class SapS4Client:
 
     def __init__(self) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
+        self._vault_connection = get_connection_for_worker("sap_s4hana")
         self.base_url = (
             get_secret_for_worker("sap_s4hana", "SAP_S4_BASE_URL")
             or settings.sap_s4_base_url
@@ -111,17 +112,33 @@ class SapS4Client:
             or settings.sap_s4_api_key
             or os.environ.get("S4_API_KEY", "")
         )
+        self.token = get_secret_for_worker("sap_s4hana", "SAP_S4_TOKEN")
+        self.auth_method = normalize_auth_method(
+            self._vault_connection.get("auth_method"),
+            "basic",
+        )
+        self._auth_payload = {
+            **self._vault_connection,
+            "auth_method": self.auth_method,
+            "user": self.user,
+            "username": self.user,
+            "password": self.password,
+            "api_key": self.api_key or self._vault_connection.get("api_key") or self.token,
+            "token": self.token or self._vault_connection.get("token") or self.api_key,
+        }
 
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
 
     def configuration_status(self) -> dict[str, Any]:
-        required = {
-            "SAP_S4_BASE_URL": self.base_url,
-            "SAP_S4_USER": self.user,
-            "SAP_S4_PASS": self.password,
-        }
+        required = {"SAP_S4_BASE_URL": self.base_url}
+        if self.auth_method == "basic":
+            required.update({"SAP_S4_USER": self.user, "SAP_S4_PASS": self.password})
+        elif self.auth_method == "api_key":
+            required["SAP_S4_API_KEY"] = self.api_key or self.token or self._vault_connection.get("token")
+        elif self.auth_method == "bearer_token":
+            required["SAP_S4_TOKEN"] = self.token or self.api_key or self._vault_connection.get("token")
         missing = [name for name, value in required.items() if not value]
         return {
             "cartridge": self.CARTRIDGE_ID,
@@ -142,17 +159,31 @@ class SapS4Client:
     # HTTP plumbing
     # ------------------------------------------------------------------
 
-    def _auth(self) -> HTTPBasicAuth:
-        return HTTPBasicAuth(self.user, self.password)
-
     def _headers(self) -> dict[str, str]:
-        headers = {
-            "Accept": "application/json",
-            "sap-client": self.client_mandant,
-        }
-        if self.api_key:
+        headers, _, _ = build_auth_headers(
+            self._auth_payload,
+            default_method="basic",
+            default_api_key_header="APIKey",
+            base_headers={
+                "Accept": "application/json",
+                "sap-client": self.client_mandant,
+            },
+        )
+        if self.api_key and self.auth_method != "api_key":
             headers["APIKey"] = self.api_key
         return headers
+
+    def _log_auth(self, status_code: int | None = None) -> None:
+        _, method, header_names = build_auth_headers(
+            self._auth_payload,
+            default_method="basic",
+            default_api_key_header="APIKey",
+            base_headers={"Accept": "application/json"},
+        )
+        if self.api_key and method != "api_key":
+            header_names = tuple(dict.fromkeys((*header_names, "APIKey")))
+        suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
+        logger.warning("%s%s", auth_trace(method, header_names), suffix)
 
     # ------------------------------------------------------------------
     # Connectivity
@@ -191,13 +222,14 @@ class SapS4Client:
             else f"{self.base_url}/$metadata"
 
         try:
+            logger.warning("SAP S/4HANA outbound GET %s", probe_url)
             resp = self._session.get(
                 probe_url,
-                auth=self._auth(),
                 headers=self._headers(),
                 params={"sap-client": self.client_mandant},
                 timeout=30,
             )
+            self._log_auth(resp.status_code)
             resp.raise_for_status()
             return {
                 "status": "ok",
@@ -265,13 +297,14 @@ class SapS4Client:
 
         url = f"{self.base_url}/{entity}"
         try:
+            logger.warning("SAP S/4HANA outbound GET %s", url)
             resp = self._session.get(
                 url,
                 params=params,
-                auth=self._auth(),
                 headers=self._headers(),
                 timeout=120,
             )
+            self._log_auth(resp.status_code)
             resp.raise_for_status()
             payload = resp.json()
         except requests.RequestException as exc:

@@ -18,6 +18,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SAP_S4_PASS": ("password", "pass", "sap_s4_pass"),
     "SAP_S4_CLIENT_MANDANT": ("client_mandant", "mandant", "client", "sap_s4_client_mandant"),
     "SAP_S4_API_KEY": ("api_key", "apikey", "token", "sap_s4_api_key"),
+    "SAP_S4_TOKEN": ("token", "api_token", "api_key", "sap_s4_token"),
 }
 
 _SERVICE_HEADERS: dict[str, tuple[str, ...]] = {
@@ -104,6 +105,11 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
         if value is not None and str(value).strip():
             return str(value)
     return ""
+
+
+def get_connection_for_worker(service_name: str) -> dict[str, Any]:
+    """Return the resolved Console Vault connection payload for a worker."""
+    return dict(_fetch_connection(service_name))
 
 
 def get_sap_s4hana_credentials() -> tuple[str, str, str]:

@@ -273,6 +273,7 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
     "replicon": {
         "replicon": ("INTERNAL_API_KEY_REPLICON_TO_CONSOLE",),
         "cartridge-replicon": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
     "sap_hcm": {
         "cartridge-sap_hcm": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),

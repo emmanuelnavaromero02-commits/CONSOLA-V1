@@ -16,6 +16,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SAP_HCM_BASE_URL": ("base_url", "url", "host", "sap_hcm_base_url"),
     "SAP_HCM_USER": ("user", "username", "sap_hcm_user"),
     "SAP_HCM_PASS": ("password", "pass", "sap_hcm_pass"),
+    "SAP_HCM_API_KEY": ("api_key", "token", "api_token", "sap_hcm_api_key"),
+    "SAP_HCM_TOKEN": ("token", "api_token", "api_key", "sap_hcm_token"),
     "SAP_HCM_CLIENT_MANDANT": ("client_mandant", "mandant", "client", "sap_hcm_client_mandant"),
 }
 
@@ -103,6 +105,11 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
         if value is not None and str(value).strip():
             return str(value)
     return ""
+
+
+def get_connection_for_worker(service_name: str) -> dict[str, Any]:
+    """Return the resolved Console Vault connection payload for a worker."""
+    return dict(_fetch_connection(service_name))
 
 
 def get_sap_hcm_credentials() -> tuple[str, str, str]:

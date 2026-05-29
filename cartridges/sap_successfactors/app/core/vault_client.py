@@ -19,6 +19,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SF_CLIENT_ID": ("client_id", "sf_client_id"),
     "SF_CLIENT_SECRET": ("client_secret", "secret", "password", "sf_client_secret"),
     "SF_TOKEN_URL": ("token_url", "oauth_token_url", "sf_token_url"),
+    "SF_ACCESS_TOKEN": ("access_token", "token", "api_token", "sf_access_token"),
+    "SF_API_KEY": ("api_key", "token", "api_token", "sf_api_key"),
 }
 
 _SERVICE_HEADERS: dict[str, tuple[str, ...]] = {
@@ -105,6 +107,11 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
         if value is not None and str(value).strip():
             return str(value)
     return ""
+
+
+def get_connection_for_worker(service_name: str) -> dict[str, Any]:
+    """Return the resolved Console Vault connection payload for a worker."""
+    return dict(_fetch_connection(service_name))
 
 
 def get_sap_successfactors_credentials() -> tuple[str, str, str, str, str]:

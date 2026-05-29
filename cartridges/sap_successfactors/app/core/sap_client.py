@@ -17,9 +17,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from app.core.auth_factory import auth_trace, build_auth_headers
 from app.core.config import settings
 from app.core.settings_proxy import get_setting
-from app.core.vault_client import get_secret_for_worker
+from app.core.vault_client import get_connection_for_worker, get_secret_for_worker
 
 logger = logging.getLogger(__name__)
 # urllib3 retry logger is noisy by default; INFO surfaces retries
@@ -78,6 +79,7 @@ class SapSfClient:
 
     def __init__(self) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
+        self._vault_connection = get_connection_for_worker("sap_successfactors")
         self.base_url = (
             get_secret_for_worker("sap_successfactors", "SF_BASE_URL")
             or get_setting("sap_successfactors_base_url", default=settings.sf_base_url, env_fallback="SF_BASE_URL")
@@ -103,6 +105,22 @@ class SapSfClient:
             get_secret_for_worker("sap_successfactors", "SF_COMPANY_ID")
             or settings.sf_company_id
         )
+        self.auth_method = str(
+            self._vault_connection.get("auth_method") or "oauth2_client_credentials",
+        ).strip().lower().replace("-", "_")
+        static_token = (
+            get_secret_for_worker("sap_successfactors", "SF_ACCESS_TOKEN")
+            or get_secret_for_worker("sap_successfactors", "SF_API_KEY")
+        )
+        self._auth_payload = {
+            **self._vault_connection,
+            "auth_method": self.auth_method,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "token": static_token or self._vault_connection.get("token"),
+            "access_token": static_token or self._vault_connection.get("access_token"),
+            "api_key": static_token or self._vault_connection.get("api_key"),
+        }
         self._token: str | None = None
         self._token_expires_at = 0.0
 
@@ -111,13 +129,18 @@ class SapSfClient:
     # ------------------------------------------------------------------
 
     def configuration_status(self) -> dict[str, Any]:
-        required = {
-            "SF_BASE_URL": self.base_url,
-            "SF_CLIENT_ID": self.client_id,
-            "SF_CLIENT_SECRET": self.client_secret,
-            "SF_TOKEN_URL": self.token_url,
-            "SF_COMPANY_ID": self.company_id,
-        }
+        required = {"SF_BASE_URL": self.base_url}
+        if self.auth_method in {"oauth2", "oauth2_client_credentials", "client_credentials"}:
+            required.update({
+                "SF_CLIENT_ID": self.client_id,
+                "SF_CLIENT_SECRET": self.client_secret,
+                "SF_TOKEN_URL": self.token_url,
+                "SF_COMPANY_ID": self.company_id,
+            })
+        elif self.auth_method in {"bearer", "bearer_token", "token"}:
+            required["SF_ACCESS_TOKEN"] = self._auth_payload.get("token") or self._auth_payload.get("access_token")
+        elif self.auth_method in {"api_key", "apikey", "x_api_key"}:
+            required["SF_API_KEY"] = self._auth_payload.get("api_key") or self._auth_payload.get("token")
         missing = [name for name, value in required.items() if not value]
         return {
             "cartridge": self.CARTRIDGE_ID,
@@ -143,6 +166,11 @@ class SapSfClient:
 
         self._require_configured()
         try:
+            logger.warning("SAP SuccessFactors outbound POST %s", self.token_url)
+            logger.warning(
+                "%s",
+                auth_trace("oauth2_client_credentials", ("Authorization",)),
+            )
             resp = self._session.post(
                 self.token_url,
                 data={
@@ -168,10 +196,31 @@ class SapSfClient:
         return token
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._get_token()}",
-            "Accept": "application/json",
-        }
+        if self.auth_method in {"oauth2", "oauth2_client_credentials", "client_credentials"}:
+            return {
+                "Authorization": f"Bearer {self._get_token()}",
+                "Accept": "application/json",
+            }
+        headers, _, _ = build_auth_headers(
+            self._auth_payload,
+            default_method="bearer_token",
+            default_api_key_header="X-API-Key",
+            base_headers={"Accept": "application/json"},
+        )
+        return headers
+
+    def _log_auth(self, status_code: int | None = None) -> None:
+        if self.auth_method in {"oauth2", "oauth2_client_credentials", "client_credentials"}:
+            method, header_names = "oauth2_client_credentials", ("Authorization",)
+        else:
+            _, method, header_names = build_auth_headers(
+                self._auth_payload,
+                default_method="bearer_token",
+                default_api_key_header="X-API-Key",
+                base_headers={"Accept": "application/json"},
+            )
+        suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
+        logger.warning("%s%s", auth_trace(method, header_names), suffix)
 
     # ------------------------------------------------------------------
     # Connectivity
@@ -182,12 +231,14 @@ class SapSfClient:
         if not status["configured"]:
             return {"status": "degraded", **status}
         try:
+            logger.warning("SAP SuccessFactors outbound GET %s", f"{self.base_url}/$metadata")
             resp = self._session.get(
                 f"{self.base_url}/$metadata",
                 headers=self._headers(),
                 params={"$format": "json"},
                 timeout=30,
             )
+            self._log_auth(resp.status_code)
             resp.raise_for_status()
             return {"status": "ok", "configured": True, "base_url": self.base_url}
         except requests.RequestException as exc:
@@ -243,7 +294,9 @@ class SapSfClient:
 
         url = f"{self.base_url}/{entity}"
         try:
+            logger.warning("SAP SuccessFactors outbound GET %s", url)
             resp = self._session.get(url, params=params, headers=self._headers(), timeout=120)
+            self._log_auth(resp.status_code)
             resp.raise_for_status()
             payload = resp.json()
         except requests.RequestException as exc:

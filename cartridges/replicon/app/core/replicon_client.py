@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -9,18 +10,21 @@ import pandas as pd
 import requests
 
 from app.core.config import settings
-from app.core.vault_client import get_replicon_credentials
+from app.core.auth_factory import auth_trace, build_auth_headers
+from app.core.vault_client import get_replicon_connection
 
 _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _RETRY_ATTEMPTS = 5
 _RETRY_BASE_DELAY = 1.0  # doubles each attempt: 1, 2, 4, 8, 16 s
+logger = logging.getLogger(__name__)
 
 
 class RepliconClient:
     """
     Client for the Replicon Analytics BI API.
 
-    Authentication: static Bearer token from REPLICON_TOKEN env var.
+    Authentication: dynamic Auth Factory from the Vault connection
+    ``auth_method`` (bearer_token, api_key, basic, none).
 
     Extract flow (async):
       1. POST /extracts  →  { extractId }
@@ -31,15 +35,18 @@ class RepliconClient:
 
     def __init__(self) -> None:
         if settings.use_demo_data:
-            base_url = settings.replicon_base_url
-            token = settings.replicon_api_token or ""
+            connection = {
+                "base_url": settings.replicon_base_url,
+                "auth_method": "bearer_token",
+                "token": settings.replicon_api_token or "",
+            }
         else:
-            base_url, token = get_replicon_credentials()
-        self.base_url = base_url.rstrip("/")
-        self._token = token
+            connection = get_replicon_connection()
+        self.base_url = str(connection.get("base_url") or "").rstrip("/")
+        self._auth_connection = connection
 
-        if not settings.use_demo_data and not self._token:
-            raise EnvironmentError("REPLICON_TOKEN is required (set in .env)")
+        if not settings.use_demo_data and not self.base_url:
+            raise EnvironmentError("Replicon base_url is required (set env or Vault connection)")
 
     # ------------------------------------------------------------------
     # Auth header
@@ -47,11 +54,23 @@ class RepliconClient:
 
     @property
     def _auth_headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
+        headers, _, _ = build_auth_headers(
+            self._auth_connection,
+            default_method="bearer_token",
+            default_api_key_header="X-API-Key",
+            base_headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        return headers
+
+    def _log_auth(self, status_code: int | None = None) -> None:
+        _, method, header_names = build_auth_headers(
+            self._auth_connection,
+            default_method="bearer_token",
+            default_api_key_header="X-API-Key",
+            base_headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
+        logger.warning("%s%s", auth_trace(method, header_names), suffix)
 
     # ------------------------------------------------------------------
     # HTTP helpers with retry / backoff
@@ -64,7 +83,9 @@ class RepliconClient:
 
         for _ in range(_RETRY_ATTEMPTS):
             try:
+                logger.warning("Replicon outbound GET %s", url)
                 resp = requests.get(url, headers=self._auth_headers, timeout=timeout)
+                self._log_auth(resp.status_code)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 last_exc = exc
                 time.sleep(delay); delay *= 2
@@ -88,7 +109,9 @@ class RepliconClient:
 
         for _ in range(_RETRY_ATTEMPTS):
             try:
+                logger.warning("Replicon outbound POST %s", url)
                 resp = requests.post(url, headers=self._auth_headers, json=body, timeout=timeout)
+                self._log_auth(resp.status_code)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 last_exc = exc
                 time.sleep(delay); delay *= 2
@@ -156,6 +179,7 @@ class RepliconClient:
         for _ in range(_RETRY_ATTEMPTS):
             try:
                 # S3 pre-signed URLs must NOT include the Authorization header
+                logger.warning("Replicon outbound CSV download %s", url.split("?", 1)[0])
                 resp = requests.get(url, timeout=120)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
                 last_exc = exc

@@ -23,6 +23,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "REPLICON_API_TOKEN": ("token", "api_token", "api_key", "password", "replicon_api_token"),
     "REPLICON_TOKEN": ("token", "api_token", "api_key", "password", "replicon_token"),
     "REPLICON_API_KEY": ("api_key", "token", "api_token", "password", "replicon_api_key"),
+    "REPLICON_USER": ("user", "username", "replicon_user"),
+    "REPLICON_PASSWORD": ("password", "pass", "token", "replicon_password"),
 }
 
 _SERVICE_HEADERS: dict[str, tuple[str, ...]] = {
@@ -113,13 +115,48 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
     return ""
 
 
-def get_replicon_credentials() -> tuple[str, str]:
-    """Return (base_url, token) from environment or Console Vault."""
-    base_url = (
+def get_connection_for_worker(service_name: str) -> dict[str, Any]:
+    """Return the resolved Console Vault connection payload for a worker."""
+    return dict(_fetch_connection(service_name))
+
+
+def get_replicon_connection() -> dict[str, Any]:
+    """Return Replicon connection material from env first, then Console Vault."""
+    payload = get_connection_for_worker("replicon")
+    connection = dict(payload)
+    connection["base_url"] = (
         get_secret_for_worker("replicon", "REPLICON_BASE_URL")
         or settings.replicon_base_url
     )
-    token = get_secret_for_worker("replicon", "REPLICON_API_TOKEN") or settings.replicon_api_token or ""
+    auth_method = str(connection.get("auth_method") or "bearer_token").strip().lower()
+    if auth_method == "basic":
+        user = get_secret_for_worker("replicon", "REPLICON_USER")
+        password = get_secret_for_worker("replicon", "REPLICON_PASSWORD")
+        if user:
+            connection["user"] = user
+        if password:
+            connection["password"] = password
+    else:
+        token = get_secret_for_worker("replicon", "REPLICON_API_TOKEN") or settings.replicon_api_token or ""
+        if token:
+            if auth_method in {"api_key", "apikey", "x_api_key"}:
+                connection.setdefault("api_key", token)
+            else:
+                connection.setdefault("token", token)
+    connection.setdefault("auth_method", auth_method)
+    return connection
+
+
+def get_replicon_credentials() -> tuple[str, str]:
+    """Return (base_url, token) from environment or Console Vault."""
+    connection = get_replicon_connection()
+    base_url = str(connection.get("base_url") or "")
+    token = (
+        str(connection.get("token") or "")
+        or str(connection.get("api_token") or "")
+        or str(connection.get("api_key") or "")
+        or str(connection.get("password") or "")
+    )
     if not token:
         raise ValueError(
             "Replicon API token not configured.\n"

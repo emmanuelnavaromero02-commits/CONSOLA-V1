@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
 
@@ -15,6 +16,24 @@ from app.services.kb_service import (
 
 router = APIRouter(prefix="/skills", tags=["skills"], dependencies=[Depends(verify_api_key)])
 _SERVICE = "replicon"
+
+
+def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse:
+    response = getattr(exc, "response", None)
+    upstream_status = getattr(response, "status_code", None)
+    message = "Replicon upstream rejected the request."
+    if upstream_status not in (401, 403):
+        message = "Replicon upstream request failed."
+    payload = {
+        "status": "failed",
+        "error": "external_request_failed",
+        "message": message,
+    }
+    if entity:
+        payload["entity"] = entity
+    if upstream_status:
+        payload["upstream_status"] = upstream_status
+    return JSONResponse(status_code=502, content=payload)
 
 
 def _humanise_path(path: str) -> str:
@@ -89,7 +108,10 @@ def run_full_load(entity: str) -> dict:
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
-    return run_entity({**config, "mode": "full"})
+    try:
+        return run_entity({**config, "mode": "full"})
+    except Exception as exc:
+        return _external_failure(exc, entity)
 
 
 @router.post("/run_incremental/{entity}")
@@ -97,7 +119,10 @@ def run_incremental(entity: str) -> dict:
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
-    return run_entity({**config, "mode": "incremental"})
+    try:
+        return run_entity({**config, "mode": "incremental"})
+    except Exception as exc:
+        return _external_failure(exc, entity)
 
 
 @router.post("/run_full_load_all")
@@ -142,7 +167,10 @@ def run_historical_load(entity: str, from_date: str, to_date: str) -> dict:
             status_code=400,
             detail=f"Entity {entity} has no date_field configured. Use run_full_load instead.",
         )
-    return run_entity(dict(config), from_date=from_date, to_date=to_date)
+    try:
+        return run_entity(dict(config), from_date=from_date, to_date=to_date)
+    except Exception as exc:
+        return _external_failure(exc, entity)
 
 
 @router.post("/run_historical_load_all")

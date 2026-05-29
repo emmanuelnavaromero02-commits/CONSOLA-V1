@@ -21,9 +21,9 @@ import httpx
 import requests as _requests
 
 from app.core.config import settings
-from app.core.vault_client import get_replicon_credentials
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
+DEFAULT_CONN_ID = "default"
 
 _pool: asyncpg.Pool | None = None
 _tasks: dict[str, asyncio.Task] = {}
@@ -252,7 +252,6 @@ async def _trigger_airflow(
 ) -> None:
     """POST to Airflow REST API to trigger the replicon_extract DAG."""
     entity = config.get("entity", "")
-    replicon_base_url, replicon_token = get_replicon_credentials()
     conf = {
         "job_id":            job_id,
         "entity":            entity,
@@ -260,8 +259,7 @@ async def _trigger_airflow(
         "from_date":         from_date or "",
         "to_date":           to_date or "",
         "watermark_field":   config.get("watermark_field") or "",
-        "replicon_base_url": replicon_base_url,
-        "replicon_token":    replicon_token,
+        "connection_id":     config.get("connection_id") or DEFAULT_CONN_ID,
     }
     url = f"{settings.airflow_url}/api/v1/dags/replicon_extract/dagRuns"
     loop = asyncio.get_event_loop()

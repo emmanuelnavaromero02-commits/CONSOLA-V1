@@ -3,9 +3,7 @@ replicon_extract DAG  (Pattern B — portable, no custom container)
 =================================================================
 Extrae UNA entidad de Replicon API → Parquet → MinIO (Bronze).
 
-Credenciales en Airflow UI > Admin > Connections > +:
-  replicon_analytics: Conn Type=HTTP, Host=<base_url>, Password=<bearer_token>
-  replicon_services:  Conn Type=HTTP, Host=<base_url>, Password=<bearer_token>
+Credenciales: Console/Vault en connections/replicon/default.
 
 El conf de cada run puede sobreescribir parámetros:
   entity          — nombre de la entidad (requerido)
@@ -16,13 +14,37 @@ El conf de cada run puede sobreescribir parámetros:
 from __future__ import annotations
 
 import io
+import logging
 import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
+
+try:
+    from replicon_auth_factory import auth_trace, build_auth_headers
+except ModuleNotFoundError:  # pragma: no cover - defensive for direct file imports
+    import importlib.util
+
+    _auth_factory_path = Path(__file__).with_name("replicon_auth_factory.py")
+    _auth_factory_spec = importlib.util.spec_from_file_location(
+        "replicon_auth_factory",
+        _auth_factory_path,
+    )
+    if not _auth_factory_spec or not _auth_factory_spec.loader:
+        raise
+    _auth_factory = importlib.util.module_from_spec(_auth_factory_spec)
+    _auth_factory_spec.loader.exec_module(_auth_factory)
+    auth_trace = _auth_factory.auth_trace
+    build_auth_headers = _auth_factory.build_auth_headers
+
+
+DEFAULT_CONN_ID = "default"
+LEGACY_CONN_IDS = ("analytics",)
+logger = logging.getLogger(__name__)
 
 
 # Entity → connection and watermark config read from entity_config table.
@@ -79,41 +101,75 @@ def _is_production() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
 
 
-def _internal_key(env_name: str) -> str:
-    key = os.environ.get(env_name, "")
-    if key:
-        return key
+def _internal_auth_headers() -> dict[str, str]:
+    replicon_key = os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", "")
+    if replicon_key:
+        return {"x-internal-service": "replicon", "x-api-key": replicon_key}
+
+    airflow_key = os.environ.get("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE", "")
+    if airflow_key:
+        return {"x-internal-service": "airflow", "x-api-key": airflow_key}
+
     if not _is_production():
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:
-            return legacy
-    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+            return {"x-internal-service": "airflow", "x-api-key": legacy}
+    raise RuntimeError(
+        "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE missing; legacy INTERNAL_API_KEY fallback is disabled in production"
+    )
 
 
-def _get_connection(conn_id: str) -> tuple[str, str]:
-    """Return (base_url, token) from Console Vault connection replicon/<conn_id>."""
+def _get_connection(conn_id: str = DEFAULT_CONN_ID) -> tuple[str, dict, str]:
+    """Return (base_url, connection_payload, conn_id) from Console Vault."""
     import os
     import requests
 
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
-    key = _internal_key("INTERNAL_API_KEY_REPLICON_TO_CONSOLE")
+    headers = _internal_auth_headers()
 
-    try:
-        resp = requests.get(
-            f"{console_url}/api/vault/connections/replicon/{conn_id}/reveal",
-            headers={"x-internal-service": "replicon", "x-api-key": key},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        raise ValueError(f"No se pudo revelar Vault replicon/{conn_id}: {exc}") from exc
+    requested = (conn_id or DEFAULT_CONN_ID).strip() or DEFAULT_CONN_ID
+    candidates = tuple(dict.fromkeys((requested, DEFAULT_CONN_ID, *LEGACY_CONN_IDS)))
+    errors: list[str] = []
+    for candidate in candidates:
+        try:
+            resp = requests.get(
+                f"{console_url}/api/vault/connections/replicon/{candidate}/reveal",
+                headers=headers,
+                timeout=20,
+            )
+            if resp.status_code == 404:
+                errors.append(f"{candidate}: 404")
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+            continue
 
-    base_url = data.get("base_url") or data.get("url") or data.get("host") or ""
-    token = data.get("token") or data.get("api_token") or data.get("password") or ""
-    if not base_url or not token:
-        raise ValueError(f"Vault replicon/{conn_id} incompleto — falta base_url/token")
-    return base_url, token
+        base_url = data.get("base_url") or data.get("url") or data.get("host") or ""
+        auth_payload = dict(data)
+        auth_payload.setdefault("auth_method", "bearer_token")
+        if base_url:
+            auth_payload["base_url"] = base_url
+        try:
+            build_auth_headers(
+                auth_payload,
+                default_method="bearer_token",
+                default_api_key_header="X-API-Key",
+                base_headers={"Accept": "application/json"},
+            )
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+            continue
+        if base_url:
+            logger.warning("Vault connection resolved from connections/replicon/%s", candidate)
+            return base_url, auth_payload, candidate
+        errors.append(f"{candidate}: missing base_url")
+
+    raise ValueError(
+        "No se pudo revelar Vault connections/replicon/default"
+        + (f" (intentos: {'; '.join(errors)})" if errors else "")
+    )
 
 
 def _get_entity_config(entity: str) -> dict:
@@ -132,13 +188,13 @@ def _get_entity_config(entity: str) -> dict:
             return {"connection_id": row[0], "watermark_field": row[1], "mode": row[2]}
     except Exception:
         pass
-    return {"connection_id": "analytics", "watermark_field": None, "mode": "full"}
+    return {"connection_id": DEFAULT_CONN_ID, "watermark_field": None, "mode": "full"}
 
 
-def _resolve_connection(entity: str) -> tuple[str, str]:
-    """Return (base_url, token) for the entity's connection via entity_config → Vault."""
+def _resolve_connection(entity: str, requested_conn_id: str | None = None) -> tuple[str, dict, str]:
+    """Return (base_url, connection_payload, conn_id) via entity_config → Console/Vault."""
     cfg     = _get_entity_config(entity)
-    conn_id = cfg.get("connection_id") or "analytics"
+    conn_id = requested_conn_id or cfg.get("connection_id") or DEFAULT_CONN_ID
     return _get_connection(conn_id)
 
 
@@ -184,25 +240,38 @@ class _RepliconClient:
     RETRY     = 5
     RETRYABLE = {429, 500, 502, 503, 504}
 
-    def __init__(self, base_url: str, token: str,
+    def __init__(self, base_url: str, connection: dict,
                  poll_interval: float = 2.0, poll_timeout: int = 300):
         import requests as _req
         self._s = _req.Session()
-        self._s.headers.update({
-            "Authorization": f"Bearer {token}",
-            "Content-Type":  "application/json",
-            "Accept":        "application/json",
-        })
+        headers, method, auth_headers = build_auth_headers(
+            connection,
+            default_method="bearer_token",
+            default_api_key_header="X-API-Key",
+            base_headers={
+                "Content-Type":  "application/json",
+                "Accept":        "application/json",
+            },
+        )
+        self._s.headers.update(headers)
+        self._auth_method = method
+        self._auth_headers = auth_headers
         self.base          = base_url.rstrip("/")
         self.poll_interval = poll_interval
         self.poll_timeout  = poll_timeout
+
+    def _log_auth(self, status_code: int | None = None) -> None:
+        suffix = f" -> Respuesta del servidor {status_code}" if status_code is not None else ""
+        logger.warning("%s%s", auth_trace(self._auth_method, self._auth_headers), suffix)
 
     def _get(self, path: str) -> dict:
         import requests as _req
         url, delay = f"{self.base}{path}", 1.0
         for _ in range(self.RETRY):
             try:
+                logger.warning("Replicon outbound GET %s", url)
                 r = self._s.get(url, timeout=60)
+                self._log_auth(r.status_code)
             except (_req.ConnectionError, _req.Timeout):
                 time.sleep(delay); delay *= 2; continue
             if r.status_code in self.RETRYABLE:
@@ -216,7 +285,9 @@ class _RepliconClient:
         url, delay = f"{self.base}{path}", 1.0
         for _ in range(self.RETRY):
             try:
+                logger.warning("Replicon outbound POST %s", url)
                 r = self._s.post(url, json=body, timeout=60)
+                self._log_auth(r.status_code)
             except (_req.ConnectionError, _req.Timeout):
                 time.sleep(delay); delay *= 2; continue
             if r.status_code in self.RETRYABLE:
@@ -302,11 +373,18 @@ def replicon_extract():
         mode      = conf.get("mode", "incremental")
         from_date = conf.get("from_date") or None
         to_date   = conf.get("to_date")   or None
+        conn_id   = conf.get("connection_id") or DEFAULT_CONN_ID
 
-        base_url, token = _resolve_connection(entity)
+        base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id)
+        logger.warning(
+            "replicon_extract starting external API call entity=%s mode=%s vault_path=connections/replicon/%s",
+            entity,
+            mode,
+            resolved_conn_id,
+        )
         watermark_field = _get_entity_config(entity).get("watermark_field")
 
-        client = _RepliconClient(base_url, token)
+        client = _RepliconClient(base_url, connection)
         df = client.extract_table(entity)
 
         if df.empty:
