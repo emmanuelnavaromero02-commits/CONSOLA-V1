@@ -5,9 +5,10 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { toast } from "sonner";
 
-import { streamMessage } from "@/lib/copilot/client";
+import { sendMessage, streamMessage } from "@/lib/copilot/client";
 import { useChat } from "@/lib/copilot/useChat";
-import type { Message as MessageType, PendingAction } from "@/lib/copilot/types";
+import type { Message as MessageType, PendingAction, SendMessageResponse } from "@/lib/copilot/types";
+import { cn } from "@/lib/utils";
 
 import { ApprovalGateDialog } from "./ApprovalGateDialog";
 import { ChatMessages }       from "./ChatMessages";
@@ -184,6 +185,8 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
     conversationId: string;
     content:        string;
   } | null>(null);
+  const [streamingEnabled, setStreamingEnabled] = useState(true);
+  const [jsonSending, setJsonSending] = useState(false);
 
   const visibleOptimistic = useMemo(
     () => optimisticTurn?.conversationId === activeId
@@ -197,7 +200,7 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
     () => [...messages, ...visibleOptimistic],
     [messages, visibleOptimistic],
   );
-  const sending = streamingTurn !== null || createConversationMutation.isPending;
+  const sending = streamingTurn !== null || createConversationMutation.isPending || jsonSending;
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeId) return activeId;
@@ -219,27 +222,32 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
           created_at: new Date().toISOString(),
         }],
       });
-      setStreamingTurn({ conversationId: cid, content: "" });
-
-      const data = await streamMessage(cid, text, {
-        onToken: (delta) => {
-          setStreamingTurn((current) =>
-            current?.conversationId === cid
-              ? { ...current, content: current.content + delta }
-              : current,
-          );
-        },
-        onText: (content) => {
-          setStreamingTurn((current) =>
-            current?.conversationId === cid ? { ...current, content } : current,
-          );
-        },
-      });
-      setStreamingTurn((current) =>
-        current?.conversationId === cid
-          ? { ...current, content: data.reply || current.content }
-          : current,
-      );
+      let data: SendMessageResponse;
+      if (streamingEnabled) {
+        setStreamingTurn({ conversationId: cid, content: "" });
+        data = await streamMessage(cid, text, {
+          onToken: (delta) => {
+            setStreamingTurn((current) =>
+              current?.conversationId === cid
+                ? { ...current, content: current.content + delta }
+                : current,
+            );
+          },
+          onText: (content) => {
+            setStreamingTurn((current) =>
+              current?.conversationId === cid ? { ...current, content } : current,
+            );
+          },
+        });
+        setStreamingTurn((current) =>
+          current?.conversationId === cid
+            ? { ...current, content: data.reply || current.content }
+            : current,
+        );
+      } else {
+        setJsonSending(true);
+        data = await sendMessage(cid, text);
+      }
       if (data.requires_approval && data.pending_actions.length > 0) {
         setPendingApproval({
           conversationId: cid,
@@ -264,8 +272,9 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
     } finally {
       setStreamingTurn(null);
       setOptimisticTurn(null);
+      setJsonSending(false);
     }
-  }, [ensureConversation, qc]);
+  }, [ensureConversation, qc, streamingEnabled]);
 
   const handleApprove = useCallback(async () => {
     if (!pendingApproval) return;
@@ -411,6 +420,20 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
             </h1>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setStreamingEnabled((current) => !current)}
+              aria-pressed={streamingEnabled}
+              aria-label="Alternar respuestas en streaming"
+              className={cn(
+                "inline-flex min-h-[44px] items-center justify-center rounded-md border px-3 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                streamingEnabled
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "bg-background text-muted-foreground hover:bg-accent/10",
+              )}
+            >
+              Streaming {streamingEnabled ? "on" : "off"}
+            </button>
             <button
               type="button"
               onClick={() => setMemoryOpen(true)}

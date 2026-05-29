@@ -493,6 +493,18 @@ async def copilot_knowledge_page(request: Request):
     return _console_next_response(request, "copilot/knowledge/index.html")
 
 
+@router.get(
+    "/copilot/tokens",
+    dependencies=[Depends(require_permission("copilot.write"))],
+)
+@router.get(
+    "/copilot/tokens/",
+    dependencies=[Depends(require_permission("copilot.write"))],
+)
+async def copilot_tokens_page(request: Request):
+    return _console_next_response(request, "copilot/tokens/index.html")
+
+
 @router.get("/viewer", dependencies=[Depends(_require_viewer_permission)])
 async def viewer_page(request: Request):
     return _console_next_response(request, "viewer/index.html", frame_ancestors="'self'")

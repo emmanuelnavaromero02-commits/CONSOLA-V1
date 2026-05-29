@@ -36,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/apps-gallery",        label: "Apps",         icon: "▥", permission: "apps.read" },
   { href: "/copilot",             label: "Copiloto",     icon: "◈", permission: "copilot.use", active: ["/copilot"] },
   { href: "/copilot/knowledge",   label: "Conocimiento", icon: "◫", permission: "copilot.use" },
+  { href: "/copilot/tokens",      label: "Tokens",       icon: "◱", permission: "copilot.write" },
   { href: "/agents",              label: "Agentes",      icon: "◇", adminOnly: true },
   { href: "/cartridges",          label: "Cartuchos",    icon: "□", permission: "cartridges.read", adminOnly: true },
   { href: "/monitor",             label: "Monitor",      icon: "▤", permission: "monitor.read" },
