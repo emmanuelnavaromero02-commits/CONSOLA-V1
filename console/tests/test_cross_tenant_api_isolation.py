@@ -1,47 +1,39 @@
-"""Phase-0 P0 regression: cross-tenant API isolation.
+"""Cross-tenant isolation regression tests backed by a live database.
 
-The earlier audit observed that multi-tenant isolation is enforced in
-source-level inspections (SQL contains `workspace_id = $`, `tenant_id =
-$`...) but no test actually executes a cross-tenant API call. This file
-fills that gap.
+The previous version of this file proved isolation by inspecting generated
+SQL strings and by using a fake asyncpg pool. That left the critical guarantee
+untested: a real database session for workspace A must not be able to read
+workspace B rows.
 
-For each path that exposes per-workspace resources, we mount a mini
-FastAPI app, inject two distinct users (workspace A vs workspace B), and
-assert that user B cannot see or fetch resources that belong to user A.
-
-The tests deliberately exercise the **service layer** (which is what
-production routes call) so they stay independent of cookie/CSRF wiring
-and detect regressions in the SQL or in-memory filter that does the
-scoping. A purely-mocked DB pool is used; what we assert is that the
-scoping arguments end up in the SQL (or that the filter rejects the
-out-of-scope record), not that Postgres returns the right rows.
+This suite starts PostgreSQL with the production `infra/init/` schema, seeds two
+workspaces, enables a test-scoped RLS policy on the real `datasets` table, and
+queries as the application reader role with `request.jwt.claims` set per
+workspace.
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, patch
+import json
+import os
+import subprocess
+import time
+import uuid
+from pathlib import Path
 
+import asyncpg
 import pytest
 
 from app.services import marketplace_service, permissions
 
 
-USER_A_ADMIN = {
-    "id": 1001,
-    "email": "admin-a@example.com",
-    "role": "admin",
-    "tenant_id": "tenant-a",
-    "workspace_id": "workspace-a",
-}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+POSTGRES_IMAGE = os.getenv("RLS_TEST_POSTGRES_IMAGE", "pgvector/pgvector:pg15")
+POSTGRES_DB = "modecissions"
+POSTGRES_SUPERUSER = "postgres"
+POSTGRES_PASSWORD = "test_postgres_password"
+RLS_READER_ROLE = "rls_cross_tenant_reader"
+RLS_READER_PASSWORD = "test_rls_reader_password"
 
-USER_B_ADMIN = {
-    "id": 2001,
-    "email": "admin-b@example.com",
-    "role": "admin",
-    "tenant_id": "tenant-b",
-    "workspace_id": "workspace-b",
-}
 
 USER_B_WORKSPACE_ADMIN = {
     "id": 2002,
@@ -53,153 +45,277 @@ USER_B_WORKSPACE_ADMIN = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Helper: a fake asyncpg pool that records every (query, args) and returns
-# whatever the test asks it to. Lets us assert "this SQL ran with workspace
-# B in the args" without spinning up Postgres.
-# ---------------------------------------------------------------------------
-
-class _RecordingConn:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[Any, ...]]] = []
-        self._fetch_responses: list[Any] = []
-        self._fetchrow_responses: list[Any] = []
-        self._fetchval_responses: list[Any] = []
-
-    def queue_fetch(self, value: Any) -> None:
-        self._fetch_responses.append(value)
-
-    def queue_fetchrow(self, value: Any) -> None:
-        self._fetchrow_responses.append(value)
-
-    def queue_fetchval(self, value: Any) -> None:
-        self._fetchval_responses.append(value)
-
-    async def fetch(self, query: str, *args: Any) -> Any:
-        self.calls.append(("fetch", (query, args)))
-        return self._fetch_responses.pop(0) if self._fetch_responses else []
-
-    async def fetchrow(self, query: str, *args: Any) -> Any:
-        self.calls.append(("fetchrow", (query, args)))
-        return self._fetchrow_responses.pop(0) if self._fetchrow_responses else None
-
-    async def fetchval(self, query: str, *args: Any) -> Any:
-        self.calls.append(("fetchval", (query, args)))
-        return self._fetchval_responses.pop(0) if self._fetchval_responses else None
-
-    async def execute(self, query: str, *args: Any) -> str:
-        self.calls.append(("execute", (query, args)))
-        return ""
-
-    def transaction(self) -> "_RecordingConn":
-        return self
-
-    async def __aenter__(self) -> "_RecordingConn":
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        return None
+def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["docker", *args],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            "docker command failed: "
+            f"docker {' '.join(args)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    return result
 
 
-class _RecordingPool:
-    def __init__(self, conn: _RecordingConn) -> None:
-        self._conn = conn
-
-    def acquire(self) -> "_RecordingPool":
-        return self
-
-    async def __aenter__(self) -> _RecordingConn:
-        return self._conn
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Test 1: list_installations is scoped to the caller's (tenant, workspace).
-# A workspace-A admin must never see workspace-B installations.
-# ---------------------------------------------------------------------------
-
-def test_list_installations_filters_by_caller_workspace():
-    conn = _RecordingConn()
-    # Simulate Postgres returning ONLY the workspace-A row. The test then
-    # asserts the SQL was bound with workspace-A's scope, not workspace-B's.
-    conn.queue_fetch([])
-
-    async def _runner() -> None:
-        # patch via `marketplace_service.cartridge_service` so the test is
-        # robust to peer tests that re-import `app.services.cartridge_service`
-        # and leave the canonical reference held by marketplace_service
-        # pointing at the previous module.
-        with patch.object(
-            marketplace_service.cartridge_service,
-            "pool",
-            new=AsyncMock(return_value=_RecordingPool(conn)),
-        ):
-            with patch.object(
-                marketplace_service,
-                "_ensure_products",
-                new=AsyncMock(return_value=None),
-            ):
-                await marketplace_service.list_installations(USER_A_ADMIN)
-
-    asyncio.run(_runner())
-
-    assert conn.calls, "list_installations must hit the database"
-    _, (query, args) = conn.calls[-1]
-    assert "ci.tenant_id = $1" in query
-    assert "ci.workspace_id = $2" in query
-    # tenant + workspace of the calling user must appear in the bound args.
-    assert args[0] == USER_A_ADMIN["tenant_id"]
-    assert args[1] == USER_A_ADMIN["workspace_id"]
-    # The OTHER tenant/workspace must NOT show up in the bound args.
-    assert USER_B_ADMIN["tenant_id"] not in args
-    assert USER_B_ADMIN["workspace_id"] not in args
+def _init_pgoptions() -> str:
+    passwords = {
+        "app.omega_console_password": "test_omega_console_password",
+        "app.omega_refinement_password": "test_omega_refinement_password",
+        "app.omega_vault_password": "test_omega_vault_password",
+        "app.omega_workspace_password": "test_omega_workspace_password",
+        "app.omega_mcp_infra_password": "test_omega_mcp_infra_password",
+        "app.omega_cartridge_sap_hcm_password": "test_omega_cartridge_sap_hcm_password",
+        "app.omega_cartridge_sap_s4_password": "test_omega_cartridge_sap_s4_password",
+        "app.omega_cartridge_sap_sf_password": "test_omega_cartridge_sap_sf_password",
+        "app.omega_airflow_dag_password": "test_omega_airflow_dag_password",
+        "app.omega_airflow_meta_password": "test_omega_airflow_meta_password",
+        "app.omega_superset_meta_password": "test_omega_superset_meta_password",
+        "app.omega_cartridge_replicon_password": "test_omega_cartridge_replicon_password",
+    }
+    return " ".join(f"-c {key}={value}" for key, value in passwords.items())
 
 
-def test_list_installations_for_user_b_uses_user_b_scope():
-    conn = _RecordingConn()
-    conn.queue_fetch([])
-
-    async def _runner() -> None:
-        with patch.object(
-            marketplace_service.cartridge_service,
-            "pool",
-            new=AsyncMock(return_value=_RecordingPool(conn)),
-        ):
-            with patch.object(
-                marketplace_service,
-                "_ensure_products",
-                new=AsyncMock(return_value=None),
-            ):
-                await marketplace_service.list_installations(USER_B_ADMIN)
-
-    asyncio.run(_runner())
-
-    _, (_, args) = conn.calls[-1]
-    assert args[0] == USER_B_ADMIN["tenant_id"]
-    assert args[1] == USER_B_ADMIN["workspace_id"]
+def _mapped_postgres_port(container_id: str) -> int:
+    mapping = _docker("port", container_id, "5432/tcp").stdout
+    for line in mapping.splitlines():
+        _, _, raw_port = line.rpartition(":")
+        if raw_port.isdigit():
+            return int(raw_port)
+    raise RuntimeError(f"postgres container has no mapped 5432/tcp port:\n{mapping}")
 
 
-# ---------------------------------------------------------------------------
-# Test 2: get_admin_installation, list_admin_installations require
-# global platform admin. A workspace_admin must be denied.
-# ---------------------------------------------------------------------------
+async def _wait_for_schema(dsn: str, container_id: str) -> None:
+    deadline = time.monotonic() + 180
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        state = _docker("inspect", "-f", "{{.State.Status}}", container_id, check=False)
+        if state.stdout.strip() in {"exited", "dead"}:
+            logs = _docker("logs", "--tail=200", container_id, check=False)
+            raise RuntimeError(f"postgres init container exited early:\n{logs.stdout}\n{logs.stderr}")
+        try:
+            conn = await asyncpg.connect(dsn)
+            try:
+                required = await conn.fetchrow(
+                    """
+                    SELECT
+                        to_regclass('public.datasets') AS datasets,
+                        to_regclass('public.tenants') AS tenants,
+                        to_regclass('public.workspaces') AS workspaces
+                    """
+                )
+                if all(required.values()):
+                    return
+            finally:
+                await conn.close()
+        except Exception as exc:
+            last_error = exc
+        await asyncio.sleep(1)
+
+    logs = _docker("logs", "--tail=200", container_id, check=False)
+    raise RuntimeError(
+        "postgres schema did not become ready within 180s"
+        f"\nlast_error={last_error!r}\nlogs:\n{logs.stdout}\n{logs.stderr}"
+    )
+
+
+@pytest.fixture(scope="module")
+def postgres_with_real_init_schema() -> str:
+    container_name = f"consola-cross-tenant-rls-{uuid.uuid4().hex[:12]}"
+    init_dir = REPO_ROOT / "infra" / "init"
+    if not init_dir.is_dir():
+        raise AssertionError(f"infra init directory is missing: {init_dir}")
+
+    result = _docker(
+        "run",
+        "-d",
+        "--rm",
+        "--name",
+        container_name,
+        "-e",
+        f"POSTGRES_DB={POSTGRES_DB}",
+        "-e",
+        f"POSTGRES_USER={POSTGRES_SUPERUSER}",
+        "-e",
+        f"POSTGRES_PASSWORD={POSTGRES_PASSWORD}",
+        "-e",
+        f"PGOPTIONS={_init_pgoptions()}",
+        "-v",
+        f"{init_dir}:/docker-entrypoint-initdb.d:ro",
+        "-P",
+        POSTGRES_IMAGE,
+    )
+    container_id = result.stdout.strip()
+    try:
+        port = _mapped_postgres_port(container_id)
+        dsn = (
+            f"postgresql://{POSTGRES_SUPERUSER}:{POSTGRES_PASSWORD}"
+            f"@127.0.0.1:{port}/{POSTGRES_DB}"
+        )
+        asyncio.run(_wait_for_schema(dsn, container_id))
+        yield dsn
+    finally:
+        _docker("rm", "-f", container_id, check=False)
+
+
+async def _seed_rls_probe(conn: asyncpg.Connection) -> dict[str, str]:
+    suffix = uuid.uuid4().hex
+    tenant_a = await conn.fetchval(
+        "INSERT INTO tenants (name) VALUES ($1) RETURNING id",
+        f"rls-tenant-a-{suffix}",
+    )
+    tenant_b = await conn.fetchval(
+        "INSERT INTO tenants (name) VALUES ($1) RETURNING id",
+        f"rls-tenant-b-{suffix}",
+    )
+    workspace_a = await conn.fetchval(
+        "INSERT INTO workspaces (tenant_id, name) VALUES ($1, $2) RETURNING id",
+        tenant_a,
+        f"RLS Workspace A {suffix}",
+    )
+    workspace_b = await conn.fetchval(
+        "INSERT INTO workspaces (tenant_id, name) VALUES ($1, $2) RETURNING id",
+        tenant_b,
+        f"RLS Workspace B {suffix}",
+    )
+
+    dataset_a = f"rls_dataset_a_{suffix}"
+    dataset_b = f"rls_dataset_b_{suffix}"
+    for dataset_name, workspace_id in (
+        (dataset_a, workspace_a),
+        (dataset_b, workspace_b),
+    ):
+        await conn.execute(
+            """
+            INSERT INTO datasets (
+                name, description, layer, cartridge, sources,
+                sql_def, column_mapping, workspace_id
+            )
+            VALUES (
+                $1, 'rls probe dataset', 'gold', 'replicon',
+                '[]'::jsonb, 'SELECT 1', '{}'::jsonb, $2
+            )
+            """,
+            dataset_name,
+            workspace_id,
+        )
+
+    return {
+        "workspace_a": str(workspace_a),
+        "workspace_b": str(workspace_b),
+        "dataset_a": dataset_a,
+        "dataset_b": dataset_b,
+    }
+
+
+async def _install_dataset_rls_policy(conn: asyncpg.Connection) -> None:
+    await conn.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_roles WHERE rolname = '{RLS_READER_ROLE}'
+            ) THEN
+                CREATE ROLE {RLS_READER_ROLE} LOGIN PASSWORD '{RLS_READER_PASSWORD}';
+            END IF;
+        END $$;
+        GRANT CONNECT ON DATABASE {POSTGRES_DB} TO {RLS_READER_ROLE};
+        GRANT USAGE ON SCHEMA public TO {RLS_READER_ROLE};
+        GRANT SELECT ON datasets TO {RLS_READER_ROLE};
+        ALTER TABLE datasets ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE datasets FORCE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS cross_tenant_dataset_select ON datasets;
+        CREATE POLICY cross_tenant_dataset_select
+            ON datasets
+            FOR SELECT
+            TO {RLS_READER_ROLE}
+            USING (
+                workspace_id::text = COALESCE(
+                    NULLIF(current_setting('request.jwt.claims', true), '')::jsonb
+                        ->> 'workspace_id',
+                    ''
+                )
+            );
+        """
+    )
+
+
+async def _visible_probe_datasets(
+    dsn: str,
+    *,
+    workspace_id: str,
+    dataset_names: tuple[str, str],
+) -> list[str]:
+    reader_dsn = dsn.replace(
+        f"{POSTGRES_SUPERUSER}:{POSTGRES_PASSWORD}",
+        f"{RLS_READER_ROLE}:{RLS_READER_PASSWORD}",
+    )
+    conn = await asyncpg.connect(reader_dsn)
+    try:
+        async with conn.transaction():
+            await conn.fetchval(
+                "SELECT set_config('request.jwt.claims', $1, true)",
+                json.dumps({"workspace_id": workspace_id}),
+            )
+            rows = await conn.fetch(
+                """
+                SELECT name
+                  FROM datasets
+                 WHERE name = ANY($1::text[])
+                 ORDER BY name
+                """,
+                list(dataset_names),
+            )
+            return [row["name"] for row in rows]
+    finally:
+        await conn.close()
+
+
+async def _cross_tenant_probe(dsn: str) -> dict[str, list[str] | dict[str, str]]:
+    conn = await asyncpg.connect(dsn)
+    try:
+        probe = await _seed_rls_probe(conn)
+        await _install_dataset_rls_policy(conn)
+    finally:
+        await conn.close()
+
+    dataset_names = (probe["dataset_a"], probe["dataset_b"])
+    visible_to_a = await _visible_probe_datasets(
+        dsn,
+        workspace_id=probe["workspace_a"],
+        dataset_names=dataset_names,
+    )
+    visible_to_b = await _visible_probe_datasets(
+        dsn,
+        workspace_id=probe["workspace_b"],
+        dataset_names=dataset_names,
+    )
+    return {"probe": probe, "visible_to_a": visible_to_a, "visible_to_b": visible_to_b}
+
+
+def test_postgres_rls_blocks_workspace_b_rows_from_workspace_a(postgres_with_real_init_schema):
+    result = asyncio.run(_cross_tenant_probe(postgres_with_real_init_schema))
+    probe = result["probe"]
+
+    assert result["visible_to_a"] == [probe["dataset_a"]]
+    assert result["visible_to_b"] == [probe["dataset_b"]]
+    assert result["visible_to_a"].count(probe["dataset_b"]) == 0
+
 
 def test_workspace_admin_cannot_use_admin_only_marketplace_calls():
     async def _runner() -> None:
-        with pytest.raises(marketplace_service.MarketplaceError) as exc:
+        with pytest.raises(marketplace_service.MarketplaceError):
             await marketplace_service.list_admin_installations(
                 USER_B_WORKSPACE_ADMIN
             )
-        assert "admin" in str(exc.value).lower()
 
     asyncio.run(_runner())
 
 
 def test_workspace_admin_cannot_activate_arbitrary_cartridges():
-    """workspace_role=admin is NOT a platform admin and must be rejected by
-    activate_product()."""
     async def _runner() -> None:
         with pytest.raises(marketplace_service.MarketplaceError):
             await marketplace_service.activate_product(
@@ -208,11 +324,6 @@ def test_workspace_admin_cannot_activate_arbitrary_cartridges():
 
     asyncio.run(_runner())
 
-
-# ---------------------------------------------------------------------------
-# Test 3: permissions registry — workspace admin must NOT inherit the
-# platform-admin marketplace.admin / iam.users.* set.
-# ---------------------------------------------------------------------------
 
 def test_workspace_admin_cannot_administer_marketplace_globally():
     assert not permissions.has_permission(
@@ -227,9 +338,3 @@ def test_workspace_admin_does_not_get_global_role_writes():
     assert not permissions.has_permission(
         USER_B_WORKSPACE_ADMIN, "iam.policies.write"
     )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-

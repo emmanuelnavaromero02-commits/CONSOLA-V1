@@ -66,13 +66,34 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "ERROR: python3 is required to generate VAULT_ENCRYPTION_KEY" >&2
   exit 1
 fi
-VAULT_ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+BOOTSTRAP_PYTHON="$(command -v python3)"
+CRYPTO_PYTHON="${BOOTSTRAP_PYTHON}"
+BOOTSTRAP_VENV=""
+
+if ! "${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; Fernet.generate_key()' >/dev/null 2>&1; then
+  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    "${CRYPTO_PYTHON}" -m pip install --quiet --upgrade cryptography
+  else
+    BOOTSTRAP_VENV="$(mktemp -d)"
+    trap 'rm -rf "${BOOTSTRAP_VENV}"' EXIT
+    "${BOOTSTRAP_PYTHON}" -m venv "${BOOTSTRAP_VENV}"
+    CRYPTO_PYTHON="${BOOTSTRAP_VENV}/bin/python"
+    "${CRYPTO_PYTHON}" -m pip install --quiet --upgrade pip cryptography
+  fi
+fi
+
+if ! "${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; Fernet.generate_key()' >/dev/null 2>&1; then
+  echo "ERROR: cryptography is required to generate Fernet keys" >&2
+  exit 1
+fi
+
+VAULT_ENCRYPTION_KEY="$("${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 
 # Sprint v1.33 (audit B1 P0): Fernet key used by SAP cartridges
 # (sap_hcm / sap_s4hana / sap_successfactors) to encrypt PII columns at
 # rest before they land in MinIO/parquet. The cartridges refuse to start
 # without it — there is no longer a hardcoded fallback.
-FIELD_ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+FIELD_ENCRYPTION_KEY="$("${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 
 umask 077
 cat > "${ENV_FILE}" <<EOF
@@ -255,9 +276,9 @@ MINIO_SECURE=false
 MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
 
 # === App env ===
-# Local compose intentionally opts into development. Production deploys
-# must set APP_ENV=production or leave it unset so code fails closed.
-APP_ENV=development
+# Local compose defaults to production guardrails. Override explicitly only
+# for isolated development runs.
+APP_ENV=production
 ALLOW_RCE_TOOLS=false
 RATE_LIMIT_ENABLED=true
 TRUSTED_PROXY_IPS=
@@ -270,7 +291,7 @@ CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY=false
 #   docker compose exec -e BOOTSTRAP_ADMIN_PASSWORD console python -m app.bootstrap_admin <email>
 # BOOTSTRAP_ADMIN_EMAIL=admin@your-domain.test
 # BOOTSTRAP_ADMIN_PASSWORD=
-# BOOTSTRAP_ADMIN_NAME=System Administrator
+# BOOTSTRAP_ADMIN_FULL_NAME=System Administrator
 EOF
 
 echo "infra/.env generated. Next: make up"

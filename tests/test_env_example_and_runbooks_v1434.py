@@ -162,11 +162,11 @@ def test_env_example_documents_bootstrap_admin_password():
 def test_env_example_documents_bootstrap_admin_name():
     src = _env_example()
     assert re.search(
-        r"^BOOTSTRAP_ADMIN_NAME=", src, re.MULTILINE
-    ), "infra/.env.example missing BOOTSTRAP_ADMIN_NAME"
-    assert "BOOTSTRAP_ADMIN_FULL_NAME" not in src, (
+        r"^BOOTSTRAP_ADMIN_FULL_NAME=", src, re.MULTILINE
+    ), "infra/.env.example missing BOOTSTRAP_ADMIN_FULL_NAME"
+    assert "BOOTSTRAP_ADMIN_NAME=" not in src, (
         "infra/.env.example must match console/app/bootstrap_admin.py, "
-        "which reads BOOTSTRAP_ADMIN_NAME"
+        "which reads BOOTSTRAP_ADMIN_FULL_NAME"
     )
 
 
@@ -191,7 +191,7 @@ def test_env_example_documents_runtime_env_contract():
         "TRUSTED_PROXY_IPS",
         "BOOTSTRAP_ADMIN_EMAIL",
         "BOOTSTRAP_ADMIN_PASSWORD",
-        "BOOTSTRAP_ADMIN_NAME",
+        "BOOTSTRAP_ADMIN_FULL_NAME",
         "AWS_REGION",
         "AWS_DEFAULT_REGION",
         "S3_BUCKET_NAME",
@@ -241,7 +241,7 @@ def test_bootstrap_sh_emits_runtime_env_contract():
         "MINIO_SECURE",
         "PG_HOST",
         "PG_PASSWORD",
-        "BOOTSTRAP_ADMIN_NAME",
+        "BOOTSTRAP_ADMIN_FULL_NAME",
     }
     missing = [name for name in sorted(required) if f"{name}=" not in src]
     assert not missing, f"infra/bootstrap.sh missing runtime keys: {missing}"
@@ -291,7 +291,7 @@ def test_runbook_02_documents_manual_bootstrap_admin_cli():
     src = _runbook_02()
     assert "python -m app.bootstrap_admin" in src
     assert "BOOTSTRAP_ADMIN_PASSWORD" in src
-    assert "BOOTSTRAP_ADMIN_NAME" in src
+    assert "BOOTSTRAP_ADMIN_FULL_NAME" in src
     assert "al primer boot" not in src.lower()
 
 

@@ -479,7 +479,7 @@ La auth local empieza vacía. Crea el primer admin manualmente vía CLI:
 ```bash
 docker compose -f /opt/modecissions/infra/terraform/deploy/docker-compose.aws.yml exec console \
   BOOTSTRAP_ADMIN_PASSWORD='<password-temporal-fuerte>' \
-  BOOTSTRAP_ADMIN_NAME='<Tu Nombre>' \
+  BOOTSTRAP_ADMIN_FULL_NAME='<Tu Nombre>' \
   python -m app.bootstrap_admin <tu-email@org.com>
 ```
 

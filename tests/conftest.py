@@ -62,6 +62,10 @@ def load_cartridge_app(cartridge_id: str) -> ModuleType:
     sys.path.insert(0, str(cart_dir))
 
     os.environ["INTERNAL_API_KEY"] = "test-secret-key-not-default"
+    os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://test:test@postgres:5432/modecissions")
+    os.environ.setdefault("GOLD_DATABASE_URL", "postgresql+psycopg2://test:test@postgres_gold:5433/modecissions_gold")
+    os.environ.setdefault("MINIO_ACCESS_KEY", "test-minio-access")
+    os.environ.setdefault("MINIO_SECRET_KEY", "test-minio-secret")
     # Sprint v1.33 (audit B1): SAP cartridge protection_service refuses
     # to import without a valid Fernet FIELD_ENCRYPTION_KEY. The test
     # harness provides one so existing route/import tests keep working;

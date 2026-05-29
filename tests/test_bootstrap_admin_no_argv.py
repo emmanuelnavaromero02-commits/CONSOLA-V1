@@ -67,14 +67,14 @@ def test_bootstrap_admin_uses_env_password(monkeypatch):
         return {"id": 1, "email": email}
 
     monkeypatch.setenv("BOOTSTRAP_ADMIN_PASSWORD", "StrongPassword12345")
-    monkeypatch.setenv("BOOTSTRAP_ADMIN_NAME", "Admin User")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_FULL_NAME", "Admin User")
     monkeypatch.setattr(
         module,
         "_auth",
         SimpleNamespace(get_user_by_email=get_user_by_email, create_user=create_user),
     )
 
-    asyncio.run(module.main("admin@example.com", module._read_password(), os.environ["BOOTSTRAP_ADMIN_NAME"]))
+    asyncio.run(module.main("admin@example.com", module._read_password(), os.environ["BOOTSTRAP_ADMIN_FULL_NAME"]))
 
     assert calls == [{
         "email": "admin@example.com",
@@ -86,5 +86,5 @@ def test_bootstrap_admin_uses_env_password(monkeypatch):
 
 def test_env_example_matches_bootstrap_admin_name_contract():
     src = (REPO_ROOT / "infra/.env.example").read_text(encoding="utf-8")
-    assert "BOOTSTRAP_ADMIN_NAME=" in src
-    assert "BOOTSTRAP_ADMIN_FULL_NAME=" not in src
+    assert "BOOTSTRAP_ADMIN_FULL_NAME=" in src
+    assert "BOOTSTRAP_ADMIN_NAME=" not in src

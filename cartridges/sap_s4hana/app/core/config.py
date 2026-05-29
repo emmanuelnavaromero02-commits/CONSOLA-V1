@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,12 +22,12 @@ class Settings(BaseSettings):
     sap_s4_api_key: str = ""
 
     # Database
-    database_url: str = ""
+    database_url: str = Field(default_factory=lambda: os.environ["DATABASE_URL"])
 
     # MinIO
     minio_endpoint: str = ""
-    minio_access_key: str = ""
-    minio_secret_key: str = ""
+    minio_access_key: str = Field(default_factory=lambda: os.environ["MINIO_ACCESS_KEY"])
+    minio_secret_key: str = Field(default_factory=lambda: os.environ["MINIO_SECRET_KEY"])
     minio_bucket: str = "lakehouse"
     minio_secure: bool = False
 

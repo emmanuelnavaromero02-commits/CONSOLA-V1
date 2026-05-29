@@ -74,7 +74,7 @@ def _usage() -> str:
     return (
         "Usage: python -m app.bootstrap_admin <email>\n"
         "Set BOOTSTRAP_ADMIN_PASSWORD for non-interactive use. "
-        "Optional display name: BOOTSTRAP_ADMIN_NAME."
+        "Optional display name: BOOTSTRAP_ADMIN_FULL_NAME."
     )
 
 
@@ -85,5 +85,5 @@ if __name__ == "__main__":
         sys.exit(2)
     email    = sys.argv[1]
     password = _read_password()
-    name     = os.environ.get("BOOTSTRAP_ADMIN_NAME")
+    name     = os.environ.get("BOOTSTRAP_ADMIN_FULL_NAME")
     asyncio.run(main(email, password, name))

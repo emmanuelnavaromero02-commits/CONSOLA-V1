@@ -16,9 +16,8 @@ These tests pin the contract:
     is set.
   * ``settings.asyncpg_dsn`` always emits ``postgresql://`` (asyncpg
     rejects the ``+psycopg2`` SQLAlchemy driver hint).
-  * Dev / test runs without DATABASE_URL still fall back to the
-    legacy pg_user/pg_password defaults so the ZIP-shipped behavior
-    is preserved when the cartridge is run standalone.
+  * Dev / test runs without DATABASE_URL still fall back to explicit
+    PG_USER / PG_PASSWORD env vars, never to baked-in credentials.
   * ``pg_client.get_connection`` and ``job_runner._get_pool`` both
     route through the settings property so the env override applies
     uniformly.
@@ -61,6 +60,8 @@ def fresh_settings(monkeypatch):
     # at module top — config.py itself doesn't touch them, but keep
     # the fixture forward-compatible.
     monkeypatch.setenv("FIELD_ENCRYPTION_KEY", "OENi0J3O2llg-_pAlcZNzewjjm-LpaaCWUYatHmCQpQ=")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-minio-access")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio-secret")
     saved_path = list(sys.path)
     sys.path[:] = [
         p for p in sys.path
@@ -101,10 +102,12 @@ def test_database_url_respects_env_override(fresh_settings, monkeypatch):
 
 def test_database_url_falls_back_to_pg_fields(fresh_settings, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("PG_USER", "omega_cartridge_replicon")
+    monkeypatch.setenv("PG_PASSWORD", "pg-secret")
     s = fresh_settings()
-    # Legacy ZIP behavior: build the URL from pg_user / pg_password
-    # defaults. Dev runs without DATABASE_URL must still get a usable
-    # connection string.
+    # Fallback behavior: build the URL from explicit pg_user / pg_password
+    # env vars. Dev runs without DATABASE_URL must still get a usable
+    # connection string, but never from baked-in credentials.
     assert s.database_url.startswith("postgresql+psycopg2://"), (
         "fallback path must keep the SQLAlchemy driver hint for the "
         "engine in pg_client.py"
@@ -116,6 +119,8 @@ def test_database_url_treats_empty_env_as_unset(fresh_settings, monkeypatch):
     """An empty / whitespace-only DATABASE_URL must NOT shadow the
     field-based fallback (mirrors the v1.39 whitespace guard pattern)."""
     monkeypatch.setenv("DATABASE_URL", "   ")
+    monkeypatch.setenv("PG_USER", "omega_cartridge_replicon")
+    monkeypatch.setenv("PG_PASSWORD", "pg-secret")
     s = fresh_settings()
     assert s.pg_user in s.database_url, (
         "empty DATABASE_URL must fall through to the pg_user fallback "
@@ -144,6 +149,8 @@ def test_asyncpg_dsn_strips_sqlalchemy_driver_hint(fresh_settings, monkeypatch):
 
 def test_asyncpg_dsn_on_fallback_path_also_strips_hint(fresh_settings, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("PG_USER", "omega_cartridge_replicon")
+    monkeypatch.setenv("PG_PASSWORD", "pg-secret")
     s = fresh_settings()
     assert s.asyncpg_dsn.startswith("postgresql://")
     assert "+psycopg2" not in s.asyncpg_dsn

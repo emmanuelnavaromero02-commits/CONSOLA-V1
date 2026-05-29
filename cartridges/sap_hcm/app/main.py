@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -15,6 +17,8 @@ from app.core import job_runner
 from app.mcp_server import load_custom_tools, mcp
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 from app.services import catalog_service
+
+logger = logging.getLogger(__name__)
 
 
 # ── FastMCP Streamable HTTP (JSON-RPC 2.0) at /mcp/rpc ───────────────────────
@@ -52,6 +56,35 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SAP HCM Cartridge", lifespan=lifespan)
+
+
+def _internal_error_request_id(request: Request | None = None) -> str:
+    candidate = getattr(getattr(request, "state", None), "request_id", None)
+    try:
+        return str(uuid.UUID(str(candidate)))
+    except Exception:
+        return str(uuid.uuid4())
+
+
+def _log_internal_error(exc: Exception, message: str, request: Request | None = None) -> str:
+    request_id = _internal_error_request_id(request)
+    logger.exception(
+        "%s request_id=%s",
+        message,
+        request_id,
+        extra={"request_id": request_id, "exception_type": type(exc).__name__},
+    )
+    return request_id
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _log_internal_error(exc, "unhandled sap_hcm exception", request)
+    return JSONResponse(
+        {"error": "Internal Error", "request_id": request_id},
+        status_code=500,
+    )
+
 
 # v1.43.1 (Codex P0-1): X-Request-ID middleware. See replicon/app/main.py
 # for the rationale + byte-equality note.
@@ -167,7 +200,7 @@ async def mcp_tools():
 
 
 @app.post("/mcp/invoke", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
-async def mcp_invoke(body: dict):
+async def mcp_invoke(body: dict, request: Request):
     import json as _json
     tool_name = body.get("tool", "")
     args = body.get("args", {})
@@ -201,7 +234,11 @@ async def mcp_invoke(body: dict):
 
         return {"result": result}
     except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        request_id = _log_internal_error(exc, "sap_hcm mcp invoke failed", request)
+        return JSONResponse(
+            {"error": "Internal Error", "request_id": request_id},
+            status_code=500,
+        )
 
 
 @app.post("/mcp-reload", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])

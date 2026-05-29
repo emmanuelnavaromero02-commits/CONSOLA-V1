@@ -330,6 +330,28 @@ def _require_effective_permission(user: dict | None, permission: str) -> None:
 app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
 
 
+def _internal_error_request_id(request: Request | None = None) -> str:
+    candidate = getattr(getattr(request, "state", None), "request_id", None)
+    try:
+        return str(uuid.UUID(str(candidate)))
+    except Exception:
+        return str(uuid.uuid4())
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _internal_error_request_id(request)
+    logger.exception(
+        "unhandled console exception request_id=%s",
+        request_id,
+        extra={"request_id": request_id, "exception_type": type(exc).__name__},
+    )
+    return JSONResponse(
+        {"error": "Internal Error", "request_id": request_id},
+        status_code=500,
+    )
+
+
 def _allowed_origins() -> list[str]:
     # Static console-next is served same-origin by FastAPI on :8000.
     # Keep workspace :8001 in the local default because it remains a
@@ -5498,10 +5520,10 @@ async def api_admin_users_create(body: dict, request: Request, admin_user: dict 
             except (RuntimeError, AttributeError) as exc:
                 if not _workspace_scope_db_unavailable(exc):
                     raise
-    except RuntimeError as exc:
+    except RuntimeError:
         # create_user assigns workspace membership in the same transaction;
-        # surface a clear 500 when the RBAC seed (workspaces/roles) is missing.
-        raise HTTPException(500, str(exc)) from exc
+        # let the global 500 handler log + sanitize internal details.
+        raise
     await _audit.record_event(
         admin_user.get("id"), admin_user.get("email"), "user.created", "user", str(target_user["id"]),
         ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
@@ -5658,9 +5680,21 @@ async def _create_vpn_config_link(user_id: int, email: str) -> dict:
             "conf_text": conf_text,
         }
     except _vpn.VPNError as exc:
-        return {"issued": False, "error": str(exc)}
+        request_id = _internal_error_request_id()
+        logger.exception(
+            "vpn issuance failed request_id=%s",
+            request_id,
+            extra={"request_id": request_id, "exception_type": type(exc).__name__},
+        )
+        return {"issued": False, "error": "Internal Error", "request_id": request_id}
     except Exception as exc:
-        return {"issued": False, "error": f"unexpected: {exc}"}
+        request_id = _internal_error_request_id()
+        logger.exception(
+            "unexpected vpn issuance failure request_id=%s",
+            request_id,
+            extra={"request_id": request_id, "exception_type": type(exc).__name__},
+        )
+        return {"issued": False, "error": "Internal Error", "request_id": request_id}
 
 
 async def _issue_vpn_for_user(user_id: int, email: str, name: str | None) -> dict:

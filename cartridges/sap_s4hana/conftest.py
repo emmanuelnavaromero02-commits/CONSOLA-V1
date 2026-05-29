@@ -17,6 +17,9 @@ import sys
 import pytest
 
 _CARTRIDGE_ROOT = os.path.dirname(__file__)
+os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://test:test@postgres:5432/modecissions")
+os.environ.setdefault("MINIO_ACCESS_KEY", "test-minio-access")
+os.environ.setdefault("MINIO_SECRET_KEY", "test-minio-secret")
 
 
 def _use_this_cartridge() -> None:

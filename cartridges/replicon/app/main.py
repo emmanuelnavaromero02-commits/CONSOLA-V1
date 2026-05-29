@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -13,6 +15,8 @@ from app.api.routes_skills import router as skills_router
 from app.core import job_runner
 from app.mcp_server import mcp, load_custom_tools
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
+
+logger = logging.getLogger(__name__)
 
 
 # ── Lifespan: schema migration + job runner init ──────────────────────────────
@@ -47,6 +51,35 @@ async def lifespan(app: FastAPI):
 _mcp_app = mcp.http_app(path="/")
 
 app = FastAPI(title="Replicon Cartridge", lifespan=lifespan)
+
+
+def _internal_error_request_id(request: Request | None = None) -> str:
+    candidate = getattr(getattr(request, "state", None), "request_id", None)
+    try:
+        return str(uuid.UUID(str(candidate)))
+    except Exception:
+        return str(uuid.uuid4())
+
+
+def _log_internal_error(exc: Exception, message: str, request: Request | None = None) -> str:
+    request_id = _internal_error_request_id(request)
+    logger.exception(
+        "%s request_id=%s",
+        message,
+        request_id,
+        extra={"request_id": request_id, "exception_type": type(exc).__name__},
+    )
+    return request_id
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _log_internal_error(exc, "unhandled replicon exception", request)
+    return JSONResponse(
+        {"error": "Internal Error", "request_id": request_id},
+        status_code=500,
+    )
+
 
 # v1.43.1 (Codex P0-1): every response — including 401/403/404 from
 # the InternalApiKeyASGIGuard and the FastAPI exception handlers —
@@ -182,7 +215,7 @@ async def mcp_tools():
 
 
 @app.post("/mcp/invoke", dependencies=[Depends(verify_api_key), Depends(_require_startup_ok)])
-async def mcp_invoke(body: dict):
+async def mcp_invoke(body: dict, request: Request):
     """Invoke a tool by name with args. Returns the tool result."""
     tool_name = body.get("tool", "")
     args = body.get("args", {})
@@ -218,7 +251,11 @@ async def mcp_invoke(body: dict):
 
         return {"result": result}
     except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        request_id = _log_internal_error(exc, "replicon mcp invoke failed", request)
+        return JSONResponse(
+            {"error": "Internal Error", "request_id": request_id},
+            status_code=500,
+        )
 
 
 # ── Custom tools reload ───────────────────────────────────────────────────────

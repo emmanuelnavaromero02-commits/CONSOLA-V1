@@ -21,7 +21,7 @@ Ejecuta el bootstrap manual con un password fuerte de un solo uso:
 ```bash
 docker compose -f infra/docker-compose.yml exec \
   -e BOOTSTRAP_ADMIN_PASSWORD='<password-temporal-fuerte>' \
-  -e BOOTSTRAP_ADMIN_NAME='System Administrator' \
+  -e BOOTSTRAP_ADMIN_FULL_NAME='System Administrator' \
   console python -m app.bootstrap_admin admin@your-domain.test
 ```
 

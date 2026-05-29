@@ -10,11 +10,13 @@ import json
 import os
 import re
 import secrets
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import duckdb
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import FastAPI, Header, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 
 # Sprint v1.18: structured JSON logs to stdout, with secret redaction.
 # Wired up before any other module-level import that might log so the
@@ -578,6 +580,35 @@ def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Head
     return x_internal_service
 
 app = FastAPI(title="MODecissionsPaaS Refinement", lifespan=lifespan)
+
+
+def _internal_error_request_id(request: Request | None = None) -> str:
+    candidate = getattr(getattr(request, "state", None), "request_id", None)
+    try:
+        return str(uuid.UUID(str(candidate)))
+    except Exception:
+        return str(uuid.uuid4())
+
+
+def _log_internal_error(exc: Exception, message: str, request: Request | None = None) -> str:
+    request_id = _internal_error_request_id(request)
+    logger.exception(
+        "%s request_id=%s",
+        message,
+        request_id,
+        extra={"request_id": request_id, "exception_type": type(exc).__name__},
+    )
+    return request_id
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _log_internal_error(exc, "unhandled refinement exception", request)
+    return JSONResponse(
+        {"error": "Internal Error", "request_id": request_id},
+        status_code=500,
+    )
+
 
 # Sprint v1.41.1 — correlation IDs.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
@@ -1226,7 +1257,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             return {"name": name, "layer": ds["layer"], "cartridge": cartridge,
                     "parquet": parquet, "fields": fields, "sample": sample}
         except Exception as exc:
-            return {"name": name, "error": str(exc),
+            request_id = _log_internal_error(exc, "dataset schema preview failed")
+            return {"name": name, "error": "Internal Error", "request_id": request_id,
                     "hint": "Dataset might not be materialized yet — run materialize first"}
 
     if tool == "list_datasets_with_schemas":
@@ -1337,7 +1369,8 @@ def _get_lineage(name: str, limit: int) -> dict:
                 r["source_load_date"] = str(r["source_load_date"])
         return {"name": name, "lineage": rows}
     except Exception as exc:
-        return {"name": name, "error": str(exc)}
+        request_id = _log_internal_error(exc, "dataset lineage lookup failed")
+        return {"name": name, "error": "Internal Error", "request_id": request_id}
 
 
 def _pg_exec(query: str, params=None, fetch=False):
@@ -1981,7 +2014,13 @@ async def refresh_by_source(
                              "row_count": result["row_count"],
                              "storage_uri": result["storage_uri"]})
         except Exception as exc:
-            results.append({"name": meta["name"], "status": "error", "error": str(exc)})
+            request_id = _log_internal_error(exc, "dataset materialize_all item failed")
+            results.append({
+                "name": meta["name"],
+                "status": "error",
+                "error": "Internal Error",
+                "request_id": request_id,
+            })
 
     errors = [r for r in results if r.get("status") == "error"]
     if errors and not body.get("allow_partial"):
