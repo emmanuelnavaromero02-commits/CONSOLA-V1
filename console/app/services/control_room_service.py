@@ -251,6 +251,7 @@ class BaseAdapter(ABC):
         self,
         action_data: dict[str, Any],
         credentials: dict[str, Any],
+        dry_run: bool = True,
     ) -> ExecutionResult | dict[str, Any] | Awaitable[ExecutionResult | dict[str, Any]]:
         """Execute an approved external write-back action."""
 
@@ -5519,7 +5520,14 @@ async def _execute_external_writeback_task(
     try:
         adapter = WriteBackAdapterFactory.get_adapter(template_type)
         adapter_name = adapter.__class__.__name__
-        adapter_result = adapter.execute(action_data, credentials)
+        validation_result = adapter.execute(action_data, credentials, dry_run=True)
+        if inspect.isawaitable(validation_result):
+            validation_result = await validation_result
+        public_validation_result = _adapter_result_to_dict(validation_result)
+        if not bool(public_validation_result.get("ok", True)):
+            raise RuntimeError(str(public_validation_result.get("message") or "write-back dry-run validation failed"))
+
+        adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
             adapter_result = await adapter_result
         public_adapter_result = _adapter_result_to_dict(adapter_result)
@@ -5576,6 +5584,7 @@ async def _execute_external_writeback_task(
         "before": before,
         "after": after,
         "message": message,
+        "validation_result": public_validation_result,
         "adapter_result": public_adapter_result,
     }
     execution = await _record_action_execution(
@@ -5622,6 +5631,7 @@ async def _execute_external_writeback_task(
             "execution_id": execution.get("id"),
             "before": before,
             "after": after,
+            "validation_result": public_validation_result,
             "adapter_result": public_adapter_result,
         },
     )

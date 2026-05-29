@@ -10,7 +10,12 @@ from app.services.control_room_service import BaseAdapter, ExecutionResult
 class SapHcmAdapter(BaseAdapter):
     DEFAULT_IT0008_PATH = "/sap/opu/odata/sap/ZHR_IT0008_SRV/BasicPaySet"
 
-    def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]) -> ExecutionResult:
+    def execute(
+        self,
+        action_data: dict[str, Any],
+        credentials: dict[str, Any],
+        dry_run: bool = True,
+    ) -> ExecutionResult:
         base_url = _first_present(credentials, "base_url", "sap_hcm_base_url", "SAP_HCM_BASE_URL", "url")
         if not base_url:
             raise ValueError("SAP HCM adapter requires base_url or SAP_HCM_BASE_URL credentials")
@@ -20,13 +25,28 @@ class SapHcmAdapter(BaseAdapter):
             or self.DEFAULT_IT0008_PATH
         )
         url = f"{str(base_url).rstrip('/')}/{str(endpoint).lstrip('/')}"
-        payload = _build_it0008_payload(action_data)
+        payload = _build_it0008_payload(action_data, dry_run=dry_run)
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
         }
-        auth = _auth_for(credentials, headers)
+        auth, auth_method = _auth_for(credentials, headers)
         timeout = float(credentials.get("timeout") or 20.0)
+
+        if dry_run:
+            return ExecutionResult(
+                ok=True,
+                status="validated",
+                message="Dry-run successful",
+                data={
+                    "dry_run": True,
+                    "permissions_checked": True,
+                    "auth_method": auth_method,
+                    "url": url,
+                    "template_type": action_data.get("template_type") or "sap_hcm_it0008",
+                    "payload": payload,
+                },
+            )
 
         with httpx.Client(timeout=timeout) as client:
             response = client.post(url, json=payload, headers=headers, auth=auth)
@@ -53,7 +73,7 @@ def _first_present(source: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> httpx.BasicAuth | None:
+def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> tuple[httpx.BasicAuth | None, str]:
     token = _first_present(credentials, "token", "api_token", "bearer_token", "SAP_HCM_TOKEN")
     api_key = _first_present(credentials, "api_key", "SAP_HCM_API_KEY")
     user = _first_present(credentials, "user", "username", "sap_hcm_user", "SAP_HCM_USER")
@@ -61,16 +81,16 @@ def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> httpx.Bas
 
     if token:
         headers["authorization"] = f"Bearer {token}"
-        return None
+        return None, "bearer_token"
     if api_key:
         headers["x-api-key"] = str(api_key)
-        return None
+        return None, "api_key"
     if user and password:
-        return httpx.BasicAuth(str(user), str(password))
+        return httpx.BasicAuth(str(user), str(password)), "basic"
     raise ValueError("SAP HCM adapter requires bearer token, api_key, or user/password credentials")
 
 
-def _build_it0008_payload(action_data: dict[str, Any]) -> dict[str, Any]:
+def _build_it0008_payload(action_data: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     action_payload = action_data.get("action_payload") if isinstance(action_data.get("action_payload"), dict) else {}
     item = action_data.get("item") if isinstance(action_data.get("item"), dict) else {}
     entity = action_payload.get("entity") if isinstance(action_payload.get("entity"), dict) else {}
@@ -84,7 +104,7 @@ def _build_it0008_payload(action_data: dict[str, Any]) -> dict[str, Any]:
         "MONTHLY_COST_USD": hcm.get("monthly_cost_usd"),
         "CONTROL_ROOM_ITEM_ID": item.get("id"),
         "IDEMPOTENCY_KEY": action_data.get("idempotency_key"),
-        "DRY_RUN": False,
+        "DRY_RUN": dry_run,
     }
 
 

@@ -1617,9 +1617,24 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
 
     class ExternalBillingAdapter(control_room_service.BaseAdapter):
-        def execute(self, action_data: dict, credentials: dict) -> control_room_service.ExecutionResult:
+        calls: list[bool] = []
+
+        def execute(
+            self,
+            action_data: dict,
+            credentials: dict,
+            dry_run: bool = True,
+        ) -> control_room_service.ExecutionResult:
+            self.calls.append(dry_run)
             assert action_data["template_type"] == "prepare_billing_review"
             assert credentials["cartridge_id"] == "replicon"
+            if dry_run:
+                return control_room_service.ExecutionResult(
+                    ok=True,
+                    status="validated",
+                    message="Dry-run successful",
+                    data={"dry_run": True},
+                )
             return control_room_service.ExecutionResult(
                 ok=True,
                 status="executed",
@@ -1668,13 +1683,39 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
 
     assert result["executed"] is True
     assert result["result"]["external_write"] is True
+    assert result["result"]["validation_result"]["message"] == "Dry-run successful"
     assert result["result"]["adapter"] == "ExternalBillingAdapter"
     assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
+    assert ExternalBillingAdapter.calls == [True, False]
     assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
     assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["status"] == "success"
     assert audit_event.await_args.kwargs["metadata"]["target"] == "replicon"
+
+
+def test_sap_hcm_adapter_dry_run_validates_without_posting():
+    from app.services.adapters import sap_hcm_adapter
+
+    client = patch.object(sap_hcm_adapter.httpx, "Client")
+
+    with client as http_client:
+        result = sap_hcm_adapter.SapHcmAdapter().execute(
+            {
+                "template_type": "sap_hcm_it0008",
+                "item": {"id": "item-hcm", "entity_id": "1001"},
+                "action_payload": {"sap_hcm": {"pernr": "1001"}},
+                "idempotency_key": "idem-hcm",
+            },
+            {"base_url": "https://sap.example", "user": "hcm-user", "password": "secret"},
+            dry_run=True,
+        )
+
+    assert result.ok is True
+    assert result.message == "Dry-run successful"
+    assert result.data["dry_run"] is True
+    assert result.data["payload"]["DRY_RUN"] is True
+    http_client.assert_not_called()
 
 
 @pytest.mark.asyncio
