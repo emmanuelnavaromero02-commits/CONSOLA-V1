@@ -286,7 +286,11 @@ function PipelineViewer({ cartridge }: { cartridge: string }) {
       ) : pipeline.isLoading ? (
         <SkeletonRows />
       ) : (
-        <PipelineTable rows={pipeline.data ?? []} />
+        <PipelineTable
+          rows={pipeline.data ?? []}
+          cartridge={cartridge}
+          onExtractionStarted={() => pipeline.refetch()}
+        />
       )}
     </ViewerShell>
   );

@@ -87,7 +87,15 @@ export default function MonitorPage() {
           ) : pipeline.isLoading ? (
             <SkeletonRows />
           ) : (
-            <PipelineTable rows={(pipeline.data ?? []).slice(0, 8)} />
+            <PipelineTable
+              rows={(pipeline.data ?? []).slice(0, 8)}
+              cartridge={cartridge}
+              onExtractionStarted={() => {
+                jobs.refetch();
+                pipeline.refetch();
+                freshness.refetch();
+              }}
+            />
           )}
         </div>
 

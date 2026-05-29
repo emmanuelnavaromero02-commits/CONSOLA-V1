@@ -21,7 +21,6 @@ from app.services.permissions import has_permission, require_permission
 
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
-CONTROL_ROOM_STATIC = STATIC / "control-room"
 CONSOLE_NEXT_STATIC = STATIC / "console-next"
 WORKSPACE_INTERNAL_URL = os.environ.get("WORKSPACE_INTERNAL_URL", "http://workspace:8001").rstrip("/")
 _INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
@@ -208,43 +207,14 @@ async def security_page(request: Request):
     return _console_next_response(request, "security/index.html")
 
 
-def _control_room_file(path: str = "index.html") -> Path:
-    root = CONTROL_ROOM_STATIC.resolve()
-    if not root.is_dir():
-        raise HTTPException(status_code=503, detail="control room frontend is not built")
-    candidate = (root / path).resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="control room asset not found") from exc
-    if candidate.is_dir():
-        candidate = candidate / "index.html"
-    if not candidate.is_file():
-        raise HTTPException(status_code=404, detail="control room asset not found")
-    return candidate
-
-
-def _control_room_response(path: str = "index.html") -> FileResponse:
-    page = _control_room_file(path)
-    headers = {}
-    if page.suffix.lower() == ".html":
-        headers["Content-Security-Policy"] = _console_next_csp(str(page), "'none'")
-    return FileResponse(page, headers=headers)
-
-
 @router.get("/control-room", dependencies=[Depends(require_permission("workspace.access"))])
-async def control_room_page():
-    return _control_room_response()
+async def control_room_page(request: Request):
+    return _console_next_response(request, "control-room/index.html")
 
 
 @router.get("/control-room/", dependencies=[Depends(require_permission("workspace.access"))])
-async def control_room_page_slash():
-    return _control_room_response()
-
-
-@router.get("/control-room/{asset_path:path}", dependencies=[Depends(require_permission("workspace.access"))])
-async def control_room_asset(asset_path: str):
-    return _control_room_response(asset_path or "index.html")
+async def control_room_page_slash(request: Request):
+    return _console_next_response(request, "control-room/index.html")
 
 
 # Sprint Phase-0 SaaS controls — "Mis accesos" is the user-facing view of
@@ -457,6 +427,18 @@ async def workspace_chat_stream_proxy(request: Request, user: dict = Depends(req
 )
 async def copilot_page(request: Request):
     return _console_next_response(request, "copilot/index.html")
+
+
+@router.get(
+    "/copilot/knowledge",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+@router.get(
+    "/copilot/knowledge/",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+async def copilot_knowledge_page(request: Request):
+    return _console_next_response(request, "copilot/knowledge/index.html")
 
 
 @router.get("/viewer", dependencies=[Depends(_require_viewer_permission)])

@@ -1,3 +1,10 @@
+"use client";
+
+import { Loader2, Play, PlayCircle } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+
+import { api } from "@/lib/api";
 import type { PipelineEntity } from "@/lib/monitor/types";
 import { StatusPill } from "./StatusPill";
 
@@ -5,7 +12,60 @@ function countNodes(row: PipelineEntity): string {
   return `${row.silver.length} silver · ${row.gold.length} gold`;
 }
 
-export function PipelineTable({ rows }: { rows: PipelineEntity[] }) {
+export function PipelineTable({
+  rows,
+  cartridge,
+  onExtractionStarted,
+}: {
+  rows: PipelineEntity[];
+  cartridge?: string;
+  onExtractionStarted?: () => void;
+}) {
+  const [pendingEntity, setPendingEntity] = useState<string | null>(null);
+  const [extractingAll, setExtractingAll] = useState(false);
+  const activeCartridge = cartridge || rows[0]?.cartridge || "";
+  const isExtractAllLoading = extractingAll;
+
+  async function extractEntity(row: PipelineEntity) {
+    const key = `${row.cartridge}:${row.entity}`;
+    setPendingEntity(key);
+    try {
+      await api.post(
+        `/api/pipeline/${encodeURIComponent(row.cartridge)}/${encodeURIComponent(row.entity)}/extract`,
+        { mode: "incremental" },
+      );
+      toast.success(`Extracción enviada para ${row.entity}.`);
+      onExtractionStarted?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `No se pudo extraer ${row.entity}.`);
+    } finally {
+      setPendingEntity(null);
+    }
+  }
+
+  async function extractAll() {
+    if (!activeCartridge) return;
+    setExtractingAll(true);
+    try {
+      const { data } = await api.post<{ count?: number; error_count?: number }>(
+        `/api/pipeline/${encodeURIComponent(activeCartridge)}/extract_all`,
+        { mode: "incremental" },
+      );
+      const count = data.count ?? 0;
+      const errors = data.error_count ?? 0;
+      toast.success(
+        errors
+          ? `Extracción masiva enviada: ${count} OK, ${errors} con error.`
+          : `Extracción masiva enviada: ${count} entidades.`,
+      );
+      onExtractionStarted?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo extraer todo.");
+    } finally {
+      setExtractingAll(false);
+    }
+  }
+
   if (!rows.length) {
     return (
       <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -15,45 +75,83 @@ export function PipelineTable({ rows }: { rows: PipelineEntity[] }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2 font-medium">Entidad</th>
-            <th className="px-3 py-2 font-medium">Bronze</th>
-            <th className="px-3 py-2 font-medium">Watermark</th>
-            <th className="px-3 py-2 font-medium">Última corrida</th>
-            <th className="px-3 py-2 font-medium">Capas</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={`${row.cartridge}:${row.entity}`} className="border-t">
-              <td className="px-3 py-2 align-top font-medium">{row.entity}</td>
-              <td className="px-3 py-2 align-top">
-                <div className="space-y-1">
-                  <StatusPill status={row.bronze.status} />
-                  <div className="text-xs text-muted-foreground">
-                    {row.bronze.record_count ?? 0} filas · {row.bronze.latest_date || "sin fecha"}
-                  </div>
-                </div>
-              </td>
-              <td className="px-3 py-2 align-top font-mono text-xs text-muted-foreground">
-                {row.watermark || "-"}
-              </td>
-              <td className="px-3 py-2 align-top">
-                <div className="space-y-1">
-                  <StatusPill status={row.last_run?.status || row.last_job?.status} />
-                  <div className="text-xs text-muted-foreground">
-                    {row.last_run?.finished_at || row.last_job?.finished_at || row.last_run?.started_at || "-"}
-                  </div>
-                </div>
-              </td>
-              <td className="px-3 py-2 align-top text-xs text-muted-foreground">{countNodes(row)}</td>
+    <div className="rounded-lg border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Extracción</span>
+        <button
+          type="button"
+          onClick={extractAll}
+          disabled={isExtractAllLoading || !activeCartridge}
+          className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isExtractAllLoading ? (
+            <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+          ) : (
+            <PlayCircle aria-hidden className="h-4 w-4" />
+          )}
+          Extraer Todo
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 font-medium">Entidad</th>
+              <th className="px-3 py-2 font-medium">Bronze</th>
+              <th className="px-3 py-2 font-medium">Watermark</th>
+              <th className="px-3 py-2 font-medium">Última corrida</th>
+              <th className="px-3 py-2 font-medium">Capas</th>
+              <th className="px-3 py-2 text-right font-medium">Acciones</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const key = `${row.cartridge}:${row.entity}`;
+              const isRowLoading = pendingEntity === key;
+              return (
+                <tr key={key} className="border-t">
+                  <td className="px-3 py-2 align-top font-medium">{row.entity}</td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="space-y-1">
+                      <StatusPill status={row.bronze.status} />
+                      <div className="text-xs text-muted-foreground">
+                        {row.bronze.record_count ?? 0} filas · {row.bronze.latest_date || "sin fecha"}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top font-mono text-xs text-muted-foreground">
+                    {row.watermark || "-"}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="space-y-1">
+                      <StatusPill status={row.last_run?.status || row.last_job?.status} />
+                      <div className="text-xs text-muted-foreground">
+                        {row.last_run?.finished_at || row.last_job?.finished_at || row.last_run?.started_at || "-"}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top text-xs text-muted-foreground">{countNodes(row)}</td>
+                  <td className="px-3 py-2 text-right align-top">
+                    <button
+                      type="button"
+                      onClick={() => extractEntity(row)}
+                      disabled={isRowLoading || isExtractAllLoading}
+                      className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isRowLoading ? (
+                        <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play aria-hidden className="h-4 w-4" />
+                      )}
+                      Extraer
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

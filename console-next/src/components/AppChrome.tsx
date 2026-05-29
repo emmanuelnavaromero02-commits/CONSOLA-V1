@@ -26,8 +26,7 @@ interface NavItem {
 /**
  * v1.44.4 Group 1 — primary navigation. Each entry maps to a real
  * console surface served by FastAPI on the same origin. Static-exported
- * pages stay in console-next; Studio/control-room/legacy bridge pages
- * keep their existing backend contracts.
+ * pages stay in console-next while backend contracts stay same-origin.
  */
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard",           label: "Panel",        icon: "▦" },
@@ -35,7 +34,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/control-room",        label: "Control Room", icon: "◎", permission: "workspace.access" },
   { href: "/marketplace",         label: "Marketplace",  icon: "◧", permission: "marketplace.read", active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses"] },
   { href: "/apps-gallery",        label: "Apps",         icon: "▥", permission: "apps.read" },
-  { href: "/copilot",             label: "Copiloto",     icon: "◈", permission: "copilot.use" },
+  { href: "/copilot",             label: "Copiloto",     icon: "◈", permission: "copilot.use", active: ["/copilot"] },
+  { href: "/copilot/knowledge",   label: "Conocimiento", icon: "◫", permission: "copilot.use" },
   { href: "/agents",              label: "Agentes",      icon: "◇", adminOnly: true },
   { href: "/cartridges",          label: "Cartuchos",    icon: "□", permission: "cartridges.read", adminOnly: true },
   { href: "/monitor",             label: "Monitor",      icon: "▤", permission: "monitor.read" },
