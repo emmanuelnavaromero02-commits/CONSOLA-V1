@@ -49,6 +49,8 @@ class SapHcmAdapter(BaseAdapter):
             )
 
         with httpx.Client(timeout=timeout) as client:
+            csrf_token = _fetch_csrf_token(client, url, headers=headers, auth=auth)
+            headers["x-csrf-token"] = csrf_token
             response = client.post(url, json=payload, headers=headers, auth=auth)
 
         ok = 200 <= response.status_code < 400
@@ -88,6 +90,23 @@ def _auth_for(credentials: dict[str, Any], headers: dict[str, str]) -> tuple[htt
     if user and password:
         return httpx.BasicAuth(str(user), str(password)), "basic"
     raise ValueError("SAP HCM adapter requires bearer token, api_key, or user/password credentials")
+
+
+def _fetch_csrf_token(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str],
+    auth: httpx.BasicAuth | None,
+) -> str:
+    fetch_headers = {**headers, "x-csrf-token": "Fetch"}
+    response = client.get(url, headers=fetch_headers, auth=auth)
+    if not 200 <= response.status_code < 400:
+        raise RuntimeError(f"SAP HCM CSRF token fetch failed with HTTP {response.status_code}")
+    token = response.headers.get("x-csrf-token")
+    if not token:
+        raise RuntimeError("SAP HCM CSRF token fetch failed: missing x-csrf-token header")
+    return token
 
 
 def _build_it0008_payload(action_data: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:

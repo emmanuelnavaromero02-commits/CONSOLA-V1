@@ -1758,6 +1758,108 @@ def test_sap_hcm_adapter_dry_run_validates_without_posting():
     http_client.assert_not_called()
 
 
+def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
+    from app.services.adapters import sap_hcm_adapter
+
+    class SapResponse:
+        def __init__(self, status_code: int, *, headers: dict | None = None, body: dict | None = None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self._body = body or {}
+            self.text = "ok"
+
+        def json(self):
+            return self._body
+
+    class SapClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.get_calls = []
+            self.post_calls = []
+            SapClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, *, headers, auth):
+            self.get_calls.append({"url": url, "headers": headers, "auth": auth})
+            return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
+
+        def post(self, url, *, json, headers, auth):
+            self.post_calls.append({"url": url, "json": json, "headers": headers, "auth": auth})
+            return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
+
+    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+
+    result = sap_hcm_adapter.SapHcmAdapter().execute(
+        {
+            "template_type": "sap_hcm_it0008",
+            "item": {"id": "item-hcm", "entity_id": "1001"},
+            "action_payload": {"sap_hcm": {"pernr": "1001"}},
+            "idempotency_key": "idem-hcm",
+        },
+        {"base_url": "https://sap.example", "user": "hcm-user", "password": "secret"},
+        dry_run=False,
+    )
+
+    assert result.ok is True
+    assert result.data["status_code"] == 201
+    assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
+    assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
+    assert SapClient.instance.post_calls[0]["json"]["DRY_RUN"] is False
+
+
+def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
+    from app.services.adapters import sap_hcm_adapter
+
+    class SapResponse:
+        status_code = 403
+        headers = {}
+        text = "forbidden"
+
+        def json(self):
+            return {"error": "forbidden"}
+
+    class SapClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.post_calls = []
+            SapClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, *_args, **_kwargs):
+            return SapResponse()
+
+        def post(self, *args, **kwargs):
+            self.post_calls.append((args, kwargs))
+            return SapResponse()
+
+    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+
+    with pytest.raises(RuntimeError, match="CSRF token fetch failed with HTTP 403"):
+        sap_hcm_adapter.SapHcmAdapter().execute(
+            {
+                "template_type": "sap_hcm_it0008",
+                "item": {"id": "item-hcm", "entity_id": "1001"},
+                "action_payload": {"sap_hcm": {"pernr": "1001"}},
+            },
+            {"base_url": "https://sap.example", "token": "token"},
+            dry_run=False,
+        )
+
+    assert SapClient.instance.post_calls == []
+
+
 @pytest.mark.asyncio
 async def test_execute_live_requires_explicit_confirmation(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
