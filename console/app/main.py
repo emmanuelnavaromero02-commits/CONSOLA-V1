@@ -269,15 +269,38 @@ def _is_security_admin_context(ctx: dict) -> bool:
     return "*" in allowed
 
 
-def _is_replicon_vault_reveal_request(request: Request) -> bool:
-    """Allow Replicon DAGs to reveal their own Vault connection at runtime."""
+_CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
+    "replicon": {
+        "replicon": ("INTERNAL_API_KEY_REPLICON_TO_CONSOLE",),
+        "cartridge-replicon": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+    },
+    "sap_hcm": {
+        "cartridge-sap_hcm": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+    },
+    "sap_s4hana": {
+        "cartridge-sap_s4hana": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+    },
+    "sap_successfactors": {
+        "cartridge-sap_successfactors": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+    },
+}
+
+
+def _is_cartridge_vault_reveal_request(request: Request) -> bool:
+    """Allow cartridge workers to reveal only their own Vault connection."""
     if request.method != "GET":
         return False
-    if not re.fullmatch(r"/api/vault/connections/replicon/[^/]+/reveal", request.url.path):
+    match = re.fullmatch(r"/api/vault/connections/([^/]+)/[^/]+/reveal", request.url.path)
+    if not match:
+        return False
+    cartridge = match.group(1)
+    service_keys = _CARTRIDGE_VAULT_REVEAL_KEYS.get(cartridge)
+    if not service_keys:
         return False
 
     service = (request.headers.get("x-internal-service") or "").strip().lower()
-    if service != "replicon":
+    key_envs = service_keys.get(service)
+    if not key_envs:
         return False
     supplied = (
         request.headers.get("x-api-key")
@@ -287,7 +310,7 @@ def _is_replicon_vault_reveal_request(request: Request) -> bool:
     if not supplied:
         return False
 
-    accepted = [os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", "")]
+    accepted = [os.environ.get(env, "") for env in key_envs]
     if not _is_production_env():
         accepted.append(INTERNAL_API_KEY)
     return any(secrets.compare_digest(str(supplied), key) for key in accepted if key)
@@ -312,6 +335,9 @@ def _user_payload(user: dict | None) -> dict | None:
 
 
 async def _internal_or_authenticated(request: Request) -> dict:
+    state_user = getattr(request.state, "user", None)
+    if state_user:
+        return state_user
     if _is_internal_request(request):
         return _internal_service_user()
     return await require_authenticated(request)
@@ -1196,7 +1222,7 @@ async def auth_middleware(request: Request, call_next):
         request.state.user = _internal_service_user()
         return await call_next(request)
 
-    if _is_replicon_vault_reveal_request(request):
+    if _is_cartridge_vault_reveal_request(request):
         request.state.user = _internal_service_user()
         return await call_next(request)
 
@@ -4102,7 +4128,7 @@ async def api_vault_list_connections(cartridge: str, user: dict = Depends(requir
     return data
 
 @app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
-async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
+async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(_internal_or_authenticated)):
     """Returns full credentials including token (not masked)."""
     _require_cartridge_visible(user, cartridge)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:

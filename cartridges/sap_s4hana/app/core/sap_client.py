@@ -35,6 +35,7 @@ from urllib3.util.retry import Retry
 from requests.auth import HTTPBasicAuth
 
 from app.core.config import settings
+from app.core.vault_client import get_secret_for_worker
 
 logger = logging.getLogger(__name__)
 # urllib3 retry logger is noisy by default; INFO surfaces retries
@@ -93,18 +94,35 @@ class SapS4Client:
 
     def __init__(self) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
-        self.base_url = (settings.sap_s4_base_url or "").rstrip("/")
-        self.user = settings.sap_s4_user
-        self.password = settings.sap_s4_pass
-        self.client_mandant = settings.sap_s4_client_mandant or "100"
-        self.api_key = settings.sap_s4_api_key or os.environ.get("S4_API_KEY", "")
+        self.base_url = (
+            get_secret_for_worker("sap_s4hana", "SAP_S4_BASE_URL")
+            or settings.sap_s4_base_url
+            or ""
+        ).rstrip("/")
+        self.user = get_secret_for_worker("sap_s4hana", "SAP_S4_USER") or settings.sap_s4_user
+        self.password = get_secret_for_worker("sap_s4hana", "SAP_S4_PASS") or settings.sap_s4_pass
+        self.client_mandant = (
+            get_secret_for_worker("sap_s4hana", "SAP_S4_CLIENT_MANDANT")
+            or settings.sap_s4_client_mandant
+            or "100"
+        )
+        self.api_key = (
+            get_secret_for_worker("sap_s4hana", "SAP_S4_API_KEY")
+            or settings.sap_s4_api_key
+            or os.environ.get("S4_API_KEY", "")
+        )
 
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
 
     def configuration_status(self) -> dict[str, Any]:
-        missing = [name.upper() for name in self.REQUIRED_ENV if not getattr(settings, name)]
+        required = {
+            "SAP_S4_BASE_URL": self.base_url,
+            "SAP_S4_USER": self.user,
+            "SAP_S4_PASS": self.password,
+        }
+        missing = [name for name, value in required.items() if not value]
         return {
             "cartridge": self.CARTRIDGE_ID,
             "configured": not missing,

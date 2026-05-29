@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 
 from app.core.config import settings
+from app.core.vault_client import get_replicon_credentials
 
 _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _RETRY_ATTEMPTS = 5
@@ -29,8 +30,13 @@ class RepliconClient:
     """
 
     def __init__(self) -> None:
-        self.base_url = settings.replicon_base_url.rstrip("/")
-        self._token = settings.replicon_api_token
+        if settings.use_demo_data:
+            base_url = settings.replicon_base_url
+            token = settings.replicon_api_token or ""
+        else:
+            base_url, token = get_replicon_credentials()
+        self.base_url = base_url.rstrip("/")
+        self._token = token
 
         if not settings.use_demo_data and not self._token:
             raise EnvironmentError("REPLICON_TOKEN is required (set in .env)")

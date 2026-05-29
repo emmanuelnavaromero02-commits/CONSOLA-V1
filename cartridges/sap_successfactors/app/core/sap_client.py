@@ -18,6 +18,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.core.config import settings
+from app.core.settings_proxy import get_setting
+from app.core.vault_client import get_secret_for_worker
 
 logger = logging.getLogger(__name__)
 # urllib3 retry logger is noisy by default; INFO surfaces retries
@@ -76,11 +78,31 @@ class SapSfClient:
 
     def __init__(self) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
-        self.base_url = (settings.sf_base_url or "").rstrip("/")
-        self.token_url = settings.sf_token_url
-        self.client_id = settings.sf_client_id
-        self.client_secret = settings.sf_client_secret
-        self.company_id = settings.sf_company_id
+        self.base_url = (
+            get_secret_for_worker("sap_successfactors", "SF_BASE_URL")
+            or get_setting("sap_successfactors_base_url", default=settings.sf_base_url, env_fallback="SF_BASE_URL")
+            or ""
+        ).rstrip("/")
+        self.token_url = (
+            get_secret_for_worker("sap_successfactors", "SF_TOKEN_URL")
+            or settings.sf_token_url
+        )
+        self.client_id = (
+            get_secret_for_worker("sap_successfactors", "SF_CLIENT_ID")
+            or get_setting("sap_successfactors_client_id", default=settings.sf_client_id, env_fallback="SF_CLIENT_ID")
+        )
+        self.client_secret = (
+            get_secret_for_worker("sap_successfactors", "SF_CLIENT_SECRET")
+            or get_setting(
+                "sap_successfactors_client_secret",
+                default=settings.sf_client_secret,
+                env_fallback="SF_CLIENT_SECRET",
+            )
+        )
+        self.company_id = (
+            get_secret_for_worker("sap_successfactors", "SF_COMPANY_ID")
+            or settings.sf_company_id
+        )
         self._token: str | None = None
         self._token_expires_at = 0.0
 
@@ -89,7 +111,14 @@ class SapSfClient:
     # ------------------------------------------------------------------
 
     def configuration_status(self) -> dict[str, Any]:
-        missing = [name.upper() for name in self.REQUIRED_ENV if not getattr(settings, name)]
+        required = {
+            "SF_BASE_URL": self.base_url,
+            "SF_CLIENT_ID": self.client_id,
+            "SF_CLIENT_SECRET": self.client_secret,
+            "SF_TOKEN_URL": self.token_url,
+            "SF_COMPANY_ID": self.company_id,
+        }
+        missing = [name for name, value in required.items() if not value]
         return {
             "cartridge": self.CARTRIDGE_ID,
             "configured": not missing,

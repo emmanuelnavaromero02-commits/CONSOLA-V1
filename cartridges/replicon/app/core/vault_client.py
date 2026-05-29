@@ -1,19 +1,128 @@
-"""
-Credential helpers for the Replicon cartridge (non-Airflow services).
-Reads from environment variables / Settings — no external Vault service needed.
-"""
 from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+import requests
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
+_CONNECTION_CACHE: dict[str, dict[str, Any]] = {}
+
+_ENV_ALIASES: dict[str, tuple[str, ...]] = {
+    "REPLICON_API_TOKEN": ("REPLICON_API_TOKEN", "REPLICON_TOKEN", "REPLICON_API_KEY"),
+    "REPLICON_TOKEN": ("REPLICON_TOKEN", "REPLICON_API_TOKEN", "REPLICON_API_KEY"),
+    "REPLICON_API_KEY": ("REPLICON_API_KEY", "REPLICON_API_TOKEN", "REPLICON_TOKEN"),
+}
+
+_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "REPLICON_BASE_URL": ("base_url", "url", "host", "replicon_base_url"),
+    "REPLICON_API_TOKEN": ("token", "api_token", "api_key", "password", "replicon_api_token"),
+    "REPLICON_TOKEN": ("token", "api_token", "api_key", "password", "replicon_token"),
+    "REPLICON_API_KEY": ("api_key", "token", "api_token", "password", "replicon_api_key"),
+}
+
+_SERVICE_HEADERS: dict[str, tuple[str, ...]] = {
+    "replicon": ("replicon", "cartridge-replicon"),
+    "sap_hcm": ("cartridge-sap_hcm",),
+    "sap_s4hana": ("cartridge-sap_s4hana",),
+    "sap_successfactors": ("cartridge-sap_successfactors",),
+}
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _auth_options(service_name: str) -> list[tuple[str, str]]:
+    service = service_name.strip().lower()
+    options: list[tuple[str, str]] = []
+    if service == "replicon":
+        key = os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", "")
+        if key:
+            options.append((key, "replicon"))
+    key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "")
+    if key:
+        for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
+            if header != "replicon":
+                options.append((key, header))
+    if not options and not _is_production():
+        legacy = os.environ.get("INTERNAL_API_KEY", "")
+        if legacy:
+            for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
+                options.append((legacy, header))
+    return options
+
+
+def _fetch_connection(service_name: str) -> dict[str, Any]:
+    service = service_name.strip().lower()
+    cached = _CONNECTION_CACHE.get(service)
+    if cached is not None:
+        return cached
+
+    console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
+    for conn_id in ("default", "analytics"):
+        for key, internal_service in _auth_options(service):
+            try:
+                response = requests.get(
+                    f"{console_url}/api/vault/connections/{service}/{conn_id}/reveal",
+                    headers={"x-api-key": key, "x-internal-service": internal_service},
+                    timeout=5,
+                )
+                if response.status_code == 404:
+                    break
+                if response.status_code in {401, 403}:
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict):
+                    _CONNECTION_CACHE[service] = payload
+                    return payload
+            except Exception as exc:
+                logger.debug("Vault reveal failed for %s/%s: %s", service, conn_id, exc)
+    return {}
+
+
+def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
+    direct = env_var_name.strip()
+    lower = direct.lower()
+    fields: list[str] = []
+    fields.extend(_FIELD_ALIASES.get(direct, ()))
+    fields.extend((direct, lower))
+    for prefix in ("REPLICON_", "SAP_HCM_", "SAP_S4_", "SF_"):
+        if direct.startswith(prefix):
+            fields.append(direct.removeprefix(prefix).lower())
+    return tuple(dict.fromkeys(fields))
+
+
+def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
+    """Resolve a worker credential from env first, then Console Vault."""
+    for candidate in _ENV_ALIASES.get(env_var_name, (env_var_name,)):
+        value = os.environ.get(candidate)
+        if value:
+            return value
+
+    payload = _fetch_connection(service_name)
+    for field in _candidate_fields(env_var_name):
+        value = payload.get(field)
+        if value is not None and str(value).strip():
+            return str(value)
+    return ""
+
 
 def get_replicon_credentials() -> tuple[str, str]:
-    """Return (base_url, token) from environment configuration."""
-    base_url = settings.replicon_base_url
-    token    = settings.replicon_api_token or ""
+    """Return (base_url, token) from environment or Console Vault."""
+    base_url = (
+        get_secret_for_worker("replicon", "REPLICON_BASE_URL")
+        or settings.replicon_base_url
+    )
+    token = get_secret_for_worker("replicon", "REPLICON_API_TOKEN") or settings.replicon_api_token or ""
     if not token:
         raise ValueError(
             "Replicon API token not configured.\n"
-            "Set REPLICON_API_TOKEN environment variable for the cartridge service."
+            "Set REPLICON_API_TOKEN or save connections/replicon/default in Vault."
         )
     return base_url, token
