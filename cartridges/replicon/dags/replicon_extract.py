@@ -25,11 +25,19 @@ from airflow.decorators import dag, task
 from airflow.models import Variable
 
 try:
-    from replicon_auth_factory import auth_trace, build_auth_headers
-except ModuleNotFoundError:  # pragma: no cover - defensive for direct file imports
+    from app.core.auth_factory import auth_trace, build_auth_headers
+except ModuleNotFoundError:  # pragma: no cover - Airflow mounts app code separately
     import importlib.util
 
-    _auth_factory_path = Path(__file__).with_name("replicon_auth_factory.py")
+    _auth_factory_candidates = (
+        Path("/registry/cartridges/replicon/app/core/auth_factory.py"),
+        Path(__file__).resolve().parents[1] / "app/core/auth_factory.py",
+    )
+    for _auth_factory_path in _auth_factory_candidates:
+        if _auth_factory_path.exists():
+            break
+    else:
+        raise
     _auth_factory_spec = importlib.util.spec_from_file_location(
         "replicon_auth_factory",
         _auth_factory_path,
