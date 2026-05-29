@@ -1317,6 +1317,23 @@ def _execution_row(
     }
 
 
+def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
+    adapter = control_room_service.WriteBackAdapterFactory.get_adapter("sap_hcm_it0008")
+
+    assert isinstance(adapter, control_room_service.BaseAdapter)
+    assert adapter.__class__.__name__ == "SapHcmAdapter"
+
+
+def test_hcm_access_template_is_wired_to_builtin_it0008_adapter():
+    template = control_room_service.ACTION_TEMPLATES["prepare_hcm_access_review"]
+    capability = control_room_service._writeback_capability(template)  # noqa: SLF001 - registry wiring test
+
+    assert template["template_type"] == "sap_hcm_it0008"
+    assert capability["supported"] is True
+    assert capability["mode"] == "external_writeback"
+    assert capability["adapter"] == "sap_hcm_it0008"
+
+
 class _AcquireContext:
     def __init__(self, conn):
         self.conn = conn

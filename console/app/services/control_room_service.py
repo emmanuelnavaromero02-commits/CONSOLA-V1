@@ -185,6 +185,7 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "prepare_hcm_access_review": {
         "template_id": "prepare_hcm_access_review",
+        "template_type": "sap_hcm_it0008",
         "cartridge_id": "sap_hcm",
         "label": "Preparar revision HCM acceso/nomina",
         "description": "Prepara baja, bloqueo de usuario, evidencia de posicion y posible cola de nomina.",
@@ -258,6 +259,12 @@ class WriteBackAdapterFactory:
     _registry: dict[str, type[BaseAdapter]] = {}
 
     @classmethod
+    def _ensure_builtin_adapters(cls) -> None:
+        from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
+
+        cls._registry.setdefault("sap_hcm_it0008", SapHcmAdapter)
+
+    @classmethod
     def register_adapter(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
         if not issubclass(adapter_cls, BaseAdapter):
             raise TypeError("write-back adapter must inherit from BaseAdapter")
@@ -265,10 +272,12 @@ class WriteBackAdapterFactory:
 
     @classmethod
     def has_adapter(cls, template_type: str) -> bool:
+        cls._ensure_builtin_adapters()
         return _normalize_writeback_template_type(template_type) in cls._registry
 
     @classmethod
     def get_adapter(cls, template_type: str) -> BaseAdapter:
+        cls._ensure_builtin_adapters()
         normalized = _normalize_writeback_template_type(template_type)
         adapter_cls = cls._registry.get(normalized)
         if adapter_cls is None:
