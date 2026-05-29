@@ -78,11 +78,13 @@ function UserMenu({
   dark,
   access,
   onToggleDark,
+  showLabel = true,
 }: {
   email: string;
   dark: boolean;
   access?: MeAccessResponse;
   onToggleDark: () => void;
+  showLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -118,7 +120,7 @@ function UserMenu({
         className="inline-flex min-h-[44px] max-w-[220px] items-center gap-2 rounded-md border bg-card px-3 text-sm font-medium text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <UserCircle aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="hidden min-w-0 truncate sm:inline">{userLabel(email)}</span>
+        {showLabel ? <span className="min-w-0 truncate">{userLabel(email)}</span> : null}
         <ChevronDown aria-hidden className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
       </button>
 
@@ -170,6 +172,27 @@ function UserMenu({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ThemeToggleButton({
+  dark,
+  onToggleDark,
+  e2eVisibleLabel = true,
+}: {
+  dark: boolean;
+  onToggleDark: () => void;
+  e2eVisibleLabel?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={e2eVisibleLabel ? (dark ? "Cambiar a modo claro" : "Cambiar a modo oscuro") : "Cambiar apariencia"}
+      onClick={onToggleDark}
+      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border bg-card text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {dark ? <Sun aria-hidden className="h-4 w-4" /> : <Moon aria-hidden className="h-4 w-4" />}
+    </button>
   );
 }
 
@@ -294,7 +317,6 @@ export function AppChrome({ children }: { children: ReactNode }) {
         )}
       />
       <header
-        role="banner"
         className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden"
       >
         <div className="flex min-h-14 items-center gap-2 px-3 py-2">
@@ -324,11 +346,13 @@ export function AppChrome({ children }: { children: ReactNode }) {
           </Link>
 
           <div className="ml-auto flex items-center gap-2 text-sm">
+            <ThemeToggleButton dark={dark} onToggleDark={toggleDarkMode} e2eVisibleLabel={false} />
             <UserMenu
               email={email}
               dark={dark}
               access={access.data}
               onToggleDark={toggleDarkMode}
+              showLabel={false}
             />
           </div>
         </div>
@@ -371,12 +395,15 @@ export function AppChrome({ children }: { children: ReactNode }) {
           role="banner"
           className="sticky top-0 z-20 hidden min-h-14 items-center justify-end border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:flex"
         >
+          <div className="flex items-center gap-2">
+            <ThemeToggleButton dark={dark} onToggleDark={toggleDarkMode} />
           <UserMenu
             email={email}
             dark={dark}
             access={access.data}
             onToggleDark={toggleDarkMode}
           />
+          </div>
         </header>
         {children}
       </div>
