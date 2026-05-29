@@ -1233,12 +1233,65 @@ def _lesson_insights(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _suggested_action_from_lesson(lesson: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = _details(lesson.get("metadata"))
+    if not metadata.get("autonomous_learning"):
+        return None
+    action = metadata.get("suggested_action")
+    if not isinstance(action, dict):
+        return None
+    template_id = str(action.get("template_id") or "").strip()
+    if not template_id:
+        return None
+    return {
+        "template_id": template_id,
+        "template_type": action.get("template_type"),
+        "label": action.get("label") or template_id.replace("_", " ").title(),
+        "action_kind": action.get("action_kind"),
+        "target": action.get("target") or lesson.get("cartridge_id"),
+        "adapter": action.get("adapter"),
+        "confidence": lesson.get("confidence"),
+        "lesson_id": lesson.get("id"),
+        "source_item_id": lesson.get("item_id"),
+        "source_decision_id": lesson.get("source_decision_id"),
+        "reason": lesson.get("rule"),
+    }
+
+
+def _suggested_actions_from_lessons(
+    item: dict[str, Any],
+    lesson_rows: Iterable[dict[str, Any]],
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for lesson in lesson_rows:
+        if not _lesson_matches_item(lesson, item):
+            continue
+        suggestion = _suggested_action_from_lesson(lesson)
+        if not suggestion:
+            continue
+        key = str(suggestion.get("template_id") or suggestion.get("lesson_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        suggestions.append(suggestion)
+    suggestions.sort(key=lambda row: float(row.get("confidence") or 0.0), reverse=True)
+    return suggestions[: max(1, min(int(limit or 5), 20))]
+
+
 def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not items:
         return []
     if not lesson_rows:
         return [
-            _with_omega({**item, "related_lessons": item.get("related_lessons") or [], "lesson_count": 0})
+            _with_omega({
+                **item,
+                "related_lessons": item.get("related_lessons") or [],
+                "lesson_count": 0,
+                "suggested_actions": item.get("suggested_actions") or [],
+            })
             for item in items
         ]
 
@@ -1258,11 +1311,13 @@ def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict
             rule = str(row.get("rule") or "").strip()
             if rule and rule not in rules:
                 rules.append(rule)
+        suggested_actions = _suggested_actions_from_lessons(item, related)
         enriched.append(_with_omega({
             **item,
             "related_lessons": related[:5],
             "lesson_count": len(related),
             "learned_rules": rules[:5],
+            "suggested_actions": suggested_actions,
         }))
     enriched.sort(key=_status_sort_key)
     return enriched
@@ -2799,6 +2854,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         option["selected"] = option["id"] == selected_option_id
     lessons = _lessons_for_item(item)
     lesson_count = int(item.get("lesson_count") or 0)
+    suggested_actions = item.get("suggested_actions") if isinstance(item.get("suggested_actions"), list) else []
     priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
     alert_state = _alert_state(item)
     control_items = _control_items_for_item(
@@ -2828,6 +2884,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "action_templates": action_templates,
         "related_lessons": item.get("related_lessons") or [],
         "lesson_count": lesson_count,
+        "suggested_actions": suggested_actions,
         "lesson_applications": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
         "omega": {
             "signals": {
@@ -2914,6 +2971,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "lessons": {
                 "rules": lessons,
                 "applied": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
+                "suggested_actions": suggested_actions,
             },
         },
     }
@@ -4678,6 +4736,40 @@ def _dedupe_lessons(lessons: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return unique
 
 
+async def get_suggested_actions(
+    user: dict,
+    item: dict[str, Any],
+    *,
+    limit: int = 5,
+) -> dict[str, Any]:
+    lesson_rows = await _load_lesson_rows(
+        user,
+        cartridge_id=item.get("cartridge"),
+        anomaly_type=item.get("anomaly_type"),
+        limit=100,
+    )
+    item_lessons = await _load_lesson_rows(user, item_id=item.get("id"), limit=100)
+    lessons = _dedupe_lessons([*lesson_rows, *item_lessons])
+    suggestions = _suggested_actions_from_lessons(item, lessons, limit=limit)
+    return {
+        "item_id": item.get("id"),
+        "cartridge_id": item.get("cartridge"),
+        "anomaly_type": item.get("anomaly_type"),
+        "suggested_actions": suggestions,
+    }
+
+
+class ControlRoomService:
+    async def get_suggested_actions(
+        self,
+        user: dict,
+        item: dict[str, Any],
+        *,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        return await get_suggested_actions(user, item, limit=limit)
+
+
 async def apply_item_lesson(
     item_id: str,
     lesson_id: int,
@@ -5496,6 +5588,72 @@ async def _record_external_writeback_error(
     raise HTTPException(status_code, error_message) from exc
 
 
+async def _record_adapter_success_lesson(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    execution: dict[str, Any],
+    result: dict[str, Any],
+    adapter_name: str,
+    template_type: str,
+) -> dict[str, Any] | None:
+    tenant_id, workspace_id = _workspace_scope(user)
+    cartridge_id = str(item.get("cartridge") or template.get("cartridge_id") or "platform")
+    anomaly_type = str(item.get("anomaly_type") or "control_room_item")
+    decision_id = int(item["decision_id"]) if item.get("decision_id") else None
+    confidence = _impact_for_item(item).get("confidence") or 0.85
+    rule = (
+        f"Para {cartridge_id}/{anomaly_type}, sugerir {template.get('label') or template.get('template_id')} "
+        f"cuando una anomalia similar aparezca: adapter {adapter_name} ejecuto correctamente."
+    )
+    metadata = {
+        "autonomous_learning": True,
+        "source": "adapter_success",
+        "execution_id": execution.get("id"),
+        "result_status": result.get("status") or result.get("adapter_result", {}).get("status"),
+        "suggested_action": {
+            "template_id": template.get("template_id"),
+            "template_type": template_type,
+            "label": template.get("label"),
+            "action_kind": template.get("action_kind"),
+            "target": result.get("target") or template.get("cartridge_id") or item.get("cartridge"),
+            "adapter": adapter_name,
+        },
+    }
+    try:
+        await pool.execute(
+            """
+            INSERT INTO control_room_lessons (
+                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+                rule, source_decision_id, confidence, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            cartridge_id,
+            anomaly_type,
+            rule,
+            decision_id,
+            confidence,
+            json.dumps(metadata),
+        )
+    except Exception:
+        return None
+    return {
+        "item_id": item["id"],
+        "cartridge_id": cartridge_id,
+        "anomaly_type": anomaly_type,
+        "rule": rule,
+        "source_decision_id": decision_id,
+        "confidence": confidence,
+        "metadata": metadata,
+    }
+
+
 async def _execute_external_writeback_task(
     pool: Any,
     *,
@@ -5637,13 +5795,29 @@ async def _execute_external_writeback_task(
     )
     if not ok:
         raise HTTPException(502, message)
-    public_item = _with_omega({**item, "execution_status": "executed"})
+    learning_lesson = await _record_adapter_success_lesson(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        execution=execution,
+        result=result,
+        adapter_name=adapter_name,
+        template_type=template_type,
+    )
+    suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
+    public_item = _with_omega({
+        **item,
+        "execution_status": "executed",
+        "suggested_actions": suggested_actions,
+    })
     return {
         "executed": True,
         "idempotent": False,
         "execution": execution,
         "payload": action_data,
         "result": result,
+        "learning_lesson": learning_lesson,
         "item": public_item,
     }
 

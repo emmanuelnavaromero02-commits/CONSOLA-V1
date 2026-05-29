@@ -1687,11 +1687,51 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     assert result["result"]["adapter"] == "ExternalBillingAdapter"
     assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
     assert ExternalBillingAdapter.calls == [True, False]
+    assert result["learning_lesson"]["metadata"]["autonomous_learning"] is True
+    assert result["item"]["omega"]["lessons"]["suggested_actions"][0]["template_id"] == "prepare_billing_review"
     assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
     assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
     audit_event.assert_awaited_once()
     assert audit_event.await_args.kwargs["status"] == "success"
     assert audit_event.await_args.kwargs["metadata"]["target"] == "replicon"
+
+
+@pytest.mark.asyncio
+async def test_get_suggested_actions_reads_autonomous_learning_lessons():
+    item = {
+        "id": "item-new",
+        "cartridge": "sap_hcm",
+        "anomaly_type": "terminated_but_active",
+    }
+    lesson = {
+        "id": 901,
+        "item_id": "item-old",
+        "cartridge_id": "sap_hcm",
+        "anomaly_type": "terminated_but_active",
+        "rule": "Para sap_hcm/terminated_but_active, sugerir IT0008.",
+        "source_decision_id": 42,
+        "confidence": 0.91,
+        "metadata": {
+            "autonomous_learning": True,
+            "suggested_action": {
+                "template_id": "prepare_hcm_access_review",
+                "template_type": "sap_hcm_it0008",
+                "label": "Preparar revision HCM acceso/nomina",
+                "action_kind": "hcm_access_review",
+                "target": "sap_hcm",
+                "adapter": "SapHcmAdapter",
+            },
+        },
+        "created_at": datetime(2026, 5, 20, 10, 2, 1),
+    }
+
+    with patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(side_effect=[[lesson], []])):
+        result = await control_room_service.ControlRoomService().get_suggested_actions(USER, item)
+
+    assert result["suggested_actions"][0]["template_id"] == "prepare_hcm_access_review"
+    assert result["suggested_actions"][0]["template_type"] == "sap_hcm_it0008"
+    assert result["suggested_actions"][0]["lesson_id"] == 901
 
 
 def test_sap_hcm_adapter_dry_run_validates_without_posting():
