@@ -6,8 +6,8 @@ pair-key checks were skipped, and mcp-infra exposed dangerous
 write tools (airflow_create_dag, superset_create_*, vault_set).
 
 The fix flips every default to ``production`` so misconfiguration
-fails closed. Local dev opts in explicitly via
-``APP_ENV=development`` in the compose file.
+fails closed. Local dev must opt in explicitly with
+``APP_ENV=development`` outside the committed compose default.
 
 This test pins the invariant in both code and infrastructure.
 """
@@ -186,9 +186,9 @@ async def test_airflow_create_dag_refuses_when_app_env_unset(monkeypatch):
 # ── Infra: compose files set APP_ENV explicitly on every app service ──────
 
 # Services that run application code and therefore MUST set APP_ENV in
-# the local compose so the new ``production`` default doesn't accidentally
-# brick local dev. Pure-infra services (postgres, redis, minio,
-# airflow-init, mailhog, superset-init) don't read APP_ENV.
+# the local compose so the production guardrail is explicit. Pure-infra
+# services (postgres, redis, minio, airflow-init, mailhog,
+# superset-init) don't read APP_ENV.
 _LOCAL_APP_SERVICES = [
     "console", "workspace", "refinement", "vault", "mcp-infra",
     "replicon", "sap-successfactors", "sap-hcm", "sap-s4hana",
@@ -204,12 +204,11 @@ def test_local_compose_app_services_set_app_env(svc):
     assert isinstance(env, dict), f"{svc} environment must be a mapping"
     assert "APP_ENV" in env, (
         f"{svc} must declare APP_ENV explicitly in local compose. "
-        "Without it, the post-v1.43.2 code defaults to ``production`` "
-        "and local dev breaks."
+        "Without it, the post-v1.43.2 code defaults to ``production``."
     )
     val = str(env["APP_ENV"])
-    assert "development" in val, (
-        f"{svc} APP_ENV should default to development locally, got {val!r}"
+    assert "production" in val, (
+        f"{svc} APP_ENV should default to production guardrails locally, got {val!r}"
     )
 
 

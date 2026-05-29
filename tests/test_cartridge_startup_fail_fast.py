@@ -60,6 +60,11 @@ def env_for_cartridges(monkeypatch):
     from cryptography.fernet import Fernet
     monkeypatch.setenv("FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://x:y@nohost:5432/x")
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql+psycopg2://x:y@nohost:5433/x_gold")
+    monkeypatch.setenv("PG_USER", "x")
+    monkeypatch.setenv("PG_PASSWORD", "y")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-minio-access")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio-secret")
 
 
 # ── Structural test: every cartridge declares the contract ────────────────
