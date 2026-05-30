@@ -175,6 +175,13 @@ def test_release_workflow_validates_before_publishing_images():
     src = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     assert "validate-release:" in src
     assert "needs: validate-release" in src
+    for requirements in (
+        "tests/requirements.txt",
+        "console/requirements.txt",
+        "vault/requirements.txt",
+        "mcp-infra/requirements.txt",
+    ):
+        assert f"-r {requirements}" in src
     assert "python -m pytest -q" in src
     assert "docker compose --env-file infra/.env.example" in src
     assert "docker-compose.cartridges.yml" in src
