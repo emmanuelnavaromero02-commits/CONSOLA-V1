@@ -1,4 +1,7 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
+RUFF ?= $(shell if [ -x .venv/bin/ruff ]; then echo .venv/bin/ruff; else echo ruff; fi)
+PIP_AUDIT ?= $(shell if [ -x .venv/bin/pip-audit ]; then echo .venv/bin/pip-audit; else echo pip-audit; fi)
+COMPOSE_FULL ?= docker compose -f infra/docker-compose.yml --profile sap
 TEST_COMPOSE ?= infra/docker-compose.test.yml
 TEST_COMPOSE_PROJECT ?= omega-hermetic-test
 MOCK_MCP_PORT ?= 18010
@@ -7,14 +10,15 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up down nuke logs ps test smoke migrate rotate-keys e2e preflight demo-check
+.PHONY: help up up-core down nuke logs ps test smoke migrate rotate-keys e2e preflight demo-check verify-release
 .PHONY: test-hermetic
 
 help:
 	@echo "MODecissionsPaaS — targets:"
 	@echo "  make preflight    check Docker/compose/.env/ports BEFORE 'make up'"
 	@echo "  make demo-check   preflight + the demo validation order (runbook 09)"
-	@echo "  make up           bootstrap secrets and start the stack"
+	@echo "  make up           bootstrap secrets and start the full v1.0 stack (SAP profile)"
+	@echo "  make up-core      bootstrap secrets and start the core stack without SAP"
 	@echo "  make down         stop the stack"
 	@echo "  make nuke CONFIRM=NUKE"
 	@echo "                    wipe this stack and volumes only"
@@ -25,6 +29,8 @@ help:
 	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
+	@echo "  make verify-release"
+	@echo "                    run the v1.0 release gate against a running full stack"
 	@echo "  make migrate      apply pending infra/init SQL migrations to running Postgres"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
@@ -48,23 +54,26 @@ demo-check:
 	@echo "  7) cd tests-e2e && npx playwright test specs/12-control-room.spec.ts"
 
 up:
+	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && $(COMPOSE_FULL) up --build -d
+
+up-core:
 	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d
 
 down:
-	docker compose -f infra/docker-compose.yml down
+	$(COMPOSE_FULL) down
 
 nuke:
 	@if [ "$(CONFIRM)" != "NUKE" ]; then \
 		echo "Refusing to remove volumes. Re-run: make nuke CONFIRM=NUKE"; \
 		exit 2; \
 	fi
-	docker compose -f infra/docker-compose.yml down -v --remove-orphans
+	$(COMPOSE_FULL) down -v --remove-orphans
 
 logs:
-	docker compose -f infra/docker-compose.yml logs -f --tail=50
+	$(COMPOSE_FULL) logs -f --tail=50
 
 ps:
-	docker compose -f infra/docker-compose.yml ps
+	$(COMPOSE_FULL) ps
 
 test:
 	$(PYTEST) -ra tests/
@@ -72,6 +81,7 @@ test:
 	PYTHONPATH=. $(PYTEST) -ra refinement/tests/
 	PYTHONPATH=vault $(PYTEST) -ra vault/tests/
 	PYTHONPATH=workspace $(PYTEST) -ra workspace/tests/
+	$(PYTEST) cartridges -q
 
 test-hermetic:
 	@set -e; \
@@ -113,6 +123,28 @@ smoke:
 # on first run). The HTML report lands at tests-e2e/playwright-report/.
 e2e:
 	@bash scripts/run-e2e.sh
+
+verify-release:
+	$(RUFF) check .
+	npm --prefix console-next ci
+	npm --prefix console-next run lint
+	npm --prefix console-next run typecheck
+	npm --prefix console-next run test
+	npm --prefix console-next run verify:static
+	npm --prefix console-next audit --audit-level=high
+	npm --prefix tests-e2e ci
+	npm --prefix tests-e2e audit --audit-level=high
+	@command -v $(PIP_AUDIT) >/dev/null 2>&1 || { echo "pip-audit not found. Install with: pip install pip-audit==2.7.3"; exit 1; }
+	@set -e; for req in $$(find . -name requirements.txt -not -path './.git/*' -not -path './*/vendor/*' -not -path './*/node_modules/*' | sort); do \
+		echo "=== Auditing $$req ==="; \
+		$(PIP_AUDIT) -r "$$req" --vulnerability-service=pypi --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2025-185; \
+	done
+	docker compose -f infra/docker-compose.yml --profile sap config -q
+	docker compose -f infra/docker-compose.yml --profile sap build
+	bash scripts/wait_for_health.sh
+	$(MAKE) test
+	$(MAKE) smoke
+	$(MAKE) e2e
 
 migrate:
 	@bash scripts/apply_db_migrations.sh

@@ -723,6 +723,7 @@ services:
     container_name: mode_superset_init
     environment:
       SUPERSET_SECRET_KEY:   ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       OMEGA_SUPERSET_META_PASSWORD: ${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}
@@ -743,6 +744,7 @@ services:
         (superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
         --firstname Admin --lastname User --email admin@modecissions.local
         --password "$$SUPERSET_ADMIN_PASSWORD" || true) &&
+        if [ -n "$${SUPERSET_PREVIOUS_SECRET_KEY:-}" ]; then superset re-encrypt-secrets; fi &&
         superset init &&
         python3 -c "import os, psycopg2; c = psycopg2.connect(host='postgres', port=5432, dbname='superset', user='postgres', password=os.environ['POSTGRES_PASSWORD']); c.autocommit = True; cur = c.cursor(); [cur.execute(s) for s in ['GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON SCHEMA public TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_superset_meta']]; print('omega_superset_meta: grants applied to superset DB'); cur.close(); c.close()"
     depends_on:
@@ -757,6 +759,7 @@ services:
     container_name: mode_superset
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       # Sprint v1.38 (audit B6 P0.5): runtime uses the dedicated
       # omega_superset_meta role created by 36_cartridge_and_meta_roles.sql.

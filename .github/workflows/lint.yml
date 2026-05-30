@@ -31,13 +31,13 @@ jobs:
         run: |
           ruff check \
             --output-format=github \
-            console workspace vault refinement mcp-infra cartridges
+            console workspace vault refinement mcp-infra cartridges airflow
 
       - name: ruff format --check (advisory)
         continue-on-error: true
         run: |
           ruff format --check \
-            console workspace vault refinement mcp-infra cartridges
+            console workspace vault refinement mcp-infra cartridges airflow
 
   console-next:
     runs-on: ubuntu-latest

@@ -239,22 +239,18 @@ def test_pipeline_js_hides_deploy_button_outside_dev_mode():
 
 
 def test_legacy_js_gates_every_dev_only_action():
-    """v1.43.2 (Frontend R3 hardening): every JS function in legacy.js
-    that ultimately calls a mcp-infra dev-only tool
-    (airflow_create_dag, airflow_delete_dag, airflow_set_variable)
-    must short-circuit via _isDevMode()/_gateDevOnlyAction in
-    production. Pre-R3, only deployDag was guarded — renameDag,
-    deleteDag and _setEntitySchedule would surface raw
-    PermissionErrors when the operator clicked them in prod."""
+    """v1.0: destructive legacy Studio actions must never be silent no-ops.
+
+    Rename/delete/schedule still short-circuit in the browser because they
+    have no useful production path. Deploy is different: the backend owns the
+    RCE gate and returns a structured 403, so the click must still issue
+    /api/studio/dag-deploy for E2E and auditability."""
     js = (REPO / "console" / "app" / "static" / "js" / "studio"
           / "legacy.js").read_text(encoding="utf-8")
     # The cache helper exists.
     assert "_devModeCache" in js
     assert "/api/system/info" in js
-    # Every dev-only action body must reference _isDevMode or
-    # _gateDevOnlyAction. Locate each function and assert.
-    for func_name in ("deployDag", "renameDag", "deleteDag",
-                      "_setEntitySchedule"):
+    for func_name in ("renameDag", "deleteDag", "_setEntitySchedule"):
         # Match the function source up to the next ``export async``
         # or end of file. Ensure the gate appears within that span.
         m = re.search(
@@ -269,6 +265,15 @@ def test_legacy_js_gates_every_dev_only_action():
             "_gateDevOnlyAction — otherwise it surfaces a raw "
             "PermissionError in production."
         )
+    deploy = re.search(
+        r"export async function deployDag\([^)]*\)\s*\{(.*?)"
+        r"(?=\n    export async function |\Z)",
+        js, re.DOTALL,
+    )
+    assert deploy, "function deployDag not found in legacy.js"
+    deploy_body = deploy.group(1)
+    assert "/api/studio/dag-deploy" in deploy_body
+    assert "backend owns the production RCE gate" in deploy_body
 
 
 def test_aws_compose_app_env_defaults_production():
