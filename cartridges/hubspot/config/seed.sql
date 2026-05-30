@@ -42,9 +42,10 @@ ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 -- watermark_field). api_path/result_shape/properties NO son columnas: el
 -- microservicio los re-inyecta desde app/config/entities.yaml en tiempo de
 -- lectura (catalog_service._merge_yaml_runtime_fields), igual que SAP hace con
--- odata_entity. Los cron evitan la secuencia '*/' porque el validador de
--- import de cartuchos (console _validate_seed_sql) rechaza '*/' como comentario
--- de bloque; '0,4,8,...' es equivalente y seguro.
+-- odata_entity. Los cron usan listas (0,4,8,...) en lugar de sintaxis de paso
+-- con barra, porque el validador de import de cartuchos
+-- (console _validate_seed_sql) rechaza esa secuencia al confundirla con un
+-- comentario de bloque. La lista es equivalente y segura.
 INSERT INTO entity_config
     (cartridge_id, entity,       display_name,          mode,          primary_key,  dag_id,            description,                                                  watermark_field,       watermark_format, page_size, enabled, trigger_type, cron_expression)
 VALUES
