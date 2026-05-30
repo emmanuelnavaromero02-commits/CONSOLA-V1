@@ -46,6 +46,12 @@ extend-ignore = [
 # branch that ruff can't see through. Same story: caught at runtime
 # by the unit tests if the flag flips.
 "console/app/main.py" = ["F821"]
+# v1 route shards are static contract slices used by tests while the
+# production FastAPI app still owns the shared dependency/helper namespace.
+"console/app/routers/v1/*.py" = ["F821"]
+# Control Room shards mirror sections of the legacy service during the
+# staged split; runtime imports still resolve through control_room_service.
+"console/app/services/control_room/*.py" = ["F821"]
 # cartridges/replicon/app/mcp_server.py:350 references run_entity that
 # is dynamically registered by the FastMCP decorator.
 "cartridges/replicon/app/mcp_server.py" = ["F821"]
