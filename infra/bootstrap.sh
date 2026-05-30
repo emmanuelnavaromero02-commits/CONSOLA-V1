@@ -59,41 +59,21 @@ INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_REPLICON_TO_REFINEMENT="$(openssl rand -hex 32)"
 
 # Sprint v1.15: Fernet master key for vault encryption at rest.
-# Generated via the `cryptography` package because Fernet keys are
-# URL-safe base64 of 32 random bytes — `openssl rand -base64 32` is
-# almost-but-not-quite the right format.
+# Fernet keys are URL-safe base64 of 32 random bytes. Generate them
+# with Python's stdlib so bootstrap does not depend on host cryptography/cffi.
 if ! command -v python3 >/dev/null 2>&1; then
   echo "ERROR: python3 is required to generate VAULT_ENCRYPTION_KEY" >&2
   exit 1
 fi
 BOOTSTRAP_PYTHON="$(command -v python3)"
-CRYPTO_PYTHON="${BOOTSTRAP_PYTHON}"
-BOOTSTRAP_VENV=""
-
-if ! "${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; Fernet.generate_key()' >/dev/null 2>&1; then
-  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    "${CRYPTO_PYTHON}" -m pip install --quiet --upgrade cryptography
-  else
-    BOOTSTRAP_VENV="$(mktemp -d)"
-    trap 'rm -rf "${BOOTSTRAP_VENV}"' EXIT
-    "${BOOTSTRAP_PYTHON}" -m venv "${BOOTSTRAP_VENV}"
-    CRYPTO_PYTHON="${BOOTSTRAP_VENV}/bin/python"
-    "${CRYPTO_PYTHON}" -m pip install --quiet --upgrade pip cryptography
-  fi
-fi
-
-if ! "${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; Fernet.generate_key()' >/dev/null 2>&1; then
-  echo "ERROR: cryptography is required to generate Fernet keys" >&2
-  exit 1
-fi
-
-VAULT_ENCRYPTION_KEY="$("${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+FERNET_KEY_SCRIPT='import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+VAULT_ENCRYPTION_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
 
 # Sprint v1.33 (audit B1 P0): Fernet key used by SAP cartridges
 # (sap_hcm / sap_s4hana / sap_successfactors) to encrypt PII columns at
 # rest before they land in MinIO/parquet. The cartridges refuse to start
 # without it — there is no longer a hardcoded fallback.
-FIELD_ENCRYPTION_KEY="$("${CRYPTO_PYTHON}" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+FIELD_ENCRYPTION_KEY="$("${BOOTSTRAP_PYTHON}" -c "${FERNET_KEY_SCRIPT}")"
 
 umask 077
 cat > "${ENV_FILE}" <<EOF
@@ -104,6 +84,10 @@ cat > "${ENV_FILE}" <<EOF
 INTERNAL_API_KEY=${INTERNAL_API_KEY}
 JWT_SECRET_KEY=${JWT_SECRET_KEY}
 SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
+# Optional: set to the previous Superset SECRET_KEY before rotating
+# SUPERSET_SECRET_KEY against an existing Superset metastore, then run
+# superset-init so `superset re-encrypt-secrets` can migrate encrypted rows.
+SUPERSET_PREVIOUS_SECRET_KEY=
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 MINIO_SECRET_KEY=${MINIO_SECRET_KEY}

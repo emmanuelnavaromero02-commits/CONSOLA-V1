@@ -166,8 +166,10 @@ def find_due_entities(**context):
             continue
         if isinstance(dag_params, str):
             import json as _json
-            try:    dag_params = _json.loads(dag_params)
-            except: dag_params = {}
+            try:
+                dag_params = _json.loads(dag_params)
+            except (_json.JSONDecodeError, TypeError):
+                dag_params = {}
         due.append({
             "cartridge_id": cartridge_id,
             "entity":       entity,

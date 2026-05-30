@@ -391,6 +391,7 @@ services:
         required: false
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       POSTGRES_PASSWORD:   ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       SQLALCHEMY_DATABASE_URI: "postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset"
       OMEGA_SUPERSET_META_PASSWORD: ${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}
@@ -413,6 +414,9 @@ services:
         set -e
         superset db upgrade
         superset fab create-admin --username "$SUPERSET_ADMIN_USER" --firstname Admin --lastname User --email admin@modecissions.local --password "$SUPERSET_ADMIN_PASSWORD" || true
+        if [ -n "${SUPERSET_PREVIOUS_SECRET_KEY:-}" ]; then
+          superset re-encrypt-secrets
+        fi
         superset init
         python3 - <<'PY'
         import os
@@ -459,6 +463,7 @@ services:
         required: false
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       SQLALCHEMY_DATABASE_URI: "postgresql+psycopg2://omega_superset_meta:${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}@postgres:5432/superset"
       SUPERSET_TALISMAN_ENABLED: ${SUPERSET_TALISMAN_ENABLED:-true}

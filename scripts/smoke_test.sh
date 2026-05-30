@@ -147,18 +147,24 @@ esac
 # (running from a workstation without infra/.env), the block warns and
 # skips — smoke stays useful in that environment without giving false
 # greens in the developer Mac where the keys are present.
-INTERNAL_KEY=""
+CARTRIDGE_KEY=""
 if [ -f "infra/.env" ]; then
-  INTERNAL_KEY="$(grep -E '^INTERNAL_API_KEY=' infra/.env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+  # The request identifies itself as X-Internal-Service: console, so it
+  # must use the console→cartridge pair key. INTERNAL_API_KEY remains a
+  # legacy fallback outside production but is not the v1.0 contract.
+  CARTRIDGE_KEY="$(grep -E '^INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE=' infra/.env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+  if [ -z "$CARTRIDGE_KEY" ]; then
+    CARTRIDGE_KEY="$(grep -E '^INTERNAL_API_KEY=' infra/.env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+  fi
 fi
-if [ -z "$INTERNAL_KEY" ]; then
-  echo "[smoke] WARN  INTERNAL_API_KEY not found in infra/.env — skipping 4 MCP tool probes"
+if [ -z "$CARTRIDGE_KEY" ]; then
+  echo "[smoke] WARN  INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE not found in infra/.env — skipping 4 MCP tool probes"
 else
   for pair in "replicon:8201" "sap_hcm:8202" "sap_successfactors:8203" "sap_s4hana:8204"; do
     name="${pair%:*}"
     port="${pair#*:}"
     BODY="$(curl -sS --max-time 5 \
-            -H "X-Internal-Api-Key: ${INTERNAL_KEY}" \
+            -H "X-Internal-Api-Key: ${CARTRIDGE_KEY}" \
             -H "X-Internal-Service: console" \
             "http://localhost:${port}/mcp/tools" 2>/dev/null || echo '')"
     # Count tool entries without jq (smoke must work without extra deps):

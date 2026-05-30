@@ -221,8 +221,10 @@ def _load_graph(workspace_id: str | None = None) -> dict[str, dict]:
     for name, layer, cartridge, sources in rows:
         if isinstance(sources, str):
             import json as _json
-            try:    sources = _json.loads(sources)
-            except: sources = []
+            try:
+                sources = _json.loads(sources)
+            except (_json.JSONDecodeError, TypeError):
+                sources = []
         out[name] = {"layer": layer, "cartridge": cartridge or "", "sources": list(sources or [])}
     return out
 

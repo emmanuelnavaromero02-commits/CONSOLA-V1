@@ -387,6 +387,83 @@ def test_dag_delete_passes_cartridge_scope(studio_client, monkeypatch):
     ]
 
 
+def test_dag_deploy_posts_to_mcp_registry_and_audits(studio_client, monkeypatch):
+    client, studio_router = studio_client
+    invoked = []
+    audits = []
+
+    async def fake_get_cartridge(cartridge):
+        return {"id": cartridge, "name": cartridge, "dags": [], "entities": []}
+
+    async def fake_invoke(server, tool, payload, **_kwargs):
+        invoked.append((server, tool, payload))
+        return {"created": payload["dag_id"], "dag_id": payload["dag_id"]}
+
+    async def fake_audit(**kwargs):
+        audits.append(kwargs)
+
+    monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
+    monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
+
+    response = client.post(
+        "/api/studio/dag-deploy",
+        json={
+            "dag_id": "replicon_new_extract",
+            "code": "from airflow import DAG\n",
+            "cartridge_id": "replicon",
+        },
+        headers={"X-CSRF-Token": CSRF},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "deployed"
+    assert invoked == [
+        (
+            "infra",
+            "airflow_create_dag",
+            {
+                "dag_id": "replicon_new_extract",
+                "code": "from airflow import DAG\n",
+                "cartridge_id": "replicon",
+                "description": None,
+            },
+        )
+    ]
+    assert audits[-1]["action"] == "studio.dag.deploy"
+    assert audits[-1]["status"] == "success"
+
+
+def test_dag_deploy_surfaces_rce_gate_as_structured_403(studio_client, monkeypatch):
+    client, studio_router = studio_client
+
+    async def fake_get_cartridge(cartridge):
+        return {"id": cartridge, "name": cartridge, "dags": [], "entities": []}
+
+    async def fake_invoke(*_args, **_kwargs):
+        return {"error": "ALLOW_RCE_TOOLS must be true"}
+
+    async def fake_audit(**_kwargs):
+        return None
+
+    monkeypatch.setattr(studio_router.cartridge_service, "get_cartridge", fake_get_cartridge)
+    monkeypatch.setattr(studio_router.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_router.audit_service, "record_event", fake_audit)
+
+    response = client.post(
+        "/api/studio/dag-deploy",
+        json={
+            "dag_id": "replicon_new_extract",
+            "code": "from airflow import DAG\n",
+            "cartridge_id": "replicon",
+        },
+        headers={"X-CSRF-Token": CSRF},
+    )
+
+    assert response.status_code == 403
+    assert "ALLOW_RCE_TOOLS" in response.text
+
+
 def test_dag_delete_rejects_other_cartridge_prefix(studio_client, monkeypatch):
     client, studio_router = studio_client
     invoked = []

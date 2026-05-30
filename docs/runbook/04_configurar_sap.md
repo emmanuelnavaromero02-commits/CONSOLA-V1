@@ -9,8 +9,9 @@
 
 - Tenant creado ([02](02_primer_tenant.md)).
 - Credenciales reales del sistema SAP correspondiente.
-- Los cartuchos SAP requieren `--profile sap` al `up`. Si los servicios
-  `sap-*` no aparecen en `docker compose ps`, relanza:
+- En v1.0 `make up` levanta el perfil SAP por defecto. Si usaste
+  `make up-core` o un compose manual y los servicios `sap-*` no aparecen en
+  `docker compose ps`, relanza:
   ```bash
   docker compose -f infra/docker-compose.yml --profile sap up -d
   ```

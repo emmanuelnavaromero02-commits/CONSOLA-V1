@@ -3674,17 +3674,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     }
 
     export async function deployDag() {
-      // R2/R3 gate: refuse early with a clear, actionable message in
-      // production so the user never sees a raw mcp-infra error.
-      if (!(await _gateDevOnlyAction(
-        'Deploy a Airflow está deshabilitado fuera de desarrollo. Usa el pipeline de despliegue o la UI de Airflow.',
-      ))) {
-        const btn = document.getElementById('btn-deploy');
-        if (btn) {
-          btn.title = 'Deploy disabled outside development';
-        }
-        return;
-      }
+      // The backend owns the production RCE gate. The UI must still issue
+      // the request so this button is never a silent no-op; production gets
+      // the structured 403 from /api/studio/dag-deploy.
 
       const code = document.getElementById('dag-code-textarea')?.value?.trim();
       if (!code) { setDeployMsg('Sin código', 'err'); return; }

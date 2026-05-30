@@ -6,6 +6,7 @@ docker-compose.aws.yml. Reads secrets from environment.
 import os
 
 SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
+PREVIOUS_SECRET_KEY = os.environ.get("SUPERSET_PREVIOUS_SECRET_KEY") or None
 
 SQLALCHEMY_DATABASE_URI = os.environ.get("SQLALCHEMY_DATABASE_URI")
 if not SQLALCHEMY_DATABASE_URI:
