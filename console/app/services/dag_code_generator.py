@@ -55,12 +55,83 @@ def _find_entity_config(cartridge_id: str, entity_name: str) -> dict[str, Any]:
     return {}
 
 
-def _connector_kind(connector: dict[str, Any], cartridge_id: str, entity_config: dict[str, Any]) -> str:
+def _schema_entities(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = schema.get("connector_schema") if isinstance(schema.get("connector_schema"), dict) else schema
+    candidates = []
+    if isinstance(schema.get("entities"), list):
+        candidates.extend(item for item in schema["entities"] if isinstance(item, dict))
+    if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
+        candidates.extend(item for item in payload["entities"] if isinstance(item, dict))
+    connector = _schema_connector(schema)
+    connector_entities = connector.get("entities") if isinstance(connector.get("entities"), list) else []
+    candidates.extend(item for item in connector_entities if isinstance(item, dict))
+    return candidates
+
+
+def _schema_entity_metadata(schema: dict[str, Any], entity_name: str) -> dict[str, Any]:
+    for item in _schema_entities(schema):
+        name = str(item.get("entity") or item.get("name") or item.get("id") or "").strip()
+        if name == entity_name:
+            return item
+    return {}
+
+
+def _fields_from_metadata(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    fields = metadata.get("fields")
+    return [field for field in fields if isinstance(field, dict) and field.get("name")] if isinstance(fields, list) else []
+
+
+def _primary_keys_from_fields(fields: list[dict[str, Any]], metadata: dict[str, Any], entity_config: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    for value in (entity_config.get("primary_key"), metadata.get("primary_key"), metadata.get("id_field")):
+        if isinstance(value, str) and value.strip():
+            keys.append(value.strip())
+        elif isinstance(value, list):
+            keys.extend(str(item).strip() for item in value if str(item).strip())
+    keys.extend(str(field.get("name")).strip() for field in fields if field.get("primary_key") and field.get("name"))
+    return list(dict.fromkeys(keys))
+
+
+def _select_fields_from_schema(fields: list[dict[str, Any]]) -> list[str]:
+    names = [str(field.get("name")).strip() for field in fields if field.get("name")]
+    return list(dict.fromkeys(name for name in names if _IDENT_RE.fullmatch(name)))
+
+
+def _watermark_from_fields(fields: list[dict[str, Any]]) -> str:
+    preferred_fragments = (
+        "lastmodified",
+        "last_change",
+        "lastchange",
+        "updated",
+        "modified",
+        "aedtm",
+        "changed",
+        "timestamp",
+    )
+    for field in fields:
+        name = str(field.get("name") or "")
+        canonical = str(field.get("type") or "").lower()
+        source_type = str(field.get("source_type") or "").lower()
+        if canonical not in {"timestamp", "date"} and not any(t in source_type for t in ("date", "time")):
+            continue
+        compact = name.replace("_", "").lower()
+        if any(fragment.replace("_", "") in compact for fragment in preferred_fragments):
+            return name
+    return ""
+
+
+def _connector_kind(connector: dict[str, Any], cartridge_id: str, entity_config: dict[str, Any], entity_meta: dict[str, Any] | None = None) -> str:
     auth_type = str((connector.get("auth") or {}).get("type") or "").lower()
     description = str(connector.get("description") or "").lower()
+    entity_meta = entity_meta or {}
     if cartridge_id == "replicon" or "async export" in description:
         return "replicon_async"
-    if entity_config.get("odata_entity") or cartridge_id.startswith("sap_") or auth_type in {"basic", "oauth2_client_credentials"}:
+    if (
+        entity_config.get("odata_entity")
+        or entity_meta.get("odata_entity")
+        or cartridge_id.startswith("sap_")
+        or auth_type in {"basic", "oauth2_client_credentials"}
+    ):
         return "odata"
     return "rest_offset"
 
@@ -180,21 +251,28 @@ def generate_dag_code(
     safe_cartridge = _safe_identifier(cartridge_id, "cartridge_id")
     safe_entity = _safe_identifier(entity_name, "entity_name")
     connector = _schema_connector(schema)
+    entity_meta = _schema_entity_metadata(schema, safe_entity)
+    schema_fields = _fields_from_metadata(entity_meta)
     entity_config = _find_entity_config(safe_cartridge, safe_entity)
     auth = connector.get("auth") if isinstance(connector.get("auth"), dict) else {}
     api = connector.get("api") if isinstance(connector.get("api"), dict) else {}
     entities_meta = connector.get("entities") if isinstance(connector.get("entities"), dict) else {}
 
-    kind = _connector_kind(connector, safe_cartridge, entity_config)
+    kind = _connector_kind(connector, safe_cartridge, entity_config, entity_meta)
     mode = str(entity_config.get("mode") or "incremental").lower()
     watermark_field = (
         entity_config.get("watermark_field")
+        or entity_meta.get("watermark_field")
         or entities_meta.get("watermark_field_default")
+        or _watermark_from_fields(schema_fields)
         or ""
     )
     page_size = int(entity_config.get("page_size") or api.get("page_size_default") or 500)
     select_fields = entity_config.get("select_fields") if isinstance(entity_config.get("select_fields"), list) else []
-    odata_entity = str(entity_config.get("odata_entity") or safe_entity)
+    if not select_fields:
+        select_fields = _select_fields_from_schema(schema_fields)
+    primary_keys = _primary_keys_from_fields(schema_fields, entity_meta, entity_config)
+    odata_entity = str(entity_config.get("odata_entity") or entity_meta.get("odata_entity") or safe_entity)
     odata_filter = str(entity_config.get("odata_filter") or "")
     dag_id = f"{safe_cartridge}_{safe_entity}_dynamic_extract"
 
@@ -216,6 +294,7 @@ def generate_dag_code(
         "ODATA_ENTITY": odata_entity,
         "ODATA_FILTER": odata_filter,
         "SELECT_FIELDS": select_fields,
+        "PRIMARY_KEYS": primary_keys,
         "WATERMARK_FIELD": str(watermark_field or ""),
         "MODE": mode,
         "PAGE_SIZE": page_size,
@@ -234,6 +313,8 @@ def generate_dag_code(
         "connector_kind": kind,
         "auth_type": constants["AUTH_TYPE"],
         "watermark_field": constants["WATERMARK_FIELD"],
+        "primary_keys": primary_keys,
+        "select_fields": select_fields,
         "page_size": page_size,
         "code": code,
     }

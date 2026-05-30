@@ -329,8 +329,11 @@ Step DAGS — gestión de DAGs de Airflow del cartucho.
 - Lista DAGs: airflow_list_dags() (filtra por nombre/tag del cartucho).
 - Código fuente existente: dag_get_source(cartridge_id, dag_id).
 - Crear DAG dinámico: primero llama `studio__introspect_source(cartridge_id)`;
+  esa tool intenta introspección viva ($metadata/OpenAPI/information_schema) y
+  sólo cae a connector.yaml/entities.yaml si no hay credenciales o timeout.
   después llama `studio__generate_dag_code(cartridge_id, entity_name, schema)`
-  usando el schema devuelto; luego llama silenciosamente
+  usando el schema devuelto con `entities[].fields`, tipos y `primary_key` cuando
+  existan; luego llama silenciosamente
   `studio__validate_dag_code(code)` antes de mostrar el código. Presenta el
   Python resultante al usuario sólo si la validación pasa.
 - Si `validate_dag_code` falla, captura el `stderr`, vuelve a llamar
@@ -345,10 +348,18 @@ Step DAGS — gestión de DAGs de Airflow del cartucho.
   Airflow directamente. Puedes consultar el modo via /api/system/info.
 - Disparar: airflow_trigger_dag(dag_id).
 - Estado y logs: airflow_get_run_status, airflow_list_dag_runs, airflow_get_task_logs.
-- Si el usuario subió un spec (OpenAPI/WSDL/OData), léelo con minio_read_spec y genera DAG.
+- Si la introspección viva/fallback no trae campos suficientes y el usuario subió
+  un spec (OpenAPI/OData), léelo con minio_read_spec y genera DAG.
 """,
     3: """\
 Step ENTIDADES — qué objetos extraer del sistema origen y cómo procesarlos.
+
+DESCUBRIR:
+- Antes de pedir YAML o crear entidades nuevas, llama `studio__introspect_source(cartridge_id)`.
+- Si `source="live"`, propone entidades usando `entities[].fields` con tipos canónicos
+  (string/int/float/bool/date/timestamp/json), nullable y primary_key.
+- Si cae a `source="static"` o devuelve razón de fallo, explica la limitación y pide
+  spec manual sólo para los campos que falten.
 
 CONSULTAR:
 - list_entities(cartridge_id) → estado actual: nombre, modo, dag_id, último run.
@@ -368,13 +379,16 @@ DIAGNÓSTICO:
 - get_entity_logs(cartridge_id, entity): error de pipeline_runs + logs Airflow en una sola llamada.
 
 ESTRATEGIA: full = todo siempre. incremental = sólo nuevos desde último watermark.
+Para incremental, prioriza campos timestamp/date descubiertos por introspección como watermark.
 """,
     4: """\
 Step REFINAR — Silver y Gold con Refinement Engine.
 
 FLUJO:
 1. EXPLORAR: list_sources, preview_source(name), get_source_partitions(name).
-2. SQL: generate_transform(description, sources, cartridge) ó pásalo escrito directamente.
+2. SQL: generate_transform(description, sources, cartridge, layer) ó pásalo escrito directamente.
+   Silver usa read_parquet + {latest_date}; Gold puede leer rutas Silver registradas
+   o tablas pggold.gold_<dataset> sin ese placeholder.
 3. PREVIEW siempre: preview_transform(sql, limit=20). Si falla, corrige y repite.
 4. GUARDAR/MATERIALIZAR:
    - save_dataset(name, sql, layer, sources, cartridge, description)
@@ -481,7 +495,7 @@ Flujo OBLIGATORIO ante cualquier pregunta sobre un cartucho:
      · "vocabulario completo"   → `infra__cartridge_get_semantic(cartridge_id)`
      · "últimos jobs"           → `infra__cartridge_list_jobs(cartridge_id)`
      · "manifest completo"      → `infra__cartridge_get_manifest(cartridge_id)`
-     · Paso 2 o 3 sin metadatos → `studio__introspect_source(cartridge_id)`
+     · Paso 2 o 3 sin metadatos → `studio__introspect_source(cartridge_id)` vivo/fallback
      · Crear DAG en Paso 2     → `studio__introspect_source`,
                                   `studio__generate_dag_code`,
                                   `studio__validate_dag_code`
@@ -494,8 +508,9 @@ Restricciones globales:
 - PROHIBIDO suponer que un término no existe sin haber llamado `cartridge_search_term`.
 - PROHIBIDO pedir el cartridge_id al usuario si puedes obtenerlo con `list_cartridges`.
 - PROHIBIDO pedir YAML al usuario en Paso 2 o 3 sin intentar primero
-  `studio__introspect_source(cartridge_id)`; sólo pide YAML si esa introspección falla
-  o el esquema devuelto no contiene metadatos suficientes.
+  `studio__introspect_source(cartridge_id)`; trata `source="live"` como la verdad
+  primaria, conserva `entities[].fields` con tipos/nullable/primary_key y sólo pide
+  YAML si esa introspección falla o el esquema devuelto no contiene metadatos suficientes.
 - Si el usuario pide crear un DAG en el Paso 2, primero llama a
   `studio__introspect_source` para obtener el esquema, luego usa
   `studio__generate_dag_code` con ese esquema y ejecuta silenciosamente

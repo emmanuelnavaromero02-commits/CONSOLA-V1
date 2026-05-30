@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import duckdb
+import sqlglot
+from sqlglot import exp as sql_exp
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -332,6 +334,76 @@ def _require_dataset_scope(body: dict, ds: dict, permission: str = "datasets.rea
     return sec
 
 
+def _dataset_name_from_source(source: str) -> str:
+    value = str(source or "").strip().strip("/")
+    if "/" in value:
+        return value.split("/")[-1]
+    return value
+
+
+def _schema_for_transform_source(body: dict, source: str, ctx: dict) -> dict:
+    source = str(source or "").strip()
+    if source.startswith("raw/"):
+        _require_source_scope(body, source)
+        return engine.get_source_schema(source, ctx)
+    ds_name = _dataset_name_from_source(source)
+    _validate_dataset_name(ds_name)
+    ds = store.get_dataset(ds_name)
+    if not ds:
+        _require_source_scope(body, source)
+        return engine.get_source_schema(source, ctx)
+    _require_dataset_scope(body, ds)
+    schema = engine.get_dataset_schema(ds)
+    return {
+        "source": source,
+        "dataset": ds_name,
+        "layer": ds.get("layer"),
+        "fields": schema.get("fields", []),
+    }
+
+
+def _require_transform_source_scope(body: dict, source: str, permission: str = "datasets.read") -> None:
+    source = str(source or "").strip()
+    sec = _require_security_permission(body, permission)
+    if _prefix_allowed(sec, source):
+        return
+    ds_name = _dataset_name_from_source(source)
+    if DATASET_NAME_RE.fullmatch(ds_name or ""):
+        ds = store.get_dataset(ds_name)
+        if ds and _dataset_allowed(sec, ds):
+            return
+    raise HTTPException(403, "source prefix not allowed")
+
+
+def _sql_table_references(sql: str) -> list[tuple[str, str, str]]:
+    try:
+        tree = sqlglot.parse_one(sql or "", read="duckdb")
+    except Exception as exc:
+        raise HTTPException(403, "SQL could not be parsed for table scope validation") from exc
+    ctes = {str(cte.alias_or_name).lower() for cte in tree.find_all(sql_exp.CTE) if cte.alias_or_name}
+    refs: list[tuple[str, str, str]] = []
+    for table in tree.find_all(sql_exp.Table):
+        name = str(table.name or "").strip('"').strip()
+        if not name:
+            continue
+        catalog = str(table.catalog or "").strip('"').strip().lower()
+        db = str(table.db or "").strip('"').strip().lower()
+        if not db and name.lower() in ctes:
+            continue
+        refs.append((catalog, db, name))
+    return refs
+
+
+def _registered_gold_table_allowed(sec: dict, table: str) -> bool:
+    if not table.lower().startswith("gold_"):
+        return False
+    for candidate in (table[5:], table):
+        ds = store.get_dataset(candidate)
+        if ds and str(ds.get("layer") or "").strip().lower() == "gold" and _dataset_allowed(sec, ds):
+            return True
+    return False
+
+
 def _s3_path_to_bucket_key(path: str) -> tuple[str, str]:
     path = (path or "").strip()
     path = path.replace("s3://{bucket}/", f"s3://{engine.minio_bucket}/", 1)
@@ -464,11 +536,14 @@ def _storage_path_matches_declared_source(sec: dict, key: str, sources: list[str
     return logical in declared and _prefix_allowed(sec, logical)
 
 
-def _storage_path_matches_registered_dataset(sec: dict, key: str) -> bool:
+def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[str] | None = None) -> bool:
     parts = key.split("/")
     if len(parts) < 3 or parts[0] not in {"silver", "gold"}:
         return False
     layer, cartridge, name = parts[:3]
+    declared = {str(source).strip().strip("/") for source in (sources or []) if str(source).strip()}
+    if declared and name not in declared and f"{layer}/{cartridge}/{name}" not in declared:
+        return False
     ds = store.get_dataset(name)
     if not ds:
         return False
@@ -497,7 +572,7 @@ def _require_sql_path_scope(
         return
     if _storage_path_matches_declared_source(sec, key, sources):
         return
-    if allow_registered_dataset_paths and _storage_path_matches_registered_dataset(sec, key):
+    if allow_registered_dataset_paths and _storage_path_matches_registered_dataset(sec, key, sources):
         return
     raise HTTPException(403, "SQL storage path not allowed")
 
@@ -520,8 +595,13 @@ def _require_sql_storage_scope(
         raise HTTPException(403, "pgdb schema is not readable through refinement")
 
     for source in sources or []:
-        if not _prefix_allowed(sec, str(source)):
-            raise HTTPException(403, "source prefix not allowed")
+        if _prefix_allowed(sec, str(source)):
+            continue
+        ds_name = _dataset_name_from_source(str(source))
+        ds = store.get_dataset(ds_name) if DATASET_NAME_RE.fullmatch(ds_name or "") else None
+        if ds and _dataset_allowed(sec, ds):
+            continue
+        raise HTTPException(403, "source prefix not allowed")
 
     reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
     direct_readers = list(_SCOPED_READER_RE.finditer(sql))
@@ -549,20 +629,21 @@ def _require_sql_storage_scope(
             allow_registered_dataset_paths=allow_registered_dataset_paths,
         )
 
-    scoped_tables = {m.group(1) for m in _PGGOLD_SCHEMA_TABLE_RE.finditer(sql or "")}
-    scoped_tables.update(m.group(1) for m in _PGGOLD_TABLE_RE.finditer(sql or ""))
-    for table in scoped_tables:
-        if not table.lower().startswith("gold_"):
+    for catalog, db, table in _sql_table_references(sql):
+        if catalog:
+            raise HTTPException(403, "SQL database/schema is not readable through refinement")
+        if db == "pgdb":
+            raise HTTPException(403, "pgdb schema is not readable through refinement")
+        if db and db != "pggold":
+            raise HTTPException(403, "SQL database/schema is not readable through refinement")
+        if db == "pggold":
+            if not _registered_gold_table_allowed(sec, table):
+                raise HTTPException(403, "pggold table is not registered as an allowed dataset")
             continue
-        ds = None
-        for candidate in (table[5:], table):
-            ds = store.get_dataset(candidate)
-            if ds:
-                break
-        if not ds:
-            raise HTTPException(403, "pggold table is not registered as an allowed dataset")
-        if not _dataset_allowed(sec, ds):
-            raise HTTPException(403, "dataset scope not allowed")
+        raise HTTPException(
+            403,
+            "SQL table references must use pggold.gold_<dataset>, CTEs, or scoped read_* file readers",
+        )
 
 
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
@@ -712,7 +793,7 @@ async def mcp_tools():
             "name": "generate_transform",
             "description": (
                 "Usa LLM para generar SQL de transformación dado una descripción en lenguaje "
-                "natural y las fuentes Bronze. Renombra columnas a términos de negocio. "
+                "natural y las fuentes/datasets. Renombra columnas a términos de negocio. "
                 "Siempre hacer preview_transform antes de save_dataset."
             ),
             "input_schema": {
@@ -721,9 +802,13 @@ async def mcp_tools():
                     "description": {"type": "string",
                                     "description": "Qué debe contener el dataset en términos de negocio"},
                     "sources":     {"type": "array", "items": {"type": "string"},
-                                    "description": "Fuentes bronze a usar, e.g. ['raw/replicon/User']"},
+                                    "description": "Fuentes o datasets a usar, e.g. ['raw/replicon/User'] o ['silver_dataset']"},
                     "cartridge":   {"type": "string",
                                     "description": "ID del cartucho origen, e.g. 'replicon'"},
+                    "layer":       {"type": "string",
+                                    "enum": ["silver", "gold"],
+                                    "default": "silver",
+                                    "description": "Capa objetivo. Silver exige read_parquet + {latest_date}; Gold lee rutas Silver registradas o pggold.gold_<dataset>."},
                 },
                 "required": ["description", "sources"],
             },
@@ -1088,18 +1173,22 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         return engine.preview_source(args["source"], args.get("limit", 5), _trusted_user_context(body, args))
 
     if tool == "generate_transform":
-        for source in args["sources"]:
-            _require_source_scope(body, source)
         ctx = _trusted_user_context(body, args)
-        schemas = {s: engine.get_source_schema(s, ctx) for s in args["sources"]}
+        layer = str(args.get("layer") or "silver").lower()
+        schemas = {s: _schema_for_transform_source(body, s, ctx) for s in args["sources"]}
         try:
-            sql, explanation = await generate_sql(args["description"], schemas)
+            sql, explanation = await generate_sql(args["description"], schemas, layer=layer)
         except GeneratedSQLValidationError as exc:
             raise HTTPException(422, f"LLM SQL generation failed validation: {exc}") from exc
-        return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
+        return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge"), "layer": layer}
 
     if tool == "preview_transform":
-        _require_sql_storage_scope(body, args["sql"], args.get("sources") or [])
+        _require_sql_storage_scope(
+            body,
+            args["sql"],
+            args.get("sources") or [],
+            allow_registered_dataset_paths=True,
+        )
         # params: externally-supplied positional parameters (? placeholders) from callers
         # that build parameterized SQL (e.g. api_data_query_filtered).  When params is
         # provided, preview_sql skips internal RLS filter injection.
@@ -1113,8 +1202,13 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if existing:
             _require_dataset_scope(body, existing, "datasets.write")
         for source in args.get("sources") or []:
-            _require_source_scope(body, source)
-        _require_sql_storage_scope(body, args.get("sql") or args.get("sql_def") or "", args.get("sources") or [])
+            _require_transform_source_scope(body, source, "datasets.read")
+        _require_sql_storage_scope(
+            body,
+            args.get("sql") or args.get("sql_def") or "",
+            args.get("sources") or [],
+            allow_registered_dataset_paths=True,
+        )
         store.save_dataset(args)
         return {"saved": True, "name": args["name"]}
 

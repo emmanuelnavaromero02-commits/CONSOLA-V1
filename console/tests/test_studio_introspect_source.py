@@ -1,4 +1,7 @@
 import importlib
+import socket
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,18 +18,237 @@ async def test_studio_introspect_source_uses_cartridge_connector_schema(monkeypa
         return {"connection": {"auth_method": "bearer_token"}, "entities": [{"name": "Project"}]}
 
     monkeypatch.setattr(cartridges, "connector_schema", connector_schema)
+    async def no_live(*_args):
+        return [], "no saved credentials in vault"
 
-    result = await studio._studio_introspect_source({"cartridge_id": "replicon"}, {"id": "u1"})
+    monkeypatch.setattr(studio, "_live_introspection", no_live)
+    monkeypatch.setattr(studio, "_load_static_entity_specs", lambda _cartridge: [])
 
-    assert calls == [("replicon", {"id": "u1"})]
-    assert result == {
-        "cartridge_id": "replicon",
-        "endpoint": "/api/cartridges/replicon/connector_schema",
-        "connector_schema": {
-            "connection": {"auth_method": "bearer_token"},
-            "entities": [{"name": "Project"}],
+    result = await studio._studio_introspect_source(
+        {"cartridge_id": "replicon"},
+        {"id": "u1", "allowed_cartridges": ["replicon"]},
+    )
+
+    assert calls == [("replicon", {"id": "u1", "allowed_cartridges": ["replicon"]})]
+    assert result["cartridge_id"] == "replicon"
+    assert result["endpoint"] == "/api/cartridges/replicon/connector_schema"
+    assert result["connector_schema"] == {
+        "connection": {"auth_method": "bearer_token"},
+        "entities": [{"name": "Project"}],
+    }
+    assert result["entities"] == []
+    assert result["source"] == "static"
+    assert result["reason"] == "live introspection requires studio.write or cartridges.write"
+
+
+@pytest.mark.asyncio
+async def test_studio_introspect_source_returns_live_openapi_fields(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    studio = importlib.import_module("app.routers.studio")
+    cartridges = importlib.import_module("app.routers.cartridges")
+    spec = {
+        "openapi": "3.0.0",
+        "components": {
+            "schemas": {
+                "Invoice": {
+                    "required": ["id", "total"],
+                    "properties": {
+                        "id": {"type": "integer", "x-primary-key": True},
+                        "total": {"type": "number"},
+                        "issued_at": {"type": "string", "format": "date-time"},
+                    },
+                }
+            }
         },
     }
+
+    async def connector_schema(cartridge, user):
+        return {"connector": {"api": {}}}
+
+    async def no_vault(_cartridge_id, _conn_id="default"):
+        return {}, "no saved credentials in vault"
+
+    monkeypatch.setattr(cartridges, "connector_schema", connector_schema)
+    monkeypatch.setattr(studio, "_vault_connection", no_vault)
+
+    result = await studio._studio_introspect_source(
+        {"cartridge_id": "replicon", "source_kind": "openapi", "spec": spec},
+        {"id": "u1", "role": "workspace_admin", "allowed_cartridges": ["replicon"]},
+    )
+
+    assert result["source"] == "live"
+    assert result["entities"][0]["name"] == "Invoice"
+    assert result["entities"][0]["primary_key"] == "id"
+    fields = {field["name"]: field for field in result["entities"][0]["fields"]}
+    assert fields["id"]["type"] == "int"
+    assert fields["id"]["nullable"] is False
+    assert fields["id"]["primary_key"] is True
+    assert fields["id"]["source_type"] == "integer"
+    assert fields["id"]["source_name"] == "id"
+    assert fields["total"]["type"] == "float"
+    assert fields["total"]["nullable"] is False
+    assert fields["issued_at"]["type"] == "timestamp"
+
+
+def test_studio_openapi_spec_url_blocks_ssrf_targets(monkeypatch):
+    studio = importlib.import_module("app.routers.studio")
+
+    monkeypatch.setenv("APP_ENV", "production")
+    assert "https" in studio._validate_external_spec_url("http://example.com/openapi.json")
+    assert "not public" in studio._validate_external_spec_url("https://localhost/openapi.json")
+    assert "metadata" in studio._validate_external_spec_url("https://169.254.169.254/latest/meta-data")
+    assert "metadata" in studio._validate_external_url("https://169.254.169.254/token", label="OAuth2 token URL")
+
+    monkeypatch.setattr(
+        studio.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443))],
+    )
+    assert "non-public" in studio._validate_external_spec_url("https://api.example.com/openapi.json")
+
+    monkeypatch.setattr(
+        studio.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443)),
+        ],
+    )
+    assert "non-public" in studio._validate_external_spec_url("https://api.example.com/openapi.json")
+
+    monkeypatch.setattr(
+        studio.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+    )
+    assert studio._validate_external_spec_url("https://api.example.com/openapi.json") == ""
+
+
+@pytest.mark.asyncio
+async def test_studio_introspect_source_returns_live_odata_entity_sets(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("SAP_HCM_BASE_URL", "https://sap.example.com/odata")
+    studio = importlib.import_module("app.routers.studio")
+    cartridges = importlib.import_module("app.routers.cartridges")
+    xml = """<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
+  <edmx:DataServices>
+    <Schema Namespace="Demo" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+      <EntityType Name="BusinessPartner">
+        <Key><PropertyRef Name="BusinessPartnerID"/></Key>
+        <Property Name="BusinessPartnerID" Type="Edm.String" Nullable="false"/>
+        <Property Name="UpdatedAt" Type="Edm.DateTimeOffset"/>
+      </EntityType>
+      <EntityContainer Name="Container">
+        <EntitySet Name="A_BusinessPartner" EntityType="Demo.BusinessPartner"/>
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>"""
+
+    async def connector_schema(cartridge, user):
+        return {"connector": {"auth": {"type": "basic"}, "api": {"base_url_env": "SAP_HCM_BASE_URL"}}}
+
+    async def vault_connection(_cartridge_id, _conn_id="default"):
+        return {"username": "user", "password": "pass"}, ""
+
+    requests = []
+
+    async def pinned_http_request(method, url, **kwargs):
+        requests.append((method, url, kwargs))
+        return studio._PinnedHTTPResponse(
+            status_code=200,
+            headers={"content-type": "application/xml"},
+            content=xml.encode("utf-8"),
+        )
+
+    monkeypatch.setattr(cartridges, "connector_schema", connector_schema)
+    monkeypatch.setattr(studio, "_vault_connection", vault_connection)
+    monkeypatch.setattr(studio, "_pinned_http_request", pinned_http_request)
+    monkeypatch.setattr(
+        studio.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+    )
+
+    result = await studio._studio_introspect_source(
+        {"cartridge_id": "sap_hcm", "source_kind": "odata"},
+        {"id": "u1", "role": "workspace_admin", "allowed_cartridges": ["sap_hcm"]},
+    )
+
+    assert result["source"] == "live"
+    assert [entity["name"] for entity in result["entities"]] == ["A_BusinessPartner"]
+    assert result["entities"][0]["primary_key"] == "BusinessPartnerID"
+    assert requests[0][0] == "GET"
+    assert requests[0][1] == "https://sap.example.com/odata/$metadata"
+    assert requests[0][2]["headers"]["Authorization"].startswith("Basic ")
+
+
+@pytest.mark.asyncio
+async def test_live_sql_introspection_requires_tables_and_maps_types(monkeypatch):
+    studio = importlib.import_module("app.routers.studio")
+
+    no_tables, reason = await studio._live_sql_introspection(
+        {},
+        {"database_url": "postgresql://user:pass@db.example.com/app"},
+    )
+    assert no_tables == []
+    assert reason == "tables are required for SQL introspection"
+
+    bypass, reason = await studio._live_sql_introspection(
+        {"tables": ["invoice"]},
+        {"database_url": "postgresql:///app?host=127.0.0.1"},
+    )
+    assert bypass == []
+    assert reason == "database DSN host query parameters are not allowed"
+
+    missing_host, reason = await studio._live_sql_introspection(
+        {"tables": ["invoice"]},
+        {"database_url": "postgresql:///app"},
+    )
+    assert missing_host == []
+    assert reason == "database host is required"
+
+    rows = [
+        {"table_name": "invoice", "column_name": "id", "data_type": "integer", "is_nullable": "NO"},
+        {"table_name": "invoice", "column_name": "updated_at", "data_type": "timestamp without time zone", "is_nullable": "YES"},
+    ]
+    captured = {}
+
+    class Conn:
+        async def fetch(self, query, table_names, **kwargs):
+            captured["query"] = query
+            captured["table_names"] = table_names
+            captured["timeout"] = kwargs["timeout"]
+            return rows
+
+        async def close(self):
+            return None
+
+    async def connect(**kwargs):
+        assert kwargs["timeout"] == 8.0
+        return Conn()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(
+        studio.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 5432))],
+    )
+
+    entities, reason = await studio._live_sql_introspection(
+        {"tables": ["invoice"]},
+        {"database_url": "postgresql://user:pass@db.example.com/app"},
+    )
+
+    assert reason == ""
+    assert "table_name = ANY($1::text[])" in captured["query"]
+    assert captured["table_names"] == ["invoice"]
+    assert captured["timeout"] == 8.0
+    assert entities[0]["name"] == "invoice"
+    fields = {field["name"]: field for field in entities[0]["fields"]}
+    assert fields["id"]["type"] == "int"
+    assert fields["id"]["primary_key"] is True
+    assert fields["updated_at"]["type"] == "timestamp"
 
 
 @pytest.mark.asyncio
@@ -100,6 +322,40 @@ async def test_studio_generate_dag_code_returns_ready_python_without_edit_here(m
     assert result["validated"] is True
     assert result["validation"]["valid"] is True
     compile(code, result["dag_id"], "exec")
+
+
+@pytest.mark.asyncio
+async def test_studio_generate_dag_code_uses_introspected_fields(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    studio = importlib.import_module("app.routers.studio")
+    schema = {
+        "connector_schema": {
+            "connector": {
+                "id": "acme",
+                "auth": {"type": "bearer_token", "env_var": "ACME_TOKEN"},
+                "api": {"base_url_env": "ACME_BASE_URL"},
+            }
+        },
+        "entities": [{
+            "name": "Invoice",
+            "fields": [
+                {"name": "invoice_id", "type": "int", "nullable": False, "primary_key": True, "source_type": "integer"},
+                {"name": "amount", "type": "float", "nullable": False, "primary_key": False, "source_type": "number"},
+                {"name": "updated_at", "type": "timestamp", "nullable": True, "primary_key": False, "source_type": "string:date-time"},
+            ],
+        }],
+    }
+
+    result = await studio._studio_generate_dag_code(
+        {"cartridge_id": "acme", "entity_name": "Invoice", "schema": schema},
+        {"id": "u1", "allowed_cartridges": ["*"]},
+    )
+
+    assert result["watermark_field"] == "updated_at"
+    assert result["primary_keys"] == ["invoice_id"]
+    assert result["select_fields"] == ["invoice_id", "amount", "updated_at"]
+    assert '"updated_at"' in result["code"]
+    assert result["validated"] is True
 
 
 @pytest.mark.asyncio
