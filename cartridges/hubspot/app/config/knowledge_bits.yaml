@@ -8,10 +8,13 @@
 #   id:          stable identifier (snake_case)
 #   name:        human-readable name
 #   description: what question it answers
-#   output:
-#     pg_table:    Postgres table written in the gold DB
-#     parquet_path: Silver path written in MinIO
+#   pg_table:    Postgres table written in the gold DB
+#   output_path: Silver directory prefix in MinIO (write_kb_parquet appends
+#                load_date=…/batch_id=…/<kb>.parquet) — NOT a file path
 #   sql: |       DuckDB SQL (use {bucket} placeholder for the MinIO bucket)
+#
+# NOTE: pg_table / output_path are TOP-LEVEL keys (the seeder reads them flat,
+# matching the replicon cartridge) — do NOT nest them under an `output:` block.
 #
 # These are OPTIONAL analytics shortcuts — the medallion datasets (silver/gold)
 # in datasets/*.sql are the canonical layer. KBs are ad-hoc rollups the
@@ -22,9 +25,8 @@ knowledge_bits:
   - id: open_pipeline_by_owner
     name: Open Pipeline by Owner
     description: Open (forecast) weighted pipeline value per sales owner.
-    output:
-      pg_table: kb_open_pipeline_by_owner
-      parquet_path: silver/hubspot/kb_open_pipeline_by_owner/data.parquet
+    pg_table: kb_open_pipeline_by_owner
+    output_path: knowledge_bits/hubspot/open_pipeline_by_owner
     sql: |
       SELECT
         COALESCE(NULLIF(TRIM(o.first_name || ' ' || o.last_name), ''), d.hubspot_owner_id, 'N/D') AS vendedor,
@@ -42,9 +44,8 @@ knowledge_bits:
   - id: deals_closing_this_month
     name: Deals Closing This Month
     description: Open deals whose expected close date falls in the current month.
-    output:
-      pg_table: kb_deals_closing_this_month
-      parquet_path: silver/hubspot/kb_deals_closing_this_month/data.parquet
+    pg_table: kb_deals_closing_this_month
+    output_path: knowledge_bits/hubspot/deals_closing_this_month
     sql: |
       SELECT
         d.dealname,

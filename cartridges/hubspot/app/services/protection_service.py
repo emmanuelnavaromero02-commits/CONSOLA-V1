@@ -44,7 +44,7 @@ def _shadow(value: Any) -> Any:
 def _build_fernet() -> Fernet:
     from app.core.vault_client import get_secret
     key_str = (
-        get_secret("field_encryption_key", default=None)
+        get_secret("FIELD_ENCRYPTION_KEY", default="")
         or os.environ.get("FIELD_ENCRYPTION_KEY")
         or ""
     ).strip()
