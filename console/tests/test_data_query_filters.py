@@ -101,7 +101,7 @@ def console_main(monkeypatch):
             close_pool=_noop_async,
         ),
         "app.services.assistant": _module(),
-        "app.services.studio_assistant": _module(),
+        "app.services.studio_assistant": _module(register_local_tool=lambda *args, **kwargs: None),
         "app.services.token_store": _module(close_pool=_noop_async),
         "app.services.job_service": _module(list_recent=_empty_list_async, close_pool=_noop_async),
         "app.services.cartridge_service": _module(get_cartridge=_noop_async, close_pool=_noop_async),
@@ -124,6 +124,7 @@ def console_main(monkeypatch):
     sys.modules.pop("app.dependencies", None)
     main = importlib.import_module("app.main")
     yield main
+    sys.modules.pop("app.routers.studio", None)
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)
 
