@@ -25,6 +25,8 @@ resource "aws_instance" "app" {
     s3_bucket_name               = aws_s3_bucket.lakehouse.bucket
     deploy_ref                   = var.deploy_ref
     image_tag                    = var.image_tag
+    public_console_domain        = var.public_console_domain
+    public_workspace_domain      = var.public_workspace_domain
     secret_arns                  = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
   })
 

@@ -1,0 +1,29 @@
+aws_region = "us-east-1"
+
+github_repo_url = "git@github.com:emmanuelnavaromero02-commits/CONSOLA-BETA.git"
+deploy_ref      = "v1.0.0-rc3"
+image_tag       = "v1.0.0-rc3"
+
+public_console_domain   = "console.example.com"
+public_workspace_domain = "workspace.example.com"
+
+# If the public domain is in Route53, set the zone id and Terraform will
+# create ACM validation and A-alias records automatically.
+route53_zone_id = ""
+
+# If DNS is managed elsewhere and Terraform creates the ACM certificate,
+# create the output acm_validation_records manually, wait until ACM is ISSUED,
+# then set this true and apply again to create the HTTPS listener.
+manual_acm_validation_complete = false
+
+# If DNS is managed elsewhere, this can point to an already issued ACM cert.
+public_acm_certificate_arn = ""
+
+# Public SSH is disabled by default. Prefer SSM:
+# aws ssm start-session --target <instance-id>
+ssh_allowed_cidrs = []
+
+# Required for SNS alarm subscription confirmation.
+alarm_email = "ops@example.com"
+
+vpn_admin_allowed_cidrs = []

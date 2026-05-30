@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, KeyRound, Link2, Loader2, RefreshCw, Save, Search, Tags } from "lucide-react";
+import { AlertTriangle, Database, KeyRound, Link2, Loader2, RefreshCw, Save, Search, Tags } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -322,32 +322,50 @@ function CatalogTable({ rows }: { rows: Array<{ name: string; dataset: CatalogDa
           </tr>
         </thead>
         <tbody className="divide-y">
-          {rows.map(({ name, dataset }) => (
-            <tr key={name} className="align-top">
-              <td className="px-4 py-3">
-                <div className="font-medium">{name}</div>
-                <div className="text-xs text-muted-foreground">{dataset.cartridge || "sin cartucho"}</div>
-              </td>
-              <td className="px-4 py-3">
-                <Badge>{dataset.layer || "n/a"}</Badge>
-              </td>
-              <td className="px-4 py-3">
-                <div className="space-y-2">
-                  {(dataset.columns ?? []).slice(0, 6).map((column) => (
-                    <ColumnPill key={`${name}:${column.name}`} column={column} />
-                  ))}
-                  {(dataset.columns?.length ?? 0) > 6 ? (
-                    <div className="text-xs text-muted-foreground">+{(dataset.columns?.length ?? 0) - 6} columnas</div>
+          {rows.map(({ name, dataset }) => {
+            const readiness = datasetReadiness(dataset.description);
+            return (
+              <tr key={name} className="align-top">
+                <td className="px-4 py-3">
+                  <div className="font-medium">{name}</div>
+                  <div className="text-xs text-muted-foreground">{dataset.cartridge || "sin cartucho"}</div>
+                  {readiness ? (
+                    <span className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                      <AlertTriangle aria-hidden className="h-3.5 w-3.5" />
+                      {readiness}
+                    </span>
                   ) : null}
-                </div>
-              </td>
-              <td className="max-w-md px-4 py-3 text-muted-foreground">{dataset.description || "Sin descripción"}</td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-4 py-3">
+                  <Badge>{dataset.layer || "n/a"}</Badge>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="space-y-2">
+                    {(dataset.columns ?? []).slice(0, 6).map((column) => (
+                      <ColumnPill key={`${name}:${column.name}`} column={column} />
+                    ))}
+                    {(dataset.columns?.length ?? 0) > 6 ? (
+                      <div className="text-xs text-muted-foreground">+{(dataset.columns?.length ?? 0) - 6} columnas</div>
+                    ) : null}
+                  </div>
+                </td>
+                <td className="max-w-md px-4 py-3 text-muted-foreground">{dataset.description || "Sin descripción"}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
+}
+
+function datasetReadiness(description?: string | null) {
+  const text = (description ?? "").toLowerCase();
+  if (!text) return "";
+  if (text.includes("pendiente") || text.includes("parcial") || text.includes(" no extra")) {
+    return "Parcial";
+  }
+  return "";
 }
 
 function ColumnPill({ column }: { column: CatalogColumn }) {

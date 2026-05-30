@@ -28,17 +28,23 @@ def test_successfactors_health_probe_runs_oauth_and_metadata_handshake(monkeypat
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
             calls.append("POST " + self.path)
+            body = json.dumps({"access_token": "token", "expires_in": 3600}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(json.dumps({"access_token": "token", "expires_in": 3600}).encode("utf-8"))
+            self.wfile.write(body)
 
         def do_GET(self):  # noqa: N802
             calls.append("GET " + self.path)
+            body = b'{"d":{}}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(b'{"d":{}}')
+            self.wfile.write(body)
 
         def log_message(self, format, *args):  # noqa: A002
             return

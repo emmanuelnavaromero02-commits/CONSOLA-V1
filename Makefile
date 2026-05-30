@@ -10,7 +10,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up up-core down nuke logs ps test smoke migrate rotate-keys e2e preflight demo-check verify-release
+.PHONY: help up up-core down nuke logs ps test smoke migrate rotate-keys e2e preflight demo-check verify-release verify-v1-public
 .PHONY: test-hermetic
 
 help:
@@ -31,6 +31,8 @@ help:
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make verify-release"
 	@echo "                    run the v1.0 release gate against a running full stack"
+	@echo "  make verify-v1-public"
+	@echo "                    verify public HTTPS staging with Playwright/live probes"
 	@echo "  make migrate      apply pending infra/init SQL migrations to running Postgres"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
@@ -123,6 +125,9 @@ smoke:
 # on first run). The HTML report lands at tests-e2e/playwright-report/.
 e2e:
 	@bash scripts/run-e2e.sh
+
+verify-v1-public:
+	@bash scripts/verify_v1_public.sh
 
 verify-release:
 	$(RUFF) check .

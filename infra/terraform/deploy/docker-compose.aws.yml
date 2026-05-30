@@ -99,6 +99,7 @@ services:
         required: false
     environment:
       APP_ENV:             ${APP_ENV:-production}
+      COOKIE_SECURE:       ${COOKIE_SECURE:-true}
       DATABASE_URL:        "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required}@postgres:5432/modecissions"
       MINIO_BUCKET:        ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:      "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
@@ -190,6 +191,7 @@ services:
         required: false
     environment:
       APP_ENV:              ${APP_ENV:-production}
+      COOKIE_SECURE:        ${COOKIE_SECURE:-true}
       DATABASE_URL:         "postgresql+psycopg2://omega_workspace:${OMEGA_WORKSPACE_PASSWORD:?OMEGA_WORKSPACE_PASSWORD is required}@postgres:5432/modecissions"
       REFINEMENT_URL:       http://refinement:8500
       MCP_INFRA_URL:        http://mcp-infra:8010
