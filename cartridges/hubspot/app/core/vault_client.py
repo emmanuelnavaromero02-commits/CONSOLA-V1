@@ -115,6 +115,12 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
     return ""
 
 
+def get_secret(env_var_name: str, default: str = "") -> str:
+    """Single-arg secret access used by protection_service (mirrors the SAP
+    cartridge signature). Reads from the process environment only."""
+    return os.environ.get(env_var_name, default)
+
+
 def get_connection_for_worker(service_name: str) -> dict[str, Any]:
     """Return the resolved Console Vault connection payload for a worker."""
     return dict(_fetch_connection(service_name))

@@ -15,7 +15,9 @@ SELECT
         100.0 * COUNT(*) FILTER (WHERE estado = 'ganado')
         / NULLIF(COUNT(*) FILTER (WHERE estado IN ('ganado', 'perdido')), 0),
         1)                                                              AS tasa_ganados_pct
+-- NOTA: filtramos por estado cerrado (no por mes_cierre IS NOT NULL) para no
+-- perder negocio cerrado sin closedate. mes=NULL agrupa esos casos.
 FROM read_parquet('s3://{bucket}/gold/hubspot/pipeline_salud/data.parquet')
-WHERE mes_cierre IS NOT NULL
+WHERE estado IN ('ganado', 'perdido')
 GROUP BY mes, owner_id, vendedor
-ORDER BY mes DESC, monto_ganado_usd DESC NULLS LAST
+ORDER BY mes DESC NULLS LAST, monto_ganado_usd DESC NULLS LAST

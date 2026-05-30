@@ -41,6 +41,37 @@ def _yaml_kbs() -> list[dict[str, Any]]:
         return (yaml.safe_load(f) or {}).get("knowledge_bits", [])
 
 
+def _yaml_entity_map() -> dict[str, dict[str, Any]]:
+    return {str(e.get("entity")): e for e in _yaml_entities() if e.get("entity")}
+
+
+def _merge_yaml_runtime_fields(row: Any) -> dict[str, Any]:
+    """Re-inject HubSpot runtime fields that are NOT columns in entity_config
+    (``api_path``, ``result_shape``) and guarantee ``properties`` is populated,
+    sourcing them from the bundled entities.yaml.
+
+    Mirrors the SAP cartridge's odata_entity re-injection: the extraction client
+    always gets what it needs regardless of how the DB row was seeded. Without
+    this, a DB-backed entity_config row (seeded by seed.sql, which can only set
+    real columns) would reach the client without api_path/result_shape/properties
+    and every object extraction would silently return only HubSpot's default
+    property set."""
+    data = dict(row)
+    yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
+    for key in ("api_path", "result_shape"):
+        if yaml_entity.get(key) and not data.get(key):
+            data[key] = yaml_entity[key]
+    if not data.get("properties"):
+        sel = data.get("select_fields")
+        if isinstance(sel, str):
+            try:
+                sel = json.loads(sel)
+            except Exception:
+                sel = None
+        data["properties"] = sel or yaml_entity.get("properties") or []
+    return data
+
+
 # ── Seed on startup ───────────────────────────────────────────────────────────
 
 def _seed_if_empty() -> None:
@@ -61,7 +92,7 @@ def _seed_if_empty() -> None:
                             effective_dated, date_field, future_window_days, description, enabled
                         ) VALUES (
                             :cid, :entity, :mode, :wf, :wfmt,
-                            :ps, :sel, CAST(:prot AS JSONB),
+                            :ps, CAST(:sel AS JSONB), CAST(:prot AS JSONB),
                             :ed, :df, :fwd, :desc, TRUE
                         )
                         ON CONFLICT (cartridge_id, entity) DO NOTHING
@@ -71,8 +102,8 @@ def _seed_if_empty() -> None:
                         "mode": e.get("mode", "full"),
                         "wf": e.get("watermark_field"),
                         "wfmt": e.get("watermark_format"),
-                        "ps": e.get("page_size", 1000),
-                        "sel": e.get("select"),
+                        "ps": e.get("page_size", 100),
+                        "sel": json.dumps(e.get("properties") or e.get("select") or []),
                         "prot": json.dumps(e.get("protection", {})),
                         "ed": bool(e.get("effective_dated", False)),
                         "df": e.get("date_field"),
@@ -118,9 +149,9 @@ def get_all_entities() -> list[dict[str, Any]]:
                 WHERE cartridge_id = :cid AND enabled = TRUE
                 ORDER BY entity
             """), {"cid": CARTRIDGE_ID}).mappings().all()
-        return [dict(r) for r in rows]
+        return [_merge_yaml_runtime_fields(r) for r in rows]
     except Exception:
-        return _yaml_entities()
+        return [_merge_yaml_runtime_fields(e) for e in _yaml_entities()]
 
 
 def get_entity_config(entity_name: str) -> dict[str, Any] | None:
@@ -131,11 +162,11 @@ def get_entity_config(entity_name: str) -> dict[str, Any] | None:
                 SELECT * FROM entity_config
                 WHERE cartridge_id = :cid AND entity = :e
             """), {"cid": CARTRIDGE_ID, "e": entity_name}).mappings().first()
-        return dict(row) if row else None
+        return _merge_yaml_runtime_fields(row) if row else None
     except Exception:
         for e in _yaml_entities():
             if e.get("entity") == entity_name:
-                return e
+                return _merge_yaml_runtime_fields(e)
         return None
 
 

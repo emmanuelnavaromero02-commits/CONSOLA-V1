@@ -11,7 +11,11 @@ SELECT
     ROUND(SUM(monto_ponderado_usd) FILTER (WHERE estado = 'forecast'), 2) AS forecast_ponderado_usd,
     COUNT(*)                 FILTER (WHERE estado = 'ganado')           AS deals_ganados,
     ROUND(SUM(monto_usd)     FILTER (WHERE estado = 'ganado'), 2)       AS monto_ganado_usd
+-- NOTA: filtramos por estado (no por mes_cierre IS NOT NULL) para NO perder
+-- deals abiertos sin fecha de cierre esperada (closedate NULL es común en
+-- HubSpot). Esos caen en el grupo mes=NULL ("sin fecha esperada") en lugar de
+-- desaparecer, y el forecast total reconcilia con pipeline_salud.
 FROM read_parquet('s3://{bucket}/gold/hubspot/pipeline_salud/data.parquet')
-WHERE mes_cierre IS NOT NULL
+WHERE estado IN ('forecast', 'ganado')
 GROUP BY mes, owner_id, vendedor
-ORDER BY mes DESC, forecast_ponderado_usd DESC NULLS LAST
+ORDER BY mes DESC NULLS LAST, forecast_ponderado_usd DESC NULLS LAST

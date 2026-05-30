@@ -213,7 +213,13 @@ class HubSpotClient:
             "limit": config.get("page_size", settings.hubspot_page_size),
             "archived": "false",
         }
-        props = config.get("properties") or []
+        props = config.get("properties") or config.get("select_fields") or []
+        if isinstance(props, str):
+            import json as _json
+            try:
+                props = _json.loads(props)
+            except Exception:
+                props = []
         if props:
             params["properties"] = ",".join(props)
         if after:

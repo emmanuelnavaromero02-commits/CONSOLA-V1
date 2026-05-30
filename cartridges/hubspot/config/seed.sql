@@ -37,23 +37,34 @@ ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 -- dag_id:        hubspot_extract (DAG fino → microservicio del cartucho, Pattern A)
 -- trigger_type:  scheduled  (el meta-DAG entity_scheduler dispara según cron_expression)
 -- El microservicio del cartucho posee: cliente HTTP, paginación, watermark, parquet.
+-- watermark_field / page_size se siembran aquí (son columnas reales) para que
+-- el modo incremental se active (routes_skills.run_incremental usa
+-- watermark_field). api_path/result_shape/properties NO son columnas: el
+-- microservicio los re-inyecta desde app/config/entities.yaml en tiempo de
+-- lectura (catalog_service._merge_yaml_runtime_fields), igual que SAP hace con
+-- odata_entity. Los cron evitan la secuencia '*/' porque el validador de
+-- import de cartuchos (console _validate_seed_sql) rechaza '*/' como comentario
+-- de bloque; '0,4,8,...' es equivalente y seguro.
 INSERT INTO entity_config
-    (cartridge_id, entity,       display_name,          mode,          primary_key,  dag_id,            description,                                                  enabled, trigger_type, cron_expression)
+    (cartridge_id, entity,       display_name,          mode,          primary_key,  dag_id,            description,                                                  watermark_field,       watermark_format, page_size, enabled, trigger_type, cron_expression)
 VALUES
-    ('hubspot',   'deals',       'Oportunidades',       'incremental', 'hubspot_id', 'hubspot_extract', 'Deals: monto, etapa, pipeline, probabilidad, cierre, dueño.', TRUE, 'scheduled', '0 */4 * * *'),
-    ('hubspot',   'companies',   'Empresas',            'incremental', 'hubspot_id', 'hubspot_extract', 'Empresas / cuentas con industria, dominio y dueño.',          TRUE, 'scheduled', '0 */6 * * *'),
-    ('hubspot',   'contacts',    'Contactos',           'incremental', 'hubspot_id', 'hubspot_extract', 'Contactos con email, empresa, puesto y etapa de ciclo.',      TRUE, 'scheduled', '0 */6 * * *'),
-    ('hubspot',   'line_items',  'Líneas de Producto',  'incremental', 'hubspot_id', 'hubspot_extract', 'Líneas de producto por deal (producto, cantidad, precio).',   TRUE, 'scheduled', '0 */6 * * *'),
-    ('hubspot',   'owners',      'Vendedores',          'full',        'hubspot_id', 'hubspot_extract', 'Vendedores / dueños de deals.',                               TRUE, 'scheduled', '0 6 * * *'),
-    ('hubspot',   'pipelines',   'Pipelines y Etapas',  'full',        'stage_id',   'hubspot_extract', 'Pipelines de deals y sus etapas con probabilidad.',           TRUE, 'scheduled', '0 6 * * *')
+    ('hubspot',   'deals',       'Oportunidades',       'incremental', 'hubspot_id', 'hubspot_extract', 'Deals: monto, etapa, pipeline, probabilidad, cierre, dueño.', 'hs_lastmodifieddate', 'iso8601',        100,       TRUE, 'scheduled', '0 0,4,8,12,16,20 * * *'),
+    ('hubspot',   'companies',   'Empresas',            'incremental', 'hubspot_id', 'hubspot_extract', 'Empresas / cuentas con industria, dominio y dueño.',          'hs_lastmodifieddate', 'iso8601',        100,       TRUE, 'scheduled', '0 0,6,12,18 * * *'),
+    ('hubspot',   'contacts',    'Contactos',           'incremental', 'hubspot_id', 'hubspot_extract', 'Contactos con email, empresa, puesto y etapa de ciclo.',      'lastmodifieddate',    'iso8601',        100,       TRUE, 'scheduled', '0 0,6,12,18 * * *'),
+    ('hubspot',   'line_items',  'Líneas de Producto',  'incremental', 'hubspot_id', 'hubspot_extract', 'Líneas de producto por deal (producto, cantidad, precio).',   'hs_lastmodifieddate', 'iso8601',        100,       TRUE, 'scheduled', '0 0,6,12,18 * * *'),
+    ('hubspot',   'owners',      'Vendedores',          'full',        'hubspot_id', 'hubspot_extract', 'Vendedores / dueños de deals.',                               NULL,                  NULL,             100,       TRUE, 'scheduled', '0 6 * * *'),
+    ('hubspot',   'pipelines',   'Pipelines y Etapas',  'full',        'stage_id',   'hubspot_extract', 'Pipelines de deals y sus etapas con probabilidad.',           NULL,                  NULL,             100,       TRUE, 'scheduled', '0 6 * * *')
 ON CONFLICT (cartridge_id, entity) DO UPDATE
-    SET display_name    = EXCLUDED.display_name,
-        mode            = EXCLUDED.mode,
-        primary_key     = EXCLUDED.primary_key,
-        dag_id          = EXCLUDED.dag_id,
-        description     = EXCLUDED.description,
-        trigger_type    = EXCLUDED.trigger_type,
-        cron_expression = EXCLUDED.cron_expression;
+    SET display_name     = EXCLUDED.display_name,
+        mode             = EXCLUDED.mode,
+        primary_key      = EXCLUDED.primary_key,
+        dag_id           = EXCLUDED.dag_id,
+        description      = EXCLUDED.description,
+        watermark_field  = EXCLUDED.watermark_field,
+        watermark_format = EXCLUDED.watermark_format,
+        page_size        = EXCLUDED.page_size,
+        trigger_type     = EXCLUDED.trigger_type,
+        cron_expression  = EXCLUDED.cron_expression;
 
 -- ── Semantic vocabulary ───────────────────────────────────────────────────────
 INSERT INTO semantic_terms (cartridge_id, term, definition, maps_to)

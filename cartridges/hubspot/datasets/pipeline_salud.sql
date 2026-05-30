@@ -56,7 +56,7 @@ SELECT
     ROUND(COALESCE(d.monto_usd, 0), 2)                     AS monto_usd,
     COALESCE(s.prob_etapa, d.prob_deal, 0)                AS probabilidad,
     ROUND(
-        CASE WHEN d.is_closed = 'true' THEN 0
+        CASE WHEN d.is_closed = 'true' OR d.is_closed_won = 'true' THEN 0
              ELSE COALESCE(d.monto_usd, 0) * COALESCE(s.prob_etapa, d.prob_deal, 0)
         END, 2)                                            AS monto_ponderado_usd,
     d.fecha_creacion,
