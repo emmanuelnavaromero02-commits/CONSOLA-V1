@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
-from app.llm_sql import generate_sql
+from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.security import get_internal_api_key
 
 DATASETS_DIR = Path("/app/datasets")
@@ -1069,7 +1069,10 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             _require_source_scope(body, source)
         ctx = _trusted_user_context(body, args)
         schemas = {s: engine.get_source_schema(s, ctx) for s in args["sources"]}
-        sql, explanation = await generate_sql(args["description"], schemas)
+        try:
+            sql, explanation = await generate_sql(args["description"], schemas)
+        except GeneratedSQLValidationError as exc:
+            raise HTTPException(422, f"LLM SQL generation failed validation: {exc}") from exc
         return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
 
     if tool == "preview_transform":

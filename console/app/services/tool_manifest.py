@@ -55,6 +55,9 @@ READ_ONLY_TOOLS = {
     "cartridge_get_schema", "cartridge_preview",
     "cartridge_get_run_logs", "cartridge_get_job_status",
     "cartridge_list_jobs", "cartridge_list_kbs",
+    "generate_dag_code",
+    "introspect_source",
+    "validate_dag_code",
 
     # infra catalog read-only
     "list_cartridges",

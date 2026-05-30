@@ -23,6 +23,7 @@ from app.services.security_context import build_security_context, rls_user_conte
 from app.services import (
     audit_service,
     cartridge_service,
+    dag_code_generator,
     dag_templates,
     mcp_registry,
     studio_assistant,
@@ -79,6 +80,178 @@ def _clean_identifier(value: str, *, label: str) -> str:
     if not _IDENT_RE.fullmatch(ident):
         raise HTTPException(400, f"Invalid {label}: use letters, numbers and underscores only")
     return ident
+
+
+async def _studio_introspect_source(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    """Studio assistant tool: reuse the cartridge connector schema endpoint logic."""
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    cartridge_id = _clean_identifier(str(args.get("cartridge_id") or ""), label="cartridge_id")
+    from app.routers import cartridges as cartridges_router
+
+    schema = await cartridges_router.connector_schema(cartridge_id, user=user)
+    return {
+        "cartridge_id": cartridge_id,
+        "endpoint": f"/api/cartridges/{cartridge_id}/connector_schema",
+        "connector_schema": schema,
+    }
+
+
+studio_assistant.register_local_tool(
+    "introspect_source",
+    description=(
+        "Obtiene el connector_schema real de un cartucho para descubrir "
+        "campos, credenciales, entidades y metadatos antes de pedir YAML al usuario."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {
+                "type": "string",
+                "description": "ID del cartucho activo, por ejemplo replicon, sap_hcm o sap_s4hana.",
+            },
+        },
+        "required": ["cartridge_id"],
+    },
+    handler=_studio_introspect_source,
+)
+
+
+async def _studio_generate_dag_code(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    """Studio assistant tool: generate ready-to-review DAG code from connector schema."""
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    cartridge_id = _clean_identifier(str(args.get("cartridge_id") or ""), label="cartridge_id")
+    entity_name = _clean_identifier(str(args.get("entity_name") or ""), label="entity_name")
+    schema = args.get("schema")
+    if not isinstance(schema, dict):
+        raise HTTPException(400, "schema must be an object returned by introspect_source")
+    validation_error = args.get("validation_error")
+    _require_cartridge_visible(user, cartridge_id)
+    try:
+        result = dag_code_generator.generate_validated_dag_code(
+            cartridge_id,
+            entity_name,
+            schema,
+            validation_error=validation_error if isinstance(validation_error, str) else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not result.get("validated"):
+        validation = result.get("validation") or {}
+        raise HTTPException(
+            422,
+            {
+                "error": "Generated DAG code failed validation after 2 attempts",
+                "stderr": validation.get("stderr") or "Unknown validation error",
+                "validation_attempts": result.get("validation_attempts") or [],
+            },
+        )
+    return result
+
+
+studio_assistant.register_local_tool(
+    "generate_dag_code",
+    description=(
+        "Genera código Python completo de un DAG de Airflow a partir del "
+        "connector_schema introspectado. No usa plantillas EDIT_HERE."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {
+                "type": "string",
+                "description": "ID del cartucho activo.",
+            },
+            "entity_name": {
+                "type": "string",
+                "description": "Entidad para la que se generará el DAG.",
+            },
+            "schema": {
+                "type": "object",
+                "description": "Objeto devuelto por studio__introspect_source o su connector_schema.",
+            },
+            "validation_error": {
+                "type": "string",
+                "description": "stderr de validate_dag_code cuando se intenta reparar una generación fallida.",
+            },
+        },
+        "required": ["cartridge_id", "entity_name", "schema"],
+    },
+    handler=_studio_generate_dag_code,
+)
+
+
+async def _studio_validate_dag_code(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    """Studio assistant tool: validate generated DAG code before showing it."""
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    code = args.get("code")
+    if not isinstance(code, str):
+        raise HTTPException(400, "code must be a string")
+    return dag_code_generator.validate_dag_code(code)
+
+
+studio_assistant.register_local_tool(
+    "validate_dag_code",
+    description=(
+        "Valida en segundo plano un DAG generado: sintaxis Python e imports básicos. "
+        "Debe ejecutarse antes de mostrar código al usuario."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": "Código Python completo del DAG generado.",
+            },
+        },
+        "required": ["code"],
+    },
+    handler=_studio_validate_dag_code,
+)
+
+
+async def _studio_create_full_cartridge(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    """Studio assistant tool: create a complete cartridge with validated seed SQL."""
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    try:
+        return await cartridge_service.create_full_cartridge(args, actor_user=user)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+studio_assistant.register_local_tool(
+    "create_full_cartridge",
+    description=(
+        "Crea un cartucho completo con conexiones, DAGs, entidades, vocabulario, "
+        "KBs, herramientas, apps y agentes. Valida integridad y seed.sql antes de escribir."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "version": {"type": "string"},
+            "description": {"type": "string"},
+            "pattern": {"type": "string"},
+            "category": {"type": "string"},
+            "bronze_path": {"type": "string"},
+            "assistant_hints": {"type": "string"},
+            "connections": {"type": "array", "items": {"type": "object"}},
+            "dags": {"type": "array", "items": {"type": "object"}},
+            "entities": {"type": "array", "items": {"type": "object"}},
+            "semantic_model": {"type": "object"},
+            "knowledge_bits": {"type": "array", "items": {"type": "object"}},
+            "custom_tools": {"type": "array", "items": {"type": "object"}},
+            "analytic_apps": {"type": "array", "items": {"type": "object"}},
+            "agents": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["id", "name"],
+    },
+    handler=_studio_create_full_cartridge,
+)
 
 
 def _clean_filename(value: str) -> str:
@@ -181,6 +354,60 @@ async def _rag_sources(user: dict | None) -> list[dict]:
     source_payload = result if isinstance(result, dict) else payload
     sources = source_payload.get("sources") or source_payload.get("results") or []
     return sources if isinstance(sources, list) else []
+
+
+def _manifest_relations(manifest: dict | None) -> list[dict[str, Any]]:
+    if not manifest:
+        return []
+    semantic = manifest.get("semantic_model") if isinstance(manifest.get("semantic_model"), dict) else {}
+    raw_relations = (
+        semantic.get("relationships")
+        or semantic.get("relations")
+        or manifest.get("relationships")
+        or manifest.get("relations")
+        or []
+    )
+    if not isinstance(raw_relations, list):
+        return []
+    relations: list[dict[str, Any]] = []
+    for rel in raw_relations:
+        if not isinstance(rel, dict):
+            continue
+        source = rel.get("from_dataset") or rel.get("source") or rel.get("from")
+        target = rel.get("to_dataset") or rel.get("target") or rel.get("to")
+        if not source or not target:
+            continue
+        relations.append({
+            "from_dataset": source,
+            "from_column": rel.get("from_column") or rel.get("source_column") or "",
+            "to_dataset": target,
+            "to_column": rel.get("to_column") or rel.get("target_column") or "",
+            "join_hint": rel.get("join_hint") or rel.get("type") or "",
+            "description": rel.get("description") or "",
+            "transform": rel.get("transform"),
+            "source": "manifest",
+        })
+    return relations
+
+
+async def _semantic_relations(cartridge: str, manifest: dict | None, user: dict | None) -> tuple[list[dict[str, Any]], str]:
+    try:
+        catalog = await _refinement_invoke(
+            "get_data_catalog",
+            {"cartridge": cartridge},
+            timeout=30,
+            user=user,
+        )
+        relationships = catalog.get("relationships") if isinstance(catalog, dict) else []
+        if isinstance(relationships, list) and relationships:
+            return [
+                {**dict(rel), "source": "refinement.get_data_catalog"}
+                for rel in relationships
+                if isinstance(rel, dict)
+            ], "refinement.get_data_catalog"
+    except Exception:
+        pass
+    return _manifest_relations(manifest), "manifest"
 
 
 def _svg_for_graph(nodes: list[dict], edges: list[dict]) -> str:
@@ -773,12 +1000,14 @@ async def semantic(
     manifest = await cartridge_service.get_cartridge(cartridge)
     if not manifest:
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
+    relations, relation_source = await _semantic_relations(cartridge, manifest, user)
     return {
         "cartridge": cartridge,
         "server": manifest,
         "entities": manifest.get("entities") or [],
         "vocabulary": (manifest.get("semantic_model") or {}).get("vocabulary") or [],
-        "relations": [],
+        "relations": relations,
+        "relation_source": relation_source,
     }
 
 

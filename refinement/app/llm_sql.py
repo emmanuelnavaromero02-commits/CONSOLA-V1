@@ -3,12 +3,45 @@ LLM SQL generation — Claude genera SQL DuckDB dado descripción + esquemas de 
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import anthropic
 
 SQL_MODEL = os.environ.get("SQL_LLM_MODEL", "claude-sonnet-4-6")
 
 _client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+_SQL_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+_SQL_FORBIDDEN_RE = re.compile(
+    r"\b(attach|call|copy|create|delete|drop|export|import|insert|install|load|pragma|set|truncate|update|alter)\b",
+    re.IGNORECASE,
+)
+_SQL_COMMENT_RE = re.compile(r"(--|/\*)")
+_SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
+
+
+class GeneratedSQLValidationError(ValueError):
+    """Raised when the LLM does not return strict, safe SQL JSON."""
+
+
+def _mask_single_quoted(sql: str) -> str:
+    return _SINGLE_QUOTED_RE.sub("''", sql or "")
+
+
+def validate_generated_sql(sql: str) -> str:
+    sql = (sql or "").strip()
+    if not sql:
+        raise GeneratedSQLValidationError("LLM SQL response is empty")
+    masked = _mask_single_quoted(sql)
+    if not _SQL_START_RE.search(masked):
+        raise GeneratedSQLValidationError("LLM SQL must start with SELECT or WITH")
+    if ";" in masked or _SQL_COMMENT_RE.search(masked) or _SQL_FORBIDDEN_RE.search(masked):
+        raise GeneratedSQLValidationError("LLM SQL contains unsafe statements, comments, or multiple statements")
+    if "read_parquet" not in masked.lower():
+        raise GeneratedSQLValidationError("LLM SQL must read parquet sources explicitly")
+    if "load_date" not in masked.lower() or "{latest_date}" not in sql:
+        raise GeneratedSQLValidationError("LLM SQL must filter the latest load_date using {latest_date}")
+    return sql
 
 SYSTEM = """Eres un experto en SQL para DuckDB y arquitecturas lakehouse.
 Generas consultas SQL limpias, eficientes y correctas para DuckDB.
@@ -49,10 +82,17 @@ Recuerda: usa WHERE load_date = '{{latest_date}}' para filtrar solo la última e
         messages=[{"role": "user", "content": prompt}],
     )
 
-    import json
     text = resp.content[0].text.strip()
     try:
         data = json.loads(text)
-        return data.get("sql", ""), data.get("explanation", "")
-    except Exception:
-        return text, ""
+    except json.JSONDecodeError as exc:
+        raise GeneratedSQLValidationError(f"LLM SQL response was not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise GeneratedSQLValidationError("LLM SQL response must be a JSON object")
+    sql = data.get("sql")
+    explanation = data.get("explanation", "")
+    if not isinstance(sql, str):
+        raise GeneratedSQLValidationError("LLM SQL JSON field 'sql' must be a string")
+    if not isinstance(explanation, str):
+        explanation = ""
+    return validate_generated_sql(sql), explanation
