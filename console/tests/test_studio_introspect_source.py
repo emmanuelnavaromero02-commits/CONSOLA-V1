@@ -187,3 +187,42 @@ def test_create_full_cartridge_rejects_unknown_entity_dag(monkeypatch):
             "dags": [{"dag_id": "acme_extract"}],
             "entities": [{"entity": "Invoice", "dag_id": "missing_dag"}],
         })
+
+
+def test_studio_step_tools_stay_whitelisted_and_dag_step_slim(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+
+    literal_step_tools = {
+        tool
+        for tools in studio_assistant.STEP_TOOLS.values()
+        for tool in tools
+        if not tool.endswith("*")
+    }
+    missing = literal_step_tools - studio_assistant.STUDIO_TOOLS_WHITELIST
+
+    assert not missing, f"STEP_TOOLS entries missing from whitelist: {sorted(missing)}"
+
+    expected_local_steps = {
+        "introspect_source": [2, 3],
+        "generate_dag_code": [2],
+        "validate_dag_code": [2],
+        "create_full_cartridge": [1],
+    }
+    for tool, expected_steps in expected_local_steps.items():
+        actual_steps = [
+            step
+            for step in range(1, 8)
+            if studio_assistant._matches_pattern(
+                tool,
+                studio_assistant.STEP_TOOLS["_common"] | studio_assistant.STEP_TOOLS.get(step, set()),
+            )
+        ]
+        assert actual_steps == expected_steps
+
+    synthetic_tools = [
+        {"name": f"infra__{tool}", "input_schema": {"type": "object"}}
+        for tool in sorted(studio_assistant.STUDIO_TOOLS_WHITELIST)
+    ]
+    dag_tools = studio_assistant.filter_tools_for_step(synthetic_tools, 2)
+    assert len(dag_tools) < 20

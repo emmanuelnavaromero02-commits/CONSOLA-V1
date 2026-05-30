@@ -41,6 +41,10 @@ READ_ONLY_TOOLS = {
     # RAG read-only
     "search_rag", "list_rag_sources",
 
+    # Studio app/catalog read-only
+    "list_apps", "get_app_details", "get_app_html",
+    "get_data_catalog", "describe_source", "describe_silver",
+
     # agent catalog read-only
     "agent_list", "agent_get",
 
@@ -71,7 +75,7 @@ DESTRUCTIVE_TOOLS = {
     "postgres_execute_query",  # arbitrary write
     "postgres_execute_ddl",
     "agent_delete",
-    "delete_entity", "vault_delete_connection",
+    "delete_app", "delete_dataset", "delete_entity", "vault_delete_connection",
 }
 
 DEFAULT_FRESHNESS_MINUTES = 60
