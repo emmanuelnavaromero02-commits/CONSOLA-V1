@@ -841,6 +841,8 @@ services:
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
+      # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
+      - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -937,6 +939,8 @@ services:
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
+      # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
+      - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1024,6 +1028,8 @@ services:
       - ../cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
+      # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
+      - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
     depends_on:
       postgres:
         condition: service_healthy

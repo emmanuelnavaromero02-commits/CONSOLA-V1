@@ -102,13 +102,14 @@ def test_no_orphan_cartridge_dags():
         if cartridge in SAP_DAGS:
             _assert_local_sap_mount(cartridge)
             continue
-        if cartridge == "replicon":
+        if cartridge in ("replicon", "hubspot"):
             # v1.40: replicon DAGs are bind-mounted just like SAP.
-            expected = "../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro"
+            # The HubSpot CRM cartridge follows the same self-contained pattern.
+            expected = f"../cartridges/{cartridge}/dags:/opt/airflow/dags/{cartridge}:ro"
             for service in ("airflow", "airflow-scheduler"):
                 volumes = _service_volumes(LOCAL_COMPOSE, service)
                 assert expected in volumes, (
-                    f"{service} must bind-mount replicon DAGs; got {volumes!r}"
+                    f"{service} must bind-mount {cartridge} DAGs; got {volumes!r}"
                 )
             continue
         raise AssertionError(
