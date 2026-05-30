@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.console_route_source import console_route_source
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,7 +15,7 @@ def test_marketplace_has_no_standalone_html_page():
 
 
 def test_marketplace_routes_use_console_next_export():
-    main = read("console/app/main.py")
+    main = console_route_source()
     assert '@app.get("/marketplace"' in main
     assert '@app.get("/customer/cartridges"' in main
     assert '"/admin/installations"' in main
@@ -147,7 +149,7 @@ def test_marketplace_permissions_distinguish_request_from_admin():
 
 
 def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
-    main = read("console/app/main.py")
+    main = console_route_source()
     service = read("console/app/services/marketplace_service.py")
     js = read("console/app/static/js/marketplace.js")
     retry_section = service.split("async def retry_installation", 1)[1].split("async def list_installation_access", 1)[0]
@@ -170,7 +172,7 @@ def test_marketplace_admin_and_retry_do_not_escalate_customer_access():
 
 
 def test_marketplace_permissions_follow_selected_workspace_header():
-    main = read("console/app/main.py")
+    main = console_route_source()
     deps = read("console/app/dependencies.py")
     workspace_session = read("workspace/app/services/session.py")
     assert 'requested_workspace_id = (request.headers.get("x-workspace-id") or "").strip() or None' in main
@@ -184,7 +186,7 @@ def test_marketplace_permissions_follow_selected_workspace_header():
 
 
 def test_marketplace_admin_user_access_api_is_server_side_and_audited():
-    main = read("console/app/main.py")
+    main = console_route_source()
     service = read("console/app/services/marketplace_service.py")
     js = read("console/app/static/js/marketplace.js")
     access_section = service.split("async def set_installation_user_access", 1)[1].split("async def _set_installation_state", 1)[0]
@@ -209,7 +211,7 @@ def test_workspace_and_mcp_are_scoped_to_active_cartridge_entitlements():
     refinement = read("refinement/app/main.py")
     security_context = read("console/app/services/security_context.py")
     cartridge_router = read("console/app/routers/cartridges.py")
-    console_main = read("console/app/main.py")
+    console_main = console_route_source()
     assert "_allowed_cartridge_set" in workspace
     assert "return None if _is_admin_user(user) and not (user.get(\"active_workspace_id\") or user.get(\"workspace_id\")) else set()" in workspace
     assert "if _is_admin_user(user):\n        return" not in workspace

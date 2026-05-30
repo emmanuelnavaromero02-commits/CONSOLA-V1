@@ -1,6 +1,14 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
+TEST_COMPOSE ?= infra/docker-compose.test.yml
+TEST_COMPOSE_PROJECT ?= omega-hermetic-test
+MOCK_MCP_PORT ?= 18010
+MOCK_REPLICON_PORT ?= 18201
+MOCK_SAP_HCM_PORT ?= 18202
+MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
+MOCK_SAP_S4HANA_PORT ?= 18204
 
 .PHONY: help up down nuke logs ps test smoke migrate rotate-keys e2e preflight demo-check
+.PHONY: test-hermetic
 
 help:
 	@echo "MODecissionsPaaS — targets:"
@@ -13,6 +21,8 @@ help:
 	@echo "  make logs         follow service logs"
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
+	@echo "  make test-hermetic"
+	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make migrate      apply pending infra/init SQL migrations to running Postgres"
@@ -62,6 +72,30 @@ test:
 	PYTHONPATH=. $(PYTEST) -ra refinement/tests/
 	PYTHONPATH=vault $(PYTEST) -ra vault/tests/
 	PYTHONPATH=workspace $(PYTEST) -ra workspace/tests/
+
+test-hermetic:
+	@set -e; \
+	MOCK_MCP_PORT=$(MOCK_MCP_PORT) \
+	MOCK_REPLICON_PORT=$(MOCK_REPLICON_PORT) \
+	MOCK_SAP_HCM_PORT=$(MOCK_SAP_HCM_PORT) \
+	MOCK_SAP_SUCCESSFACTORS_PORT=$(MOCK_SAP_SUCCESSFACTORS_PORT) \
+	MOCK_SAP_S4HANA_PORT=$(MOCK_SAP_S4HANA_PORT) \
+		docker compose -p $(TEST_COMPOSE_PROJECT) -f $(TEST_COMPOSE) down --remove-orphans; \
+	MOCK_MCP_PORT=$(MOCK_MCP_PORT) \
+	MOCK_REPLICON_PORT=$(MOCK_REPLICON_PORT) \
+	MOCK_SAP_HCM_PORT=$(MOCK_SAP_HCM_PORT) \
+	MOCK_SAP_SUCCESSFACTORS_PORT=$(MOCK_SAP_SUCCESSFACTORS_PORT) \
+	MOCK_SAP_S4HANA_PORT=$(MOCK_SAP_S4HANA_PORT) \
+		docker compose -p $(TEST_COMPOSE_PROJECT) -f $(TEST_COMPOSE) up -d --wait; \
+	trap 'MOCK_MCP_PORT=$(MOCK_MCP_PORT) MOCK_REPLICON_PORT=$(MOCK_REPLICON_PORT) MOCK_SAP_HCM_PORT=$(MOCK_SAP_HCM_PORT) MOCK_SAP_SUCCESSFACTORS_PORT=$(MOCK_SAP_SUCCESSFACTORS_PORT) MOCK_SAP_S4HANA_PORT=$(MOCK_SAP_S4HANA_PORT) docker compose -p $(TEST_COMPOSE_PROJECT) -f $(TEST_COMPOSE) down --remove-orphans' EXIT; \
+	OMEGA_ENABLE_LIVE_STACK_TESTS=1 \
+	OMEGA_STACK_BASE=http://127.0.0.1:18000 \
+	OMEGA_MCP_INFRA_BASE=http://127.0.0.1:$(MOCK_MCP_PORT) \
+	OMEGA_REPLICON_BASE=http://127.0.0.1:$(MOCK_REPLICON_PORT) \
+	OMEGA_SAP_HCM_BASE=http://127.0.0.1:$(MOCK_SAP_HCM_PORT) \
+	OMEGA_SAP_SUCCESSFACTORS_BASE=http://127.0.0.1:$(MOCK_SAP_SUCCESSFACTORS_PORT) \
+	OMEGA_SAP_S4HANA_BASE=http://127.0.0.1:$(MOCK_SAP_S4HANA_PORT) \
+		$(PYTEST) tests/ -q
 
 # Sprint v1.23 (audit B3): real end-to-end smoke. Verifies the stack is
 # functional — not just "containers running" — by hitting /healthz on

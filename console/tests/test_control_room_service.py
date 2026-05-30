@@ -1606,10 +1606,12 @@ async def test_execute_live_external_template_without_adapter_fails_and_audits(m
     assert "No write-back adapter registered" in str(exc.value.detail)
     assert any("INSERT INTO control_room_action_executions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
     assert any("action_failed" in str(call.args) for call in mock_pool.execute.call_args_list)
-    audit_event.assert_awaited_once()
-    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute"
-    assert audit_event.await_args.kwargs["status"] == "failure"
-    assert audit_event.await_args.kwargs["metadata"]["error_type"] == "NotImplementedError"
+    assert audit_event.await_count == 2
+    assert audit_event.await_args_list[0].kwargs["action"] == "control_room.action.execute.external.preflight"
+    assert audit_event.await_args_list[0].kwargs["status"] == "pending"
+    assert audit_event.await_args_list[1].kwargs["action"] == "control_room.action.execute"
+    assert audit_event.await_args_list[1].kwargs["status"] == "failure"
+    assert audit_event.await_args_list[1].kwargs["metadata"]["error_type"] == "NotImplementedError"
 
 
 @pytest.mark.asyncio
@@ -1628,13 +1630,6 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
             self.calls.append(dry_run)
             assert action_data["template_type"] == "prepare_billing_review"
             assert credentials["cartridge_id"] == "replicon"
-            if dry_run:
-                return control_room_service.ExecutionResult(
-                    ok=True,
-                    status="validated",
-                    message="Dry-run successful",
-                    data={"dry_run": True},
-                )
             return control_room_service.ExecutionResult(
                 ok=True,
                 status="executed",
@@ -1683,18 +1678,20 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
 
     assert result["executed"] is True
     assert result["result"]["external_write"] is True
-    assert result["result"]["validation_result"]["message"] == "Dry-run successful"
+    assert result["result"]["validation_result"]["status"] == "audit_preflight_recorded"
     assert result["result"]["adapter"] == "ExternalBillingAdapter"
     assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
-    assert ExternalBillingAdapter.calls == [True, False]
+    assert ExternalBillingAdapter.calls == [False]
     assert result["learning_lesson"]["metadata"]["autonomous_learning"] is True
     assert result["item"]["omega"]["lessons"]["suggested_actions"][0]["template_id"] == "prepare_billing_review"
     assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
     assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
     assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
-    audit_event.assert_awaited_once()
-    assert audit_event.await_args.kwargs["status"] == "success"
-    assert audit_event.await_args.kwargs["metadata"]["target"] == "replicon"
+    assert audit_event.await_count == 2
+    assert audit_event.await_args_list[0].kwargs["action"] == "control_room.action.execute.external.preflight"
+    assert audit_event.await_args_list[0].kwargs["status"] == "pending"
+    assert audit_event.await_args_list[1].kwargs["status"] == "success"
+    assert audit_event.await_args_list[1].kwargs["metadata"]["target"] == "replicon"
 
 
 @pytest.mark.asyncio
@@ -1734,28 +1731,57 @@ async def test_get_suggested_actions_reads_autonomous_learning_lessons():
     assert result["suggested_actions"][0]["lesson_id"] == 901
 
 
-def test_sap_hcm_adapter_dry_run_validates_without_posting():
+def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch):
     from app.services.adapters import sap_hcm_adapter
 
-    client = patch.object(sap_hcm_adapter.httpx, "Client")
+    class SapResponse:
+        def __init__(self, status_code: int, *, headers: dict | None = None, body: dict | None = None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self._body = body or {}
+            self.text = "ok"
 
-    with client as http_client:
-        result = sap_hcm_adapter.SapHcmAdapter().execute(
-            {
-                "template_type": "sap_hcm_it0008",
-                "item": {"id": "item-hcm", "entity_id": "1001"},
-                "action_payload": {"sap_hcm": {"pernr": "1001"}},
-                "idempotency_key": "idem-hcm",
-            },
-            {"base_url": "https://sap.example", "user": "hcm-user", "password": "secret"},
-            dry_run=True,
-        )
+        def json(self):
+            return self._body
+
+    class SapClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.get_calls = []
+            self.post_calls = []
+            SapClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, *, headers, auth):
+            self.get_calls.append({"url": url, "headers": headers, "auth": auth})
+            return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
+
+        def post(self, url, *, json, headers, auth):
+            self.post_calls.append({"url": url, "json": json, "headers": headers, "auth": auth})
+            return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
+
+    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+
+    result = sap_hcm_adapter.SapHcmAdapter().execute(
+        {
+            "template_type": "sap_hcm_it0008",
+            "item": {"id": "item-hcm", "entity_id": "1001"},
+            "action_payload": {"sap_hcm": {"pernr": "1001"}},
+            "idempotency_key": "idem-hcm",
+        },
+        {"base_url": "https://sap.example", "user": "hcm-user", "password": "secret"},
+        dry_run=True,
+    )
 
     assert result.ok is True
-    assert result.message == "Dry-run successful"
-    assert result.data["dry_run"] is True
-    assert result.data["payload"]["DRY_RUN"] is True
-    http_client.assert_not_called()
+    assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
+    assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
 
 
 def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
@@ -1810,7 +1836,7 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
     assert result.data["status_code"] == 201
     assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
     assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
-    assert SapClient.instance.post_calls[0]["json"]["DRY_RUN"] is False
+    assert "DRY_RUN" not in SapClient.instance.post_calls[0]["json"]
 
 
 def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):

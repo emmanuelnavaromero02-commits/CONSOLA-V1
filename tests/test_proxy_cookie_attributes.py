@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.console_route_source import console_route_source
+
 
 REPO = Path(__file__).resolve().parents[1]
 MAIN_PY = REPO / "console/app/main.py"
@@ -34,7 +36,7 @@ def test_console_next_pages_seed_csrf_cookie():
 
 
 def test_backend_login_sets_httponly_on_mod_session():
-    main_py = _read(MAIN_PY)
+    main_py = console_route_source()
     import re
 
     block = re.search(
@@ -50,7 +52,7 @@ def test_backend_login_sets_httponly_on_mod_session():
 
 
 def test_backend_login_sets_httponly_on_refresh_token():
-    main_py = _read(MAIN_PY)
+    main_py = console_route_source()
     import re
 
     block = re.search(
@@ -65,7 +67,7 @@ def test_backend_login_sets_httponly_on_refresh_token():
 
 
 def test_backend_logout_deletes_session_cookies():
-    main_py = _read(MAIN_PY)
+    main_py = console_route_source()
     assert "resp.delete_cookie(_auth.COOKIE_NAME" in main_py
     assert "resp.delete_cookie(_auth.REFRESH_COOKIE_NAME" in main_py
     assert "clear_csrf_cookie(resp)" in main_py

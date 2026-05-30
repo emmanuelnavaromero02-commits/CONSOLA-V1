@@ -22,6 +22,10 @@ _READ_FN_RE = re.compile(
 _COMMENT_RE = re.compile(r"(--|/\*)")
 _QUOTED_RE = re.compile(r"('(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")")
 _LIMIT_RE = re.compile(r"\bLIMIT\s+(?P<value>[^\s,)]+)", re.IGNORECASE)
+_TAUTOLOGY_RE = re.compile(
+    r"\b(?:OR|AND)\s+(?P<left>\d+)\s*=\s*(?P=left)\b",
+    re.IGNORECASE,
+)
 
 
 def _mask_quoted(sql: str) -> str:
@@ -70,6 +74,8 @@ def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | lis
         return False, "Multiple statements are not allowed"
     if _COMMENT_RE.search(masked):
         return False, "SQL comments are not allowed"
+    if _TAUTOLOGY_RE.search(masked):
+        return False, "SQL tautology predicates are not allowed"
 
     limit_ok, limit_err = _validate_limit_clause(masked)
     if not limit_ok:

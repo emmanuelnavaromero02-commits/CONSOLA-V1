@@ -65,8 +65,13 @@ async def health(request: Request):
 
 
 @router.get("/sap_successfactors", dependencies=[Depends(verify_api_key)])
-def health_sap_successfactors() -> dict:
+def health_sap_successfactors() -> JSONResponse:
     """Configuration + connectivity check. Requires X-Internal-Api-Key."""
     client = SapSfClient()
     info = client.test_connection()
-    return {"service": "sap_successfactors", **info}
+    connectivity_ok = bool(info.get("reachable")) or info.get("status") in {"ok", "auth_error"}
+    ok = info.get("status") == "ok"
+    return JSONResponse(
+        {"ok": ok, "connectivity_ok": connectivity_ok, "service": "sap_successfactors", **info},
+        status_code=200 if connectivity_ok or info.get("status") == "degraded" else 503,
+    )

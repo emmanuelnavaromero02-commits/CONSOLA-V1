@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from tests.console_route_source import console_route_source
 import yaml
 
 
@@ -217,7 +219,7 @@ def test_console_system_info_exposes_dev_mode_flag():
     (Studio Deploy DAG button) on this flag. Pre-R1 the button was
     rendered unconditionally and clicking it in production surfaced
     a confusing PermissionError from airflow_create_dag."""
-    src = (REPO / "console" / "app" / "main.py").read_text(encoding="utf-8")
+    src = console_route_source()
     # The endpoint exists and returns dev_mode based on APP_ENV.
     assert '"dev_mode"' in src
     assert '"app_env"' in src

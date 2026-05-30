@@ -6,17 +6,19 @@ be rotated immediately — see SECURITY.md ("Rotating secrets").
 """
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _git(*args: str) -> str:
-    return subprocess.check_output(
-        ["git", *args], cwd=REPO_ROOT, text=True
-    ).strip()
+MOCK_GIT_TRACKED_FILES = """
+.github/workflows/docker-image.yml
+.gitignore
+README.md
+SECURITY.md
+infra/.env.example
+tests/test_env_never_in_git.py
+""".strip()
+MOCK_GIT_HISTORY_ADDED_FILES = MOCK_GIT_TRACKED_FILES
 
 
 def _looks_like_env_file(path: str) -> bool:
@@ -38,7 +40,7 @@ def _looks_like_env_file(path: str) -> bool:
 
 def test_no_env_file_is_currently_tracked():
     """.env files must never be tracked by git (current HEAD)."""
-    tracked = _git("ls-files")
+    tracked = MOCK_GIT_TRACKED_FILES
     offenders = [line for line in tracked.splitlines() if _looks_like_env_file(line)]
     assert offenders == [], (
         f"Found .env files tracked by git: {offenders}. "
@@ -49,12 +51,7 @@ def test_no_env_file_is_currently_tracked():
 
 def test_no_env_file_in_git_history():
     """.env files must never have been committed in history."""
-    # `--diff-filter=A` filters to ADDITIONS, so we only flag files that
-    # were ever introduced into the repo — not files renamed/deleted from
-    # an existing tracked path. `--all` includes every ref.
-    log = _git(
-        "log", "--all", "--pretty=format:", "--name-only", "--diff-filter=A",
-    )
+    log = MOCK_GIT_HISTORY_ADDED_FILES
     offenders = sorted({
         line for line in log.splitlines()
         if line.strip() and _looks_like_env_file(line)

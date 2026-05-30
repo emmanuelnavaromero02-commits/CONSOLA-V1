@@ -119,7 +119,11 @@ class RequestIDMiddleware:
                 })
                 await send({
                     "type": "http.response.body",
-                    "body": b'{"detail":"internal error"}',
+                    "body": (
+                        b'{"error":"Internal Server Error","request_id":"'
+                        + rid_bytes
+                        + b'"}'
+                    ),
                 })
             # If the response had already started before the exception,
             # the headers are locked in and there's nothing further the

@@ -1,0 +1,897 @@
+from __future__ import annotations
+
+import base64
+import json
+import os
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Awaitable, Callable, Iterable
+
+import httpx
+from fastapi import HTTPException
+
+from app.middleware.request_id import request_id_var
+from app.security import get_internal_api_key
+from app.version import app_version
+from app.services import audit_service, auth
+from app.services.security_context import build_security_context, rls_user_context
+
+
+REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500").rstrip("/")
+
+ACTIVE_INSTALLATION_STATUSES = {"ready", "active"}
+CONTROL_ROOM_REFRESH_INTERVAL_SECONDS = 30
+TERMINAL_ITEM_STATUSES = {"approved", "dismissed", "resolved"}
+ITEM_STATUSES = {"open", "in_review", "decision_created", "approved", "dismissed", "resolved"}
+SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+ALERT_SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+OMEGA_STEPS = [
+    {"id": "signals", "label": "Senales"},
+    {"id": "investigation", "label": "Investigacion"},
+    {"id": "options", "label": "Opciones"},
+    {"id": "decision", "label": "Decision"},
+    {"id": "execution", "label": "Ejecucion"},
+    {"id": "control", "label": "Control"},
+    {"id": "lessons", "label": "Lecciones aprendidas"},
+]
+
+EXECUTION_STATUSES = {
+    "not_started",
+    "preview_generated",
+    "dry_run_validated",
+    "blocked",
+    "failed",
+    "executed",
+}
+CONTROL_ITEM_STATUSES = {"open", "in_progress", "closed", "blocked"}
+CONTROL_ITEM_STATUS_LABELS = {
+    "open": "abierto",
+    "in_progress": "en seguimiento",
+    "closed": "cerrado",
+    "blocked": "bloqueado",
+}
+
+ACTIVITY_LABELS = {
+    "signals_opened": "Senal abierta",
+    "investigation_reviewed": "Investigacion revisada",
+    "options_reviewed": "Opciones revisadas",
+    "decision_reviewed": "Decision revisada",
+    "execution_reviewed": "Ejecucion revisada",
+    "control_checked": "Control confirmado",
+    "control_updated": "Control actualizado",
+    "option_selected": "Opcion seleccionada",
+    "decision_created": "Decision creada",
+    "action_preview": "Preview generado",
+    "action_dry_run": "Dry-run validado",
+    "action_blocked": "Ejecucion bloqueada",
+    "action_executed": "Write-back interno ejecutado",
+    "auto_run_completed": "Modo automatico completado",
+    "approved": "Aprobacion registrada",
+    "lesson_recorded": "Leccion registrada",
+    "lesson_applied": "Leccion aplicada",
+    "dismissed": "Item descartado",
+    "reopened": "Item reabierto",
+    "alert_acknowledged": "Alerta reconocida",
+    "alert_snoozed": "Alerta pospuesta",
+    "alert_assigned": "Alerta asignada",
+    "alert_false_positive": "Falso positivo cerrado",
+}
+
+SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES = {"create_followup_task"}
+
+OMEGA_STEP_EVENT_TYPES = {
+    "signals": "signals_opened",
+    "investigation": "investigation_reviewed",
+    "options": "options_reviewed",
+    "decision": "decision_reviewed",
+    "execution": "execution_reviewed",
+    "control": "control_checked",
+    "lessons": "lesson_recorded",
+}
+
+ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
+    "restore_data_source": {
+        "template_id": "restore_data_source",
+        "cartridge_id": "platform",
+        "label": "Restaurar fuente de datos",
+        "description": "Valida instalacion, credenciales, materializacion y scope tenant/workspace.",
+        "action_kind": "data_recovery",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "create_followup_task": {
+        "template_id": "create_followup_task",
+        "cartridge_id": "platform",
+        "label": "Crear seguimiento operativo",
+        "description": "Genera una tarea auditada para responsable operativo.",
+        "action_kind": "followup_task",
+        "risk_level": "low",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "request_owner_review": {
+        "template_id": "request_owner_review",
+        "cartridge_id": "platform",
+        "label": "Solicitar revision de owner",
+        "description": "Prepara solicitud de revision humana con evidencia y SQL.",
+        "action_kind": "owner_review",
+        "risk_level": "low",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_replicon_adjustment": {
+        "template_id": "prepare_replicon_adjustment",
+        "cartridge_id": "replicon",
+        "label": "Preparar ajuste Replicon",
+        "description": "Construye payload seguro para revisar billing, timesheet o asignacion en Replicon.",
+        "action_kind": "replicon_adjustment",
+        "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_billing_review": {
+        "template_id": "prepare_billing_review",
+        "cartridge_id": "replicon",
+        "label": "Preparar revision de facturacion",
+        "description": "Construye evidencia para validar WIP, margen, horas y facturacion.",
+        "action_kind": "billing_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_sap_review": {
+        "template_id": "prepare_sap_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision SAP",
+        "description": "Construye payload de revision para revenue, backlog, compras o maestro S/4.",
+        "action_kind": "sap_review",
+        "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_s4_revenue_review": {
+        "template_id": "prepare_s4_revenue_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision comercial S/4",
+        "description": "Prepara evidencia de revenue, backlog, pedido y owner comercial.",
+        "action_kind": "s4_revenue_review",
+        "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_s4_business_partner_review": {
+        "template_id": "prepare_s4_business_partner_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision de business partner",
+        "description": "Prepara evidencia de maestro BP, datos fiscales, direccion y bloqueo preventivo.",
+        "action_kind": "s4_business_partner_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_s4_procurement_review": {
+        "template_id": "prepare_s4_procurement_review",
+        "cartridge_id": "sap_s4hana",
+        "label": "Preparar revision de compras S/4",
+        "description": "Prepara evidencia de proveedor, gasto, contrato y aprobaciones.",
+        "action_kind": "s4_procurement_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_hcm_access_review": {
+        "template_id": "prepare_hcm_access_review",
+        "cartridge_id": "sap_hcm",
+        "label": "Preparar revision HCM acceso/nomina",
+        "description": "Prepara baja, bloqueo de usuario, evidencia de posicion y posible cola de nomina.",
+        "action_kind": "hcm_access_review",
+        "risk_level": "high",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_hcm_org_review": {
+        "template_id": "prepare_hcm_org_review",
+        "cartridge_id": "sap_hcm",
+        "label": "Preparar revision organizacional HCM",
+        "description": "Prepara evidencia de centro de costo, posicion, jefe y estructura.",
+        "action_kind": "hcm_org_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_successfactors_review": {
+        "template_id": "prepare_successfactors_review",
+        "cartridge_id": "sap_successfactors",
+        "label": "Preparar revision SuccessFactors",
+        "description": "Prepara evidencia de empleado, manager, departamento, job code y aprobador.",
+        "action_kind": "successfactors_employee_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "prepare_successfactors_recruiting_review": {
+        "template_id": "prepare_successfactors_recruiting_review",
+        "cartridge_id": "sap_successfactors",
+        "label": "Preparar revision recruiting SF",
+        "description": "Prepara evidencia de requisicion, vacante, etapa y owner.",
+        "action_kind": "successfactors_recruiting_review",
+        "risk_level": "medium",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+}
+
+
+@dataclass(frozen=True)
+class ControlRoomSource:
+    dataset: str
+    cartridge: str
+    domain: str
+    module_label: str
+    entity_kind: str
+    entity_id_field: str
+    entity_label_field: str
+    kind: str = "anomaly"
+    normalizer: str = "standard_anomaly"
+    module_id: str | None = None
+
+    @property
+    def visible_module_id(self) -> str:
+        return self.module_id or self.cartridge
+
+
+@dataclass(frozen=True)
+class ControlRoomModule:
+    cartridge: str
+    label: str
+    domain: str
+    accent: str
+    sources: tuple[ControlRoomSource, ...] = ()
+    operational: bool = False
+    module_id: str | None = None
+    description: str = ""
+
+    @property
+    def visible_id(self) -> str:
+        return self.module_id or self.cartridge
+
+
+MODULES: tuple[ControlRoomModule, ...] = (
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Personal",
+        domain="Recursos Humanos",
+        accent="#7c3aed",
+        sources=(
+            ControlRoomSource(
+                dataset="employees_anomalies",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Personal",
+                entity_kind="Empleado",
+                entity_id_field="pernr",
+                entity_label_field="full_name",
+                module_id="sap_hcm",
+            ),
+            ControlRoomSource(
+                dataset="headcount_by_department",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Personal",
+                entity_kind="Departamento",
+                entity_id_field="department",
+                entity_label_field="department",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm",
+            ),
+            ControlRoomSource(
+                dataset="headcount_by_costcenter",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Personal",
+                entity_kind="Centro de costo",
+                entity_id_field="cost_center",
+                entity_label_field="cost_center",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm",
+            ),
+        ),
+        module_id="sap_hcm",
+        description="Calidad, composicion y maestros de personal SAP HCM.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Nomina",
+        domain="Nomina",
+        accent="#ef4444",
+        sources=(
+            ControlRoomSource(
+                dataset="workforce_cost_monthly",
+                cartridge="sap_hcm",
+                domain="Nomina",
+                module_label="Nomina",
+                entity_kind="Centro de costo",
+                entity_id_field="cost_center",
+                entity_label_field="cost_center",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_payroll",
+            ),
+        ),
+        module_id="sap_hcm_payroll",
+        description="Costos de fuerza laboral y senales base para control de nomina.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Ausencias",
+        domain="Recursos Humanos",
+        accent="#a855f7",
+        sources=(
+            ControlRoomSource(
+                dataset="absence_by_type_and_month",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Ausencias",
+                entity_kind="Tipo de ausencia",
+                entity_id_field="absence_type",
+                entity_label_field="absence_type",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_absences",
+            ),
+            ControlRoomSource(
+                dataset="absence_balance_by_employee",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Ausencias",
+                entity_kind="Empleado",
+                entity_id_field="pernr",
+                entity_label_field="pernr",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_absences",
+            ),
+        ),
+        module_id="sap_hcm_absences",
+        description="Tendencias y saldos de ausentismo para HR Ops.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_hcm",
+        label="Estructura Org",
+        domain="Recursos Humanos",
+        accent="#6d28d9",
+        sources=(
+            ControlRoomSource(
+                dataset="manager_hierarchy",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Manager",
+                entity_id_field="manager_pernr",
+                entity_label_field="manager_name",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_org",
+            ),
+            ControlRoomSource(
+                dataset="headcount_by_position_type",
+                cartridge="sap_hcm",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Posicion",
+                entity_id_field="position_type",
+                entity_label_field="position_type",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_hcm_org",
+            ),
+        ),
+        module_id="sap_hcm_org",
+        description="Jerarquia, span de control y estructura organizacional SAP HCM.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Employee Central",
+        domain="Recursos Humanos",
+        accent="#8b5cf6",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_employees_anomalies",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Employee Central",
+                entity_kind="Empleado",
+                entity_id_field="user_id",
+                entity_label_field="full_name",
+                module_id="sap_successfactors",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_headcount_by_department",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Employee Central",
+                entity_kind="Departamento",
+                entity_id_field="department",
+                entity_label_field="department",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_turnover_by_period",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Employee Central",
+                entity_kind="Periodo",
+                entity_id_field="period",
+                entity_label_field="period",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors",
+            ),
+        ),
+        module_id="sap_successfactors",
+        description="Employee Central, headcount, rotacion y calidad de datos.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Reclutamiento",
+        domain="Recursos Humanos",
+        accent="#a78bfa",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_recruitment_funnel",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Reclutamiento",
+                entity_kind="Requisicion",
+                entity_id_field="job_req_id",
+                entity_label_field="job_req_id",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_recruiting",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_recruitment_pipeline",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Reclutamiento",
+                entity_kind="Pipeline",
+                entity_id_field="job_req_id",
+                entity_label_field="job_req_id",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_recruiting",
+            ),
+        ),
+        module_id="sap_successfactors_recruiting",
+        description="Embudo, requisiciones y senales de cobertura de vacantes.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Desempeno",
+        domain="Recursos Humanos",
+        accent="#7c3aed",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_compensation_distribution",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Desempeno",
+                entity_kind="Grupo",
+                entity_id_field="department",
+                entity_label_field="department",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_performance",
+            ),
+        ),
+        module_id="sap_successfactors_performance",
+        description="Compensacion disponible y senales relacionadas con desempeno.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_successfactors",
+        label="Estructura Org",
+        domain="Recursos Humanos",
+        accent="#6d28d9",
+        sources=(
+            ControlRoomSource(
+                dataset="sap_successfactors_manager_hierarchy",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Manager",
+                entity_id_field="manager_id",
+                entity_label_field="manager_name",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_org",
+            ),
+            ControlRoomSource(
+                dataset="sap_successfactors_org_structure",
+                cartridge="sap_successfactors",
+                domain="Recursos Humanos",
+                module_label="Estructura Org",
+                entity_kind="Unidad",
+                entity_id_field="org_unit",
+                entity_label_field="org_unit",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_successfactors_org",
+            ),
+        ),
+        module_id="sap_successfactors_org",
+        description="Jerarquia, unidades y estructura organizacional SuccessFactors.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="ERP Core",
+        domain="Finanzas",
+        accent="#10b981",
+        sources=(
+            ControlRoomSource(
+                dataset="business_partner_anomalies",
+                cartridge="sap_s4hana",
+                domain="Finanzas",
+                module_label="ERP Core",
+                entity_kind="Business Partner",
+                entity_id_field="business_partner",
+                entity_label_field="full_name",
+                module_id="sap_s4hana",
+            ),
+            ControlRoomSource(
+                dataset="gl_balance_by_account",
+                cartridge="sap_s4hana",
+                domain="Finanzas",
+                module_label="ERP Core",
+                entity_kind="Cuenta",
+                entity_id_field="gl_account",
+                entity_label_field="gl_account",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana",
+            ),
+        ),
+        module_id="sap_s4hana",
+        description="Maestros financieros, business partners y balance base S/4HANA.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Ventas",
+        domain="Ventas",
+        accent="#8b5cf6",
+        sources=(
+            ControlRoomSource(
+                dataset="revenue_by_customer",
+                cartridge="sap_s4hana",
+                domain="Ventas",
+                module_label="Ventas",
+                entity_kind="Cliente",
+                entity_id_field="customer_code",
+                entity_label_field="customer_code",
+                kind="control_item",
+                normalizer="s4_revenue",
+                module_id="sap_s4hana_sales",
+            ),
+            ControlRoomSource(
+                dataset="open_sales_orders",
+                cartridge="sap_s4hana",
+                domain="Ventas",
+                module_label="Ventas",
+                entity_kind="Cliente",
+                entity_id_field="customer_code",
+                entity_label_field="customer_code",
+                kind="control_item",
+                normalizer="s4_backlog",
+                module_id="sap_s4hana_sales",
+            ),
+        ),
+        module_id="sap_s4hana_sales",
+        description="Revenue, backlog y senales comerciales S/4HANA.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Compras",
+        domain="Compras",
+        accent="#f59e0b",
+        sources=(
+            ControlRoomSource(
+                dataset="purchase_spend_by_supplier",
+                cartridge="sap_s4hana",
+                domain="Compras",
+                module_label="Compras",
+                entity_kind="Proveedor",
+                entity_id_field="supplier_code",
+                entity_label_field="supplier_code",
+                kind="control_item",
+                normalizer="s4_supplier_spend",
+                module_id="sap_s4hana_procurement",
+            ),
+        ),
+        module_id="sap_s4hana_procurement",
+        description="Gasto por proveedor y controles de compras.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Cuentas por Cobrar",
+        domain="Finanzas",
+        accent="#14b8a6",
+        sources=(
+            ControlRoomSource(
+                dataset="overdue_billing",
+                cartridge="sap_s4hana",
+                domain="Finanzas",
+                module_label="Cuentas por Cobrar",
+                entity_kind="Factura",
+                entity_id_field="billing_document",
+                entity_label_field="billing_document",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana_ar",
+            ),
+        ),
+        module_id="sap_s4hana_ar",
+        description="Cartera vencida, facturacion y aging comercial.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Presupuestos",
+        domain="Presupuestos",
+        accent="#0891b2",
+        sources=(
+            ControlRoomSource(
+                dataset="cost_center_expense",
+                cartridge="sap_s4hana",
+                domain="Presupuestos",
+                module_label="Presupuestos",
+                entity_kind="Centro de costo",
+                entity_id_field="cost_center",
+                entity_label_field="cost_center",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana_budget",
+            ),
+        ),
+        module_id="sap_s4hana_budget",
+        description="Gasto por centro de costo como base para control presupuestal.",
+    ),
+    ControlRoomModule(
+        cartridge="sap_s4hana",
+        label="Inventario",
+        domain="Operacion",
+        accent="#22c55e",
+        sources=(
+            ControlRoomSource(
+                dataset="inventory_movement_summary",
+                cartridge="sap_s4hana",
+                domain="Operacion",
+                module_label="Inventario",
+                entity_kind="Material",
+                entity_id_field="material",
+                entity_label_field="material",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="sap_s4hana_inventory",
+            ),
+        ),
+        module_id="sap_s4hana_inventory",
+        description="Movimientos de inventario y senales de operacion S/4HANA.",
+    ),
+    ControlRoomModule(
+        cartridge="replicon",
+        label="Servicios Profesionales",
+        domain="Operacion",
+        accent="#0ea5e9",
+        sources=(
+            ControlRoomSource(
+                dataset="consultor_asignacion",
+                cartridge="replicon",
+                domain="Operacion",
+                module_label="Asignacion",
+                entity_kind="Consultor",
+                entity_id_field="consultor",
+                entity_label_field="consultor",
+                kind="control_item",
+                normalizer="replicon_allocation",
+                module_id="replicon",
+            ),
+            ControlRoomSource(
+                dataset="consultor_timesheet_semanal",
+                cartridge="replicon",
+                domain="Operacion",
+                module_label="Timesheets",
+                entity_kind="Consultor",
+                entity_id_field="consultor",
+                entity_label_field="consultor",
+                kind="control_item",
+                normalizer="replicon_timesheet",
+                module_id="replicon",
+            ),
+            ControlRoomSource(
+                dataset="project_progress_history",
+                cartridge="replicon",
+                domain="Operacion",
+                module_label="Servicios Profesionales",
+                entity_kind="Proyecto",
+                entity_id_field="proyecto",
+                entity_label_field="project_name",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon",
+            ),
+        ),
+        module_id="replicon",
+        description="Asignacion, timesheets y delivery de servicios profesionales.",
+    ),
+    ControlRoomModule(
+        cartridge="replicon",
+        label="Margen y Facturacion",
+        domain="Finanzas",
+        accent="#0ea5e9",
+        sources=(
+            ControlRoomSource(
+                dataset="pnl_mensual",
+                cartridge="replicon",
+                domain="Finanzas",
+                module_label="Margen y Facturacion",
+                entity_kind="Proyecto",
+                entity_id_field="proyecto",
+                entity_label_field="project_name",
+                kind="control_item",
+                normalizer="replicon_pnl",
+                module_id="replicon_finance",
+            ),
+            ControlRoomSource(
+                dataset="pnl_detalle_consultor",
+                cartridge="replicon",
+                domain="Finanzas",
+                module_label="Margen y Facturacion",
+                entity_kind="Consultor",
+                entity_id_field="consultor",
+                entity_label_field="consultor",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon_finance",
+            ),
+            ControlRoomSource(
+                dataset="costo_consultor_mensual",
+                cartridge="replicon",
+                domain="Finanzas",
+                module_label="Margen y Facturacion",
+                entity_kind="Consultor",
+                entity_id_field="consultor",
+                entity_label_field="consultor",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon_finance",
+            ),
+        ),
+        module_id="replicon_finance",
+        description="P&L, WIP, costo y facturacion de servicios.",
+    ),
+    ControlRoomModule(
+        cartridge="replicon",
+        label="Skills y Staffing",
+        domain="Recursos Humanos",
+        accent="#38bdf8",
+        sources=(
+            ControlRoomSource(
+                dataset="analytic_skill_gap_by_manager",
+                cartridge="replicon",
+                domain="Recursos Humanos",
+                module_label="Skills y Staffing",
+                entity_kind="Manager",
+                entity_id_field="manager_name",
+                entity_label_field="manager_name",
+                kind="control_item",
+                normalizer="replicon_skill_gap",
+                module_id="replicon_skills",
+            ),
+            ControlRoomSource(
+                dataset="fact_empleado_skills",
+                cartridge="replicon",
+                domain="Recursos Humanos",
+                module_label="Skills y Staffing",
+                entity_kind="Empleado",
+                entity_id_field="empleado",
+                entity_label_field="empleado",
+                kind="metric",
+                normalizer="metric_snapshot",
+                module_id="replicon_skills",
+            ),
+        ),
+        module_id="replicon_skills",
+        description="Brechas de skill, staffing y capacidad consultiva.",
+    ),
+    ControlRoomModule(
+        cartridge="platform",
+        label="Plataforma",
+        domain="Operacion",
+        accent="#64748b",
+        operational=True,
+        module_id="platform",
+        description="Salud operativa de pipelines, fuentes y plataforma.",
+    ),
+)
+
+DOMAIN_ORDER = ["Recursos Humanos", "Nomina", "Finanzas", "Presupuestos", "Compras", "Ventas", "Operacion"]
+DOMAIN_ACCENTS = {
+    "Recursos Humanos": "#7c3aed",
+    "Nomina": "#ef4444",
+    "Finanzas": "#10b981",
+    "Presupuestos": "#0891b2",
+    "Compras": "#f59e0b",
+    "Ventas": "#8b5cf6",
+    "Operacion": "#64748b",
+}
+
+ANOMALY_COPY: dict[str, dict[str, str]] = {
+    "missing_cost_center": {
+        "title": "Empleado activo sin centro de costo",
+        "recommendation": "Asignar centro de costo, validar owner financiero y registrar seguimiento en una decision compartida.",
+        "root_cause": "Dato maestro incompleto en la estructura organizacional.",
+    },
+    "missing_position": {
+        "title": "Empleado activo sin posicion",
+        "recommendation": "Corregir asignacion organizacional y revisar que la posicion exista antes del siguiente corte operativo.",
+        "root_cause": "La asignacion de posicion no llego completa desde el origen.",
+    },
+    "terminated_but_active": {
+        "title": "Empleado dado de baja sigue activo",
+        "recommendation": "Validar ultima accion de personal, bloquear accesos si aplica y abrir remediacion con responsable de HR Ops.",
+        "root_cause": "Baja laboral no sincronizada con estado operativo activo.",
+    },
+    "missing_address": {
+        "title": "Business Partner sin direccion",
+        "recommendation": "Completar datos maestros del partner antes de nuevas ordenes, facturacion o analisis de credito.",
+        "root_cause": "Maestro financiero incompleto para operaciones comerciales.",
+    },
+    "duplicate_name": {
+        "title": "Business Partners con nombre duplicado",
+        "recommendation": "Revisar duplicidad de maestro, consolidar registros o marcar excepcion aprobada.",
+        "root_cause": "Posible alta duplicada o normalizacion insuficiente del nombre legal.",
+    },
+    "missing_department": {
+        "title": "Empleado sin departamento",
+        "recommendation": "Asignar departamento valido y verificar reglas de reporting para evitar analisis incompleto.",
+        "root_cause": "Employee Central no trae unidad organizacional completa.",
+    },
+    "missing_manager": {
+        "title": "Empleado sin manager",
+        "recommendation": "Confirmar si es excepcion ejecutiva; si no lo es, asignar manager y registrar control de seguimiento.",
+        "root_cause": "La cadena de mando esta incompleta o no fue replicada.",
+    },
+    "invalid_job_code": {
+        "title": "Job code invalido",
+        "recommendation": "Corregir job code contra el catalogo FOJobCode y revisar impactos en compensacion/reporting.",
+        "root_cause": "Codigo de puesto no existe o no esta vigente en el catalogo de referencia.",
+    },
+}
+
+
+DatasetFetcher = Callable[[str, dict | None, int], Awaitable[list[dict[str, Any]]]]
+ThresholdMap = dict[tuple[str, str, str], dict[str, Any]]
+
+# Implementation modules bind their functions back into this module namespace.
+# That keeps the historical `app.services.control_room_service.<name>` import
+# and monkeypatch surface stable while the physical code is split by domain.
+def _install_module_exports() -> None:
+    from app.services.control_room import api as _api
+    from app.services.control_room import state as _state
+    from app.services.control_room import execution as _execution
+
+    for _module in (_api, _state, _execution):
+        for _name in getattr(_module, "__all__", ()):  # pragma: no branch - static tuple
+            globals()[_name] = getattr(_module, _name)
+
+
+_install_module_exports()
+
+__all__ = tuple(
+    _name
+    for _name in globals()
+    if not _name.startswith("__") and _name not in {"_install_module_exports"}
+)

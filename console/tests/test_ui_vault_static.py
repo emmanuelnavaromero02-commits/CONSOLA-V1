@@ -21,6 +21,7 @@ TOKENS_CSS     = REPO_ROOT / "console/app/static/css/tokens.css"
 MAIN_CSS       = REPO_ROOT / "console/app/static/css/main.css"
 VIEWER_CSS     = REPO_ROOT / "console/app/static/css/viewer.css"
 MAIN_PY        = REPO_ROOT / "console/app/main.py"
+ROUTERS_V1     = REPO_ROOT / "console/app/routers/v1"
 
 
 # ── HTML invariants ─────────────────────────────────────────────────────────
@@ -98,7 +99,7 @@ def _normalize_js_url(url: str) -> str:
 
 def test_vault_js_only_calls_existing_backend_endpoints():
     js = VAULT_JS.read_text(encoding="utf-8")
-    py = MAIN_PY.read_text(encoding="utf-8")
+    py = _console_route_source()
 
     # Extract all /api/vault/... fetches from vault.js.
     js_urls = {_normalize_js_url(u) for u in VAULT_ENDPOINT_RE.findall(js)}
@@ -110,7 +111,7 @@ def test_vault_js_only_calls_existing_backend_endpoints():
 
     missing = js_urls - py_routes
     assert not missing, (
-        f"vault.js calls endpoints not declared in console/app/main.py: {missing}. "
+        f"vault.js calls endpoints not declared in console routes: {missing}. "
         f"Known backend vault routes: {sorted(py_routes)}"
     )
 
@@ -155,6 +156,16 @@ def _function_body(src: str, name: str) -> str:
         elif src[i] == "}": depth -= 1
         i += 1
     return src[m.end():i]
+
+
+def _console_route_source() -> str:
+    parts = [MAIN_PY.read_text(encoding="utf-8")]
+    parts.extend(
+        path.read_text(encoding="utf-8").replace("@router.", "@app.")
+        for path in sorted(ROUTERS_V1.glob("*.py"))
+        if path.name != "__init__.py"
+    )
+    return "\n".join(parts)
 
 
 # ── CSS tokens invariants ───────────────────────────────────────────────────

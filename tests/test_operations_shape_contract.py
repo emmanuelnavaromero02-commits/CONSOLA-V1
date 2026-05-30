@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests.console_route_source import console_route_source
+
 
 REPO     = Path(__file__).resolve().parents[1]
 MAIN_PY  = REPO / "console/app/main.py"
@@ -40,7 +42,7 @@ def test_admin_users_routes_use_real_verbs():
     """Pin the exact HTTP verbs on each admin-users route. The
     Round 1 Backend audit caught a PUT/PATCH mismatch — keep
     that fixed and any future verb change explicit."""
-    src = _read(MAIN_PY)
+    src = console_route_source()
     # Each tuple is (verb, route literal, permission needed)
     expectations = [
         ("get",    '"/api/admin/users"',                       "iam.users.read"),
@@ -88,7 +90,7 @@ def test_security_audit_route_exists():
 
 def test_vault_connections_route_exists():
     """The Next.js Vault page reads /api/vault/connections/{cartridge}."""
-    src = _read(MAIN_PY)
+    src = console_route_source()
     assert '"/api/vault/connections/{cartridge}"' in src
     assert 'require_permission("vault.connections.read")' in src
 

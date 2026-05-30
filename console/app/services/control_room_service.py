@@ -5675,16 +5675,32 @@ async def _execute_external_writeback_task(
         "status": item.get("status") or "open",
         "decision_id": item.get("decision_id"),
     }
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute.external.preflight",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="pending",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "target": target,
+            "adapter": adapter_name,
+            "idempotency_key": idempotency_key,
+            "fail_closed": True,
+        },
+    )
+    public_validation_result = {
+        "ok": True,
+        "status": "audit_preflight_recorded",
+        "message": "Audit preflight recorded before external write-back.",
+    }
     try:
         adapter = WriteBackAdapterFactory.get_adapter(template_type)
         adapter_name = adapter.__class__.__name__
-        validation_result = adapter.execute(action_data, credentials, dry_run=True)
-        if inspect.isawaitable(validation_result):
-            validation_result = await validation_result
-        public_validation_result = _adapter_result_to_dict(validation_result)
-        if not bool(public_validation_result.get("ok", True)):
-            raise RuntimeError(str(public_validation_result.get("message") or "write-back dry-run validation failed"))
-
         adapter_result = adapter.execute(action_data, credentials, dry_run=False)
         if inspect.isawaitable(adapter_result):
             adapter_result = await adapter_result

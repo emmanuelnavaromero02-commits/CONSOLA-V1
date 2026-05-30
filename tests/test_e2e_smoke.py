@@ -34,6 +34,9 @@ WORKSPACE_BASE = os.environ.get("OMEGA_WORKSPACE_BASE", "http://localhost:8001")
 MCP_INFRA_BASE = os.environ.get("OMEGA_MCP_INFRA_BASE", "http://localhost:8010")
 VAULT_BASE     = os.environ.get("OMEGA_VAULT_BASE",     "http://localhost:8300")
 REFINEMENT_BASE = os.environ.get("OMEGA_REFINEMENT_BASE", "http://localhost:8500")
+E2E_SMOKE_ENABLED = os.environ.get("OMEGA_ENABLE_E2E_SMOKE", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 
 def _stack_up() -> bool:
@@ -49,10 +52,10 @@ def _stack_up() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _stack_up(),
+    not E2E_SMOKE_ENABLED or not _stack_up(),
     reason=(
-        "Stack not reachable at "
-        f"{STACK_BASE}/healthz — run `make up` to enable E2E tests."
+        "E2E smoke disabled or stack not reachable at "
+        f"{STACK_BASE}/healthz — set OMEGA_ENABLE_E2E_SMOKE=1 after `make up` to enable."
     ),
 )
 

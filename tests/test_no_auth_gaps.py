@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.console_route_source import console_route_source
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_MAIN = REPO_ROOT / "console" / "app" / "main.py"
 
@@ -214,7 +216,7 @@ def _decorator_has_auth(deco: ast.Call) -> bool:
 
 @pytest.fixture(scope="module")
 def console_routes():
-    tree = ast.parse(CONSOLE_MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(console_route_source())
     return list(_route_decorators(tree))
 
 

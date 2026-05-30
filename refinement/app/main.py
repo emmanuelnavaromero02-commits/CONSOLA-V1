@@ -611,8 +611,31 @@ def _log_internal_error(exc: Exception, message: str, request: Request | None = 
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     request_id = _log_internal_error(exc, "unhandled refinement exception", request)
     return JSONResponse(
-        {"error": "Internal Error", "request_id": request_id},
+        {"error": "Internal Server Error", "request_id": request_id},
         status_code=500,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 500:
+        request_id = _internal_error_request_id(request)
+        logger.error(
+            "refinement HTTPException sanitized request_id=%s status=%s",
+            request_id,
+            exc.status_code,
+            exc_info=exc.__cause__ is not None,
+            extra={"request_id": request_id, "exception_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            {"error": "Internal Server Error", "request_id": request_id},
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+    return JSONResponse(
+        {"detail": exc.detail},
+        status_code=exc.status_code,
+        headers=exc.headers,
     )
 
 
@@ -1154,7 +1177,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                 mc.remove_object(engine.minio_bucket, obj_path)
                 steps.append(f"parquet deleted: s3://{engine.minio_bucket}/{obj_path}")
             except Exception as exc:
-                steps.append(f"parquet not found or already deleted: {exc}")
+                _log_internal_error(exc, "dataset parquet delete failed")
+                steps.append("parquet not found or already deleted")
         # Drop Postgres table for Gold datasets.
         if layer == "gold":
             table  = f"gold_{name}"
@@ -1168,7 +1192,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                 conn.close()
                 steps.append(f"table dropped: {table}")
             except Exception as exc:
-                steps.append(f"table drop failed: {exc}")
+                _log_internal_error(exc, "dataset gold table drop failed")
+                steps.append("table drop failed")
         return {"deleted": True, "name": name, "layer": layer, "steps": steps}
 
     if tool == "materialize":

@@ -1157,8 +1157,7 @@ _AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
 
 # Routes a user is allowed to hit while in must_change_password=true state.
 _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
-    "/me", "/api/me", "/api/me/change-password", "/auth/logout", "/auth/me",
-    "/api/me/access", "/api/me/profile",
+    "/me", "/api/me", "/api/me/access", "/api/me/profile", "/api/me/change-password", "/auth/logout", "/auth/me",
 }
 
 _RBAC_DEPENDENCY_PREFIXES = (

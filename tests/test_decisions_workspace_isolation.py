@@ -26,6 +26,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.console_route_source import console_route_source
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_DIR = REPO_ROOT / "console"
@@ -61,7 +63,7 @@ def test_decision_select_queries_are_workspace_scoped():
     """Every direct SELECT on the ``decisions`` table must include the
     ``workspace_id`` filter so a cross-workspace read can't slip past
     the visibility clause."""
-    src = CONSOLE_MAIN.read_text(encoding="utf-8")
+    src = console_route_source()
 
     # _dec_load_with_visibility built the per-row lookup.
     assert "SELECT * FROM decisions WHERE id = $1 AND workspace_id = $2" in src, (
@@ -76,7 +78,7 @@ def test_decision_select_queries_are_workspace_scoped():
 
 
 def test_decision_insert_writes_workspace_id():
-    src = CONSOLE_MAIN.read_text(encoding="utf-8")
+    src = console_route_source()
     assert (
         "(title, description, commitment_date, kpis, created_by_id, "
         "assignee_id, visibility, workspace_id)"
@@ -84,7 +86,7 @@ def test_decision_insert_writes_workspace_id():
 
 
 def test_decision_update_is_workspace_scoped():
-    src = CONSOLE_MAIN.read_text(encoding="utf-8")
+    src = console_route_source()
     assert (
         "WHERE id = {decision_ref} AND workspace_id = {workspace_ref} "
         "RETURNING *"
@@ -92,7 +94,7 @@ def test_decision_update_is_workspace_scoped():
 
 
 def test_decision_delete_is_workspace_scoped():
-    src = CONSOLE_MAIN.read_text(encoding="utf-8")
+    src = console_route_source()
     assert (
         'DELETE FROM decisions WHERE id = $1 AND workspace_id = $2'
     ) in src, "DELETE /api/decisions/{id} must include workspace_id"

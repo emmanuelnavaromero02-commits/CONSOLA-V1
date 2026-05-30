@@ -4,11 +4,13 @@ from typing import Any
 
 import httpx
 
+from app.services.adapters.circuit_breaker import CartridgeCircuitBreaker
 from app.services.control_room_service import BaseAdapter, ExecutionResult
 
 
 class SapHcmAdapter(BaseAdapter):
     DEFAULT_IT0008_PATH = "/sap/opu/odata/sap/ZHR_IT0008_SRV/BasicPaySet"
+    CARTRIDGE_ID = "sap_hcm"
 
     def execute(
         self,
@@ -25,35 +27,36 @@ class SapHcmAdapter(BaseAdapter):
             or self.DEFAULT_IT0008_PATH
         )
         url = f"{str(base_url).rstrip('/')}/{str(endpoint).lstrip('/')}"
-        payload = _build_it0008_payload(action_data, dry_run=dry_run)
+        payload = _build_it0008_payload(action_data)
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
         }
-        auth, auth_method = _auth_for(credentials, headers)
+        auth, _auth_method = _auth_for(credentials, headers)
         timeout = float(credentials.get("timeout") or 20.0)
 
-        if dry_run:
-            return ExecutionResult(
-                ok=True,
-                status="validated",
-                message="Dry-run successful",
-                data={
-                    "dry_run": True,
-                    "permissions_checked": True,
-                    "auth_method": auth_method,
-                    "url": url,
-                    "template_type": action_data.get("template_type") or "sap_hcm_it0008",
-                    "payload": payload,
-                },
-            )
-
-        with httpx.Client(timeout=timeout) as client:
-            csrf_token = _fetch_csrf_token(client, url, headers=headers, auth=auth)
-            headers["x-csrf-token"] = csrf_token
-            response = client.post(url, json=payload, headers=headers, auth=auth)
+        CartridgeCircuitBreaker.before_call(self.CARTRIDGE_ID)
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                csrf_token = _fetch_csrf_token(client, url, headers=headers, auth=auth)
+                headers["x-csrf-token"] = csrf_token
+                response = client.post(url, json=payload, headers=headers, auth=auth)
+        except RuntimeError as exc:
+            text = str(exc)
+            if "HTTP 5" in text or "HTTP 429" in text:
+                CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)
+            raise
+        except httpx.TransportError:
+            CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)
+            raise
 
         ok = 200 <= response.status_code < 400
+        if response.status_code in {401, 403}:
+            CartridgeCircuitBreaker.record_success(self.CARTRIDGE_ID)
+        elif response.status_code >= 500 or response.status_code == 429:
+            CartridgeCircuitBreaker.record_failure(self.CARTRIDGE_ID)
+        elif ok:
+            CartridgeCircuitBreaker.record_success(self.CARTRIDGE_ID)
         return ExecutionResult(
             ok=ok,
             status="executed" if ok else "failed",
@@ -109,7 +112,7 @@ def _fetch_csrf_token(
     return token
 
 
-def _build_it0008_payload(action_data: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+def _build_it0008_payload(action_data: dict[str, Any]) -> dict[str, Any]:
     action_payload = action_data.get("action_payload") if isinstance(action_data.get("action_payload"), dict) else {}
     item = action_data.get("item") if isinstance(action_data.get("item"), dict) else {}
     entity = action_payload.get("entity") if isinstance(action_payload.get("entity"), dict) else {}
@@ -123,7 +126,6 @@ def _build_it0008_payload(action_data: dict[str, Any], *, dry_run: bool) -> dict
         "MONTHLY_COST_USD": hcm.get("monthly_cost_usd"),
         "CONTROL_ROOM_ITEM_ID": item.get("id"),
         "IDEMPOTENCY_KEY": action_data.get("idempotency_key"),
-        "DRY_RUN": dry_run,
     }
 
 
