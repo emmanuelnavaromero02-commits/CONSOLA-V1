@@ -1,0 +1,135 @@
+# HubSpot CRM v3 objects.
+#
+# Each entry uses a URL-safe ``entity:`` id (matches the HubSpot object name)
+# so it travels cleanly through console routes like /entities/{entity}/schema.
+# ``api_path`` is the real REST path the client calls; ``result_shape`` tells
+# the client how to flatten the response (objects | owners | pipelines).
+#
+# Extraction is cursor-paginated. Incremental mode pages the full object and
+# filters client-side on ``watermark_field`` (HubSpot list endpoints take no
+# server-side updatedAt filter — same approach Replicon uses for its export).
+#
+# In production set HUBSPOT_API_TOKEN to a Private App token with CRM read
+# scopes (crm.objects.deals.read, crm.objects.companies.read,
+# crm.objects.contacts.read, crm.objects.line_items.read, crm.schemas.deals.read).
+
+entities:
+
+  # ---------------------------------------------------------------
+  # Pipeline backbone — deals (incremental by hs_lastmodifieddate)
+  # ---------------------------------------------------------------
+
+  - entity: deals
+    object: deals
+    api_path: /crm/v3/objects/deals
+    result_shape: objects
+    mode: incremental
+    watermark_field: hs_lastmodifieddate
+    watermark_format: iso8601
+    page_size: 100
+    description: "Deals (oportunidades): monto, etapa, pipeline, probabilidad, fecha de cierre, dueño."
+    properties:
+      - dealname
+      - amount
+      - amount_in_home_currency
+      - dealstage
+      - pipeline
+      - closedate
+      - createdate
+      - hs_lastmodifieddate
+      - hubspot_owner_id
+      - hs_deal_stage_probability
+      - dealtype
+      - hs_is_closed
+      - hs_is_closed_won
+      - hs_forecast_amount
+      - hs_projected_amount
+      - hs_lastactivitydate
+      - hs_deal_amount_calculation_preference
+      - num_associated_contacts
+
+  # ---------------------------------------------------------------
+  # Accounts & people — incremental
+  # ---------------------------------------------------------------
+
+  - entity: companies
+    object: companies
+    api_path: /crm/v3/objects/companies
+    result_shape: objects
+    mode: incremental
+    watermark_field: hs_lastmodifieddate
+    watermark_format: iso8601
+    page_size: 100
+    description: "Empresas / cuentas: nombre, dominio, industria, ubicación, dueño."
+    properties:
+      - name
+      - domain
+      - industry
+      - city
+      - state
+      - country
+      - hubspot_owner_id
+      - lifecyclestage
+      - annualrevenue
+      - numberofemployees
+      - createdate
+      - hs_lastmodifieddate
+
+  - entity: contacts
+    object: contacts
+    api_path: /crm/v3/objects/contacts
+    result_shape: objects
+    mode: incremental
+    watermark_field: lastmodifieddate
+    watermark_format: iso8601
+    page_size: 100
+    description: "Contactos: nombre, email, empresa, puesto, etapa de ciclo de vida, dueño."
+    properties:
+      - firstname
+      - lastname
+      - email
+      - company
+      - jobtitle
+      - lifecyclestage
+      - hubspot_owner_id
+      - createdate
+      - lastmodifieddate
+
+  - entity: line_items
+    object: line_items
+    api_path: /crm/v3/objects/line_items
+    result_shape: objects
+    mode: incremental
+    watermark_field: hs_lastmodifieddate
+    watermark_format: iso8601
+    page_size: 100
+    description: "Líneas de producto por deal: producto, cantidad, precio, monto."
+    properties:
+      - name
+      - quantity
+      - price
+      - amount
+      - hs_product_id
+      - hs_sku
+      - createdate
+      - hs_lastmodifieddate
+
+  # ---------------------------------------------------------------
+  # Reference data — full load (small)
+  # ---------------------------------------------------------------
+
+  - entity: owners
+    object: owners
+    api_path: /crm/v3/owners
+    result_shape: owners
+    mode: full
+    page_size: 100
+    description: "Vendedores / dueños de deals (id, email, nombre)."
+
+  - entity: pipelines
+    object: pipelines
+    api_path: /crm/v3/pipelines/deals
+    result_shape: pipelines
+    mode: full
+    page_size: 100
+    description: "Pipelines de deals y sus etapas con probabilidad (lookup etapa→probabilidad)."
