@@ -10,7 +10,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, NotRequired, TypedDict
 import re
-import xml.etree.ElementTree as ET
+
+import defusedxml.ElementTree as ET
 
 
 class Field(TypedDict):
