@@ -1,0 +1,79 @@
+connector:
+  id: hubspot
+  name: HubSpot CRM
+  version: "1.0"
+  description: >
+    Connector for the HubSpot CRM platform.
+    Extracts deals, companies, contacts, line items, owners and deal
+    pipelines via the HubSpot CRM v3 REST API (cursor-paginated,
+    client-side watermark filter for incremental loads).
+
+  # ── Authentication ─────────────────────────────────────────────────────────
+  auth:
+    type: bearer_token
+    env_var: HUBSPOT_API_TOKEN
+    header: Authorization
+    prefix: "Bearer "
+
+  # ── API configuration ───────────────────────────────────────────────────────
+  api:
+    base_url_env: HUBSPOT_BASE_URL
+    base_url_default: https://api.hubapi.com
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    pagination: cursor          # paging.next.after
+    page_size_default: 100
+
+  # ── Storage ─────────────────────────────────────────────────────────────────
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/hubspot/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+
+  # ── Extraction modes ────────────────────────────────────────────────────────
+  modes:
+    - id: full
+      description: Full snapshot — pages the whole object
+    - id: incremental
+      description: Client-side watermark filter on watermark_field > last value
+    - id: historical
+      description: Date-range filter on date_field between from_date and to_date
+
+  # ── Watermark ───────────────────────────────────────────────────────────────
+  watermark:
+    storage: postgres          # table: watermarks
+    buffer_minutes: 5          # safety overlap before persisting high watermark
+    field_format: iso8601      # e.g. 2024-01-15T10:30:00Z
+
+  # ── MCP interface ───────────────────────────────────────────────────────────
+  mcp:
+    mount_path: /mcp
+    transport: streamable_http
+    tools:
+      - name: list_entities
+        description: List all entities with their watermarks and last run status
+      - name: get_schema
+        description: Return the property schema for a HubSpot entity
+      - name: preview
+        description: Preview rows from a HubSpot entity stored in MinIO
+      - name: extract
+        description: Trigger extraction of a HubSpot entity (full or incremental)
+      - name: get_job_status
+        description: Get the status of an extraction job by job_id
+      - name: list_kbs
+        description: List all Knowledge Bits configured for the HubSpot cartridge
+      - name: run_kb
+        description: Execute a Knowledge Bit and write results to Parquet and PostgreSQL
+      - name: query_kb
+        description: Run arbitrary DuckDB SQL against HubSpot Bronze/Silver data
+
+  # ── Entities catalogue (summary — full config in entities.yaml) ─────────────
+  entities:
+    count: 6
+    id_field: hubspot_id
+    watermark_field_default: hs_lastmodifieddate
+    watermark_format: "%Y-%m-%dT%H:%M:%SZ"
+    page_size_default: 100

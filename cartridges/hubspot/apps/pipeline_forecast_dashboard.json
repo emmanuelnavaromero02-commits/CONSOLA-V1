@@ -1,0 +1,19 @@
+{
+  "slug": "pipeline_forecast_dashboard",
+  "title": "Pipeline & Forecast por Vendedor",
+  "description": "Pipeline abierto ponderado y forecast mensual por vendedor, con lo ya ganado del mes.",
+  "cartridge": "hubspot",
+  "dataset": "forecast_mensual",
+  "layout": "table",
+  "default_filters": {},
+  "columns": [
+    {"field": "mes", "label": "Mes", "format": "month"},
+    {"field": "vendedor", "label": "Vendedor"},
+    {"field": "deals_abiertos", "label": "Deals abiertos"},
+    {"field": "monto_pipeline_usd", "label": "Pipeline", "format": "currency"},
+    {"field": "forecast_ponderado_usd", "label": "Forecast ponderado", "format": "currency"},
+    {"field": "deals_ganados", "label": "Ganados"},
+    {"field": "monto_ganado_usd", "label": "Ganado", "format": "currency"}
+  ],
+  "sql": null
+}

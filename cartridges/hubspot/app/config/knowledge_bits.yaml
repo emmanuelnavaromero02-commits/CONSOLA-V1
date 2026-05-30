@@ -1,0 +1,59 @@
+# HubSpot Knowledge Bits — declarative analytics catalog.
+#
+# Each Knowledge Bit (KB) is a named analytics query the cartridge can run on
+# demand. KBs read Bronze/Silver Parquet via DuckDB and write results to Silver
+# Parquet + a Postgres table.
+#
+# Schema per KB:
+#   id:          stable identifier (snake_case)
+#   name:        human-readable name
+#   description: what question it answers
+#   pg_table:    Postgres table written in the gold DB
+#   output_path: Silver directory prefix in MinIO (write_kb_parquet appends
+#                load_date=…/batch_id=…/<kb>.parquet) — NOT a file path
+#   sql: |       DuckDB SQL (use {bucket} placeholder for the MinIO bucket)
+#
+# NOTE: pg_table / output_path are TOP-LEVEL keys (the seeder reads them flat,
+# matching the replicon cartridge) — do NOT nest them under an `output:` block.
+#
+# These are OPTIONAL analytics shortcuts — the medallion datasets (silver/gold)
+# in datasets/*.sql are the canonical layer. KBs are ad-hoc rollups the
+# assistant can trigger by name via the run_kb MCP tool.
+
+knowledge_bits:
+
+  - id: open_pipeline_by_owner
+    name: Open Pipeline by Owner
+    description: Open (forecast) weighted pipeline value per sales owner.
+    pg_table: kb_open_pipeline_by_owner
+    output_path: knowledge_bits/hubspot/open_pipeline_by_owner
+    sql: |
+      SELECT
+        COALESCE(NULLIF(TRIM(o.first_name || ' ' || o.last_name), ''), d.hubspot_owner_id, 'N/D') AS vendedor,
+        COUNT(*)                                                       AS deals_abiertos,
+        ROUND(SUM(TRY_CAST(d.amount AS DOUBLE)), 2)                    AS monto_total_usd,
+        ROUND(SUM(TRY_CAST(d.amount AS DOUBLE)
+              * COALESCE(TRY_CAST(d.hs_deal_stage_probability AS DOUBLE), 0)), 2) AS monto_ponderado_usd
+      FROM read_parquet('s3://{bucket}/silver/hubspot/hubspot_deals_latest/data.parquet') d
+      LEFT JOIN read_parquet('s3://{bucket}/silver/hubspot/hubspot_owners_latest/data.parquet') o
+        ON o.hubspot_id = d.hubspot_owner_id
+      WHERE LOWER(COALESCE(d.hs_is_closed, 'false')) <> 'true'
+      GROUP BY 1
+      ORDER BY monto_ponderado_usd DESC NULLS LAST
+
+  - id: deals_closing_this_month
+    name: Deals Closing This Month
+    description: Open deals whose expected close date falls in the current month.
+    pg_table: kb_deals_closing_this_month
+    output_path: knowledge_bits/hubspot/deals_closing_this_month
+    sql: |
+      SELECT
+        d.dealname,
+        ROUND(TRY_CAST(d.amount AS DOUBLE), 2)                         AS monto_usd,
+        d.dealstage,
+        TRY_CAST(d.hs_deal_stage_probability AS DOUBLE)               AS probabilidad,
+        CAST(TRY_CAST(d.closedate AS TIMESTAMP) AS DATE)              AS fecha_cierre_esperada
+      FROM read_parquet('s3://{bucket}/silver/hubspot/hubspot_deals_latest/data.parquet') d
+      WHERE LOWER(COALESCE(d.hs_is_closed, 'false')) <> 'true'
+        AND DATE_TRUNC('month', TRY_CAST(d.closedate AS TIMESTAMP)) = DATE_TRUNC('month', CURRENT_DATE)
+      ORDER BY monto_usd DESC NULLS LAST

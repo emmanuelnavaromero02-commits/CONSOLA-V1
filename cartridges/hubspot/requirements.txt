@@ -1,0 +1,20 @@
+# Cartridge REST adapter dependencies.
+# Pins mirror the existing cartridges (replicon / sap_*) so all cartridges
+# run on the same versions of the critical libs and share the same CVE floors.
+fastapi==0.136.1
+starlette>=1.0.1
+uvicorn[standard]>=0.35.0,<1.0
+requests>=2.33.0,<3.0
+pydantic>=2.11.7,<3.0
+pydantic-settings>=2.7.0,<3.0
+python-dotenv>=1.2.2,<2.0
+sqlalchemy
+psycopg2-binary
+minio
+pandas
+pyarrow
+pyyaml
+cryptography
+duckdb
+fastmcp>=3.3.0,<4.0
+asyncpg
