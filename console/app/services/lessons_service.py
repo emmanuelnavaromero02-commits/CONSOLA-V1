@@ -75,8 +75,18 @@ async def record_lesson(
     if not trigger_pattern or not lesson_text:
         return None
 
-    trigger_pattern = trigger_pattern.strip()[:_MAX_TRIGGER_LEN]
-    lesson_text = lesson_text.strip()[:_MAX_LESSON_TEXT]
+    # Audit-round-7 P1 + P2 fix: drop NUL bytes and invisible Unicode
+    # format characters BEFORE truncate so the stored value matches
+    # what every later code path sees. Without this an admin could
+    # plant ``"plain text\x00secret"`` and a legacy PG client would
+    # silently expose ``"plain text"`` while the jailbreak filter
+    # checked the longer hidden suffix.
+    trigger_pattern = _strip_dangerous_unicode(
+        trigger_pattern.strip()
+    )[:_MAX_TRIGGER_LEN]
+    lesson_text = _strip_dangerous_unicode(
+        lesson_text.strip()
+    )[:_MAX_LESSON_TEXT]
     confidence = max(0.0, min(1.0, float(confidence)))
     if scope not in ("user", "workspace", "global"):
         scope = "user"
@@ -434,11 +444,35 @@ _REBEL_KEYWORDS = (
 )
 
 
+_INVISIBLE_CHARS = (
+    "​", "‌", "‍",   # zero-width space / NJ / J
+    "‎", "‏",             # LRM / RLM
+    "‪", "‫", "‬",   # LRE / RLE / PDF
+    "‭", "‮",             # LRO / RLO  ← the attack
+    "⁦", "⁧", "⁨",   # LRI / RLI / FSI
+    "⁩",                       # PDI
+    "﻿",                       # BOM
+    " ",                       # NBSP — explicit escape; the
+                                    # literal-character form was
+                                    # corrupted to U+0020 by an
+                                    # editor pass, which silently
+                                    # stripped every normal space.
+)
+
+
 def _strip_accents(text: str) -> str:
-    """Lowercase + drop common Spanish accents so the rebel matcher
-    catches both `"olvida"` and `"ólvida"`. Keeps the implementation
-    dependency-free (no unicodedata import needed for the small alphabet
-    we actually care about)."""
+    """Lowercase + drop common Spanish accents + neutralise Unicode
+    format characters so the rebel matcher catches ``"olvida"``,
+    ``"ólvida"`` AND ``"olv‮ida"`` (RLO marker injection).
+
+    Audit-round-7 P1 fix: previously the invisible-character filter
+    *removed* the chars, which broke the rebel match for attacks
+    that split a keyword with a zero-width space — ``"ignora​regla"``
+    became ``"ignoraregla"`` and missed the literal ``"ignora regla"``
+    rebel pattern. Replace with a single space so a hidden-boundary
+    attack collapses back to the real boundary, and then squeeze
+    runs of whitespace so the substring search still hits.
+    """
     if not text:
         return ""
     out = text.lower()
@@ -448,7 +482,39 @@ def _strip_accents(text: str) -> str:
         ("ü", "u"),
     ):
         out = out.replace(src, dst)
+    for invisible in _INVISIBLE_CHARS:
+        if invisible in out:
+            out = out.replace(invisible, " ")
+    # Collapse runs of whitespace so ``"olvida   regla"`` matches the
+    # rebel keyword ``"olvida regla"``. Cheap loop avoids importing re.
+    while "  " in out:
+        out = out.replace("  ", " ")
     return out
+
+
+def _strip_dangerous_unicode(text: str) -> str:
+    """Drop NUL bytes and invisible Unicode format characters before a
+    value lands in the DB. NUL is mostly a defence against legacy
+    Postgres client libraries that truncate text columns at the first
+    ``\\x00``; the format chars are the same set ``_strip_accents``
+    neutralises for the rebel matcher.
+
+    Unlike ``_strip_accents`` we *remove* the invisibles entirely here
+    (not replace with space) because this output is what gets stored
+    in the DB and rendered back to the user. An attacker that planted
+    ``"a‮b"`` shouldn't leave a tell-tale extra space in the
+    operator's UI — we'd rather close the seam invisibly. The
+    rebel-keyword matcher always re-runs ``_strip_accents`` over the
+    stored value at render time, so the space-vs-empty asymmetry
+    doesn't open a gap."""
+    if not text:
+        return ""
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    for invisible in _INVISIBLE_CHARS:
+        if invisible in text:
+            text = text.replace(invisible, "")
+    return text
 
 
 def _looks_like_jailbreak(text: str) -> bool:
