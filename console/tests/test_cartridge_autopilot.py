@@ -75,7 +75,7 @@ def test_build_blueprint_full_shape():
     assert len(bp["kbs"]) == 2
     assert all("kb_id" in k for k in bp["kbs"])
     vocab = bp["semantic_model"]["vocabulary"]
-    assert any(t["term"] == "amount" for t in vocab)
+    assert any("amount" in t["term"] for t in vocab)
 
 
 def test_pii_is_flagged_for_encryption():
@@ -298,3 +298,95 @@ def test_entity_slug_collision_disambiguated():
     )
     names = [e["entity"] for e in bp["entities"]]
     assert len(set(names)) == 2, f"slug collision not disambiguated: {names}"
+
+
+# ── Audit-round-2 regression / new-edge-case tests ──────────────────────────
+
+
+def test_classify_field_non_dict_never_raises():
+    """classify_field must return a safe default for non-dict input, never raise."""
+    result = ap.classify_field(None)
+    assert result["name"] == ""
+    assert result["role"] == "dimension"
+    result2 = ap.classify_field("not a dict")
+    assert result2["protected"] is False
+
+
+def test_classify_field_account_is_pii():
+    """'account' token must trigger PII classification (replaces dead 'account_number')."""
+    assert ap.classify_field({"name": "account", "type": "string"})["role"] == "pii"
+    assert ap.classify_field({"name": "bank_account", "type": "string"})["role"] == "pii"
+
+
+def test_classify_field_code_uuid_guid_are_keys():
+    """'code', 'uuid', 'guid' tokens must classify as key."""
+    assert ap.classify_field({"name": "product_code", "type": "string"})["role"] == "key"
+    assert ap.classify_field({"name": "uuid", "type": "string"})["role"] == "key"
+    assert ap.classify_field({"name": "record_guid", "type": "string"})["role"] == "key"
+
+
+def test_params_is_json_string_not_python_list():
+    """DAG params must be a JSON string so str() in the seed SQL stays valid JSON."""
+    import json
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "e", "fields": [{"name": "id", "type": "string", "primary_key": True}]}],
+    )
+    dag = bp["dags"][0]
+    assert isinstance(dag["params"], str), "params must be a JSON string, not a list"
+    parsed = json.loads(dag["params"])
+    assert isinstance(parsed, list)
+
+
+def test_semantic_terms_qualified_with_entity():
+    """Vocabulary terms must be 'entity.field' to prevent duplicates across entities."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[
+            {"name": "a", "fields": [{"name": "amount", "type": "float"}]},
+            {"name": "b", "fields": [{"name": "amount", "type": "float"}]},
+        ],
+    )
+    terms = [t["term"] for t in bp["semantic_model"]["vocabulary"]]
+    assert "a.amount" in terms and "b.amount" in terms
+    assert len(terms) == len(set(terms)), "duplicate vocabulary terms"
+
+
+def test_silver_sql_subquery_has_alias():
+    """Silver dedup subquery must have an alias (_dedup) to be standards-compliant."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "deals", "fields": [
+            {"name": "deal_id", "type": "string", "primary_key": True},
+            {"name": "close_date", "type": "date"},
+        ]}],
+    )
+    silver = next(d for d in bp["datasets"] if d["layer"] == "silver")
+    assert "_dedup" in silver["sql"]
+
+
+def test_watermark_excludes_pii_date_fields():
+    """A date field that classifies as PII (e.g. birth_date) must not be the watermark."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "people", "fields": [
+            {"name": "id", "type": "string", "primary_key": True},
+            {"name": "birth_date", "type": "date"},   # PII — must not be watermark
+            {"name": "updated_at", "type": "timestamp"},
+        ]}],
+    )
+    e = next(ent for ent in bp["entities"] if ent["entity"] == "people")
+    assert e["watermark_field"] != "birth_date"
+    assert e["watermark_field"] == "updated_at"
+
+
+def test_build_blueprint_tolerates_none_in_entities_list():
+    """None entries in the entities list must be silently skipped, not crash."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[
+            None,
+            {"name": "deals", "fields": [{"name": "id", "type": "string", "primary_key": True}]},
+        ],
+    )
+    assert len(bp["entities"]) == 1

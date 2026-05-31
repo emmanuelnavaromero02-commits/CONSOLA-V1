@@ -35,7 +35,7 @@ from typing import Any
 _PII_NAME_HINTS = (
     "email", "mail", "phone", "telefono", "celular", "rfc", "curp", "ssn",
     "passport", "pasaporte", "iban", "clabe", "tarjeta", "card", "cuenta",
-    "account_number", "birth", "nacimiento", "gbdat", "address", "direccion",
+    "account", "birth", "nacimiento", "gbdat", "address", "direccion",
     "salary", "salario", "sueldo", "compensation", "pernr",
     # national identifiers + name/DOB tokens (token-exact, so 'name' won't
     # match 'filename' once camel/underscore-split). 'national'/'voter' are
@@ -48,7 +48,8 @@ _MONEY_NAME_HINTS = (
     "arr", "billing", "facturacion", "margin", "margen", "budget", "presupuesto",
 )
 _DATE_TYPES = {"date", "timestamp", "datetime"}
-_KEY_NAME_HINTS = ("id", "_id", "code", "codigo", "key", "uuid", "guid", "number")
+# "number" omitted: too broad — would misclassify metric fields like "page_number".
+_KEY_NAME_HINTS = ("id", "code", "codigo", "key", "uuid", "guid")
 
 
 def classify_field(field: dict[str, Any]) -> dict[str, Any]:
@@ -57,6 +58,8 @@ def classify_field(field: dict[str, Any]) -> dict[str, Any]:
     Roles: ``key`` | ``pii`` | ``money`` | ``date`` | ``metric`` | ``dimension``.
     Never raises; unknown fields fall back to ``dimension``.
     """
+    if not isinstance(field, dict):
+        return {"name": "", "role": "dimension", "protected": False}
     name = str(field.get("name") or "").strip()
     lname = name.lower()
     ftype = str(field.get("type") or "string").lower()
@@ -84,7 +87,7 @@ def classify_field(field: dict[str, Any]) -> dict[str, Any]:
     if _hint_hit(_PII_NAME_HINTS):
         role = "pii"
         protect = True
-    elif is_pk or lname == "id" or lname.endswith("_id"):
+    elif is_pk or lname == "id" or lname.endswith("_id") or _hint_hit(_KEY_NAME_HINTS):
         role = "key"
     elif ftype in _DATE_TYPES:
         role = "date"
@@ -112,19 +115,30 @@ def _slug_identifier(value: str, fallback: str = "entity") -> str:
 
 
 def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
-    # Skip fields with no usable name (avoids blank column refs in generated SQL).
-    fields = [c for c in (classify_field(f) for f in (entity.get("fields") or [])) if c["name"]]
+    # Skip non-dict entries and fields with no usable name.
+    fields = [c for c in (classify_field(f) for f in (entity.get("fields") or []) if isinstance(f, dict)) if c["name"]]
     pk = entity.get("primary_key") or next(
         (f["name"] for f in fields if f["role"] == "key"), None
     )
+    # Two-tier watermark: prefer explicit update/modified signals before generic
+    # date signals; PII fields (role=="pii") are excluded from both tiers since
+    # a birth_date or tax_date must never become a dedup/watermark key.
     watermark = entity.get("watermark_field") or next(
         (
             f["name"]
             for f in fields
             if f["role"] == "date"
-            and any(w in f["name"].lower() for w in ("modif", "updated", "change", "fecha", "date"))
+            and any(w in f["name"].lower() for w in ("modif", "updated", "change"))
         ),
-        next((f["name"] for f in fields if f["role"] == "date"), None),
+        next(
+            (
+                f["name"]
+                for f in fields
+                if f["role"] == "date"
+                and any(w in f["name"].lower() for w in ("fecha", "date"))
+            ),
+            next((f["name"] for f in fields if f["role"] == "date"), None),
+        ),
     )
     # Audit #11: a PK that is ALSO a date/money column keeps its measurement role
     # for dataset generation (the 'key' role only governs dedup). We re-scan the
@@ -138,13 +152,19 @@ def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
         return out
 
     date_fields = _typed(_DATE_TYPES)
+    pii_names = {f["name"] for f in fields if f["role"] == "pii"}
     money_fields = [f["name"] for f in fields if f["role"] == "money"] or _typed(
         {"int", "float", "number", "decimal"}, money=True
     )
     if not watermark and date_fields:
+        # Exclude PII-role fields (e.g. birth_date) from watermark candidates.
+        wm_cands = [d for d in date_fields if d not in pii_names]
         watermark = next(
-            (d for d in date_fields if any(w in d.lower() for w in ("modif", "updated", "change", "fecha", "date"))),
-            date_fields[0],
+            (d for d in wm_cands if any(w in d.lower() for w in ("modif", "updated", "change"))),
+            next(
+                (d for d in wm_cands if any(w in d.lower() for w in ("fecha", "date"))),
+                next((d for d in wm_cands), None),
+            ),
         )
     return {
         "name": _slug_identifier(entity.get("name") or entity.get("entity") or "entity"),
@@ -186,7 +206,7 @@ def _silver_sql(cartridge_id: str, ent: dict[str, Any]) -> str:
             f"  SELECT *, ROW_NUMBER() OVER (PARTITION BY {_qi(pk)} ORDER BY {_qi(order)} DESC) AS rn\n"
             f"  FROM read_parquet('{src}', hive_partitioning=true, union_by_name=true)\n"
             f"  WHERE load_date = '{{latest_date}}'\n"
-            f") WHERE rn = 1"
+            f") _dedup WHERE rn = 1"
         )
     return (
         f"SELECT * FROM read_parquet('{src}', hive_partitioning=true, union_by_name=true)\n"
@@ -240,7 +260,7 @@ def build_blueprint(
     if not cid or not cid[0].isalpha():
         cid = "c_" + cid
     cid = cid[:80]
-    classified = [_classify_entity(e) for e in entities if (e.get("name") or e.get("entity"))]
+    classified = [_classify_entity(e) for e in entities if isinstance(e, dict) and (e.get("name") or e.get("entity"))]
     if not classified:
         raise ValueError("autopilot requires at least one entity with fields")
 
@@ -313,7 +333,10 @@ def build_blueprint(
         for f in ent["fields"]:
             if f["role"] in {"money", "metric", "key"}:
                 semantic_terms.append({
-                    "term": f["name"],
+                    # Qualify with entity to prevent duplicate terms when two
+                    # entities share a field name (e.g. "amount") — _require_unique
+                    # in the normalizer would raise on bare duplicates.
+                    "term": f"{en}.{f['name']}",
                     "definition": f"{f['name']} ({f['role']}) en {en}.",
                     "maps_to": f"{en}.{f['name']}",
                 })
@@ -353,8 +376,8 @@ def build_blueprint(
             "file": f"{dag_id}.py",
             "description": f"Extracción {pattern} de {name} a Bronze.",
             "trigger": "on-demand",
-            # list form: the consumer json.dumps it (handles isinstance(list)).
-            "params": ["entity", "mode"],
+            # JSON string: str(list) would produce Python repr, not valid JSON.
+            "params": '["entity", "mode"]',
         }],
         "entities": out_entities,
         "datasets": out_datasets,

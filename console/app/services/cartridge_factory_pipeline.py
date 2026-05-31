@@ -77,7 +77,7 @@ def plan_from_descriptor(
         cartridge_id=cartridge_id,
         name=name,
         entities=entities,
-        pattern=kind,
+        pattern=_pattern_family(kind),
         category=domain,
     )
 

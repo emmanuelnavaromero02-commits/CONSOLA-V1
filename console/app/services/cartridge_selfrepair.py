@@ -18,6 +18,7 @@ Pieces:
 """
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Callable
 from typing import Any
@@ -31,6 +32,11 @@ _FORBIDDEN_SQL = re.compile(
 )
 # Same single-quote masking as the engine (handles escaped '' inside literals).
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
+# Double-quoted identifier masking — must be applied AFTER single-quote masking so
+# that a single-quoted string containing a double-quote (e.g. 'say "hi"') is already
+# neutralised before this pattern runs.  Handles the '' escape inside double-quoted
+# identifiers per ANSI SQL / DuckDB (a literal " inside an identifier is written "").
+_DOUBLE_QUOTED_RE = re.compile(r'"(?:""|[^"])*"', re.DOTALL)
 # SQL-safe identifier shape (matches cartridge_service's entity/dataset contract).
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -63,6 +69,14 @@ def _base_sql_checks(sql: str) -> list[str]:
     # read_parquet('s3://.../**/*.parquet')) don't trip the comment / DML
     # checks — '**/*' literally contains the '/*' block-comment sequence.
     body = _SINGLE_QUOTED_RE.sub("''", s)
+    # Mask double-quoted identifiers so a column or table named after a
+    # forbidden keyword (e.g. "set", "load", "update") does not produce a
+    # false-positive DML/DDL hit.  _qi() in autopilot wraps every identifier
+    # in double quotes; without this step PARTITION BY "set" or SUM("load")
+    # would incorrectly fail the _FORBIDDEN_SQL check (word boundaries fire
+    # because " is not a \w character).  Apply AFTER single-quote masking so
+    # we never accidentally consume a double-quote that lives inside a string.
+    body = _DOUBLE_QUOTED_RE.sub('""', body)
     # ANY semicolon is rejected (matches the engine — even a lone trailing ';').
     if ";" in body:
         reasons.append("sql must not contain ';' (multi-statement)")
@@ -101,7 +115,7 @@ def repair_sql(sql: str, layer: str, reasons: list[str]) -> str:
     ``WHERE load_date = '{latest_date}'`` appended so the loop can actually
     converge instead of aborting as a no-op.
     """
-    s = (sql or "").strip()
+    s = (sql or "").strip().replace("\x00", "")  # neutralize stash-marker injection
 
     # Gold: strip a leaked Silver latest-partition filter FIRST, on the raw
     # string — the '{latest_date}' literal must be matched before it gets
@@ -126,12 +140,21 @@ def repair_sql(sql: str, layer: str, reasons: list[str]) -> str:
     masked = masked.replace(";", " ")
 
     if layer == "silver":
-        # additive repair: ensure the latest-partition filter is present. Append
-        # at the END (a top-level predicate) instead of injecting into the first
-        # WHERE — which could be a subquery's, corrupting scope (audit #13).
+        # additive repair: ensure the latest-partition filter is present. If
+        # load_date exists with a wrong value, replace the predicate; otherwise
+        # append at the END (a top-level predicate) to avoid corrupting subquery
+        # scope (audit #13).
         low = masked.lower()
-        if "read_parquet" in low and ("load_date" not in low or "{latest_date}" not in masked):
-            masked = f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
+        if "read_parquet" in low and "{latest_date}" not in masked:
+            if "load_date" in low:
+                fixed, n = re.subn(
+                    r"(?i)\bload_date\s*=\s*(?:\x00\d+\x00|\S+)",
+                    "load_date = '{latest_date}'",
+                    masked,
+                )
+                masked = fixed if n else f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
+            else:
+                masked = f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
 
     def _unstash(m: "re.Match[str]") -> str:
         return literals[int(m.group(1))]
@@ -154,9 +177,9 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
     if reasons:
         return ValidationResult(False, reasons)
 
-    entity_names = {e.get("entity") or e.get("name") for e in blueprint["entities"]}
-    dag_ids = {d.get("dag_id") for d in blueprint["dags"]}
-    dataset_names = {d.get("name") for d in blueprint["datasets"]}
+    entity_names = {e.get("entity") or e.get("name") for e in blueprint["entities"]} - {None}
+    dag_ids = {d.get("dag_id") for d in blueprint["dags"]} - {None}
+    dataset_names = {d.get("name") for d in blueprint["datasets"]} - {None}
 
     if not entity_names:
         reasons.append("blueprint has no entities")
@@ -215,12 +238,13 @@ def run_repair_loop(
     """
     trace: list[dict[str, Any]] = []
     current = artifact
-    for attempt in range(1, max(1, max_attempts) + 1):
+    effective_max = max(1, max_attempts)
+    for attempt in range(1, effective_max + 1):
         vr = validate_fn(current)
         trace.append({"attempt": attempt, "ok": vr.ok, "reasons": list(vr.reasons)})
         if vr.ok:
             return {"ok": True, "artifact": current, "attempts": attempt, "trace": trace}
-        if attempt == max_attempts:
+        if attempt == effective_max:
             break
         repaired = repair_fn(current, vr.reasons)
         if repaired == current:
@@ -235,7 +259,7 @@ def repair_blueprint_sql(blueprint: dict[str, Any]) -> dict[str, Any]:
 
     Returns a new blueprint with repaired SQL where possible + a per-dataset report.
     """
-    bp = dict(blueprint)
+    bp = copy.deepcopy(blueprint)
     datasets = []
     report: list[dict[str, Any]] = []
     for d in blueprint.get("datasets", []):

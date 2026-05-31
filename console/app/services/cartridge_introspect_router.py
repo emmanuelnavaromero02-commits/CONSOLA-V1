@@ -70,6 +70,8 @@ _PAGINATION_HINTS = ("next", "cursor", "offset", "page", "skiptoken", "@odata.ne
 
 def detect_source_kind(descriptor: dict[str, Any]) -> str:
     """Classify a source from a descriptor (hint + payload). Never raises."""
+    if not isinstance(descriptor, dict):
+        return "rest_sample"
     kind = str(descriptor.get("kind") or "").strip().lower().replace("-", "_")
     if kind in {"odata", "openapi", "graphql", "sql", "file_csv", "rest_sample", "soap"}:
         return kind
@@ -105,12 +107,16 @@ def _is_graphql_introspection(sample: Any) -> bool:
 
 def detect_source_pattern(descriptor: dict[str, Any], fields: list[Field] | None = None) -> dict[str, Any]:
     """Infer the extraction strategy: paginated / incremental / async / webhook."""
+    if not isinstance(descriptor, dict):
+        descriptor = {}
     sample = descriptor.get("sample")
     text_blob = json.dumps(sample).lower() if isinstance(sample, (dict, list)) else ""
     paginated = any(h in text_blob for h in _PAGINATION_HINTS) or bool(descriptor.get("paginated"))
 
     incremental_field = None
     for f in (fields or []):
+        if not isinstance(f, dict):
+            continue
         nm = str(f.get("name", "")).lower()
         if f.get("type") in {"date", "timestamp", "datetime"} and any(h in nm for h in _INCREMENTAL_HINTS):
             incremental_field = f["name"]
@@ -139,7 +145,7 @@ def detect_source_pattern(descriptor: dict[str, Any], fields: list[Field] | None
 
 def parse_csv_header(text: str) -> dict[str, list[Field]]:
     """CSV header -> one entity 'records' with inferred-from-sample types."""
-    if not text or not text.strip():
+    if not isinstance(text, str) or not text.strip():
         return {}
     reader = csv.reader(io.StringIO(text))
     rows = list(reader)
@@ -156,7 +162,7 @@ def parse_csv_header(text: str) -> dict[str, list[Field]]:
         _append_field(fields, {
             "name": col,
             "type": _infer_scalar_type(val),
-            "primary_key": col.lower() in {"id", f"{header[0].lower()}"} and idx == 0,
+            "primary_key": _looks_like_pk(col, "records"),
         })
     return {"records": fields} if fields else {}
 
@@ -167,7 +173,7 @@ def parse_sql_information_schema(rows: list[dict[str, Any]]) -> dict[str, list[F
     Each row: {table_name, column_name, data_type, is_nullable, is_primary_key?}.
     """
     out: dict[str, list[Field]] = {}
-    for r in rows or []:
+    for r in (rows if isinstance(rows, list) else []):
         table = str(r.get("table_name") or r.get("table") or "").strip()
         col = str(r.get("column_name") or r.get("column") or "").strip()
         if not table or not col:
@@ -221,6 +227,8 @@ def parse_graphql_introspection(sample: Any) -> dict[str, list[Field]]:
             })
         if fields:
             out[name] = fields
+            if len(out) >= _MAX_ENTITIES:
+                break
     return out
 
 
@@ -263,6 +271,8 @@ def extract_entities(descriptor: dict[str, Any]) -> tuple[list[dict[str, Any]], 
     Returns ([{"name", "fields":[Field]}], source_kind). Empty list if nothing
     could be parsed (caller falls back to static connector.yaml).
     """
+    if not isinstance(descriptor, dict):
+        return [], "rest_sample"
     kind = detect_source_kind(descriptor)
     by_entity: dict[str, list[Field]] = {}
     if kind == "odata":

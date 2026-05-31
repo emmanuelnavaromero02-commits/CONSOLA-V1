@@ -121,3 +121,70 @@ def test_dos_cap_on_huge_schema():
     cols = [{"table_name": "t", "column_name": f"c{i}", "data_type": "int"} for i in range(3000)]
     ents, _ = r.extract_entities({"columns": cols})
     assert len(ents[0]["fields"]) <= 1000
+
+
+# ── Audit-round-2 regression / new-edge-case tests ──────────────────────────
+
+
+def test_detect_source_kind_non_dict_never_raises():
+    """detect_source_kind must return a safe default for non-dict input."""
+    assert r.detect_source_kind(None) == "rest_sample"
+    assert r.detect_source_kind("odata") == "rest_sample"
+    assert r.detect_source_kind(42) == "rest_sample"
+
+
+def test_detect_source_pattern_non_dict_never_raises():
+    """detect_source_pattern must not raise on non-dict descriptor."""
+    result = r.detect_source_pattern(None)
+    assert isinstance(result, dict)
+    assert "paginated" in result
+
+
+def test_extract_entities_non_dict_returns_empty():
+    """extract_entities must return ([], 'rest_sample') for non-dict input."""
+    ents, kind = r.extract_entities(None)
+    assert ents == []
+    assert kind == "rest_sample"
+    ents2, _ = r.extract_entities("string")
+    assert ents2 == []
+
+
+def test_parse_csv_header_non_string_returns_empty():
+    """parse_csv_header must return {} for non-string input."""
+    assert r.parse_csv_header(None) == {}
+    assert r.parse_csv_header(123) == {}
+
+
+def test_parse_csv_header_pk_uses_looks_like_pk():
+    """parse_csv_header must mark only genuine id columns as primary_key."""
+    out = r.parse_csv_header("name,id,value\nfoo,1,99")
+    by = {f["name"]: f for f in out["records"]}
+    assert by["id"]["primary_key"] is True
+    assert by["name"]["primary_key"] is False
+    assert by["value"]["primary_key"] is False
+
+
+def test_parse_sql_information_schema_non_list_rows():
+    """parse_sql_information_schema must return {} for non-list rows."""
+    assert r.parse_sql_information_schema(None) == {}
+    assert r.parse_sql_information_schema("bad") == {}
+
+
+def test_detect_source_pattern_non_dict_field_skipped():
+    """Non-dict entries in the fields list must be silently skipped."""
+    fields = [None, {"name": "updated_at", "type": "timestamp"}, "garbage"]
+    desc = {"sample": {"next": "cursor"}}
+    pat = r.detect_source_pattern(desc, fields)
+    assert pat["incremental"] is True
+    assert pat["incremental_field"] == "updated_at"
+
+
+def test_graphql_introspection_entity_cap():
+    """GraphQL parser must stop adding entities at _MAX_ENTITIES."""
+    types = [
+        {"kind": "OBJECT", "name": f"T{i}", "fields": [{"name": "id", "type": {"kind": "SCALAR", "name": "ID"}}]}
+        for i in range(600)
+    ]
+    sample = {"data": {"__schema": {"types": types}}}
+    out = r.parse_graphql_introspection(sample)
+    assert len(out) <= r._MAX_ENTITIES

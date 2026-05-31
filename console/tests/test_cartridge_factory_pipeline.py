@@ -164,3 +164,62 @@ def test_highlight_handles_none_desc():
         assert any(a["name"] == "forecast_x" for a in plan["highlighted_analytics"])
     finally:
         ci._DOMAIN_ANALYTICS["crm"] = orig
+
+
+# ── Audit-round-2 regression / new-edge-case tests ──────────────────────────
+
+
+def test_sap_successfactors_not_cross_source():
+    """'SAP SuccessFactors' in one sentence must NOT set cross_source=True."""
+    intent = ci.parse_build_intent("conecta SAP SuccessFactors para ver headcount")
+    assert intent["cross_source"] is False
+
+
+def test_s4hana_alias_detected():
+    """'S/4HANA' alias must resolve to sap_s4hana."""
+    intent = ci.parse_build_intent("dame los datos de SAP S/4HANA")
+    assert intent["primary_source"] is not None
+    assert intent["primary_source"]["id"] == "sap_s4hana"
+
+
+def test_panel_word_boundary():
+    """'panel' hint must not fire inside 'espanol' or 'panelboard'."""
+    intent = ci.parse_build_intent("quiero resultados en espanol")
+    assert "dashboard" not in intent["outputs"]
+
+
+def test_monitor_word_boundary():
+    """'monitor' hint must not fire inside 'monitoring' or 'demonstrate'."""
+    intent = ci.parse_build_intent("enable monitoring for hubspot")
+    # 'monitoring' must not trigger the 'agent' output hint via 'monitor' substring
+    assert "agent" not in intent["outputs"]
+
+
+def test_recall_pattern_odata_bearer_returns_oauth2():
+    """recall_pattern('odata', 'bearer') must fall back to odata:oauth2, not odata:basic."""
+    p = ci.recall_pattern("odata", "bearer")
+    assert p is not None
+    assert p["key"] == "odata:oauth2"
+
+
+def test_parse_intent_non_string_text_never_raises():
+    """parse_build_intent must handle non-string input without raising."""
+    intent = ci.parse_build_intent(None)
+    assert intent["actionable"] is False
+    intent2 = ci.parse_build_intent(42)
+    assert intent2["actionable"] is False
+
+
+def test_plan_from_descriptor_pattern_family_normalized():
+    """blueprint pattern must be 'rest'/'odata'/etc, not the raw source kind like 'rest_sample'."""
+    plan = fp.plan_from_descriptor(
+        _crm_sample_descriptor(), cartridge_id="hubspot", name="HubSpot", domain="crm"
+    )
+    assert plan["ok"] is True
+    assert plan["blueprint"]["pattern"] in {"rest", "odata", "sql", "soap"}
+
+
+def test_recall_learned_sql_non_dict_memory():
+    """recall_learned_sql must return None for non-dict memory, never raise."""
+    assert ci.recall_learned_sql(None, "rest:bearer") is None
+    assert ci.recall_learned_sql("garbage", "rest:bearer") is None

@@ -228,3 +228,61 @@ def test_validate_blueprint_rejects_unsafe_identifiers():
     vr = sr.validate_blueprint(bp)
     assert not vr.ok
     assert any("unsafe" in r for r in vr.reasons)
+
+
+# ── Audit-round-2 regression / new-edge-case tests ──────────────────────────
+
+
+def test_repair_sql_nul_byte_is_stripped():
+    """NUL byte in sql must not corrupt stash/unstash and never raise."""
+    sql = "SELECT * FROM read_parquet('s3://x/**/*.parquet') WHERE \x00foo\x00 = 'v'"
+    result = sr.repair_sql(sql, "silver", [])
+    assert "\x00" not in result
+
+
+def test_repair_sql_silver_replaces_existing_load_date():
+    """Silver repair must replace a wrong load_date value, not append a second WHERE."""
+    sql = "SELECT * FROM read_parquet('s3://x/**/*.parquet') WHERE load_date = '2024-01-01'"
+    result = sr.repair_sql(sql, "silver", ["silver sql must filter the latest partition"])
+    # Should contain the placeholder exactly once, not two WHERE clauses.
+    assert result.count("{latest_date}") == 1
+    assert result.count("WHERE") == 1
+
+
+def test_repair_blueprint_sql_does_not_mutate_input():
+    """repair_blueprint_sql must not modify the caller's original blueprint dict."""
+    sql_bad = "SELECT * FROM read_parquet('s3://x') WHERE load_date = '2024-01-01'"
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [], "dags": [],
+        "datasets": [{"name": "s", "layer": "silver", "sql": sql_bad}],
+    }
+    import copy
+    original_sql = copy.deepcopy(sql_bad)
+    sr.repair_blueprint_sql(bp)
+    assert bp["datasets"][0]["sql"] == original_sql
+
+
+def test_run_repair_loop_max_attempts_zero():
+    """max_attempts=0 must still do one validation pass (effective_max=1)."""
+    calls = []
+    def _validate(a):
+        calls.append(a)
+        from app.services.cartridge_selfrepair import ValidationResult
+        return ValidationResult(True)
+    result = sr.run_repair_loop("x", _validate, lambda a, r: a, max_attempts=0)
+    assert result["ok"] is True
+    assert len(calls) == 1
+
+
+def test_validate_blueprint_none_entity_name_ignored():
+    """A blueprint where an entity yields None for its name must not crash."""
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [{"dag_id": "d"}],  # no 'entity' or 'name' key
+        "dags": [{"dag_id": "d"}],
+        "datasets": [],
+    }
+    vr = sr.validate_blueprint(bp)
+    # No crash; entity_names set excludes None without raising.
+    assert isinstance(vr.ok, bool)

@@ -26,6 +26,7 @@ _SOURCE_ALIASES: dict[str, dict[str, str]] = {
     "replicon": {"id": "replicon", "kind": "rest", "domain": "psa"},
     "sap": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "s4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
+    "s/4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "successfactors": {"id": "sap_successfactors", "kind": "odata", "domain": "hcm"},
     "workday": {"id": "workday", "kind": "rest", "domain": "hcm"},
     "netsuite": {"id": "netsuite", "kind": "soap", "domain": "erp"},
@@ -33,18 +34,27 @@ _SOURCE_ALIASES: dict[str, dict[str, str]] = {
     "zendesk": {"id": "zendesk", "kind": "rest", "domain": "support"},
 }
 
+# Alias family grouping: aliases in the same family belong to one vendor and
+# must NOT trigger cross_source=True when co-mentioned (e.g. "SAP SuccessFactors").
+_ALIAS_FAMILY: dict[str, str] = {
+    "sap": "sap",
+    "s4hana": "sap",
+    "s/4hana": "sap",
+    "successfactors": "sap",
+}
+
 _OUTPUT_HINTS = {
-    "dashboard": ("dashboard", "tablero", "panel", "visualiz", "gráfica", "grafica"),
+    "dashboard": ("dashboard", "tablero", r"\bpanel\b", "visualiz", "gráfica", "grafica"),
     "forecast": ("forecast", "pronóstico", "pronostico", "proyección", "proyeccion"),
     "report": ("reporte", "report", "informe"),
     "metrics": ("métrica", "metrica", "kpi", "indicador"),
-    "agent": ("agente", "vigía", "vigia", "watchdog", "alerta", "monitor"),
+    "agent": ("agente", "vigía", "vigia", "watchdog", "alerta", r"\bmonitor\b"),
 }
 
 
 def parse_build_intent(text: str) -> dict[str, Any]:
     """Turn a free-text request into a structured build intent. Never raises."""
-    t = (text or "").strip()
+    t = str(text or "").strip()
     low = t.lower()
 
     # detect source(s) mentioned
@@ -54,25 +64,34 @@ def parse_build_intent(text: str) -> dict[str, Any]:
             if meta["id"] not in {s["id"] for s in sources}:
                 sources.append({"alias": alias, **meta})
 
-    # detect desired outputs
+    # Family veto: aliases in the same vendor family (e.g. "SAP" + "SuccessFactors")
+    # are de-duplicated so they never inflate the source count to trigger cross_source.
+    seen_families: set[str] = set()
+    deduped: list[dict[str, str]] = []
+    for s in sources:
+        family = _ALIAS_FAMILY.get(s["alias"], s["id"])
+        if family not in seen_families:
+            seen_families.add(family)
+            deduped.append(s)
+    sources = deduped
+
+    # detect desired outputs (use regex for hints that start with r"\b" prefix)
     outputs = [
         out for out, hints in _OUTPUT_HINTS.items()
-        if any(h in low for h in hints)
+        if any(re.search(h, low) if h.startswith(r"\b") else h in low for h in hints)
     ]
 
-    # cross-source join: feasible only with 2+ sources. A join keyword with
-    # <2 sources signals INTENT but not capability (kept separate so callers
-    # don't try to join a single/zero-source set).
-    intends_cross = any(
-        w in low for w in ("cruza", "cruzar", "combina", "join", "junta", "merge")
-    )
+    # cross-source join: feasible only with 2+ distinct-family sources.
+    intends_cross = bool(re.search(
+        r"\b(?:cruzar?|combinar?|join|juntar?|merge)\b", low
+    ))
     cross_source = len(sources) >= 2
 
     return {
         "raw": t,
         "sources": sources,
         "primary_source": sources[0] if sources else None,
-        "outputs": outputs or (["dashboard"] if "dashboard" in low else ["metrics"]),
+        "outputs": outputs or ["metrics"],
         "cross_source": cross_source,
         "intends_cross": intends_cross,
         "wants_agent": "agent" in outputs,
@@ -163,8 +182,9 @@ def recall_pattern(kind: str, auth: str = "bearer") -> dict[str, Any] | None:
     key = f"{k}:{a}"
     if key in _BUILD_PATTERNS:
         return {"key": key, **_BUILD_PATTERNS[key]}
-    # fall back to the kind's default auth
-    for cand in (f"{k}:bearer", f"{k}:basic", f"{k}:none", f"{k}:oauth2", f"{k}:api_key"):
+    # fall back to the kind's default auth (oauth2 before basic so OData+bearer
+    # → oauth2 extractor, not basic — basic is a legacy fallback).
+    for cand in (f"{k}:bearer", f"{k}:oauth2", f"{k}:basic", f"{k}:none", f"{k}:api_key"):
         if cand in _BUILD_PATTERNS:
             return {"key": cand, **_BUILD_PATTERNS[cand]}
     return None
@@ -195,4 +215,4 @@ def learn_from_correction(memory: dict[str, Any], pattern_key: str, corrected_sq
 def recall_learned_sql(memory: dict[str, Any], pattern_key: str) -> str | None:
     # ``learned_sql`` may be absent OR explicitly None (after a store round-trip
     # that nulls empty maps) — guard both so this never raises.
-    return ((memory or {}).get("learned_sql") or {}).get(pattern_key)
+    return ((memory if isinstance(memory, dict) else {}).get("learned_sql") or {}).get(pattern_key)
