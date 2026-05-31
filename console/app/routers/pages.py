@@ -484,6 +484,18 @@ async def copilot_page(request: Request):
 
 
 @router.get(
+    "/copilot/actions",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+@router.get(
+    "/copilot/actions/",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+async def copilot_actions_page(request: Request):
+    return _console_next_response(request, "copilot/actions/index.html")
+
+
+@router.get(
     "/copilot/knowledge",
     dependencies=[Depends(require_permission("copilot.use"))],
 )

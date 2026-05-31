@@ -1,4 +1,4 @@
-"""Sprint v1.45 cúspide — shared helpers for the new copilot modules.
+"""Sprint v1.45 advanced copilot — shared helpers for the new copilot modules.
 
 These small primitives live in a private module so lessons_service,
 goal_solver, watchdog_registry and briefing_v2 can share the same

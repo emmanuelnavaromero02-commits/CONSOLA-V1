@@ -148,7 +148,7 @@ def test_fastapi_pages_router_serves_console_next_export():
     assert "CONSOLE_NEXT_STATIC" in src
     assert "_console_next_response" in src
     assert "set_csrf_cookie" in src
-    for route in ('"/dashboard"', '"/cartridges"', '"/copilot"', '"/monitor"', '"/viewer"'):
+    for route in ('"/dashboard"', '"/cartridges"', '"/copilot"', '"/copilot/actions"', '"/monitor"', '"/viewer"'):
         assert route in src
 
 
@@ -183,6 +183,39 @@ def test_copilot_initial_prompt_is_visible_and_sendable():
     assert "preparedPrompt" in src
     assert "Prompt preparado" in src
     assert "Enviar al copiloto" in src
+
+
+def test_copilot_actions_are_on_dedicated_screen_not_chat_surface():
+    chat = _read(SRC / "components/workspace/ChatLayout.tsx")
+    copilot_page = _read(SRC / "app/(shell)/copilot/page.tsx")
+    workspace_page = _read(SRC / "app/(shell)/workspace/page.tsx")
+    actions_page = SRC / "app/(shell)/copilot/actions/page.tsx"
+    panel = _read(SRC / "components/workspace/CopilotActionsConsole.tsx")
+    client = _read(SRC / "lib/copilot/client.ts")
+
+    assert actions_page.exists()
+    assert "actionsHref" in chat
+    assert "Acciones" in chat
+    assert "<CopilotActionsConsole" not in chat
+    assert 'actionsHref="/copilot/actions"' in copilot_page
+    assert "actionsHref" not in workspace_page
+    assert "CopilotActionsConsole" in _read(actions_page)
+    for endpoint in (
+        "/api/copilot/goals",
+        "/api/copilot/briefing/v2",
+        "/api/copilot/watchdogs",
+        "/api/copilot/lessons",
+        "/api/copilot/ask-with-context",
+    ):
+        assert endpoint in client
+    for visible_label in (
+        "Acciones",
+        "Crear + diagnosticar",
+        "Ask with context",
+        "Watchdogs",
+        "Lessons",
+    ):
+        assert visible_label in panel
 
 
 # ── lib/api.ts — server vs browser base URL ──────────────────────────────

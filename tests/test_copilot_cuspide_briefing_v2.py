@@ -58,6 +58,17 @@ def test_suggest_next_action_failure(briefing_mod):
     assert "sap_hcm" in out["href"]
 
 
+def test_suggest_next_action_failures_plural_from_proactive_service(briefing_mod):
+    out = briefing_mod._suggest_next_action({
+        "category": "failures", "cartridge": "hubspot",
+    })
+    assert out["kind"] == "open_pipeline"
+    assert "hubspot" in out["href"]
+    assert briefing_mod._priority_score({
+        "severity": "critical", "category": "failures",
+    }) == 95
+
+
 def test_suggest_next_action_unknown_returns_none(briefing_mod):
     assert briefing_mod._suggest_next_action({"category": "weird"}) is None
 

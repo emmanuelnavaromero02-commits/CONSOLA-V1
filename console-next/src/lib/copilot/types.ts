@@ -279,3 +279,111 @@ export interface GenerateDraftResponse {
   ok:    boolean;
   draft: Draft;
 }
+
+
+// ── Copilot advanced v1.45 ───────────────────────────────────────────
+
+
+export type CopilotGoalStatus =
+  | "planning"
+  | "running"
+  | "awaiting_approval"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+
+export interface CopilotGoal {
+  id:               string;
+  goal_text:        string;
+  plan_summary?:    string | null;
+  status:           CopilotGoalStatus;
+  impact_estimate?: Record<string, unknown> | null;
+  outcome_summary?: string | null;
+  workflow_ids?:    string[] | null;
+  created_at?:      string;
+  finished_at?:     string | null;
+}
+
+
+export interface CopilotSubgoal {
+  description?:         string;
+  expected_cartridges?: string[];
+  success_criteria?:    string;
+  risk_level?:          string;
+  watchdog_hint?:       string | null;
+  [key: string]:        unknown;
+}
+
+
+export interface CopilotGoalDiagnosis {
+  classification?:   string;
+  plan_summary?:     string;
+  intent_keywords?:  string[];
+  subgoals?:         CopilotSubgoal[];
+  impact_estimate?:  Record<string, unknown>;
+  already_planned?:  boolean;
+  [key: string]:     unknown;
+}
+
+
+export interface CopilotWatchdog {
+  id?:              string;
+  cartridge_id:    string;
+  slug:            string;
+  name:            string;
+  description?:    string | null;
+  intent_keywords?: string[];
+  agent_slug?:     string | null;
+  tools?:          unknown[];
+  risk_level?:     string | null;
+  enabled?:        boolean;
+  metadata?:       Record<string, unknown> | null;
+}
+
+
+export interface CopilotWatchdogMatch {
+  subgoal?:  CopilotSubgoal;
+  watchdog?: CopilotWatchdog;
+}
+
+
+export interface CopilotGoalDiagnosisResponse {
+  diagnosis: CopilotGoalDiagnosis;
+  watchdogs: CopilotWatchdogMatch[];
+}
+
+
+export interface CopilotNextAction {
+  kind:       string;
+  label:      string;
+  href?:      string;
+  cartridge?: string;
+  [key: string]: unknown;
+}
+
+
+export interface BriefingV2Highlight extends BriefingHighlight {
+  priority_score?: number;
+  next_action?:    CopilotNextAction | null;
+  watchdogs?:      Pick<CopilotWatchdog, "cartridge_id" | "slug" | "name">[];
+}
+
+
+export interface CopilotLesson {
+  id:               string;
+  trigger_pattern?: string;
+  lesson_text?:     string;
+  confidence?:      number;
+  source_kind?:     string;
+  enabled?:         boolean;
+  created_at?:      string;
+  last_used_at?:    string | null;
+  [key: string]:    unknown;
+}
+
+
+export interface AskWithContextResponse {
+  answer:       string;
+  context_used: Record<string, unknown>;
+}

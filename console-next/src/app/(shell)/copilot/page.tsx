@@ -11,7 +11,7 @@ function CopilotShell() {
 
   return (
     <div className="flex h-[calc(100vh-56px)] min-h-[calc(100vh-56px)] flex-col bg-background md:h-screen md:min-h-screen">
-      <ChatLayout initialPrompt={prompt} />
+      <ChatLayout initialPrompt={prompt} actionsHref="/copilot/actions" />
     </div>
   );
 }

@@ -45,7 +45,7 @@ from fastapi import HTTPException
 
 from app.services import audit_service, auth, llm_client, mcp_registry, permissions
 from app.services import memory_service  # v1.44.3 Tarea D — memory injection
-from app.services import lessons_service  # v1.45 cúspide — lessons injection
+from app.services import lessons_service  # v1.45 copilot lessons injection
 from app.services import tool_manifest, tool_policy
 
 
@@ -1246,7 +1246,7 @@ async def _run_loop(
             )
             system_prompt_for_call = SYSTEM_PROMPT
 
-        # v1.45 cúspide (Nivel 5): append lessons learned from prior
+        # v1.45 advanced copilot: append lessons learned from prior
         # approvals / declines. The intent hint is the last user turn
         # so the matcher can rank relevant lessons first. Identity
         # transform when the user has no lessons. Wrapped in try/except
@@ -1748,7 +1748,7 @@ async def approve_pending_action(
         user_agent=user_agent,
     )
 
-    # v1.45 cúspide (Nivel 5): persist a lesson per approved entry so
+    # v1.45 advanced copilot: persist a lesson per approved entry so
     # the copilot stops asking the same question next turn. Never
     # block the approval flow — lessons are best-effort.
     try:

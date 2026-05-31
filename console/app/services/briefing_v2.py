@@ -2,7 +2,7 @@
 
 The v1.44.2 ``proactive_service.briefing_for_user`` returns a list of
 ``Highlight`` dicts sorted by severity. v2 wraps that pipeline and
-adds the two pieces the cúspide vision demands:
+adds the two pieces the advanced copilot flow needs:
 
   * ``priority_score`` — numeric ranking (0..100) blending severity,
     age and an optional impact estimate, so the dashboard can render
@@ -35,6 +35,7 @@ def _priority_score(highlight: dict[str, Any]) -> int:
     cat = (highlight.get("category") or "").lower()
     bump = {
         "failure": 15,
+        "failures": 15,
         "pending": 10,
         "volume": 5,
         "freshness": 5,
@@ -57,7 +58,7 @@ def _suggest_next_action(highlight: dict[str, Any]) -> dict[str, Any] | None:
             "cartridge": cart,
             "href": f"/cartridges/{cart}",
         }
-    if cat == "failure" and cart:
+    if cat in ("failure", "failures") and cart:
         return {
             "kind": "open_pipeline",
             "label": f"Revisar runs fallidos de {cart}",

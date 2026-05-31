@@ -1,4 +1,4 @@
-"""Sprint v1.45 — copilot cúspide endpoints.
+"""Sprint v1.45 — advanced copilot endpoints.
 
 Public surface for the four new copilot capabilities:
 
@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/copilot",
-    tags=["copilot-cuspide"],
+    tags=["copilot-advanced"],
     dependencies=[Depends(require_permission("copilot.use"))],
 )
 
@@ -528,10 +528,11 @@ async def enable_lesson_endpoint(
 async def list_watchdogs_endpoint(
     cartridge_id: str | None = Query(None),
     enabled_only: bool = Query(True),
+    limit: int = Query(100, ge=1, le=200),
     user: dict = Depends(require_authenticated),
 ):
     return await watchdog_registry.list_watchdogs(
-        cartridge_id=cartridge_id, enabled_only=enabled_only,
+        cartridge_id=cartridge_id, enabled_only=enabled_only, limit=limit,
     )
 
 
