@@ -44,6 +44,65 @@ import { state } from './legacy-state.js';
       return csrf ? {'X-CSRF-Token': csrf} : {};
     }
 
+    const AI_STEP_HINTS = {
+      1: 'Paso 1 — Resumen: puedo crear un blueprint completo en dry-run desde frase, sample, OpenAPI u OData; también puedo auditar el cartucho activo antes de escribir nada.',
+      2: 'Paso 2 — DAGs: puedo introspectar la fuente, generar un DAG validado con schema real, revisar el DAG abierto y preparar despliegue con aprobación.',
+      3: 'Paso 3 — Entidades: puedo descubrir entidades con tipos, primary keys y watermarks; también puedo detectar entidades incompletas, extraction smoke y gaps de configuración.',
+      4: 'Paso 4 — Refinar: puedo generar SQL Silver/Gold por capa, previsualizarlo, revisar lineage y señalar datasets sin materializar o SQL frágil.',
+      5: 'Paso 5 — Analytics: puedo convertir Gold en KPIs, Superset datasets o apps internas; primero leo lo existente y luego propongo cambios publicables.',
+      6: 'Paso 6 — IA Semántica: puedo enriquecer glosario, relaciones y términos de negocio; después sincronizo a RAG para que el lenguaje natural use la versión nueva.',
+      7: 'Paso 7 — RAG: puedo auditar fuentes, ingerir documentos, buscar evidencia y detectar huecos de conocimiento antes de responder sobre el cartucho.',
+    };
+
+    const AI_STEP_QUICK_ACTIONS = {
+      1: [
+        { key: 'autopilot_sample', label: 'Sample → cartucho' },
+        { key: 'autopilot_openapi', label: 'OpenAPI/OData' },
+        { key: 'self_check', label: 'Auditar cartucho' },
+      ],
+      2: [
+        { key: 'dag_introspect_generate', label: 'Schema → DAG' },
+        { key: 'dag_review_current', label: 'Revisar DAG' },
+        { key: 'dag_smoke_plan', label: 'Smoke Airflow' },
+      ],
+      3: [
+        { key: 'entities_discover', label: 'Descubrir entidades' },
+        { key: 'entities_watermarks', label: 'PK + watermark' },
+        { key: 'entities_extract_smoke', label: 'Smoke extracción' },
+      ],
+      4: [
+        { key: 'refine_silver', label: 'Crear Silver' },
+        { key: 'refine_gold', label: 'Crear Gold' },
+        { key: 'refine_lineage', label: 'Validar lineage' },
+      ],
+      5: [
+        { key: 'analytics_kpis', label: 'KPIs desde Gold' },
+        { key: 'analytics_app', label: 'Publicar app' },
+        { key: 'analytics_superset', label: 'Superset' },
+      ],
+      6: [
+        { key: 'semantic_enrich', label: 'Enriquecer glosario' },
+        { key: 'semantic_relationships', label: 'Relaciones' },
+        { key: 'semantic_sync_rag', label: 'Sync a RAG' },
+      ],
+      7: [
+        { key: 'rag_audit', label: 'Auditar fuentes' },
+        { key: 'rag_ingest', label: 'Ingerir doc' },
+        { key: 'rag_search', label: 'Buscar evidencia' },
+      ],
+    };
+
+    function aiStepHint(step) {
+      return AI_STEP_HINTS[step] || state.STEP_HINTS?.[step] || '';
+    }
+
+    function aiRefreshStepHint() {
+      const hint = document.querySelector('#ai-chat > .ai-hint');
+      if (hint && !hint.textContent.startsWith('↑ historial')) {
+        hint.textContent = aiStepHint(state.currentStep || 1);
+      }
+    }
+
     function currentCartridgeId() {
       return state._currentCartridge?.id
         || document.getElementById('ds-ed-cart')?.value.trim()
@@ -376,10 +435,12 @@ import { state } from './legacy-state.js';
 
       // Update AI context badge + hint
       document.getElementById('ai-ctx-badge').textContent = `Paso ${n}: ${state.STEP_LABELS[n]}`;
+      aiRenderQuickActions();
       document.getElementById('ai-chat').innerHTML =
-        `<div class="ai-hint">${esc(state.STEP_HINTS[n])}</div>`;
+        `<div class="ai-hint">${esc(aiStepHint(n))}</div>`;
       // Restore saved chat history for this step (if any, within TTL)
       _restoreChatHistory();
+      aiRefreshStepHint();
 
       // Render step
       const el = document.getElementById('step-content');
@@ -3076,6 +3137,84 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       aiSend();
     }
 
+    function aiPromptText(kind) {
+      const cartridge = state._currentCartridge?.id || document.getElementById('cartridge-sel')?.value || 'hubspot';
+      const dagId = state._selectedDag && state._selectedDag !== '__new__' ? state._selectedDag : '';
+      const dataset = state._selectedDS?.name || state._selectedDSDetail?.name || '';
+      const prompts = {
+        autopilot_sample:
+          'Crea en dry-run un cartucho nuevo llamado ACME CRM con id acme_crm desde este sample REST:\n' +
+          '{"results":[{"deal_id":"d1","amount":1000,"owner_email":"rep@example.com","updated_at":"2026-05-30T10:00:00Z","stage":"open"}]}\n' +
+          'Devuelve el blueprint resumido: entidades, primary key, watermark, Silver, Gold, KB, agente y PII.',
+        autopilot_openapi:
+          'Crea en dry-run un cartucho nuevo desde una spec OpenAPI/OData. Primero dime qué URL o archivo necesitas y, cuando lo tenga, usa autopilot_build_cartridge para devolver blueprint completo sin escribir en DB.',
+        self_check:
+          `Haz un self-check proactivo del cartucho ${cartridge}. Reporta score, bloqueadores, warnings, evidencia y la siguiente accion concreta.`,
+        dag_introspect_generate:
+          `Para el cartucho ${cartridge}, primero introspecta la fuente en vivo/fallback y luego genera un DAG validado para la entidad principal usando schema con fields, tipos, primary_key y watermark.`,
+        dag_review_current:
+          dagId
+            ? `Revisa el DAG ${dagId} del cartucho ${cartridge}. Lee su fuente actual, detecta riesgos de producción, imports rotos, secrets, retries, timeouts y compatibilidad con el microservicio. No lo reescribas desde cero.`
+            : `Revisa el DAG abierto o principal del cartucho ${cartridge}. Si no hay DAG seleccionado, lista DAGs primero y dime cuál conviene auditar.`,
+        dag_smoke_plan:
+          `Prepara un smoke real para los DAGs del cartucho ${cartridge}: listar DAGs, validar fuente, trigger controlado, revisar run status, logs y evidencia de Bronze/Silver/Gold.`,
+        entities_discover:
+          `Descubre entidades del cartucho ${cartridge}. Primero intenta introspeccion viva; si falla usa fallback estatico. Devuelve entidades con fields, tipos canonicos, nullable, primary_key y source.`,
+        entities_watermarks:
+          `Audita las entidades del cartucho ${cartridge}: cuales tienen primary_key, watermark, modo incremental, DAG asociado y cuales estan incompletas o fragiles.`,
+        entities_extract_smoke:
+          `Diseña y ejecuta si es seguro un smoke de extraccion para ${cartridge}: una entidad pequeña, credenciales/Vault, job status, logs y evidencia de escritura Bronze. Si requiere approval, pidelo.`,
+        refine_silver:
+          `Para ${cartridge}, revisa fuentes Bronze disponibles y propone un dataset Silver limpio. Genera SQL layer=silver, haz preview y dime riesgos antes de guardar.`,
+        refine_gold:
+          `Para ${cartridge}, revisa datasets Silver y propone un Gold de negocio. Genera SQL layer=gold sin exigir read_parquet/latest_date, preview primero y explica KPIs resultantes.`,
+        refine_lineage:
+          `Audita lineage de ${cartridge}: fuentes Bronze, Silver, Gold, datasets sin materializar, errores recientes y gaps que bloquearian analitica real.`,
+        analytics_kpis:
+          `Revisa Gold disponible para ${cartridge} y propone KPIs concretos con fuente, formula y accion recomendada. No inventes datos; consulta datasets primero.`,
+        analytics_app:
+          `Prepara una app interna para ${cartridge} desde datasets Gold existentes. Primero lista apps/datasets, si ya existe lee HTML actual, y solo publica cuando el cambio este claro.`,
+        analytics_superset:
+          `Conecta los Gold de ${cartridge} a Superset: lista tablas, datasets existentes, gaps y pasos exactos para crear dataset/dashboard sin duplicar.`,
+        semantic_enrich:
+          `Revisa el data catalog de ${cartridge} y enriquece terminos/columnas sin descripcion. Prioriza columnas usadas en Gold y no inventes significado sin evidencia.`,
+        semantic_relationships:
+          `Detecta relaciones candidatas entre datasets de ${cartridge}: claves, joins, cardinalidad esperada y register_relationship si corresponde con approval.`,
+        semantic_sync_rag:
+          `Sincroniza el vocabulario semantico de ${cartridge} hacia RAG despues de revisar cambios pendientes. Reporta cuantas entradas quedan disponibles para busqueda.`,
+        rag_audit:
+          `Audita RAG para ${cartridge}: fuentes cargadas, documentos faltantes, freshness, huecos de conocimiento y preguntas que aun no podria responder con evidencia.`,
+        rag_ingest:
+          `Prepara ingestion RAG para ${cartridge}. Dime que documento o texto necesitas, como se nombrara la fuente y que validacion haras despues de ingerir.`,
+        rag_search:
+          `Busca en RAG evidencia sobre ${cartridge} antes de responder. Si no hay fuentes suficientes, dilo claro y lista que documento falta.`,
+      };
+      return prompts[kind] || '';
+    }
+
+    export function aiRenderQuickActions() {
+      const actions = AI_STEP_QUICK_ACTIONS[state.currentStep] || AI_STEP_QUICK_ACTIONS[1] || [];
+      const title = document.getElementById('ai-cap-title-text');
+      const subtitle = document.getElementById('ai-cap-subtitle');
+      const wrap = document.getElementById('ai-quick-actions');
+      if (title) title.textContent = `Paso ${state.currentStep || 1} · ${state.STEP_LABELS[state.currentStep] || 'Studio'}`;
+      if (subtitle) subtitle.textContent = 'acciones guiadas';
+      if (!wrap) return;
+      wrap.innerHTML = actions.map(a =>
+        `<button type="button" data-ai-prompt="${esc(a.key)}">${esc(a.label)}</button>`
+      ).join('');
+    }
+
+    export function aiQuickPrompt(kind) {
+      const input = document.getElementById('ai-input');
+      if (!input || state.aiBusy) return;
+      input.value = aiPromptText(kind);
+      aiAutogrow(input);
+      input.focus();
+      input.style.borderColor = 'var(--green)';
+      setTimeout(() => { input.style.borderColor = ''; }, 1400);
+    }
+
     // ── AI Chat Persistence ────────────────────────────────────────────────────
 
 
@@ -3143,8 +3282,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       state.aiHistory = [];
       if (id && step) localStorage.removeItem(_chatKey(id, step));
       const chat = document.getElementById('ai-chat');
-      const hint = state.STEP_HINTS[step] || '';
+      const hint = aiStepHint(step);
       chat.innerHTML = hint ? `<div class="ai-hint">${esc(hint)}</div>` : '';
+      aiRenderQuickActions();
     }
 
     // ── AI Assistant ───────────────────────────────────────────────────────────
@@ -4567,8 +4707,11 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         document.getElementById('cartridge-sel').value = preferredCartridge;
         await selectCartridge(preferredCartridge);
       }
-      if (!state.currentStep && !document.body.dataset.studioStep) {
-        goStep(1);
+      if (!state.currentStep) {
+        const initialStep = Number(document.body.dataset.studioStep || 1) || 1;
+        goStep(initialStep);
+      } else {
+        aiRenderQuickActions();
       }
 
       // Check if we arrived from Pipeline with a DAG to edit

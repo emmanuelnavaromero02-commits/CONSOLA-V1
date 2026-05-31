@@ -15,9 +15,10 @@ import {
   showCreateCartridge,
   aiAutogrow,
   aiKey,
+  aiQuickPrompt,
   aiResizeStart,
-} from './legacy.js';
-import { closeSqlRunner, execSqlRunner } from './sql-runner.js';
+} from './legacy.js?v=studio-autopilot-ui5';
+import { closeSqlRunner, execSqlRunner } from './sql-runner.js?v=studio-autopilot-ui5';
 
 const $ = (id) => document.getElementById(id);
 const on = (el, ev, fn) => { if (el) el.addEventListener(ev, fn); };
@@ -41,6 +42,11 @@ export function wireStudioHandlers() {
   on($('ai-input'), 'keydown', aiKey);
   on($('ai-input'), 'input', (e) => aiAutogrow(e.target));
   on($('ai-send-btn'), 'click', aiSend);
+  on($('ai-capabilities'), 'click', (e) => {
+    const button = e.target.closest('[data-ai-prompt]');
+    if (!button) return;
+    aiQuickPrompt(button.dataset.aiPrompt);
+  });
 
   // E2E compatibility sentinels
   on($('new-entity-compat-toggle'), 'click', () => {

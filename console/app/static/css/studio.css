@@ -154,6 +154,54 @@
       padding: 1px 6px;
       border-radius: 2px;
     }
+    .ai-capabilities {
+      flex-shrink: 0;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--bg2) 88%, var(--green) 12%);
+    }
+    .ai-cap-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-family: var(--font-ui);
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .ai-cap-title small {
+      color: var(--text3);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 500;
+    }
+    .ai-quick-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .ai-quick-actions button {
+      min-width: 0;
+      min-height: 30px;
+      padding: 4px 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text2);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      line-height: 1.2;
+      cursor: pointer;
+      white-space: normal;
+    }
+    .ai-quick-actions button:hover,
+    .ai-quick-actions button:focus {
+      outline: none;
+      border-color: var(--green);
+      color: var(--text);
+    }
     .ai-chat {
       flex: 1;
       overflow-y: auto;
