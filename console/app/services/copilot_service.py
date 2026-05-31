@@ -45,6 +45,7 @@ from fastapi import HTTPException
 
 from app.services import audit_service, auth, llm_client, mcp_registry, permissions
 from app.services import memory_service  # v1.44.3 Tarea D — memory injection
+from app.services import lessons_service  # v1.45 cúspide — lessons injection
 from app.services import tool_manifest, tool_policy
 
 
@@ -1233,6 +1234,34 @@ async def _run_loop(
                 "falling back to base SYSTEM_PROMPT",
             )
             system_prompt_for_call = SYSTEM_PROMPT
+
+        # v1.45 cúspide (Nivel 5): append lessons learned from prior
+        # approvals / declines. The intent hint is the last user turn
+        # so the matcher can rank relevant lessons first. Identity
+        # transform when the user has no lessons. Wrapped in try/except
+        # for the same reason as memory: never block on personalisation.
+        try:
+            intent_hint = ""
+            for h in reversed(history):
+                if h.get("role") == "user":
+                    intent_hint = str(h.get("content") or "")[:400]
+                    break
+            workspace_id_for_lessons = user.get("active_workspace_id")
+            # workspaces.id is a UUID string in this schema (see
+            # infra/init/13_rbac_models.sql); keep it as str rather than
+            # forcing int() and crashing for legitimate UUID workspaces.
+            system_prompt_for_call = await lessons_service.build_system_prompt_with_lessons(
+                user_id=int(user_id_for_memory),
+                workspace_id=str(workspace_id_for_lessons) if workspace_id_for_lessons else None,
+                base_prompt=system_prompt_for_call,
+                intent_hint=intent_hint or None,
+            )
+        except Exception:                          # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception(
+                "lessons_service.build_system_prompt_with_lessons failed; "
+                "continuing without lessons block",
+            )
     else:
         system_prompt_for_call = SYSTEM_PROMPT
 
@@ -1707,6 +1736,27 @@ async def approve_pending_action(
         ip=ip,
         user_agent=user_agent,
     )
+
+    # v1.45 cúspide (Nivel 5): persist a lesson per approved entry so
+    # the copilot stops asking the same question next turn. Never
+    # block the approval flow — lessons are best-effort.
+    try:
+        uid_for_lesson = user.get("id")
+        ws_for_lesson = user.get("active_workspace_id")
+        if uid_for_lesson is not None:
+            for entry in entries:
+                await lessons_service.record_lesson_from_approval(
+                    user_id=int(uid_for_lesson),
+                    workspace_id=str(ws_for_lesson) if ws_for_lesson else None,
+                    tool_name=entry.get("full_name") or entry.get("bare_name") or "tool",
+                    tool_args=entry.get("args") or {},
+                    conversation_id=conversation_id,
+                )
+    except Exception:                              # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).debug(
+            "lesson record_from_approval failed", exc_info=True,
+        )
 
     out = await _run_loop(
         conversation_id=conversation_id,
