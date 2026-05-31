@@ -25,6 +25,8 @@ async def reveal_setting_internal(
     allowed_prefixes = {
         "cartridge-replicon": ("replicon_",),
         "replicon": ("replicon_",),
+        "cartridge-hubspot": ("hubspot_",),
+        "hubspot": ("hubspot_",),
         "cartridge-sap_hcm": ("sap_hcm_",),
         "cartridge-sap_s4hana": ("sap_s4hana_",),
         "cartridge-sap_successfactors": ("sap_successfactors_",),

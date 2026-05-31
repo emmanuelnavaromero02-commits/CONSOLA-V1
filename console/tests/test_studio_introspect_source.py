@@ -124,6 +124,23 @@ def test_studio_openapi_spec_url_blocks_ssrf_targets(monkeypatch):
     assert studio._validate_external_spec_url("https://api.example.com/openapi.json") == ""
 
 
+def test_static_introspection_reads_entity_properties():
+    studio = importlib.import_module("app.routers.studio")
+
+    entity = {
+        "entity": "deals",
+        "properties": ["dealname", "hs_lastmodifieddate"],
+        "watermark_field": "hs_lastmodifieddate",
+    }
+
+    fields = studio._fields_from_static_entity(entity)
+    by_name = {field["name"]: field for field in fields}
+
+    assert by_name["dealname"]["type"] == "string"
+    assert by_name["dealname"]["source_type"] == "static_property"
+    assert by_name["hs_lastmodifieddate"]["type"] == "timestamp"
+
+
 @pytest.mark.asyncio
 async def test_studio_introspect_source_returns_live_odata_entity_sets(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")

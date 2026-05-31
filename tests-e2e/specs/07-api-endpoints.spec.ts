@@ -73,6 +73,10 @@ const PROTECTED: ApiCheck[] = [
                   Array.isArray((d as { cartridges: unknown[] }).cartridges),
   },
   {
+    method: "GET", path: "/api/cartridges/hubspot/connector_schema",
+    shape: (d) => typeof d === "object" && d !== null,
+  },
+  {
     method: "GET", path: "/api/cartridges/replicon/connector_schema",
     shape: (d) => typeof d === "object" && d !== null,
   },

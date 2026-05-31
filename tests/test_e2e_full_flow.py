@@ -27,6 +27,16 @@ def _skip_if_stack_down() -> None:
         pytest.skip(f"Stack not healthy ({r.status_code})")
 
 
+def _mirror_cookie_for_http_client(client: httpx.Client, name: str, value: str | None) -> None:
+    if value:
+        for domain in ("localhost.local", "localhost", "127.0.0.1"):
+            try:
+                client.cookies.delete(name, domain=domain, path="/")
+            except Exception:
+                pass
+        client.cookies.set(name, value, path="/")
+
+
 @pytest.fixture(scope="module")
 def session():
     _skip_if_stack_down()
@@ -34,14 +44,21 @@ def session():
         pytest.skip("E2E_ADMIN_PASSWORD not set")
     client = httpx.Client(base_url=CONSOLE, timeout=10.0)
     # GET /login to receive the CSRF cookie used by the JSON login.
-    client.get("/login")
-    csrf = client.cookies.get("csrftoken") or client.cookies.get("csrf_token") or ""
+    login = client.get("/login")
+    csrf = login.cookies.get("csrf_token") or client.cookies.get("csrf_token") or client.cookies.get("csrftoken") or ""
+    _mirror_cookie_for_http_client(client, "csrf_token", csrf)
     r = client.post(
         "/api/auth/login",
         json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-        headers={"X-CSRF-Token": csrf} if csrf else {},
+        headers={"X-CSRF-Token": csrf, "Cookie": f"csrf_token={csrf}"} if csrf else {},
     )
     assert r.status_code == 200, r.text
+    for cookie_name in ("csrf_token", "mod_session", "refresh_token"):
+        _mirror_cookie_for_http_client(
+            client,
+            cookie_name,
+            r.cookies.get(cookie_name) or client.cookies.get(cookie_name),
+        )
     yield client
     client.close()
 

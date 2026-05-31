@@ -84,7 +84,7 @@ jobs:
           fail=0
           # v1.43.2 (DevOps R1 hardening): discover every requirements.txt
           # at runtime instead of hand-listing 5 services. The previous
-          # hand-list missed the 4 cartridge requirements + tests
+          # hand-list missed cartridge requirements + tests
           # requirements — a CVE there would ship to prod undetected.
           # Excludes .git/ and any nested vendor/ trees.
           REQUIREMENTS=$(find . -name requirements.txt \
@@ -101,7 +101,7 @@ jobs:
           echo "---"
           # v1.43.4: the "cartridge-deps sprint" that v1.43.2 deferred
           # shipped in this hotfix — fastmcp was bumped 2.5.0 → 3.x
-          # across the 4 cartridges (Codex C1 BLOCKER fix), which
+          # across the cartridges (Codex C1 BLOCKER fix), which
           # transitively pulled mcp >= 1.23.0, requests >= 2.33.0,
           # and python-dotenv >= 1.2.2. All ten suppressions are
           # therefore retired and the audit runs fail-closed again.

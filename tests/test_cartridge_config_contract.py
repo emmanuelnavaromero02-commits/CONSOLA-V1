@@ -3,7 +3,7 @@
 sap_successfactors and replicon had no dedicated unit tests of their own
 config (the SAP suites are mostly parametrized contract tests). These pure
 checks pin the minimal shape of each cartridge's entities / knowledge_bits /
-connector YAML for all four cartridges, so a malformed config is caught without
+connector YAML for all built-in cartridges, so a malformed config is caught without
 a live SAP/MinIO backend.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "replicon")
+CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors", "replicon", "hubspot")
 
 
 def _config(cartridge: str, name: str) -> dict:

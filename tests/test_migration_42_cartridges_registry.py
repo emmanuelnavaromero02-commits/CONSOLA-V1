@@ -1,8 +1,8 @@
 """Sprint v1.43.1 — Codex P0-3: cartridges registered in mcp_servers.
 
 Static verification of:
-  * migration 42 SQL seeds the 4 cartridge rows and is idempotent.
-  * mcp_registry.startup() includes the 4 cartridges so the rows stay
+  * migration 42 SQL seeds the built-in cartridge rows and is idempotent.
+  * mcp_registry.startup() includes the built-in cartridges so the rows stay
     fresh on every console restart (and the tools JSONB gets populated
     via /mcp/tools HTTP fetch).
 """
@@ -24,20 +24,20 @@ def test_migration_exists():
     assert MIGRATION.exists(), f"missing {MIGRATION}"
 
 
-def test_migration_42_adds_4_cartridges():
+def test_migration_42_adds_builtin_cartridges():
     src = _src()
-    for cart_id in ("replicon", "sap_hcm", "sap_successfactors", "sap_s4hana"):
+    for cart_id in ("hubspot", "replicon", "sap_hcm", "sap_successfactors", "sap_s4hana"):
         assert f"'{cart_id}'" in src, (
             f"migration 42 missing INSERT for cartridge {cart_id!r}"
         )
 
 
 def test_migration_42_uses_cartridge_category():
-    """All 4 must be tagged ``category='cartridge'`` so the tool
+    """All built-in cartridges must be tagged ``category='cartridge'`` so the tool
     manifest filter (which groups by category) sees them in the
     right bucket."""
     src = _src()
-    assert src.count("'cartridge'") >= 4
+    assert src.count("'cartridge'") >= 5
 
 
 def test_migration_42_idempotent():
@@ -77,19 +77,19 @@ def test_migration_42_ordering():
 def test_mcp_registry_startup_includes_4_cartridges():
     """v1.43.1: console boot must HTTP-sync each cartridge's /mcp/tools.
     Verify by reading the source — the builtin list in startup() has
-    entries for all 4 cartridges with category='cartridge'."""
+    entries for all built-in cartridges with category='cartridge'."""
     src = (REPO / "console/app/services/mcp_registry.py").read_text(encoding="utf-8")
     # Find the startup() function body.
     m = re.search(r"async def startup\(\).*?\n    for server in builtin:", src, re.DOTALL)
     assert m, "startup() function not found"
     body = m.group(0)
-    for cart_id in ("replicon", "sap_hcm", "sap_successfactors", "sap_s4hana"):
+    for cart_id in ("hubspot", "replicon", "sap_hcm", "sap_successfactors", "sap_s4hana"):
         assert f'"id":          "{cart_id}"' in body, (
             f"startup() missing cartridge {cart_id!r}"
         )
     # And every cartridge is in the cartridge category, not the
     # legacy 'mcp' or 'monitoring' buckets.
-    assert body.count('"category":    "cartridge"') == 4
+    assert body.count('"category":    "cartridge"') == 5
 
 
 def test_mcp_registry_startup_cartridge_urls_from_env():
@@ -97,6 +97,7 @@ def test_mcp_registry_startup_cartridge_urls_from_env():
     DAGs now use). Compose defaults match the local service hostnames."""
     src = (REPO / "console/app/services/mcp_registry.py").read_text(encoding="utf-8")
     for env_var, default in [
+        ("HUBSPOT_URL",           "http://hubspot:8210"),
         ("REPLICON_URL",           "http://replicon:8201"),
         ("SAP_HCM_URL",            "http://sap-hcm:8202"),
         ("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"),

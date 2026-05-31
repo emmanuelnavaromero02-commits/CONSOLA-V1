@@ -1,7 +1,7 @@
 /**
  * v1.44.3.2.1 spec 10 — MCP cartridge deep coverage.
  *
- * 36 tests — 9 checks × 4 cartridges:
+ * 45 tests — 9 checks × 5 built-in cartridges:
  *   /healthz (no auth)
  *   /health  (no auth)
  *   /skills  unauth → 401/403
@@ -17,6 +17,7 @@ import { test, expect, request as pwRequest } from "@playwright/test";
 test.use({ storageState: { cookies: [], origins: [] } });
 
 const CARTS = [
+  { id: "hubspot",             url: process.env.HUBSPOT_URL || "http://localhost:8210" },
   { id: "replicon",            url: process.env.REPLICON_URL || "http://localhost:8201" },
   { id: "sap_hcm",             url: process.env.SAP_HCM_URL  || "http://localhost:8202" },
   { id: "sap_successfactors",  url: process.env.SAP_SF_URL   || "http://localhost:8203" },

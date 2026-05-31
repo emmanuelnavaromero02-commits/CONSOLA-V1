@@ -4,7 +4,7 @@
 #   docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml up -d
 #
 # Production can still run cartridges in ECS/K8s/another EC2 by setting
-# REPLICON_URL / SAP_*_URL in .env and omitting this overlay.
+# REPLICON_URL / HUBSPOT_URL / SAP_*_URL in .env and omitting this overlay.
 
 x-cartridge-env: &cartridge-env
   APP_ENV: ${APP_ENV:-production}
@@ -46,6 +46,32 @@ services:
       - modecissions_net
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8201/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  hubspot:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/hubspot:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      <<: *cartridge-env
+      INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:?INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE is required}
+      INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA: ${INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA:?INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT: ${INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT:?INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT is required}
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_hubspot:${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:?OMEGA_CARTRIDGE_HUBSPOT_PASSWORD is required}@postgres:5432/modecissions"
+      HUBSPOT_BASE_URL: ${HUBSPOT_BASE_URL:-https://api.hubapi.com}
+      HUBSPOT_API_TOKEN: ${HUBSPOT_API_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - modecissions_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8210/health', timeout=3).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 5

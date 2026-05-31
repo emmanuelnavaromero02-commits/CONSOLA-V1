@@ -127,6 +127,7 @@ echo "  • Backend health (no auth):                http://localhost:8000/healt
 echo "  • Backend readiness (deps):                http://localhost:8000/readyz"
 echo "  • Superset:                                http://localhost:8088"
 echo "  • Airflow:                                 http://localhost:8082"
+echo "  • Replicon / HubSpot cartridges:           http://localhost:8201 and :8210/health"
 echo "  • SAP cartridges:                          http://localhost:8202-8204/health"
 echo "  Local seed login: emmanuel@local.ai / Admin123!  (rotate before real data)"
 

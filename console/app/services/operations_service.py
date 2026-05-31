@@ -52,6 +52,7 @@ def service_probes() -> dict[str, str]:
         "mcp-infra":          f"{_service_url('MCP_INFRA_URL', 'http://mcp-infra:8010', 'http://127.0.0.1:8010')}/healthz",
         "vault":              f"{_service_url('VAULT_URL', 'http://vault:8300', 'http://127.0.0.1:8300')}/healthz",
         "replicon":           f"{_service_url('REPLICON_URL', 'http://replicon:8201', 'http://127.0.0.1:8201')}/health",
+        "hubspot":            f"{_service_url('HUBSPOT_URL', 'http://hubspot:8210', 'http://127.0.0.1:8210')}/health",
         "sap-hcm":            f"{_service_url('SAP_HCM_URL', 'http://sap-hcm:8202', 'http://127.0.0.1:8202')}/health",
         "sap-successfactors": f"{_service_url('SAP_SUCCESSFACTORS_URL', 'http://sap-successfactors:8203', 'http://127.0.0.1:8203')}/health",
         "sap-s4hana":         f"{_service_url('SAP_S4HANA_URL', 'http://sap-s4hana:8204', 'http://127.0.0.1:8204')}/health",

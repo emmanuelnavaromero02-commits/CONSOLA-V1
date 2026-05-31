@@ -14,6 +14,7 @@ import re
 from fastmcp import FastMCP
 
 from app.core.config import settings
+from app.core.request_context import scoped_prefix
 from app.core import job_runner
 from app.services.catalog_service import get_all_entities, get_all_kbs, get_entity_config
 from app.services.duckdb_service import run_kb_sql, _get_duckdb_connection
@@ -95,7 +96,8 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     """
     limit = min(limit, 200)
     bucket = settings.minio_bucket
-    path = f"s3://{bucket}/raw/hubspot/{entity}/load_date=*/batch_id=*/*.parquet"
+    scope = scoped_prefix()
+    path = f"s3://{bucket}/raw/hubspot/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true, union_by_name=true) LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()

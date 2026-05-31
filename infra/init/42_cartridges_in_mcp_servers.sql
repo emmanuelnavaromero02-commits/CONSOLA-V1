@@ -1,4 +1,4 @@
--- Sprint v1.43.1 (Codex P0-3) — Register the 4 cartridges in mcp_servers
+-- Sprint v1.43.1 (Codex P0-3) — Register the built-in cartridges in mcp_servers
 -- so the copilot can discover and invoke their tools.
 --
 -- Idempotent: ON CONFLICT(id) DO UPDATE keeps name/url/category/
@@ -9,6 +9,11 @@
 
 INSERT INTO mcp_servers (id, name, url, category, description, tools, healthy)
 VALUES
+  ('hubspot', 'HubSpot CRM',
+   'http://hubspot:8210',
+   'cartridge',
+   'Connector for HubSpot CRM.',
+   '[]'::jsonb, false),
   ('replicon', 'Replicon Time & Attendance',
    'http://replicon:8201',
    'cartridge',

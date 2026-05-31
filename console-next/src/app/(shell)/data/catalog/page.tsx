@@ -15,7 +15,7 @@ import type { CatalogColumn, CatalogDataset, CatalogRelationshipInput } from "@/
 import { cn } from "@/lib/utils";
 
 const LAYERS = ["bronze", "silver", "gold", "master"] as const;
-const CARTRIDGES = ["replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
 const JOIN_HINTS = ["many_to_one", "one_to_many", "one_to_one", "many_to_many"] as const;
 
 interface EntryForm {

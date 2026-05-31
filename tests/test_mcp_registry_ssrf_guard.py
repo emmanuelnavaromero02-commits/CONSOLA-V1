@@ -29,6 +29,7 @@ def _run(coro):
     "url",
     [
         "http://replicon:8201/health",
+        "http://hubspot:8210/health",
         "http://sap-hcm:8202/mcp",
         "http://sap-s4hana:8204/mcp",
         "http://sap-successfactors:8203/mcp",

@@ -10,6 +10,10 @@ const CARTRIDGE_META = {
     name: 'Replicon',
     description: 'Time tracking, proyectos, empleados y horas.',
   },
+  hubspot: {
+    name: 'HubSpot CRM',
+    description: 'CRM comercial, deals, empresas, contactos, pipeline y forecast.',
+  },
   sap_hcm: {
     name: 'SAP HCM',
     description: 'Recursos humanos, empleados, puestos y organización.',

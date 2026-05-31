@@ -125,6 +125,10 @@ jobs:
           INTERNAL_API_KEY_REPLICON_TO_CONSOLE: dummy_replicon_to_console_key_for_ci_only_32chars_xxxxxxx
           INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA: dummy_replicon_to_mcp_key_for_ci_only_32chars_xxxxxxxxxx
           INTERNAL_API_KEY_REPLICON_TO_REFINEMENT: dummy_replicon_to_refinement_key_for_ci_only_32chars_xx
+          OMEGA_CARTRIDGE_HUBSPOT_PASSWORD: dummy_cartridge_hubspot_password_for_ci_only
+          INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: dummy_hubspot_to_console_key_for_ci_only_32chars_xxxxxxx
+          INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA: dummy_hubspot_to_mcp_key_for_ci_only_32chars_xxxxxxxxxx
+          INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT: dummy_hubspot_to_refinement_key_for_ci_only_32chars_xx
         run: docker compose config --quiet
 
   build:
@@ -152,6 +156,8 @@ jobs:
             context: ./infra/airflow
           - service: replicon
             context: ./cartridges/replicon
+          - service: hubspot
+            context: ./cartridges/hubspot
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana

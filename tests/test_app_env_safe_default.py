@@ -83,6 +83,7 @@ def test_console_auth_is_production_defaults_true(monkeypatch):
         "INTERNAL_API_KEY_VAULT_TO_CONSOLE",
         "INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE",
         "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
+        "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)
     monkeypatch.delenv("APP_ENV", raising=False)
@@ -94,6 +95,7 @@ def test_console_dependencies_default_to_production(monkeypatch):
     for env in (
         "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)
@@ -108,6 +110,7 @@ async def test_workspace_cartridge_dataset_fallback_denied_when_env_unset(monkey
     for env in (
         "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)

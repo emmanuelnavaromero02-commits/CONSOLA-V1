@@ -23,6 +23,30 @@ CUSTOMER_PRODUCT_STATUSES = {"active"}
 
 
 COMMERCIAL_PROFILES: dict[str, dict[str, Any]] = {
+    "hubspot": {
+        "headline": "CRM, pipeline, forecast y revenue comercial conectados a OMEGA.",
+        "what_it_does": [
+            "Extrae deals, compañías, contactos, líneas de producto, owners y pipelines desde HubSpot CRM.",
+            "Modela pipeline ponderado, forecast mensual, revenue por vendedor y deals estancados.",
+            "Publica agentes especializados para vigilar forecast y perseguir oportunidades sin actividad.",
+        ],
+        "data_domains": ["Deals", "Compañías", "Contactos", "Owners", "Pipelines", "Forecast"],
+        "dashboards": [
+            "Forecast mensual",
+            "Pipeline ponderado",
+            "Revenue por vendedor",
+            "Deals estancados",
+            "Conversión por etapa",
+        ],
+        "sample_questions": [
+            "¿Qué deals ponen en riesgo el forecast del mes?",
+            "¿Qué vendedores tienen más pipeline ponderado abierto?",
+            "¿Qué oportunidades llevan más días sin actividad?",
+        ],
+        "requirements": ["HubSpot Private App token", "Scopes CRM de lectura", "Permisos para objetos deals/companies/contacts"],
+        "plan": "CRM Intelligence",
+        "price_label": "Cotización por workspace CRM",
+    },
     "replicon": {
         "headline": "Servicios profesionales, rentabilidad, disponibilidad y P&L en un solo cartucho.",
         "what_it_does": [

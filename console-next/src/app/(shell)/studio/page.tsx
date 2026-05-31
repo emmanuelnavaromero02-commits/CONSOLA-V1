@@ -22,7 +22,7 @@ import { CartridgeLauncherCard } from "@/components/studio/CartridgeLauncherCard
  * Per the scope decision (option B in the v1.44.4 Group 1
  * brief), this page is a SLIM LAUNCHER, not a full UI:
  *
- *   - 4 cartridge cards showing real freshness + status.
+ *   - Built-in cartridge cards showing real freshness + status.
  *   - Each card links to /studio?cartridge=<id> on the legacy
  *     :8000 origin via the LEGACY_CONSOLE_URL env var.
  *   - A clear banner at the top explains the migration in
@@ -37,6 +37,11 @@ const CARTRIDGES: { id: string; name: string; description: string }[] = [
     id:          "replicon",
     name:        "Replicon",
     description: "Time tracking + project hours.",
+  },
+  {
+    id:          "hubspot",
+    name:        "HubSpot CRM",
+    description: "Pipeline, forecast, deals y revenue comercial.",
   },
   {
     id:          "sap_hcm",
@@ -113,7 +118,7 @@ export default function StudioPage() {
         className="grid grid-cols-1 gap-4 sm:grid-cols-2"
       >
         {isLoading && !data ? (
-          Array.from({ length: 4 }).map((_, i) => (
+          Array.from({ length: CARTRIDGES.length }).map((_, i) => (
             <div
               key={i}
               className="h-44 animate-pulse rounded-lg border bg-card"

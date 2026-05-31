@@ -19,7 +19,7 @@ from app.services import auth
 
 
 _KNOWN_CARTRIDGES = frozenset({
-    "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors",
+    "replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors",
 })
 
 

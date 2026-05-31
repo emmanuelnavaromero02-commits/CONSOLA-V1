@@ -112,6 +112,8 @@ const ENDPOINTS: Check[] = [
       "cartridges" in d && "extractions" in d && "data_freshness" in d },
   { method: "GET", path: "/api/cartridges",
     shape: (d) => typeof d === "object" && d !== null && "cartridges" in d },
+  { method: "GET", path: "/api/cartridges/hubspot/connector_schema",
+    shape: (d) => typeof d === "object" && d !== null },
   { method: "GET", path: "/api/cartridges/replicon/connector_schema",
     shape: (d) => typeof d === "object" && d !== null },
   { method: "GET", path: "/api/cartridges/sap_hcm/connector_schema",
