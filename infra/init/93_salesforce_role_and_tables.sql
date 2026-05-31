@@ -39,6 +39,21 @@ GRANT SELECT ON
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO omega_cartridge_salesforce;
 
+-- job_runner.ensure_schema() runs CREATE TABLE/INDEX IF NOT EXISTS on the
+-- shared operational tables at startup. Postgres checks CREATE-on-schema even
+-- when the table already exists, and CREATE INDEX needs ownership of `jobs`.
+-- Like the SAP cartridges (see 46_sap_jobs_permissions.sql), grant CREATE on
+-- the schema and membership in the shared NOLOGIN owner of `jobs` rather than
+-- taking ownership directly (replicon already owns the tables at 37).
+GRANT CREATE ON SCHEMA public TO omega_cartridge_salesforce;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_cartridge_jobs_owner')
+     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_cartridge_salesforce') THEN
+    EXECUTE 'GRANT omega_cartridge_jobs_owner TO omega_cartridge_salesforce';
+  END IF;
+END $$;
+
 -- Defense-in-depth: identity / auth / decisions / vault / audit
 -- tables are hard-locked from omega_cartridge_salesforce.
 DO $$

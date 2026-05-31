@@ -214,7 +214,7 @@ class SalesforceClient:
                 "client_id": self.client_id,
                 "client_secret": self.client_secret,
             }
-        else:  # username-password flow (default)
+        elif self.auth_method in {"oauth2_password", "password", "oauth2"}:
             data = {
                 "grant_type": "password",
                 "client_id": self.client_id,
@@ -222,6 +222,14 @@ class SalesforceClient:
                 "username": self.username,
                 "password": f"{self.password}{self.security_token}",
             }
+        else:
+            # bearer / token methods must supply a static SF_ACCESS_TOKEN, which
+            # is returned at the top of this method; reaching here means none was
+            # configured — fail clearly instead of POSTing a malformed grant.
+            raise SalesforceClientError(
+                f"auth_method '{self.auth_method}' needs a static token "
+                "(SF_ACCESS_TOKEN); none configured"
+            )
         try:
             logger.warning("Salesforce outbound POST %s", self.token_url)
             logger.warning("%s", auth_trace(self.auth_method, ("Authorization",)))
@@ -238,7 +246,11 @@ class SalesforceClient:
 
         token = payload.get("access_token")
         if not token:
-            raise SalesforceClientError(f"OAuth response missing access_token: {payload}")
+            # Don't echo the body — a token response can carry refresh_token /
+            # id_token / signed id even when access_token is absent.
+            raise SalesforceClientError(
+                f"OAuth response missing access_token (response keys: {sorted(payload.keys())})"
+            )
         # Salesforce returns the org instance_url; prefer it for subsequent calls.
         instance_url = payload.get("instance_url")
         if instance_url:

@@ -14,10 +14,17 @@ logger = logging.getLogger(__name__)
 _CONNECTION_CACHE: dict[str, dict[str, Any]] = {}
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "SF_BASE_URL": ("base_url", "url", "host", "sf_base_url"),
+    "SF_BASE_URL": ("base_url", "url", "host", "instance_url", "sf_base_url"),
     "SF_COMPANY_ID": ("company_id", "company", "sf_company_id"),
-    "SF_CLIENT_ID": ("client_id", "sf_client_id"),
-    "SF_CLIENT_SECRET": ("client_secret", "secret", "password", "sf_client_secret"),
+    "SF_CLIENT_ID": ("client_id", "consumer_key", "sf_client_id"),
+    # NOTE: "password" is deliberately NOT an alias for the OAuth client secret.
+    # In Salesforce's username-password flow the Connected App consumer secret
+    # and the user's login password are distinct; a Vault field named
+    # ``password`` is the login password (SF_PASSWORD), never the client secret.
+    "SF_CLIENT_SECRET": ("client_secret", "secret", "consumer_secret", "sf_client_secret"),
+    "SF_USERNAME": ("username", "user", "sf_username"),
+    "SF_PASSWORD": ("password", "pass", "sf_password"),
+    "SF_SECURITY_TOKEN": ("security_token", "sf_security_token"),
     "SF_TOKEN_URL": ("token_url", "oauth_token_url", "sf_token_url"),
     "SF_ACCESS_TOKEN": ("access_token", "token", "api_token", "sf_access_token"),
     "SF_API_KEY": ("api_key", "token", "api_token", "sf_api_key"),
@@ -135,7 +142,11 @@ def get_salesforce_credentials() -> tuple[str, str, str, str, str]:
     )
     token_url = get_secret_for_worker("salesforce", "SF_TOKEN_URL") or settings.sf_token_url
 
-    if not all([company_id, client_id, client_secret, token_url]):
+    # Salesforce has no company_id (that was a SAP concept) — it is NOT required.
+    # base_url + client_id + client_secret + token_url is the minimum for the
+    # OAuth flows; company_id is returned only for tuple-shape parity and is
+    # always "" for Salesforce.
+    if not all([base_url, client_id, client_secret, token_url]):
         raise ValueError(
             "Salesforce credentials not configured.\n"
             "Set SF_* variables or save connections/salesforce/default in Vault."

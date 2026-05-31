@@ -31,7 +31,7 @@ inventa datos.
 
 ## Entidades
 
-Sales Cloud core (15): `Account`, `Contact`, `Lead`, `Opportunity`,
+Sales Cloud core (14): `Account`, `Contact`, `Lead`, `Opportunity`,
 `OpportunityLineItem`, `OpportunityHistory`, `OpportunityContactRole`, `User`,
 `Product2`, `PricebookEntry`, `Campaign`, `CampaignMember`, `Task`, `Event`.
 Incremental por `SystemModstamp` (historial por `CreatedDate`); datos de

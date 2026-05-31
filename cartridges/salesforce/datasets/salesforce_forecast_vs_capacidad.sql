@@ -24,8 +24,8 @@ SELECT
     COALESCE(sf.mes, cap.mes)                                          AS mes,
     ROUND(sf.forecast_ponderado_usd, 2)                               AS forecast_ponderado_usd,
     cap.capacidad_horas,
-    ROUND(sf.forecast_ponderado_usd / 150.0, 1)                       AS demanda_horas_estimada,
-    ROUND(cap.capacidad_horas - sf.forecast_ponderado_usd / 150.0, 1) AS holgura_horas
+    ROUND(COALESCE(sf.forecast_ponderado_usd, 0) / 150.0, 1)                       AS demanda_horas_estimada,
+    ROUND(cap.capacidad_horas - COALESCE(sf.forecast_ponderado_usd, 0) / 150.0, 1) AS holgura_horas
 FROM sf
 FULL OUTER JOIN cap ON sf.mes = cap.mes
 ORDER BY mes

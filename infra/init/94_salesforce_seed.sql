@@ -1,8 +1,13 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- MODecissions Cartridge: Salesforce Sales Cloud — seed configuration
--- Run once to register this cartridge in a new installation.
--- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
+-- Salesforce cartridge — fresh-install registration (docker-entrypoint-initdb.d).
+--
+-- Mirrors cartridges/salesforce/config/seed.sql. The cartridge-local seed is only
+-- consumed by the runtime cartridge-upload path; the cartridges row, entity_config,
+-- semantic_terms and agents must be seeded here for a fresh `docker compose up`.
+-- Datasets / apps / hints self-seed from source via the console startup seeders.
+-- Idempotent: every insert uses ON CONFLICT DO NOTHING / DO UPDATE.
 -- ─────────────────────────────────────────────────────────────────────────────
+
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)

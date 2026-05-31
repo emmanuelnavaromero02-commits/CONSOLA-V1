@@ -154,6 +154,8 @@ entities:
       - IsActive
       - SystemModstamp
     protection:
+      Id: shadowed
+      Name: masked
       Email: masked
       Username: masked
 
