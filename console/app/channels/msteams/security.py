@@ -91,16 +91,16 @@ def _signature_verifier():
 
 def _validate_claims(token: str, cfg: MsTeamsConfig) -> Decision:
     try:
-        import jwt  # PyJWT
+        # Use python-jose (already in console/requirements.txt). We want the
+        # claims WITHOUT signature verification — claims mode validates
+        # iss/aud/exp structurally and is documented as weaker than strict.
+        # ``get_unverified_claims`` returns the payload without touching the
+        # signature or asking for a key/algorithm.
+        from jose import jwt as _jwt
     except Exception:
         return Decision(False, "jwt_library_unavailable")
     try:
-        # Signature intentionally not verified in claims mode; we still
-        # validate exp/aud/iss/tid structurally. Documented as weaker.
-        claims: dict[str, Any] = jwt.decode(
-            token,
-            options={"verify_signature": False, "verify_aud": False, "verify_exp": False},
-        )
+        claims: dict[str, Any] = _jwt.get_unverified_claims(token)
     except Exception:
         return Decision(False, "jwt_decode_failed")
 

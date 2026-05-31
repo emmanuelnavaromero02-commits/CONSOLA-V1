@@ -318,9 +318,10 @@ def test_jwt_disabled_allows():
 
 
 def _mint(claims: dict) -> str:
-    import jwt as _jwt
-    # Signature is irrelevant (claims mode doesn't verify it); use a 32-byte
-    # key only to keep PyJWT's key-length notice quiet.
+    # Use python-jose to match console's runtime JWT library (PyJWT is NOT in
+    # console/requirements.txt → would break collection in CI). The signature
+    # is irrelevant because claims mode never verifies it.
+    from jose import jwt as _jwt
     return "Bearer " + _jwt.encode(claims, "x" * 32, algorithm="HS256")
 
 
