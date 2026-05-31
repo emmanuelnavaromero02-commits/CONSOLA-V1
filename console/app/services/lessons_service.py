@@ -102,15 +102,23 @@ async def record_lesson(
     if existing:
         return existing
 
+    # Audit-round-4 P0 fix: ``workspaces.id`` is UUID, but the INSERT
+    # used to bind ``workspace_id`` as a bare positional parameter. In
+    # production that crashes with ``asyncpg.exceptions.DataError:
+    # invalid input for type uuid`` the moment ``workspace_id`` is a
+    # non-null string. The ``$2::uuid`` cast plus the explicit
+    # ``_coerce_uuid_or_none`` step before binding rejects garbage
+    # IDs cleanly instead of letting asyncpg surface a 500.
+    workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     row = await pool.fetchrow(
         """
         INSERT INTO copilot_lessons
             (user_id, workspace_id, scope, trigger_pattern, lesson_text,
              source_kind, source_ref, confidence, applies_to)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb)
         RETURNING id::text
         """,
-        user_id, workspace_id, scope, trigger_pattern, lesson_text,
+        user_id, workspace_id_uuid, scope, trigger_pattern, lesson_text,
         source_kind, source_ref, confidence,
         _json_dumps(applies_to or {}),
     )
@@ -338,6 +346,11 @@ async def fetch_relevant_lessons(
     if not await _has_table():
         return []
     pool = await auth.pool()
+    # Audit-round-4 P0 fix: cast workspace_id to UUID at query time so
+    # the comparison hits the index and asyncpg doesn't raise a
+    # DataError when the session carries a bare string for a UUID
+    # column.
+    workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     rows = await pool.fetch(
         """
         SELECT id::text         AS id,
@@ -352,12 +365,12 @@ async def fetch_relevant_lessons(
           FROM copilot_lessons
          WHERE enabled = TRUE
            AND (user_id = $1
-                OR (workspace_id IS NOT NULL AND workspace_id = $2)
+                OR (workspace_id IS NOT NULL AND workspace_id = $2::uuid)
                 OR scope = 'global')
          ORDER BY created_at DESC
          LIMIT 200
         """,
-        user_id, workspace_id,
+        user_id, workspace_id_uuid,
     )
     candidates = [dict(r) for r in rows]
     intent_tokens = tokenize_intent(intent_hint or "")
@@ -536,6 +549,11 @@ async def list_lessons(
     if not await _has_table():
         return []
     pool = await auth.pool()
+    # Audit-round-4 P0 fix: same workspace_id UUID cast as the
+    # fetch_relevant_lessons path. Without it list_lessons would
+    # crash the operator's "manage my lessons" view as soon as the
+    # caller has a workspace assigned.
+    workspace_id_uuid = _coerce_uuid_or_none(workspace_id)
     rows = await pool.fetch(
         """
         SELECT id::text         AS id,
@@ -552,13 +570,13 @@ async def list_lessons(
                created_at
           FROM copilot_lessons
          WHERE (user_id = $1
-                OR (workspace_id IS NOT NULL AND workspace_id = $2)
+                OR (workspace_id IS NOT NULL AND workspace_id = $2::uuid)
                 OR scope = 'global')
            AND ($3::boolean = FALSE OR enabled = TRUE)
          ORDER BY created_at DESC
          LIMIT $4
         """,
-        user_id, workspace_id, enabled_only, limit,
+        user_id, workspace_id_uuid, enabled_only, limit,
     )
     return [dict(r) for r in rows]
 

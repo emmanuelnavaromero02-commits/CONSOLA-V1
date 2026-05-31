@@ -296,8 +296,20 @@ def parse_diagnosis(raw: str) -> dict[str, Any]:
     txt = re.sub(r",\s*([\]}])", r"\1", txt)
     try:
         data = json.loads(txt)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"diagnosis JSON parse error: {exc}") from exc
+    except json.JSONDecodeError:
+        # Audit-round-4 retry: some LLMs (or operators copy-pasting
+        # from a Python REPL) drift into Python-flavoured JSON with
+        # ``True``/``False``/``None`` outside of strings. We only run
+        # the substitution after a strict parse has already failed,
+        # so a legitimate ``"True positive"`` inside a JSON string
+        # in a well-formed payload is left untouched.
+        retry_txt = re.sub(r"\bTrue\b",  "true",  txt)
+        retry_txt = re.sub(r"\bFalse\b", "false", retry_txt)
+        retry_txt = re.sub(r"\bNone\b",  "null",  retry_txt)
+        try:
+            data = json.loads(retry_txt)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"diagnosis JSON parse error: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("diagnosis must be a JSON object")
     if "subgoals" not in data or not isinstance(data["subgoals"], list):
