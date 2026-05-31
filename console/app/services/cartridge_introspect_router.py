@@ -286,6 +286,12 @@ def extract_entities(descriptor: dict[str, Any]) -> tuple[list[dict[str, Any]], 
         by_entity = parse_json_sample(descriptor.get("sample"), descriptor.get("entity_name") or "records")
 
     entities = [{"name": name, "fields": fields} for name, fields in by_entity.items() if fields]
+    # DoS cap (audit #15): a maliciously huge schema (100k entities/fields) would
+    # fan out into multi-MB SQL + several in-memory copies. Bound both.
+    entities = entities[:_MAX_ENTITIES]
+    for e in entities:
+        if len(e["fields"]) > _MAX_FIELDS_PER_ENTITY:
+            e["fields"] = e["fields"][:_MAX_FIELDS_PER_ENTITY]
     return entities, kind
 
 
