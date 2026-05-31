@@ -15,8 +15,9 @@ CREATE TABLE IF NOT EXISTS msteams_conversations (
     mode                   TEXT   NOT NULL DEFAULT 'dm',
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- The UNIQUE constraint creates an implicit btree on
+    -- (teams_conversation_id, console_user_id) — the EXACT shape of the only
+    -- lookup the channel runs (service._ensure_conversation). No additional
+    -- index is needed; a duplicate would just amplify writes.
     UNIQUE (teams_conversation_id, console_user_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_msteams_conversations_lookup
-    ON msteams_conversations (teams_conversation_id, console_user_id);
