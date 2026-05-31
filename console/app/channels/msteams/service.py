@@ -112,6 +112,12 @@ async def handle_activity(
     # ── Drive the EXISTING copilot ──
     try:
         conversation_id = await _ensure_conversation(event, console_user)
+    except ConversationFallbackError:
+        # DB pool down AND ad-hoc fallback also failed → distinct audit type
+        # so an operator can tell "DB outage" from "copilot turn raised".
+        await _audit(event, ctx, "error", error_type="conversation_mapping_unavailable")
+        return ChannelResult(status="error", activity=adapter.error_activity(), detail="error")
+    try:
         turn = await copilot_service.run_turn(
             conversation_id=conversation_id,
             user_message=req.text,
@@ -120,7 +126,7 @@ async def handle_activity(
             user_agent=user_agent or "msteams",
         )
     except Exception as exc:
-        # Copilot/DB failure — contain it. Log full detail server-side; the
+        # Copilot failure — contain it. Log full detail server-side; the
         # channel reply and audit carry only a safe, generic message.
         logger.warning("msteams: copilot turn failed: %s", type(exc).__name__, exc_info=True)
         await _audit(event, ctx, "error", error_type="copilot_turn_failed")
@@ -137,7 +143,15 @@ def _to_internal_response(turn: dict[str, Any]) -> InternalCopilotResponse:
     if turn.get("requires_approval"):
         text = (text + "\n\n_Esta acción requiere aprobación humana y debe aprobarse "
                 "desde la consola; Teams no aprueba acciones en esta versión._").strip()
-    citations = turn.get("citations") if isinstance(turn.get("citations"), list) else None
+    raw_citations = turn.get("citations")
+    if isinstance(raw_citations, list):
+        # Pydantic strictly validates ``list[dict[str, Any]]`` — a hostile
+        # citation list with None / non-dict entries would raise here and
+        # 500 the webhook (this runs OUTSIDE the copilot try/except). Filter
+        # defensively before constructing the model.
+        citations: list[dict[str, Any]] | None = [c for c in raw_citations if isinstance(c, dict)]
+    else:
+        citations = None
     return InternalCopilotResponse(text=text, citations=citations)
 
 
@@ -169,23 +183,43 @@ async def _ensure_conversation(event: InboundTeamsEvent, console_user: dict) -> 
                 title=f"Teams · {event.mode()}",
             )
             conv_id = str(created["id"])
-            await conn.execute(
+            # Race-safe upsert: two concurrent first-contacts (same user/teams
+            # conversation) used to each create a console conversation while
+            # ON CONFLICT DO NOTHING silently dropped the second insert,
+            # leaving one console conversation orphaned. ``DO UPDATE …
+            # RETURNING`` returns the row that ACTUALLY won the race so both
+            # callers converge on the same id.
+            winning_id = await conn.fetchval(
                 """
                 INSERT INTO msteams_conversations
                   (teams_conversation_id, console_user_id, conversation_id,
                    tenant_id, mode)
                 VALUES ($1, $2, $3::uuid, $4, $5)
-                ON CONFLICT (teams_conversation_id, console_user_id) DO NOTHING
+                ON CONFLICT (teams_conversation_id, console_user_id) DO UPDATE
+                  SET updated_at = NOW()
+                RETURNING conversation_id
                 """,
                 teams_conv, user_id, conv_id, event.tenant_id, event.mode(),
             )
-            return conv_id
+            return str(winning_id) if winning_id else conv_id
     except Exception:
+        # Mapping store is unavailable. Try once more to give the user a
+        # fresh ad-hoc conversation; if THAT fails too, surface a distinct
+        # error type so the operator can tell "DB down" from "copilot down".
         logger.warning("msteams: conversation mapping unavailable; using ad-hoc conversation", exc_info=True)
-        created = await copilot_service.create_conversation(
-            user_id=user_id, workspace_id=None, title=f"Teams · {event.mode()}",
-        )
-        return str(created["id"])
+        try:
+            created = await copilot_service.create_conversation(
+                user_id=user_id, workspace_id=None, title=f"Teams · {event.mode()}",
+            )
+            return str(created["id"])
+        except Exception:
+            logger.warning("msteams: ad-hoc conversation creation also failed", exc_info=True)
+            raise ConversationFallbackError("conversation_mapping_unavailable")
+
+
+class ConversationFallbackError(RuntimeError):
+    """Raised by _ensure_conversation when even the ad-hoc fallback fails.
+    Distinguished from a generic copilot turn failure for audit clarity."""
 
 
 # ── Audit (reuses the platform audit_service; no new table) ──

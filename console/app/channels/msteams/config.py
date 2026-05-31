@@ -17,8 +17,11 @@ DM/group policies, name-matching off. An empty allowlist with an
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
+
+_logger = logging.getLogger("msteams.config")
 
 _TRUE = {"1", "true", "yes", "on"}
 _VALID_DM_POLICIES = {"allowlist", "open", "disabled"}
@@ -42,8 +45,21 @@ def _csv(name: str) -> tuple[str, ...]:
     compare case-insensitively at match time instead of mangling here.
     """
     raw = os.environ.get(name, "") or ""
-    parts = [p.strip() for p in raw.replace("\n", ",").replace(" ", ",").split(",")]
-    return tuple(p for p in parts if p)
+    # Normalise whitespace (including tabs) to commas, then split + strip.
+    # Dedup preserves first-seen order so a duplicated id is silently
+    # collapsed rather than amplifying allowlist iteration cost.
+    normalised = raw.replace("\n", ",").replace("\t", ",").replace(" ", ",")
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in (q.strip() for q in normalised.split(",")):
+        if not p:
+            continue
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -81,6 +97,11 @@ def _parse_user_map(raw: str) -> dict[str, str]:
     """Parse ``aadObjectId=email,aadObjectId2=email2`` → dict.
 
     Malformed pairs are skipped silently (config must never crash boot).
+    Duplicate keys log a warning instead of last-write-wins so a typo
+    doesn't quietly route a Teams user to the wrong console identity.
+    Emails are lowercased to align with case-insensitive DB lookups
+    (RFC 5321 makes local-part formally case-sensitive but every
+    mainstream user store treats it case-insensitively).
     """
     out: dict[str, str] = {}
     for pair in (raw or "").replace("\n", ",").split(","):
@@ -88,9 +109,16 @@ def _parse_user_map(raw: str) -> dict[str, str]:
         if not pair or "=" not in pair:
             continue
         key, _, val = pair.partition("=")
-        key, val = key.strip(), val.strip()
-        if key and val:
-            out[key.lower()] = val
+        key, val = key.strip().lower(), val.strip().lower()
+        if not (key and val):
+            continue
+        if key in out and out[key] != val:
+            _logger.warning(
+                "msteams: duplicate MSTEAMS_USER_MAP key %r; first mapping kept (%r), discarding %r",
+                key, out[key], val,
+            )
+            continue
+        out.setdefault(key, val)
     return out
 
 
@@ -137,7 +165,10 @@ def active_level(cfg: MsTeamsConfig | None = None) -> int:
         return 0
     if cfg.graph_enabled and cfg.transcripts_enabled:
         return 3
-    # Level 2 = any explicit allowlist scoping beyond the basic bot.
-    if cfg.allowed_conversations or cfg.group_policy != "disabled":
+    # Level 2 means explicit allowlist SCOPING is in effect — either an
+    # operator-declared allowlist OR an explicit "trust the members"
+    # decision (group_policy=open). An allowlist policy with no entries
+    # is functionally Level 1 (DM-only) for the user, so don't inflate.
+    if cfg.allowed_conversations or cfg.allowed_users or cfg.group_policy == "open":
         return 2
     return 1

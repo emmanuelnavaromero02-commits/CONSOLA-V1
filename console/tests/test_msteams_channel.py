@@ -317,6 +317,147 @@ def test_jwt_disabled_allows():
     assert security.verify_jwt(None, _cfg(jwt_mode="disabled")).allowed is True
 
 
+# ── Wave-1 audit regressions ──────────────────────────────────────────
+
+def test_parse_activity_tolerates_non_list_entities():
+    # A hostile/SDK-quirk payload that puts a NON-iterable at "entities" must
+    # not raise (parse_activity is wrapped by service, but best-effort parse
+    # should still succeed for the rest of the message).
+    bad = {**_dm_activity(text="hola"), "entities": 123}
+    ev = adapter.parse_activity(bad)
+    assert ev.text == "hola"
+    assert ev.mentioned_bot is False
+
+
+def test_copilot_response_with_hostile_citations_does_not_500_the_webhook():
+    # CRITICAL fix: _to_internal_response → InternalCopilotResponse runs
+    # OUTSIDE service's copilot try/except. The copilot returning a
+    # list with None / non-dict entries used to ValidationError → 500 →
+    # Teams retry storm. The filter at the service boundary keeps it safe.
+    turn = {
+        "reply": "ok",
+        "citations": [None, 123, {"title": "ventas_gold"}, {"dataset": "kpis"}],
+        "requires_approval": False,
+    }
+    resp = service._to_internal_response(turn)
+    assert resp.citations is not None
+    assert len(resp.citations) == 2  # None/123 filtered, well-formed kept
+    rendered = adapter.from_copilot_response(resp)
+    assert "ventas_gold" in rendered["text"] and "kpis" in rendered["text"]
+
+
+def test_from_copilot_response_directly_tolerates_non_dict_citations():
+    # Belt-and-braces: even if a malformed list ever reaches the adapter
+    # (e.g. via a future caller bypassing _to_internal_response), it must
+    # not raise — non-dict entries are skipped.
+    from app.channels.msteams.schemas import InternalCopilotResponse
+    resp = InternalCopilotResponse(text="ok", citations=[{"title": "ventas_gold"}])
+    # Manually inject bad entries to bypass pydantic validation.
+    object.__setattr__(resp, "citations", [None, 123, {"title": "ventas_gold"}])
+    out = adapter.from_copilot_response(resp)
+    assert "ventas_gold" in out["text"]
+
+
+def test_summarise_attachments_skips_non_dict_entries():
+    out = adapter._summarise_attachments([{"name": "ok"}, None, "junk", {"contentType": "image/png"}])
+    assert len(out) == 2
+    assert out[0]["name"] == "ok"
+
+
+def test_strip_mentions_tolerates_non_string_mention_text():
+    # Defensive: even if mention_texts contained a non-str, the helper
+    # must not raise. parse_activity coerces, but the public helper is
+    # exported and may be called directly.
+    assert adapter.strip_mentions("<at>Bot</at> hola", [123, None, "<at>Bot</at>"]).strip() == "hola"
+
+
+def test_to_internal_request_falls_back_when_ctx_lacks_model_dump():
+    from app.channels.msteams.schemas import PermissionsContext
+    ev = adapter.parse_activity(_dm_activity(text="ping"))
+    # Object without model_dump and not a dict → falls back to {} ctx
+    class NotAPermissions:
+        pass
+    req = adapter.to_internal_request(ev, NotAPermissions())
+    assert req.text == "ping"
+    # Valid model still works
+    req2 = adapter.to_internal_request(ev, PermissionsContext(level=2))
+    assert req2.permissions_context.level == 2
+
+
+def test_config_csv_dedups_and_strips_tabs(monkeypatch):
+    monkeypatch.setenv("MSTEAMS_ALLOWED_USERS", "id-1,\tid-2 ,id-1,, ,id-2")
+    cfg = config.load_config()
+    assert cfg.allowed_users == ("id-1", "id-2")
+
+
+def test_config_user_map_skips_conflicting_duplicates_and_lowercases_email(monkeypatch):
+    monkeypatch.setenv(
+        "MSTEAMS_USER_MAP",
+        "AAD-1=Agent@Org.com,AAD-1=other@org.com,AAD-2=B@Org.com",
+    )
+    cfg = config.load_config()
+    # First mapping kept; conflicting duplicate skipped; email lowercased.
+    assert cfg.user_map == {"aad-1": "agent@org.com", "aad-2": "b@org.com"}
+
+
+def test_active_level_does_not_inflate_to_2_with_empty_allowlists(monkeypatch):
+    # Old predicate `or cfg.group_policy != "disabled"` reported Level 2 for
+    # an enabled bot with default policy + empty allowlists → misleading.
+    monkeypatch.setenv("MSTEAMS_ENABLED", "true")
+    monkeypatch.delenv("MSTEAMS_ALLOWED_CONVERSATIONS", raising=False)
+    monkeypatch.delenv("MSTEAMS_ALLOWED_USERS", raising=False)
+    monkeypatch.setenv("MSTEAMS_GROUP_POLICY", "allowlist")
+    assert config.active_level() == 1
+    monkeypatch.setenv("MSTEAMS_ALLOWED_USERS", "id-1")
+    assert config.active_level() == 2
+    monkeypatch.delenv("MSTEAMS_ALLOWED_USERS", raising=False)
+    monkeypatch.setenv("MSTEAMS_GROUP_POLICY", "open")
+    assert config.active_level() == 2
+
+
+@pytest.mark.asyncio
+async def test_ensure_conversation_returns_winning_id_on_race():
+    # Simulate the race: SELECT finds nothing, INSERT ... ON CONFLICT
+    # DO UPDATE RETURNING returns a DIFFERENT id (the row that won the
+    # race). The service must return THAT id, not the just-created orphan.
+    ctx, run_turn = _patch_backend(reply="ok")
+    winning = "00000000-0000-0000-0000-000000000099"
+    fake_conn = AsyncMock()
+    fake_conn.fetchrow = AsyncMock(return_value=None)  # SELECT finds nothing
+    fake_conn.fetchval = AsyncMock(return_value=winning)  # other request won
+
+    class _PoolCtx:
+        async def __aenter__(self):
+            return fake_conn
+        async def __aexit__(self, *a):
+            return False
+
+    fake_pool = AsyncMock()
+    fake_pool.acquire = lambda: _PoolCtx()
+    with ctx:
+        service.auth.pool.return_value = fake_pool
+        res = await service.handle_activity(_dm_activity(), cfg=_cfg())
+    assert res.status == "ok"
+    # Copilot was driven with the WINNING conversation id, not the orphan.
+    assert run_turn.await_args.kwargs["conversation_id"] == winning
+
+
+@pytest.mark.asyncio
+async def test_conversation_mapping_unavailable_audited_distinctly():
+    # When both pool acquire AND ad-hoc fallback fail, the audit must use a
+    # distinct error_type so operators can tell DB-down from copilot-down.
+    ctx, run_turn = _patch_backend()
+    captured = {}
+    with ctx:
+        service.auth.pool.side_effect = RuntimeError("db down")
+        service.copilot_service.create_conversation.side_effect = RuntimeError("create also failed")
+        service.audit_service.record_event.side_effect = lambda **kw: captured.update(kw)
+        res = await service.handle_activity(_dm_activity(), cfg=_cfg())
+    assert res.status == "error"
+    assert captured.get("metadata", {}).get("error_type") == "conversation_mapping_unavailable"
+    run_turn.assert_not_awaited()
+
+
 def _mint(claims: dict) -> str:
     # Use python-jose to match console's runtime JWT library (PyJWT is NOT in
     # console/requirements.txt → would break collection in CI). The signature

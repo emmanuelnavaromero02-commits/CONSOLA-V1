@@ -44,8 +44,10 @@ def strip_mentions(text: str, mention_texts: list[str]) -> str:
     out = text or ""
     # Remove the exact mention surface text FIRST (e.g. "<at>Bot</at>") while
     # the tags are intact, so the bot's name doesn't survive as bare text.
+    # ``str.replace`` raises TypeError on non-string arguments; the public
+    # function must never raise on hostile input, so coerce defensively.
     for m in mention_texts:
-        if m:
+        if m and isinstance(m, str):
             out = out.replace(m, " ")
     out = _TAG_RE.sub(" ", out)
     out = html.unescape(out)
@@ -63,9 +65,14 @@ def parse_activity(activity: dict[str, Any]) -> InboundTeamsEvent:
 
     # Detect a bot mention via the entities array (stable) and collect the
     # mention surface texts so we can strip them from the user's message.
+    # Hostile-input safe: a non-list ``entities`` (int, dict, string) MUST
+    # NOT make the iteration raise — Teams payload shapes vary across SDKs.
     mentioned_bot = False
     mention_texts: list[str] = []
-    for ent in activity.get("entities") or []:
+    raw_entities = activity.get("entities")
+    if not isinstance(raw_entities, list):
+        raw_entities = []
+    for ent in raw_entities:
         if isinstance(ent, dict) and str(ent.get("type", "")).lower() == "mention":
             mentioned = _get(ent, "mentioned", "id", default="")
             mtext = ent.get("text") or ""
@@ -103,9 +110,16 @@ def _summarise_attachments(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pass through only safe, structural attachment metadata — never bytes,
     never SharePoint/Graph URLs with auth. v0.1 surfaces name + contentType
     so the copilot can acknowledge a file without downloading it (download
-    needs Graph; see meetings/files scaffolding)."""
+    needs Graph; see meetings/files scaffolding).
+
+    Hostile-input safe: non-dict entries are skipped silently. ``parse_activity``
+    already filters, but this helper must defend itself in case a future
+    caller passes raw activity payloads directly.
+    """
     out: list[dict[str, Any]] = []
     for a in raw[:10]:
+        if not isinstance(a, dict):
+            continue
         out.append({
             "content_type": str(a.get("contentType") or ""),
             "name": str(a.get("name") or ""),
@@ -120,7 +134,14 @@ def to_internal_request(
     # Accept a model OR a plain dict and let pydantic build the nested model.
     # Passing a dump (not the instance) also sidesteps class-identity issues
     # when callers import PermissionsContext from a differently-loaded module.
-    ctx_data = ctx if isinstance(ctx, dict) else ctx.model_dump()
+    # If neither: fall back to an empty context rather than raise — Teams
+    # transport must never 500 the webhook.
+    if isinstance(ctx, dict):
+        ctx_data: dict = ctx
+    elif hasattr(ctx, "model_dump"):
+        ctx_data = ctx.model_dump()
+    else:
+        ctx_data = {}
     return InternalCopilotRequest(
         tenant_id=event.tenant_id,
         user_id=event.aad_object_id or event.user_id,
@@ -145,9 +166,16 @@ def from_copilot_response(resp: InternalCopilotResponse) -> dict[str, Any]:
     (Level 4) and intentionally not fabricated here.
     """
     text = resp.text or ""
+    # Citations come from the copilot (DB / LLM extraction) and may be
+    # hostile-shaped in edge cases (None entries, non-dict items). This
+    # function runs OUTSIDE the service.handle_activity copilot try/except,
+    # so a single bad citation would 500 the webhook → Teams retry storm.
+    # Best-effort: skip non-dict entries silently, never raise.
     if resp.citations:
         refs = []
         for i, c in enumerate(resp.citations[:5], start=1):
+            if not isinstance(c, dict):
+                continue
             label = c.get("title") or c.get("dataset") or c.get("source") or f"fuente {i}"
             refs.append(f"[{i}] {label}")
         if refs:
