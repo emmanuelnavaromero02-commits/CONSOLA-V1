@@ -605,6 +605,10 @@ services:
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      # Salesforce + HubSpot DAGs (service may not be provisioned on every AWS
+      # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
+      - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
+      - /opt/modecissions/cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
     networks:
       - modecissions_net
     depends_on:
@@ -669,6 +673,10 @@ services:
       # Sprint v1.40: Replicon DAGs ship inside the cartridge.
       - /opt/modecissions/cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       - /opt/modecissions/cartridges/sap_s4hana/dags:/opt/airflow/dags/sap_s4hana:ro
+      # Salesforce + HubSpot DAGs (service may not be provisioned on every AWS
+      # target yet; mount is safe — Airflow sees an empty dir if unprovisioned).
+      - /opt/modecissions/cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
+      - /opt/modecissions/cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
     networks:
       - modecissions_net
     depends_on:

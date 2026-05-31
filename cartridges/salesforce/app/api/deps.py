@@ -11,15 +11,9 @@ import secrets
 
 from fastapi import Header, HTTPException, status
 
-from app.security import get_internal_api_key
+from app.security import ALLOWED_INTERNAL_SERVICES, get_internal_api_key
 
-_ALLOWED_INTERNAL_SERVICES = {
-    "console",
-    "workspace",
-    "refinement",
-    "mcp-infra",
-    "airflow",
-}
+_ALLOWED_INTERNAL_SERVICES = ALLOWED_INTERNAL_SERVICES
 
 
 def verify_api_key(

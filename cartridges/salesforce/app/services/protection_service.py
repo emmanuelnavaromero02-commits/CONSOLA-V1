@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_logger = logging.getLogger(__name__)
 from cryptography.fernet import Fernet
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -79,6 +82,11 @@ def apply_protection_for_entity(entity_name: str, rows: list[dict]) -> list[dict
         new_row = dict(row)
         for field_name, rule in rules.items():
             if field_name not in new_row:
+                _logger.warning(
+                    "Protection rule %r configured for %r but field absent from row; "
+                    "check that Salesforce API returns PascalCase field names",
+                    rule, field_name,
+                )
                 continue
             if rule == "plain":
                 pass

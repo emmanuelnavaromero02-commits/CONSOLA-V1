@@ -56,12 +56,22 @@ estas reglas además de las globales.
    mucho en la misma etapa (`salesforce_velocidad_pipeline` da el promedio para
    comparar). No las mezcles en una sola etiqueta.
 
+## Agentes
+
+- **El Pronosticador** (`salesforce_pipeline_forecaster`): analiza `salesforce_pipeline_forecast`. Responde sobre forecast, pipeline abierto y lo ganado por mes/vendedor.
+- **Centinela de Deals** (`salesforce_deal_risk_sentinel`): analiza `salesforce_deals_en_riesgo`. Detecta opps sin actividad, con cierre vencido o estancadas.
+- **Vigía de Cuota** (`salesforce_quota_watchdog`): analiza `salesforce_cobertura_cuota`. La cuota es NULL — compara ganado vs promedio del equipo.
+- **Analista de Margen** (`salesforce_margin_analyst`): analiza `salesforce_vendedor_margen`. Descuento como proxy de margen; no hay costo real cargado.
+- **Enlace Operativo** (`salesforce_ops_liaison`): analiza `salesforce_forecast_vs_capacidad`. Cruza Salesforce con Replicon — requiere gold de Replicon materializado.
+
 ## Apps publicadas
 
 - `salesforce_pipeline_forecast` — pipeline y forecast ponderado por vendedor.
 - `salesforce_deals_en_riesgo` — oportunidades abiertas en riesgo, por monto.
 - `salesforce_velocidad_pipeline` — días promedio por etapa del pipeline.
 - `salesforce_vendedor_margen` — volumen ganado vs descuento por vendedor.
+- `salesforce_cobertura_cuota` — ganado y forecast por vendedor; cuota NULL.
+- `salesforce_forecast_vs_capacidad` — forecast vs capacidad operativa (Replicon).
 
 ## Limitaciones honestas
 
