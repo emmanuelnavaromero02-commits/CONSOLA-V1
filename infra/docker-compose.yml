@@ -173,8 +173,8 @@ services:
       MINIO_SECURE:      "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY:    ${GEMINI_API_KEY:-}
-      CHAT_LLM_PROVIDER: ${CHAT_LLM_PROVIDER:-gemini}
-      CHAT_LLM_MODEL:    ${CHAT_LLM_MODEL:-gemini-1.5-flash}
+      CHAT_LLM_PROVIDER: ${CHAT_LLM_PROVIDER:-anthropic}
+      CHAT_LLM_MODEL:    ${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REFINEMENT_URL:    http://refinement:8500
       MCP_INFRA_URL:     http://mcp-infra:8010
@@ -278,8 +278,8 @@ services:
       WORKSPACE_PUBLIC_URL: ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
       ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY:       ${GEMINI_API_KEY:-}
-      CHAT_LLM_PROVIDER:    ${CHAT_LLM_PROVIDER:-gemini}
-      CHAT_LLM_MODEL:       ${CHAT_LLM_MODEL:-gemini-1.5-flash}
+      CHAT_LLM_PROVIDER:    ${CHAT_LLM_PROVIDER:-anthropic}
+      CHAT_LLM_MODEL:       ${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}
       GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REDIS_URL:            ${REDIS_URL:-redis://redis:6379/0}
     ports:

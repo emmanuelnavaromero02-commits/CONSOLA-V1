@@ -152,6 +152,24 @@ def test_fastapi_pages_router_serves_console_next_export():
         assert route in src
 
 
+def test_fastapi_workspace_route_serves_workspace_shell_not_copilot_layout():
+    src = _read(REPO / "console/app/routers/pages.py")
+    start = src.index('"/workspace"')
+    end = src.index('@router.post(\n    "/workspace/chat"', start)
+    workspace_route = src[start:end]
+    assert 'FileResponse(STATIC / "workspace.html")' in workspace_route
+    assert 'set_csrf_cookie' in workspace_route
+    assert '"workspace/index.html"' not in workspace_route
+
+
+def test_fastapi_workspace_proxy_forwards_csrf_header_to_workspace_service():
+    src = _read(REPO / "console/app/routers/pages.py")
+    start = src.index("def _workspace_headers")
+    end = src.index("async def _workspace_proxy", start)
+    workspace_headers = src[start:end]
+    assert '"x-csrf-token"' in workspace_headers
+
+
 def test_fastapi_console_next_csp_hashes_inline_next_scripts():
     src = _read(REPO / "console/app/routers/pages.py")
     assert "_INLINE_SCRIPT_RE" in src
