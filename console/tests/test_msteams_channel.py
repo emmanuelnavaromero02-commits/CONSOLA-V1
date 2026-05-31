@@ -1023,6 +1023,48 @@ def test_status_endpoint_requires_console_session():
     )
 
 
+@pytest.mark.asyncio
+async def test_display_name_audited_for_ux_but_auth_remains_by_aad_id():
+    # Feature toggle: display name surfaces in audit + copilot metadata for
+    # forensic readability ("which human pushed this button") and a natural
+    # "Hola Juan" UX. But the authorization gate is UNCHANGED — it must
+    # still consult AAD object id only, never name. This regression locks
+    # both halves: name visible in metadata, AAD id authoritative for auth.
+    ctx, run_turn = _patch_backend(reply="ok")
+    captured = {}
+    activity = _dm_activity()
+    activity["from"]["name"] = "Juan Pérez"
+    with ctx:
+        service.audit_service.record_event.side_effect = lambda **kw: captured.update(kw)
+        res = await service.handle_activity(activity, cfg=_cfg())
+    assert res.status == "ok"
+    # Audit carries the display name AND the AAD id, separately.
+    md = captured.get("metadata", {})
+    assert md.get("teams_user_name") == "Juan Pérez"
+    assert md.get("teams_user_id") == AAD  # AAD id is the auth identity
+    # Copilot also received the name as UX context (not as identity).
+    kwargs = run_turn.await_args.kwargs
+    # The copilot user dict still carries the REAL console role; the Teams
+    # display name is metadata, not a substitute identity.
+    assert kwargs["user"]["id"] == 42  # resolved from email → console DB
+    assert kwargs["user"]["role"] == "analyst"
+
+
+@pytest.mark.asyncio
+async def test_changing_display_name_with_unallowlisted_aad_id_is_still_rejected():
+    # Adversarial regression: an attacker editing their Teams display name
+    # to match an allowlisted person ("Director Financiero") but whose AAD
+    # object id is NOT in MSTEAMS_ALLOWED_USERS must still be rejected.
+    # The display name must NEVER substitute for the stable id.
+    ctx, run_turn = _patch_backend()
+    activity = _dm_activity(aad="00000000-0000-0000-0000-000000000000")
+    activity["from"]["name"] = "Director Financiero"  # name of an allowlisted person
+    with ctx:
+        res = await service.handle_activity(activity, cfg=_cfg())
+    assert res.status == "unauthorized"
+    run_turn.assert_not_awaited()
+
+
 def test_citation_label_is_length_capped():
     # A hostile copilot/LLM could return a 10KB citation title and bloat the
     # Teams reply past the ~4KB message body budget, causing silent drops or

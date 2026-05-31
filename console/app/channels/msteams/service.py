@@ -243,6 +243,14 @@ async def _audit(
             metadata.update({
                 "tenant_id": event.tenant_id,
                 "teams_user_id": event.aad_object_id or event.user_id,
+                # Display name is audited for UX / forensic readability ("which
+                # human did this") but is NEVER consulted for authorization —
+                # auth is exclusively by stable AAD object id. The name is
+                # attacker-influenceable (Teams lets users edit their own
+                # display name), so trusting it as a security control would
+                # be a known anti-pattern. See the security-model section of
+                # the channel README.
+                "teams_user_name": event.user_name,
                 "conversation_id": event.conversation_id,
                 "message_id": event.message_id,
                 "mode": event.mode(),

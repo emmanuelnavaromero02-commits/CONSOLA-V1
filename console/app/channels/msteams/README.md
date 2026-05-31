@@ -88,6 +88,13 @@ response never contains secrets (only counts / booleans).
 - **Stable ids only** for authorization (AAD object id, Bot Framework
   conversation id). Display names are mutable and never authorize anything;
   there is no name-matching escape hatch in this version.
+- **Display names ARE used for UX and audit readability** (so an operator
+  reviewing the audit log sees "Juan Pérez" alongside the AAD GUID, and so
+  the copilot can render "Hola Juan" replies). They are passed to the
+  copilot via request metadata (`teams_user_name`) and stored in the audit
+  event (`metadata.teams_user_name`). **Auth is still exclusively by AAD id.**
+  A user editing their Teams display name does NOT change who they can
+  impersonate — auth is recomputed from the AAD GUID on every turn.
 - **Empty allowlist + allowlist policy = nobody** (never "everybody").
 - **Secrets**: never logged, never returned by `/status`, never in audit.
 - **Errors**: contained — the webhook returns a generic reply and a safe

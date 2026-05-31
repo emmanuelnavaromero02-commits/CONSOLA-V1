@@ -167,6 +167,12 @@ def to_internal_request(
             "message_id": event.message_id,
             "conversation_type": event.conversation_type,
             "service_url": event.service_url,
+            # Display name surfaced to the copilot as UX context (e.g. for a
+            # natural "Hola, Juan" reply). Auth is unchanged — the copilot
+            # still derives permissions from the resolved console user.role,
+            # not from this string. Bots that trust the name as identity are
+            # a known anti-pattern.
+            "teams_user_name": event.user_name,
         },
         permissions_context=ctx_data,
     )
