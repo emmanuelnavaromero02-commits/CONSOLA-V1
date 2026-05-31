@@ -13,11 +13,22 @@ DO $$
 DECLARE
   pw TEXT := current_setting('app.omega_cartridge_salesforce_password', true);
 BEGIN
-  IF pw IS NULL OR pw = '' THEN
-    RAISE EXCEPTION 'app.omega_cartridge_salesforce_password not set; refusing to create role with empty password';
-  END IF;
+  -- Salesforce is deployed on the local stack but not on every target yet
+  -- (e.g. AWS ships no salesforce service or secret). Never create a
+  -- passwordless LOGIN role: when a password is supplied, create a normal LOGIN
+  -- role; when it's absent (target where the cartridge isn't provisioned),
+  -- create a NOLOGIN role so the GRANTs below still apply — the role just can't
+  -- authenticate until a password is provisioned and it is ALTERed to LOGIN.
+  -- This keeps the shared init resilient instead of aborting the whole DB init.
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omega_cartridge_salesforce') THEN
-    EXECUTE format('CREATE ROLE omega_cartridge_salesforce LOGIN PASSWORD %L', pw);
+    IF pw IS NULL OR pw = '' THEN
+      CREATE ROLE omega_cartridge_salesforce NOLOGIN;
+      RAISE NOTICE 'omega_cartridge_salesforce created NOLOGIN (no password provisioned on this target)';
+    ELSE
+      EXECUTE format('CREATE ROLE omega_cartridge_salesforce LOGIN PASSWORD %L', pw);
+    END IF;
+  ELSIF pw IS NOT NULL AND pw <> '' THEN
+    EXECUTE format('ALTER ROLE omega_cartridge_salesforce LOGIN PASSWORD %L', pw);
   END IF;
 END $$;
 
