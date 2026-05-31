@@ -38,8 +38,9 @@ _PII_NAME_HINTS = (
     "account_number", "birth", "nacimiento", "gbdat", "address", "direccion",
     "salary", "salario", "sueldo", "compensation", "pernr",
     # national identifiers + name/DOB tokens (token-exact, so 'name' won't
-    # match 'filename' once camel/underscore-split)
-    "dni", "nss", "dob", "zip", "postal", "ip",
+    # match 'filename' once camel/underscore-split). 'national'/'voter' are
+    # safe as exact tokens (no money/metric collision).
+    "dni", "nss", "dob", "zip", "postal", "ip", "national", "voter",
 )
 _MONEY_NAME_HINTS = (
     "amount", "monto", "importe", "price", "precio", "cost", "costo", "revenue",
