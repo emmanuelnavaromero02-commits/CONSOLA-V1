@@ -146,13 +146,21 @@ def repair_sql(sql: str, layer: str, reasons: list[str]) -> str:
         # scope (audit #13).
         low = masked.lower()
         if "read_parquet" in low and "{latest_date}" not in masked:
+            has_where = bool(re.search(r"\bWHERE\b", masked, re.IGNORECASE))
             if "load_date" in low:
                 fixed, n = re.subn(
                     r"(?i)\bload_date\s*=\s*(?:\x00\d+\x00|\S+)",
                     "load_date = '{latest_date}'",
                     masked,
                 )
-                masked = fixed if n else f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
+                if n:
+                    masked = fixed
+                elif has_where:
+                    masked = f"{masked.rstrip()} AND load_date = '{{latest_date}}'"
+                else:
+                    masked = f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
+            elif has_where:
+                masked = f"{masked.rstrip()} AND load_date = '{{latest_date}}'"
             else:
                 masked = f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
 
@@ -177,9 +185,9 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
     if reasons:
         return ValidationResult(False, reasons)
 
-    entity_names = {e.get("entity") or e.get("name") for e in blueprint["entities"]} - {None}
-    dag_ids = {d.get("dag_id") for d in blueprint["dags"]} - {None}
-    dataset_names = {d.get("name") for d in blueprint["datasets"]} - {None}
+    entity_names = {e.get("entity") or e.get("name") for e in blueprint["entities"] if isinstance(e, dict)} - {None}
+    dag_ids = {d.get("dag_id") for d in blueprint["dags"] if isinstance(d, dict)} - {None}
+    dataset_names = {d.get("name") for d in blueprint["datasets"] if isinstance(d, dict)} - {None}
 
     if not entity_names:
         reasons.append("blueprint has no entities")
@@ -192,14 +200,18 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
 
     # Every entity must reference an existing dag_id.
     for e in blueprint["entities"]:
+        if not isinstance(e, dict):
+            continue
         did = e.get("dag_id")
-        if did and did not in dag_ids:
+        if did is not None and did and did not in dag_ids:
             reasons.append(f"entity '{e.get('entity')}' references unknown dag_id '{did}'")
 
     # Dataset names unique; gold sources should reference a known silver dataset.
     if len(dataset_names) != len(blueprint["datasets"]):
         reasons.append("duplicate dataset names")
     for d in blueprint["datasets"]:
+        if not isinstance(d, dict):
+            continue
         if d.get("layer") == "gold":
             for src in d.get("sources") or []:
                 if src not in dataset_names and src not in entity_names:
@@ -207,6 +219,8 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
 
     # Per-layer SQL must validate.
     for d in blueprint["datasets"]:
+        if not isinstance(d, dict):
+            continue
         layer = d.get("layer")
         if layer == "silver":
             vr = validate_silver_sql(d.get("sql", ""))

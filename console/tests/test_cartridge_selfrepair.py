@@ -286,3 +286,23 @@ def test_validate_blueprint_none_entity_name_ignored():
     vr = sr.validate_blueprint(bp)
     # No crash; entity_names set excludes None without raising.
     assert isinstance(vr.ok, bool)
+
+
+def test_repair_sql_silver_and_clause_when_where_exists():
+    """Silver repair must use AND (not a second WHERE) when a WHERE clause already exists."""
+    sql = "SELECT * FROM read_parquet('s3://x/**/*.parquet') WHERE amount > 0"
+    result = sr.repair_sql(sql, "silver", ["silver sql must filter the latest partition"])
+    assert "WHERE amount > 0 AND load_date" in result or "where amount > 0 and load_date" in result.lower()
+    assert result.upper().count("WHERE") == 1
+
+
+def test_validate_blueprint_none_items_in_lists_no_crash():
+    """None items in entities/dags/datasets lists must not crash validate_blueprint."""
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [None, {"entity": "e", "dag_id": "d"}],
+        "dags": [None, {"dag_id": "d"}],
+        "datasets": [None],
+    }
+    vr = sr.validate_blueprint(bp)
+    assert isinstance(vr.ok, bool)  # no crash

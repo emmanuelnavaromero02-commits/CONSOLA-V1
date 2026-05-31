@@ -188,3 +188,25 @@ def test_graphql_introspection_entity_cap():
     sample = {"data": {"__schema": {"types": types}}}
     out = r.parse_graphql_introspection(sample)
     assert len(out) <= r._MAX_ENTITIES
+
+
+def test_first_record_wrapper_with_none_value_returns_none():
+    """_first_record on a wrapper dict with None-valued keys must return None, not the wrapper."""
+    from app.services.cartridge_introspect_router import _first_record
+    assert _first_record({"results": None}) is None
+    assert _first_record({"data": None, "items": None}) is None
+    # A direct record (no wrapper keys) still returns itself
+    assert _first_record({"id": 1, "name": "foo"}) == {"id": 1, "name": "foo"}
+
+
+def test_first_record_empty_list_returns_none():
+    """_first_record on a wrapper with an empty list must return None."""
+    from app.services.cartridge_introspect_router import _first_record
+    assert _first_record({"results": []}) is None
+    assert _first_record({"data": []}) is None
+
+
+def test_parse_json_sample_none_results_produces_no_fields():
+    """parse_json_sample with {'results': None} must produce no phantom fields."""
+    out = r.parse_json_sample({"results": None}, "records")
+    assert out == {}

@@ -390,3 +390,20 @@ def test_build_blueprint_tolerates_none_in_entities_list():
         ],
     )
     assert len(bp["entities"]) == 1
+
+
+def test_gold_sql_excludes_pii_date_fields_from_group_by():
+    """Gold SQL must not GROUP BY a PII-classified date field (e.g., birth_date)."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "people", "fields": [
+            {"name": "id", "type": "string", "primary_key": True},
+            {"name": "amount", "type": "float"},
+            {"name": "birth_date", "type": "date"},   # PII — excluded from Gold GROUP BY
+            {"name": "updated_at", "type": "timestamp"},
+        ]}],
+    )
+    gold_datasets = [d for d in bp["datasets"] if d["layer"] == "gold"]
+    assert gold_datasets, "need gold to test"
+    for gd in gold_datasets:
+        assert "birth_date" not in gd["sql"]

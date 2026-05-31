@@ -223,7 +223,10 @@ def _gold_sql(ent: dict[str, Any]) -> str | None:
     silver = _qi(f"silver_{ent['name']}")
     # de-dup money fields so we never emit two identical SUM aliases (invalid SQL)
     money = list(dict.fromkeys(ent["money_fields"]))
-    dates = ent["date_fields"]
+    # Exclude PII-classified fields from GROUP BY to prevent quasi-identifier
+    # leakage (e.g., grouping by birth_date reveals demographic data).
+    pii = set(ent.get("pii_fields", []))
+    dates = [d for d in ent["date_fields"] if d not in pii]
     if not money:
         return None
     sums = ",\n  ".join(f"SUM({_qi(m)}) AS {_qi('total_' + m)}" for m in money)

@@ -373,12 +373,21 @@ def _first_record(sample: Any) -> Any:
     if isinstance(sample, list):
         return sample[0] if sample else None
     if isinstance(sample, dict):
+        has_wrapper_key = False
         for key in ("data", "results", "value", "items", "records"):
-            v = sample.get(key)
+            if key not in sample:
+                continue
+            has_wrapper_key = True
+            v = sample[key]
             if isinstance(v, list) and v:
                 return v[0]
             if isinstance(v, dict):
                 return v
+        # If this dict has known wrapper keys but all had empty/None values,
+        # return None rather than the wrapper itself (which would produce
+        # phantom fields like "results: string" in the schema).
+        if has_wrapper_key:
+            return None
         return sample
     return None
 
