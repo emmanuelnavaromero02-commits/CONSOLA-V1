@@ -22,10 +22,15 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+# MUST stay byte-for-byte aligned with refinement/app/llm_sql.py's
+# _SQL_FORBIDDEN_RE so SQL that passes self-repair is never rejected by the
+# real engine validator at create time (audit round-2 #13).
 _FORBIDDEN_SQL = re.compile(
-    r"\b(insert|update|delete|drop|truncate|alter|grant|revoke|copy|attach|create)\b",
+    r"\b(attach|call|copy|create|delete|drop|export|import|insert|install|load|pragma|set|truncate|update|alter)\b",
     re.IGNORECASE,
 )
+# Same single-quote masking as the engine (handles escaped '' inside literals).
+_SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
 
 
 class ValidationResult:
@@ -55,9 +60,10 @@ def _base_sql_checks(sql: str) -> list[str]:
     # Mask string literals FIRST so glob patterns inside paths (e.g.
     # read_parquet('s3://.../**/*.parquet')) don't trip the comment / DML
     # checks — '**/*' literally contains the '/*' block-comment sequence.
-    body = re.sub(r"'[^']*'", "''", s)
-    if ";" in body.rstrip(";"):
-        reasons.append("sql must not contain intermediate ';' (multi-statement)")
+    body = _SINGLE_QUOTED_RE.sub("''", s)
+    # ANY semicolon is rejected (matches the engine — even a lone trailing ';').
+    if ";" in body:
+        reasons.append("sql must not contain ';' (multi-statement)")
     if "--" in body or "/*" in body:
         reasons.append("sql must not contain comments")
     if _FORBIDDEN_SQL.search(body):

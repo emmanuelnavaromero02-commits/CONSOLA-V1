@@ -183,3 +183,48 @@ def test_repair_blueprint_sql_end_to_end():
     repaired = sr.repair_blueprint_sql(bp)
     assert "_selfrepair_report" in repaired
     assert all(r["ok"] for r in repaired["_selfrepair_report"])
+
+
+def test_validator_aligned_with_engine_trailing_semicolon():
+    """Audit-13: a trailing ';' must be REJECTED to match refinement.llm_sql
+    (which rejects any ';'), so SQL that passes self-repair is never rejected by
+    the real engine at create time."""
+    assert not sr.validate_gold_sql("SELECT SUM(x) FROM silver_t GROUP BY 1;").ok
+
+
+def test_validator_aligned_forbidden_keywords():
+    """Audit-13: keyword set must match the engine (set/load/pragma/attach...)."""
+    for kw_sql in ("SELECT set FROM t", "SELECT * FROM t WHERE load_date='{latest_date}' AND x IN (load)"):
+        assert not sr.validate_gold_sql(kw_sql).ok
+
+
+def test_literal_semicolon_not_false_positive_and_survives_repair():
+    """Audit-13: a ';' inside a string literal is valid and must not be mangled."""
+    sql = "SELECT * FROM read_parquet('s3://x/**/*.parquet') WHERE note='a;b' AND load_date='{latest_date}'"
+    assert sr.validate_silver_sql(sql).ok
+    repaired = sr.repair_sql("SELECT 'a;b' AS x FROM silver_t", "gold", ["x"])
+    assert "'a;b'" in repaired  # literal preserved
+
+
+def test_silver_additive_repair_appends_at_end_not_subquery():
+    """Audit-13: the latest_date filter is appended at the end, not injected into
+    a subquery's WHERE (which would corrupt scope)."""
+    sql = ("SELECT a, (SELECT max(b) FROM read_parquet('s3://s/**/*.parquet') WHERE c=1) "
+           "FROM read_parquet('s3://t/**/*.parquet')")
+    fixed = sr.repair_sql(sql, "silver", ["missing latest"])
+    # the appended filter must be after the outer FROM, i.e. at the tail
+    assert fixed.rstrip().endswith("load_date = '{latest_date}'")
+
+
+def test_validate_blueprint_rejects_unsafe_identifiers():
+    """Audit-13 #4: entity/dataset names must be SQL-safe."""
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [{"entity": "bad name; drop", "dag_id": "d"}],
+        "dags": [{"dag_id": "d"}],
+        "datasets": [{"name": "1$weird", "layer": "silver",
+                      "sql": "SELECT * FROM read_parquet('s3://a/**/*.parquet') WHERE load_date='{latest_date}'"}],
+    }
+    vr = sr.validate_blueprint(bp)
+    assert not vr.ok
+    assert any("unsafe" in r for r in vr.reasons)
