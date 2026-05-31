@@ -44,6 +44,10 @@ READ_ONLY_TOOLS = {
     # Studio app/catalog read-only
     "list_apps", "get_app_details", "get_app_html",
     "get_data_catalog", "describe_source", "describe_silver",
+    "list_sources", "preview_source", "get_source_partitions",
+    "generate_transform", "preview_transform", "list_datasets",
+    "list_datasets_with_schemas", "query_dataset", "get_lineage",
+    "superset_list_databases", "superset_list_datasets",
 
     # agent catalog read-only
     "agent_list", "agent_get",
@@ -60,6 +64,9 @@ READ_ONLY_TOOLS = {
     "cartridge_get_run_logs", "cartridge_get_job_status",
     "cartridge_list_jobs", "cartridge_list_kbs",
     "generate_dag_code",
+    "cartridge_self_check",
+    "create_goal_run", "plan_goal_run", "execute_goal_run",
+    "get_goal_run_status",
     "introspect_source",
     "validate_dag_code",
 

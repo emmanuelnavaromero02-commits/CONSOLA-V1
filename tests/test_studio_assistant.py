@@ -88,6 +88,54 @@ async def test_studio_assistant_only_exposes_whitelisted_tools(studio_assistant_
 
 
 @pytest.mark.asyncio
+async def test_studio_assistant_blocks_direct_write_tool_invocation(studio_assistant_module, monkeypatch):
+    captured = {}
+    audits = []
+    invoked = False
+
+    async def fake_list_servers():
+        return _servers()
+
+    async def fake_invoke(*_args, **_kwargs):
+        nonlocal invoked
+        invoked = True
+        raise AssertionError("direct write tool should not be invoked")
+
+    async def fake_audit(**kwargs):
+        audits.append(kwargs)
+
+    async def fake_chat(**kwargs):
+        result = await kwargs["invoke_tool"](
+            "infra",
+            "superset_create_dataset",
+            {"dataset": "gold_margin", "password": "secret"},
+        )
+        captured["result"] = result
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "list_servers", fake_list_servers)
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_assistant_module.audit_service, "record_event", fake_audit)
+    monkeypatch.setattr(studio_assistant_module.llm_client, "chat", fake_chat)
+
+    await studio_assistant_module.chat(
+        "crea este dataset",
+        [],
+        step=5,
+        manifest={"id": "hubspot", "name": "HubSpot"},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai"},
+    )
+
+    assert invoked is False
+    assert captured["result"]["approval_required"] is True
+    assert captured["result"]["tool"] == "infra__superset_create_dataset"
+    assert captured["result"]["args_preview"]["password"] == "***"
+    assert audits[-1]["status"] == "pending_approval"
+    assert audits[-1]["tool_result_status"] == "pending_approval"
+
+
+@pytest.mark.asyncio
 async def test_copilot_service_respects_tools_whitelist(studio_assistant_module):
     tools = [
         {"name": "infra__list_cartridges"},
@@ -97,6 +145,12 @@ async def test_copilot_service_respects_tools_whitelist(studio_assistant_module)
     filtered = studio_assistant_module.filter_tools_by_whitelist(tools, {"list_cartridges"})
 
     assert filtered == [{"name": "infra__list_cartridges"}]
+
+
+def test_studio_assistant_analyst_policy_uses_manifest_risk(studio_assistant_module):
+    assert studio_assistant_module.is_tool_allowed_for_role("analyst", "infra__list_cartridges") is True
+    assert studio_assistant_module.is_tool_allowed_for_role("analyst", "infra__dag_get_source") is False
+    assert studio_assistant_module.is_tool_allowed_for_role("analyst", "infra__cartridge_query_kb") is False
 
 
 def test_studio_assistant_audits_messages(monkeypatch):

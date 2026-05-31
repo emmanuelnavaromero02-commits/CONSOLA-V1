@@ -306,7 +306,9 @@ async def test_studio_assistant_exposes_introspect_source_in_steps_2_and_3(monke
     step_3_names = {tool["name"] for tool in studio_assistant.filter_tools_for_step(captured["tools"], 3)}
     assert "studio__generate_dag_code" not in step_3_names
     assert "studio__validate_dag_code" not in step_3_names
-    assert not studio_assistant.filter_tools_for_step(captured["tools"], 1)
+    step_1_names = {tool["name"] for tool in studio_assistant.filter_tools_for_step(captured["tools"], 1)}
+    assert "studio__generate_dag_code" not in step_1_names
+    assert "studio__validate_dag_code" not in step_1_names
 
 
 @pytest.mark.asyncio
@@ -477,7 +479,14 @@ def test_studio_step_tools_stay_whitelisted_and_dag_step_slim(monkeypatch):
     assert not missing, f"STEP_TOOLS entries missing from whitelist: {sorted(missing)}"
 
     expected_local_steps = {
+        "approve_goal_step": [1, 2, 3, 4, 5, 6, 7],
+        "cartridge_self_check": [1, 2, 3, 4, 5, 6, 7],
+        "create_goal_run": [1, 2, 3, 4, 5, 6, 7],
+        "execute_goal_run": [1, 2, 3, 4, 5, 6, 7],
+        "get_goal_run_status": [1, 2, 3, 4, 5, 6, 7],
         "introspect_source": [2, 3],
+        "plan_goal_run": [1],
+        "reject_goal_step": [1, 2, 3, 4, 5, 6, 7],
         "generate_dag_code": [2],
         "validate_dag_code": [2],
         "create_full_cartridge": [1],
@@ -498,4 +507,4 @@ def test_studio_step_tools_stay_whitelisted_and_dag_step_slim(monkeypatch):
         for tool in sorted(studio_assistant.STUDIO_TOOLS_WHITELIST)
     ]
     dag_tools = studio_assistant.filter_tools_for_step(synthetic_tools, 2)
-    assert len(dag_tools) < 20
+    assert len(dag_tools) <= 25
