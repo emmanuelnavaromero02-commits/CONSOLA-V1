@@ -145,3 +145,22 @@ def test_learn_from_correction_deep_immutable():
     new["learned_sql"]["k"]["sql"] = "MUT"
     assert orig["learned_sql"]["k"]["sql"] == "x"
     assert ci.recall_learned_sql(new, "k2") == "y"
+
+
+def test_plan_from_descriptor_non_dict_guard():
+    """Audit-17: non-dict descriptor returns clean ok:False, never crashes."""
+    plan = fp.plan_from_descriptor("nope", cartridge_id="x", name="X")
+    assert plan["ok"] is False
+    assert plan["reason"] == "descriptor must be an object"
+
+
+def test_highlight_handles_none_desc():
+    """Audit-17: None name/desc in a suggestion must not crash highlighting."""
+    import app.services.cartridge_intent as ci
+    orig = ci._DOMAIN_ANALYTICS.get("crm")
+    ci._DOMAIN_ANALYTICS["crm"] = [{"name": None, "desc": None}, {"name": "forecast_x", "desc": "forecast"}]
+    try:
+        plan = fp.plan_from_intent("dame forecast de HubSpot", _crm_sample_descriptor())
+        assert any(a["name"] == "forecast_x" for a in plan["highlighted_analytics"])
+    finally:
+        ci._DOMAIN_ANALYTICS["crm"] = orig

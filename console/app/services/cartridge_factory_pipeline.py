@@ -132,6 +132,6 @@ def plan_from_intent(text: str, descriptor: dict[str, Any]) -> dict[str, Any]:
     if "forecast" in intent["outputs"]:
         plan["highlighted_analytics"] = [
             a for a in plan.get("suggested_analytics", [])
-            if "forecast" in a.get("name", "") or "forecast" in a.get("desc", "").lower()
+            if "forecast" in (a.get("name") or "") or "forecast" in (a.get("desc") or "").lower()
         ]
     return plan

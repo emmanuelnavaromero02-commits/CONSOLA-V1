@@ -48,13 +48,9 @@ def _safe_field(spec: dict[str, Any]) -> Field | None:
         return None
 
 
-def _collect(specs: list[dict[str, Any]]) -> list[Field]:
-    out: list[Field] = []
-    for spec in specs:
-        f = _safe_field(spec)
-        if f is not None:
-            out.append(f)
-    return out
+# DoS caps for adversarially-large introspected schemas (audit #15).
+_MAX_ENTITIES = 500
+_MAX_FIELDS_PER_ENTITY = 1000
 
 
 def _append_field(fields: list[Field], spec: dict[str, Any]) -> None:

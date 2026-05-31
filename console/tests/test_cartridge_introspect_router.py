@@ -114,3 +114,10 @@ def test_extract_entities_end_to_end_csv():
 def test_extract_entities_empty_safe():
     entities, kind = r.extract_entities({"kind": "soap", "wsdl": "<not-xml"})
     assert entities == []  # malformed -> empty, no crash
+
+
+def test_dos_cap_on_huge_schema():
+    """Audit-15: a huge schema is capped (entities <=500, fields <=1000)."""
+    cols = [{"table_name": "t", "column_name": f"c{i}", "data_type": "int"} for i in range(3000)]
+    ents, _ = r.extract_entities({"columns": cols})
+    assert len(ents[0]["fields"]) <= 1000
