@@ -37,6 +37,9 @@ _PII_NAME_HINTS = (
     "passport", "pasaporte", "iban", "clabe", "tarjeta", "card", "cuenta",
     "account_number", "birth", "nacimiento", "gbdat", "address", "direccion",
     "salary", "salario", "sueldo", "compensation", "pernr",
+    # national identifiers + name/DOB tokens (token-exact, so 'name' won't
+    # match 'filename' once camel/underscore-split)
+    "dni", "nss", "dob", "zip", "postal", "ip",
 )
 _MONEY_NAME_HINTS = (
     "amount", "monto", "importe", "price", "precio", "cost", "costo", "revenue",
@@ -58,31 +61,58 @@ def classify_field(field: dict[str, Any]) -> dict[str, Any]:
     ftype = str(field.get("type") or "string").lower()
     is_pk = bool(field.get("primary_key"))
 
+    # Token-aware hint matching: split the name into word tokens (on
+    # non-alphanumeric AND camelCase boundaries) so a hint like "card"
+    # matches "card_number"/"cardNumber" but NOT "dashboard", and "value"
+    # matches "order_value" but not "valuestream".
+    camel = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(name)).lower()
+    tokens = {t for t in re.split(r"[^a-z0-9]+", camel) if t}
+
+    def _hint_hit(hints: tuple[str, ...]) -> bool:
+        # A hint matches only when it equals a whole token — no substring
+        # bleed (the camelCase split already separated glued words).
+        return any(h in tokens for h in hints)
+
     role = "dimension"
     protect = False
 
-    if is_pk or lname == "id" or lname.endswith("_id"):
-        role = "key"
-    elif any(h in lname for h in _PII_NAME_HINTS):
+    # PII detection runs FIRST so identifiers that are actually sensitive
+    # (national_id, tax_id, voter_id, ssn...) are encrypted, not treated as
+    # harmless keys. A surrogate key like 'id'/'deal_id' has no PII token and
+    # still falls through to the key branch below.
+    if _hint_hit(_PII_NAME_HINTS):
         role = "pii"
         protect = True
+    elif is_pk or lname == "id" or lname.endswith("_id"):
+        role = "key"
     elif ftype in _DATE_TYPES:
         role = "date"
-    elif ftype in {"int", "float", "number", "decimal"} and any(
-        h in lname for h in _MONEY_NAME_HINTS
-    ):
+    elif ftype in {"int", "float", "number", "decimal"} and _hint_hit(_MONEY_NAME_HINTS):
         role = "money"
     elif ftype in {"int", "float", "number", "decimal"}:
         role = "metric"
 
     out = dict(field)
+    out["name"] = name  # guarantee 'name' key (defaults to "") for downstream use
     out["role"] = role
     out["protected"] = protect
     return out
 
 
+def _slug_identifier(value: str, fallback: str = "entity") -> str:
+    """Coerce a name to the create_full_cartridge identifier contract
+    (^[A-Za-z_][A-Za-z0-9_]{0,127}$): replace bad chars, ensure leading letter,
+    truncate. So a source entity 'Order Items'/'Niños'/'123tbl' becomes a valid
+    table identifier instead of crashing the downstream gate."""
+    s = re.sub(r"[^A-Za-z0-9_]", "_", str(value or "").strip())
+    if not s or not (s[0].isalpha() or s[0] == "_"):
+        s = "e_" + s
+    return s[:127] or fallback
+
+
 def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
-    fields = [classify_field(f) for f in (entity.get("fields") or [])]
+    # Skip fields with no usable name (avoids blank column refs in generated SQL).
+    fields = [c for c in (classify_field(f) for f in (entity.get("fields") or [])) if c["name"]]
     pk = entity.get("primary_key") or next(
         (f["name"] for f in fields if f["role"] == "key"), None
     )
@@ -96,7 +126,7 @@ def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
         next((f["name"] for f in fields if f["role"] == "date"), None),
     )
     return {
-        "name": str(entity.get("name") or entity.get("entity") or "entity"),
+        "name": _slug_identifier(entity.get("name") or entity.get("entity") or "entity"),
         "fields": fields,
         "primary_key": pk,
         "watermark_field": watermark,
@@ -110,6 +140,13 @@ def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
 # ── SQL builders (Silver = latest-partition dedup; Gold = domain metrics) ─────
 
 
+def _qi(name: str) -> str:
+    """Quote a SQL identifier for DuckDB/Postgres so reserved words (order,
+    group, key...) and mixed-case names never break generated SQL. Safe for
+    non-reserved names too."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
 def _silver_sql(cartridge_id: str, ent: dict[str, Any]) -> str:
     name = ent["name"]
     src = f"s3://lakehouse/raw/{cartridge_id}/{name}/**/*.parquet"
@@ -119,7 +156,7 @@ def _silver_sql(cartridge_id: str, ent: dict[str, Any]) -> str:
         # Incremental dedup: keep the latest row per key within the newest partition.
         return (
             f"SELECT * EXCLUDE (rn) FROM (\n"
-            f"  SELECT *, ROW_NUMBER() OVER (PARTITION BY {pk} ORDER BY {order} DESC) AS rn\n"
+            f"  SELECT *, ROW_NUMBER() OVER (PARTITION BY {_qi(pk)} ORDER BY {_qi(order)} DESC) AS rn\n"
             f"  FROM read_parquet('{src}', hive_partitioning=true, union_by_name=true)\n"
             f"  WHERE load_date = '{{latest_date}}'\n"
             f") WHERE rn = 1"
@@ -136,16 +173,17 @@ def _gold_sql(ent: dict[str, Any]) -> str | None:
     Gold reads the registered Silver dataset (no read_parquet / {latest_date}).
     Returns None when there's nothing meaningful to aggregate.
     """
-    silver = f"silver_{ent['name']}"
-    money = ent["money_fields"]
+    silver = _qi(f"silver_{ent['name']}")
+    # de-dup money fields so we never emit two identical SUM aliases (invalid SQL)
+    money = list(dict.fromkeys(ent["money_fields"]))
     dates = ent["date_fields"]
     if not money:
         return None
-    sums = ",\n  ".join(f"SUM({m}) AS total_{m}" for m in money)
+    sums = ",\n  ".join(f"SUM({_qi(m)}) AS {_qi('total_' + m)}" for m in money)
     if dates:
         d = dates[0]
         return (
-            f"SELECT date_trunc('month', {d}) AS periodo,\n"
+            f"SELECT date_trunc('month', {_qi(d)}) AS periodo,\n"
             f"  COUNT(*) AS registros,\n  {sums}\n"
             f"FROM {silver}\nGROUP BY 1\nORDER BY 1"
         )
@@ -169,7 +207,12 @@ def build_blueprint(
     ``entities`` items: ``{"name": str, "fields": [Field], "primary_key"?, "watermark_field"?}``.
     Output is the payload shape consumed by ``create_full_cartridge``.
     """
-    cid = re.sub(r"[^a-z0-9_]", "_", str(cartridge_id).strip().lower()) or "cartridge"
+    cid = re.sub(r"[^a-z0-9_]", "_", str(cartridge_id).strip().lower())
+    # create_full_cartridge requires ^[a-z][a-z0-9_]{0,79}$ — force a leading
+    # letter and clamp length so a numeric/symbol source id isn't rejected.
+    if not cid or not cid[0].isalpha():
+        cid = "c_" + cid
+    cid = cid[:80]
     classified = [_classify_entity(e) for e in entities if (e.get("name") or e.get("entity"))]
     if not classified:
         raise ValueError("autopilot requires at least one entity with fields")
@@ -222,6 +265,7 @@ def build_blueprint(
             })
 
         out_kbs.append({
+            "kb_id": f"kb_{en}",
             "name": f"kb_{en}",
             "sql": f"SELECT * FROM silver_{en} LIMIT 100",
             "description": f"Conocimiento base sobre {en}: estructura, claves y campos.",
@@ -232,7 +276,7 @@ def build_blueprint(
                 semantic_terms.append({
                     "term": f["name"],
                     "definition": f"{f['name']} ({f['role']}) en {en}.",
-                    "entity": en,
+                    "maps_to": f"{en}.{f['name']}",
                 })
 
     # One domain agent that watches the most business-relevant metric.
@@ -270,30 +314,37 @@ def build_blueprint(
             "file": f"{dag_id}.py",
             "description": f"Extracción {pattern} de {name} a Bronze.",
             "trigger": "on-demand",
-            "params": '["entity","mode"]',
+            # list form: the consumer json.dumps it (handles isinstance(list)).
+            "params": ["entity", "mode"],
         }],
         "entities": out_entities,
         "datasets": out_datasets,
         "kbs": out_kbs,
         "agents": [agent],
-        "semantic_terms": semantic_terms,
+        # create_full_cartridge reads semantic_model.vocabulary (not a flat
+        # semantic_terms list) — emit the shape the consumer actually ingests.
+        "semantic_model": {"vocabulary": semantic_terms},
     }
 
 
 def summarize_blueprint(blueprint: dict[str, Any]) -> dict[str, Any]:
-    """Compact, UI-friendly summary of what the autopilot produced."""
+    """Compact, UI-friendly summary of what the autopilot produced. Defensive:
+    tolerates a partial/empty blueprint without raising."""
+    bp = blueprint if isinstance(blueprint, dict) else {}
+    datasets = bp.get("datasets") or []
+    vocab = (bp.get("semantic_model") or {}).get("vocabulary") or []
     return {
-        "cartridge_id": blueprint["id"],
-        "name": blueprint["name"],
-        "entities": len(blueprint["entities"]),
-        "datasets": len(blueprint["datasets"]),
-        "silver": sum(1 for d in blueprint["datasets"] if d["layer"] == "silver"),
-        "gold": sum(1 for d in blueprint["datasets"] if d["layer"] == "gold"),
-        "kbs": len(blueprint["kbs"]),
-        "agents": len(blueprint["agents"]),
-        "semantic_terms": len(blueprint["semantic_terms"]),
+        "cartridge_id": bp.get("id"),
+        "name": bp.get("name"),
+        "entities": len(bp.get("entities") or []),
+        "datasets": len(datasets),
+        "silver": sum(1 for d in datasets if d.get("layer") == "silver"),
+        "gold": sum(1 for d in datasets if d.get("layer") == "gold"),
+        "kbs": len(bp.get("kbs") or []),
+        "agents": len(bp.get("agents") or []),
+        "semantic_terms": len(vocab),
         "pii_protected": sorted({
-            col for e in blueprint["entities"]
+            col for e in (bp.get("entities") or [])
             for col in (e.get("protection", {}).get("encrypt") or [])
         }),
     }

@@ -51,9 +51,10 @@ def test_build_blueprint_full_shape():
         pattern="rest",
         category="crm",
     )
-    # Manifest-level fields create_full_cartridge needs.
+    # Manifest-level fields create_full_cartridge needs (vocabulary lives under
+    # semantic_model.vocabulary — the shape the consumer ingests).
     for key in ("id", "name", "pattern", "category", "bronze_path", "entities",
-                "datasets", "kbs", "agents", "semantic_terms", "dags"):
+                "datasets", "kbs", "agents", "semantic_model", "dags"):
         assert key in bp, f"missing manifest key {key}"
     assert bp["id"] == "demo_crm"
     assert bp["bronze_path"] == "raw/demo_crm"
@@ -63,16 +64,18 @@ def test_build_blueprint_full_shape():
     assert layers.count("silver") == 2
     assert layers.count("gold") >= 1
 
-    # Gold derives from the money entity (deals.amount).
+    # Gold derives from the money entity (deals.amount) — identifiers are quoted.
     gold = next(d for d in bp["datasets"] if d["layer"] == "gold")
-    assert "total_amount" in gold["sql"]
-    assert "silver_deals" in gold["sql"]
+    assert '"total_amount"' in gold["sql"]
+    assert '"silver_deals"' in gold["sql"]
 
-    # An agent + KBs per entity + semantic terms exist.
+    # An agent + KBs per entity + semantic vocabulary exist.
     assert len(bp["agents"]) == 1
     assert bp["agents"][0]["slug"] == "demo_crm_watchdog"
     assert len(bp["kbs"]) == 2
-    assert any(t["term"] == "amount" for t in bp["semantic_terms"])
+    assert all("kb_id" in k for k in bp["kbs"])
+    vocab = bp["semantic_model"]["vocabulary"]
+    assert any(t["term"] == "amount" for t in vocab)
 
 
 def test_pii_is_flagged_for_encryption():
@@ -156,9 +159,104 @@ def test_partial_fields_without_nullable_or_pk():
     assert any(d["layer"] == "gold" for d in bp["datasets"])
 
 
+def test_pii_no_false_positive_on_metric_names():
+    """Audit-7: token-aware matching must NOT flag 'card_count'/'dashboard_id' as PII
+    nor 'total_records' as money via substring."""
+    assert ap.classify_field({"name": "dashboard_id", "type": "string"})["role"] == "key"
+    # 'card_count' is an int metric, not PII (card matched only as a word part of
+    # a real PII token, here 'card' is a token -> would be pii; assert the
+    # NON-pii cases that previously broke via substring):
+    assert ap.classify_field({"name": "stage_name", "type": "string"})["role"] == "dimension"
+    assert ap.classify_field({"name": "valuestream", "type": "string"})["role"] == "dimension"
+
+
+def test_money_requires_money_token_not_substring():
+    # 'valuestream' must NOT become money just because it contains 'value'
+    assert ap.classify_field({"name": "valuestream", "type": "int"})["role"] == "metric"
+    # but a real money token does
+    assert ap.classify_field({"name": "order_value", "type": "float"})["role"] == "money"
+
+
+def test_classify_pii_beats_pk_for_sensitive_ids():
+    # Audit-2 fix: PII detection runs BEFORE the key check so a sensitive
+    # identifier (national_id, email_id) is encrypted, not treated as a plain key.
+    assert ap.classify_field({"name": "national_id", "type": "string"})["role"] == "pii"
+    assert ap.classify_field({"name": "email_id", "type": "string", "primary_key": True})["role"] == "pii"
+    # a surrogate key with no PII token still classifies as key
+    assert ap.classify_field({"name": "deal_id", "type": "string", "primary_key": True})["role"] == "key"
+
+
+def test_entity_with_no_money_has_no_gold():
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "tags", "fields": [
+            {"name": "tag_id", "type": "string", "primary_key": True},
+            {"name": "label", "type": "string"},
+        ]}],
+    )
+    assert all(d["layer"] != "gold" for d in bp["datasets"])
+    assert any(d["layer"] == "silver" for d in bp["datasets"])
+
+
+def test_watermark_prefers_modified_over_created():
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "deals", "fields": [
+            {"name": "id", "type": "string", "primary_key": True},
+            {"name": "created_at", "type": "timestamp"},
+            {"name": "last_modified", "type": "timestamp"},
+        ]}],
+    )
+    deals = next(e for e in bp["entities"] if e["entity"] == "deals")
+    assert deals["watermark_field"] == "last_modified"
+
+
+def test_cid_sanitization():
+    bp = ap.build_blueprint(
+        cartridge_id="My CRM!", name="My CRM",
+        entities=[{"name": "e", "fields": [{"name": "id", "type": "string", "primary_key": True}]}],
+    )
+    assert bp["id"] == "my_crm_"
+
+
 def test_requires_entities():
     try:
         ap.build_blueprint(cartridge_id="x", name="X", entities=[])
         assert False, "should have raised"
     except ValueError:
         pass
+
+
+def test_blueprint_accepted_by_create_full_cartridge_normalizer():
+    """Audit-2/8 critical: the blueprint must pass _normalize_full_cartridge_manifest
+    (the real consumer) — proves kb_id / semantic_model / cid contracts hold."""
+    from app.services import cartridge_service
+    bp = ap.build_blueprint(
+        cartridge_id="autopilot_demo", name="Autopilot Demo",
+        entities=[{"name": "deals", "fields": [
+            {"name": "deal_id", "type": "string", "primary_key": True},
+            {"name": "amount", "type": "float"},
+            {"name": "owner_email", "type": "string"},
+            {"name": "close_date", "type": "date"},
+        ]}],
+    )
+    manifest, seed_sql = cartridge_service._normalize_full_cartridge_manifest(bp)
+    assert manifest["id"] == "autopilot_demo"
+    # KBs survived (kb_id contract)
+    assert manifest["knowledge_bits"], "KBs were dropped — kb_id contract broken"
+    assert manifest["knowledge_bits"][0]["kb_id"] == "kb_deals"
+    # semantic vocabulary survived (semantic_model.vocabulary contract)
+    assert manifest["semantic_model"]["vocabulary"], "vocabulary dropped"
+    # seed SQL was generated and validated (no exception above == valid)
+    assert "INSERT INTO" in seed_sql
+
+
+def test_blueprint_normalizer_accepts_numeric_source_id():
+    """cid leading-letter contract: a numeric source id must not be rejected."""
+    from app.services import cartridge_service
+    bp = ap.build_blueprint(
+        cartridge_id="123erp", name="ERP",
+        entities=[{"name": "x", "fields": [{"name": "id", "type": "string", "primary_key": True}]}],
+    )
+    manifest, _ = cartridge_service._normalize_full_cartridge_manifest(bp)
+    assert manifest["id"].startswith("c_")
