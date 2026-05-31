@@ -210,3 +210,88 @@ def test_parse_json_sample_none_results_produces_no_fields():
     """parse_json_sample with {'results': None} must produce no phantom fields."""
     out = r.parse_json_sample({"results": None}, "records")
     assert out == {}
+
+
+# ── Audit-round-3 regression / new-edge-case tests ──────────────────────────
+
+
+def test_safe_field_slugifies_non_ascii_name():
+    """Audit-40: non-ASCII field names must be slugified and retained, not silently dropped."""
+    out = r.parse_json_sample({"nombre": "Ana", "monto_crédit": 42.5}, "records")
+    assert out  # must produce fields, not empty {}
+    names = {f["name"] for f in out["records"]}
+    assert any("nombre" in n or "nombre" == n for n in names)
+
+
+def test_safe_field_cjk_name_slugified():
+    """Audit-40: CJK field names must not cause extract_entities to return empty."""
+    out = r.parse_json_sample({"名前": "Tanaka", "金額": 50000}, "records")
+    assert out  # must not be {} — slugified names preserved
+
+
+def test_detect_source_pattern_nan_sample_does_not_raise():
+    """Audit-40: sample containing float('nan') must not raise in detect_source_pattern."""
+    import math
+    desc = {"sample": {"amount": float("nan"), "next": "cursor123"}}
+    pat = r.detect_source_pattern(desc)
+    assert pat["paginated"] is True  # 'next' still detected
+
+
+def test_infer_scalar_type_bool_vs_int():
+    """bool must be detected before int (Python bool is a subclass of int)."""
+    from app.services.cartridge_introspect_router import _infer_scalar_type
+    assert _infer_scalar_type(True) == "bool"
+    assert _infer_scalar_type(False) == "bool"
+    assert _infer_scalar_type(1) == "int"
+    assert _infer_scalar_type(0) == "int"
+
+
+def test_parse_json_sample_native_int_and_bool():
+    """Native Python int/bool values must be typed via isinstance, not string-regex."""
+    sample = {"data": [{"id": "x", "count": 5, "active": True}]}
+    out = r.parse_json_sample(sample, "things")
+    by = {f["name"]: f for f in out["things"]}
+    assert by["count"]["type"] == "int"
+    assert by["active"]["type"] == "bool"
+
+
+def test_wsdl_nested_complextype_does_not_bleed_fields():
+    """Audit-37: fields from a nested complexType must NOT bleed into the parent entity."""
+    wsdl = """<?xml version="1.0"?>
+    <definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:complexType name="Order">
+        <xsd:sequence>
+          <xsd:element name="OrderId" type="xsd:int"/>
+          <xsd:complexType name="Address">
+            <xsd:sequence>
+              <xsd:element name="Street" type="xsd:string"/>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:sequence>
+      </xsd:complexType>
+    </definitions>"""
+    out = r.parse_wsdl_elements(wsdl)
+    assert "Order" in out
+    order_names = [f["name"] for f in out["Order"]]
+    assert "OrderId" in order_names
+    assert "Street" not in order_names  # must not bleed from nested complexType
+
+
+def test_extract_entities_soap_valid_wsdl():
+    """Audit-37: extract_entities must dispatch soap kind through parse_wsdl_elements."""
+    wsdl = """<?xml version="1.0"?>
+    <definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:complexType name="Invoice">
+        <xsd:sequence>
+          <xsd:element name="InvoiceId" type="xsd:int"/>
+          <xsd:element name="Amount" type="xsd:decimal" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:complexType>
+    </definitions>"""
+    entities, kind = r.extract_entities({"kind": "soap", "wsdl": wsdl})
+    assert kind == "soap"
+    assert len(entities) == 1
+    assert entities[0]["name"] == "Invoice"
+    by = {f["name"]: f for f in entities[0]["fields"]}
+    assert by["InvoiceId"]["type"] == "int"
+    assert by["Amount"]["nullable"] is True

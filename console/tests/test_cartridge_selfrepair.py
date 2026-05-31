@@ -306,3 +306,77 @@ def test_validate_blueprint_none_items_in_lists_no_crash():
     }
     vr = sr.validate_blueprint(bp)
     assert isinstance(vr.ok, bool)  # no crash
+
+
+# ── Audit-round-3 regression / new-edge-case tests ──────────────────────────
+
+
+def test_has_outer_where_distinguishes_subquery_from_outer():
+    """_has_outer_where must return True only for a WHERE at paren-depth 0."""
+    from app.services.cartridge_selfrepair import _has_outer_where
+    assert _has_outer_where("SELECT a FROM t WHERE x = 1") is True
+    assert _has_outer_where("SELECT a, (SELECT max(b) FROM t WHERE c=1) FROM outer") is False
+    assert _has_outer_where("SELECT 1") is False
+    assert _has_outer_where("SELECT 1 FROM t WHERE (x IN (SELECT y FROM s WHERE z=1))") is True
+
+
+def test_silver_repair_subquery_where_uses_outer_where_not_and():
+    """Audit-31: when the only WHERE is inside a subquery, outer query must get
+    WHERE (not AND) to produce syntactically valid SQL."""
+    sql = ("SELECT a, (SELECT max(b) FROM read_parquet('s3://s/**/*.parquet') WHERE c=1) "
+           "FROM read_parquet('s3://t/**/*.parquet')")
+    fixed = sr.repair_sql(sql, "silver", ["missing latest"])
+    assert " WHERE load_date = '{latest_date}'" in fixed
+    assert " AND load_date" not in fixed
+
+
+def test_validate_silver_sql_rejects_load_date_only_in_literal():
+    """Audit-31: load_date inside a string literal must not satisfy the partition
+    filter requirement — we need an actual column predicate."""
+    sql = "SELECT * FROM read_parquet('s3://x/**/*.parquet') WHERE col = 'load_date = {latest_date}'"
+    vr = sr.validate_silver_sql(sql)
+    assert not vr.ok
+    assert any("latest" in r for r in vr.reasons)
+
+
+def test_validate_blueprint_empty_dag_id_flagged():
+    """Audit-31: dag_id='' (empty string) must be treated as unknown, not silently skipped."""
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [{"entity": "e", "dag_id": ""}],
+        "dags": [{"dag_id": "real"}],
+        "datasets": [],
+    }
+    vr = sr.validate_blueprint(bp)
+    assert not vr.ok
+    assert any("unknown dag_id" in r for r in vr.reasons)
+
+
+def test_validate_blueprint_gold_no_sources_flagged():
+    """Audit-31: a gold dataset with sources=[] must be flagged, not silently accepted."""
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [{"entity": "e", "dag_id": "d"}],
+        "dags": [{"dag_id": "d"}],
+        "datasets": [{"name": "g", "layer": "gold", "sources": [], "sql": "SELECT 1 FROM silver_e"}],
+    }
+    vr = sr.validate_blueprint(bp)
+    assert not vr.ok
+    assert any("no declared sources" in r for r in vr.reasons)
+
+
+def test_repair_blueprint_sql_iterates_deepcopy_not_original():
+    """Audit-39: repair_blueprint_sql must never mutate the caller's blueprint dict."""
+    import copy
+    bp = {
+        "id": "x", "name": "X",
+        "entities": [], "dags": [],
+        "datasets": [{"name": "s", "layer": "silver",
+                      "sql": "SELECT * FROM read_parquet('s3://x') WHERE x=1",
+                      "sources": ["a", "b"]}],
+    }
+    original = copy.deepcopy(bp)
+    repaired = sr.repair_blueprint_sql(bp)
+    # sources list must not be aliased between repaired and original
+    repaired["datasets"][0]["sources"].append("injected")
+    assert bp["datasets"][0]["sources"] == original["datasets"][0]["sources"]

@@ -39,11 +39,27 @@ def _safe_field(spec: dict[str, Any]) -> Field | None:
     """Normalize a field, returning None instead of raising on a bad name.
 
     Real introspection routinely yields non-identifier names ('Order ID',
-    'created-at', '2024sales'). The module's contract is 'never raise' — so a
-    field that can't be normalized is skipped, not fatal.
+    'created-at', '2024sales', non-ASCII CJK/accented chars). On first failure
+    we retry with a slugified name so non-ASCII schemas aren't silently empty.
     """
     try:
         return schema_introspect.normalize_field(spec)
+    except (ValueError, TypeError):
+        pass
+    # Retry: transliterate/slugify the name so non-ASCII / non-identifier
+    # field names produce a usable fallback rather than silent data loss.
+    raw = str(spec.get("name") or "")
+    if not raw:
+        return None
+    slug = re.sub(r"[^A-Za-z0-9_]", "_", raw)
+    # Pure non-ASCII produces only underscores — use "f_" prefix.
+    if not slug or slug.replace("_", "") == "":
+        slug = "f_"
+    elif not (slug[0].isalpha() or slug[0] == "_"):
+        slug = "f_" + slug
+    slug = slug[:127]
+    try:
+        return schema_introspect.normalize_field({**spec, "name": slug})
     except (ValueError, TypeError):
         return None
 
@@ -110,7 +126,10 @@ def detect_source_pattern(descriptor: dict[str, Any], fields: list[Field] | None
     if not isinstance(descriptor, dict):
         descriptor = {}
     sample = descriptor.get("sample")
-    text_blob = json.dumps(sample).lower() if isinstance(sample, (dict, list)) else ""
+    try:
+        text_blob = json.dumps(sample).lower() if isinstance(sample, (dict, list)) else ""
+    except (TypeError, ValueError):
+        text_blob = ""
     paginated = any(h in text_blob for h in _PAGINATION_HINTS) or bool(descriptor.get("paginated"))
 
     incremental_field = None
@@ -232,6 +251,23 @@ def parse_graphql_introspection(sample: Any) -> dict[str, list[Field]]:
     return out
 
 
+def _shallow_elements(element: Any) -> list[Any]:
+    """Yield xsd:element children without crossing into nested complexType/simpleType.
+
+    Using ct.iter() (recursive) bleeds inner complexType fields into the parent
+    entity's field list. This walker stops recursion at type boundaries so each
+    complexType entity only gets its own direct structural elements.
+    """
+    result: list[Any] = []
+    for child in element:
+        ctag = _strip_ns(getattr(child, "tag", "") or "")
+        if ctag == "element":
+            result.append(child)
+        elif ctag not in ("complexType", "simpleType"):
+            result.extend(_shallow_elements(child))
+    return result
+
+
 def parse_wsdl_elements(wsdl_xml: str) -> dict[str, list[Field]]:
     """Best-effort: extract xsd:complexType elements as entities. XXE-safe."""
     if not wsdl_xml or not wsdl_xml.strip():
@@ -251,7 +287,7 @@ def parse_wsdl_elements(wsdl_xml: str) -> dict[str, list[Field]]:
         if not name:
             continue
         fields: list[Field] = []
-        for el in _iter_local(ct, "element"):
+        for el in _shallow_elements(ct):
             en = el.get("name")
             if not en:
                 continue

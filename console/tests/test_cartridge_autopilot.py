@@ -407,3 +407,83 @@ def test_gold_sql_excludes_pii_date_fields_from_group_by():
     assert gold_datasets, "need gold to test"
     for gd in gold_datasets:
         assert "birth_date" not in gd["sql"]
+
+
+# ── Audit-round-3 regression / new-edge-case tests ──────────────────────────
+
+
+def test_gold_sql_pii_money_fallback_excludes_pii_names():
+    """Audit-32: when all money-named fields are also PII, the _typed fallback
+    must NOT include them in the Gold SQL aggregate (privacy regression)."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "payroll", "fields": [
+            {"name": "id", "type": "string", "primary_key": True},
+            {"name": "salary_amount", "type": "float"},  # PII (salary) + money (amount)
+            {"name": "paid_date", "type": "date"},
+        ]}],
+    )
+    gold_datasets = [d for d in bp["datasets"] if d["layer"] == "gold"]
+    # If no non-PII money field exists, either no Gold is generated or salary_amount
+    # must NOT appear in a SUM/total_ expression.
+    for gd in gold_datasets:
+        assert "salary_amount" not in gd["sql"], "PII field must not be aggregated in Gold"
+
+
+def test_gold_sql_all_dates_pii_produces_aggregate_without_group_by():
+    """Audit-38/32: when all non-PII date fields are excluded, Gold falls back to
+    a scalar aggregate with no GROUP BY clause."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "payments", "fields": [
+            {"name": "id", "type": "string", "primary_key": True},
+            {"name": "amount", "type": "float"},
+            {"name": "birth_date", "type": "date"},  # PII -> excluded
+        ]}],
+    )
+    gold_datasets = [d for d in bp["datasets"] if d["layer"] == "gold"]
+    assert gold_datasets, "need gold"
+    sql = gold_datasets[0]["sql"]
+    assert "birth_date" not in sql
+    assert "group by" not in sql.lower()
+
+
+def test_classify_field_account_id_is_pii_not_key():
+    """Audit-32/38: 'account' is a PII token; PII check runs first so account_id
+    must be classified as pii/protected, not as key."""
+    result = ap.classify_field({"name": "account_id", "type": "string"})
+    assert result["role"] == "pii"
+    assert result["protected"] is True
+
+
+def test_silver_sql_no_pk_no_watermark_uses_load_date_fallback():
+    """Audit-38: entity with no fields => no pk, no watermark => load_date fallback order."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "log", "fields": []}],
+    )
+    silver_datasets = [d for d in bp["datasets"] if d["layer"] == "silver"]
+    assert silver_datasets, "silver dataset expected even for empty-field entity"
+    sql = silver_datasets[0]["sql"]
+    assert "load_date" in sql
+    assert "{latest_date}" in sql
+
+
+def test_build_blueprint_agent_watches_money_entity_over_pii_only():
+    """Audit-38: agent must watch a money entity, not a PII-only entity."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[
+            {"name": "people", "fields": [
+                {"name": "email", "type": "string"},
+                {"name": "ssn", "type": "string"},
+            ]},
+            {"name": "invoices", "fields": [
+                {"name": "invoice_id", "type": "string", "primary_key": True},
+                {"name": "amount", "type": "float"},
+                {"name": "invoice_date", "type": "date"},
+            ]},
+        ],
+    )
+    agent_instructions = bp["agents"][0]["instructions"]
+    assert "invoices" in agent_instructions

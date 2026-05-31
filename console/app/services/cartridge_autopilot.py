@@ -153,9 +153,10 @@ def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
 
     date_fields = _typed(_DATE_TYPES)
     pii_names = {f["name"] for f in fields if f["role"] == "pii"}
-    money_fields = [f["name"] for f in fields if f["role"] == "money"] or _typed(
-        {"int", "float", "number", "decimal"}, money=True
-    )
+    money_fields = [f["name"] for f in fields if f["role"] == "money"] or [
+        n for n in _typed({"int", "float", "number", "decimal"}, money=True)
+        if n not in pii_names
+    ]
     if not watermark and date_fields:
         # Exclude PII-role fields (e.g. birth_date) from watermark candidates.
         wm_cands = [d for d in date_fields if d not in pii_names]
@@ -329,7 +330,7 @@ def build_blueprint(
         out_kbs.append({
             "kb_id": f"kb_{en}",
             "name": f"kb_{en}",
-            "sql": f"SELECT * FROM silver_{en} LIMIT 100",
+            "sql": f"SELECT * FROM {_qi('silver_' + en)} LIMIT 100",
             "description": f"Conocimiento base sobre {en}: estructura, claves y campos.",
         })
 

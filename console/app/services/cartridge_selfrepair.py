@@ -92,7 +92,11 @@ def validate_silver_sql(sql: str) -> ValidationResult:
     low = (sql or "").lower()
     if "read_parquet" not in low:
         reasons.append("silver sql must read parquet sources (read_parquet)")
-    if "load_date" not in low or "{latest_date}" not in (sql or ""):
+    # Mask literals to check load_date as a column reference, not as a string value.
+    # {latest_date} is intentionally inside quotes (as the bound parameter value),
+    # so check it against the original SQL, not the masked form.
+    masked_check = _SINGLE_QUOTED_RE.sub("''", sql or "")
+    if "load_date" not in masked_check.lower() or "{latest_date}" not in (sql or ""):
         reasons.append("silver sql must filter the latest partition with {latest_date}")
     return ValidationResult(not reasons, reasons)
 
@@ -105,6 +109,30 @@ def validate_gold_sql(sql: str) -> ValidationResult:
     if "read_parquet" in (sql or "").lower():
         reasons.append("gold sql must read registered silver datasets, not raw parquet")
     return ValidationResult(not reasons, reasons)
+
+
+def _has_outer_where(text: str) -> bool:
+    """Return True only if a WHERE keyword exists at paren-depth 0 (outer query)."""
+    depth = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '(':
+            depth += 1
+            i += 1
+        elif c == ')':
+            depth -= 1
+            i += 1
+        elif depth == 0 and text[i:i+5].upper() == 'WHERE':
+            pre = text[i - 1] if i > 0 else ' '
+            post = text[i + 5] if i + 5 < n else ' '
+            if not (pre.isalnum() or pre == '_') and not (post.isalnum() or post == '_'):
+                return True
+            i += 1
+        else:
+            i += 1
+    return False
 
 
 def repair_sql(sql: str, layer: str, reasons: list[str]) -> str:
@@ -146,7 +174,7 @@ def repair_sql(sql: str, layer: str, reasons: list[str]) -> str:
         # scope (audit #13).
         low = masked.lower()
         if "read_parquet" in low and "{latest_date}" not in masked:
-            has_where = bool(re.search(r"\bWHERE\b", masked, re.IGNORECASE))
+            has_where = _has_outer_where(masked)
             if "load_date" in low:
                 fixed, n = re.subn(
                     r"(?i)\bload_date\s*=\s*(?:\x00\d+\x00|\S+)",
@@ -203,7 +231,7 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
         if not isinstance(e, dict):
             continue
         did = e.get("dag_id")
-        if did is not None and did and did not in dag_ids:
+        if did is not None and did not in dag_ids:
             reasons.append(f"entity '{e.get('entity')}' references unknown dag_id '{did}'")
 
     # Dataset names unique; gold sources should reference a known silver dataset.
@@ -213,7 +241,10 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
         if not isinstance(d, dict):
             continue
         if d.get("layer") == "gold":
-            for src in d.get("sources") or []:
+            srcs = d.get("sources") or []
+            if not srcs:
+                reasons.append(f"gold dataset '{d.get('name')}' has no declared sources")
+            for src in srcs:
                 if src not in dataset_names and src not in entity_names:
                     reasons.append(f"gold dataset '{d.get('name')}' references unknown source '{src}'")
 
@@ -276,9 +307,8 @@ def repair_blueprint_sql(blueprint: dict[str, Any]) -> dict[str, Any]:
     bp = copy.deepcopy(blueprint)
     datasets = []
     report: list[dict[str, Any]] = []
-    for d in blueprint.get("datasets", []):
+    for d in bp.get("datasets", []):
         layer = d.get("layer")
-        nd = dict(d)
         if layer in {"silver", "gold"}:
             validate = validate_silver_sql if layer == "silver" else validate_gold_sql
             outcome = run_repair_loop(
@@ -287,10 +317,10 @@ def repair_blueprint_sql(blueprint: dict[str, Any]) -> dict[str, Any]:
                 lambda sql, reasons, _l=layer: repair_sql(sql, _l, reasons),
                 max_attempts=3,
             )
-            nd["sql"] = outcome["artifact"]
+            d["sql"] = outcome["artifact"]
             report.append({"dataset": d.get("name"), "layer": layer, "ok": outcome["ok"],
                            "attempts": outcome["attempts"]})
-        datasets.append(nd)
+        datasets.append(d)
     bp["datasets"] = datasets
     bp["_selfrepair_report"] = report
     return bp

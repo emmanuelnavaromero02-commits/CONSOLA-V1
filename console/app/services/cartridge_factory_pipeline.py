@@ -57,7 +57,7 @@ def plan_from_descriptor(
             "ok": False,
             "reason": "descriptor must be an object",
             "source_kind": None,
-            "pattern": None,
+            "pattern": cartridge_introspect_router.detect_source_pattern({}),
         }
     entities, kind = cartridge_introspect_router.extract_entities(descriptor)
     pattern = cartridge_introspect_router.detect_source_pattern(

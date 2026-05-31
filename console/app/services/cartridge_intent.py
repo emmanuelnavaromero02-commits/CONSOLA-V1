@@ -23,6 +23,7 @@ from typing import Any
 _SOURCE_ALIASES: dict[str, dict[str, str]] = {
     "hubspot": {"id": "hubspot", "kind": "rest", "domain": "crm"},
     "salesforce": {"id": "salesforce", "kind": "rest", "domain": "crm"},
+    "sf": {"id": "salesforce", "kind": "rest", "domain": "crm"},
     "replicon": {"id": "replicon", "kind": "rest", "domain": "psa"},
     "sap": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
     "s4hana": {"id": "sap_s4hana", "kind": "odata", "domain": "erp"},
@@ -83,7 +84,7 @@ def parse_build_intent(text: str) -> dict[str, Any]:
 
     # cross-source join: feasible only with 2+ distinct-family sources.
     intends_cross = bool(re.search(
-        r"\b(?:cruzar?|combinar?|join|juntar?|merge)\b", low
+        r"\b(?:cruzar?|combinar?|join|juntar?|merge|cross[_\- ]?source)\b", low
     ))
     cross_source = len(sources) >= 2
 
