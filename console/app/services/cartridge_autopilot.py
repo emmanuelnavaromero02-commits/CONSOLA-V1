@@ -126,16 +126,42 @@ def _classify_entity(entity: dict[str, Any]) -> dict[str, Any]:
         ),
         next((f["name"] for f in fields if f["role"] == "date"), None),
     )
+    # Audit #11: a PK that is ALSO a date/money column keeps its measurement role
+    # for dataset generation (the 'key' role only governs dedup). We re-scan the
+    # raw type so a money/date PK still drives Gold metrics + watermark.
+    def _typed(role_types: set[str], money: bool = False) -> list[str]:
+        out: list[str] = []
+        for f in fields:
+            ft = str(f.get("type") or "").lower()
+            if ft in role_types and (not money or _money_named(f["name"])):
+                out.append(f["name"])
+        return out
+
+    date_fields = _typed(_DATE_TYPES)
+    money_fields = [f["name"] for f in fields if f["role"] == "money"] or _typed(
+        {"int", "float", "number", "decimal"}, money=True
+    )
+    if not watermark and date_fields:
+        watermark = next(
+            (d for d in date_fields if any(w in d.lower() for w in ("modif", "updated", "change", "fecha", "date"))),
+            date_fields[0],
+        )
     return {
         "name": _slug_identifier(entity.get("name") or entity.get("entity") or "entity"),
         "fields": fields,
         "primary_key": pk,
         "watermark_field": watermark,
-        "money_fields": [f["name"] for f in fields if f["role"] == "money"],
+        "money_fields": list(dict.fromkeys(money_fields)),
         "metric_fields": [f["name"] for f in fields if f["role"] == "metric"],
-        "date_fields": [f["name"] for f in fields if f["role"] == "date"],
+        "date_fields": list(dict.fromkeys(date_fields)),
         "pii_fields": [f["name"] for f in fields if f["role"] == "pii"],
     }
+
+
+def _money_named(name: str) -> bool:
+    camel = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(name)).lower()
+    tokens = {t for t in re.split(r"[^a-z0-9]+", camel) if t}
+    return any(h in tokens for h in _MONEY_NAME_HINTS)
 
 
 # ── SQL builders (Silver = latest-partition dedup; Gold = domain metrics) ─────
@@ -217,6 +243,18 @@ def build_blueprint(
     classified = [_classify_entity(e) for e in entities if (e.get("name") or e.get("entity"))]
     if not classified:
         raise ValueError("autopilot requires at least one entity with fields")
+
+    # Audit #19: two source entities can slugify to the same identifier
+    # ('a b' and 'a-b' -> 'a_b'), which would emit duplicate silver_/gold_
+    # datasets and silently merge distinct sources. Disambiguate with a suffix.
+    _seen: dict[str, int] = {}
+    for ent in classified:
+        base = ent["name"]
+        if base in _seen:
+            _seen[base] += 1
+            ent["name"] = f"{base}_{_seen[base]}"
+        else:
+            _seen[base] = 1
 
     dag_id = f"{cid}_extract"
     out_entities: list[dict[str, Any]] = []

@@ -31,6 +31,8 @@ _FORBIDDEN_SQL = re.compile(
 )
 # Same single-quote masking as the engine (handles escaped '' inside literals).
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
+# SQL-safe identifier shape (matches cartridge_service's entity/dataset contract).
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class ValidationResult:
@@ -99,30 +101,43 @@ def repair_sql(sql: str, layer: str, reasons: list[str]) -> str:
     ``WHERE load_date = '{latest_date}'`` appended so the loop can actually
     converge instead of aborting as a no-op.
     """
-    # Operate on a literal-masked copy for *detection*, but edit the real string.
     s = (sql or "").strip()
-    # strip comments (only real ones — masking avoids touching glob '**/*')
-    masked = re.sub(r"'[^']*'", lambda m: "'" + "X" * (len(m.group(0)) - 2) + "'", s)
-    if "--" in masked:
-        s = re.sub(r"--[^\n]*", "", s)
-    if "/*" in masked and "*/" in masked and "**/*" not in s:
-        s = re.sub(r"/\*.*?\*/", "", s, flags=re.DOTALL)
-    # strip trailing/intermediate semicolons
-    s = s.replace(";", " ").strip()
 
+    # Gold: strip a leaked Silver latest-partition filter FIRST, on the raw
+    # string — the '{latest_date}' literal must be matched before it gets
+    # stashed below (otherwise the masking hides it). Then drop any stray marker.
     if layer == "gold":
-        # remove the Silver-only latest-partition filter if it leaked into Gold
-        s = re.sub(r"(?is)\s+where\s+load_date\s*=\s*'\{latest_date\}'", "", s)
+        s = re.sub(r"(?is)\s+where\s+load_date\s*=\s*'?\{latest_date\}'?", "", s)
         s = s.replace("{latest_date}", "")
-    elif layer == "silver":
-        # additive repair: ensure the latest-partition filter is present.
-        low = s.lower()
-        if "read_parquet" in low and ("load_date" not in low or "{latest_date}" not in s):
-            if re.search(r"(?is)\bwhere\b", s):
-                s = re.sub(r"(?is)\bwhere\b", "WHERE load_date = '{latest_date}' AND ", s, count=1)
-            else:
-                s = f"{s} WHERE load_date = '{{latest_date}}'"
-    return re.sub(r"[ \t]+", " ", s).strip()
+
+    # Stash single-quoted literals so the comment/semicolon strips never touch
+    # literal content (a literal ';' or '--' must SURVIVE — audit #13).
+    literals: list[str] = []
+
+    def _stash(m: "re.Match[str]") -> str:
+        literals.append(m.group(0))
+        return f"\x00{len(literals) - 1}\x00"
+
+    masked = _SINGLE_QUOTED_RE.sub(_stash, s)
+
+    # strip comments + ALL semicolons (safe now — literals are stashed)
+    masked = re.sub(r"--[^\n]*", "", masked)
+    masked = re.sub(r"/\*.*?\*/", "", masked, flags=re.DOTALL)
+    masked = masked.replace(";", " ")
+
+    if layer == "silver":
+        # additive repair: ensure the latest-partition filter is present. Append
+        # at the END (a top-level predicate) instead of injecting into the first
+        # WHERE — which could be a subquery's, corrupting scope (audit #13).
+        low = masked.lower()
+        if "read_parquet" in low and ("load_date" not in low or "{latest_date}" not in masked):
+            masked = f"{masked.rstrip()} WHERE load_date = '{{latest_date}}'"
+
+    def _unstash(m: "re.Match[str]") -> str:
+        return literals[int(m.group(1))]
+
+    out = re.sub(r"\x00(\d+)\x00", _unstash, masked)
+    return re.sub(r"[ \t]+", " ", out).strip()
 
 
 # ── Blueprint validation (internal consistency) ──────────────────────────────
@@ -145,6 +160,12 @@ def validate_blueprint(blueprint: dict[str, Any]) -> ValidationResult:
 
     if not entity_names:
         reasons.append("blueprint has no entities")
+
+    # Identifier shape: entity + dataset names must be SQL-safe so the generated
+    # SQL and the downstream create_full_cartridge gate never choke (audit #13 #4).
+    for nm in entity_names | dataset_names:
+        if nm is not None and not _SAFE_IDENT_RE.match(str(nm)):
+            reasons.append(f"unsafe identifier '{nm}' (must match {_SAFE_IDENT_RE.pattern})")
 
     # Every entity must reference an existing dag_id.
     for e in blueprint["entities"]:

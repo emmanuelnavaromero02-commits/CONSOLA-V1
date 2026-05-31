@@ -260,3 +260,41 @@ def test_blueprint_normalizer_accepts_numeric_source_id():
     )
     manifest, _ = cartridge_service._normalize_full_cartridge_manifest(bp)
     assert manifest["id"].startswith("c_")
+
+
+def test_money_pk_still_drives_gold():
+    """Audit-11: a PK that is also a money column must still produce Gold metrics."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "invoices", "fields": [
+            {"name": "total_amount", "type": "float", "primary_key": True},
+            {"name": "issued_date", "type": "date"},
+        ]}],
+    )
+    assert any(d["layer"] == "gold" for d in bp["datasets"]), "money PK lost its metric role"
+
+
+def test_date_pk_still_drives_watermark():
+    """Audit-11: a PK that is also a date column must still feed the watermark."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[{"name": "snaps", "fields": [
+            {"name": "snapshot_date", "type": "date", "primary_key": True},
+            {"name": "amount", "type": "float"},
+        ]}],
+    )
+    snaps = next(e for e in bp["entities"] if e["entity"] == "snaps")
+    assert snaps["watermark_field"] == "snapshot_date"
+
+
+def test_entity_slug_collision_disambiguated():
+    """Audit-19: two entities that slugify to the same id get distinct names."""
+    bp = ap.build_blueprint(
+        cartridge_id="x", name="X",
+        entities=[
+            {"name": "a b", "fields": [{"name": "id", "type": "string", "primary_key": True}]},
+            {"name": "a-b", "fields": [{"name": "id", "type": "string", "primary_key": True}]},
+        ],
+    )
+    names = [e["entity"] for e in bp["entities"]]
+    assert len(set(names)) == 2, f"slug collision not disambiguated: {names}"
