@@ -13,6 +13,7 @@ this module is the pure, testable core.
 """
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -170,17 +171,21 @@ def recall_pattern(kind: str, auth: str = "bearer") -> dict[str, Any] | None:
 
 
 def suggest_analytics(domain: str) -> list[dict[str, str]]:
-    """Domain-aware proactive analytic suggestions."""
-    return list(_DOMAIN_ANALYTICS.get(str(domain or "").lower(), []))
+    """Domain-aware proactive analytic suggestions.
+
+    Deep-copies so a caller mutating a suggestion can never corrupt the
+    module-global ``_DOMAIN_ANALYTICS`` catalog for other callers.
+    """
+    return copy.deepcopy(_DOMAIN_ANALYTICS.get(str(domain or "").lower(), []))
 
 
 def learn_from_correction(memory: dict[str, Any], pattern_key: str, corrected_sql: str) -> dict[str, Any]:
     """Record a human SQL correction as a learned override for a pattern.
 
-    Pure: returns a new memory dict; the caller persists it. This is the
-    'learns from human edits' loop — next build for the same pattern reuses it.
+    Deep-copies the incoming memory so the returned dict shares no nested
+    state with the caller's original snapshot (true immutability).
     """
-    mem = dict(memory or {})
+    mem = copy.deepcopy(memory) if isinstance(memory, dict) else {}
     learned = dict(mem.get("learned_sql") or {})
     learned[pattern_key] = corrected_sql
     mem["learned_sql"] = learned

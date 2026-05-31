@@ -129,3 +129,19 @@ def test_plan_blueprint_is_create_full_cartridge_shaped():
     for key in ("id", "name", "pattern", "category", "bronze_path",
                 "entities", "datasets", "kbs", "agents", "semantic_model", "dags"):
         assert key in bp, f"missing {key}"
+
+
+def test_suggest_analytics_does_not_leak_global():
+    """Audit-16: mutating a returned suggestion must not corrupt the global catalog."""
+    s = ci.suggest_analytics("crm")
+    s[0]["name"] = "HACKED"
+    assert ci.suggest_analytics("crm")[0]["name"] != "HACKED"
+
+
+def test_learn_from_correction_deep_immutable():
+    """Audit-16: returned memory shares no nested state with the original."""
+    orig = {"learned_sql": {"k": {"sql": "x"}}}
+    new = ci.learn_from_correction(orig, "k2", "y")
+    new["learned_sql"]["k"]["sql"] = "MUT"
+    assert orig["learned_sql"]["k"]["sql"] == "x"
+    assert ci.recall_learned_sql(new, "k2") == "y"
