@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.console_route_source import console_route_source
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_MAIN = REPO_ROOT / "console" / "app" / "main.py"
@@ -158,7 +160,7 @@ def _has_csrf(deco: ast.Call) -> bool:
 def console_state_changing_routes():
     """Return a list of (path, method, decorator_ast) tuples for every
     state-changing route declared on the app."""
-    tree = ast.parse(CONSOLE_MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(console_route_source())
     routes = []
     for path, method, deco in _route_decorators(tree):
         if method in STATE_CHANGING_METHODS:

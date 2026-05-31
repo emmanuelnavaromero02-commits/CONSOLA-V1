@@ -180,6 +180,7 @@ def test_env_example_documents_runtime_env_contract():
         "AIRFLOW_URL",
         "VAULT_URL",
         "REPLICON_URL",
+        "HUBSPOT_URL",
         "SAP_HCM_URL",
         "SAP_S4HANA_URL",
         "SAP_SUCCESSFACTORS_URL",
@@ -228,6 +229,7 @@ def test_bootstrap_sh_emits_runtime_env_contract():
         "AIRFLOW_URL",
         "VAULT_URL",
         "REPLICON_URL",
+        "HUBSPOT_URL",
         "SAP_HCM_URL",
         "SAP_S4HANA_URL",
         "SAP_SUCCESSFACTORS_URL",
@@ -245,6 +247,22 @@ def test_bootstrap_sh_emits_runtime_env_contract():
     }
     missing = [name for name in sorted(required) if f"{name}=" not in src]
     assert not missing, f"infra/bootstrap.sh missing runtime keys: {missing}"
+
+
+def test_bootstrap_fernet_generation_uses_stdlib_not_host_cryptography():
+    src = _bootstrap_sh()
+    assert "base64.urlsafe_b64encode(os.urandom(32))" in src
+    assert "cryptography.fernet" not in src, (
+        "bootstrap must not depend on host cryptography/cffi just to mint Fernet-shaped keys"
+    )
+
+
+def test_env_example_documents_superset_previous_secret_key():
+    src = _env_example()
+    assert re.search(r"^SUPERSET_PREVIOUS_SECRET_KEY=", src, re.MULTILINE), (
+        "Superset rotations need SUPERSET_PREVIOUS_SECRET_KEY documented so "
+        "superset re-encrypt-secrets can recover existing metadata"
+    )
 
 
 def test_local_superset_bootstrap_does_not_force_https_on_http_port():

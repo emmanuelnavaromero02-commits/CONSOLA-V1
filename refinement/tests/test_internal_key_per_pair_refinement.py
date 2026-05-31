@@ -28,6 +28,10 @@ def _module(**attrs):
     return mod
 
 
+class _GeneratedSQLValidationError(ValueError):
+    pass
+
+
 @pytest.fixture()
 def refinement_main(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
@@ -41,7 +45,14 @@ def refinement_main(monkeypatch):
     async def generate_sql(*args, **kwargs):
         return "", ""
 
-    monkeypatch.setitem(sys.modules, "app.llm_sql", _module(generate_sql=generate_sql))
+    monkeypatch.setitem(
+        sys.modules,
+        "app.llm_sql",
+        _module(
+            GeneratedSQLValidationError=_GeneratedSQLValidationError,
+            generate_sql=generate_sql,
+        ),
+    )
     monkeypatch.setitem(
         sys.modules,
         "app.security",
@@ -119,7 +130,14 @@ def refinement_main_prod_legacy_only(monkeypatch):
     async def generate_sql(*args, **kwargs):
         return "", ""
 
-    monkeypatch.setitem(sys.modules, "app.llm_sql", _module(generate_sql=generate_sql))
+    monkeypatch.setitem(
+        sys.modules,
+        "app.llm_sql",
+        _module(
+            GeneratedSQLValidationError=_GeneratedSQLValidationError,
+            generate_sql=generate_sql,
+        ),
+    )
     monkeypatch.setitem(sys.modules, "app.security", _module(get_internal_api_key=lambda: LEGACY))
     sys.modules.pop("app.main", None)
     main = importlib.import_module("app.main")

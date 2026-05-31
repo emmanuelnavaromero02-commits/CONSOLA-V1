@@ -189,7 +189,7 @@ def console_main(monkeypatch):
         "app.services.email_service": _module(render_invitation=render_invitation, send_email=send_email),
         "app.services.mcp_registry": _module(startup=_noop_async, health_check_all=_noop_async, close_pool=close_pool),
         "app.services.assistant": _module(chat=assistant_chat),
-        "app.services.studio_assistant": _module(),
+        "app.services.studio_assistant": _module(register_local_tool=lambda *args, **kwargs: None),
         "app.services.token_store": _module(summary=token_summary, close_pool=close_pool),
         "app.services.job_service": _module(list_recent=list_recent_jobs, get=get_job, close_pool=close_pool),
         "app.services.cartridge_service": _module(close_pool=close_pool),
@@ -221,6 +221,7 @@ def console_main(monkeypatch):
     from app.services.rate_limiter import reset_rate_limiter
     reset_rate_limiter()
     yield main
+    sys.modules.pop("app.routers.studio", None)
     sys.modules.pop("app.main", None)
     sys.modules.pop("app.dependencies", None)
 

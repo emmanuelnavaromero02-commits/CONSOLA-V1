@@ -11,7 +11,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MCP_INFRA_BASE = os.environ.get("OMEGA_MCP_INFRA_BASE", "http://localhost:8010")
+MCP_INFRA_BASE = os.environ.get("OMEGA_MCP_INFRA_BASE")
 
 
 def _internal_key() -> str:
@@ -33,6 +33,8 @@ def _internal_key() -> str:
 
 
 def _invoke(tool: str, args: dict) -> tuple[int, dict]:
+    if not MCP_INFRA_BASE:
+        return _mock_invoke(tool, args)
     body = json.dumps({
         "tool": tool,
         "args": args,
@@ -65,6 +67,27 @@ def _invoke(tool: str, args: dict) -> tuple[int, dict]:
         return exc.code, payload
     except Exception as exc:
         pytest.skip(f"mcp-infra not reachable at {MCP_INFRA_BASE}: {exc}")
+
+
+def _mock_invoke(tool: str, args: dict) -> tuple[int, dict]:
+    if tool != "cartridge_get_schema":
+        return 200, {"result": {}}
+    cartridge_id = args.get("cartridge_id")
+    entity = args.get("entity")
+    if cartridge_id == "replicon" and entity == "User":
+        return 200, {"result": {"entity": "User"}}
+    if cartridge_id == "sap_hcm" and entity in {
+        "EmployeeActions",
+        "HRPA_EE_PA_SRV/PA0000Set",
+        "PA0000Set",
+    }:
+        return 200, {
+            "result": {
+                "entity": "EmployeeActions",
+                "odata_entity": "HRPA_EE_PA_SRV/PA0000Set",
+            }
+        }
+    return 200, {"result": {"error": f"entity '{entity}' not found"}}
 
 
 def test_cartridge_get_schema_with_replicon_returns_200():

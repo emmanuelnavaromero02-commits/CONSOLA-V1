@@ -275,6 +275,11 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         "cartridge-replicon": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
+    "hubspot": {
+        "hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
+        "cartridge-hubspot": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
+    },
     "sap_hcm": {
         "cartridge-sap_hcm": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
     },
@@ -1157,8 +1162,7 @@ _AUTH_INTERNAL_SERVICE_PREFIX = ("/monitoring/mcp/", "/studio_ops/mcp/")
 
 # Routes a user is allowed to hit while in must_change_password=true state.
 _AUTH_FORCED_CHANGE_ALLOW_EXACT = {
-    "/me", "/api/me", "/api/me/change-password", "/auth/logout", "/auth/me",
-    "/api/me/access", "/api/me/profile",
+    "/me", "/api/me", "/api/me/access", "/api/me/profile", "/api/me/change-password", "/auth/logout", "/auth/me",
 }
 
 _RBAC_DEPENDENCY_PREFIXES = (

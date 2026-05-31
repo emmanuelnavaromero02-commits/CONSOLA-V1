@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Iterable
@@ -65,6 +67,7 @@ ACTIVITY_LABELS = {
     "action_dry_run": "Dry-run validado",
     "action_blocked": "Ejecucion bloqueada",
     "action_executed": "Write-back interno ejecutado",
+    "action_failed": "Ejecucion fallida",
     "auto_run_completed": "Modo automatico completado",
     "approved": "Aprobacion registrada",
     "lesson_recorded": "Leccion registrada",
@@ -182,6 +185,7 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "prepare_hcm_access_review": {
         "template_id": "prepare_hcm_access_review",
+        "template_type": "sap_hcm_it0008",
         "cartridge_id": "sap_hcm",
         "label": "Preparar revision HCM acceso/nomina",
         "description": "Prepara baja, bloqueo de usuario, evidencia de posicion y posible cola de nomina.",
@@ -221,6 +225,68 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
         "requires_approval": True,
     },
 }
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    ok: bool
+    status: str
+    message: str
+    data: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "ok": self.ok,
+            "status": self.status,
+            "message": self.message,
+        }
+        if self.data is not None:
+            payload["data"] = self.data
+        return payload
+
+
+class BaseAdapter(ABC):
+    @abstractmethod
+    def execute(
+        self,
+        action_data: dict[str, Any],
+        credentials: dict[str, Any],
+        dry_run: bool = True,
+    ) -> ExecutionResult | dict[str, Any] | Awaitable[ExecutionResult | dict[str, Any]]:
+        """Execute an approved external write-back action."""
+
+
+class WriteBackAdapterFactory:
+    _registry: dict[str, type[BaseAdapter]] = {}
+
+    @classmethod
+    def _ensure_builtin_adapters(cls) -> None:
+        from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
+
+        cls._registry.setdefault("sap_hcm_it0008", SapHcmAdapter)
+
+    @classmethod
+    def register_adapter(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
+        if not issubclass(adapter_cls, BaseAdapter):
+            raise TypeError("write-back adapter must inherit from BaseAdapter")
+        cls._registry[_normalize_writeback_template_type(template_type)] = adapter_cls
+
+    @classmethod
+    def has_adapter(cls, template_type: str) -> bool:
+        cls._ensure_builtin_adapters()
+        return _normalize_writeback_template_type(template_type) in cls._registry
+
+    @classmethod
+    def get_adapter(cls, template_type: str) -> BaseAdapter:
+        cls._ensure_builtin_adapters()
+        normalized = _normalize_writeback_template_type(template_type)
+        adapter_cls = cls._registry.get(normalized)
+        if adapter_cls is None:
+            raise NotImplementedError(
+                f"No write-back adapter registered for template_type '{normalized}'. "
+                "Register a BaseAdapter implementation before live execution."
+            )
+        return adapter_cls()
 
 
 @dataclass(frozen=True)
@@ -1167,12 +1233,65 @@ def _lesson_insights(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _suggested_action_from_lesson(lesson: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = _details(lesson.get("metadata"))
+    if not metadata.get("autonomous_learning"):
+        return None
+    action = metadata.get("suggested_action")
+    if not isinstance(action, dict):
+        return None
+    template_id = str(action.get("template_id") or "").strip()
+    if not template_id:
+        return None
+    return {
+        "template_id": template_id,
+        "template_type": action.get("template_type"),
+        "label": action.get("label") or template_id.replace("_", " ").title(),
+        "action_kind": action.get("action_kind"),
+        "target": action.get("target") or lesson.get("cartridge_id"),
+        "adapter": action.get("adapter"),
+        "confidence": lesson.get("confidence"),
+        "lesson_id": lesson.get("id"),
+        "source_item_id": lesson.get("item_id"),
+        "source_decision_id": lesson.get("source_decision_id"),
+        "reason": lesson.get("rule"),
+    }
+
+
+def _suggested_actions_from_lessons(
+    item: dict[str, Any],
+    lesson_rows: Iterable[dict[str, Any]],
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for lesson in lesson_rows:
+        if not _lesson_matches_item(lesson, item):
+            continue
+        suggestion = _suggested_action_from_lesson(lesson)
+        if not suggestion:
+            continue
+        key = str(suggestion.get("template_id") or suggestion.get("lesson_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        suggestions.append(suggestion)
+    suggestions.sort(key=lambda row: float(row.get("confidence") or 0.0), reverse=True)
+    return suggestions[: max(1, min(int(limit or 5), 20))]
+
+
 def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not items:
         return []
     if not lesson_rows:
         return [
-            _with_omega({**item, "related_lessons": item.get("related_lessons") or [], "lesson_count": 0})
+            _with_omega({
+                **item,
+                "related_lessons": item.get("related_lessons") or [],
+                "lesson_count": 0,
+                "suggested_actions": item.get("suggested_actions") or [],
+            })
             for item in items
         ]
 
@@ -1192,11 +1311,13 @@ def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict
             rule = str(row.get("rule") or "").strip()
             if rule and rule not in rules:
                 rules.append(rule)
+        suggested_actions = _suggested_actions_from_lessons(item, related)
         enriched.append(_with_omega({
             **item,
             "related_lessons": related[:5],
             "lesson_count": len(related),
             "learned_rules": rules[:5],
+            "suggested_actions": suggested_actions,
         }))
     enriched.sort(key=_status_sort_key)
     return enriched
@@ -1983,6 +2104,40 @@ def _external_delivery_enabled() -> bool:
     }
 
 
+def _normalize_writeback_template_type(template_type: Any) -> str:
+    return str(template_type or "").strip().lower()
+
+
+def _writeback_template_type(template: dict[str, Any]) -> str:
+    return _normalize_writeback_template_type(template.get("template_type") or template.get("template_id"))
+
+
+def _adapter_result_to_dict(result: ExecutionResult | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(result, ExecutionResult):
+        return result.to_dict()
+    if isinstance(result, dict):
+        return dict(result)
+    raise TypeError("write-back adapter returned an invalid result")
+
+
+def _writeback_credentials_for_action(
+    *,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = _details(item.get("metadata"))
+    connection = _details(metadata.get("connection"))
+    credentials = _details(payload.get("credentials"))
+    return {
+        **connection,
+        **credentials,
+        "cartridge_id": template.get("cartridge_id") or item.get("cartridge"),
+        "template_type": _writeback_template_type(template),
+        "workspace_id": payload.get("workspace_id"),
+    }
+
+
 def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
     template_id = str(template.get("template_id") or "")
     if template_id in SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES:
@@ -1999,18 +2154,22 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
             "status": "supported",
             "description": "Crea un seguimiento operativo real en la bitacora de decisiones; no escribe en ERP.",
         }
+    template_type = _writeback_template_type(template)
+    has_adapter = WriteBackAdapterFactory.has_adapter(template_type)
     return {
-        "supported": False,
-        "mode": "unsupported",
+        "supported": has_adapter,
+        "mode": "external_writeback",
         "target": str(template.get("cartridge_id") or "external_system"),
         "external": True,
+        "adapter": template_type if has_adapter else None,
+        "template_type": template_type,
         "requires_flag": True,
         "requires_confirmation": True,
         "requires_decision": True,
         "requires_dry_run": True,
         "permission": "control_room.execute",
-        "status": "unsupported",
-        "reason": "No hay adapter productivo aprobado para este template.",
+        "status": "supported" if has_adapter else "adapter_missing",
+        "reason": None if has_adapter else "No hay adapter productivo aprobado para este template.",
     }
 
 
@@ -2695,6 +2854,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         option["selected"] = option["id"] == selected_option_id
     lessons = _lessons_for_item(item)
     lesson_count = int(item.get("lesson_count") or 0)
+    suggested_actions = item.get("suggested_actions") if isinstance(item.get("suggested_actions"), list) else []
     priority = _priority_payload({**item, "lesson_count": lesson_count}, impact)
     alert_state = _alert_state(item)
     control_items = _control_items_for_item(
@@ -2724,6 +2884,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "action_templates": action_templates,
         "related_lessons": item.get("related_lessons") or [],
         "lesson_count": lesson_count,
+        "suggested_actions": suggested_actions,
         "lesson_applications": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
         "omega": {
             "signals": {
@@ -2810,6 +2971,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "lessons": {
                 "rules": lessons,
                 "applied": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
+                "suggested_actions": suggested_actions,
             },
         },
     }
@@ -4574,6 +4736,40 @@ def _dedupe_lessons(lessons: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return unique
 
 
+async def get_suggested_actions(
+    user: dict,
+    item: dict[str, Any],
+    *,
+    limit: int = 5,
+) -> dict[str, Any]:
+    lesson_rows = await _load_lesson_rows(
+        user,
+        cartridge_id=item.get("cartridge"),
+        anomaly_type=item.get("anomaly_type"),
+        limit=100,
+    )
+    item_lessons = await _load_lesson_rows(user, item_id=item.get("id"), limit=100)
+    lessons = _dedupe_lessons([*lesson_rows, *item_lessons])
+    suggestions = _suggested_actions_from_lessons(item, lessons, limit=limit)
+    return {
+        "item_id": item.get("id"),
+        "cartridge_id": item.get("cartridge"),
+        "anomaly_type": item.get("anomaly_type"),
+        "suggested_actions": suggestions,
+    }
+
+
+class ControlRoomService:
+    async def get_suggested_actions(
+        self,
+        user: dict,
+        item: dict[str, Any],
+        *,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        return await get_suggested_actions(user, item, limit=limit)
+
+
 async def apply_item_lesson(
     item_id: str,
     lesson_id: int,
@@ -5312,6 +5508,336 @@ async def _execute_internal_followup_task_tx(
     }
 
 
+async def _record_external_writeback_error(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    idempotency_key: str | None,
+    ip: str | None,
+    user_agent: str | None,
+    template_type: str,
+    adapter_name: str,
+    exc: Exception,
+    status_code: int,
+) -> None:
+    target = template.get("cartridge_id") or item.get("cartridge") or "external_system"
+    error_message = str(exc) or exc.__class__.__name__
+    result = {
+        "ok": False,
+        "mode": "execute_live",
+        "executed": False,
+        "external_write": True,
+        "internal_write": False,
+        "target": target,
+        "adapter": adapter_name,
+        "template_type": template_type,
+        "idempotency_key": idempotency_key,
+        "error_type": exc.__class__.__name__,
+        "message": error_message,
+    }
+    execution = await _record_action_execution(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute_live",
+        status="failed",
+        payload={**payload, "idempotency_key": idempotency_key, "template_type": template_type},
+        result=result,
+        error=error_message,
+        critical=True,
+    )
+    await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="action_failed",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "execution_id": execution.get("id"),
+            "target": target,
+            "adapter": adapter_name,
+            "error_type": exc.__class__.__name__,
+        },
+        critical=True,
+    )
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="failure",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "target": target,
+            "adapter": adapter_name,
+            "execution_id": execution.get("id"),
+            "error_type": exc.__class__.__name__,
+            "error": error_message,
+        },
+    )
+    raise HTTPException(status_code, error_message) from exc
+
+
+async def _record_adapter_success_lesson(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    execution: dict[str, Any],
+    result: dict[str, Any],
+    adapter_name: str,
+    template_type: str,
+) -> dict[str, Any] | None:
+    tenant_id, workspace_id = _workspace_scope(user)
+    cartridge_id = str(item.get("cartridge") or template.get("cartridge_id") or "platform")
+    anomaly_type = str(item.get("anomaly_type") or "control_room_item")
+    decision_id = int(item["decision_id"]) if item.get("decision_id") else None
+    confidence = _impact_for_item(item).get("confidence") or 0.85
+    rule = (
+        f"Para {cartridge_id}/{anomaly_type}, sugerir {template.get('label') or template.get('template_id')} "
+        f"cuando una anomalia similar aparezca: adapter {adapter_name} ejecuto correctamente."
+    )
+    metadata = {
+        "autonomous_learning": True,
+        "source": "adapter_success",
+        "execution_id": execution.get("id"),
+        "result_status": result.get("status") or result.get("adapter_result", {}).get("status"),
+        "suggested_action": {
+            "template_id": template.get("template_id"),
+            "template_type": template_type,
+            "label": template.get("label"),
+            "action_kind": template.get("action_kind"),
+            "target": result.get("target") or template.get("cartridge_id") or item.get("cartridge"),
+            "adapter": adapter_name,
+        },
+    }
+    try:
+        await pool.execute(
+            """
+            INSERT INTO control_room_lessons (
+                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+                rule, source_decision_id, confidence, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            cartridge_id,
+            anomaly_type,
+            rule,
+            decision_id,
+            confidence,
+            json.dumps(metadata),
+        )
+    except Exception:
+        return None
+    return {
+        "item_id": item["id"],
+        "cartridge_id": cartridge_id,
+        "anomaly_type": anomaly_type,
+        "rule": rule,
+        "source_decision_id": decision_id,
+        "confidence": confidence,
+        "metadata": metadata,
+    }
+
+
+async def _execute_external_writeback_task(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    idempotency_key: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict[str, Any]:
+    template_type = _writeback_template_type(template)
+    target = template.get("cartridge_id") or item.get("cartridge") or "external_system"
+    adapter_name = template_type
+    action_data = {**payload, "idempotency_key": idempotency_key, "template_type": template_type}
+    credentials = _writeback_credentials_for_action(item=item, template=template, payload=payload)
+    before = {
+        "execution_status": item.get("execution_status") or "not_started",
+        "status": item.get("status") or "open",
+        "decision_id": item.get("decision_id"),
+    }
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute.external.preflight",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="pending",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "target": target,
+            "adapter": adapter_name,
+            "idempotency_key": idempotency_key,
+            "fail_closed": True,
+        },
+    )
+    public_validation_result = {
+        "ok": True,
+        "status": "audit_preflight_recorded",
+        "message": "Audit preflight recorded before external write-back.",
+    }
+    try:
+        adapter = WriteBackAdapterFactory.get_adapter(template_type)
+        adapter_name = adapter.__class__.__name__
+        adapter_result = adapter.execute(action_data, credentials, dry_run=False)
+        if inspect.isawaitable(adapter_result):
+            adapter_result = await adapter_result
+        public_adapter_result = _adapter_result_to_dict(adapter_result)
+    except NotImplementedError as exc:
+        await _record_external_writeback_error(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            idempotency_key=idempotency_key,
+            ip=ip,
+            user_agent=user_agent,
+            template_type=template_type,
+            adapter_name=adapter_name,
+            exc=exc,
+            status_code=501,
+        )
+    except Exception as exc:
+        await _record_external_writeback_error(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            idempotency_key=idempotency_key,
+            ip=ip,
+            user_agent=user_agent,
+            template_type=template_type,
+            adapter_name=adapter_name,
+            exc=exc,
+            status_code=502,
+        )
+
+    ok = bool(public_adapter_result.get("ok", True))
+    execution_status = "executed" if ok else "failed"
+    after = public_adapter_result.get("after")
+    if not isinstance(after, dict):
+        after = {"execution_status": execution_status, "target": target}
+    message = str(
+        public_adapter_result.get("message")
+        or ("Write-back externo ejecutado." if ok else "Write-back externo fallido.")
+    )
+    result = {
+        "ok": ok,
+        "mode": "execute_live",
+        "executed": ok,
+        "external_write": True,
+        "internal_write": False,
+        "target": target,
+        "adapter": adapter_name,
+        "template_type": template_type,
+        "idempotency_key": idempotency_key,
+        "before": before,
+        "after": after,
+        "message": message,
+        "validation_result": public_validation_result,
+        "adapter_result": public_adapter_result,
+    }
+    execution = await _record_action_execution(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute_live",
+        status=execution_status,
+        payload=action_data,
+        result=result,
+        error=None if ok else message,
+        critical=True,
+    )
+    await _set_execution_status(pool, user=user, item=item, execution_status=execution_status, critical=True)
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="action_executed" if ok else "action_failed",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "execution_id": execution.get("id"),
+            "target": target,
+            "adapter": adapter_name,
+        },
+        critical=True,
+    )
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="success" if ok else "failure",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "target": target,
+            "adapter": adapter_name,
+            "execution_id": execution.get("id"),
+            "before": before,
+            "after": after,
+            "validation_result": public_validation_result,
+            "adapter_result": public_adapter_result,
+        },
+    )
+    if not ok:
+        raise HTTPException(502, message)
+    learning_lesson = await _record_adapter_success_lesson(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        execution=execution,
+        result=result,
+        adapter_name=adapter_name,
+        template_type=template_type,
+    )
+    suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
+    public_item = _with_omega({
+        **item,
+        "execution_status": "executed",
+        "suggested_actions": suggested_actions,
+    })
+    return {
+        "executed": True,
+        "idempotent": False,
+        "execution": execution,
+        "payload": action_data,
+        "result": result,
+        "learning_lesson": learning_lesson,
+        "item": public_item,
+    }
+
+
 async def execute_item(
     item_id: str,
     user: dict,
@@ -5343,7 +5869,7 @@ async def execute_item(
         raise HTTPException(409, "external write-back is disabled for Control Room V1")
 
     capability = _writeback_capability(template)
-    if not capability.get("supported"):
+    if not capability.get("supported") and not capability.get("external"):
         await _record_execute_block(
             pool,
             user=user,
@@ -5459,18 +5985,16 @@ async def execute_item(
             user_agent=user_agent,
         )
 
-    await _record_execute_block(
+    return await _execute_external_writeback_task(
         pool,
         user=user,
         item=item,
         template=template,
         payload=payload,
+        idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
         ip=ip,
         user_agent=user_agent,
-        message="No hay adapter productivo aprobado para este template.",
-        error="unsupported_writeback_template",
     )
-    raise HTTPException(501, "write-back template is not supported in Control Room V1")
 
 
 async def create_decision_for_anomaly(

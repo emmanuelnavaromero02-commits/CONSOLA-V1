@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
+import secrets
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -36,6 +39,7 @@ from app.logging_config import setup_logging  # noqa: E402
 from app.middleware.request_id import request_id_var  # noqa: E402
 
 setup_logging(service_name="workspace")
+logger = logging.getLogger(__name__)
 
 def _app_env() -> str:
     return os.environ.get("APP_ENV", "production").strip().lower()
@@ -279,7 +283,7 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-    # Sprint v1.24 (audit B6): script-src dropped 'unsafe-inline'. Every
+    # Sprint v1.24 (audit B6): JavaScript sources are strict. Every
     # script in the workspace shell now ships as an external .js file
     # (see workspace/app/static/js/) and inline event handlers are
     # bound via addEventListener — same pattern console adopted in
@@ -306,7 +310,7 @@ SECURITY_HEADERS = {
 # relaxed pre-v1.24 CSP. Same pattern console used in v1.11.
 _APPS_WRAPPER_CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline'; "
+    "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; "
     "frame-src 'self'; "
@@ -318,7 +322,7 @@ _APPS_WRAPPER_CSP = (
 _APPS_CONTENT_CSP = (
     "default-src 'none'; "
     "sandbox allow-scripts; "
-    "script-src 'unsafe-inline' https://cdn.jsdelivr.net "
+    "script-src https://cdn.jsdelivr.net "
     "https://cdnjs.cloudflare.com https://unpkg.com; "
     "style-src 'unsafe-inline' https://cdn.jsdelivr.net "
     "https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
@@ -329,6 +333,14 @@ _APPS_CONTENT_CSP = (
     "base-uri 'none'; "
     "form-action 'none'"
 )
+
+
+def _apps_wrapper_csp(nonce: str) -> str:
+    return _APPS_WRAPPER_CSP.replace("script-src 'self';", f"script-src 'self' 'nonce-{nonce}';")
+
+
+def _apps_content_csp(nonce: str) -> str:
+    return _APPS_CONTENT_CSP.replace("script-src ", f"script-src 'nonce-{nonce}' ", 1)
 
 
 def _apply_security_headers(response: Response, path: str = "") -> Response:
@@ -503,7 +515,9 @@ async def workspace_chat_stream(request: Request, body: dict):
             result = await _ca.chat(message, history, user=user, on_event=on_event)
             await queue.put({"type": "done", **result})
         except Exception as exc:
-            await queue.put({"type": "error", "message": str(exc)})
+            request_id = request_id_var.get() or str(uuid.uuid4())
+            logger.exception("workspace chat stream failed request_id=%s", request_id)
+            await queue.put({"type": "error", "message": "Internal Server Error", "request_id": request_id})
 
     asyncio.create_task(run())
 
@@ -592,7 +606,7 @@ async def _load_visible_app(user: dict, name: str) -> dict:
 
 
 _APP_BRIDGE_SCRIPT = r"""
-<script>
+<script nonce="__OMEGA_CSP_NONCE__">
 (() => {
   const pending = new Map();
   let seq = 0;
@@ -645,14 +659,24 @@ _APP_BRIDGE_SCRIPT = r"""
 """
 
 
-def _inject_app_bridge(raw_html: str) -> str:
+_SCRIPT_TAG_WITHOUT_NONCE_RE = re.compile(r"<script\b(?![^>]*\bnonce=)", re.IGNORECASE)
+
+
+def _nonce_script_tags(html: str, nonce: str) -> str:
+    return _SCRIPT_TAG_WITHOUT_NONCE_RE.sub(f'<script nonce="{nonce}"', html)
+
+
+def _inject_app_bridge(raw_html: str, nonce: str) -> str:
+    bridge = _APP_BRIDGE_SCRIPT.replace("__OMEGA_CSP_NONCE__", nonce)
     match = re.search(r"<head\b[^>]*>", raw_html, flags=re.IGNORECASE)
     if match:
-        return raw_html[:match.end()] + _APP_BRIDGE_SCRIPT + raw_html[match.end():]
-    return _APP_BRIDGE_SCRIPT + raw_html
+        html = raw_html[:match.end()] + bridge + raw_html[match.end():]
+    else:
+        html = bridge + raw_html
+    return _nonce_script_tags(html, nonce)
 
 
-def _app_wrapper_html(name: str, datasets_used: list[str]) -> str:
+def _app_wrapper_html(name: str, datasets_used: list[str], nonce: str) -> str:
     content_src = f"/apps/{quote(name, safe='')}/content"
     content_src_json = json.dumps(content_src)
     allowed_datasets_json = json.dumps(sorted({
@@ -671,7 +695,7 @@ def _app_wrapper_html(name: str, datasets_used: list[str]) -> str:
 </head>
 <body>
   <iframe id="omega-app-frame" title="Published app" sandbox="allow-scripts" referrerpolicy="same-origin" src={json.dumps(content_src)}></iframe>
-  <script>
+  <script nonce={json.dumps(nonce)}>
     (() => {{
       const frame = document.getElementById("omega-app-frame");
       const allowedSrc = {content_src_json};
@@ -735,14 +759,24 @@ def _app_wrapper_html(name: str, datasets_used: list[str]) -> str:
 async def serve_app_content(request: Request, name: str):
     user = require_user(request)
     app_info = await _load_visible_app(user, name)
-    return Response(content=_inject_app_bridge(app_info["html"]), media_type="text/html")
+    nonce = secrets.token_urlsafe(16)
+    return Response(
+        content=_inject_app_bridge(app_info["html"], nonce),
+        media_type="text/html",
+        headers={"Content-Security-Policy": _apps_content_csp(nonce)},
+    )
 
 
 @app.get("/apps/{name}")
 async def serve_app(request: Request, name: str):
     user = require_user(request)
     app_info = await _load_visible_app(user, name)
-    return Response(content=_app_wrapper_html(name, app_info["datasets_used"]), media_type="text/html")
+    nonce = secrets.token_urlsafe(16)
+    return Response(
+        content=_app_wrapper_html(name, app_info["datasets_used"], nonce),
+        media_type="text/html",
+        headers={"Content-Security-Policy": _apps_wrapper_csp(nonce)},
+    )
 
 
 # ── Data API consumed by the published apps ────────────────────────────────

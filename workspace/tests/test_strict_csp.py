@@ -81,10 +81,10 @@ def test_workspace_csp_keeps_style_unsafe_inline():
 
 def test_workspace_apps_wrapper_allows_only_same_origin_bridge():
     """The /apps/* wrapper is platform-owned chrome around the sandboxed
-    iframe. It can keep inline bridge JS, but must not load CDN code."""
+    iframe. Inline bridge JS must be nonced and must not load CDN code."""
     csp = _csp_for("/apps/pnl_ejecutivo")
     script_seg = csp.split("style-src", 1)[0]
-    assert "'unsafe-inline'" in script_seg
+    assert "'unsafe-inline'" not in script_seg
     assert "frame-src 'self'" in csp, csp
     assert "cdn.jsdelivr.net" not in csp and "cdnjs.cloudflare.com" not in csp, csp
 
@@ -95,9 +95,23 @@ def test_workspace_apps_content_is_sandboxed_and_cannot_connect():
     csp = _csp_for("/apps/pnl_ejecutivo/content")
     assert "sandbox allow-scripts" in csp, csp
     assert "allow-same-origin" not in csp, csp
+    assert "'unsafe-inline'" not in csp.split("style-src", 1)[0]
     assert "connect-src 'none'" in csp, csp
     assert "frame-ancestors 'self'" in csp, csp
     assert "cdn.jsdelivr.net" in csp or "cdnjs.cloudflare.com" in csp, csp
+
+
+def test_workspace_apps_nonce_inline_scripts():
+    main_module = _main()
+    nonce = "testnonce123"
+    wrapper_html = main_module._app_wrapper_html("demo", ["gold_demo"], nonce)
+    content_html = main_module._inject_app_bridge("<html><head></head><body><script>run()</script></body></html>", nonce)
+
+    assert f"'nonce-{nonce}'" in main_module._apps_wrapper_csp(nonce)
+    assert f"'nonce-{nonce}'" in main_module._apps_content_csp(nonce)
+    assert f'<script nonce="{nonce}">' in wrapper_html
+    assert f'<script nonce="{nonce}">' in content_html
+    assert content_html.count(f'nonce="{nonce}"') == 2
 
 
 def test_workspace_csp_keeps_frame_ancestors_none():

@@ -69,7 +69,15 @@ _FORBIDDEN_SEED_SQL = re.compile(
 # inside a dollar-quoted literal as data, not a statement boundary.
 _DOLLAR_QUOTE_OPEN_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 _SAFE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,79}$")
+_SAFE_CARTRIDGE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_SAFE_ENTITY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SAFE_READ_SQL_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+_UNSAFE_READ_SQL_RE = re.compile(
+    r";|--|/\*|\b(attach|call|copy|create|delete|drop|export|import|insert|install|load|pragma|set|truncate|update|alter)\b",
+    re.IGNORECASE,
+)
+_SINGLE_QUOTED_SQL_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
 
 
 def _validate_cartridge_id(value: str) -> str:
@@ -337,6 +345,257 @@ async def create_cartridge(cartridge_id: str, name: str, description: str = "") 
     finally:
         await conn.close()
     return await get_cartridge(cartridge_id)
+
+
+def _as_list(value, field: str) -> list:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    return value
+
+
+def _require_unique(values: list[str], field: str) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if value in seen:
+            duplicates.add(value)
+        seen.add(value)
+    if duplicates:
+        raise ValueError(f"{field} contains duplicate values: {', '.join(sorted(duplicates))}")
+
+
+def _validate_entity_identifier(value: str, field: str) -> str:
+    value = (value or "").strip()
+    if not _SAFE_ENTITY_RE.fullmatch(value):
+        raise ValueError(f"invalid {field}")
+    return value
+
+
+def _validate_full_cartridge_id(value: str) -> str:
+    value = (value or "").strip()
+    if not _SAFE_CARTRIDGE_ID_RE.fullmatch(value):
+        raise ValueError("invalid cartridge id")
+    return value
+
+
+def _validate_kb_sql(sql: str | None, kb_id: str) -> None:
+    if not sql:
+        return
+    masked = _SINGLE_QUOTED_SQL_RE.sub("''", sql)
+    if not _SAFE_READ_SQL_RE.search(masked) or _UNSAFE_READ_SQL_RE.search(masked):
+        raise ValueError(f"knowledge bit '{kb_id}' SQL must be a single read-only SELECT/WITH statement")
+
+
+def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
+    if not isinstance(payload, dict):
+        raise ValueError("manifest must be an object")
+    cid = _validate_full_cartridge_id(str(payload.get("id") or payload.get("cartridge_id") or ""))
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+
+    manifest: dict = {
+        "id": cid,
+        "name": name,
+        "version": str(payload.get("version") or "1.0"),
+        "description": str(payload.get("description") or ""),
+        "pattern": str(payload.get("pattern") or "custom"),
+        "category": str(payload.get("category") or "custom"),
+        "bronze_path": str(payload.get("bronze_path") or f"raw/{cid}"),
+        "assistant_hints": str(payload.get("assistant_hints") or payload.get("hints") or ""),
+    }
+
+    connections = []
+    for item in _as_list(payload.get("connections"), "connections"):
+        if not isinstance(item, dict):
+            raise ValueError("connections entries must be objects")
+        conn_id = _validate_entity_identifier(str(item.get("conn_id") or item.get("id") or ""), "conn_id")
+        connections.append({
+            "conn_id": conn_id,
+            "description": str(item.get("description") or ""),
+            "auth_type": str(item.get("auth_type") or item.get("auth") or "bearer_token"),
+            "poll_strategy": item.get("poll_strategy"),
+        })
+    _require_unique([c["conn_id"] for c in connections], "connections")
+    manifest["connections"] = connections
+
+    dags = []
+    for item in _as_list(payload.get("dags"), "dags"):
+        if not isinstance(item, dict):
+            raise ValueError("dags entries must be objects")
+        dag_id = _validate_entity_identifier(str(item.get("dag_id") or item.get("id") or ""), "dag_id")
+        dags.append({
+            "dag_id": dag_id,
+            "file": str(item.get("file") or f"{dag_id}.py"),
+            "description": str(item.get("description") or ""),
+            "trigger": str(item.get("trigger") or "on-demand"),
+            "params": item.get("params") or "[]",
+            "dag_params_example": item.get("dag_params_example") or {},
+        })
+    _require_unique([d["dag_id"] for d in dags], "dags")
+    dag_ids = {d["dag_id"] for d in dags}
+    manifest["dags"] = dags
+
+    entities = []
+    for item in _as_list(payload.get("entities"), "entities"):
+        if not isinstance(item, dict):
+            raise ValueError("entities entries must be objects")
+        entity = _validate_entity_identifier(str(item.get("entity") or item.get("name") or ""), "entity")
+        dag_id = str(item.get("dag_id") or "").strip()
+        if dag_id and dag_ids and dag_id not in dag_ids:
+            raise ValueError(f"entity '{entity}' references unknown dag_id '{dag_id}'")
+        entities.append({
+            "entity": entity,
+            "display_name": str(item.get("display_name") or item.get("title") or entity),
+            "mode": str(item.get("mode") or "full"),
+            "primary_key": item.get("primary_key") or "",
+            "dag_id": dag_id,
+            "trigger_type": str(item.get("trigger_type") or "manual"),
+            "cron_expression": item.get("cron_expression") or "",
+            "description": str(item.get("description") or ""),
+            "dag_params": item.get("dag_params") or {},
+        })
+    _require_unique([e["entity"] for e in entities], "entities")
+    manifest["entities"] = entities
+
+    semantic_model = payload.get("semantic_model") if isinstance(payload.get("semantic_model"), dict) else {}
+    vocabulary = semantic_model.get("vocabulary") or payload.get("vocabulary") or []
+    normalized_vocab = []
+    for item in _as_list(vocabulary, "semantic_model.vocabulary"):
+        if not isinstance(item, dict):
+            raise ValueError("semantic_model.vocabulary entries must be objects")
+        term = str(item.get("term") or "").strip()
+        if not term:
+            raise ValueError("semantic vocabulary term is required")
+        normalized_vocab.append({
+            "term": term,
+            "definition": str(item.get("definition") or ""),
+            "maps_to": str(item.get("maps_to") or ""),
+        })
+    _require_unique([v["term"] for v in normalized_vocab], "semantic_model.vocabulary")
+    manifest["semantic_model"] = {"vocabulary": normalized_vocab}
+
+    knowledge_bits = []
+    for item in _as_list(payload.get("knowledge_bits") or payload.get("kbs"), "knowledge_bits"):
+        if not isinstance(item, dict):
+            raise ValueError("knowledge_bits entries must be objects")
+        kb_id = _validate_entity_identifier(str(item.get("kb_id") or item.get("id") or ""), "kb_id")
+        _validate_kb_sql(item.get("sql"), kb_id)
+        knowledge_bits.append({
+            "kb_id": kb_id,
+            "name": str(item.get("name") or kb_id),
+            "description": str(item.get("description") or ""),
+            "sql": str(item.get("sql") or ""),
+            "pg_table": item.get("pg_table"),
+            "output_path": item.get("output_path"),
+        })
+    _require_unique([k["kb_id"] for k in knowledge_bits], "knowledge_bits")
+    manifest["knowledge_bits"] = knowledge_bits
+
+    custom_tools = []
+    for item in _as_list(payload.get("custom_tools"), "custom_tools"):
+        if not isinstance(item, dict):
+            raise ValueError("custom_tools entries must be objects")
+        name = _validate_entity_identifier(str(item.get("name") or ""), "custom tool name")
+        tool_type = str(item.get("tool_type") or "").strip()
+        if not tool_type:
+            raise ValueError(f"custom tool '{name}' requires tool_type")
+        config = item.get("config") or {}
+        if not isinstance(config, (dict, str)):
+            raise ValueError(f"custom tool '{name}' config must be an object or JSON string")
+        custom_tools.append({
+            "name": name,
+            "description": str(item.get("description") or ""),
+            "tool_type": tool_type,
+            "config": config,
+        })
+    _require_unique([t["name"] for t in custom_tools], "custom_tools")
+    manifest["custom_tools"] = custom_tools
+
+    analytic_apps = []
+    for item in _as_list(payload.get("analytic_apps"), "analytic_apps"):
+        if not isinstance(item, dict):
+            raise ValueError("analytic_apps entries must be objects")
+        name = _validate_entity_identifier(str(item.get("name") or ""), "analytic app name")
+        html = str(item.get("html") or "")
+        if not html:
+            raise ValueError(f"analytic app '{name}' requires html")
+        analytic_apps.append({
+            "name": name,
+            "title": str(item.get("title") or name),
+            "html": html,
+            "description": str(item.get("description") or ""),
+        })
+    _require_unique([a["name"] for a in analytic_apps], "analytic_apps")
+    manifest["analytic_apps"] = analytic_apps
+
+    agents = []
+    for item in _as_list(payload.get("agents"), "agents"):
+        if not isinstance(item, dict):
+            raise ValueError("agents entries must be objects")
+        slug = _validate_entity_identifier(str(item.get("slug") or item.get("id") or ""), "agent slug")
+        agent_name = str(item.get("name") or "").strip()
+        if not agent_name:
+            raise ValueError(f"agent '{slug}' requires name")
+        allowed_tools = item.get("allowed_tools") or []
+        rag_filter = item.get("rag_filter") or {"cartridges": [cid]}
+        extra = item.get("extra") or {}
+        if not isinstance(allowed_tools, list):
+            raise ValueError(f"agent '{slug}' allowed_tools must be a list")
+        if not isinstance(rag_filter, dict) or not isinstance(extra, dict):
+            raise ValueError(f"agent '{slug}' rag_filter and extra must be objects")
+        agents.append({
+            "slug": slug,
+            "name": agent_name,
+            "description": str(item.get("description") or ""),
+            "instructions": str(item.get("instructions") or ""),
+            "personality": str(item.get("personality") or ""),
+            "allowed_tools": allowed_tools,
+            "rag_filter": rag_filter,
+            "extra": extra,
+            "model": str(item.get("model") or "claude-sonnet-4-6"),
+            "max_tokens": int(item.get("max_tokens") or 8192),
+            "temperature": float(item.get("temperature") if item.get("temperature") is not None else 0.4),
+            "is_active": bool(item.get("is_active", True)),
+        })
+    _require_unique([a["slug"] for a in agents], "agents")
+    manifest["agents"] = agents
+
+    seed_sql = _generate_seed_sql(manifest)
+    _validate_seed_sql(seed_sql)
+    return manifest, seed_sql
+
+
+async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -> dict:
+    """Create a full cartridge after validating the seed SQL generated from it."""
+    manifest, seed_sql = _normalize_full_cartridge_manifest(payload)
+    conn = await _pg()
+    try:
+        existing = await conn.fetchrow("SELECT id FROM cartridges WHERE id=$1", manifest["id"])
+        if existing:
+            raise ValueError(f"Cartridge '{manifest['id']}' already exists")
+        async with conn.transaction():
+            for statement in _split_sql_statements(seed_sql):
+                if statement.strip():
+                    await conn.execute(statement)
+    finally:
+        await conn.close()
+    created = await get_cartridge(manifest["id"])
+    return {
+        "created": True,
+        "cartridge": created,
+        "seed_sql_validated": True,
+        "counts": {
+            "connections": len(manifest.get("connections") or []),
+            "dags": len(manifest.get("dags") or []),
+            "entities": len(manifest.get("entities") or []),
+            "knowledge_bits": len(manifest.get("knowledge_bits") or []),
+            "agents": len(manifest.get("agents") or []),
+            "semantic_terms": len((manifest.get("semantic_model") or {}).get("vocabulary") or []),
+        },
+    }
 
 
 async def update_cartridge(cartridge_id: str, updates: dict) -> dict:
@@ -771,7 +1030,8 @@ def _validate_seed_sql(sql: str) -> None:
         raise ValueError("seed.sql contains forbidden SQL")
     # Fail-closed: a block comment can hide a ';' that breaks statement
     # splitting. No legitimate cartridge seed.sql uses them, so reject outright.
-    if "/*" in sql or "*/" in sql:
+    comment_masked = _SINGLE_QUOTED_SQL_RE.sub("''", sql or "")
+    if "/*" in comment_masked or "*/" in comment_masked:
         raise ValueError("seed.sql cannot contain block comments")
     cleaned = "\n".join(
         line for line in (sql or "").splitlines()
@@ -780,7 +1040,7 @@ def _validate_seed_sql(sql: str) -> None:
     statements = _split_sql_statements(cleaned)
     for statement in statements:
         normalized = re.sub(r"\s+", " ", statement).strip()
-        lower = normalized.lower()
+        lower = _SINGLE_QUOTED_SQL_RE.sub("''", normalized).lower()
         insert_match = re.match(r"insert\s+into\s+([a-z_][a-z0-9_]*)\b", lower)
         if insert_match:
             table = insert_match.group(1)

@@ -11,24 +11,24 @@ Guía operacional end-to-end para desplegar MODecissions desde una laptop Window
 | Postgres     | Contenedores en EC2 App (`pgvector/pgvector:pg15` + `postgres:15`) | 4 databases (modecissions, _gold, superset, airflow) — paridad con local |
 | S3           | Bucket privado             | Lakehouse (reemplaza MinIO)               |
 
-**Servicios docker en EC2 App** (todos accesibles solo vía VPN):
+**Servicios docker en EC2 App**:
 
 | Servicio              | Puerto | Rol                                                         |
 |-----------------------|--------|-------------------------------------------------------------|
-| console               | 8000   | Builder/admin: Studio, Monitor, Decisiones, /admin/users    |
-| workspace             | 8001   | End-user: apps publicadas + asistente IA + decisiones       |
-| refinement            | 8500   | DuckDB + LLM SQL para datasets                              |
-| mcp-infra             | 8010   | MCP tools para Airflow, Postgres, Superset, RAG, cartridges |
-| superset              | 8088   | BI tradicional                                              |
-| airflow               | 8082   | Orquestación de DAGs                                        |
-| mailhog (UI)          | 8025   | Dev SMTP catcher (placeholder hasta SES)                    |
+| console               | 8000   | Público solo vía ALB HTTPS; target privado de EC2 App       |
+| workspace             | 8001   | Público solo vía ALB HTTPS; target privado de EC2 App       |
+| refinement            | 8500   | Interno/VPN: DuckDB + LLM SQL para datasets                 |
+| mcp-infra             | 8010   | Interno/VPN: MCP tools para Airflow, Postgres, Superset, RAG, cartridges |
+| superset              | 8088   | Interno/VPN: BI tradicional                                 |
+| airflow               | 8082   | Interno/VPN: orquestación de DAGs                           |
+| mailhog (UI)          | 8025   | Interno/VPN: Dev SMTP catcher (placeholder hasta SES)       |
 | mailhog (SMTP)        | 1025   | SMTP interno (consumido por console)                        |
 | postgres              | 5432*  | DBs modecissions, superset, airflow                         |
 | postgres_gold         | 5433*  | DB modecissions_gold (master + gold layer)                  |
 
 \* Postgres ports no están expuestos al host — solo en la red `modecissions_net` interna.
 
-**Acceso**: 100% vía VPN WireGuard. Ningún servicio expuesto a internet, salvo el panel wg-easy y SSH al bastión VPN.
+**Acceso**: console y workspace salen por ALB público HTTPS. Airflow, Superset, Postgres, MinIO/S3, MailHog, MCP, cartuchos y puertos directos quedan detrás de VPN/SSM. SSH público queda cerrado por defecto; WireGuard `51820/udp` es el único puerto VPN público esperado.
 
 **Tiempo total estimado**: ~2 horas (de las cuales ~30-45 min son builds desatendidos).
 
@@ -45,7 +45,7 @@ Herramientas requeridas en Windows.
 | WireGuard          | latest      | https://www.wireguard.com/install/                                        |
 | Git                | 2.40+       | https://git-scm.com/download/win                                          |
 | PowerShell         | 7.4+        | https://github.com/PowerShell/PowerShell/releases                         |
-| OpenSSH (ssh, ssh-keygen) | included | viene con Windows 10/11 — `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0` |
+| OpenSSH (`ssh-keygen`) | included | solo para generar deploy key — `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0` |
 
 **Comandos de verificación** (correr todos en una sola PowerShell):
 
@@ -54,7 +54,6 @@ aws --version              # aws-cli/2.15.x
 terraform version          # Terraform v1.6+
 git --version              # git version 2.40+
 $PSVersionTable.PSVersion  # 7.4.x
-ssh -V                     # OpenSSH_for_Windows_8.1+
 ssh-keygen --help 2>&1 | Select-Object -First 1
 Test-Path "C:\Program Files\WireGuard\wireguard.exe"   # True
 ```
@@ -106,7 +105,7 @@ Get-Content .\modecissions-deploy-key.pub
 ## 2. Terraform — Infraestructura — 20 min
 
 ```powershell
-cd infra/
+cd infra\terraform\infra
 terraform init
 
 terraform apply -target=aws_secretsmanager_secret.app
@@ -117,8 +116,11 @@ aws secretsmanager put-secret-value `
 
 terraform apply `
   -var="github_repo_url=git@github.com:ORG/REPO.git" `
-  -var="deploy_ref=v1.44.6" `
-  -var="image_tag=v1.44.6"
+  -var="deploy_ref=v1.0.0-rc3" `
+  -var="image_tag=v1.0.0-rc3" `
+  -var="public_console_domain=console.example.com" `
+  -var="public_workspace_domain=workspace.example.com" `
+  -var="alarm_email=ops@example.com"
 ```
 
 > Bash equivalente para la clave privada:
@@ -130,6 +132,8 @@ terraform apply `
 |---------------------------------|---------|------------------------------------------|
 | VPC + subnets + IGW + NAT GW    | ~3 min  | NAT GW es lo más lento del bloque        |
 | Security groups (sg_app, sg_vpn) | <1 min | |
+| Public ALB + target groups       | ~3 min | console/workspace only                  |
+| ACM cert + DNS validation        | variable | automatic with Route53; manual otherwise |
 | S3 bucket                       | <1 min  | private + versioning + SSE-S3            |
 | IAM role + instance profile     | <1 min  | permite a EC2 App acceso a S3            |
 | EC2 VPN (`t3.nano`)             | ~2 min  | user_data instala Docker + wg-easy       |
@@ -149,7 +153,11 @@ Outputs esperados:
 {
   "ec2_vpn_public_ip":  { "value": "54.x.x.x" },
   "ec2_app_private_ip": { "value": "10.0.2.x" },
-  "s3_bucket_name":     { "value": "modecissions-lakehouse-xxx" }
+  "s3_bucket_name":     { "value": "modecissions-lakehouse-xxx" },
+  "public_console_url": { "value": "https://console.example.com" },
+  "public_workspace_url": { "value": "https://workspace.example.com" },
+  "ssm_app_command":    { "value": "aws ssm start-session --target i-..." },
+  "ssm_vpn_command":    { "value": "aws ssm start-session --target i-..." }
 }
 ```
 
@@ -157,24 +165,24 @@ Outputs esperados:
 
 ## 3. Setup VPN WireGuard — 10 min
 
-Desde Windows, con los outputs de Terraform:
+En producción `51821/tcp` no debe quedar público. Usa port-forwarding por SSM
+para abrir wg-easy localmente:
 
 ```powershell
-cd ..\access\
-
-# Reemplazar con los valores reales de terraform-outputs.json
-.\vpn-setup.ps1 `
-  -VpnIp 54.123.45.67 `
-  -AppIp 10.0.2.15 `
-  -PemPath ..\modecissions-key.pem
+terraform output ssm_wg_easy_port_forward_command
+# Ejecuta el comando impreso y abre http://127.0.0.1:51821
 ```
 
-El script:
+Flujo:
 
-1. Abre `http://<VPN_IP>:51821` en el navegador (password: `M4n4g3rWG27*`, definido como bcrypt hash en `infra/terraform/infra/user_data/vpn.sh.tpl`).
-2. Te guía a crear un peer y descargar el `.conf`.
-3. Detecta el `.conf` más reciente en `~/Downloads` y lo importa como servicio Windows.
-4. Activa el tunnel y hace `Test-Connection` a la EC2 App.
+1. Login en `http://127.0.0.1:51821` con la password definida en `infra/terraform/infra/user_data/vpn.sh.tpl`.
+2. Crear un peer y descargar el `.conf`.
+3. Importar el `.conf` en WireGuard.
+4. Activar el tunnel y hacer `Test-Connection` a la EC2 App privada.
+
+El script `infra/terraform/access/vpn-setup.ps1` queda como helper legacy para
+casos donde `vpn_admin_allowed_cidrs` abre temporalmente `51821/tcp` a un CIDR
+explícito. No usar `0.0.0.0/0`.
 
 **Verificar tunnel activo** (en otra ventana PowerShell):
 
@@ -189,11 +197,11 @@ Test-Connection 10.0.2.15 -Count 2     # debe responder
 
 ## 4. Verificar EC2 App — 5 min
 
-Con la VPN activa:
+Usa SSM, no SSH público:
 
 ```powershell
-cd ..\access\
-.\ssh-app.ps1 -AppIp 10.0.2.15 -PemPath ..\modecissions-key.pem
+terraform output ssm_app_command
+# Ejecuta el comando impreso.
 ```
 
 Una vez dentro de la EC2:
@@ -276,6 +284,7 @@ aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_sap
 aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_sap_s4_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_sap_sf_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_replicon_password --secret-string '<role-password>'
+aws secretsmanager put-secret-value --secret-id modecissions/omega_cartridge_hubspot_password --secret-string '<role-password>'
 aws secretsmanager put-secret-value --secret-id modecissions/airflow_secret_key --secret-string '<64+ chars>'
 aws secretsmanager put-secret-value --secret-id modecissions/airflow_admin_password --secret-string '<password-seguro>'
 aws secretsmanager put-secret-value --secret-id modecissions/agent_runner_token --secret-string '<64+ chars>'
@@ -313,8 +322,8 @@ cualquiera de esas llaves obligatorias falta.
 | `SUPERSET_ADMIN_USER`   | `admin`                                                  | usuario bootstrap de Superset        |
 | `SUPERSET_ADMIN_PASSWORD` | password fuerte                                        | inventado / gestor                     |
 | `AIRFLOW_SECRET_KEY`    | hex de 32 bytes                                          | mismo comando que Superset             |
-| `CONSOLE_URL`           | `http://10.0.2.X:8000` (IP privada de EC2 App)           | `aws-entrypoint.sh` vía IMDSv2         |
-| `WORKSPACE_PUBLIC_URL`  | `http://10.0.2.X:8001`                                   | `aws-entrypoint.sh` vía IMDSv2         |
+| `CONSOLE_URL`           | `https://console.example.com`                            | Terraform `public_console_domain`      |
+| `WORKSPACE_PUBLIC_URL`  | `https://workspace.example.com`                          | Terraform `public_workspace_domain`    |
 | `SMTP_HOST`             | `mailhog` (default — captura emails sin enviarlos)       | mantener hasta tener SES configurado   |
 | `SMTP_PORT`             | `1025`                                                   | fijo para MailHog                      |
 | `SMTP_PASSWORD`         | `modecissions/smtp_password`                             | AWS Secrets Manager, opcional puede ser vacío |
@@ -347,9 +356,11 @@ Descarga las imágenes versionadas desde GHCR usando `GHCR_OWNER` e
 fallar el despliegue. El compose AWS ya no consume `modecissions/*:latest`;
 si cambias el tag de release, actualiza `IMAGE_TAG` y vuelve a ejecutar este paso.
 
-**Monitoreo en otra sesión SSH**:
+**Monitoreo en otra sesión SSM**:
 
 ```bash
+aws ssm start-session --target <app-instance-id> --region us-east-1
+
 # Progreso en vivo (qué se está buildeando ahora)
 docker ps -a --format 'table {{.Names}}\t{{.Status}}'
 
@@ -366,10 +377,10 @@ docker images | grep modecissions
 **Resultado esperado** al terminar:
 
 ```
-ghcr.io/OWNER/console      v1.44.5  ...  ~1.2 GB
-ghcr.io/OWNER/workspace    v1.44.5  ...  ~900 MB
-ghcr.io/OWNER/refinement   v1.44.5  ...  ~1.0 GB
-ghcr.io/OWNER/mcp-infra    v1.44.5  ...  ~800 MB
+ghcr.io/OWNER/console      v1.0.0-rc3  ...  ~1.2 GB
+ghcr.io/OWNER/workspace    v1.0.0-rc3  ...  ~900 MB
+ghcr.io/OWNER/refinement   v1.0.0-rc3  ...  ~1.0 GB
+ghcr.io/OWNER/mcp-infra    v1.0.0-rc3  ...  ~800 MB
 ```
 
 > Si el build falla por OOM, ver Troubleshooting (sección 10).
@@ -415,36 +426,57 @@ Si algún servicio queda en `Restarting`, ver Troubleshooting.
 
 ## 9. Smoke tests — 5 min
 
-Desde Windows, con VPN activa:
+Para v1 pública, el smoke obligatorio va contra los dominios HTTPS:
 
-```powershell
-cd access\
-.\smoke-test.ps1 -AppIp 10.0.2.15 -PemPath ..\modecissions-key.pem
+```bash
+PUBLIC_CONSOLE_URL=https://console.example.com \
+PUBLIC_WORKSPACE_URL=https://workspace.example.com \
+TEST_EMAIL=admin@example.com \
+TEST_PASSWORD=... \
+E2E_LIVE_LLM=1 \
+ANTHROPIC_API_KEY=... \
+make verify-v1-public
 ```
 
 Resultado esperado:
 
 ```
-Servicio    Puerto  URL                              HTTP  Status
---------    ------  ---                              ----  ------
-console     8000    http://<APP_PRIVATE_IP>:8000/login      200   [OK]
-workspace   8001    http://<APP_PRIVATE_IP>:8001/healthz    200   [OK]
-superset    8088    http://<APP_PRIVATE_IP>:8088/health     200   [OK]
-airflow     8082    http://<APP_PRIVATE_IP>:8082/health     200   [OK]
-refinement  8500    http://<APP_PRIVATE_IP>:8500/health     200   [OK]
-mcp-infra   8010    http://<APP_PRIVATE_IP>:8010/healthz    200   [OK]
-mailhog UI  8025    http://<APP_PRIVATE_IP>:8025/           200   [OK]
-
-7/7 servicios operativos
+[OK] console /healthz
+[OK] console /readyz
+[OK] workspace /healthz
+[OK] HTTP redirects to HTTPS
+[OK] login cookies are HttpOnly, Secure and SameSite
+[OK] replicon live test_connection
+[OK] hubspot live test_connection
+[OK] sap_hcm live test_connection
+[OK] sap_s4hana live test_connection
+[OK] sap_successfactors live test_connection
+[OK] direct internal ports are not publicly reachable
+[OK] Playwright public E2E
 ```
 
-Abrir desde el navegador (con VPN activa):
+Los servicios internos se validan por VPN/SSM con `scripts/smoke_test.sh` desde
+la EC2 App cuando haga falta diagnóstico interno.
 
-- Console:    http://10.0.2.X:8000        ← login + Studio + admin
-- Workspace:  http://10.0.2.X:8001        ← end-user (apps + asistente + decisiones)
-- Superset:   http://10.0.2.X:8088        (admin / `$SUPERSET_ADMIN_PASSWORD`)
-- Airflow:    http://10.0.2.X:8082        (admin / admin — cambiar después)
-- MailHog UI: http://10.0.2.X:8025        ← lee aquí los emails de invitación/reset
+Abrir desde el navegador:
+
+- Console público:    https://console.example.com        ← login + Studio + admin
+- Workspace público:  https://workspace.example.com      ← end-user (apps + asistente + decisiones)
+- Superset:           http://10.0.2.X:8088               ← solo con VPN/SSM
+- Airflow:            http://10.0.2.X:8082               ← solo con VPN/SSM
+- MailHog UI:         http://10.0.2.X:8025               ← solo con VPN/SSM
+
+Validación pública obligatoria:
+
+```bash
+PUBLIC_CONSOLE_URL=https://console.example.com \
+PUBLIC_WORKSPACE_URL=https://workspace.example.com \
+TEST_EMAIL=admin@example.com \
+TEST_PASSWORD=... \
+E2E_LIVE_LLM=1 \
+ANTHROPIC_API_KEY=... \
+make verify-v1-public
+```
 
 ---
 
@@ -575,8 +607,9 @@ Si falla otra vez, revisa que la DB `superset` exista: `docker exec mode_postgre
    ```bash
    aws ec2 describe-security-groups --group-ids sg-xxx --query 'SecurityGroups[].IpPermissions'
    ```
-2. SSH a la EC2 VPN (`ssh -i modecissions-key.pem ubuntu@<VPN_IP>`):
+2. Entra a la EC2 VPN por SSM:
    ```bash
+   aws ssm start-session --target <vpn-instance-id> --region us-east-1
    docker ps | grep wg-easy
    docker logs wg-easy --tail=50
    ```
@@ -611,20 +644,39 @@ bash /opt/modecissions/infra/terraform/deploy/update.sh console
 bash /opt/modecissions/infra/terraform/deploy/update.sh
 ```
 
-**Backup Postgres manual** (desde EC2 App):
+**Acceso operativo por SSM**:
 
 ```bash
-# Dump de las 3 DBs principales
-TS=$(date +%Y%m%d-%H%M)
-docker exec mode_postgres pg_dumpall -U postgres > /tmp/pg-$TS.sql
-docker exec mode_postgres_gold pg_dumpall -U postgres -p 5433 > /tmp/pg_gold-$TS.sql
-
-# Subir a S3 (el IAM role del EC2 App ya tiene acceso)
-aws s3 cp /tmp/pg-$TS.sql s3://$S3_BUCKET_NAME/backups/
-aws s3 cp /tmp/pg_gold-$TS.sql s3://$S3_BUCKET_NAME/backups/
+terraform output ssm_app_command
+terraform output ssm_vpn_command
 ```
 
-> **Nota**: ya no hay snapshots automáticos como con RDS. Se recomienda agendar este backup en cron (`crontab -e`).
+SSH público queda deshabilitado por defecto. Solo se habilita si
+`ssh_allowed_cidrs` contiene CIDRs explícitos; nunca usar `0.0.0.0/0`.
+
+**Backup operativo** (desde EC2 App):
+
+```bash
+bash /opt/modecissions/infra/terraform/deploy/backup.sh
+```
+
+**Restore controlado**:
+
+```bash
+BACKUP_ID=20260530T220000Z-v1.0.0-rc3 \
+CONFIRM_RESTORE=modecissions \
+bash /opt/modecissions/infra/terraform/deploy/restore.sh
+```
+
+**Rollback de release**:
+
+```bash
+bash /opt/modecissions/infra/terraform/deploy/rollback.sh v1.0.0-rc2
+```
+
+> Backups, restores y rollbacks deben terminar con smoke verde antes de declarar v1 saludable.
+> `RESTORE_DELETE_STALE_S3=1` requiere `RESTORE_DELETE_PREFIX` y rechaza
+> prefijos peligrosos como `/` o `backups`.
 
 **Reiniciar la EC2 App** (mantenimiento):
 
@@ -675,6 +727,14 @@ Tarifas us-east-1, on-demand, 730 h/mes.
 ```
                         Internet
                            │
+                           ├── HTTPS 443 / HTTP 80 redirect
+                           ▼
+                    Public ALB (console/workspace)
+                           │
+                           └── private targets :8000/:8001
+                               to EC2 App sg_app
+
+                        Operator
                            │
            ┌───────────────┴────────────────┐
            │                                │
@@ -689,9 +749,9 @@ Tarifas us-east-1, on-demand, 730 h/mes.
    │  UDP  │   │  │ EC2 VPN        │  │     │
    │ 51820 ├───┼──┤ t3.nano        │  │     │
    │       │   │  │ wg-easy:51821  │  │     │
-   │  TCP  │   │  │ public IP      │  │     │
-   │ 51821 │   │  │ sg_vpn         │  │     │
-   │ (UI)  │   │  └────────────────┘  │     │
+   │ SSM/  │   │  │ public IP      │  │     │
+   │ CIDR  │   │  │ sg_vpn         │  │     │
+   │ only  │   │  └────────────────┘  │     │
    │       │   │                      │     │
    │       │   │  ┌────────────────┐  │     │
    │       │   │  │   NAT Gateway  │  │     │
@@ -744,20 +804,28 @@ Tarifas us-east-1, on-demand, 730 h/mes.
 
 Reglas de Security Groups
 ─────────────────────────
+sg_alb (ALB público)
+  Ingress:  TCP 80   ← 0.0.0.0/0    (redirect a 443)
+            TCP 443  ← 0.0.0.0/0    (HTTPS console/workspace)
+  Egress:   TCP 8000 → sg_app
+            TCP 8001 → sg_app
+
 sg_vpn  (EC2 VPN)
   Ingress:  UDP 51820  ← 0.0.0.0/0    (WireGuard)
-            TCP 51821  ← 0.0.0.0/0    (wg-easy UI; mover a VPN-only en prod)
-            TCP 22     ← admin IP     (SSH)
+            TCP 51821  ← CIDRs explícitos solamente o SSM port-forward
+            TCP 22     ← cerrado por defecto; solo `ssh_allowed_cidrs` explícitos
   Egress:   ALL → 0.0.0.0/0
 
 sg_app  (EC2 App)
   Ingress:  ALL traffic from sg_vpn (security_groups ref, no fija puertos)
-            → cubre 8000, 8001, 8010, 8025, 8082, 8088, 8500 + SSH
+            → cubre 8000, 8001, 8010, 8025, 8082, 8088, 8500
+            TCP 8000 ← sg_alb
+            TCP 8001 ← sg_alb
   Egress:   ALL → 0.0.0.0/0   (vía NAT GW)
 
-Flujo de un request del usuario
+Flujo de un request público
 ────────────────────────────────
-Laptop ──WG tunnel──► EC2 VPN ──VPC route──► EC2 App :8000 ──► postgres (docker) :5432
+Browser ──HTTPS──► ALB ──HTTP target privado──► EC2 App :8000/:8001 ──► postgres (docker) :5432
                                                  │
                                                  └──► S3 (vía NAT GW + IAM role)
 ```
@@ -775,15 +843,15 @@ Laptop ──WG tunnel──► EC2 VPN ──VPC route──► EC2 App :8000 �
 - [ ] §6  `.env` completo, `chmod 600`
 - [ ] §7  4 imágenes `modecissions/*` en `docker images`
 - [ ] §8  `docker compose ps` muestra todos los servicios `Up` (init en `Exited 0`)
-- [ ] §9  `smoke-test.ps1` reporta 6/6
-- [ ] §11 Backup `pg_dumpall` programado en cron — recurrente
+- [ ] §9  `make verify-v1-public` verde contra dominios HTTPS
+- [ ] §11 `backup.sh`, `restore.sh` y `rollback.sh` ejecutados en staging con smoke verde
 
 ---
 
 ## v1.43.1 — Cartridges deployed separately (Codex P0-4)
 
 This compose file (**`docker-compose.aws.yml`**) **does NOT include
-the 4 cartridges** (`replicon`, `sap_hcm`, `sap_s4hana`,
+the 5 cartridges** (`replicon`, `hubspot`, `sap_hcm`, `sap_s4hana`,
 `sap_successfactors`). Reason: cartridges have independent scaling +
 release cadence from the core platform and typically live in a
 separate compute pool (their own EC2, ECS service, or Kubernetes
@@ -794,7 +862,7 @@ What the AWS compose **does** ship:
 1. **DAG mounts** — `cartridges/<c>/dags/` is mounted into the
    Airflow workers, so the DAGs still parse and schedule.
 2. **Cartridge URL env vars** — `SAP_HCM_URL`, `SAP_S4HANA_URL`,
-   `SAP_SUCCESSFACTORS_URL`, `REPLICON_URL` are threaded into both
+   `SAP_SUCCESSFACTORS_URL`, `REPLICON_URL`, `HUBSPOT_URL` are threaded into both
    `airflow` and `airflow-scheduler`. The DAGs read these env vars
    (v1.43.1 Claude B2 hardening) so the operator points them at
    wherever the cartridges actually run.
@@ -803,8 +871,8 @@ What the AWS compose **does** ship:
 
 | Pattern | When to use |
 |---|---|
-| **A. Same host (escape hatch)** | Staging / dev clusters where compute pressure is low. Run `docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml up -d` with a sibling compose file that adds the 4 services. Defaults of `http://sap-hcm:8202` etc. already match. |
-| **B. Separate cluster (production)** | Production. Cartridges run on their own EC2 / ECS / K8s with their own scaling rules. Set `SAP_HCM_URL=https://cart-sap-hcm.internal.example.com` etc. in the parent `.env`. Make sure security-group / NACL rules allow `airflow → cartridges:820X`. |
+| **A. Same host (escape hatch)** | Staging / dev clusters where compute pressure is low. Run `docker compose -f docker-compose.aws.yml -f docker-compose.cartridges.yml up -d` with a sibling compose file that adds the 5 services. Defaults of `http://hubspot:8210`, `http://sap-hcm:8202` etc. already match. |
+| **B. Separate cluster (production)** | Production. Cartridges run on their own EC2 / ECS / K8s with their own scaling rules. Set `HUBSPOT_URL=https://cart-hubspot.internal.example.com`, `SAP_HCM_URL=https://cart-sap-hcm.internal.example.com` etc. in the parent `.env`. Make sure security-group / NACL rules allow `airflow -> cartridges:820X/8210`. |
 
 ### Verification after deploy
 
@@ -813,6 +881,7 @@ What the AWS compose **does** ship:
 docker exec mode_airflow_scheduler airflow dags list-import-errors
 
 # 2. URLs resolve.
+docker exec mode_airflow_scheduler sh -lc 'curl -sS -o /dev/null -w "%{http_code}\n" "$HUBSPOT_URL/health"'
 docker exec mode_airflow_scheduler sh -lc 'curl -sS -o /dev/null -w "%{http_code}\n" "$SAP_HCM_URL/health"'
 
 # 3. Trigger a smoke run.

@@ -1294,12 +1294,18 @@ def _executed_item(item: dict, *, status: str = "decision_created") -> dict:
     })
 
 
-def _execution_row(item: dict, *, status: str = "executed", result: dict | None = None) -> dict:
+def _execution_row(
+    item: dict,
+    *,
+    status: str = "executed",
+    result: dict | None = None,
+    template_id: str = "create_followup_task",
+) -> dict:
     return {
         "id": 33,
         "workspace_id": "workspace-A",
         "item_id": item["id"],
-        "template_id": "create_followup_task",
+        "template_id": template_id,
         "mode": "execute_live",
         "status": status,
         "payload": {"idempotency_key": "idem-1"},
@@ -1309,6 +1315,23 @@ def _execution_row(item: dict, *, status: str = "executed", result: dict | None 
         "created_at": datetime(2026, 5, 20, 10, 2, 0),
         "completed_at": datetime(2026, 5, 20, 10, 2, 1),
     }
+
+
+def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
+    adapter = control_room_service.WriteBackAdapterFactory.get_adapter("sap_hcm_it0008")
+
+    assert isinstance(adapter, control_room_service.BaseAdapter)
+    assert adapter.__class__.__name__ == "SapHcmAdapter"
+
+
+def test_hcm_access_template_is_wired_to_builtin_it0008_adapter():
+    template = control_room_service.ACTION_TEMPLATES["prepare_hcm_access_review"]
+    capability = control_room_service._writeback_capability(template)  # noqa: SLF001 - registry wiring test
+
+    assert template["template_type"] == "sap_hcm_it0008"
+    assert capability["supported"] is True
+    assert capability["mode"] == "external_writeback"
+    assert capability["adapter"] == "sap_hcm_it0008"
 
 
 class _AcquireContext:
@@ -1542,7 +1565,7 @@ async def test_execute_live_idempotent_replay_still_requires_confirmation(monkey
 
 
 @pytest.mark.asyncio
-async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeypatch):
+async def test_execute_live_external_template_without_adapter_fails_and_audits(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
         USER,
@@ -1553,14 +1576,22 @@ async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeyp
     ))["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item, status="blocked"))
+    mock_pool.fetchrow = AsyncMock(side_effect=[
+        None,
+        _execution_row(
+            item,
+            status="failed",
+            template_id="prepare_billing_review",
+            result={"ok": False, "adapter": "prepare_billing_review"},
+        ),
+    ])
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.execute_item(
@@ -1572,8 +1603,287 @@ async def test_execute_live_unsupported_template_fails_closed_and_audits(monkeyp
             )
 
     assert exc.value.status_code == 501
-    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
-    assert audit_event.await_args.kwargs["metadata"]["reason"] == "unsupported_writeback_template"
+    assert "No write-back adapter registered" in str(exc.value.detail)
+    assert any("INSERT INTO control_room_action_executions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+    assert any("action_failed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert audit_event.await_count == 2
+    assert audit_event.await_args_list[0].kwargs["action"] == "control_room.action.execute.external.preflight"
+    assert audit_event.await_args_list[0].kwargs["status"] == "pending"
+    assert audit_event.await_args_list[1].kwargs["action"] == "control_room.action.execute"
+    assert audit_event.await_args_list[1].kwargs["status"] == "failure"
+    assert audit_event.await_args_list[1].kwargs["metadata"]["error_type"] == "NotImplementedError"
+
+
+@pytest.mark.asyncio
+async def test_execute_live_external_template_uses_registered_adapter(monkeypatch):
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+
+    class ExternalBillingAdapter(control_room_service.BaseAdapter):
+        calls: list[bool] = []
+
+        def execute(
+            self,
+            action_data: dict,
+            credentials: dict,
+            dry_run: bool = True,
+        ) -> control_room_service.ExecutionResult:
+            self.calls.append(dry_run)
+            assert action_data["template_type"] == "prepare_billing_review"
+            assert credentials["cartridge_id"] == "replicon"
+            return control_room_service.ExecutionResult(
+                ok=True,
+                status="executed",
+                message="External write-back ok",
+                data={"external_id": "WB-1"},
+            )
+
+    monkeypatch.setattr(
+        control_room_service.WriteBackAdapterFactory,
+        "_registry",
+        {"prepare_billing_review": ExternalBillingAdapter},
+    )
+    base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+        USER,
+        fetcher=finance_fetcher,
+        include_source_state_items=True,
+        persist=False,
+        use_catalog=False,
+    ))["items"][0]
+    item = _executed_item(base_item)
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=[
+        None,
+        _execution_row(
+            item,
+            template_id="prepare_billing_review",
+            result={"ok": True, "target": "replicon", "adapter": "ExternalBillingAdapter"},
+        ),
+    ])
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
+    ):
+        result = await control_room_service.execute_item(
+            item["id"],
+            USER,
+            template_id="prepare_billing_review",
+            confirm_execute=True,
+            idempotency_key="idem-ext-1",
+            fetcher=finance_fetcher,
+        )
+
+    assert result["executed"] is True
+    assert result["result"]["external_write"] is True
+    assert result["result"]["validation_result"]["status"] == "audit_preflight_recorded"
+    assert result["result"]["adapter"] == "ExternalBillingAdapter"
+    assert result["result"]["adapter_result"]["data"]["external_id"] == "WB-1"
+    assert ExternalBillingAdapter.calls == [False]
+    assert result["learning_lesson"]["metadata"]["autonomous_learning"] is True
+    assert result["item"]["omega"]["lessons"]["suggested_actions"][0]["template_id"] == "prepare_billing_review"
+    assert not any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
+    assert any("action_executed" in str(call.args) for call in mock_pool.execute.call_args_list)
+    assert any("INSERT INTO control_room_lessons" in call.args[0] for call in mock_pool.execute.call_args_list)
+    assert audit_event.await_count == 2
+    assert audit_event.await_args_list[0].kwargs["action"] == "control_room.action.execute.external.preflight"
+    assert audit_event.await_args_list[0].kwargs["status"] == "pending"
+    assert audit_event.await_args_list[1].kwargs["status"] == "success"
+    assert audit_event.await_args_list[1].kwargs["metadata"]["target"] == "replicon"
+
+
+@pytest.mark.asyncio
+async def test_get_suggested_actions_reads_autonomous_learning_lessons():
+    item = {
+        "id": "item-new",
+        "cartridge": "sap_hcm",
+        "anomaly_type": "terminated_but_active",
+    }
+    lesson = {
+        "id": 901,
+        "item_id": "item-old",
+        "cartridge_id": "sap_hcm",
+        "anomaly_type": "terminated_but_active",
+        "rule": "Para sap_hcm/terminated_but_active, sugerir IT0008.",
+        "source_decision_id": 42,
+        "confidence": 0.91,
+        "metadata": {
+            "autonomous_learning": True,
+            "suggested_action": {
+                "template_id": "prepare_hcm_access_review",
+                "template_type": "sap_hcm_it0008",
+                "label": "Preparar revision HCM acceso/nomina",
+                "action_kind": "hcm_access_review",
+                "target": "sap_hcm",
+                "adapter": "SapHcmAdapter",
+            },
+        },
+        "created_at": datetime(2026, 5, 20, 10, 2, 1),
+    }
+
+    with patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(side_effect=[[lesson], []])):
+        result = await control_room_service.ControlRoomService().get_suggested_actions(USER, item)
+
+    assert result["suggested_actions"][0]["template_id"] == "prepare_hcm_access_review"
+    assert result["suggested_actions"][0]["template_type"] == "sap_hcm_it0008"
+    assert result["suggested_actions"][0]["lesson_id"] == 901
+
+
+def test_sap_hcm_adapter_dry_run_flag_still_executes_real_handshake(monkeypatch):
+    from app.services.adapters import sap_hcm_adapter
+
+    class SapResponse:
+        def __init__(self, status_code: int, *, headers: dict | None = None, body: dict | None = None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self._body = body or {}
+            self.text = "ok"
+
+        def json(self):
+            return self._body
+
+    class SapClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.get_calls = []
+            self.post_calls = []
+            SapClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, *, headers, auth):
+            self.get_calls.append({"url": url, "headers": headers, "auth": auth})
+            return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
+
+        def post(self, url, *, json, headers, auth):
+            self.post_calls.append({"url": url, "json": json, "headers": headers, "auth": auth})
+            return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
+
+    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+
+    result = sap_hcm_adapter.SapHcmAdapter().execute(
+        {
+            "template_type": "sap_hcm_it0008",
+            "item": {"id": "item-hcm", "entity_id": "1001"},
+            "action_payload": {"sap_hcm": {"pernr": "1001"}},
+            "idempotency_key": "idem-hcm",
+        },
+        {"base_url": "https://sap.example", "user": "hcm-user", "password": "secret"},
+        dry_run=True,
+    )
+
+    assert result.ok is True
+    assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
+    assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
+
+
+def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
+    from app.services.adapters import sap_hcm_adapter
+
+    class SapResponse:
+        def __init__(self, status_code: int, *, headers: dict | None = None, body: dict | None = None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self._body = body or {}
+            self.text = "ok"
+
+        def json(self):
+            return self._body
+
+    class SapClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.get_calls = []
+            self.post_calls = []
+            SapClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, *, headers, auth):
+            self.get_calls.append({"url": url, "headers": headers, "auth": auth})
+            return SapResponse(200, headers={"x-csrf-token": "csrf-123"})
+
+        def post(self, url, *, json, headers, auth):
+            self.post_calls.append({"url": url, "json": json, "headers": headers, "auth": auth})
+            return SapResponse(201, body={"d": {"id": "sap-writeback-1"}})
+
+    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+
+    result = sap_hcm_adapter.SapHcmAdapter().execute(
+        {
+            "template_type": "sap_hcm_it0008",
+            "item": {"id": "item-hcm", "entity_id": "1001"},
+            "action_payload": {"sap_hcm": {"pernr": "1001"}},
+            "idempotency_key": "idem-hcm",
+        },
+        {"base_url": "https://sap.example", "user": "hcm-user", "password": "secret"},
+        dry_run=False,
+    )
+
+    assert result.ok is True
+    assert result.data["status_code"] == 201
+    assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
+    assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
+    assert "DRY_RUN" not in SapClient.instance.post_calls[0]["json"]
+
+
+def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):
+    from app.services.adapters import sap_hcm_adapter
+
+    class SapResponse:
+        status_code = 403
+        headers = {}
+        text = "forbidden"
+
+        def json(self):
+            return {"error": "forbidden"}
+
+    class SapClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.post_calls = []
+            SapClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, *_args, **_kwargs):
+            return SapResponse()
+
+        def post(self, *args, **kwargs):
+            self.post_calls.append((args, kwargs))
+            return SapResponse()
+
+    monkeypatch.setattr(sap_hcm_adapter.httpx, "Client", SapClient)
+
+    with pytest.raises(RuntimeError, match="CSRF token fetch failed with HTTP 403"):
+        sap_hcm_adapter.SapHcmAdapter().execute(
+            {
+                "template_type": "sap_hcm_it0008",
+                "item": {"id": "item-hcm", "entity_id": "1001"},
+                "action_payload": {"sap_hcm": {"pernr": "1001"}},
+            },
+            {"base_url": "https://sap.example", "token": "token"},
+            dry_run=False,
+        )
+
+    assert SapClient.instance.post_calls == []
 
 
 @pytest.mark.asyncio

@@ -53,6 +53,7 @@ def run_entity(
     entity = config["entity"]
     watermark_field = config.get("watermark_field")
     date_field = config.get("date_field") or watermark_field
+    security_context = config.get("security_context")
 
     if from_date or to_date:
         mode = "historical"
@@ -92,6 +93,7 @@ def run_entity(
                 run_id=batch_run_id,
                 load_type=mode,
                 watermark_field=watermark_field,
+                security_context=security_context,
             )
             batch_num += 1
             buffer = []

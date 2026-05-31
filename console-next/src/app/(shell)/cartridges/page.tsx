@@ -14,6 +14,10 @@ const META: Record<
     name: "Replicon",
     description: "Time tracking + project hours. Empleados, proyectos, time entries.",
   },
+  "hubspot": {
+    name: "HubSpot CRM",
+    description: "CRM comercial. Deals, empresas, contactos, pipeline y forecast.",
+  },
   sap_hcm: {
     name: "SAP HCM",
     description: "Recursos humanos. Empleados, puestos, organización.",
@@ -97,14 +101,10 @@ export default function CartridgesPage() {
 
       <section
         aria-label="Listado de cartuchos"
-        // v1.44.3 R1 Frontend P2: dropped the redundant lg:grid-cols-2
-        // — it was identical to md:grid-cols-2. 2-column at md and up
-        // is the intentional layout; bump to 3 once the brief adds a
-        // 5th cartridge.
-        className="grid grid-cols-1 gap-4 md:grid-cols-2"
+        className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
       >
         {list.isLoading
-          ? Array.from({ length: 4 }).map((_, i) => (
+          ? Array.from({ length: 5 }).map((_, i) => (
               <div
                 key={i}
                 className="h-40 animate-pulse rounded-lg border bg-card"

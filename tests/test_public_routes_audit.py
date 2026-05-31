@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests.console_route_source import console_route_source
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN = REPO_ROOT / "console" / "app" / "main.py"
 
@@ -41,7 +43,7 @@ FORBIDDEN_PUBLIC = {
 
 
 def _main_source() -> str:
-    return MAIN.read_text(encoding="utf-8")
+    return console_route_source()
 
 
 def _public_exact() -> set[str]:

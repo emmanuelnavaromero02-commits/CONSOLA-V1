@@ -10,7 +10,7 @@ but with a different system prompt that is:
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
@@ -19,6 +19,10 @@ from app.services.tool_manifest import classify_tool
 
 
 STUDIO_TOOLS_WHITELIST = {
+    "introspect_source",
+    "generate_dag_code",
+    "validate_dag_code",
+    "create_full_cartridge",
     "list_cartridges",
     "cartridge_get_manifest",
     "cartridge_list_entities",
@@ -38,6 +42,7 @@ STUDIO_TOOLS_WHITELIST = {
     "airflow_list_dag_runs",
     "dag_save_source",
     "dag_get_source",
+    "watermark_get",
     "cartridge_preview",
     "cartridge_extract",
     "cartridge_extract_all",
@@ -57,11 +62,24 @@ STUDIO_TOOLS_WHITELIST = {
     "list_datasets",
     "get_schema",
     "query_dataset",
+    "describe_source",
+    "describe_silver",
+    "delete_dataset",
     "list_datasets_with_schemas",
     "get_lineage",
+    "cartridge_run_kb",
+    "cartridge_query_kb",
+    "postgres_execute_query",
+    "postgres_execute_ddl",
+    "postgres_list_tables",
     "superset_list_databases",
     "superset_create_dataset",
     "superset_list_datasets",
+    "publish_app",
+    "list_apps",
+    "delete_app",
+    "get_app_details",
+    "get_app_html",
     "get_data_catalog",
     "upsert_catalog_entries",
     "register_relationship",
@@ -70,6 +88,38 @@ STUDIO_TOOLS_WHITELIST = {
     "ingest_document",
     "list_rag_sources",
 }
+
+STUDIO_LOCAL_SERVER_ID = "studio"
+LocalToolHandler = Callable[[dict[str, Any], dict | None], Awaitable[Any]]
+_LOCAL_TOOLS: dict[str, dict[str, Any]] = {}
+_LOCAL_TOOL_HANDLERS: dict[str, LocalToolHandler] = {}
+
+
+def register_local_tool(
+    name: str,
+    *,
+    description: str,
+    input_schema: dict[str, Any],
+    handler: LocalToolHandler,
+) -> None:
+    """Register a Studio-native tool exposed through the assistant tool loop."""
+    _LOCAL_TOOLS[name] = {
+        "name": name,
+        "description": description,
+        "input_schema": input_schema,
+    }
+    _LOCAL_TOOL_HANDLERS[name] = handler
+
+
+def _local_tools() -> list[dict[str, Any]]:
+    return list(_LOCAL_TOOLS.values())
+
+
+async def _invoke_local_tool(tool: str, args: dict[str, Any], user: dict | None) -> Any:
+    handler = _LOCAL_TOOL_HANDLERS.get(tool)
+    if handler is None:
+        raise HTTPException(404, f"Studio local tool '{tool}' is not registered")
+    return await handler(args or {}, user)
 
 # ── Step metadata (aligned with studio.html nav) ──────────────────────────────
 
@@ -98,18 +148,21 @@ STEP_TOOLS: dict[int | str, set[str]] = {
     },
     # Note: cartridge_sync_semantic_to_rag is exposed in step 6 (semantic editing).
     1: {  # RESUMEN — overview, manifest editing
+        "create_full_cartridge",
         "cartridge_list_jobs", "cartridge_list_kbs",
         "minio_list_cartridge_specs", "minio_read_spec", "minio_upload_spec",
     },
     2: {  # DAGS
         "airflow_*",
+        "introspect_source",
+        "generate_dag_code",
+        "validate_dag_code",
         "dag_save_source", "dag_get_source",
-        "watermark_get", "watermark_set", "pipeline_run_save",
-        "cartridge_extract", "cartridge_extract_all",
-        "cartridge_get_run_logs", "cartridge_get_job_status", "cartridge_list_jobs",
+        "cartridge_get_run_logs", "cartridge_get_job_status",
     },
     3: {  # ENTIDADES
         "cartridge_preview", "cartridge_extract", "cartridge_extract_all",
+        "introspect_source",
         "cartridge_get_run_logs", "cartridge_get_job_status", "cartridge_list_jobs",
         "minio_*",
         "list_entities", "rename_entity", "update_entity", "get_entity_logs",
@@ -165,9 +218,12 @@ ANALYST_READ_ONLY_EXACT = {
     "get_app_html",
     "get_data_catalog",
     "get_entity_logs",
+    "generate_dag_code",
     "get_lineage",
     "get_schema",
     "get_source_partitions",
+    "introspect_source",
+    "validate_dag_code",
     "list_apps",
     "list_cartridges",
     "list_datasets",
@@ -177,7 +233,6 @@ ANALYST_READ_ONLY_EXACT = {
     "list_sources",
     "minio_list_cartridge_specs",
     "minio_read_spec",
-    "postgres_execute_query",
     "postgres_get_sample",
     "postgres_get_table_schema",
     "postgres_list_schemas",
@@ -264,12 +319,27 @@ Step RESUMEN — visión general del cartucho activo.
 - Overview: cartridge_get_manifest(id).
 - Significado de un término: cartridge_search_term(id, query).
 - Listar cartuchos: list_cartridges().
-- Crear/importar: indica al usuario que use el botón "Importar ZIP" o pide datos para crear uno.
+- Crear cartucho completo: usa `studio__create_full_cartridge` cuando el usuario ya
+  entregó nombre, descripción, entidades, DAGs, KBs/agentes/hints. No uses la creación
+  mínima si hay metadatos completos; esta tool valida integridad y seed.sql.
+- Importar ZIP: indica al usuario que use el botón "Importar ZIP".
 """,
     2: """\
 Step DAGS — gestión de DAGs de Airflow del cartucho.
 - Lista DAGs: airflow_list_dags() (filtra por nombre/tag del cartucho).
 - Código fuente existente: dag_get_source(cartridge_id, dag_id).
+- Crear DAG dinámico: primero llama `studio__introspect_source(cartridge_id)`;
+  esa tool intenta introspección viva ($metadata/OpenAPI/information_schema) y
+  sólo cae a connector.yaml/entities.yaml si no hay credenciales o timeout.
+  después llama `studio__generate_dag_code(cartridge_id, entity_name, schema)`
+  usando el schema devuelto con `entities[].fields`, tipos y `primary_key` cuando
+  existan; luego llama silenciosamente
+  `studio__validate_dag_code(code)` antes de mostrar el código. Presenta el
+  Python resultante al usuario sólo si la validación pasa.
+- Si `validate_dag_code` falla, captura el `stderr`, vuelve a llamar
+  `studio__generate_dag_code` pasando ese error como contexto si está disponible,
+  y revalida. Máximo 2 intentos; si ambos fallan, avisa el error detallado.
+- No uses plantillas con EDIT_HERE para crear DAGs nuevos.
 - Crear/actualizar: airflow_create_dag(dag_id, code, cartridge_id) + dag_save_source.
   v1.43.2 (Frontend R2): airflow_create_dag está deshabilitado fuera
   de modo desarrollo — fallará con PermissionError en producción.
@@ -278,10 +348,18 @@ Step DAGS — gestión de DAGs de Airflow del cartucho.
   Airflow directamente. Puedes consultar el modo via /api/system/info.
 - Disparar: airflow_trigger_dag(dag_id).
 - Estado y logs: airflow_get_run_status, airflow_list_dag_runs, airflow_get_task_logs.
-- Si el usuario subió un spec (OpenAPI/WSDL/OData), léelo con minio_read_spec y genera DAG.
+- Si la introspección viva/fallback no trae campos suficientes y el usuario subió
+  un spec (OpenAPI/OData), léelo con minio_read_spec y genera DAG.
 """,
     3: """\
 Step ENTIDADES — qué objetos extraer del sistema origen y cómo procesarlos.
+
+DESCUBRIR:
+- Antes de pedir YAML o crear entidades nuevas, llama `studio__introspect_source(cartridge_id)`.
+- Si `source="live"`, propone entidades usando `entities[].fields` con tipos canónicos
+  (string/int/float/bool/date/timestamp/json), nullable y primary_key.
+- Si cae a `source="static"` o devuelve razón de fallo, explica la limitación y pide
+  spec manual sólo para los campos que falten.
 
 CONSULTAR:
 - list_entities(cartridge_id) → estado actual: nombre, modo, dag_id, último run.
@@ -301,13 +379,16 @@ DIAGNÓSTICO:
 - get_entity_logs(cartridge_id, entity): error de pipeline_runs + logs Airflow en una sola llamada.
 
 ESTRATEGIA: full = todo siempre. incremental = sólo nuevos desde último watermark.
+Para incremental, prioriza campos timestamp/date descubiertos por introspección como watermark.
 """,
     4: """\
 Step REFINAR — Silver y Gold con Refinement Engine.
 
 FLUJO:
 1. EXPLORAR: list_sources, preview_source(name), get_source_partitions(name).
-2. SQL: generate_transform(description, sources, cartridge) ó pásalo escrito directamente.
+2. SQL: generate_transform(description, sources, cartridge, layer) ó pásalo escrito directamente.
+   Silver usa read_parquet + {latest_date}; Gold puede leer rutas Silver registradas
+   o tablas pggold.gold_<dataset> sin ese placeholder.
 3. PREVIEW siempre: preview_transform(sql, limit=20). Si falla, corrige y repite.
 4. GUARDAR/MATERIALIZAR:
    - save_dataset(name, sql, layer, sources, cartridge, description)
@@ -414,6 +495,10 @@ Flujo OBLIGATORIO ante cualquier pregunta sobre un cartucho:
      · "vocabulario completo"   → `infra__cartridge_get_semantic(cartridge_id)`
      · "últimos jobs"           → `infra__cartridge_list_jobs(cartridge_id)`
      · "manifest completo"      → `infra__cartridge_get_manifest(cartridge_id)`
+     · Paso 2 o 3 sin metadatos → `studio__introspect_source(cartridge_id)` vivo/fallback
+     · Crear DAG en Paso 2     → `studio__introspect_source`,
+                                  `studio__generate_dag_code`,
+                                  `studio__validate_dag_code`
 
   3. SINTETIZA con datos REALES de la tool:
      · Si la tool NO devolvió matches, di "No está definido en este cartucho".
@@ -422,6 +507,20 @@ Flujo OBLIGATORIO ante cualquier pregunta sobre un cartucho:
 Restricciones globales:
 - PROHIBIDO suponer que un término no existe sin haber llamado `cartridge_search_term`.
 - PROHIBIDO pedir el cartridge_id al usuario si puedes obtenerlo con `list_cartridges`.
+- PROHIBIDO pedir YAML al usuario en Paso 2 o 3 sin intentar primero
+  `studio__introspect_source(cartridge_id)`; trata `source="live"` como la verdad
+  primaria, conserva `entities[].fields` con tipos/nullable/primary_key y sólo pide
+  YAML si esa introspección falla o el esquema devuelto no contiene metadatos suficientes.
+- Si el usuario pide crear un DAG en el Paso 2, primero llama a
+  `studio__introspect_source` para obtener el esquema, luego usa
+  `studio__generate_dag_code` con ese esquema y ejecuta silenciosamente
+  `studio__validate_dag_code` antes de presentar el código resultante al usuario.
+  Esta es la excepción al bloqueo global de pegar código: puedes mostrar el
+  Python validado generado por `generate_dag_code`.
+- Si el DAG no pasa validación tras 2 intentos, NO entregues código incompleto:
+  informa el `stderr` de validación y qué faltó corregir.
+- PROHIBIDO responder con plantillas que contengan EDIT_HERE; el DAG generado
+  debe estar validado y listo para revisión/despliegue.
 - PROHIBIDO devolver respuesta vacía: si una tool falla, diagnostica con los logs.
 - PROHIBIDO pegar código (HTML, SQL, JS, Python, YAML) en el chat. El código se
   aplica con la tool correspondiente (`publish_app`, `save_dataset`, `dag_save_source`,
@@ -438,6 +537,7 @@ sus nombres, parámetros y descripciones son visibles directamente en tu API de 
 Convención de prefijos:
   · infra__*       → Airflow, MinIO, PostgreSQL, Superset, Vault, Cartridge tools, RAG
   · refinement__*  → Bronze → Silver → Gold (DuckDB, dataset save/materialize)
+  · studio__*      → herramientas locales de Studio, como introspección de fuente
   · studio_ops__*  → operaciones específicas de cartuchos (rename_entity, get_entity_logs)
   · monitoring__*  → deeplinks a vistas del UI
 
@@ -523,6 +623,15 @@ async def chat(
             })
             tool_server_map[full_name] = server["id"]
 
+    for t in _local_tools():
+        full_name = f"{STUDIO_LOCAL_SERVER_ID}__{t['name']}"
+        tools.append({
+            "name": full_name,
+            "description": f"[Studio] {t.get('description', '')}",
+            "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
+        })
+        tool_server_map[full_name] = STUDIO_LOCAL_SERVER_ID
+
     # Tool slimming: only expose tools relevant to the active step + common ones.
     # Reduces ~60 tools to 10–20 per call, sharply improving LLM accuracy.
     tools = filter_tools_for_step(tools, step)
@@ -585,9 +694,13 @@ async def chat(
             return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
         risk = classify_tool(bare_name)["risk_level"]
         try:
-            result = await mcp_registry.invoke(srv, tool, args, user=actor_user)
+            if srv == STUDIO_LOCAL_SERVER_ID:
+                result = await _invoke_local_tool(tool, args, actor_user)
+            else:
+                result = await mcp_registry.invoke(srv, tool, args, user=actor_user)
         except HTTPException as exc:
             message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            detail_payload = exc.detail if isinstance(exc.detail, dict) else None
             await audit_service.record_event(
                 user_id=(actor_user or {}).get("id"),
                 email=(actor_user or {}).get("email"),
@@ -601,6 +714,12 @@ async def chat(
                 tool_result_status="error",
                 risk_level=risk,
             )
+            if detail_payload is not None:
+                return {
+                    "error": str(detail_payload.get("error") or message),
+                    "status_code": exc.status_code,
+                    "details": detail_payload,
+                }
             return {"error": str(message), "status_code": exc.status_code}
         status = "error" if isinstance(result, dict) and result.get("error") else "success"
         await audit_service.record_event(

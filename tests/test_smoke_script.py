@@ -23,6 +23,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT    = REPO_ROOT / "scripts" / "smoke_test.sh"
 MAKEFILE  = REPO_ROOT / "Makefile"
+RUN_E2E   = REPO_ROOT / "scripts" / "run-e2e.sh"
+WAIT_HEALTH = REPO_ROOT / "scripts" / "wait_for_health.sh"
 
 
 # ── File-level shape ────────────────────────────────────────────────
@@ -217,6 +219,44 @@ def test_makefile_help_describes_smoke_as_real():
     )
 
 
+def test_makefile_up_starts_full_sap_profile():
+    body = MAKEFILE.read_text(encoding="utf-8")
+    m = re.search(r"^up:\s*$([\s\S]+?)(?=^\S|\Z)", body, re.MULTILINE)
+    assert m, "up target not found in Makefile"
+    up_body = m.group(1)
+    assert "--profile sap" in body and "$(COMPOSE_FULL)" in up_body, (
+        "v1.0 `make up` must start the SAP profile because smoke/E2E require "
+        "SAP HCM, SAP S/4HANA and SuccessFactors on ports 8202-8204"
+    )
+    assert "up-core:" in body, "Makefile must keep an explicit up-core target for non-SAP local work"
+
+
+def test_makefile_lifecycle_targets_manage_full_sap_stack():
+    body = MAKEFILE.read_text(encoding="utf-8")
+    assert "COMPOSE_FULL ?= docker compose -f infra/docker-compose.yml --profile sap" in body
+    for target in ("up", "down", "nuke", "logs", "ps"):
+        m = re.search(rf"^{target}:\s*$([\s\S]+?)(?=^\S|\Z)", body, re.MULTILINE)
+        assert m, f"{target} target not found in Makefile"
+        assert "$(COMPOSE_FULL)" in m.group(1), (
+            f"{target} must use COMPOSE_FULL so SAP profile services are not "
+            "left running or omitted from the release lifecycle"
+        )
+
+
+def test_wait_for_health_does_not_accept_exited_containers_as_ready():
+    body = WAIT_HEALTH.read_text(encoding="utf-8")
+    assert "OMEGA_WAIT_FULL_STACK" in body
+    assert "healthy|running|exited" not in body, (
+        "wait_for_health must not count exited containers as ready; that would "
+        "turn a dead service into a false-positive release gate"
+    )
+    assert "mode_superset" in body
+    assert "mode_hubspot" in body
+    assert "mode_sap_hcm" in body
+    assert "mode_sap_s4hana" in body
+    assert "mode_sap_successfactors" in body
+
+
 # ── Idempotency contract (documented by inspection) ─────────────────
 
 
@@ -305,4 +345,22 @@ def test_smoke_auth_gate_still_accepts_401_and_403():
     body = SCRIPT.read_text(encoding="utf-8")
     assert re.search(r"401\|403\)\s*pass", body), (
         "auth_gate_check must still treat 401/403 as a working gate"
+    )
+
+
+def test_smoke_uses_console_to_cartridge_pair_key_for_authenticated_tools():
+    body = SCRIPT.read_text(encoding="utf-8")
+    assert "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE" in body, (
+        "authenticated cartridge probes identify as X-Internal-Service: console, "
+        "so they must use the console→cartridge pair key instead of the legacy "
+        "shared INTERNAL_API_KEY"
+    )
+    assert 'X-Internal-Service: console' in body
+
+
+def test_e2e_runner_exports_console_to_cartridge_pair_key_for_specs():
+    body = RUN_E2E.read_text(encoding="utf-8")
+    assert "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE" in body, (
+        "Playwright cartridge specs send X-Internal-Service: console; the runner "
+        "must source the console→cartridge pair key from infra/.env"
     )

@@ -33,6 +33,63 @@ variable "key_pair_name" {
   default     = "modecissions-key"
 }
 
+variable "public_console_domain" {
+  description = "Public HTTPS hostname for the console, e.g. console.example.com."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.public_console_domain))
+    error_message = "public_console_domain must be a DNS hostname, not a URL."
+  }
+}
+
+variable "public_workspace_domain" {
+  description = "Public HTTPS hostname for the workspace, e.g. workspace.example.com."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.public_workspace_domain))
+    error_message = "public_workspace_domain must be a DNS hostname, not a URL."
+  }
+}
+
+variable "route53_zone_id" {
+  description = "Optional Route53 hosted zone ID for automatic ACM validation and DNS records. Leave empty to output manual ACM validation records."
+  type        = string
+  default     = ""
+}
+
+variable "manual_acm_validation_complete" {
+  description = "Set true only after the manual ACM DNS validation records are created and the managed certificate is ISSUED. Used when route53_zone_id and public_acm_certificate_arn are empty."
+  type        = bool
+  default     = false
+}
+
+variable "public_acm_certificate_arn" {
+  description = "Optional prevalidated ACM certificate ARN for the public ALB. Use when Route53 is managed outside this Terraform state."
+  type        = string
+  default     = ""
+}
+
+variable "ssh_allowed_cidrs" {
+  description = "CIDRs allowed to reach SSH on the VPN bastion. Empty disables public SSH; use SSM by default."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for cidr in var.ssh_allowed_cidrs :
+      cidr != "0.0.0.0/0" && cidr != "::/0"
+    ])
+    error_message = "ssh_allowed_cidrs must not include 0.0.0.0/0 or ::/0."
+  }
+}
+
+variable "alarm_email" {
+  description = "Email address subscribed to v1 public CloudWatch alarms."
+  type        = string
+}
+
 variable "vpn_admin_allowed_cidrs" {
   description = "CIDRs allowed to reach the wg-easy admin UI. Empty means no public admin UI ingress."
   type        = list(string)

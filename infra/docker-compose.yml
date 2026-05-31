@@ -19,7 +19,7 @@ services:
       # Sprint v1.38 (audit B5+B6): added six more roles for SAP
       # cartridges, Airflow and Superset (see
       # infra/init/36_cartridge_and_meta_roles.sql).
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -158,6 +158,7 @@ services:
       INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
       INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:-}
       INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:-}
+      INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:-}
       INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE: ${INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
@@ -531,6 +532,54 @@ services:
       minio:
         condition: service_healthy
 
+  # HubSpot CRM cartridge follows the Replicon runtime contract: internal
+  # microservice, dedicated DB role, Vault-backed credentials, and Airflow DAGs.
+  hubspot:
+    build:
+      context: ../cartridges/hubspot
+      dockerfile: Dockerfile
+    container_name: mode_hubspot
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:?INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE is required}
+      INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA: ${INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA:?INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA is required}
+      INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT: ${INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT:?INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for HubSpot cartridge}
+      CONSOLE_URL: http://console:8000
+      MCP_INFRA_URL: http://mcp-infra:8010
+      REFINEMENT_URL: http://refinement:8500
+      HUBSPOT_BASE_URL: ${HUBSPOT_BASE_URL:-https://api.hubapi.com}
+      HUBSPOT_API_TOKEN: ${HUBSPOT_API_TOKEN:-}
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_hubspot:${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:?OMEGA_CARTRIDGE_HUBSPOT_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET: lakehouse
+      MINIO_SECURE: "false"
+    ports:
+      - "8210:8210"
+    extra_hosts:
+      # Full-stack acceptance runs a deterministic fake HubSpot API on the
+      # host and points HUBSPOT_BASE_URL at host.docker.internal.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8210/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
   # ── SAP cartridges (opt-in via `--profile sap`) ─────────────────────────────
   # These cartridges are part of the registry mount and run as standalone
   # FastAPI services for direct console / MCP access. They're under the
@@ -773,6 +822,7 @@ services:
     container_name: mode_superset_init
     environment:
       SUPERSET_SECRET_KEY:   ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/superset
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       OMEGA_SUPERSET_META_PASSWORD: ${OMEGA_SUPERSET_META_PASSWORD:?OMEGA_SUPERSET_META_PASSWORD is required}
@@ -793,6 +843,7 @@ services:
         (superset fab create-admin --username ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
         --firstname Admin --lastname User --email admin@modecissions.local
         --password "$$SUPERSET_ADMIN_PASSWORD" || true) &&
+        if [ -n "$${SUPERSET_PREVIOUS_SECRET_KEY:-}" ]; then superset re-encrypt-secrets; fi &&
         superset init &&
         python3 -c "import os, psycopg2; c = psycopg2.connect(host='postgres', port=5432, dbname='superset', user='postgres', password=os.environ['POSTGRES_PASSWORD']); c.autocommit = True; cur = c.cursor(); [cur.execute(s) for s in ['GRANT ALL ON ALL TABLES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO omega_superset_meta', 'GRANT ALL ON SCHEMA public TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO omega_superset_meta', 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO omega_superset_meta']]; print('omega_superset_meta: grants applied to superset DB'); cur.close(); c.close()"
     depends_on:
@@ -807,6 +858,7 @@ services:
     container_name: mode_superset
     environment:
       SUPERSET_SECRET_KEY:     ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required}
+      SUPERSET_PREVIOUS_SECRET_KEY: ${SUPERSET_PREVIOUS_SECRET_KEY:-}
       POSTGRES_PASSWORD:       ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       # Sprint v1.38 (audit B6 P0.5): runtime uses the dedicated
       # omega_superset_meta role created by 36_cartridge_and_meta_roles.sql.
@@ -972,6 +1024,7 @@ services:
       # keep the var here so a future cartridge-direct DAG works
       # without operators having to touch compose first.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
+      HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
@@ -1066,6 +1119,7 @@ services:
       SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
+      HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
     volumes:
       # Kept read-write on purpose: the per-cartridge DAGs below are nested
       # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and

@@ -10,7 +10,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def test_makefile_exposes_migrate_target():
     makefile = (REPO_ROOT / "Makefile").read_text()
 
-    assert ".PHONY: help up down nuke logs ps test smoke migrate rotate-keys" in makefile
+    phony_lines = [line for line in makefile.splitlines() if line.startswith(".PHONY:")]
+    phony_text = "\n".join(phony_lines)
+    for target in ("help", "up", "up-core", "down", "test", "smoke", "migrate", "rotate-keys", "verify-release"):
+        assert target in phony_text
     assert "migrate:" in makefile
     assert "scripts/apply_db_migrations.sh" in makefile
 

@@ -31,7 +31,7 @@ async def test_master_preview_returns_real_data(studio_preview):
     async def datasets():
         return [{
             "name": "employee_master",
-            "layer": "master",
+            "layer": "gold",
             "cartridge": "replicon",
             "sources": ["raw/replicon/Employee"],
         }]
@@ -74,7 +74,7 @@ async def test_master_preview_empty_entity_returns_clear_error(studio_preview):
         )
 
     assert exc.value.status_code == 404
-    assert "No Master dataset registered" in exc.value.detail
+    assert "No Gold dataset registered" in exc.value.detail
 
 
 @pytest.mark.asyncio

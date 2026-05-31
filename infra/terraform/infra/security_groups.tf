@@ -11,12 +11,15 @@ resource "aws_security_group" "vpn" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  dynamic "ingress" {
+    for_each = length(var.ssh_allowed_cidrs) > 0 ? [1] : []
+    content {
+      description = "SSH restricted to operator CIDRs"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = var.ssh_allowed_cidrs
+    }
   }
 
   dynamic "ingress" {
@@ -42,9 +45,51 @@ resource "aws_security_group" "vpn" {
   }
 }
 
+resource "aws_security_group" "alb" {
+  name        = "modecissions-sg-public-alb"
+  description = "Public ALB: HTTPS for console/workspace only"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "HTTP redirect to HTTPS"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Console target in VPC"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    description = "Workspace target in VPC"
+    from_port   = 8001
+    to_port     = 8001
+    protocol    = "tcp"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  tags = {
+    Name = "modecissions-sg-public-alb"
+  }
+}
+
 resource "aws_security_group" "app" {
   name        = "modecissions-sg-app"
-  description = "App EC2: reachable only from VPN SG"
+  description = "App EC2: internal services from VPN, public console/workspace from ALB"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -53,6 +98,22 @@ resource "aws_security_group" "app" {
     to_port         = 0
     protocol        = "-1"
     security_groups = [aws_security_group.vpn.id]
+  }
+
+  ingress {
+    description     = "Console from public ALB"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description     = "Workspace from public ALB"
+    from_port       = 8001
+    to_port         = 8001
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
   }
 
   egress {

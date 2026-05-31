@@ -43,11 +43,16 @@ async def health(request: Request):
 
 
 @router.get("/replicon", dependencies=[Depends(verify_api_key)])
-def health_replicon() -> dict:
+def health_replicon() -> JSONResponse:
     try:
         client = RepliconClient()
         info = client.test_connection()
-        return {"ok": True, "service": "replicon", **info}
+        connectivity_ok = bool(info.get("reachable")) or info.get("status") in {"ok", "auth_error"}
+        ok = info.get("status") == "ok"
+        return JSONResponse(
+            {"ok": ok, "connectivity_ok": connectivity_ok, "service": "replicon", **info},
+            status_code=200 if connectivity_ok else 503,
+        )
     except EnvironmentError as exc:
         return JSONResponse(
             {

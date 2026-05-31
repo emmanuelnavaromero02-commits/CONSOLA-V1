@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Demo/beta preflight — run BEFORE `make up` to catch the things that
+# v1.0 preflight — run BEFORE `make up` to catch the things that
 # silently break a fresh bring-up: no Docker daemon, an occupied port,
-# a host Python whose cryptography is broken (bootstrap.sh needs it to
-# mint Fernet keys), or an invalid compose file.
+# a host Python that cannot generate Fernet-shaped keys via stdlib, or
+# an invalid compose file.
 #
 # Read-only and idempotent: it inspects, never mutates. Exit code is 0
-# when the stack CAN be brought up (warnings allowed) and non-zero when
-# a hard blocker is present, so it is safe to chain:
+# when the full stack CAN be brought up and non-zero when a hard blocker
+# is present, so it is safe to chain:
 #
 #     bash scripts/preflight.sh && make up
 #
@@ -23,7 +23,7 @@ ok()    { echo "  ✅ $*"; }
 warn()  { echo "  ⚠️  $*"; WARNINGS=$((WARNINGS + 1)); }
 block() { echo "  ❌ $*"; BLOCKERS=$((BLOCKERS + 1)); }
 
-echo "OMEGA demo preflight"
+echo "OMEGA v1.0 preflight"
 echo "════════════════════"
 
 # ── 1. Docker engine + daemon ──────────────────────────────────────────
@@ -70,17 +70,16 @@ else
 infra/.env.example documents every key (incl. BOOTSTRAP_ADMIN_*)."
 fi
 
-# ── 4. Host Python cryptography (bootstrap.sh mints Fernet keys) ────────
+# ── 4. Host Python Fernet key generation ────────────────────────────────
 echo ""
 echo "Host Python (used by bootstrap.sh):"
 PYBIN="$(command -v python3 || command -v python || true)"
 if [ -z "${PYBIN}" ]; then
-    warn "no host python3 found — bootstrap.sh needs it to generate FIELD_ENCRYPTION_KEY"
-elif "${PYBIN}" -c "from cryptography.fernet import Fernet; Fernet.generate_key()" >/dev/null 2>&1; then
-    ok "python cryptography works ($("${PYBIN}" --version 2>&1))"
+    block "no host python3 found — bootstrap.sh needs it to generate FIELD_ENCRYPTION_KEY"
+elif "${PYBIN}" -c "import base64, os; k=base64.urlsafe_b64encode(os.urandom(32)).decode(); assert len(k) == 44 and k.endswith('=')" >/dev/null 2>&1; then
+    ok "python Fernet key generation works ($("${PYBIN}" --version 2>&1))"
 else
-    warn "host python cryptography is broken (e.g. ModuleNotFoundError: _cffi_backend). \
-Fix with: ${PYBIN} -m pip install --upgrade cffi cryptography — otherwise 'make up' fails in bootstrap.sh before any container starts."
+    block "host python cannot generate Fernet-shaped keys via stdlib base64/os. Fix ${PYBIN} before running 'make up'."
 fi
 
 # ── 5. Required host ports free ────────────────────────────────────────
@@ -114,7 +113,7 @@ done
 if [ "${PORT_TOOL_MISSING}" = "1" ]; then
     warn "no ss/lsof to check ports — verify 8000/8001 are free manually"
 elif [ -n "${BUSY_PORTS}" ]; then
-    warn "ports already in use:${BUSY_PORTS} — stop the conflicting process or run 'make down' first"
+    block "ports already in use:${BUSY_PORTS} — stop the conflicting process or run 'make down' first"
 else
     ok "all required ports free"
 fi
@@ -126,6 +125,10 @@ echo "  • Console (FastAPI static export):         http://localhost:8000"
 echo "  • Control Room (FastAPI backend):          http://localhost:8000/control-room"
 echo "  • Backend health (no auth):                http://localhost:8000/healthz"
 echo "  • Backend readiness (deps):                http://localhost:8000/readyz"
+echo "  • Superset:                                http://localhost:8088"
+echo "  • Airflow:                                 http://localhost:8082"
+echo "  • Replicon / HubSpot cartridges:           http://localhost:8201 and :8210/health"
+echo "  • SAP cartridges:                          http://localhost:8202-8204/health"
 echo "  Local seed login: emmanuel@local.ai / Admin123!  (rotate before real data)"
 
 # ── Verdict ────────────────────────────────────────────────────────────

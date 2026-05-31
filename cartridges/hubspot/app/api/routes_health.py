@@ -43,11 +43,16 @@ async def health(request: Request):
 
 
 @router.get("/hubspot", dependencies=[Depends(verify_api_key)])
-def health_hubspot() -> dict:
+def health_hubspot():
     try:
         client = HubSpotClient()
         info = client.test_connection()
-        return {"ok": True, "service": "hubspot", **info}
+        status = str(info.get("status") or "").strip().lower()
+        ok = status == "ok"
+        return JSONResponse(
+            {"ok": ok, "service": "hubspot", **info},
+            status_code=200 if ok else 503,
+        )
     except EnvironmentError as exc:
         return JSONResponse(
             {

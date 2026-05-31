@@ -14,7 +14,7 @@ import asyncpg
 import yaml
 from fastapi import HTTPException
 
-from app.services import audit_service, auth, cartridge_service
+from app.services import audit_service, auth, cartridge_service, schema_introspect
 
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -48,13 +48,16 @@ def _normalise_spec(name: str, cartridge: str, spec: dict[str, Any] | None) -> d
         fields = raw.get("columns")
     if not isinstance(fields, list) or not fields:
         raise ValueError("spec.fields must be a non-empty list")
+    normalised_fields: list[dict[str, Any]] = []
     for idx, field in enumerate(fields):
         if not isinstance(field, dict):
             raise ValueError(f"spec.fields[{idx}] must be an object")
         if not field.get("name"):
             raise ValueError(f"spec.fields[{idx}].name is required")
+        field = schema_introspect.normalize_field(field)
         field["name"] = _clean_identifier(str(field["name"]), label=f"field {idx}")
-    raw["fields"] = fields
+        normalised_fields.append(field)
+    raw["fields"] = normalised_fields
     return raw
 
 
@@ -77,6 +80,16 @@ def _entity_config_fields(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _parse_spec_text(text: str) -> Any:
+    if (text or "").lstrip().startswith("<"):
+        parsed = schema_introspect.parse_odata_metadata(text)
+        if not parsed:
+            raise ValueError("OData metadata did not include EntityType fields")
+        return {
+            "entities": [
+                {"name": name, "fields": fields}
+                for name, fields in parsed.items()
+            ]
+        }
     try:
         parsed = yaml.safe_load(text)
     except yaml.YAMLError:
@@ -92,6 +105,22 @@ def _iter_entity_specs(parsed: Any, default_cartridge: str | None = None) -> lis
 
     default = default_cartridge or parsed.get("cartridge") or parsed.get("cartridge_id")
     raw_entities = parsed.get("entities")
+    if raw_entities is None:
+        openapi_fields = schema_introspect.parse_openapi_fields(parsed)
+        if openapi_fields:
+            raw_entities = [
+                {
+                    "name": name,
+                    "display_name": name,
+                    "description": "Imported from OpenAPI schema",
+                    "fields": fields,
+                    "primary_key": next(
+                        (field["name"] for field in fields if field.get("primary_key")),
+                        "",
+                    ),
+                }
+                for name, fields in sorted(openapi_fields.items())
+            ]
     if raw_entities is None and ("name" in parsed or "entity" in parsed):
         raw_entities = [parsed]
 

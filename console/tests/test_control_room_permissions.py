@@ -16,6 +16,17 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def read_console_routes() -> str:
+    parts = [read("console/app/main.py")]
+    routers_dir = ROOT / "console/app/routers/v1"
+    parts.extend(
+        p.read_text(encoding="utf-8").replace("@router.", "@app.")
+        for p in sorted(routers_dir.glob("*.py"))
+        if p.name != "__init__.py"
+    )
+    return "\n".join(parts)
+
+
 def test_control_room_mutations_use_specific_write_permission():
     router = read("console/app/routers/control_room.py")
 
@@ -151,7 +162,7 @@ def test_control_room_routes_are_workspace_context_enriched():
 
 
 def test_published_apps_stay_on_console_origin_via_workspace_proxy():
-    main = read("console/app/main.py")
+    main = read_console_routes()
 
     assert '@app.get("/apps/{name}/content"' in main
     assert "_proxy_workspace_app" in main

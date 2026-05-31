@@ -7,22 +7,29 @@ in by bringing the stack up first.
 """
 from __future__ import annotations
 
+import os
+
 import httpx
 import pytest
 
 
+_LIVE_STACK_TESTS = os.environ.get("OMEGA_ENABLE_LIVE_STACK_TESTS", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 _CARTRIDGES = [
-    ("replicon", 8201),
-    ("sap_hcm",  8202),
-    ("sap_sf",   8203),
-    ("sap_s4",   8204),
+    ("replicon", os.environ.get("OMEGA_REPLICON_BASE", "http://localhost:8201"), 8201),
+    ("sap_hcm",  os.environ.get("OMEGA_SAP_HCM_BASE", "http://localhost:8202"), 8202),
+    ("sap_sf",   os.environ.get("OMEGA_SAP_SUCCESSFACTORS_BASE", "http://localhost:8203"), 8203),
+    ("sap_s4",   os.environ.get("OMEGA_SAP_S4HANA_BASE", "http://localhost:8204"), 8204),
 ]
 
-_CONSOLE   = "http://localhost:8000"
-_MCP_INFRA = "http://localhost:8010"
+_CONSOLE   = os.environ.get("OMEGA_STACK_BASE", "http://localhost:8000")
+_MCP_INFRA = os.environ.get("OMEGA_MCP_INFRA_BASE", "http://localhost:8010")
 
 
 def _skip_if_unreachable(base: str, probe: str = "/healthz") -> None:
+    if not _LIVE_STACK_TESTS:
+        pytest.skip("live-stack security probes disabled; run `make test-hermetic` or set OMEGA_ENABLE_LIVE_STACK_TESTS=1")
     try:
         # We just need to know if the port answers — any HTTP status is fine.
         httpx.get(base + probe, timeout=2.0)
@@ -32,9 +39,8 @@ def _skip_if_unreachable(base: str, probe: str = "/healthz") -> None:
 
 # ── Cartridges ──────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("cartridge,port", _CARTRIDGES)
-def test_cartridge_mcp_invoke_unauth_returns_401(cartridge, port):
-    base = f"http://localhost:{port}"
+@pytest.mark.parametrize("cartridge,base,port", _CARTRIDGES)
+def test_cartridge_mcp_invoke_unauth_returns_401(cartridge, base, port):
     _skip_if_unreachable(base, "/health")
     r = httpx.post(f"{base}/mcp/invoke", json={}, timeout=5.0)
     assert r.status_code == 401, (
@@ -42,9 +48,8 @@ def test_cartridge_mcp_invoke_unauth_returns_401(cartridge, port):
     )
 
 
-@pytest.mark.parametrize("cartridge,port", _CARTRIDGES)
-def test_cartridge_skills_unauth_returns_401(cartridge, port):
-    base = f"http://localhost:{port}"
+@pytest.mark.parametrize("cartridge,base,port", _CARTRIDGES)
+def test_cartridge_skills_unauth_returns_401(cartridge, base, port):
     _skip_if_unreachable(base, "/health")
     r = httpx.get(f"{base}/skills/entities", timeout=5.0)
     assert r.status_code == 401, (
@@ -52,10 +57,9 @@ def test_cartridge_skills_unauth_returns_401(cartridge, port):
     )
 
 
-@pytest.mark.parametrize("cartridge,port", _CARTRIDGES)
-def test_cartridge_test_connection_unauth_returns_401(cartridge, port):
+@pytest.mark.parametrize("cartridge,base,port", _CARTRIDGES)
+def test_cartridge_test_connection_unauth_returns_401(cartridge, base, port):
     """v1.41.0 hardening: /skills/test_connection joined the auth ring."""
-    base = f"http://localhost:{port}"
     _skip_if_unreachable(base, "/health")
     r = httpx.post(f"{base}/skills/test_connection", timeout=5.0)
     assert r.status_code == 401
@@ -139,10 +143,10 @@ def test_mcp_infra_invoke_unauth_returns_401():
 _ALL_SERVICES = [
     ("console",   _CONSOLE,                 "/api/whatever-unauth"),
     ("mcp-infra", _MCP_INFRA,               "/api/whatever-unauth"),
-    ("replicon",  "http://localhost:8201",  "/mcp/tools"),
-    ("sap_hcm",   "http://localhost:8202",  "/mcp/tools"),
-    ("sap_sf",    "http://localhost:8203",  "/mcp/tools"),
-    ("sap_s4",    "http://localhost:8204",  "/mcp/tools"),
+    ("replicon",  _CARTRIDGES[0][1],        "/mcp/tools"),
+    ("sap_hcm",   _CARTRIDGES[1][1],        "/mcp/tools"),
+    ("sap_sf",    _CARTRIDGES[2][1],        "/mcp/tools"),
+    ("sap_s4",    _CARTRIDGES[3][1],        "/mcp/tools"),
 ]
 
 
@@ -184,10 +188,10 @@ def test_403_responses_still_carry_request_id(name, base, path):
 
 
 @pytest.mark.parametrize("base,port", [
-    ("http://localhost:8201", 8201),
-    ("http://localhost:8202", 8202),
-    ("http://localhost:8203", 8203),
-    ("http://localhost:8204", 8204),
+    (_CARTRIDGES[0][1], 8201),
+    (_CARTRIDGES[1][1], 8202),
+    (_CARTRIDGES[2][1], 8203),
+    (_CARTRIDGES[3][1], 8204),
     (_MCP_INFRA, 8010),
 ])
 def test_mcp_invoke_returns_401_when_auth_headers_missing(base, port):

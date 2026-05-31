@@ -70,6 +70,11 @@ async def health(request: Request):
 
 
 @router.get("/sap_hcm", dependencies=[Depends(verify_api_key)])
-def health_sap_hcm() -> dict:
+def health_sap_hcm() -> JSONResponse:
     info = SapHcmClient().test_connection()
-    return {"service": "sap_hcm", **info}
+    connectivity_ok = bool(info.get("reachable")) or info.get("status") in {"ok", "auth_error"}
+    ok = info.get("status") == "ok"
+    return JSONResponse(
+        {"ok": ok, "connectivity_ok": connectivity_ok, "service": "sap_hcm", **info},
+        status_code=200 if connectivity_ok or info.get("status") == "degraded" else 503,
+    )

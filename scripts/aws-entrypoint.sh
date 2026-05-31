@@ -36,6 +36,9 @@ required_secrets=(
   INTERNAL_API_KEY_REPLICON_TO_CONSOLE
   INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA
   INTERNAL_API_KEY_REPLICON_TO_REFINEMENT
+  INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE
+  INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA
+  INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT
   INTERNAL_API_KEY_MCP_INFRA_TO_VAULT
   INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE
   INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT
@@ -57,6 +60,7 @@ required_secrets=(
   OMEGA_CARTRIDGE_SAP_S4_PASSWORD
   OMEGA_CARTRIDGE_SAP_SF_PASSWORD
   OMEGA_CARTRIDGE_REPLICON_PASSWORD
+  OMEGA_CARTRIDGE_HUBSPOT_PASSWORD
   AIRFLOW_SECRET_KEY
   AIRFLOW_ADMIN_PASSWORD
   AGENT_RUNNER_TOKEN
@@ -149,6 +153,7 @@ AIRFLOW_ADMIN_USER="${AIRFLOW_ADMIN_USER:-admin}"
 SUPERSET_ADMIN_USER="${SUPERSET_ADMIN_USER:-admin}"
 SUPERSET_SERVICE_USER="${SUPERSET_SERVICE_USER:-omega_service}"
 APP_ENV="${APP_ENV:-production}"
+COOKIE_SECURE="${COOKIE_SECURE:-true}"
 GHCR_OWNER="${GHCR_OWNER:-emmanuelnavaromero02-commits}"
 IMAGE_TAG="${IMAGE_TAG:-}"
 DEPLOY_REF="${DEPLOY_REF:-}"
@@ -193,18 +198,26 @@ if [[ "$APP_ENV" =~ ^(production|prod)$ ]]; then
     exit 1
   fi
   assert_release_refs_coherent
-  for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL; do
-    value="${!url_var:-}"
-    if [[ "$value" == *"localhost"* || "$value" == *"127.0.0.1"* ]]; then
-      echo "[aws-entrypoint] $url_var must not point to localhost in production: $value" >&2
-      exit 1
-    fi
-  done
-fi
+	  for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL; do
+	    value="${!url_var:-}"
+	    if [[ "$value" == *"localhost"* || "$value" == *"127.0.0.1"* ]]; then
+	      echo "[aws-entrypoint] $url_var must not point to localhost in production: $value" >&2
+	      exit 1
+	    fi
+	  done
+	  for url_var in CONSOLE_URL WORKSPACE_PUBLIC_URL APP_BASE_URL; do
+	    value="${!url_var:-}"
+	    if [[ "$value" != https://* ]]; then
+	      echo "[aws-entrypoint] $url_var must use https in production: $value" >&2
+	      exit 1
+	    fi
+	  done
+	fi
 
 for config_name in \
-  GHCR_OWNER IMAGE_TAG DEPLOY_REF APP_BASE_URL ALLOWED_ORIGINS \
-  AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL \
+	  GHCR_OWNER IMAGE_TAG DEPLOY_REF APP_BASE_URL ALLOWED_ORIGINS \
+	  COOKIE_SECURE \
+	  AIRFLOW_PUBLIC_URL SUPERSET_PUBLIC_URL \
   SUPERSET_SERVICE_USER \
   SMTP_HOST SMTP_PORT SMTP_USER SMTP_FROM SMTP_USE_TLS APP_ENV \
   CHAT_LLM_PROVIDER CHAT_LLM_MODEL SQL_LLM_MODEL GEMINI_CACHE_ENABLED \

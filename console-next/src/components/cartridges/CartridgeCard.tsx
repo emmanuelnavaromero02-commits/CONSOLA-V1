@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Calculator, Clock3, Package, TrendingUp, Users } from "lucide-react";
+import { Calculator, Clock3, Handshake, Package, TrendingUp, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { StatusBadge, type ConnectionStatus } from "./StatusBadge";
 
@@ -14,6 +14,7 @@ interface CartridgeCardProps {
 
 const ICON_FOR_ID: Record<string, LucideIcon> = {
   replicon:            Clock3,
+  hubspot:             Handshake,
   sap_hcm:             Users,
   sap_s4hana:          Calculator,
   sap_successfactors:  TrendingUp,

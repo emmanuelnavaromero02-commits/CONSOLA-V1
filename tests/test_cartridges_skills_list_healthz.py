@@ -1,7 +1,6 @@
 """Sprint v1.44.3.3 Task C — cartridge /skills/list + /healthz contracts.
 
-The user's brief reported all four MCP cartridges (replicon,
-sap_hcm, sap_s4hana, sap_successfactors) returning 404 on
+The user's brief reported MCP cartridges returning 404 on
 ``GET /skills/list``. The pre-existing audit confirmed that
 ``/healthz`` was also missing (``/health`` was present but
 gates on real startup state — it's not the simple yes/no
@@ -38,7 +37,7 @@ VALID_HEADERS = {
 }
 
 
-CARTRIDGES = ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors")
+CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
 
 
 def _client(cartridge_id: str):

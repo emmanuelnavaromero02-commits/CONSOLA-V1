@@ -41,6 +41,7 @@ _prefix_allowed = refinement_main._prefix_allowed
 def _scoped_sec(*, workspace="ws-1", cartridges=("replicon", "sap_hcm")):
     return {
         "trusted": True,
+        "source": "console",
         "role": "member",
         "tenant_id": "tenant-1",
         "workspace_id": workspace,
@@ -161,3 +162,159 @@ def test_endpoint_filter_returns_scoped_datasets():
     visible = [ds for ds in catalog if _dataset_allowed(sec, ds)]
     names = {ds["name"] for ds in visible}
     assert names == {"replicon_project_latest", "headcount_by_department"}
+
+
+def _body(sec: dict | None = None):
+    return {"security_context": sec or _scoped_sec(), "_verified_internal_service": "console"}
+
+
+def test_sql_storage_scope_rejects_unregistered_table_reads():
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM users", [])
+
+    assert exc.value.status_code == 403
+    assert "table references" in exc.value.detail
+
+
+def test_sql_storage_scope_rejects_unregistered_pggold_tables(monkeypatch):
+    monkeypatch.setattr(refinement_main.store, "get_dataset", lambda _name: None)
+
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM pggold.billing", [])
+
+    assert exc.value.status_code == 403
+    assert "pggold table is not registered" in exc.value.detail
+
+
+def test_sql_storage_scope_allows_registered_pggold_gold_tables(monkeypatch):
+    def fake_get_dataset(name: str):
+        if name in {"sales", "gold_sales"}:
+            return {
+                "cartridge": "replicon",
+                "layer": "gold",
+                "name": "sales",
+                "workspace_id": "ws-1",
+            }
+        return None
+
+    monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
+
+    refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM pggold.gold_sales", [])
+
+
+def test_sql_storage_scope_rejects_pggold_table_registered_as_silver(monkeypatch):
+    def fake_get_dataset(name: str):
+        if name in {"sales", "gold_sales"}:
+            return {
+                "cartridge": "replicon",
+                "layer": "silver",
+                "name": "sales",
+                "workspace_id": "ws-1",
+            }
+        return None
+
+    monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
+
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM pggold.gold_sales", [])
+
+    assert exc.value.status_code == 403
+    assert "pggold table is not registered" in exc.value.detail
+
+
+def test_sql_storage_scope_rejects_three_part_external_pggold_reference(monkeypatch):
+    def fake_get_dataset(name: str):
+        if name in {"sales", "gold_sales"}:
+            return {
+                "cartridge": "replicon",
+                "layer": "gold",
+                "name": "sales",
+                "workspace_id": "ws-1",
+            }
+        return None
+
+    monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
+
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_storage_scope(_body(), "SELECT * FROM other.pggold.gold_sales", [])
+
+    assert exc.value.status_code == 403
+    assert "database/schema" in exc.value.detail
+
+
+def test_gold_sql_scope_allows_declared_registered_silver_source_path(monkeypatch):
+    def fake_get_dataset(name: str):
+        if name == "timeentry_clean":
+            return {
+                "cartridge": "replicon",
+                "layer": "silver",
+                "name": name,
+                "workspace_id": "ws-1",
+            }
+        return None
+
+    monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
+    sql = "SELECT * FROM read_parquet('s3://lakehouse/silver/replicon/timeentry_clean/data.parquet')"
+
+    with pytest.raises(HTTPException):
+        refinement_main._require_sql_storage_scope(_body(), sql, ["timeentry_clean"])
+
+    refinement_main._require_sql_storage_scope(
+        _body(),
+        sql,
+        ["timeentry_clean"],
+        allow_registered_dataset_paths=True,
+    )
+
+    with pytest.raises(HTTPException):
+        refinement_main._require_sql_storage_scope(
+            _body(),
+            sql,
+            ["other_source"],
+            allow_registered_dataset_paths=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_transform_mcp_propagates_gold_layer_for_registered_dataset(monkeypatch):
+    captured = {}
+
+    def fake_get_dataset(name: str):
+        if name == "timeentry_clean":
+            return {
+                "cartridge": "replicon",
+                "layer": "silver",
+                "name": name,
+                "workspace_id": "ws-1",
+            }
+        return None
+
+    def fake_get_dataset_schema(_ds):
+        return {"fields": [{"name": "customer_id", "type": "string"}, {"name": "amount", "type": "float"}]}
+
+    async def fake_generate_sql(description, schemas, layer="silver"):
+        captured["description"] = description
+        captured["schemas"] = schemas
+        captured["layer"] = layer
+        return "SELECT * FROM pggold.gold_sales", "ok"
+
+    monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
+    monkeypatch.setattr(refinement_main.engine, "get_dataset_schema", fake_get_dataset_schema)
+    monkeypatch.setattr(refinement_main, "generate_sql", fake_generate_sql)
+
+    result = await refinement_main.mcp_invoke(
+        {
+            "tool": "generate_transform",
+            "args": {
+                "description": "sales by customer",
+                "sources": ["timeentry_clean"],
+                "layer": "gold",
+            },
+            "security_context": _scoped_sec(cartridges=("replicon",)),
+        },
+        internal_service="console",
+    )
+
+    assert result["layer"] == "gold"
+    assert captured["layer"] == "gold"
+    assert captured["schemas"]["timeentry_clean"]["fields"][0]["name"] == "customer_id"

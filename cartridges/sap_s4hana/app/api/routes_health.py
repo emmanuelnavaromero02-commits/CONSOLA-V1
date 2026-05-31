@@ -65,6 +65,11 @@ async def health(request: Request):
 
 
 @router.get("/sap_s4hana", dependencies=[Depends(verify_api_key)])
-def health_sap_s4hana() -> dict:
+def health_sap_s4hana() -> JSONResponse:
     info = SapS4Client().test_connection()
-    return {"service": "sap_s4hana", **info}
+    connectivity_ok = bool(info.get("reachable")) or info.get("status") in {"ok", "auth_error"}
+    ok = info.get("status") == "ok"
+    return JSONResponse(
+        {"ok": ok, "connectivity_ok": connectivity_ok, "service": "sap_s4hana", **info},
+        status_code=200 if connectivity_ok or info.get("status") == "degraded" else 503,
+    )

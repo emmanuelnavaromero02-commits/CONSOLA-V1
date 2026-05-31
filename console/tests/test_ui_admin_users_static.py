@@ -22,6 +22,7 @@ VAULT_JS        = REPO_ROOT / "console/app/static/js/viewers/vault.js"
 STUDIO_HTML     = REPO_ROOT / "console/app/static/studio.html"
 TOKENS_CSS      = REPO_ROOT / "console/app/static/css/tokens.css"
 MAIN_PY         = REPO_ROOT / "console/app/main.py"
+ROUTERS_V1      = REPO_ROOT / "console/app/routers/v1"
 
 
 INLINE_HANDLER_RE = re.compile(
@@ -167,9 +168,9 @@ def test_admin_js_renderers_use_safe_dom_apis():
 
 def test_admin_js_only_calls_existing_backend_endpoints():
     """Cross-check every /api/admin/users/* and /auth/* fetch against
-    routes declared in console/app/main.py."""
+    routes declared in console's app/router modules."""
     js = ADMIN_JS.read_text(encoding="utf-8")
-    py = MAIN_PY.read_text(encoding="utf-8")
+    py = _console_route_source()
 
     pattern = re.compile(r"/(?:api/admin/users|auth/[a-z\-]+)[^\s`'\"\\]*")
     js_urls = {_normalize(u) for u in pattern.findall(js)}
@@ -182,7 +183,7 @@ def test_admin_js_only_calls_existing_backend_endpoints():
 
     missing = js_urls - py_routes
     assert not missing, (
-        f"admin_users.js calls endpoints not declared in main.py: {missing}. "
+        f"admin_users.js calls endpoints not declared in console routes: {missing}. "
         f"Known: {sorted(py_routes)}"
     )
 
@@ -261,3 +262,13 @@ def _function_body(src: str, name: str) -> str:
         elif src[i] == "}": depth -= 1
         i += 1
     return src[m.end():i]
+
+
+def _console_route_source() -> str:
+    parts = [MAIN_PY.read_text(encoding="utf-8")]
+    parts.extend(
+        path.read_text(encoding="utf-8").replace("@router.", "@app.")
+        for path in sorted(ROUTERS_V1.glob("*.py"))
+        if path.name != "__init__.py"
+    )
+    return "\n".join(parts)

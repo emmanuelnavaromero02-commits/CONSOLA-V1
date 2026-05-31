@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 # console/app/services/mcp_registry.py and the router map in
 # console/app/routers/cartridges.py. Adding a new cartridge means
 # updating those + this list (the test guards parity).
-_CARTRIDGES = ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors")
+_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
 
 
 def _freshness_label(age_hours: float | None) -> str:

@@ -2,11 +2,22 @@ from pathlib import Path
 
 
 MAIN_SOURCE = Path("console/app/main.py")
+ROUTERS_V1 = Path("console/app/routers/v1")
 CARTRIDGE_SERVICE_SOURCE = Path("console/app/services/cartridge_service.py")
 
 
+def _console_route_source() -> str:
+    parts = [MAIN_SOURCE.read_text(encoding="utf-8")]
+    parts.extend(
+        path.read_text(encoding="utf-8")
+        for path in sorted(ROUTERS_V1.glob("*.py"))
+        if path.name != "__init__.py"
+    )
+    return "\n".join(parts)
+
+
 def test_admin_handlers_use_explicit_admin_and_target_user_names():
-    source = MAIN_SOURCE.read_text(encoding="utf-8")
+    source = _console_route_source()
 
     assert 'admin_user: dict = Depends(require_permission("iam.users.write"))' in source
     assert "target_user = await _auth.create_user" in source
@@ -16,7 +27,7 @@ def test_admin_handlers_use_explicit_admin_and_target_user_names():
 
 
 def test_no_mutable_default_body_dict_remains():
-    source = MAIN_SOURCE.read_text(encoding="utf-8")
+    source = _console_route_source()
 
     assert "body: dict = {}" not in source
     assert "body: dict | None = None" in source

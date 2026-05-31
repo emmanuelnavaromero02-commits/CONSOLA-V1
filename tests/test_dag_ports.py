@@ -2,6 +2,7 @@
 Port hygiene contract for SAP cartridge DAGs / ap_flows.
 
 Every cartridge has a canonical port assignment:
+    hubspot            -> 8210
     sap_successfactors → 8203
     sap_hcm            → 8202
     sap_s4hana         → 8204
@@ -18,6 +19,7 @@ import pytest
 from tests.conftest import CARTRIDGES_ROOT
 
 CARTRIDGE_PORTS = {
+    "hubspot":            "8210",
     "sap_successfactors": "8203",
     "sap_hcm":            "8202",
     "sap_s4hana":         "8204",

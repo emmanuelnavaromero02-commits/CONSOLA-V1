@@ -1,21 +1,21 @@
 /**
  * v1.44.3.2.1 spec 03-deep — Exhaustive /cartridges.
  *
- * 28 tests covering the grid for all 4 cartridges, the dynamic
+ * 31 tests covering the grid for all 5 built-in cartridges, the dynamic
  * form for each, save / test / delete flows with the LIVE Vault
  * (using cleanup-safe fake credentials), and per-cartridge schema
  * shape sanity.
  */
 import { test, expect } from "../fixtures/auth";
 
-const CARTRIDGES = ["replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["hubspot", "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
 const cartridgeViewer = (id: string) => `/cartridges/viewer?id=${id}`;
 const cartridgeViewerLink = (id: string) =>
   `a[href="/cartridges/viewer?id=${id}"], a[href="/cartridges/viewer/?id=${id}"]`;
 const cartridgeViewerLinks =
   'a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]';
 
-test.describe("Cartridges grid — coverage of all 4", () => {
+test.describe("Cartridges grid — coverage of all 5", () => {
   test("renders the 'Cartuchos' h1", async ({ page }) => {
     await page.goto("/cartridges");
     await expect(
@@ -33,13 +33,13 @@ test.describe("Cartridges grid — coverage of all 4", () => {
     );
   }
 
-  test("grid has exactly 4 cartridge tiles", async ({ page }) => {
+  test("grid has at least 5 cartridge tiles", async ({ page }) => {
     await page.goto("/cartridges");
     const tiles = page.locator(cartridgeViewerLinks);
-    // Allow >4 in case the dashboard freshness card also appears,
-    // but at least the canonical 4 must be present.
+    // Allow >5 in case related dashboard cards also appear, but at
+    // least the canonical built-in cartridges must be present.
     await expect(tiles.first()).toBeVisible({ timeout: 15_000 });
-    expect(await tiles.count()).toBeGreaterThanOrEqual(4);
+    expect(await tiles.count()).toBeGreaterThanOrEqual(5);
   });
 
   test("each tile carries a status badge", async ({ page }) => {
@@ -49,7 +49,7 @@ test.describe("Cartridges grid — coverage of all 4", () => {
     await expect(badge).toBeVisible({ timeout: 15_000 });
   });
 
-  test("loading state shows 4 skeleton tiles before data arrives",
+  test("loading state shows skeleton tiles before data arrives",
     async ({ page }) => {
       // Throttle the listCartridges request so the skeleton has
       // time to render.

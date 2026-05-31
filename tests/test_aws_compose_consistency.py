@@ -135,6 +135,7 @@ def test_aws_cartridge_overlay_ships_release_images():
     assert "${IMAGE_TAG:-v1.44.5}" not in src
     expected = {
         "replicon": "replicon",
+        "hubspot": "hubspot",
         "sap-hcm": "sap_hcm",
         "sap-s4hana": "sap_s4hana",
         "sap-successfactors": "sap_successfactors",
@@ -175,6 +176,13 @@ def test_release_workflow_validates_before_publishing_images():
     src = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     assert "validate-release:" in src
     assert "needs: validate-release" in src
+    for requirements in (
+        "tests/requirements.txt",
+        "console/requirements.txt",
+        "vault/requirements.txt",
+        "mcp-infra/requirements.txt",
+    ):
+        assert f"-r {requirements}" in src
     assert "python -m pytest -q" in src
     assert "docker compose --env-file infra/.env.example" in src
     assert "docker-compose.cartridges.yml" in src

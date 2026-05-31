@@ -157,8 +157,10 @@ def find_due_agents(**context):
     due = []
     for agent_id, cartridge_id, slug, name, extra in rows:
         if not isinstance(extra, dict):
-            try:    extra = json.loads(extra)
-            except: continue
+            try:
+                extra = json.loads(extra)
+            except (TypeError, json.JSONDecodeError):
+                continue
         sched = (extra or {}).get("schedule") or {}
         if not sched.get("cron"):
             continue

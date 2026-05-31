@@ -15,6 +15,10 @@ def _module(**attrs):
     return mod
 
 
+class _GeneratedSQLValidationError(ValueError):
+    pass
+
+
 @pytest.fixture()
 def anyio_backend():
     return "asyncio"
@@ -29,7 +33,14 @@ def refinement_main(monkeypatch):
     async def generate_sql(*args, **kwargs):
         return "", ""
 
-    monkeypatch.setitem(sys.modules, "app.llm_sql", _module(generate_sql=generate_sql))
+    monkeypatch.setitem(
+        sys.modules,
+        "app.llm_sql",
+        _module(
+            GeneratedSQLValidationError=_GeneratedSQLValidationError,
+            generate_sql=generate_sql,
+        ),
+    )
     monkeypatch.setitem(
         sys.modules,
         "app.security",

@@ -19,6 +19,6 @@ def test_me_password_form_matches_backend_policy_and_refreshes_profile():
 
 def test_forced_password_change_allows_me_only_until_password_update():
     main = read("console/app/main.py")
-    assert '"/me", "/api/me", "/api/me/change-password", "/auth/logout", "/auth/me"' in main
+    assert '"/me", "/api/me", "/api/me/access", "/api/me/profile", "/api/me/change-password", "/auth/logout", "/auth/me"' in main
     assert '"/api/me/change-password"' in main
     assert '"password change required"' in main

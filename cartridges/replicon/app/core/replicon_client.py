@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -17,6 +16,42 @@ _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _RETRY_ATTEMPTS = 5
 _RETRY_BASE_DELAY = 1.0  # doubles each attempt: 1, 2, 4, 8, 16 s
 logger = logging.getLogger(__name__)
+
+
+class CircuitBreakerOpen(RuntimeError):
+    pass
+
+
+class CartridgeCircuitBreaker:
+    failures = 0
+    threshold = 3
+    state = "HEALTHY"
+
+    @classmethod
+    def before_request(cls) -> None:
+        if cls.failures >= cls.threshold:
+            cls.state = "UNHEALTHY"
+            raise CircuitBreakerOpen("replicon circuit breaker is UNHEALTHY")
+
+    @classmethod
+    def record_success(cls) -> None:
+        cls.failures = 0
+        cls.state = "HEALTHY"
+
+    @classmethod
+    def record_failure(cls) -> None:
+        cls.failures += 1
+        if cls.failures >= cls.threshold:
+            cls.state = "UNHEALTHY"
+
+    @classmethod
+    def snapshot(cls) -> dict[str, Any]:
+        return {"state": cls.state, "failures": cls.failures, "threshold": cls.threshold}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.failures = 0
+        cls.state = "HEALTHY"
 
 
 class RepliconClient:
@@ -34,18 +69,11 @@ class RepliconClient:
     """
 
     def __init__(self) -> None:
-        if settings.use_demo_data:
-            connection = {
-                "base_url": settings.replicon_base_url,
-                "auth_method": "bearer_token",
-                "token": settings.replicon_api_token or "",
-            }
-        else:
-            connection = get_replicon_connection()
+        connection = get_replicon_connection()
         self.base_url = str(connection.get("base_url") or "").rstrip("/")
         self._auth_connection = connection
 
-        if not settings.use_demo_data and not self.base_url:
+        if not self.base_url:
             raise EnvironmentError("Replicon base_url is required (set env or Vault connection)")
 
     # ------------------------------------------------------------------
@@ -77,6 +105,7 @@ class RepliconClient:
     # ------------------------------------------------------------------
 
     def _get(self, path: str, timeout: int = 60) -> requests.Response:
+        CartridgeCircuitBreaker.before_request()
         url = f"{self.base_url}{path}"
         delay = _RETRY_BASE_DELAY
         last_exc: Exception | None = None
@@ -97,12 +126,24 @@ class RepliconClient:
                 last_exc = requests.exceptions.HTTPError(response=resp)
                 continue
 
+            if resp.status_code in {401, 403}:
+                CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            if resp.status_code >= 400:
+                if resp.status_code >= 500:
+                    CartridgeCircuitBreaker.record_failure()
+                else:
+                    CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            CartridgeCircuitBreaker.record_success()
             resp.raise_for_status()
             return resp
 
+        CartridgeCircuitBreaker.record_failure()
         raise last_exc or RuntimeError(f"GET {url} failed after {_RETRY_ATTEMPTS} attempts")
 
     def _post(self, path: str, body: dict, timeout: int = 60) -> requests.Response:
+        CartridgeCircuitBreaker.before_request()
         url = f"{self.base_url}{path}"
         delay = _RETRY_BASE_DELAY
         last_exc: Exception | None = None
@@ -123,9 +164,20 @@ class RepliconClient:
                 last_exc = requests.exceptions.HTTPError(response=resp)
                 continue
 
+            if resp.status_code in {401, 403}:
+                CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            if resp.status_code >= 400:
+                if resp.status_code >= 500:
+                    CartridgeCircuitBreaker.record_failure()
+                else:
+                    CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            CartridgeCircuitBreaker.record_success()
             resp.raise_for_status()
             return resp
 
+        CartridgeCircuitBreaker.record_failure()
         raise last_exc or RuntimeError(f"POST {url} failed after {_RETRY_ATTEMPTS} attempts")
 
     # ------------------------------------------------------------------
@@ -133,8 +185,6 @@ class RepliconClient:
     # ------------------------------------------------------------------
 
     def list_tables(self) -> list[dict[str, Any]]:
-        if settings.use_demo_data:
-            return [{"id": "Project", "name": "Project", "columns": []}]
         return self._get("/tables").json()
 
     def get_table_schema(self, table_id: str) -> dict[str, Any]:
@@ -208,9 +258,6 @@ class RepliconClient:
         dataUrls in the completed extract is a dict keyed by tableId:
           { "Project": "https://s3.amazonaws.com/..." }
         """
-        if settings.use_demo_data:
-            return self._demo_rows(table_id)
-
         extract_id = self._create_extract([table_id])
         result = self._poll_extract(extract_id)
 
@@ -235,75 +282,47 @@ class RepliconClient:
         return combined.to_dict(orient="records")
 
     # ------------------------------------------------------------------
-    # Demo data
-    # ------------------------------------------------------------------
-
-    def _demo_rows(self, table_id: str) -> list[dict[str, Any]]:
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        demo: dict[str, list[dict]] = {
-            "User": [
-                {"user_id": "U001", "login_name": "jsmith", "first_name": "John",
-                 "last_name": "Smith", "department": "Engineering", "title": "Senior Engineer",
-                 "cost_rate": 85.0, "billing_rate": 150.0, "is_active": True, "last_modified": now},
-                {"user_id": "U002", "login_name": "mjones", "first_name": "Maria",
-                 "last_name": "Jones", "department": "Consulting", "title": "Consultant",
-                 "cost_rate": 70.0, "billing_rate": 130.0, "is_active": True, "last_modified": now},
-            ],
-            "Project": [
-                {"project_id": "P001", "project_name": "ERP Implementation",
-                 "client_id": "C001", "status": "InProgress",
-                 "budget_amount": 500000.0, "budget_hours": 4000.0,
-                 "start_date": "2024-01-01", "end_date": "2024-12-31", "last_modified": now},
-                {"project_id": "P002", "project_name": "BI Dashboard",
-                 "client_id": "C002", "status": "InProgress",
-                 "budget_amount": 120000.0, "budget_hours": 800.0,
-                 "start_date": "2024-03-01", "end_date": "2024-09-30", "last_modified": now},
-            ],
-            "TimeEntry": [
-                {"entry_id": "T001", "user_id": "U001", "project_id": "P001",
-                 "task_id": "TK001", "entry_date": today, "hours": 8.0,
-                 "billable_status": "Billable", "approval_status": "Approved", "last_modified": now},
-                {"entry_id": "T002", "user_id": "U002", "project_id": "P001",
-                 "task_id": "TK001", "entry_date": today, "hours": 6.0,
-                 "billable_status": "Billable", "approval_status": "Approved", "last_modified": now},
-            ],
-            "Task": [
-                {"task_id": "TK001", "project_id": "P001", "task_name": "Analysis",
-                 "status": "InProgress", "estimated_hours": 200.0,
-                 "billable_type": "Billable", "last_modified": now},
-            ],
-            "Client": [
-                {"client_id": "C001", "client_name": "Acme Corp",
-                 "currency": "USD", "default_billing_rate": 150.0, "last_modified": now},
-                {"client_id": "C002", "client_name": "Beta Industries",
-                 "currency": "USD", "default_billing_rate": 130.0, "last_modified": now},
-            ],
-            "Invoice": [
-                {"invoice_id": "INV001", "client_id": "C001", "project_id": "P001",
-                 "invoice_date": "2024-03-01", "amount": 48000.0,
-                 "status": "Unpaid", "due_date": "2024-03-31", "last_modified": now},
-            ],
-            "ResourceAssignment": [
-                {"assignment_id": "A001", "project_id": "P001", "user_id": "U001",
-                 "role": "Lead", "start_date": "2024-01-01", "end_date": "2024-12-31",
-                 "allocated_hours": 2000.0, "last_modified": now},
-            ],
-            "ExpenseEntry": [
-                {"expense_id": "E001", "user_id": "U001", "project_id": "P001",
-                 "expense_date": today, "amount": 250.0, "category": "Travel",
-                 "billable_status": "Billable", "last_modified": now},
-            ],
-        }
-        return demo.get(table_id, [{"id": "demo-1", "last_modified": now}])
-
-    # ------------------------------------------------------------------
     # Connection test
     # ------------------------------------------------------------------
 
     def test_connection(self) -> dict[str, Any]:
-        if settings.use_demo_data:
-            return {"reachable": True, "tables": 1, "mode": "demo"}
-        tables = self.list_tables()
-        return {"reachable": True, "tables": len(tables), "base_url": self.base_url}
+        try:
+            tables = self.list_tables()
+            return {
+                "status": "ok",
+                "reachable": True,
+                "tables": len(tables),
+                "base_url": self.base_url,
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
+        except CircuitBreakerOpen as exc:
+            return {
+                "status": "unhealthy",
+                "reachable": False,
+                "error": str(exc),
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code in {401, 403}:
+                return {
+                    "status": "auth_error",
+                    "reachable": True,
+                    "http_status": status_code,
+                    "base_url": self.base_url,
+                    "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+                }
+            return {
+                "status": "error",
+                "reachable": False,
+                "http_status": status_code,
+                "error": str(exc),
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
+        except requests.RequestException as exc:
+            return {
+                "status": "error",
+                "reachable": False,
+                "error": str(exc),
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }

@@ -45,6 +45,23 @@ def _bail(message: str) -> None:
     pytest.skip(message)
 
 
+def _cookie_header(name: str, value: str) -> dict[str, str]:
+    return {"Cookie": f"{name}={value}"} if value else {}
+
+
+def _mirror_cookie_for_http_client(client: httpx.Client, name: str, value: str | None) -> None:
+    """httpx honors Secure cookies and therefore will not replay them on
+    http://localhost. The local stack can run COOKIE_SECURE=true to mimic
+    production, so E2E mirrors response cookies as host-only test cookies."""
+    if value:
+        for domain in ("localhost.local", "localhost", "127.0.0.1"):
+            try:
+                client.cookies.delete(name, domain=domain, path="/")
+            except Exception:
+                pass
+        client.cookies.set(name, value, path="/")
+
+
 # v1.43.4 (Claude L1): if E2E tests are being collected inside CI
 # AND the admin password isn't set, fail the collection step
 # loudly. Pre-v1.43.4 the silent skip path made it impossible to
@@ -103,17 +120,25 @@ def admin_session(console_up):
             "unset E2E_REQUIRE_STACK to skip the E2E suite locally."
         )
     client = httpx.Client(base_url=console_up, timeout=15.0)
-    client.get("/login")          # warm CSRF cookie
-    csrf = client.cookies.get("csrftoken") or client.cookies.get("csrf_token") or ""
+    login = client.get("/login")          # warm CSRF cookie
+    csrf = login.cookies.get("csrf_token") or client.cookies.get("csrf_token") or client.cookies.get("csrftoken") or ""
+    _mirror_cookie_for_http_client(client, "csrf_token", csrf)
+    headers = {"X-CSRF-Token": csrf, **_cookie_header("csrf_token", csrf)} if csrf else {}
     r = client.post(
         "/api/auth/login",
         json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-        headers={"X-CSRF-Token": csrf} if csrf else {},
+        headers=headers,
     )
     if r.status_code != 200:
         _bail(
             f"E2E admin login failed: {r.status_code} {r.text[:200]}. "
             f"Check E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD."
+        )
+    for cookie_name in ("csrf_token", "mod_session", "refresh_token"):
+        _mirror_cookie_for_http_client(
+            client,
+            cookie_name,
+            r.cookies.get(cookie_name) or client.cookies.get(cookie_name),
         )
     yield client
     client.close()

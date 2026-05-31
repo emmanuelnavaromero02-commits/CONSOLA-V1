@@ -66,6 +66,42 @@ class SAPClientError(RuntimeError):
     pass
 
 
+class CircuitBreakerOpen(SAPClientError):
+    pass
+
+
+class CartridgeCircuitBreaker:
+    failures = 0
+    threshold = 3
+    state = "HEALTHY"
+
+    @classmethod
+    def before_request(cls) -> None:
+        if cls.failures >= cls.threshold:
+            cls.state = "UNHEALTHY"
+            raise CircuitBreakerOpen("sap_successfactors circuit breaker is UNHEALTHY")
+
+    @classmethod
+    def record_success(cls) -> None:
+        cls.failures = 0
+        cls.state = "HEALTHY"
+
+    @classmethod
+    def record_failure(cls) -> None:
+        cls.failures += 1
+        if cls.failures >= cls.threshold:
+            cls.state = "UNHEALTHY"
+
+    @classmethod
+    def snapshot(cls) -> dict[str, Any]:
+        return {"state": cls.state, "failures": cls.failures, "threshold": cls.threshold}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.failures = 0
+        cls.state = "HEALTHY"
+
+
 class SapSfClient:
     """SuccessFactors OData v2 client with OAuth2 client_credentials."""
 
@@ -166,6 +202,7 @@ class SapSfClient:
 
         self._require_configured()
         try:
+            CartridgeCircuitBreaker.before_request()
             logger.warning("SAP SuccessFactors outbound POST %s", self.token_url)
             logger.warning(
                 "%s",
@@ -182,9 +219,20 @@ class SapSfClient:
                 headers={"Accept": "application/json"},
                 timeout=30,
             )
+            if resp.status_code in {401, 403}:
+                CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            if resp.status_code >= 500 or resp.status_code == 429:
+                CartridgeCircuitBreaker.record_failure()
+                resp.raise_for_status()
             resp.raise_for_status()
+            CartridgeCircuitBreaker.record_success()
             payload = resp.json()
+        except CircuitBreakerOpen:
+            raise
         except requests.RequestException as exc:
+            if not isinstance(exc, requests.HTTPError):
+                CartridgeCircuitBreaker.record_failure()
             raise SAPClientError(f"OAuth token request failed: {exc}") from exc
 
         token = payload.get("access_token")
@@ -231,6 +279,7 @@ class SapSfClient:
         if not status["configured"]:
             return {"status": "degraded", **status}
         try:
+            CartridgeCircuitBreaker.before_request()
             logger.warning("SAP SuccessFactors outbound GET %s", f"{self.base_url}/$metadata")
             resp = self._session.get(
                 f"{self.base_url}/$metadata",
@@ -239,10 +288,58 @@ class SapSfClient:
                 timeout=30,
             )
             self._log_auth(resp.status_code)
+            if resp.status_code in {401, 403}:
+                CartridgeCircuitBreaker.record_success()
+                return {
+                    "status": "auth_error",
+                    "reachable": True,
+                    "configured": True,
+                    "base_url": self.base_url,
+                    "http_status": resp.status_code,
+                    "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+                }
+            if resp.status_code >= 500 or resp.status_code == 429:
+                CartridgeCircuitBreaker.record_failure()
+                resp.raise_for_status()
             resp.raise_for_status()
-            return {"status": "ok", "configured": True, "base_url": self.base_url}
+            CartridgeCircuitBreaker.record_success()
+            return {
+                "status": "ok",
+                "reachable": True,
+                "configured": True,
+                "base_url": self.base_url,
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
+        except CircuitBreakerOpen as exc:
+            return {
+                "status": "unhealthy",
+                "reachable": False,
+                "configured": True,
+                "base_url": self.base_url,
+                "error": str(exc),
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
+        except SAPClientError as exc:
+            text = str(exc)
+            auth_error = "401" in text or "403" in text
+            return {
+                "status": "auth_error" if auth_error else "error",
+                "reachable": auth_error,
+                "configured": True,
+                "base_url": self.base_url,
+                "error": text,
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
         except requests.RequestException as exc:
-            return {"status": "error", "configured": True, "error": str(exc)}
+            if not isinstance(exc, requests.HTTPError):
+                CartridgeCircuitBreaker.record_failure()
+            return {
+                "status": "error",
+                "reachable": False,
+                "configured": True,
+                "error": str(exc),
+                "circuit_breaker": CartridgeCircuitBreaker.snapshot(),
+            }
 
     # ------------------------------------------------------------------
     # Discovery (uses local catalog as the source of truth)
@@ -294,12 +391,24 @@ class SapSfClient:
 
         url = f"{self.base_url}/{entity}"
         try:
+            CartridgeCircuitBreaker.before_request()
             logger.warning("SAP SuccessFactors outbound GET %s", url)
             resp = self._session.get(url, params=params, headers=self._headers(), timeout=120)
             self._log_auth(resp.status_code)
+            if resp.status_code in {401, 403}:
+                CartridgeCircuitBreaker.record_success()
+                resp.raise_for_status()
+            if resp.status_code >= 500 or resp.status_code == 429:
+                CartridgeCircuitBreaker.record_failure()
+                resp.raise_for_status()
             resp.raise_for_status()
+            CartridgeCircuitBreaker.record_success()
             payload = resp.json()
+        except CircuitBreakerOpen:
+            raise
         except requests.RequestException as exc:
+            if not isinstance(exc, requests.HTTPError):
+                CartridgeCircuitBreaker.record_failure()
             raise SAPClientError(f"GET {url} failed: {exc}") from exc
 
         if isinstance(payload, dict) and "d" in payload:

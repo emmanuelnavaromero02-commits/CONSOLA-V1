@@ -10,12 +10,15 @@ via the standard MCP contract:
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import re
 import secrets
+import uuid
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import FastAPI, Header, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import registry
@@ -25,6 +28,7 @@ from app.security import get_internal_api_key
 from app.logging_config import setup_logging  # noqa: E402
 
 setup_logging(service_name="mcp-infra")
+logger = logging.getLogger(__name__)
 
 # ── Import tool modules so decorators register themselves ──────────────────────
 import app.tools.airflow     # noqa: F401
@@ -114,6 +118,57 @@ app = FastAPI(
     version="1.1.0",
     lifespan=_lifespan,
 )
+
+
+def _internal_error_request_id(request: Request | None = None) -> str:
+    candidate = getattr(getattr(request, "state", None), "request_id", None)
+    try:
+        return str(uuid.UUID(str(candidate)))
+    except Exception:
+        return str(uuid.uuid4())
+
+
+def _log_internal_error(exc: Exception, message: str, request: Request | None = None) -> str:
+    request_id = _internal_error_request_id(request)
+    logger.exception(
+        "%s request_id=%s",
+        message,
+        request_id,
+        extra={"request_id": request_id, "exception_type": type(exc).__name__},
+    )
+    return request_id
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _log_internal_error(exc, "unhandled mcp-infra exception", request)
+    return JSONResponse(
+        {"error": "Internal Server Error", "request_id": request_id},
+        status_code=500,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 500:
+        request_id = _internal_error_request_id(request)
+        logger.error(
+            "mcp-infra HTTPException sanitized request_id=%s status=%s",
+            request_id,
+            exc.status_code,
+            exc_info=exc.__cause__ is not None,
+            extra={"request_id": request_id, "exception_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            {"error": "Internal Server Error", "request_id": request_id},
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+    return JSONResponse(
+        {"detail": exc.detail},
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
 
 # Sprint v1.41.1 — correlation IDs.
 from app.middleware.request_id import RequestIDMiddleware  # noqa: E402
@@ -991,11 +1046,11 @@ async def invoke_tool(req: InvokeRequest, internal_service: str = Depends(verify
     except HTTPException:
         raise
     except EmbeddingProviderError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail="Embedding provider unavailable") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail="Resource not found") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"tool invocation failed: {type(exc).__name__}") from exc
+        raise HTTPException(status_code=500, detail="Tool invocation failed") from exc
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -1101,7 +1156,7 @@ async def rag_rest_search(body: dict, internal_service: str = Depends(verify_api
             kinds=body.get("kinds"),
         )}
     except EmbeddingProviderError as exc:
-        raise HTTPException(503, detail=str(exc)) from exc
+        raise HTTPException(503, detail="Embedding provider unavailable") from exc
     return _filter_rag_payload(result, ctx)
 
 
@@ -1129,7 +1184,7 @@ async def rag_rest_ingest(body: dict, internal_service: str = Depends(verify_api
             kind=body.get("kind", "document"),
         )
     except EmbeddingProviderError as exc:
-        raise HTTPException(503, detail=str(exc)) from exc
+        raise HTTPException(503, detail="Embedding provider unavailable") from exc
 
 
 # ── Re-index a single raw entity or dataset into the RAG ────────────────────
@@ -1173,7 +1228,7 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
             kind="schema",
         )
     except EmbeddingProviderError as exc:
-        raise HTTPException(503, detail=str(exc)) from exc
+        raise HTTPException(503, detail="Embedding provider unavailable") from exc
     semantic_result = None
     if kind == "dataset":
         cartridge_for_semantic = (
@@ -1187,7 +1242,12 @@ async def rag_rest_reindex(body: dict, internal_service: str = Depends(verify_ap
         try:
             semantic_result = await _rebuild_semantic_doc(cartridge_for_semantic, ctx)
         except Exception as exc:                              # noqa: BLE001
-            semantic_result = {"rebuilt": False, "error": str(exc)}
+            request_id = _log_internal_error(exc, "semantic reindex failed")
+            semantic_result = {
+                "rebuilt": False,
+                "error": "Internal Server Error",
+                "request_id": request_id,
+            }
     return {
         "reindexed": True,
         "source": source,
@@ -1346,8 +1406,9 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                     f" hive_partitioning=true, union_by_name=true) LIMIT 0"
                 ).fetchall()
             except Exception as exc:                          # noqa: BLE001
+                _log_internal_error(exc, "semantic raw schema lookup failed")
                 fields = []
-                out.append(f"_(schema unavailable: {exc})_\n")
+                out.append("_(schema unavailable)_\n")
             for col, ty, *_ in fields:
                 out.append(fmt_col(ent, col, ty))
             out.append("\n")
@@ -1375,8 +1436,9 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
                         parquet = f"s3://{bucket}/silver/{cartridge}/{name}/data.parquet"
                     fields = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet}') LIMIT 0").fetchall()
             except Exception as exc:                          # noqa: BLE001
+                _log_internal_error(exc, "semantic dataset schema lookup failed")
                 fields = []
-                out.append(f"_(schema unavailable: {exc})_\n")
+                out.append("_(schema unavailable)_\n")
             for col, ty, *_ in fields:
                 out.append(fmt_col(name, col, ty))
             out.append("\n")
@@ -1430,7 +1492,8 @@ def _build_raw_doc(cartridge: str, entity: str, ctx: dict[str, Any] | None = Non
         ).fetchall()
         fields = "\n".join(f"- `{r[0]}` : {r[1]}" for r in rows)
     except Exception as exc:                                  # noqa: BLE001
-        fields = f"(schema unavailable: {exc})"
+        _log_internal_error(exc, "raw doc schema lookup failed")
+        fields = "(schema unavailable)"
     return (
         f"# Raw entity: {entity}\nLayer: bronze (raw)\nCartridge: {cartridge}\n\n"
         f"## Storage\n`{path}`\n\n## Schema\n{fields}\n"

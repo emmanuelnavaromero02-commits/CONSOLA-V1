@@ -128,6 +128,7 @@ test.describe("MCP cartridge endpoints — /healthz unauthenticated", () => {
   // status proves the route exists; 404 means the cartridge isn't
   // serving its health surface at all.
   const carts = [
+    { name: "hubspot",             url: process.env.HUBSPOT_URL || "http://localhost:8210" },
     { name: "replicon",            url: process.env.REPLICON_URL || "http://localhost:8201" },
     { name: "sap_hcm",             url: process.env.SAP_HCM_URL  || "http://localhost:8202" },
     { name: "sap_successfactors",  url: process.env.SAP_SF_URL   || "http://localhost:8203" },

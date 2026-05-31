@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import duckdb
+import sqlglot
+from sqlglot import exp as sql_exp
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 from app.duckdb_engine import DuckDBEngine
 from app.dataset_store import DatasetStore
-from app.llm_sql import generate_sql
+from app.llm_sql import GeneratedSQLValidationError, generate_sql
 from app.security import get_internal_api_key
 
 DATASETS_DIR = Path("/app/datasets")
@@ -115,6 +117,8 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     # salesforce) share one key — they play the same role from refinement's side.
     "replicon":             "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-replicon":   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "hubspot":              "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-hubspot":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_hcm":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_s4hana": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
@@ -131,6 +135,12 @@ _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
     "workspace": {"workspace"},
     "airflow": {"airflow", "agent_runner"},
+    "hubspot": {"cartridge-hubspot", "hubspot"},
+    "cartridge-hubspot": {"cartridge-hubspot", "hubspot"},
+    "cartridge-replicon": {"cartridge-replicon", "replicon"},
+    "cartridge-sap_hcm": {"cartridge-sap_hcm"},
+    "cartridge-sap_s4hana": {"cartridge-sap_s4hana"},
+    "cartridge-sap_successfactors": {"cartridge-sap_successfactors"},
     "refinement": {"refinement"},
     "mcp-infra": {"mcp-infra"},
 }
@@ -319,7 +329,16 @@ def _dataset_allowed(sec: dict, ds: dict) -> bool:
         return True
     workspace_id = str(ds.get("workspace_id") or "")
     sec_workspace = str(sec.get("workspace_id") or "")
-    if workspace_id and workspace_id != sec_workspace:
+    source = str(sec.get("source") or "")
+    service_materializer = (
+        not sec_workspace
+        and (
+            source == "airflow"
+            or source == "agent_runner"
+            or source.startswith("cartridge-")
+        )
+    )
+    if workspace_id and workspace_id != sec_workspace and not service_materializer:
         return False
     cartridge = str(ds.get("cartridge") or "").strip()
     layer = str(ds.get("layer") or "").strip().lower()
@@ -332,6 +351,76 @@ def _require_dataset_scope(body: dict, ds: dict, permission: str = "datasets.rea
     if not _dataset_allowed(sec, ds):
         raise HTTPException(403, "dataset not allowed")
     return sec
+
+
+def _dataset_name_from_source(source: str) -> str:
+    value = str(source or "").strip().strip("/")
+    if "/" in value:
+        return value.split("/")[-1]
+    return value
+
+
+def _schema_for_transform_source(body: dict, source: str, ctx: dict) -> dict:
+    source = str(source or "").strip()
+    if source.startswith("raw/"):
+        _require_source_scope(body, source)
+        return engine.get_source_schema(source, ctx)
+    ds_name = _dataset_name_from_source(source)
+    _validate_dataset_name(ds_name)
+    ds = store.get_dataset(ds_name)
+    if not ds:
+        _require_source_scope(body, source)
+        return engine.get_source_schema(source, ctx)
+    _require_dataset_scope(body, ds)
+    schema = engine.get_dataset_schema(ds)
+    return {
+        "source": source,
+        "dataset": ds_name,
+        "layer": ds.get("layer"),
+        "fields": schema.get("fields", []),
+    }
+
+
+def _require_transform_source_scope(body: dict, source: str, permission: str = "datasets.read") -> None:
+    source = str(source or "").strip()
+    sec = _require_security_permission(body, permission)
+    if _prefix_allowed(sec, source):
+        return
+    ds_name = _dataset_name_from_source(source)
+    if DATASET_NAME_RE.fullmatch(ds_name or ""):
+        ds = store.get_dataset(ds_name)
+        if ds and _dataset_allowed(sec, ds):
+            return
+    raise HTTPException(403, "source prefix not allowed")
+
+
+def _sql_table_references(sql: str) -> list[tuple[str, str, str]]:
+    try:
+        tree = sqlglot.parse_one(sql or "", read="duckdb")
+    except Exception as exc:
+        raise HTTPException(403, "SQL could not be parsed for table scope validation") from exc
+    ctes = {str(cte.alias_or_name).lower() for cte in tree.find_all(sql_exp.CTE) if cte.alias_or_name}
+    refs: list[tuple[str, str, str]] = []
+    for table in tree.find_all(sql_exp.Table):
+        name = str(table.name or "").strip('"').strip()
+        if not name:
+            continue
+        catalog = str(table.catalog or "").strip('"').strip().lower()
+        db = str(table.db or "").strip('"').strip().lower()
+        if not db and name.lower() in ctes:
+            continue
+        refs.append((catalog, db, name))
+    return refs
+
+
+def _registered_gold_table_allowed(sec: dict, table: str) -> bool:
+    if not table.lower().startswith("gold_"):
+        return False
+    for candidate in (table[5:], table):
+        ds = store.get_dataset(candidate)
+        if ds and str(ds.get("layer") or "").strip().lower() == "gold" and _dataset_allowed(sec, ds):
+            return True
+    return False
 
 
 def _s3_path_to_bucket_key(path: str) -> tuple[str, str]:
@@ -466,11 +555,14 @@ def _storage_path_matches_declared_source(sec: dict, key: str, sources: list[str
     return logical in declared and _prefix_allowed(sec, logical)
 
 
-def _storage_path_matches_registered_dataset(sec: dict, key: str) -> bool:
+def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[str] | None = None) -> bool:
     parts = key.split("/")
     if len(parts) < 3 or parts[0] not in {"silver", "gold"}:
         return False
     layer, cartridge, name = parts[:3]
+    declared = {str(source).strip().strip("/") for source in (sources or []) if str(source).strip()}
+    if declared and name not in declared and f"{layer}/{cartridge}/{name}" not in declared:
+        return False
     ds = store.get_dataset(name)
     if not ds:
         return False
@@ -499,7 +591,7 @@ def _require_sql_path_scope(
         return
     if _storage_path_matches_declared_source(sec, key, sources):
         return
-    if allow_registered_dataset_paths and _storage_path_matches_registered_dataset(sec, key):
+    if allow_registered_dataset_paths and _storage_path_matches_registered_dataset(sec, key, sources):
         return
     raise HTTPException(403, "SQL storage path not allowed")
 
@@ -522,8 +614,13 @@ def _require_sql_storage_scope(
         raise HTTPException(403, "pgdb schema is not readable through refinement")
 
     for source in sources or []:
-        if not _prefix_allowed(sec, str(source)):
-            raise HTTPException(403, "source prefix not allowed")
+        if _prefix_allowed(sec, str(source)):
+            continue
+        ds_name = _dataset_name_from_source(str(source))
+        ds = store.get_dataset(ds_name) if DATASET_NAME_RE.fullmatch(ds_name or "") else None
+        if ds and _dataset_allowed(sec, ds):
+            continue
+        raise HTTPException(403, "source prefix not allowed")
 
     reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
     direct_readers = list(_SCOPED_READER_RE.finditer(sql))
@@ -551,20 +648,21 @@ def _require_sql_storage_scope(
             allow_registered_dataset_paths=allow_registered_dataset_paths,
         )
 
-    scoped_tables = {m.group(1) for m in _PGGOLD_SCHEMA_TABLE_RE.finditer(sql or "")}
-    scoped_tables.update(m.group(1) for m in _PGGOLD_TABLE_RE.finditer(sql or ""))
-    for table in scoped_tables:
-        if not table.lower().startswith("gold_"):
+    for catalog, db, table in _sql_table_references(sql):
+        if catalog:
+            raise HTTPException(403, "SQL database/schema is not readable through refinement")
+        if db == "pgdb":
+            raise HTTPException(403, "pgdb schema is not readable through refinement")
+        if db and db != "pggold":
+            raise HTTPException(403, "SQL database/schema is not readable through refinement")
+        if db == "pggold":
+            if not _registered_gold_table_allowed(sec, table):
+                raise HTTPException(403, "pggold table is not registered as an allowed dataset")
             continue
-        ds = None
-        for candidate in (table[5:], table):
-            ds = store.get_dataset(candidate)
-            if ds:
-                break
-        if not ds:
-            raise HTTPException(403, "pggold table is not registered as an allowed dataset")
-        if not _dataset_allowed(sec, ds):
-            raise HTTPException(403, "dataset scope not allowed")
+        raise HTTPException(
+            403,
+            "SQL table references must use pggold.gold_<dataset>, CTEs, or scoped read_* file readers",
+        )
 
 
 def verify_api_key(x_api_key: str = Header(None), x_internal_service: str = Header(None)):
@@ -613,8 +711,31 @@ def _log_internal_error(exc: Exception, message: str, request: Request | None = 
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     request_id = _log_internal_error(exc, "unhandled refinement exception", request)
     return JSONResponse(
-        {"error": "Internal Error", "request_id": request_id},
+        {"error": "Internal Server Error", "request_id": request_id},
         status_code=500,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 500:
+        request_id = _internal_error_request_id(request)
+        logger.error(
+            "refinement HTTPException sanitized request_id=%s status=%s",
+            request_id,
+            exc.status_code,
+            exc_info=exc.__cause__ is not None,
+            extra={"request_id": request_id, "exception_type": type(exc).__name__},
+        )
+        return JSONResponse(
+            {"error": "Internal Server Error", "request_id": request_id},
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+    return JSONResponse(
+        {"detail": exc.detail},
+        status_code=exc.status_code,
+        headers=exc.headers,
     )
 
 
@@ -691,7 +812,7 @@ async def mcp_tools():
             "name": "generate_transform",
             "description": (
                 "Usa LLM para generar SQL de transformación dado una descripción en lenguaje "
-                "natural y las fuentes Bronze. Renombra columnas a términos de negocio. "
+                "natural y las fuentes/datasets. Renombra columnas a términos de negocio. "
                 "Siempre hacer preview_transform antes de save_dataset."
             ),
             "input_schema": {
@@ -700,9 +821,13 @@ async def mcp_tools():
                     "description": {"type": "string",
                                     "description": "Qué debe contener el dataset en términos de negocio"},
                     "sources":     {"type": "array", "items": {"type": "string"},
-                                    "description": "Fuentes bronze a usar, e.g. ['raw/replicon/User']"},
+                                    "description": "Fuentes o datasets a usar, e.g. ['raw/replicon/User'] o ['silver_dataset']"},
                     "cartridge":   {"type": "string",
                                     "description": "ID del cartucho origen, e.g. 'replicon'"},
+                    "layer":       {"type": "string",
+                                    "enum": ["silver", "gold"],
+                                    "default": "silver",
+                                    "description": "Capa objetivo. Silver exige read_parquet + {latest_date}; Gold lee rutas Silver registradas o pggold.gold_<dataset>."},
                 },
                 "required": ["description", "sources"],
             },
@@ -1067,15 +1192,22 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         return engine.preview_source(args["source"], args.get("limit", 5), _trusted_user_context(body, args))
 
     if tool == "generate_transform":
-        for source in args["sources"]:
-            _require_source_scope(body, source)
         ctx = _trusted_user_context(body, args)
-        schemas = {s: engine.get_source_schema(s, ctx) for s in args["sources"]}
-        sql, explanation = await generate_sql(args["description"], schemas)
-        return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge")}
+        layer = str(args.get("layer") or "silver").lower()
+        schemas = {s: _schema_for_transform_source(body, s, ctx) for s in args["sources"]}
+        try:
+            sql, explanation = await generate_sql(args["description"], schemas, layer=layer)
+        except GeneratedSQLValidationError as exc:
+            raise HTTPException(422, f"LLM SQL generation failed validation: {exc}") from exc
+        return {"sql": sql, "explanation": explanation, "cartridge": args.get("cartridge"), "layer": layer}
 
     if tool == "preview_transform":
-        _require_sql_storage_scope(body, args["sql"], args.get("sources") or [])
+        _require_sql_storage_scope(
+            body,
+            args["sql"],
+            args.get("sources") or [],
+            allow_registered_dataset_paths=True,
+        )
         # params: externally-supplied positional parameters (? placeholders) from callers
         # that build parameterized SQL (e.g. api_data_query_filtered).  When params is
         # provided, preview_sql skips internal RLS filter injection.
@@ -1089,8 +1221,13 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if existing:
             _require_dataset_scope(body, existing, "datasets.write")
         for source in args.get("sources") or []:
-            _require_source_scope(body, source)
-        _require_sql_storage_scope(body, args.get("sql") or args.get("sql_def") or "", args.get("sources") or [])
+            _require_transform_source_scope(body, source, "datasets.read")
+        _require_sql_storage_scope(
+            body,
+            args.get("sql") or args.get("sql_def") or "",
+            args.get("sources") or [],
+            allow_registered_dataset_paths=True,
+        )
         store.save_dataset(args)
         return {"saved": True, "name": args["name"]}
 
@@ -1153,7 +1290,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                 mc.remove_object(engine.minio_bucket, obj_path)
                 steps.append(f"parquet deleted: s3://{engine.minio_bucket}/{obj_path}")
             except Exception as exc:
-                steps.append(f"parquet not found or already deleted: {exc}")
+                _log_internal_error(exc, "dataset parquet delete failed")
+                steps.append("parquet not found or already deleted")
         # Drop Postgres table for Gold datasets.
         if layer == "gold":
             table  = f"gold_{name}"
@@ -1167,7 +1305,8 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
                 conn.close()
                 steps.append(f"table dropped: {table}")
             except Exception as exc:
-                steps.append(f"table drop failed: {exc}")
+                _log_internal_error(exc, "dataset gold table drop failed")
+                steps.append("table drop failed")
         return {"deleted": True, "name": name, "layer": layer, "steps": steps}
 
     if tool == "materialize":

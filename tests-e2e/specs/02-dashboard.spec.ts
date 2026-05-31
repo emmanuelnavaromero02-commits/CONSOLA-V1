@@ -75,8 +75,8 @@ test.describe("Dashboard (Next.js, /dashboard)", () => {
     await page.goto("/dashboard");
     await expect(page.getByText(/frescura de datos/i)).toBeVisible();
     // The table has a 'Cartucho' header and at least one cartridge row
-    // (replicon / sap_hcm / sap_s4hana / sap_successfactors) — even
-    // if every status is 'never' we still render the four rows.
+    // (hubspot / replicon / sap_hcm / sap_s4hana / sap_successfactors)
+    // even if every status is 'never'.
     const table = page.locator("table");
     await expect(table.first()).toBeVisible({ timeout: 10_000 });
     const rows = await table.first().locator("tbody tr").count();

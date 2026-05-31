@@ -270,6 +270,47 @@ async def test_upload_spec_json_creates_entities(studio_entities, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_upload_openapi_spec_persists_field_types(studio_entities, monkeypatch):
+    created = []
+
+    async def fake_create(name, cartridge, spec, user):
+        created.append((name, cartridge, spec, user))
+        return {"name": name, "cartridge": cartridge, "spec": spec}
+
+    monkeypatch.setattr(studio_entities, "create_entity", fake_create)
+    result = await studio_entities.upload_spec(
+        """
+cartridge: replicon
+openapi: 3.0.0
+components:
+  schemas:
+    Invoice:
+      required: [id, total]
+      properties:
+        id:
+          type: integer
+          x-primary-key: true
+        total:
+          type: number
+        updated_at:
+          type: string
+          format: date-time
+""",
+        {"id": 1},
+    )
+
+    assert result["errors"] == []
+    assert result["created"][0]["name"] == "Invoice"
+    spec = created[0][2]
+    fields = {field["name"]: field for field in spec["fields"]}
+    assert fields["id"]["type"] == "int"
+    assert fields["id"]["primary_key"] is True
+    assert fields["total"]["type"] == "float"
+    assert fields["updated_at"]["type"] == "timestamp"
+    assert spec["primary_key"] == "id"
+
+
+@pytest.mark.asyncio
 async def test_upload_spec_validates_required_fields(studio_entities, monkeypatch):
     async def fake_create(name, cartridge, spec, user):
         raise ValueError("spec.fields must be a non-empty list")
