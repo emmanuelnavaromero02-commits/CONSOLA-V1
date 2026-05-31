@@ -115,10 +115,27 @@ async def briefing_v2_for_user(
 
     Re-sorts by priority_score descending (severity was the v1 sort key
     but is preserved as a tiebreaker via the underlying analyzer order).
+
+    Audit round 3 hardening: the upstream
+    ``proactive_service.briefing_for_user`` runs 4 SQL analyzers and
+    can raise on schema drift / pool exhaustion. The previous code let
+    the exception propagate, turning a transient blip into a 500 on
+    the dashboard's first paint. The mitigation here is to log and
+    return an empty briefing — the UI already renders the empty state
+    cleanly, which is strictly better UX than a red banner.
     """
-    highlights = await proactive_service.briefing_for_user(
-        user_id, limit=limit * 2,
-    )
+    try:
+        highlights = await proactive_service.briefing_for_user(
+            user_id, limit=limit * 2,
+        )
+    except Exception:
+        logger.warning(
+            "briefing_v2_for_user: upstream proactive_service failed; "
+            "returning empty briefing",
+            exc_info=True,
+        )
+        return []
+
     enriched: list[dict[str, Any]] = []
     for h in highlights:
         item = dict(h)

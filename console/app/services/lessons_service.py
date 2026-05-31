@@ -174,7 +174,7 @@ async def record_lesson_from_approval(
     workflow_id: str | None = None,
 ) -> str | None:
     trigger, lesson = _summarise_approval(tool_name, tool_args)
-    return await record_lesson(
+    new_id = await record_lesson(
         user_id=user_id,
         workspace_id=workspace_id,
         scope="user",
@@ -185,6 +185,53 @@ async def record_lesson_from_approval(
         confidence=0.85,
         applies_to={"tool": tool_name},
     )
+    # Audit-round-3: forensic anchor. The underlying tool execution
+    # is already audited by ``copilot_service._audit`` with a
+    # ``claim_id``; emitting a second event here lets an operator
+    # trace which approval (= which audit row) became which durable
+    # lesson row, so a malicious "approve, then read the planted
+    # lesson out of the next turn's prompt" pattern is detectable.
+    if new_id:
+        await _emit_lesson_audit(
+            user_id=user_id,
+            action="copilot.lesson.recorded_from_approval",
+            lesson_id=new_id,
+            tool_name=tool_name,
+            source_ref=workflow_id or conversation_id,
+        )
+    return new_id
+
+
+async def _emit_lesson_audit(
+    *,
+    user_id: int,
+    action: str,
+    lesson_id: str,
+    tool_name: str | None,
+    source_ref: str | None,
+) -> None:
+    """Best-effort audit emission so an auditor can later answer
+    "which approve/decline became which lesson". Imported lazily to
+    avoid a hard import cycle (audit_service depends on auth, which
+    depends on this module's pool helpers in some deploys)."""
+    try:
+        from app.services import audit_service
+        await audit_service.record_event(
+            user_id=user_id,
+            email="",  # ``copilot_service`` already has the email
+                       # on the surrounding ``copilot.tool.approved``
+                       # audit row; we don't need to re-fetch it.
+            action=action,
+            resource_type="copilot_lesson",
+            resource_id=str(lesson_id),
+            status="completed",
+            metadata={
+                "tool_name": (tool_name or "")[:120],
+                "source_ref": (source_ref or "")[:120],
+            },
+        )
+    except Exception:
+        logger.debug("audit %s failed", action, exc_info=True)
 
 
 async def record_lesson_from_decline(
@@ -205,7 +252,7 @@ async def record_lesson_from_decline(
         + " No vuelvas a proponer esa acción para la misma intención sin "
         "preguntar explícitamente por nuevos factores."
     )
-    return await record_lesson(
+    new_id = await record_lesson(
         user_id=user_id,
         workspace_id=workspace_id,
         scope="user",
@@ -216,6 +263,15 @@ async def record_lesson_from_decline(
         confidence=0.95,  # explicit declines weigh more than approvals
         applies_to={"tool": tool_name},
     )
+    if new_id:
+        await _emit_lesson_audit(
+            user_id=user_id,
+            action="copilot.lesson.recorded_from_decline",
+            lesson_id=new_id,
+            tool_name=tool_name,
+            source_ref=workflow_id or conversation_id,
+        )
+    return new_id
 
 
 async def record_manual_lesson(

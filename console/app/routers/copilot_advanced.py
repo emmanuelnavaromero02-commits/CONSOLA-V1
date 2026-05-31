@@ -144,6 +144,9 @@ async def _conversation_belongs_to_user(
     return int(owner) == int(user_id)
 
 
+_LLM_HARD_TIMEOUT_SECONDS = 60.0
+
+
 async def _llm_text_call(system: str, messages: list[dict]) -> str:
     """Adapter so memory_service.LLMTextCall (and goal_solver) can hit
     the real llm_client.chat.
@@ -151,20 +154,44 @@ async def _llm_text_call(system: str, messages: list[dict]) -> str:
     ``llm_client.chat`` returns ``(reply_text, viewer_urls, messages)``.
     We only need the reply for these flows — no tool use, no streaming,
     no events.
+
+    Audit round 3 hardening: the previous version had no overall
+    timeout, so a stuck LLM connection could pin a worker for the
+    framework default (~300s). It also only logged ``warning`` then
+    re-raised ``Exception`` — fine for the goal-solver's
+    ``except ValueError`` filter, but a ``TimeoutError`` or
+    ``ConnectionError`` would have surfaced raw to the client. Now
+    we wrap in ``asyncio.wait_for`` and convert any non-``ValueError``
+    failure into a ``RuntimeError("llm_call_failed")`` so the router
+    can sanitise it into a 502 / 504 instead of leaking the upstream
+    exception type in the response body.
     """
+    import asyncio
+
+    async def _do_call() -> str:
+        try:
+            reply, _viewer_urls, _full_msgs = await llm_client.chat(
+                system=system,
+                messages=messages,
+                tools=[],
+                invoke_tool=_noop_invoke_tool,
+                tool_server_map={},
+                on_event=None,
+            )
+        except ValueError:
+            # Surface upstream parse errors so the goal-solver's own
+            # ``except ValueError`` branch can decide what to do.
+            raise
+        except Exception as exc:
+            logger.warning("llm adapter call failed: %s", exc)
+            raise RuntimeError("llm_call_failed") from exc
+        return reply or ""
+
     try:
-        reply, _viewer_urls, _full_msgs = await llm_client.chat(
-            system=system,
-            messages=messages,
-            tools=[],
-            invoke_tool=_noop_invoke_tool,
-            tool_server_map={},
-            on_event=None,
-        )
-    except Exception as exc:
-        logger.warning("llm adapter call failed: %s", exc)
-        raise
-    return reply or ""
+        return await asyncio.wait_for(_do_call(), timeout=_LLM_HARD_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("llm adapter call timed out after %ss", _LLM_HARD_TIMEOUT_SECONDS)
+        raise RuntimeError("llm_call_timeout")
 
 
 # ── Goal solver endpoints ─────────────────────────────────────────────
@@ -206,6 +233,25 @@ async def create_goal_endpoint(
     )
     if goal is None:
         raise HTTPException(503, "copilot_goals table not provisioned")
+    # Audit-round-3: emit a durable forensic event so an operator can
+    # later attribute "who asked the copilot to fix the margin?" — the
+    # goal_text is truncated to 200 chars to avoid logging arbitrary
+    # client PII into the audit stream.
+    try:
+        await audit_service.record_event(
+            user_id=_user_id(user),
+            email=str(user.get("email") or ""),
+            action="copilot.goal.created",
+            resource_type="copilot_goal",
+            resource_id=str(goal.get("id") or ""),
+            status="completed",
+            metadata={
+                "goal_preview": str(goal_text)[:200],
+                "conversation_id": conversation_id,
+            },
+        )
+    except Exception:
+        logger.debug("audit copilot.goal.created failed", exc_info=True)
     return goal
 
 
@@ -249,12 +295,22 @@ async def diagnose_goal_endpoint(
         )
     except ValueError as exc:
         # Bad goal_id / unparsable diagnosis — caller can retry.
-        # Log the full exception server-side; surface a sanitised
+        # Server-side log keeps the original exception message
+        # (intentionally truncated by ``logger.warning`` %.300s style)
+        # so an operator can diagnose; the client only sees a generic
         # message so we don't leak raw LLM output (which might echo
         # the user's PII or system-prompt fragments) into the
         # HTTP response.
-        logger.warning("diagnose_goal failed for %s: %s", goal_id, exc)
+        logger.warning("diagnose_goal failed for %s: %.200s", goal_id, exc)
         raise HTTPException(422, "diagnosis failed: invalid plan returned by LLM")
+    except RuntimeError as exc:
+        # ``_llm_text_call`` converts upstream LLM failures into
+        # ``RuntimeError("llm_call_timeout"|"llm_call_failed")``. Map
+        # to 504 / 502 so the UI can show the right retry affordance.
+        msg = str(exc)
+        if msg == "llm_call_timeout":
+            raise HTTPException(504, "llm call timed out")
+        raise HTTPException(502, "llm call failed")
     watchdog_pairs = await goal_solver.pick_watchdogs_for_diagnosis(diagnosis)
     return {"diagnosis": diagnosis, "watchdogs": watchdog_pairs}
 
@@ -483,6 +539,25 @@ async def invoke_watchdog_endpoint(
     )
     if result.get("error") == "watchdog_not_found":
         raise HTTPException(404, "watchdog not found")
+    # Audit-round-3: watchdog invocations are the "specialist agent
+    # ran on the user's behalf" event — log it so an operator can
+    # reconstruct who triggered which diagnosis run.
+    try:
+        await audit_service.record_event(
+            user_id=_user_id(user),
+            email=str(user.get("email") or ""),
+            action="copilot.watchdog.invoked",
+            resource_type="copilot_watchdog",
+            resource_id=f"{cartridge_id}/{slug}",
+            status="completed" if not result.get("error") else "failed",
+            metadata={
+                "mode": result.get("mode") or "unknown",
+                "error": result.get("error"),
+                "input_preview": str(input_text)[:200],
+            },
+        )
+    except Exception:
+        logger.debug("audit copilot.watchdog.invoked failed", exc_info=True)
     return result
 
 
@@ -656,11 +731,17 @@ async def ask_with_context_endpoint(
     messages = [{"role": "user", "content": str(question)[:_QUESTION_MAX_LEN]}]
     try:
         answer = await _llm_text_call(final_prompt, messages)
+    except RuntimeError as exc:
+        # ``_llm_text_call`` raises ``RuntimeError("llm_call_timeout")``
+        # or ``RuntimeError("llm_call_failed")``. Map both to sanitised
+        # gateway responses so we don't leak the upstream LLM provider
+        # error type (which might hint at the model name, the API
+        # endpoint, auth header layout, etc.).
+        if str(exc) == "llm_call_timeout":
+            raise HTTPException(504, "llm call timed out")
+        raise HTTPException(502, "llm call failed")
     except Exception as exc:
-        # Log full exception server-side; the response body never
-        # echoes the upstream LLM provider error (might leak API
-        # endpoint, model name, auth header hints, etc.).
-        logger.warning("ask-with-context llm call failed: %s", exc)
+        logger.warning("ask-with-context unexpected failure: %.200s", exc)
         raise HTTPException(502, "llm call failed")
     return {
         "answer": (answer or "").strip(),
