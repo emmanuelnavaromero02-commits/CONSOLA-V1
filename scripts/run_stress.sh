@@ -120,9 +120,9 @@ if [[ "$ENABLE_WRITES" =~ ^(1|true|yes)$ && "${OMEGA_STRESS_RESET_HUBSPOT_DERIVE
   # intact and Gold is reset only when Gold refresh is enabled for this run.
   if [[ -d data/lakehouse/lakehouse ]]; then
     echo "[stress] resetting local HubSpot derived parquet outputs"
-    rm -rf data/lakehouse/lakehouse/silver/hubspot/hubspot_deals_latest
+    rm -rf data/lakehouse/lakehouse/silver/hubspot
     if [[ "${OMEGA_STRESS_ENABLE_GOLD_REFRESH:-0}" =~ ^(1|true|yes)$ ]]; then
-      rm -rf data/lakehouse/lakehouse/gold/hubspot/pipeline_salud
+      rm -rf data/lakehouse/lakehouse/gold/hubspot
     fi
     "${COMPOSE[@]}" restart minio >/dev/null
     for _ in $(seq 1 45); do
@@ -177,6 +177,7 @@ OMEGA_STRESS_RUN_TIME=${STRESS_RUN_TIME}
 OMEGA_STRESS_ENABLE_WRITES=${OMEGA_STRESS_ENABLE_WRITES:-0}
 OMEGA_STRESS_ENABLE_COPILOT_WRITES=${OMEGA_STRESS_ENABLE_COPILOT_WRITES:-0}
 OMEGA_STRESS_ENABLE_GOLD_REFRESH=${OMEGA_STRESS_ENABLE_GOLD_REFRESH:-0}
+OMEGA_STRESS_ENABLE_INTERNAL_PROBES=${OMEGA_STRESS_ENABLE_INTERNAL_PROBES:-0}
 OMEGA_STRESS_CONCURRENT_WRITES=${OMEGA_STRESS_CONCURRENT_WRITES:-0}
 OMEGA_STRESS_FAKE_HUBSPOT=${OMEGA_STRESS_FAKE_HUBSPOT:-1}
 OMEGA_STRESS_LIVE=${OMEGA_STRESS_LIVE:-0}
@@ -188,6 +189,7 @@ E2E_ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" \
 OMEGA_STRESS_ENABLE_WRITES="${OMEGA_STRESS_ENABLE_WRITES:-0}" \
 OMEGA_STRESS_ENABLE_COPILOT_WRITES="${OMEGA_STRESS_ENABLE_COPILOT_WRITES:-0}" \
 OMEGA_STRESS_ENABLE_GOLD_REFRESH="${OMEGA_STRESS_ENABLE_GOLD_REFRESH:-0}" \
+OMEGA_STRESS_ENABLE_INTERNAL_PROBES="${OMEGA_STRESS_ENABLE_INTERNAL_PROBES:-0}" \
 OMEGA_STRESS_CONCURRENT_WRITES="${OMEGA_STRESS_CONCURRENT_WRITES:-0}" \
 OMEGA_STRESS_REQUIRE_HUBSPOT_OK="${OMEGA_STRESS_REQUIRE_HUBSPOT_OK:-1}" \
   "$PYTHON_BIN" -m locust \

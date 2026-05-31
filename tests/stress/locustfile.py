@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any
 
-from gevent.lock import Semaphore
+from gevent.lock import RLock
 from locust import HttpUser, between, task
 
 
@@ -25,7 +25,14 @@ REQUIRE_HUBSPOT_OK = os.environ.get("OMEGA_STRESS_REQUIRE_HUBSPOT_OK", "1").stri
     "yes",
 }
 POLL_EXTRACT_JOBS = os.environ.get("OMEGA_STRESS_POLL_JOBS", "1").strip().lower() in {"1", "true", "yes"}
+JOB_POLL_ATTEMPTS = int(os.environ.get("OMEGA_STRESS_JOB_POLL_ATTEMPTS", "30"))
+JOB_POLL_INTERVAL_SECONDS = float(os.environ.get("OMEGA_STRESS_JOB_POLL_INTERVAL_SECONDS", "1"))
 ENABLE_GOLD_REFRESH = os.environ.get("OMEGA_STRESS_ENABLE_GOLD_REFRESH", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+ENABLE_INTERNAL_PROBES = os.environ.get("OMEGA_STRESS_ENABLE_INTERNAL_PROBES", "").strip().lower() in {
     "1",
     "true",
     "yes",
@@ -41,9 +48,11 @@ FORGED_WORKSPACE_ID = os.environ.get("OMEGA_STRESS_FORGED_WORKSPACE_ID", "000000
 WAIT_MIN = float(os.environ.get("OMEGA_STRESS_WAIT_MIN", "0.1"))
 WAIT_MAX = float(os.environ.get("OMEGA_STRESS_WAIT_MAX", "0.5"))
 
-WRITE_LOCK = Semaphore()
+WRITE_LOCK = RLock()
 LAST_EXTRACT_AT = 0.0
 LAST_GOLD_REFRESH_AT = 0.0
+EXTRACT_IN_FLIGHT = False
+GOLD_REFRESH_IN_FLIGHT = False
 WRITE_WARMUP_COMPLETE = False
 WRITE_WARMUP_ERROR: str | None = None
 
@@ -65,6 +74,31 @@ OPENAPI_SPEC = {
     },
 }
 
+HTML_PAGES = (
+    ("/", "page:home"),
+    ("/marketplace", "page:marketplace"),
+    ("/studio", "page:studio"),
+    ("/control-room", "page:control-room"),
+    ("/workspace", "page:workspace"),
+    ("/operations/vault", "page:vault"),
+)
+
+INTERNAL_SERVICE_ENDPOINTS = (
+    ("workspace", "http://127.0.0.1:8001/healthz"),
+    ("mcp-infra", "http://127.0.0.1:8010/healthz"),
+    ("refinement", "http://127.0.0.1:8500/healthz"),
+    ("vault", "http://127.0.0.1:8300/healthz"),
+    ("hubspot", "http://127.0.0.1:8210/healthz"),
+    ("replicon", "http://127.0.0.1:8201/healthz"),
+    ("sap-hcm", "http://127.0.0.1:8202/healthz"),
+    ("sap-successfactors", "http://127.0.0.1:8203/healthz"),
+    ("sap-s4hana", "http://127.0.0.1:8204/healthz"),
+    ("airflow", "http://127.0.0.1:8082/health"),
+    ("superset", "http://127.0.0.1:8088/health"),
+    ("minio", "http://127.0.0.1:9000/minio/health/live"),
+    ("mailhog", "http://127.0.0.1:8025/api/v2/messages"),
+)
+
 
 class OmegaStressUser(HttpUser):
     wait_time = between(WAIT_MIN, WAIT_MAX)
@@ -75,6 +109,9 @@ class OmegaStressUser(HttpUser):
         if not ADMIN_PASSWORD:
             raise RuntimeError("E2E_ADMIN_PASSWORD is required for stress login")
         self._login()
+        self._probe_console_pages()
+        if ENABLE_INTERNAL_PROBES:
+            self._probe_internal_services()
         if ENABLE_WRITES:
             self._ensure_write_data_ready()
 
@@ -132,6 +169,24 @@ class OmegaStressUser(HttpUser):
             response.success()
             return payload
 
+    def _get_ok(self, path: str, *, name: str, expected_status: set[int] | None = None) -> None:
+        expected = expected_status or {200}
+        with self.client.get(path, name=name, catch_response=True) as response:
+            if response.status_code not in expected:
+                response.failure(f"{path} returned {response.status_code}: {response.text[:200]}")
+                return
+            response.success()
+
+    def _probe_console_pages(self) -> None:
+        for path, name in HTML_PAGES:
+            self._get_ok(path, name=name)
+
+    def _probe_internal_services(self) -> None:
+        self._get_json("/readyz", name="read:readyz")
+        for service, url in INTERNAL_SERVICE_ENDPOINTS:
+            self._get_ok(url, name=f"svc:{service}")
+        self._post_json("/api/mcp/servers/health-check", name="mcp:health-check", body={})
+
     def _post_json(
         self,
         path: str,
@@ -180,7 +235,7 @@ class OmegaStressUser(HttpUser):
                     raise RuntimeError(WRITE_WARMUP_ERROR)
                 return
             try:
-                self._maybe_extract_deals(force=True)
+                self._maybe_extract_hubspot_bundle(force=True)
                 if ENABLE_GOLD_REFRESH:
                     self._maybe_refresh_pipeline(force=True)
             except Exception as exc:
@@ -189,77 +244,113 @@ class OmegaStressUser(HttpUser):
                 raise
             WRITE_WARMUP_COMPLETE = True
 
-    def _maybe_extract_deals(self, *, force: bool = False) -> None:
+    def _maybe_extract_hubspot_bundle(self, *, force: bool = False) -> None:
         now = time.monotonic()
         should_extract = force
-        global LAST_EXTRACT_AT
+        global EXTRACT_IN_FLIGHT, LAST_EXTRACT_AT
         if not force:
             if CONCURRENT_WRITES:
                 should_extract = True
             else:
                 with WRITE_LOCK:
+                    if EXTRACT_IN_FLIGHT:
+                        return
                     if now - LAST_EXTRACT_AT >= EXTRACT_INTERVAL_SECONDS:
                         LAST_EXTRACT_AT = now
+                        EXTRACT_IN_FLIGHT = True
                         should_extract = True
         elif not CONCURRENT_WRITES:
+            EXTRACT_IN_FLIGHT = True
             LAST_EXTRACT_AT = now
 
         if not should_extract:
             return
 
-        started = self._post_json(
-            "/api/mcp/servers/hubspot/invoke",
-            name="hubspot:extract-deals",
-            body={"tool": "extract", "args": {"entity": "deals", "mode": "full"}},
-        )
-        job_id = (started or {}).get("job_id")
-        if job_id and POLL_EXTRACT_JOBS:
-            for _ in range(10):
-                status = self._post_json(
-                    "/api/mcp/servers/hubspot/invoke",
-                    name="hubspot:get-job-status",
-                    body={"tool": "get_job_status", "args": {"job_id": job_id}},
-                )
-                state = str((status or {}).get("status") or "")
-                if state in {"done", "failed"}:
-                    if state == "failed":
-                        raise RuntimeError(f"HubSpot extract failed: {status}")
-                    return
-                time.sleep(1)
-            raise RuntimeError(f"HubSpot extract did not finish before poll limit: {job_id}")
+        try:
+            started = self._post_json(
+                "/api/mcp/servers/hubspot/invoke",
+                name="hubspot:extract-all",
+                body={"tool": "extract_all", "args": {"mode": "full"}},
+            )
+            job_id = (started or {}).get("job_id")
+            if job_id and POLL_EXTRACT_JOBS:
+                for _ in range(max(1, JOB_POLL_ATTEMPTS)):
+                    status = self._post_json(
+                        "/api/mcp/servers/hubspot/invoke",
+                        name="hubspot:get-job-status",
+                        body={"tool": "get_job_status", "args": {"job_id": job_id}},
+                    )
+                    state = str((status or {}).get("status") or "")
+                    if state in {"done", "failed"}:
+                        if state == "failed":
+                            raise RuntimeError(f"HubSpot extract failed: {status}")
+                        return
+                    time.sleep(max(0.1, JOB_POLL_INTERVAL_SECONDS))
+                raise RuntimeError(f"HubSpot extract did not finish before poll limit: {job_id}")
+        finally:
+            if not CONCURRENT_WRITES:
+                with WRITE_LOCK:
+                    EXTRACT_IN_FLIGHT = False
+                    LAST_EXTRACT_AT = time.monotonic()
 
     def _maybe_refresh_pipeline(self, *, force: bool = False) -> None:
         now = time.monotonic()
         should_refresh = force
-        global LAST_GOLD_REFRESH_AT
+        global GOLD_REFRESH_IN_FLIGHT, LAST_GOLD_REFRESH_AT
         if not force:
             if CONCURRENT_WRITES:
                 should_refresh = True
             else:
                 with WRITE_LOCK:
+                    if GOLD_REFRESH_IN_FLIGHT:
+                        return
                     if now - LAST_GOLD_REFRESH_AT >= GOLD_REFRESH_INTERVAL_SECONDS:
                         LAST_GOLD_REFRESH_AT = now
+                        GOLD_REFRESH_IN_FLIGHT = True
                         should_refresh = True
         elif not CONCURRENT_WRITES:
+            GOLD_REFRESH_IN_FLIGHT = True
             LAST_GOLD_REFRESH_AT = now
 
         if not should_refresh:
             return
 
-        payload = self._post_json(
-            "/datasets/pipeline_salud/refresh",
-            name="data:refresh-pipeline-salud",
-            body={},
-            expected_status={200},
-        )
-        if payload and payload.get("row_count", 0) <= 0:
-            raise RuntimeError(f"pipeline_salud refresh produced no rows: {payload}")
+        try:
+            self._refresh_hubspot_silver_bundle()
+            payload = self._post_json(
+                "/datasets/pipeline_salud/refresh",
+                name="data:refresh-pipeline-salud",
+                body={},
+                expected_status={200},
+            )
+            if payload and payload.get("row_count", 0) <= 0:
+                raise RuntimeError(f"pipeline_salud refresh produced no rows: {payload}")
+        finally:
+            if not CONCURRENT_WRITES:
+                with WRITE_LOCK:
+                    GOLD_REFRESH_IN_FLIGHT = False
+                    LAST_GOLD_REFRESH_AT = time.monotonic()
+
+    def _refresh_hubspot_silver_bundle(self) -> None:
+        for dataset in ("hubspot_deals_latest", "hubspot_owners_latest", "hubspot_pipelines_latest"):
+            payload = self._post_json(
+                f"/datasets/{dataset}/refresh",
+                name=f"data:refresh-{dataset}",
+                body={},
+                expected_status={200},
+            )
+            if payload and payload.get("row_count", 0) < 0:
+                raise RuntimeError(f"{dataset} refresh returned invalid row_count: {payload}")
 
     @task(4)
     def read_console_surfaces(self) -> None:
         self._get_json("/api/me", name="read:me")
         self._get_json("/api/cartridges", name="read:cartridges")
         self._get_json("/api/settings", name="read:settings")
+
+    @task(2)
+    def read_console_pages(self) -> None:
+        self._probe_console_pages()
 
     @task(5)
     def read_control_room_and_kpis(self) -> None:
@@ -280,6 +371,13 @@ class OmegaStressUser(HttpUser):
         self._get_json("/api/semantic?cartridge=hubspot", name="read:semantic-hubspot")
         self._get_json("/api/catalog?cartridge=hubspot", name="read:catalog-hubspot")
         self._get_json("/api/datasets/pipeline_salud/lineage", name="read:lineage-pipeline-salud")
+
+    @task(1)
+    def service_health_surfaces(self) -> None:
+        if not ENABLE_INTERNAL_PROBES:
+            self._get_json("/healthz", name="read:healthz")
+            return
+        self._probe_internal_services()
 
     @task(2)
     def studio_introspection(self) -> None:
@@ -365,7 +463,7 @@ class OmegaStressUser(HttpUser):
             self._get_json("/healthz", name="read:healthz")
             return
 
-        self._maybe_extract_deals()
+        self._maybe_extract_hubspot_bundle()
 
         if not ENABLE_GOLD_REFRESH:
             return
