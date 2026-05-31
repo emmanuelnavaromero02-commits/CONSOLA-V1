@@ -37,10 +37,12 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=20),
+    "email_on_failure": False,
+    "email_on_retry": False,
 }
 
 
-@dag(schedule=None, catchup=False, default_args=default_args)
+@dag(dag_id="salesforce_extract_all", schedule=None, catchup=False, default_args=default_args)
 def salesforce_extract_all():
     @task
     def trigger_extract_all(**context):
@@ -64,4 +66,4 @@ def salesforce_extract_all():
     trigger_extract_all()
 
 
-dag = salesforce_extract_all()
+salesforce_extract_all()

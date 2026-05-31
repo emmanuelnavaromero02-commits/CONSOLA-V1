@@ -42,6 +42,7 @@ def update_watermark(
                     last_watermark_value = EXCLUDED.last_watermark_value,
                     last_run_id = EXCLUDED.last_run_id,
                     updated_at = NOW()
+                WHERE entity_watermarks.last_watermark_value < EXCLUDED.last_watermark_value
                 """,
                 (_CARTRIDGE_ID, entity_name, watermark_field, last_watermark_value, last_run_id),
             )

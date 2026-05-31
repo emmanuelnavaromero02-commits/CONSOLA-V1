@@ -93,10 +93,17 @@ def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | lis
     normalized_prefixes = _prefixes(allowed_bucket_prefix)
     for fn in _READ_FN_RE.finditer(stripped):
         name = fn.group(1).lower()
-        raw_path = unquote(fn.group("path")).replace("\\", "/")
+        # Iteratively decode until stable to defeat double/multi-encoding attacks.
+        raw_path = fn.group("path")
+        for _ in range(3):
+            decoded = unquote(raw_path).replace("\\", "/")
+            if decoded == raw_path:
+                break
+            raw_path = decoded
+        raw_path = decoded
         if raw_path.lower().startswith(("file:", "/", "../", "~", "http:", "https:")):
             return False, f"{name} may only read from the cartridge S3 prefixes"
-        if "/../" in raw_path or raw_path.endswith("/.."):
+        if "/../" in raw_path or raw_path.endswith("/..") or "/.." in raw_path:
             return False, f"{name} path traversal is not allowed"
         if not any(raw_path.startswith(prefix) for prefix in normalized_prefixes):
             return False, f"{name} path must start with one of {normalized_prefixes}"

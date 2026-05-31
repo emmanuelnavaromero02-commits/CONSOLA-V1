@@ -86,7 +86,8 @@ def _odata_filter_to_soql(filter_expr: str | None) -> str | None:
         val = match.group(1)
         if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", val):
             return val
-        return f"'{val}'"
+        # Escape embedded single quotes to prevent SOQL injection.
+        return "'" + val.replace("'", "\\'") + "'"
 
     return re.sub(r"'([^']*)'", _unquote_datetime, expr)
 
@@ -286,7 +287,7 @@ class SalesforceClient:
             logger.warning("Salesforce outbound GET %s", url)
             resp = self._session.get(url, headers=self._headers(), timeout=30)
             resp.raise_for_status()
-            return {"status": "ok", "configured": True, "base_url": self.base_url}
+            return {"status": "ok", "configured": True, "base_url": self.base_url, "message": "Connection successful"}
         except requests.RequestException as exc:
             return {"status": "error", "configured": True, "error": str(exc)}
 
@@ -333,6 +334,10 @@ class SalesforceClient:
         try:
             logger.warning("Salesforce outbound GET %s/query (SOQL)", self.api_version)
             resp = self._session.get(url, headers=self._headers(), timeout=120)
+            if resp.status_code == 401:
+                self._token = None
+                self._token_expires_at = 0.0
+                resp = self._session.get(url, headers=self._headers(), timeout=120)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -342,6 +347,10 @@ class SalesforceClient:
         url = f"{self.base_url}{next_url}"
         try:
             resp = self._session.get(url, headers=self._headers(), timeout=120)
+            if resp.status_code == 401:
+                self._token = None
+                self._token_expires_at = 0.0
+                resp = self._session.get(url, headers=self._headers(), timeout=120)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:

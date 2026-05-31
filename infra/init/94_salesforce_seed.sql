@@ -30,7 +30,7 @@ ON CONFLICT (id) DO UPDATE
 INSERT INTO cartridge_dags (cartridge_id, dag_id, file, description, trigger, params)
 VALUES
     ('salesforce', 'salesforce_extract',     'salesforce_extract.py',     'Extrae una entidad en Bronze MinIO (full o incremental)', 'on-demand', '["entity","mode","from_date","to_date"]'),
-    ('salesforce', 'salesforce_extract_all', 'salesforce_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',      'on-demand', '["mode","entities"]')
+    ('salesforce', 'salesforce_extract_all', 'salesforce_extract_all.py', 'Extrae todas las entidades habilitadas en secuencia',      'on-demand', '["mode"]')
 ON CONFLICT (cartridge_id, dag_id) DO NOTHING;
 
 -- ── Entities ──────────────────────────────────────────────────────────────────
@@ -99,7 +99,9 @@ VALUES
    lo ya ganado del mes.
 3. Entrega un numero arriba (forecast del periodo) y debajo la tabla por vendedor. Cuando ayude,
    sugiere abrir el app `salesforce_pipeline_forecast`.
-4. Avisa si el pipeline ponderado cae por debajo de ${{min_pipeline_usd}} USD.
+4. Para velocidad de ciclo (cuántos días tarda cada etapa), consulta `kb_salesforce_velocidad_pipeline`
+   o el gold `pggold.gold_salesforce_velocidad_pipeline`. Útil para detectar cuellos de botella.
+5. Avisa si el pipeline ponderado cae por debajo de ${{min_pipeline_usd}} USD.
 
 ## Sin alucinaciones
 - Si Amount o Probability es nulo, excluye esa oportunidad del forecast (no asumas 0 ni 100).

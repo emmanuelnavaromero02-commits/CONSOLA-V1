@@ -42,7 +42,7 @@ entities:
       Id: shadowed
       FirstName: masked
       LastName: masked
-      Email: masked
+      Email: shadowed
       Phone: masked
 
   - entity: Lead
@@ -67,7 +67,8 @@ entities:
       Id: shadowed
       FirstName: masked
       LastName: masked
-      Email: masked
+      Company: masked
+      Email: shadowed
       Phone: masked
 
   # ── Pipeline ──────────────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ entities:
     protection:
       Id: shadowed
       Name: masked
-      Email: masked
+      Email: shadowed
       Username: masked
 
   # ── Products & pricing ────────────────────────────────────────────────────

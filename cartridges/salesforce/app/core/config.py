@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     minio_access_key: str = Field(default_factory=lambda: os.environ["MINIO_ACCESS_KEY"])
     minio_secret_key: str = Field(default_factory=lambda: os.environ["MINIO_SECRET_KEY"])
     minio_bucket: str = "lakehouse"
-    minio_secure: bool = False
+    minio_secure: bool = Field(default_factory=lambda: os.environ.get("MINIO_SECURE", "false").lower() in {"true", "1", "yes"})
 
     # Internal API key (validated by app.security on startup)
     internal_api_key: str = ""

@@ -195,3 +195,51 @@ def test_limit_detection_ignores_strings():
     assert has_limit_clause(
         "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/unlimited.parquet')"
     ) is False
+
+
+@pytest.mark.parametrize(
+    "sql,expected",
+    [
+        # Write keywords missing from original parametrize
+        ("INSERT INTO x VALUES (1)", "SELECT/WITH"),
+        ("CREATE TABLE x AS SELECT 1", "SELECT/WITH"),
+        ("TRUNCATE TABLE x", "SELECT/WITH"),
+        ("ALTER TABLE x ADD COLUMN y INT", "SELECT/WITH"),
+        # Whitespace-only / empty variants
+        ("   ", "empty"),
+        ("\t\n", "empty"),
+        # Double-encoded path traversal
+        (
+            "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/..%2F..%2Fetc/passwd')",
+            "traversal",
+        ),
+        (
+            "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/..%252F..%252Fetc/passwd')",
+            "traversal",
+        ),
+    ],
+)
+def test_validate_kb_sql_additional_blocks(sql, expected):
+    ok, reason = _validate_kb_sql(sql)
+    assert ok is False
+    assert reason is not None
+    assert expected in reason, f"Expected {expected!r} in {reason!r} for SQL: {sql!r}"
+
+
+def test_validate_kb_sql_rejects_none():
+    from app.core.sql_guard import validate_kb_sql
+    ok, reason = validate_kb_sql(None, "s3://lakehouse/raw/salesforce/")  # type: ignore[arg-type]
+    assert ok is False
+    assert "empty" in reason
+
+
+def test_validate_kb_sql_union_injection_blocked():
+    """A UNION that sneaks a cross-cartridge read into a second branch must be blocked."""
+    sql = (
+        "SELECT * FROM read_parquet('s3://lakehouse/raw/salesforce/Opportunity/*.parquet')"
+        " UNION ALL "
+        "SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/x.parquet')"
+    )
+    ok, reason = _validate_kb_sql(sql)
+    assert ok is False
+    assert "path must start" in reason

@@ -3,9 +3,20 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from app.core.config import settings
 from app.core.pg_client import get_connection
+from app.core.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_kbs, get_kb_config
 from app.services.duckdb_service import run_kb_sql, write_kb_parquet, write_kb_to_postgres
+
+
+def _kb_allowed_prefixes() -> tuple[str, str, str]:
+    bucket = settings.minio_bucket
+    return (
+        f"s3://{bucket}/raw/salesforce/",
+        f"s3://{bucket}/silver/salesforce/",
+        f"s3://{bucket}/gold/salesforce/",
+    )
 
 
 def get_all_knowledge_bits() -> list[dict]:
@@ -78,6 +89,11 @@ def run_knowledge_bit(kb_id: str) -> dict:
 
     if not sql:
         return {"status": "error", "error": f"KB {kb_id} has no SQL defined"}
+
+    resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
+    ok, err = validate_kb_sql(resolved_sql, _kb_allowed_prefixes())
+    if not ok:
+        return {"status": "error", "error": f"KB SQL blocked by security guard: {err}"}
 
     started_at = datetime.now(timezone.utc)
     run_id = _create_kb_run(kb_id, started_at)
