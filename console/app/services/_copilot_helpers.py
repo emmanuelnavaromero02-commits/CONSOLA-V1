@@ -7,7 +7,6 @@ importing each other (which would create circular deps).
 """
 from __future__ import annotations
 
-import asyncio
 import re
 import uuid as _uuid
 from typing import Any
@@ -55,7 +54,6 @@ def coerce_uuid_list(values: Any) -> list[str]:
 
 
 _table_cache: dict[str, bool] = {}
-_table_cache_lock = asyncio.Lock()
 
 
 async def has_table_cached(pool: Any, table_name: str) -> bool:
@@ -64,24 +62,23 @@ async def has_table_cached(pool: Any, table_name: str) -> bool:
     process-wide once it's True; a False answer is never cached so a
     deploy that adds the migration mid-run picks up the new tables
     on the next request.
+
+    No lock guards the cache: it's a plain dict and the only racing
+    callers can do on a cold start is each fire one idempotent
+    ``SELECT to_regclass`` before the first True lands. That's cheaper
+    than carrying a module-level ``asyncio.Lock`` — which would bind to
+    whatever event loop imported the module and then blow up under a
+    second loop (uvicorn reload, pytest-asyncio, ``asyncio.run`` in a
+    worker).
     """
-    cached = _table_cache.get(table_name)
-    if cached is True:
+    if _table_cache.get(table_name) is True:
         return True
-    async with _table_cache_lock:
-        # Double-check inside the lock so concurrent callers don't
-        # hammer Postgres on a cold start.
-        cached = _table_cache.get(table_name)
-        if cached is True:
-            return True
-        present = bool(
-            await pool.fetchval(
-                f"SELECT to_regclass('public.{table_name}')"
-            )
-        )
-        if present:
-            _table_cache[table_name] = True
-        return present
+    present = bool(
+        await pool.fetchval(f"SELECT to_regclass('public.{table_name}')")
+    )
+    if present:
+        _table_cache[table_name] = True
+    return present
 
 
 def reset_table_cache() -> None:
