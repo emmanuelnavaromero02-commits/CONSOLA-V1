@@ -55,12 +55,38 @@ def _public_exact() -> set[str]:
 
 def _registered_app_paths() -> set[str]:
     src = _main_source()
-    return set(
+    paths = set(
         re.findall(
             r'@app\.(?:get|post|put|delete|patch|head|options)\(\s*["\']([^"\']+)["\']',
             src,
         )
     )
+    # Also recognize routes declared in APIRouter modules (e.g. the Teams
+    # channel webhook in routers/msteams.py). console_route_source() only
+    # covers main.py + the v1 routers, so a public-exact path served by any
+    # other router would otherwise look like an orphan. We compose each
+    # router's prefix with its @router.<verb>("...") paths. This only ADDS to
+    # the recognized set, so it can never make the orphan check stricter.
+    paths.update(_router_module_paths())
+    return paths
+
+
+def _router_module_paths() -> set[str]:
+    routers_dir = REPO_ROOT / "console" / "app" / "routers"
+    out: set[str] = set()
+    for path in routers_dir.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        prefix_match = re.search(r"APIRouter\([^)]*prefix\s*=\s*[\"']([^\"']*)[\"']", text)
+        prefix = prefix_match.group(1) if prefix_match else ""
+        for sub in re.findall(
+            r'@\w+\.(?:get|post|put|delete|patch|head|options)\(\s*["\']([^"\']*)["\']',
+            text,
+        ):
+            composed = (prefix + sub) or "/"
+            out.add(composed)
+    return out
 
 
 def test_every_public_exact_entry_maps_to_a_route():

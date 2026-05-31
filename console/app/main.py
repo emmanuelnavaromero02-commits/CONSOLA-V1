@@ -1144,6 +1144,11 @@ _AUTH_PUBLIC_EXACT = {
     "/reset-password", "/auth/reset-password", "/auth/reset/info",
     # ── Static / browser ──
     "/favicon.ico",
+    # ── Microsoft Teams channel webhook ──
+    # The Bot Framework calls this with its OWN JWT (not a console session),
+    # so it must bypass console auth. The channel's own security layer
+    # (app/channels/msteams/security.py) gates enabled/JWT/allowlists.
+    "/api/msteams/messages",
     # ── Health / monitoring ──
     # Sprint v1.23.1 hotfix: /healthz must be reachable WITHOUT auth so
     # the v1.21 compose probe + the v1.23 smoke script can hit it from
@@ -5966,6 +5971,7 @@ from app.routers import freshness as freshness_router
 from app.routers import metrics as metrics_router
 from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
 from app.routers import studio as studio_router             # v1.44.3.3 Task B
+from app.routers import msteams as msteams_router          # Teams channel (I/O only)
 from app.routers import control_room, mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
@@ -5987,6 +5993,7 @@ app.include_router(copilot_drafts_router.router)          # v1.44.2 Tarea H
 app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
 app.include_router(copilot_workflows_router.plural_router) # v1.44.6 Task 1 executor aliases
 app.include_router(studio_router.router)                  # v1.44.3.3 Task B (stub)
+app.include_router(msteams_router.router)                 # Microsoft Teams channel (I/O only)
 
 
 # v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST

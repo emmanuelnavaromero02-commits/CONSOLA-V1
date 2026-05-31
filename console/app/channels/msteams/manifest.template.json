@@ -1,0 +1,51 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.23/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.23",
+  "version": "1.0.0",
+  "id": "REPLACE_WITH_TEAMS_APP_ID",
+  "developer": {
+    "name": "Your Org",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "name": {
+    "short": "Copiloto Empresarial",
+    "full": "Copiloto Empresarial (CONSOLA-BETA)"
+  },
+  "description": {
+    "short": "Copiloto Empresarial dentro de Microsoft Teams",
+    "full": "Canal de entrada/salida para conversar con el Copiloto Empresarial desde Microsoft Teams. La lógica vive en la plataforma; Teams es solo el canal."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#5B6DEF",
+  "bots": [
+    {
+      "botId": "REPLACE_WITH_AZURE_BOT_APP_ID",
+      "scopes": ["personal", "team", "groupChat"],
+      "isNotificationOnly": false,
+      "supportsCalling": false,
+      "supportsVideo": false,
+      "supportsFiles": true
+    }
+  ],
+  "webApplicationInfo": {
+    "id": "REPLACE_WITH_AZURE_BOT_APP_ID"
+  },
+  "validDomains": [
+    "REPLACE_WITH_YOUR_PUBLIC_HOST"
+  ],
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        { "name": "ChannelMessage.Read.Group", "type": "Application" },
+        { "name": "ChannelMessage.Send.Group", "type": "Application" },
+        { "name": "Member.Read.Group", "type": "Application" },
+        { "name": "ChatMessage.Read.Chat", "type": "Application" }
+      ]
+    }
+  }
+}
