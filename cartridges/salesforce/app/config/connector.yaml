@@ -1,0 +1,32 @@
+connector:
+  id: salesforce
+  name: Salesforce Sales Cloud
+  version: "1.0"
+  auth:
+    # OAuth2 username-password flow by default (server-to-server). The client
+    # also supports client_credentials and a static bearer token; pick via the
+    # Vault connection's auth_method.
+    type: oauth2_password
+    token_url_env: SF_TOKEN_URL
+    client_id_env: SF_CLIENT_ID
+    client_secret_env: SF_CLIENT_SECRET
+    username_env: SF_USERNAME
+    password_env: SF_PASSWORD
+    security_token_env: SF_SECURITY_TOKEN
+  api:
+    base_url_env: SF_BASE_URL
+    api_version_env: SF_API_VERSION
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 2000
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/salesforce/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601

@@ -1,0 +1,6 @@
+{
+  "name": "salesforce_velocidad_pipeline",
+  "title": "Velocidad de Pipeline",
+  "description": "Días promedio que una oportunidad permanece en cada etapa, desde el historial. Fuente: gold salesforce_velocidad_pipeline.",
+  "datasets_used": ["salesforce_velocidad_pipeline"]
+}

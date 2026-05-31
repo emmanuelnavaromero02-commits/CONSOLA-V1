@@ -1,0 +1,87 @@
+knowledge_bits:
+  # ── Raw-level: unified opportunity view ─────────────────────────────────────
+  - id: kb_salesforce_opportunity_360
+    name: "Opportunity 360"
+    description: "Vista unificada de la oportunidad: deal + cuenta + dueño + última actividad."
+    sql: >
+      WITH opp AS (
+          SELECT DISTINCT ON (Id) Id, Name, AccountId, OwnerId, Amount, StageName,
+                 Probability, CloseDate, IsClosed, IsWon
+          FROM read_parquet('s3://{bucket}/raw/salesforce/Opportunity/load_date=*/batch_id=*/*.parquet',
+                            hive_partitioning = true, union_by_name = true)
+          ORDER BY Id, load_date DESC
+      ),
+      acc AS (
+          SELECT DISTINCT ON (Id) Id, Name AS account_name, Industry
+          FROM read_parquet('s3://{bucket}/raw/salesforce/Account/load_date=*/batch_id=*/*.parquet',
+                            hive_partitioning = true, union_by_name = true)
+          ORDER BY Id, load_date DESC
+      ),
+      usr AS (
+          SELECT DISTINCT ON (Id) Id, Name AS owner_name
+          FROM read_parquet('s3://{bucket}/raw/salesforce/User/load_date=*/batch_id=*/*.parquet',
+                            hive_partitioning = true, union_by_name = true)
+          ORDER BY Id, load_date DESC
+      )
+      SELECT o.Id AS opportunity_id, o.Name AS opportunity_name, a.account_name, a.Industry,
+             u.owner_name, o.Amount, o.StageName, o.Probability, o.CloseDate, o.IsClosed, o.IsWon
+      FROM opp o
+      LEFT JOIN acc a ON o.AccountId = a.Id
+      LEFT JOIN usr u ON o.OwnerId = u.Id
+
+  # ── Gold-level KBs (read the materialized gold parquet) ─────────────────────
+  - id: kb_salesforce_pipeline_forecast
+    name: "Pipeline y forecast por vendedor"
+    description: "¿Qué vamos a cerrar este mes y trimestre? Pipeline abierto, forecast ponderado y ganado por mes y vendedor."
+    sql: >
+      SELECT mes, vendedor, deals_abiertos, monto_pipeline_usd,
+             forecast_ponderado_usd, deals_ganados, monto_ganado_usd
+      FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_pipeline_forecast/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY mes DESC, forecast_ponderado_usd DESC
+
+  - id: kb_salesforce_deals_en_riesgo
+    name: "Deals en riesgo"
+    description: "¿Qué oportunidades se van a caer? Deals abiertos sin actividad reciente o con cierre vencido, priorizados por monto."
+    sql: >
+      SELECT opportunity_name, vendedor, stage_name, amount, close_date,
+             dias_sin_actividad, motivo_riesgo
+      FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_deals_en_riesgo/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY amount DESC NULLS LAST
+
+  - id: kb_salesforce_velocidad_pipeline
+    name: "Velocidad de pipeline"
+    description: "¿Cuánto tarda una oportunidad en cada etapa? Días promedio por etapa, desde el historial de oportunidades."
+    sql: >
+      SELECT stage_name, transiciones, dias_promedio_en_etapa, dias_max_en_etapa
+      FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_velocidad_pipeline/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY dias_promedio_en_etapa DESC
+
+  - id: kb_salesforce_vendedor_margen
+    name: "Margen por vendedor"
+    description: "¿Quién vende mucho pero con peor margen? Monto ganado y descuento promedio por vendedor (proxy de margen)."
+    sql: >
+      SELECT vendedor, deals_ganados, monto_ganado_usd, descuento_promedio_pct
+      FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_vendedor_margen/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY monto_ganado_usd DESC NULLS LAST
+
+  - id: kb_salesforce_cobertura_cuota
+    name: "Cobertura de cuota"
+    description: "¿Cómo va cada vendedor contra su objetivo? Ganado y forecast ponderado por vendedor (la cuota no es objeto estándar; attainment queda nulo)."
+    sql: >
+      SELECT vendedor, ganado_usd, forecast_ponderado_usd, cuota_usd, attainment_pct
+      FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_cobertura_cuota/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY ganado_usd DESC NULLS LAST
+
+  - id: kb_salesforce_forecast_vs_capacidad
+    name: "Forecast vs capacidad operativa"
+    description: "¿El forecast de ventas cuadra contra la capacidad operativa? Cruza el forecast ponderado (Salesforce) con la capacidad en horas (Replicon) por mes. Parcial: requiere el gold de Replicon; si no existe, la capacidad viene nula."
+    sql: >
+      SELECT mes, forecast_ponderado_usd, capacidad_horas, demanda_horas_estimada, holgura_horas
+      FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_forecast_vs_capacidad/**/*.parquet',
+                        hive_partitioning = true, union_by_name = true)
+      ORDER BY mes

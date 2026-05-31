@@ -1,0 +1,6 @@
+{
+  "name": "salesforce_pipeline_forecast",
+  "title": "Pipeline & Forecast por Vendedor",
+  "description": "Pipeline abierto y forecast ponderado por probabilidad, por mes y vendedor, con lo ya ganado del mes. Fuente: gold salesforce_pipeline_forecast.",
+  "datasets_used": ["salesforce_pipeline_forecast"]
+}

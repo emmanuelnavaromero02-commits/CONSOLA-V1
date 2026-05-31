@@ -1,0 +1,248 @@
+# Salesforce Sales Cloud — SOQL entities
+# Names match the Salesforce sObject API name used in the REST Query resource
+# (e.g. {instance_url}/services/data/v60.0/query?q=SELECT ... FROM <entity>).
+# Incremental loads watermark on SystemModstamp (the canonical change field on
+# every standard object). select_fields ALWAYS include the watermark field so
+# the silver/gold layers can de-duplicate to the latest version.
+entities:
+  # ── Accounts & People ─────────────────────────────────────────────────────
+  - entity: Account
+    description: "Customer / prospect company (the CRM account master)."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - Name
+      - Industry
+      - Type
+      - AnnualRevenue
+      - NumberOfEmployees
+      - BillingCountry
+      - OwnerId
+      - CreatedDate
+      - SystemModstamp
+
+  - entity: Contact
+    description: "Person associated with an account (buyer, champion, influencer)."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - AccountId
+      - FirstName
+      - LastName
+      - Email
+      - Phone
+      - Title
+      - OwnerId
+      - SystemModstamp
+    protection:
+      Id: shadowed
+      FirstName: masked
+      LastName: masked
+      Email: masked
+      Phone: masked
+
+  - entity: Lead
+    description: "Unconverted prospect at the top of the funnel."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - FirstName
+      - LastName
+      - Company
+      - Email
+      - Phone
+      - Status
+      - LeadSource
+      - IsConverted
+      - OwnerId
+      - CreatedDate
+      - SystemModstamp
+    protection:
+      Id: shadowed
+      FirstName: masked
+      LastName: masked
+      Email: masked
+      Phone: masked
+
+  # ── Pipeline ──────────────────────────────────────────────────────────────
+  - entity: Opportunity
+    description: "Deal in the sales pipeline (the spine of the cartridge)."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - Name
+      - AccountId
+      - Amount
+      - StageName
+      - Probability
+      - CloseDate
+      - Type
+      - LeadSource
+      - ForecastCategory
+      - IsClosed
+      - IsWon
+      - OwnerId
+      - CreatedDate
+      - SystemModstamp
+
+  - entity: OpportunityLineItem
+    description: "Product line on an opportunity (quantity, unit price, total)."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - OpportunityId
+      - Product2Id
+      - Quantity
+      - UnitPrice
+      - TotalPrice
+      - ListPrice
+      - SystemModstamp
+
+  - entity: OpportunityHistory
+    description: "Stage/amount history per opportunity. Drives pipeline velocity."
+    mode: incremental
+    watermark_field: CreatedDate
+    page_size: 2000
+    select_fields:
+      - Id
+      - OpportunityId
+      - StageName
+      - Amount
+      - Probability
+      - CloseDate
+      - CreatedDate
+      - SystemModstamp
+
+  - entity: OpportunityContactRole
+    description: "Links contacts to opportunities with a buying role."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - OpportunityId
+      - ContactId
+      - Role
+      - IsPrimary
+      - SystemModstamp
+
+  # ── Owners / reps ─────────────────────────────────────────────────────────
+  - entity: User
+    description: "Salesforce user — the opportunity/account owner (sales rep)."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - Name
+      - Email
+      - Username
+      - Title
+      - Department
+      - ManagerId
+      - UserRoleId
+      - IsActive
+      - SystemModstamp
+    protection:
+      Email: masked
+      Username: masked
+
+  # ── Products & pricing ────────────────────────────────────────────────────
+  - entity: Product2
+    description: "Product catalog entry."
+    mode: full
+    page_size: 2000
+    select_fields:
+      - Id
+      - Name
+      - ProductCode
+      - Family
+      - IsActive
+      - SystemModstamp
+
+  - entity: PricebookEntry
+    description: "Price of a product in a given price book."
+    mode: full
+    page_size: 2000
+    select_fields:
+      - Id
+      - Product2Id
+      - Pricebook2Id
+      - UnitPrice
+      - IsActive
+      - SystemModstamp
+
+  # ── Marketing ─────────────────────────────────────────────────────────────
+  - entity: Campaign
+    description: "Marketing campaign (source of leads / influenced pipeline)."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - Name
+      - Type
+      - Status
+      - StartDate
+      - EndDate
+      - BudgetedCost
+      - ActualCost
+      - NumberOfLeads
+      - NumberOfOpportunities
+      - SystemModstamp
+
+  - entity: CampaignMember
+    description: "Lead/contact membership in a campaign."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - CampaignId
+      - LeadId
+      - ContactId
+      - Status
+      - SystemModstamp
+
+  # ── Activities ────────────────────────────────────────────────────────────
+  - entity: Task
+    description: "Logged task (call, email, to-do). Signals deal activity."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - Subject
+      - WhoId
+      - WhatId
+      - Status
+      - Priority
+      - ActivityDate
+      - IsClosed
+      - OwnerId
+      - SystemModstamp
+
+  - entity: Event
+    description: "Calendar event (meeting). Signals deal activity."
+    mode: incremental
+    watermark_field: SystemModstamp
+    page_size: 2000
+    select_fields:
+      - Id
+      - Subject
+      - WhoId
+      - WhatId
+      - ActivityDate
+      - DurationInMinutes
+      - OwnerId
+      - SystemModstamp
