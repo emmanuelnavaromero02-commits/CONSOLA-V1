@@ -2158,9 +2158,14 @@ async def api_delete_dataset(name: str, user: dict = Depends(require_permission(
 
 @app.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_authenticated)])
 async def api_dataset_lineage(name: str, user: dict = Depends(require_authenticated)):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user))
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
+            r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
+                             json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user))
+    except httpx.TimeoutException:
+        return {"name": name, "lineage": [], "degraded": True, "error": "lineage_timeout"}
+    if r.status_code >= 500:
+        return {"name": name, "lineage": [], "degraded": True, "error": "lineage_unavailable"}
     return r.json()
 
 
@@ -5958,6 +5963,7 @@ async def api_admin_users_send_reset(user_id: int, request: Request, admin: dict
 
 from app.routers import cartridges as cartridges_router
 from app.routers import copilot as copilot_router
+from app.routers import copilot_advanced as copilot_advanced_router   # v1.45 advanced copilot
 from app.routers import copilot_drafts as copilot_drafts_router       # v1.44.2 Tarea H
 from app.routers import copilot_memory as copilot_memory_router       # v1.44.2 Tarea G
 from app.routers import copilot_workflows as copilot_workflows_router # v1.44.2 Tarea I
@@ -5986,6 +5992,7 @@ app.include_router(copilot_memory_router.router)          # v1.44.2 Tarea G
 app.include_router(copilot_drafts_router.router)          # v1.44.2 Tarea H
 app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
 app.include_router(copilot_workflows_router.plural_router) # v1.44.6 Task 1 executor aliases
+app.include_router(copilot_advanced_router.router)        # v1.45 advanced copilot (goals, lessons, watchdogs, briefing-v2, ask-with-context)
 app.include_router(studio_router.router)                  # v1.44.3.3 Task B (stub)
 
 

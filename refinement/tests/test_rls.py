@@ -173,7 +173,10 @@ def test_silver_path_rejects_invalid_dataset_name():
 def test_bronze_path_allows_expected_raw_source():
     e = DuckDBEngine()
 
-    assert e._bronze_path("raw/replicon/TimeEntry") == "s3://lakehouse/raw/replicon/TimeEntry/**/*.parquet"
+    assert (
+        e._bronze_path("raw/replicon/TimeEntry")
+        == "s3://lakehouse/raw/replicon/TimeEntry/load_date=*/batch_id=*/*.parquet"
+    )
 
 @pytest.mark.parametrize("source", [
     "../secret",

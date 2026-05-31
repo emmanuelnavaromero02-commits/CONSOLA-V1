@@ -2,8 +2,8 @@
 DuckDB Engine — Refinement service (transversal, multi-cartridge).
 
 Silver layer:
-  - Limpieza 1:1 desde raw → Parquet snapshot en MinIO
-    s3://lakehouse/silver/{cartridge}/{name}/data.parquet  (sobreescrito en cada refresh)
+  - Limpieza 1:1 desde raw → Parquet snapshot inmutable en MinIO
+    s3://lakehouse/silver/{cartridge}/{name}/_snapshots/{timestamp}.parquet
 
 Gold layer:
   - Modelado de negocio, dimensiones, hechos, agregaciones y KPIs → tabla Postgres en el GOLD DB: gold_{name}
@@ -21,7 +21,10 @@ import os
 import io
 import json
 import re
+import tempfile
 import threading
+import time
+import uuid
 from datetime import datetime, timezone
 
 import duckdb
@@ -241,14 +244,22 @@ class DuckDBEngine:
                 f"s3://{self.minio_bucket}/{source}/"
                 f"tenant_id={tenant}/workspace_id={workspace}/**/*.parquet"
             )
-        return f"s3://{self.minio_bucket}/{source}/**/*.parquet"
+        # Keep unscoped reads on the legacy/global layout only. A recursive glob
+        # over both `load_date=...` and `tenant_id=.../workspace_id=...` layouts
+        # makes DuckDB's hive partition reader fail because the partition keys
+        # differ across files.
+        return f"s3://{self.minio_bucket}/{source}/load_date=*/batch_id=*/*.parquet"
 
     def _bronze_read(self, source: str, user_context: dict | None = None) -> str:
         path = self._bronze_path(source, user_context)
         return f"read_parquet('{path}', hive_partitioning=true, union_by_name=true)"
 
     def _silver_path(self, cartridge: str, name: str, user_context: dict | None = None) -> str:
-        """Silver es un snapshot único — un archivo por dataset, siempre sobreescrito."""
+        """Legacy Silver path used to recognize older cartridge SQL.
+
+        New materializations write immutable `_snapshots/*.parquet` objects and
+        `_scope_storage_sql` redirects this path to the latest lineage URI.
+        """
         validate_safe_identifier(cartridge, "cartridge")
         validate_safe_identifier(name, "dataset")
         tenant, workspace = self._scope_values(user_context)
@@ -260,6 +271,7 @@ class DuckDBEngine:
         return f"s3://{self.minio_bucket}/silver/{cartridge}/{name}/data.parquet"
 
     def _gold_path(self, cartridge: str, name: str, user_context: dict | None = None) -> str:
+        """Legacy Gold parquet path used for backwards-compatible SQL rewrites."""
         validate_safe_identifier(cartridge, "cartridge")
         validate_safe_identifier(name, "dataset")
         tenant, workspace = self._scope_values(user_context)
@@ -270,14 +282,88 @@ class DuckDBEngine:
             )
         return f"s3://{self.minio_bucket}/gold/{cartridge}/{name}/data.parquet"
 
+    def _snapshot_prefix(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+    ) -> str:
+        if layer not in ("silver", "gold"):
+            raise ValueError("Invalid dataset layer")
+        validate_safe_identifier(cartridge, "cartridge")
+        validate_safe_identifier(name, "dataset")
+        tenant, workspace = self._scope_values(user_context)
+        base = f"{layer}/{cartridge}/{name}"
+        if tenant and workspace:
+            base = f"{base}/tenant_id={tenant}/workspace_id={workspace}"
+        return f"{base}/_snapshots/"
+
+    def _snapshot_path(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+    ) -> str:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        suffix = uuid.uuid4().hex[:12]
+        return f"s3://{self.minio_bucket}/{self._snapshot_prefix(layer, cartridge, name, user_context)}{stamp}-{suffix}.parquet"
+
+    def _latest_materialized_uri(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+    ) -> str | None:
+        if layer not in ("silver", "gold"):
+            return None
+        validate_safe_identifier(cartridge, "cartridge")
+        validate_safe_identifier(name, "dataset")
+        clauses = [
+            "silver_name = %s",
+            "cartridge_id = %s",
+            "layer = %s",
+            "storage_uri IS NOT NULL",
+            "storage_uri <> ''",
+            "storage_uri LIKE %s",
+        ]
+        params: list[str] = [name, cartridge, layer, "s3://%"]
+        tenant, workspace = self._scope_values(user_context)
+        if tenant and workspace:
+            clauses.append("storage_uri LIKE %s")
+            params.append(f"%/tenant_id={tenant}/workspace_id={workspace}/%")
+        try:
+            conn = self._pg_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT storage_uri
+                    FROM silver_lineage
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    params,
+                )
+                row = cur.fetchone()
+            conn.close()
+            return str(row[0]) if row and row[0] else None
+        except Exception:
+            return None
+
     def _scope_storage_sql(self, sql: str, sources: list[str], user_context: dict | None) -> str:
         """Rewrite known raw/silver/gold S3 references to the tenant/workspace
         partition when the caller is scoped. This keeps dataset SQL portable:
         definitions still reference raw/<cartridge>/<entity>, while execution
-        uses only the current tenant/workspace physical path."""
+        uses only the current tenant/workspace physical path.
+
+        Materialized silver/gold datasets are immutable snapshots. Legacy
+        cartridge SQL still references .../data.parquet; when lineage has a
+        newer snapshot we redirect that reference before execution.
+        """
         tenant, workspace = self._scope_values(user_context)
-        if not (tenant and workspace):
-            return sql
 
         out = sql
         for source in sources or []:
@@ -290,18 +376,148 @@ class DuckDBEngine:
                     out = out.replace(legacy.replace("**/*.parquet", "*.parquet"), scoped)
                 except Exception:
                     continue
-            elif src.startswith(("silver/", "gold/")):
+            elif tenant and workspace and src.startswith(("silver/", "gold/")):
                 parts = src.split("/")
                 if len(parts) >= 3:
                     layer, cartridge, name = parts[0], parts[1], parts[2]
                     legacy = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}/data.parquet"
-                    scoped = (
+                    latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
+                    scoped = latest or (
                         self._silver_path(cartridge, name, user_context)
                         if layer == "silver"
                         else self._gold_path(cartridge, name, user_context)
                     )
                     out = out.replace(legacy, scoped)
+            elif src.startswith(("silver/", "gold/")):
+                parts = src.split("/")
+                if len(parts) >= 3:
+                    layer, cartridge, name = parts[0], parts[1], parts[2]
+                    legacy = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}/data.parquet"
+                    latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
+                    if latest:
+                        out = out.replace(legacy, latest)
         return out
+
+    def _s3_object_key(self, uri: str) -> str | None:
+        prefix = f"s3://{self.minio_bucket}/"
+        if not str(uri or "").startswith(prefix):
+            return None
+        key = str(uri)[len(prefix):].strip("/")
+        return key or None
+
+    def _delete_s3_prefix(self, uri: str) -> None:
+        """Delete an existing MinIO/S3 object or prefix before DuckDB rewrites it.
+
+        DuckDB 1.2.2 can raise a low-level UnicodeDecodeError when `COPY TO`
+        overwrites an existing MinIO object. Removing the object/prefix first
+        gives materialization idempotent semantics and keeps repeated refreshes
+        from failing under stress.
+        """
+        key = self._s3_object_key(uri)
+        if not key:
+            return
+        from minio import Minio
+
+        client = Minio(
+            self.minio_endpoint,
+            access_key=self.minio_access,
+            secret_key=self.minio_secret,
+            secure=self.minio_secure,
+        )
+        self._delete_s3_key_with_client(client, key)
+
+    def _delete_s3_key_with_client(self, client, key: str) -> None:
+        for obj in client.list_objects(self.minio_bucket, prefix=key, recursive=True):
+            client.remove_object(self.minio_bucket, obj.object_name)
+        # In the common case `data.parquet` is a single object, not a prefix.
+        # Removing a missing key is harmless on MinIO/S3-compatible backends.
+        try:
+            client.remove_object(self.minio_bucket, key)
+        except Exception:
+            pass
+
+    def _upload_local_parquet(self, local_path: str, parquet_path: str) -> str:
+        key = self._s3_object_key(parquet_path)
+        if not key:
+            return parquet_path
+        from minio import Minio
+
+        client = Minio(
+            self.minio_endpoint,
+            access_key=self.minio_access,
+            secret_key=self.minio_secret,
+            secure=self.minio_secure,
+        )
+        last_error: Exception | None = None
+        for attempt in range(1, 9):
+            attempt_key = key
+            if attempt > 1:
+                if key.endswith(".parquet"):
+                    attempt_key = f"{key[:-8]}.retry{attempt}-{uuid.uuid4().hex[:8]}.parquet"
+                else:
+                    attempt_key = f"{key}.retry{attempt}-{uuid.uuid4().hex[:8]}"
+            try:
+                client.fput_object(
+                    self.minio_bucket,
+                    attempt_key,
+                    local_path,
+                    content_type="application/octet-stream",
+                )
+                return f"s3://{self.minio_bucket}/{attempt_key}"
+            except Exception as exc:
+                last_error = exc
+                if attempt == 8:
+                    break
+                time.sleep(min(0.5 * attempt, 3.0))
+        if last_error:
+            raise last_error
+        return parquet_path
+
+    def _copy_to_parquet(self, con: duckdb.DuckDBPyConnection, sql: str, parquet_path: str) -> str:
+        key = self._s3_object_key(parquet_path)
+        if not key:
+            con.execute(f"COPY ({sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+            return parquet_path
+
+        tmp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(prefix="omega-materialize-", suffix=".parquet", delete=False) as tmp:
+                tmp_path = tmp.name
+            con.execute(f"COPY ({sql}) TO '{tmp_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+            return self._upload_local_parquet(tmp_path, parquet_path)
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass
+
+    def _prune_snapshots(
+        self,
+        layer: str,
+        cartridge: str,
+        name: str,
+        user_context: dict | None = None,
+        keep: int = 5,
+    ) -> None:
+        prefix = self._snapshot_prefix(layer, cartridge, name, user_context)
+        from minio import Minio
+
+        client = Minio(
+            self.minio_endpoint,
+            access_key=self.minio_access,
+            secret_key=self.minio_secret,
+            secure=self.minio_secure,
+        )
+        try:
+            objects = sorted(
+                [obj.object_name for obj in client.list_objects(self.minio_bucket, prefix=prefix, recursive=True)],
+                reverse=True,
+            )
+            for object_name in objects[keep:]:
+                client.remove_object(self.minio_bucket, object_name)
+        except Exception:
+            pass
 
     def _ensure_scope_columns(
         self,
@@ -852,40 +1068,40 @@ class DuckDBEngine:
                         f"SELECT COUNT(*) FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
                         [tenant, workspace],
                     ).fetchone()[0]
-                    gold_parquet_path = self._gold_path(cartridge, name, user_context)
-                    con.execute(
-                        f"COPY (SELECT * FROM pggold.{table} "
-                        f"WHERE tenant_id = {_sql_quote(tenant)} "
-                        f"AND workspace_id = {_sql_quote(workspace)}) "
-                        f"TO '{gold_parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)",
+                    gold_parquet_path = self._snapshot_path("gold", cartridge, name, user_context)
+                    gold_storage_uri = self._copy_to_parquet(
+                        con,
+                        (
+                            f"SELECT * FROM pggold.{table} "
+                            f"WHERE tenant_id = {_sql_quote(tenant)} "
+                            f"AND workspace_id = {_sql_quote(workspace)}"
+                        ),
+                        gold_parquet_path,
                     )
                 else:
                     con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
                     row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
-                    gold_parquet_path = self._gold_path(cartridge, name)
-                    con.execute(
-                        f"COPY (SELECT * FROM pggold.{table}) TO '{gold_parquet_path}' "
-                        "(FORMAT PARQUET, OVERWRITE_OR_IGNORE true)"
-                    )
+                    gold_parquet_path = self._snapshot_path("gold", cartridge, name)
+                    gold_storage_uri = self._copy_to_parquet(con, f"SELECT * FROM pggold.{table}", gold_parquet_path)
                 storage_uri = f"postgres_gold:{table}"
+                if gold_storage_uri:
+                    storage_uri = gold_storage_uri
 
             else:
-                # ── Silver → Parquet único, siempre sobreescrito (última extracción) ──
+                # ── Silver → Parquet snapshot inmutable (última extracción vía lineage) ──
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
-                parquet_path  = self._silver_path(cartridge, name, user_context)
-                con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+                parquet_path  = self._snapshot_path("silver", cartridge, name, user_context)
+                storage_uri = self._copy_to_parquet(con, effective_sql, parquet_path)
                 row_count = con.execute(
-                    f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
+                    f"SELECT COUNT(*) FROM read_parquet('{storage_uri}')"
                 ).fetchone()[0]
-                storage_uri = parquet_path
 
             # ── Infer schema for catalog & lineage ──────────────────────────────
             try:
                 if layer == "silver":
-                    parquet_path = self._silver_path(cartridge, name, user_context)
                     schema_rows  = con.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{parquet_path}') LIMIT 0"
+                        f"DESCRIBE SELECT * FROM read_parquet('{storage_uri}') LIMIT 0"
                     ).fetchall()
                 else:
                     self._pg_gold_attach(con)
@@ -911,6 +1127,10 @@ class DuckDBEngine:
             row_count        = row_count,
             storage_uri      = storage_uri,
         )
+        try:
+            self._prune_snapshots(layer, cartridge, name, user_context)
+        except Exception:
+            pass
 
         # ── Update semantic catalog ──────────────────────────────────────────
         self._update_catalog(

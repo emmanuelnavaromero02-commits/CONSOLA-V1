@@ -35,16 +35,20 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 function loadLocalEnv(): void {
-  const envPath = path.resolve(process.cwd(), ".env");
-  if (!existsSync(envPath)) return;
-  for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#") || !line.includes("=")) continue;
-    const idx = line.indexOf("=");
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim();
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
+  for (const envPath of [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(process.cwd(), "tests-e2e/.env"),
+  ]) {
+    if (!existsSync(envPath)) continue;
+    for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#") || !line.includes("=")) continue;
+      const idx = line.indexOf("=");
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).replace(/\s+#.*$/, "").trim();
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
     }
   }
 }

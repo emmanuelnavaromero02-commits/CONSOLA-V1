@@ -99,6 +99,17 @@
           </button>
           <button class="btn-sm" id="ai-clear-btn" title="Borrar historial" style="margin-left:auto;color:var(--text3);opacity:0.6">🗑</button>
         </div>
+        <div class="ai-capabilities" id="ai-capabilities" aria-label="Acciones rápidas del asistente">
+          <div class="ai-cap-title">
+            <span id="ai-cap-title-text">Autopilot Studio</span>
+            <small id="ai-cap-subtitle">dry-run primero</small>
+          </div>
+          <div class="ai-quick-actions" id="ai-quick-actions">
+            <button type="button" data-ai-prompt="autopilot_sample">Crear desde sample</button>
+            <button type="button" data-ai-prompt="self_check">Self-check</button>
+            <button type="button" data-ai-prompt="introspect">Introspectar</button>
+          </div>
+        </div>
         <div class="ai-chat" id="ai-chat"></div>
         <div class="ai-input-bar">
           <textarea id="ai-input" rows="2" placeholder="Pregunta al asistente... (Shift+Enter = nueva línea)"></textarea>
@@ -109,7 +120,7 @@
     </div>
   </div>
 
-  <script type="module" src="/static/js/studio/legacy-bootstrap.js"></script>
+  <script type="module" src="/static/js/studio/legacy-bootstrap.js?v=studio-autopilot-ui5"></script>
   <script type="module" src="/static/js/studio/main.js"></script>
   <!-- Canonical Studio action bridge: keeps the legacy screen on :8000
        connected to the real /api/studio/* endpoints while the older

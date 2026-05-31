@@ -166,9 +166,14 @@ async def api_delete_dataset(name: str, user: dict = Depends(require_permission(
 @router.get("/api/datasets/{name}/lineage", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_dataset_lineage(name: str, user: dict = Depends(require_authenticated)):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user))
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
+            r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
+                             json=_mcp_payload("get_lineage", {"name": name, "limit": 20}, user))
+    except httpx.TimeoutException:
+        return {"name": name, "lineage": [], "degraded": True, "error": "lineage_timeout"}
+    if r.status_code >= 500:
+        return {"name": name, "lineage": [], "degraded": True, "error": "lineage_unavailable"}
     return r.json()
 
 # /api/explorer/buckets

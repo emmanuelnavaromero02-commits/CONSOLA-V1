@@ -31,6 +31,7 @@ from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
 from app.services import (
     audit_service,
+    cartridge_factory_pipeline,
     cartridge_service,
     dag_code_generator,
     dag_templates,
@@ -38,6 +39,7 @@ from app.services import (
     schema_introspect,
     studio_assistant,
     studio_entities,
+    studio_goal_runs,
     superset_client,
 )
 from app.services.csrf import require_csrf
@@ -833,6 +835,265 @@ studio_assistant.register_local_tool(
 )
 
 
+def _autopilot_inline_descriptor(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str, str]:
+    descriptor = args.get("descriptor")
+    if isinstance(descriptor, dict):
+        return descriptor, "provided_descriptor", ""
+
+    spec = _openapi_spec_from_args(args)
+    if isinstance(spec, dict):
+        return {"kind": "openapi", "spec": spec, "auth_type": args.get("auth_type")}, "inline_openapi", ""
+
+    edmx = args.get("edmx") or args.get("metadata")
+    if isinstance(edmx, str) and edmx.strip():
+        if len(edmx.encode("utf-8")) > _MAX_METADATA_BYTES:
+            return None, "inline_odata", "OData metadata content exceeds size limit"
+        return {"kind": "odata", "edmx": edmx, "auth_type": args.get("auth_type")}, "inline_odata", ""
+
+    columns = args.get("columns") or args.get("information_schema")
+    if isinstance(columns, list) and columns:
+        return {"kind": "sql", "columns": columns, "auth_type": args.get("auth_type")}, "inline_sql", ""
+
+    csv_text = args.get("csv") or args.get("text")
+    if isinstance(csv_text, str) and csv_text.strip():
+        if len(csv_text.encode("utf-8")) > _MAX_SPEC_BYTES:
+            return None, "inline_csv", "CSV content exceeds size limit"
+        return {"kind": "file_csv", "csv": csv_text, "auth_type": args.get("auth_type")}, "inline_csv", ""
+
+    if "sample" in args:
+        kind = str(args.get("source_kind") or args.get("kind") or "rest_sample").strip().lower()
+        return {
+            "kind": kind or "rest_sample",
+            "sample": args.get("sample"),
+            "entity_name": args.get("entity_name") or "records",
+            "auth_type": args.get("auth_type"),
+            "paginated": args.get("paginated"),
+            "async_export": args.get("async_export"),
+            "webhook": args.get("webhook"),
+        }, "inline_sample", ""
+
+    return None, "none", "no inline descriptor supplied"
+
+
+async def _autopilot_openapi_url_descriptor(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    spec_url = str(args.get("spec_url") or args.get("openapi_url") or "").strip()
+    if not spec_url:
+        return None, "no OpenAPI spec URL supplied"
+    blocked_reason = _validate_external_spec_url(spec_url)
+    if blocked_reason:
+        return None, blocked_reason
+    try:
+        response = await _pinned_http_request(
+            "GET",
+            spec_url,
+            label="OpenAPI spec URL",
+            headers={"Accept": "application/json,yaml,text/yaml"},
+            max_bytes=_MAX_SPEC_BYTES,
+        )
+    except Exception as exc:
+        return None, f"OpenAPI spec URL request failed: {type(exc).__name__}"
+    if response.is_redirect:
+        return None, "OpenAPI spec URL redirects are blocked"
+    if response.status_code >= 400:
+        return None, f"OpenAPI spec URL returned HTTP {response.status_code}"
+    try:
+        parsed = yaml.safe_load(response.text)
+    except yaml.YAMLError as exc:
+        return None, f"OpenAPI spec parse failed: {exc.__class__.__name__}"
+    if not isinstance(parsed, dict):
+        return None, "OpenAPI spec URL did not return an object"
+    return {"kind": "openapi", "spec": parsed, "auth_type": args.get("auth_type")}, ""
+
+
+def _autopilot_source_kind(cartridge_id: str, connector: dict[str, Any], args: dict[str, Any], source: str) -> str:
+    kind = str(args.get("source_kind") or args.get("kind") or "").strip().lower()
+    if kind:
+        return kind
+    if _looks_odata(cartridge_id, connector, args):
+        return "odata"
+    if source == "live_sql":
+        return "sql"
+    if source in {"live_introspection", "static_introspection"}:
+        return "openapi"
+    return "rest_sample"
+
+
+async def _autopilot_live_descriptor(
+    args: dict[str, Any],
+    user: dict,
+    source_cartridge_id: str,
+) -> tuple[dict[str, Any] | None, str, str]:
+    if not source_cartridge_id:
+        return None, "none", "no source cartridge supplied for live introspection"
+    cartridge_id = _clean_identifier(source_cartridge_id, label="source_cartridge_id")
+    _require_cartridge_visible(user, cartridge_id)
+    from app.routers import cartridges as cartridges_router
+
+    schema = await cartridges_router.connector_schema(cartridge_id, user=user)
+    connector = _connector_payload(schema)
+    can_live = has_permission(user, "studio.write") or has_permission(user, "cartridges.write")
+    reason = "live introspection requires studio.write or cartridges.write"
+    if can_live:
+        live_entities, reason = await _live_introspection(cartridge_id, schema, args)
+        if live_entities:
+            kind = _autopilot_source_kind(cartridge_id, connector, args, "live_introspection")
+            return {
+                "kind": kind,
+                "entities": live_entities,
+                "auth_type": (connector.get("auth") or {}).get("type") or (connector.get("connection") or {}).get("auth_method"),
+            }, "live_introspection", ""
+
+    fallback = _static_introspection_payload(cartridge_id, schema, reason=reason)
+    if fallback.get("entities"):
+        kind = _autopilot_source_kind(cartridge_id, connector, args, "static_introspection")
+        return {
+            "kind": kind,
+            "entities": fallback["entities"],
+            "auth_type": (connector.get("auth") or {}).get("type") or (connector.get("connection") or {}).get("auth_method"),
+        }, "static_introspection", fallback.get("reason") or reason
+    return None, "live_introspection", reason or fallback.get("reason") or "no entities available from live/static introspection"
+
+
+def _autopilot_blueprint_preview(blueprint: dict[str, Any] | None) -> dict[str, Any]:
+    bp = blueprint if isinstance(blueprint, dict) else {}
+    return {
+        "id": bp.get("id"),
+        "name": bp.get("name"),
+        "entities": [e.get("entity") or e.get("name") for e in (bp.get("entities") or []) if isinstance(e, dict)],
+        "datasets": [d.get("name") for d in (bp.get("datasets") or []) if isinstance(d, dict)],
+        "dags": [d.get("dag_id") for d in (bp.get("dags") or []) if isinstance(d, dict)],
+        "kbs": len(bp.get("kbs") or bp.get("knowledge_bits") or []),
+        "agents": len(bp.get("agents") or []),
+    }
+
+
+async def _studio_autopilot_build_cartridge(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    """Studio assistant tool: sentence/spec/source -> dry-run cartridge blueprint."""
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+
+    args = args or {}
+    intent = str(args.get("intent") or args.get("message") or "").strip()
+    parsed_intent = cartridge_factory_pipeline.cartridge_intent.parse_build_intent(intent) if intent else {}
+    inferred_source_id = ""
+    if isinstance(parsed_intent.get("primary_source"), dict):
+        inferred_source_id = str(parsed_intent["primary_source"].get("id") or "")
+    source_cartridge_id = str(args.get("source_cartridge_id") or args.get("cartridge_id") or inferred_source_id or "").strip()
+
+    descriptor, source, reason = _autopilot_inline_descriptor(args)
+    if descriptor is None and (args.get("spec_url") or args.get("openapi_url")):
+        descriptor, reason = await _autopilot_openapi_url_descriptor(args)
+        source = "openapi_url" if descriptor else "openapi_url"
+    if descriptor is None and source_cartridge_id and args.get("use_live", True) is not False:
+        descriptor, source, reason = await _autopilot_live_descriptor(args, user, source_cartridge_id)
+
+    if descriptor is None:
+        return {
+            "ok": False,
+            "source": source,
+            "reason": reason or "no descriptor/spec/sample/live introspection available",
+            "dry_run": True,
+        }
+
+    explicit_id = str(args.get("target_cartridge_id") or args.get("new_cartridge_id") or args.get("cartridge_id") or "").strip()
+    explicit_name = str(args.get("name") or args.get("cartridge_name") or "").strip()
+    domain = str(args.get("domain") or args.get("category") or "").strip() or (
+        str((parsed_intent.get("primary_source") or {}).get("domain") or "custom") if isinstance(parsed_intent, dict) else "custom"
+    )
+
+    if explicit_id and explicit_name:
+        plan = cartridge_factory_pipeline.plan_from_descriptor(
+            descriptor,
+            cartridge_id=explicit_id,
+            name=explicit_name,
+            domain=domain,
+        )
+        if parsed_intent:
+            plan["intent"] = parsed_intent
+    elif intent:
+        plan = cartridge_factory_pipeline.plan_from_intent(intent, descriptor)
+        if not plan.get("ok") and explicit_id:
+            plan = cartridge_factory_pipeline.plan_from_descriptor(
+                descriptor,
+                cartridge_id=explicit_id,
+                name=explicit_name or explicit_id.replace("_", " ").title(),
+                domain=domain,
+            )
+            if parsed_intent:
+                plan["intent"] = parsed_intent
+    else:
+        if not explicit_id:
+            return {
+                "ok": False,
+                "source": source,
+                "reason": "cartridge_id/name or intent is required to build a cartridge blueprint",
+                "dry_run": True,
+            }
+        plan = cartridge_factory_pipeline.plan_from_descriptor(
+            descriptor,
+            cartridge_id=explicit_id,
+            name=explicit_name or explicit_id.replace("_", " ").title(),
+            domain=domain,
+        )
+
+    blueprint = plan.get("blueprint") if isinstance(plan, dict) else None
+    apply_requested = bool(args.get("apply") or args.get("write") or args.get("create"))
+    response = {
+        "ok": bool(plan.get("ok")) if isinstance(plan, dict) else False,
+        "source": source,
+        "source_reason": reason,
+        "dry_run": True,
+        "plan": plan,
+        "blueprint": blueprint,
+        "summary": plan.get("summary") if isinstance(plan, dict) else None,
+        "next_action": (
+            "Review the returned blueprint. To write it, run create_full_cartridge "
+            "through a Studio goal run approval."
+        ),
+    }
+    if apply_requested and blueprint:
+        response.update({
+            "approval_required": True,
+            "tool": "studio__create_full_cartridge",
+            "risk_level": "write",
+            "reason": "Autopilot generated the cartridge blueprint but does not write directly.",
+            "args_preview": _autopilot_blueprint_preview(blueprint),
+        })
+    return response
+
+
+studio_assistant.register_local_tool(
+    "autopilot_build_cartridge",
+    description=(
+        "Convierte una frase, spec OpenAPI/OData/SQL/CSV/sample o introspección viva "
+        "en un blueprint completo de cartucho. Dry-run por defecto; no escribe en DB."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string", "description": "Instrucción del usuario, por ejemplo: conecta HubSpot y crea forecast."},
+            "cartridge_id": {"type": "string", "description": "Cartucho origen existente para introspección o id destino si se pasa name."},
+            "source_cartridge_id": {"type": "string", "description": "Cartucho existente del cual introspectar esquema vivo/fallback."},
+            "target_cartridge_id": {"type": "string", "description": "ID destino del cartucho a generar."},
+            "name": {"type": "string", "description": "Nombre visible del cartucho destino."},
+            "domain": {"type": "string", "description": "Dominio: crm, finance, hcm, custom, etc."},
+            "descriptor": {"type": "object", "description": "Descriptor ya cargado: OpenAPI, EDMX, CSV, SQL columns, sample o entities."},
+            "spec": {"type": "object", "description": "OpenAPI/Swagger spec como objeto."},
+            "spec_content": {"type": "string", "description": "OpenAPI YAML/JSON como texto."},
+            "spec_url": {"type": "string", "description": "URL HTTPS pública de OpenAPI/Swagger."},
+            "edmx": {"type": "string", "description": "Contenido OData $metadata."},
+            "sample": {"description": "Payload JSON de ejemplo para REST."},
+            "columns": {"type": "array", "items": {"type": "object"}, "description": "Filas information_schema para SQL."},
+            "csv": {"type": "string", "description": "CSV de muestra."},
+            "source_kind": {"type": "string", "description": "openapi, odata, sql, file_csv, rest_sample, graphql o soap."},
+            "dry_run": {"type": "boolean", "default": True},
+            "apply": {"type": "boolean", "default": False, "description": "Si true, devuelve approval_required; no escribe directo."},
+        },
+    },
+    handler=_studio_autopilot_build_cartridge,
+)
+
+
 async def _studio_generate_dag_code(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
     """Studio assistant tool: generate ready-to-review DAG code from connector schema."""
     if user is None:
@@ -1124,6 +1385,423 @@ async def _semantic_relations(cartridge: str, manifest: dict | None, user: dict 
     except Exception:
         pass
     return _manifest_relations(manifest), "manifest"
+
+
+def _diag_item(message: str, *, evidence: str = "", severity: str = "warning") -> dict[str, Any]:
+    return {"message": message, "evidence": evidence, "severity": severity}
+
+
+def _entity_identity(entity: dict[str, Any]) -> str:
+    return str(entity.get("entity") or entity.get("name") or entity.get("id") or "").strip()
+
+
+async def _studio_cartridge_self_check_impl(cartridge_id: str, user: dict | None) -> dict[str, Any]:
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    next_actions: list[str] = []
+    evidence: dict[str, Any] = {"cartridge_id": cartridge_id}
+
+    manifest = await cartridge_service.get_cartridge(cartridge_id)
+    if not manifest:
+        blockers.append(_diag_item("Manifest del cartucho no encontrado", evidence="cartridge_service.get_cartridge", severity="critical"))
+        return {
+            "cartridge_id": cartridge_id,
+            "status": "blocked",
+            "score": 0,
+            "blockers": blockers,
+            "warnings": warnings,
+            "next_actions": ["Registrar el cartucho antes de usar Studio Assistant"],
+            "evidence": evidence,
+        }
+    evidence["manifest"] = {
+        "name": manifest.get("name"),
+        "entities": len(manifest.get("entities") or []),
+        "dags": len(manifest.get("dags") or []),
+        "has_hints": bool((manifest.get("assistant_hints") or "").strip()),
+    }
+
+    try:
+        from app.routers import cartridges as cartridges_router
+
+        connector_schema = await cartridges_router.connector_schema(cartridge_id, user=user)
+        evidence["connector_schema"] = "ok" if connector_schema else "empty"
+        if not connector_schema:
+            warnings.append(_diag_item("connector_schema vacío", evidence=f"/api/cartridges/{cartridge_id}/connector_schema"))
+    except Exception as exc:
+        blockers.append(_diag_item("connector_schema no disponible", evidence=type(exc).__name__, severity="critical"))
+
+    vault_connection, vault_reason = await _vault_connection(cartridge_id, "default")
+    evidence["vault"] = "present" if vault_connection else vault_reason
+    if not vault_connection:
+        warnings.append(_diag_item("Credenciales default no encontradas en Vault", evidence=vault_reason or "no saved credentials"))
+
+    entities = manifest.get("entities") if isinstance(manifest.get("entities"), list) else []
+    if not entities:
+        blockers.append(_diag_item("El cartucho no tiene entidades declaradas", evidence="manifest.entities", severity="critical"))
+    studio_specs: dict[str, dict[str, Any]] = {}
+    try:
+        for item in await studio_entities.list_entities(cartridge=cartridge_id):
+            name = _entity_identity(item)
+            spec = item.get("spec") if isinstance(item.get("spec"), dict) else item
+            if name:
+                studio_specs[name] = spec
+    except Exception as exc:
+        warnings.append(_diag_item("No se pudieron leer studio_entities", evidence=type(exc).__name__))
+
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        name = _entity_identity(entity)
+        if not name:
+            warnings.append(_diag_item("Entidad sin nombre válido", evidence="manifest.entities[]"))
+            continue
+        spec = studio_specs.get(name) or entity
+        fields = spec.get("fields") if isinstance(spec.get("fields"), list) else []
+        primary_key = spec.get("primary_key") or spec.get("id_field") or next(
+            (field.get("name") for field in fields if isinstance(field, dict) and field.get("primary_key")),
+            "",
+        )
+        if not fields:
+            warnings.append(_diag_item(f"Entidad {name} sin fields tipados", evidence="studio_entities.spec.fields"))
+        if not primary_key:
+            warnings.append(_diag_item(f"Entidad {name} sin primary_key", evidence="primary_key/id_field"))
+        if not entity.get("dag_id"):
+            warnings.append(_diag_item(f"Entidad {name} sin dag_id", evidence="manifest.entities[].dag_id"))
+
+    dag_ids = _manifest_dag_ids(manifest)
+    evidence["expected_dags"] = sorted(dag_ids)
+    try:
+        airflow = await mcp_registry.invoke("infra", "airflow_list_dags", {}, user=user)
+        raw_dags = airflow.get("dags") if isinstance(airflow, dict) else []
+        seen = {
+            str(item.get("dag_id") or item.get("id") or item)
+            for item in (raw_dags if isinstance(raw_dags, list) else [])
+        }
+        missing = sorted(dag_ids - seen) if seen else []
+        evidence["airflow_dags_seen"] = len(seen)
+        if missing:
+            warnings.append(_diag_item("DAGs esperados no aparecen en Airflow", evidence=", ".join(missing)))
+    except Exception as exc:
+        warnings.append(_diag_item("Airflow no disponible para validar DAGs", evidence=type(exc).__name__))
+
+    try:
+        jobs = await mcp_registry.invoke("infra", "cartridge_list_jobs", {"cartridge_id": cartridge_id, "limit": 5}, user=user)
+        evidence["recent_jobs"] = len((jobs or {}).get("jobs") or (jobs or {}).get("runs") or [])
+    except Exception as exc:
+        warnings.append(_diag_item("No se pudieron leer jobs recientes", evidence=type(exc).__name__))
+
+    try:
+        datasets = [ds for ds in await _refinement_datasets(user) if str(ds.get("cartridge") or "") == cartridge_id]
+        silver = [ds for ds in datasets if str(ds.get("layer") or "").lower() == "silver"]
+        gold = [ds for ds in datasets if str(ds.get("layer") or "").lower() == "gold"]
+        evidence["datasets"] = {"total": len(datasets), "silver": len(silver), "gold": len(gold)}
+        if not silver:
+            warnings.append(_diag_item("No hay datasets Silver registrados para el cartucho", evidence="refinement.list_datasets"))
+        if not gold:
+            warnings.append(_diag_item("No hay datasets Gold registrados para el cartucho", evidence="refinement.list_datasets"))
+    except Exception as exc:
+        warnings.append(_diag_item("Refinement no disponible para validar Silver/Gold", evidence=type(exc).__name__))
+
+    if not (manifest.get("knowledge_bits") or []):
+        warnings.append(_diag_item("El cartucho no declara KBs", evidence="manifest.knowledge_bits"))
+    if not (manifest.get("assistant_hints") or "").strip():
+        warnings.append(_diag_item("El cartucho no tiene assistant_hints", evidence="cartridges.assistant_hints"))
+
+    try:
+        servers = await mcp_registry.list_servers()
+        server = next((srv for srv in servers if str(srv.get("id")) == cartridge_id), None)
+        if not server:
+            warnings.append(_diag_item("El cartucho no aparece como MCP server registrado", evidence="mcp_servers"))
+        elif not bool(server.get("healthy")):
+            warnings.append(_diag_item("MCP server del cartucho registrado pero no healthy", evidence=str(server.get("url") or "")))
+        evidence["mcp_server"] = {
+            "registered": bool(server),
+            "healthy": bool((server or {}).get("healthy")),
+            "url": (server or {}).get("url"),
+        }
+    except Exception as exc:
+        warnings.append(_diag_item("No se pudo validar registry MCP", evidence=type(exc).__name__))
+
+    for item in blockers:
+        next_actions.append(item["message"])
+    for item in warnings[:5]:
+        next_actions.append(item["message"])
+
+    score = max(0, 100 - (len(blockers) * 25) - (len(warnings) * 5))
+    status = "blocked" if blockers else ("warning" if warnings else "ok")
+    return {
+        "cartridge_id": cartridge_id,
+        "status": status,
+        "score": score,
+        "blockers": blockers,
+        "warnings": warnings,
+        "next_actions": next_actions[:8],
+        "evidence": evidence,
+    }
+
+
+async def _execute_studio_goal_step(
+    run: dict[str, Any],
+    step: dict[str, Any],
+    user: dict | None,
+) -> dict[str, Any]:
+    cartridge_id = str(run.get("cartridge_id") or (step.get("args") or {}).get("cartridge_id") or "")
+    step_key = str(step.get("step_key") or "")
+    if step_key == "load_manifest":
+        manifest = await cartridge_service.get_cartridge(cartridge_id)
+        if not manifest:
+            raise HTTPException(404, f"Cartridge '{cartridge_id}' not found")
+        return {
+            "ok": True,
+            "source": "cartridge_service.get_cartridge",
+            "entity_count": len(manifest.get("entities") or []),
+            "dag_count": len(manifest.get("dags") or []),
+        }
+    if step_key == "connector_schema":
+        from app.routers import cartridges as cartridges_router
+
+        schema = await cartridges_router.connector_schema(cartridge_id, user=user)
+        return {
+            "ok": bool(schema),
+            "source": f"/api/cartridges/{cartridge_id}/connector_schema",
+            "keys": sorted(schema.keys())[:20] if isinstance(schema, dict) else [],
+        }
+    if step_key == "vault_credentials":
+        connection, reason = await _vault_connection(cartridge_id, "default")
+        return {
+            "ok": bool(connection),
+            "source": "vault.connections",
+            "status": "present" if connection else "missing",
+            "reason": "" if connection else reason,
+        }
+    if step_key == "introspect_source":
+        result = await _studio_introspect_source({"cartridge_id": cartridge_id}, user)
+        return {
+            "ok": bool(result.get("entities")),
+            "source": result.get("source"),
+            "reason": result.get("reason") or "",
+            "entity_count": len(result.get("entities") or []),
+        }
+    if step_key == "compare_entities":
+        check = await _studio_cartridge_self_check_impl(cartridge_id, user)
+        entity_warnings = [
+            item
+            for item in check.get("warnings", [])
+            if "Entidad" in str(item.get("message") or "")
+        ]
+        return {
+            "ok": not entity_warnings,
+            "source": "studio.cartridge_self_check",
+            "warnings": entity_warnings,
+        }
+    if step_key == "validate_dags":
+        check = await _studio_cartridge_self_check_impl(cartridge_id, user)
+        dag_warnings = [
+            item
+            for item in check.get("warnings", [])
+            if "DAG" in str(item.get("message") or "") or "Airflow" in str(item.get("message") or "")
+        ]
+        return {"ok": not dag_warnings, "source": "studio.cartridge_self_check", "warnings": dag_warnings}
+    if step_key == "extraction_smoke":
+        mode = str((step.get("args") or {}).get("mode") or "incremental")
+        result = await mcp_registry.invoke(
+            "infra",
+            "cartridge_extract_all",
+            {"cartridge_id": cartridge_id, "mode": mode},
+            user=user,
+        )
+        return {"ok": True, "source": "infra.cartridge_extract_all", "result": result}
+    if step_key == "medallion_layers":
+        datasets = [ds for ds in await _refinement_datasets(user) if str(ds.get("cartridge") or "") == cartridge_id]
+        return {
+            "ok": bool(datasets),
+            "source": "refinement.list_datasets",
+            "silver": len([ds for ds in datasets if str(ds.get("layer") or "").lower() == "silver"]),
+            "gold": len([ds for ds in datasets if str(ds.get("layer") or "").lower() == "gold"]),
+            "datasets": [ds.get("name") for ds in datasets[:20]],
+        }
+    if step_key == "marketplace_visibility":
+        check = await _studio_cartridge_self_check_impl(cartridge_id, user)
+        mcp_info = (check.get("evidence") or {}).get("mcp_server") or {}
+        return {"ok": bool(mcp_info.get("registered")), "source": "mcp_registry.list_servers", "mcp_server": mcp_info}
+    if step_key == "final_report":
+        return await _studio_cartridge_self_check_impl(cartridge_id, user)
+    return {"ok": True, "source": "studio_goal_runs", "message": f"No custom executor for {step_key}"}
+
+
+async def _studio_cartridge_self_check(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    cartridge_id = _clean_identifier(str(args.get("cartridge_id") or args.get("cartridge") or ""), label="cartridge_id")
+    _require_cartridge_visible(user, cartridge_id)
+    return await _studio_cartridge_self_check_impl(cartridge_id, user)
+
+
+async def _studio_create_goal_run(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    cartridge_id = _clean_identifier(str(args.get("cartridge_id") or args.get("cartridge") or ""), label="cartridge_id")
+    _require_cartridge_visible(user, cartridge_id)
+    intent = str(args.get("intent") or args.get("goal") or f"Validar cartucho {cartridge_id} para producción").strip()
+    auto_plan = bool(args.get("auto_plan", True))
+    return await studio_goal_runs.create_goal_run(cartridge_id, intent, user, auto_plan=auto_plan)
+
+
+async def _require_goal_run_visible(goal_run_id: str, user: dict | None) -> dict[str, Any]:
+    status = await studio_goal_runs.get_goal_run_status(goal_run_id, user)
+    cartridge_id = str((status.get("goal_run") or {}).get("cartridge_id") or "")
+    _require_cartridge_visible(user, cartridge_id)
+    return status
+
+
+async def _studio_plan_goal_run(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    goal_run_id = str(args.get("goal_run_id") or args.get("id") or "")
+    await _require_goal_run_visible(goal_run_id, user)
+    return await studio_goal_runs.plan_goal_run(goal_run_id, user)
+
+
+async def _studio_execute_goal_run(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    goal_run_id = str(args.get("goal_run_id") or args.get("id") or "")
+    await _require_goal_run_visible(goal_run_id, user)
+    return await studio_goal_runs.execute_goal_run(goal_run_id, user, executor=_execute_studio_goal_step)
+
+
+async def _studio_get_goal_run_status(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    goal_run_id = str(args.get("goal_run_id") or args.get("id") or "")
+    return await _require_goal_run_visible(goal_run_id, user)
+
+
+async def _studio_approve_goal_step(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    await _require_goal_run_visible(str(args.get("goal_run_id") or ""), user)
+    return await studio_goal_runs.approve_goal_step(
+        str(args.get("goal_run_id") or ""),
+        int(args.get("step_id")),
+        user,
+        approval_key=str(args.get("approval_key") or ""),
+    )
+
+
+async def _studio_reject_goal_step(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+    await _require_goal_run_visible(str(args.get("goal_run_id") or ""), user)
+    return await studio_goal_runs.reject_goal_step(
+        str(args.get("goal_run_id") or ""),
+        int(args.get("step_id")),
+        user,
+        reason=str(args.get("reason") or ""),
+        approval_key=str(args.get("approval_key") or ""),
+    )
+
+
+studio_assistant.register_local_tool(
+    "cartridge_self_check",
+    description=(
+        "Diagnóstico proactivo del cartucho: manifest, connector_schema, Vault, "
+        "entidades, DAGs, Silver/Gold, KBs, hints y registry MCP."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {"type": "string", "description": "ID del cartucho a diagnosticar."},
+        },
+        "required": ["cartridge_id"],
+    },
+    handler=_studio_cartridge_self_check,
+)
+
+
+studio_assistant.register_local_tool(
+    "create_goal_run",
+    description="Crea un goal run durable para un objetivo amplio de Studio y lo planea por defecto.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "cartridge_id": {"type": "string"},
+            "intent": {"type": "string"},
+            "auto_plan": {"type": "boolean", "default": True},
+        },
+        "required": ["cartridge_id", "intent"],
+    },
+    handler=_studio_create_goal_run,
+)
+
+
+studio_assistant.register_local_tool(
+    "plan_goal_run",
+    description="Materializa los pasos estándar de un goal run de Studio si aún está sin plan.",
+    input_schema={
+        "type": "object",
+        "properties": {"goal_run_id": {"type": "string"}},
+        "required": ["goal_run_id"],
+    },
+    handler=_studio_plan_goal_run,
+)
+
+
+studio_assistant.register_local_tool(
+    "execute_goal_run",
+    description="Ejecuta secuencialmente un goal run hasta completarlo, fallar o requerir aprobación.",
+    input_schema={
+        "type": "object",
+        "properties": {"goal_run_id": {"type": "string"}},
+        "required": ["goal_run_id"],
+    },
+    handler=_studio_execute_goal_run,
+)
+
+
+studio_assistant.register_local_tool(
+    "get_goal_run_status",
+    description="Consulta estado, pasos, evidencia y approvals pendientes de un goal run.",
+    input_schema={
+        "type": "object",
+        "properties": {"goal_run_id": {"type": "string"}},
+        "required": ["goal_run_id"],
+    },
+    handler=_studio_get_goal_run_status,
+)
+
+
+studio_assistant.register_local_tool(
+    "approve_goal_step",
+    description="Aprueba un paso waiting_approval de un goal run de Studio.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "goal_run_id": {"type": "string"},
+            "step_id": {"type": "integer"},
+            "approval_key": {"type": "string"},
+        },
+        "required": ["goal_run_id", "step_id", "approval_key"],
+    },
+    handler=_studio_approve_goal_step,
+)
+
+
+studio_assistant.register_local_tool(
+    "reject_goal_step",
+    description="Rechaza y salta un paso waiting_approval de un goal run de Studio.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "goal_run_id": {"type": "string"},
+            "step_id": {"type": "integer"},
+            "approval_key": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        "required": ["goal_run_id", "step_id", "approval_key"],
+    },
+    handler=_studio_reject_goal_step,
+)
 
 
 def _svg_for_graph(nodes: list[dict], edges: list[dict]) -> str:

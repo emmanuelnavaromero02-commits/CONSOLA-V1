@@ -15,11 +15,19 @@ from typing import Any, Awaitable, Callable
 from fastapi import HTTPException
 
 from app.services import audit_service, mcp_registry, llm_client
-from app.services.tool_manifest import classify_tool
+from app.services.tool_manifest import classify_tool, requires_approval
 
 
 STUDIO_TOOLS_WHITELIST = {
+    "approve_goal_step",
+    "autopilot_build_cartridge",
+    "cartridge_self_check",
+    "create_goal_run",
+    "execute_goal_run",
+    "get_goal_run_status",
     "introspect_source",
+    "plan_goal_run",
+    "reject_goal_step",
     "generate_dag_code",
     "validate_dag_code",
     "create_full_cartridge",
@@ -143,12 +151,17 @@ STEP_TOOLS: dict[int | str, set[str]] = {
         "list_cartridges", "cartridge_get_manifest",
         "cartridge_list_entities", "cartridge_get_schema",
         "cartridge_search_term", "cartridge_get_semantic",
+        # Durable Studio objectives + approval loop
+        "cartridge_self_check", "create_goal_run", "execute_goal_run",
+        "get_goal_run_status", "approve_goal_step", "reject_goal_step",
         # Vault — credentials may be needed in any step
         "vault_*",
     },
     # Note: cartridge_sync_semantic_to_rag is exposed in step 6 (semantic editing).
     1: {  # RESUMEN — overview, manifest editing
         "create_full_cartridge",
+        "autopilot_build_cartridge",
+        "plan_goal_run",
         "cartridge_list_jobs", "cartridge_list_kbs",
         "minio_list_cartridge_specs", "minio_read_spec", "minio_upload_spec",
     },
@@ -162,6 +175,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
     },
     3: {  # ENTIDADES
         "cartridge_preview", "cartridge_extract", "cartridge_extract_all",
+        "autopilot_build_cartridge",
         "introspect_source",
         "cartridge_get_run_logs", "cartridge_get_job_status", "cartridge_list_jobs",
         "minio_*",
@@ -200,6 +214,7 @@ ANALYST_READ_ONLY_EXACT = {
     "airflow_list_dag_runs",
     "airflow_list_dags",
     "airflow_list_task_instances",
+    "autopilot_build_cartridge",
     "cartridge_get_job_status",
     "cartridge_get_manifest",
     "cartridge_get_run_logs",
@@ -211,6 +226,7 @@ ANALYST_READ_ONLY_EXACT = {
     "cartridge_preview",
     "cartridge_search_term",
     "cartridge_query_kb",
+    "cartridge_self_check",
     "dag_get_source",
     "describe_silver",
     "describe_source",
@@ -218,6 +234,7 @@ ANALYST_READ_ONLY_EXACT = {
     "get_app_html",
     "get_data_catalog",
     "get_entity_logs",
+    "get_goal_run_status",
     "generate_dag_code",
     "get_lineage",
     "get_schema",
@@ -261,6 +278,29 @@ _SENSITIVE_ARG_FRAGMENTS = (
     "token",
 )
 
+_APPROVAL_DECISION_TOOLS = {"approve_goal_step", "reject_goal_step"}
+_APPROVAL_PHRASES = (
+    "apruebo",
+    "aprobado",
+    "autorizo",
+    "autorizado",
+    "approve",
+    "approved",
+    "authorize",
+    "authorized",
+)
+_REJECTION_PHRASES = (
+    "rechazo",
+    "rechazado",
+    "no apruebo",
+    "no autorizo",
+    "deniego",
+    "reject",
+    "rejected",
+    "deny",
+    "denied",
+)
+
 
 def _scrub_tool_args(value: Any) -> Any:
     if isinstance(value, dict):
@@ -277,12 +317,28 @@ def _scrub_tool_args(value: Any) -> Any:
     return value
 
 
+def _current_user_text_allows_approval_tool(tool_name: str, args: dict[str, Any] | None, message: str) -> bool:
+    """Do not let the model approve its own waiting step in the same turn."""
+    bare = _bare_tool_name(tool_name)
+    if bare not in _APPROVAL_DECISION_TOOLS:
+        return True
+    text = (message or "").casefold()
+    approval_key = str((args or {}).get("approval_key") or "").strip()
+    if not approval_key or approval_key.casefold() not in text:
+        return False
+    has_rejection = any(phrase in text for phrase in _REJECTION_PHRASES)
+    has_approval = any(phrase in text for phrase in _APPROVAL_PHRASES)
+    if bare == "approve_goal_step":
+        return has_approval and not has_rejection
+    return has_rejection
+
+
 def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
     """Server-side Studio tool policy. Analysts are read/query/preview only."""
     if (role or "").lower() != "analyst":
         return True
     bare = _bare_tool_name(tool_name)
-    return bare in ANALYST_READ_ONLY_EXACT
+    return bare in ANALYST_READ_ONLY_EXACT and classify_tool(bare)["risk_level"] == "read"
 
 
 def _matches_pattern(bare_name: str, allowed: set[str]) -> bool:
@@ -319,9 +375,20 @@ Step RESUMEN — visión general del cartucho activo.
 - Overview: cartridge_get_manifest(id).
 - Significado de un término: cartridge_search_term(id, query).
 - Listar cartuchos: list_cartridges().
+- Diagnóstico proactivo: cartridge_self_check(cartridge_id) antes de opinar "qué falta".
+- Objetivo amplio ("valida este cartucho", "déjalo listo", "prepara producción"):
+  crea `studio__create_goal_run(cartridge_id, intent)`, luego
+  `studio__execute_goal_run(goal_run_id)` y reporta pasos completados,
+  bloqueados, evidencia y próxima acción. Si devuelve approval_required,
+  muestra qué se aprobaría y espera aprobación.
 - Crear cartucho completo: usa `studio__create_full_cartridge` cuando el usuario ya
   entregó nombre, descripción, entidades, DAGs, KBs/agentes/hints. No uses la creación
   mínima si hay metadatos completos; esta tool valida integridad y seed.sql.
+- Crear cartucho desde una frase/spec/fuente: primero usa
+  `studio__autopilot_build_cartridge(intent, descriptor/spec/sample, dry_run=true)`.
+  Esa tool genera un blueprint completo sin escribir en DB. Si el usuario aprueba
+  materializarlo, pasa el blueprint por goal run/aprobación antes de escribir con
+  `studio__create_full_cartridge`.
 - Importar ZIP: indica al usuario que use el botón "Importar ZIP".
 """,
     2: """\
@@ -489,12 +556,15 @@ Flujo OBLIGATORIO ante cualquier pregunta sobre un cartucho:
        → primera acción: `infra__list_cartridges()`.
 
   2. CONSULTA con la tool correcta (NUNCA respondas de memoria):
+     · "qué falta / valida / producción" → `studio__cartridge_self_check(cartridge_id)`;
+       si es objetivo amplio → `studio__create_goal_run` + `studio__execute_goal_run`
      · "qué significa X"        → `infra__cartridge_search_term(cartridge_id, X)`
      · "qué entidades hay"      → `infra__cartridge_list_entities(cartridge_id)`
      · "qué KBs hay"            → `infra__cartridge_list_kbs(cartridge_id)`
      · "vocabulario completo"   → `infra__cartridge_get_semantic(cartridge_id)`
      · "últimos jobs"           → `infra__cartridge_list_jobs(cartridge_id)`
      · "manifest completo"      → `infra__cartridge_get_manifest(cartridge_id)`
+     · "crea cartucho desde frase/spec" → `studio__autopilot_build_cartridge(..., dry_run=true)`
      · Paso 2 o 3 sin metadatos → `studio__introspect_source(cartridge_id)` vivo/fallback
      · Crear DAG en Paso 2     → `studio__introspect_source`,
                                   `studio__generate_dag_code`,
@@ -511,6 +581,10 @@ Restricciones globales:
   `studio__introspect_source(cartridge_id)`; trata `source="live"` como la verdad
   primaria, conserva `entities[].fields` con tipos/nullable/primary_key y sólo pide
   YAML si esa introspección falla o el esquema devuelto no contiene metadatos suficientes.
+- Si el usuario pide crear un cartucho nuevo desde una frase, spec, sample o fuente,
+  primero llama `studio__autopilot_build_cartridge` en dry-run. Esa tool NO escribe:
+  devuelve blueprint completo. Para materializarlo, usa goal run/aprobación y después
+  `studio__create_full_cartridge`.
 - Si el usuario pide crear un DAG en el Paso 2, primero llama a
   `studio__introspect_source` para obtener el esquema, luego usa
   `studio__generate_dag_code` con ese esquema y ejecuta silenciosamente
@@ -522,6 +596,14 @@ Restricciones globales:
 - PROHIBIDO responder con plantillas que contengan EDIT_HERE; el DAG generado
   debe estar validado y listo para revisión/despliegue.
 - PROHIBIDO devolver respuesta vacía: si una tool falla, diagnostica con los logs.
+- PROHIBIDO resolver objetivos amplios sólo en chat. Si el usuario pide validar,
+  cerrar, preparar, hardenizar o dejar listo un cartucho, usa goal runs durables:
+  `studio__create_goal_run` → `studio__execute_goal_run` → `studio__get_goal_run_status`.
+- PROHIBIDO ejecutar acciones mutantes sin approval del goal run cuando la tool
+  devuelva `approval_required`. Explica tool, riesgo, razón y args_preview; espera
+  que el usuario apruebe antes de llamar `studio__approve_goal_step`.
+- En respuestas de goal run, SIEMPRE reporta pasos completados, pasos bloqueados,
+  evidencia relevante y próxima acción concreta.
 - PROHIBIDO pegar código (HTML, SQL, JS, Python, YAML) en el chat. El código se
   aplica con la tool correspondiente (`publish_app`, `save_dataset`, `dag_save_source`,
   `postgres_execute_ddl`, etc.). La respuesta al usuario describe QUÉ hiciste y
@@ -631,6 +713,10 @@ async def chat(
             "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
         })
         tool_server_map[full_name] = STUDIO_LOCAL_SERVER_ID
+        # Some providers normalize or return the bare function name even when
+        # the schema was exposed with the Studio prefix. Keep local tools
+        # routable either way so the live assistant does not fall through to MCP.
+        tool_server_map.setdefault(t["name"], STUDIO_LOCAL_SERVER_ID)
 
     # Tool slimming: only expose tools relevant to the active step + common ones.
     # Reduces ~60 tools to 10–20 per call, sharply improving LLM accuracy.
@@ -660,7 +746,9 @@ async def chat(
         )
 
     async def _invoke_tool(srv: str, tool: str, args: dict):
-        full_name = f"{srv}__{tool}"
+        if not srv and tool in _LOCAL_TOOL_HANDLERS:
+            srv = STUDIO_LOCAL_SERVER_ID
+        full_name = f"{srv}__{tool}" if srv else tool
         bare_name = _bare_tool_name(full_name)
         if bare_name not in (tools_whitelist or STUDIO_TOOLS_WHITELIST):
             await audit_service.record_event(
@@ -692,14 +780,65 @@ async def chat(
                 risk_level=classify_tool(bare_name)["risk_level"],
             )
             return {"error": "Forbidden: analyst role is limited to read, inspect, query and preview tools"}
-        risk = classify_tool(bare_name)["risk_level"]
+        if not _current_user_text_allows_approval_tool(bare_name, args, message):
+            await audit_service.record_event(
+                user_id=(actor_user or {}).get("id"),
+                email=(actor_user or {}).get("email"),
+                action="studio.assistant.tool_denied",
+                resource_type="mcp_tool",
+                resource_id=full_name,
+                status="forbidden",
+                metadata={
+                    "server": srv,
+                    "tool": tool,
+                    "reason": "explicit_user_approval_required",
+                },
+                tool_name=full_name,
+                tool_args=_scrub_tool_args(args or {}),
+                tool_result_status="forbidden",
+                risk_level=classify_tool(bare_name)["risk_level"],
+            )
+            return {
+                "error": (
+                    "Forbidden: approval decision tools require an explicit user "
+                    "approval or rejection in the current message"
+                )
+            }
+        risk_meta = classify_tool(bare_name)
+        risk = risk_meta["risk_level"]
+        if bare_name not in _APPROVAL_DECISION_TOOLS and (risk_meta.get("requires_approval") or requires_approval(bare_name)):
+            payload = {
+                "approval_required": True,
+                "tool": full_name,
+                "risk_level": risk,
+                "reason": (
+                    "Studio Assistant blocks direct mutating tool calls. "
+                    "Run the action through a Studio goal run so it can pause "
+                    "with an approval_key and audited step evidence."
+                ),
+                "args_preview": _scrub_tool_args(args or {}),
+            }
+            await audit_service.record_event(
+                user_id=(actor_user or {}).get("id"),
+                email=(actor_user or {}).get("email"),
+                action="studio.assistant.tool_call",
+                resource_type="mcp_tool",
+                resource_id=full_name,
+                status="pending_approval",
+                metadata={"server": srv, "tool": tool, **payload},
+                tool_name=full_name,
+                tool_args=payload["args_preview"],
+                tool_result_status="pending_approval",
+                risk_level=risk,
+            )
+            return payload
         try:
             if srv == STUDIO_LOCAL_SERVER_ID:
                 result = await _invoke_local_tool(tool, args, actor_user)
             else:
                 result = await mcp_registry.invoke(srv, tool, args, user=actor_user)
         except HTTPException as exc:
-            message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
+            error_message = exc.detail if isinstance(exc.detail, str) else f"HTTP {exc.status_code}"
             detail_payload = exc.detail if isinstance(exc.detail, dict) else None
             await audit_service.record_event(
                 user_id=(actor_user or {}).get("id"),
@@ -716,11 +855,11 @@ async def chat(
             )
             if detail_payload is not None:
                 return {
-                    "error": str(detail_payload.get("error") or message),
+                    "error": str(detail_payload.get("error") or error_message),
                     "status_code": exc.status_code,
                     "details": detail_payload,
                 }
-            return {"error": str(message), "status_code": exc.status_code}
+            return {"error": str(error_message), "status_code": exc.status_code}
         status = "error" if isinstance(result, dict) and result.get("error") else "success"
         await audit_service.record_event(
             user_id=(actor_user or {}).get("id"),
@@ -737,14 +876,30 @@ async def chat(
         )
         return result
 
-    reply, viewer_urls, full_msgs = await llm_client.chat(
-        system=system,
-        messages=messages,
-        tools=tools,
-        invoke_tool=_invoke_tool,
-        tool_server_map=tool_server_map,
-        on_event=on_event,
-    )
+    try:
+        reply, viewer_urls, full_msgs = await llm_client.chat(
+            system=system,
+            messages=messages,
+            tools=tools,
+            invoke_tool=_invoke_tool,
+            tool_server_map=tool_server_map,
+            on_event=on_event,
+        )
+    except llm_client.LLMConfigurationError as exc:
+        reply = (
+            "⚠️ El asistente de Studio no tiene proveedor LLM configurado. "
+            f"{exc}. Define la variable correspondiente en `infra/.env` y "
+            "recrea el servicio `console` para probar el chat en vivo."
+        )
+        full_msgs = messages + [{"role": "assistant", "content": reply}]
+        return {"reply": reply, "viewer_urls": [], "messages": full_msgs}
+    except llm_client.LLMProviderError as exc:
+        reply = (
+            "⚠️ El proveedor LLM respondió con error. "
+            f"{exc}. Revisa la key/configuración y vuelve a intentar."
+        )
+        full_msgs = messages + [{"role": "assistant", "content": reply}]
+        return {"reply": reply, "viewer_urls": [], "messages": full_msgs}
 
     # full_msgs already contains the complete conversation including tool calls.
     # The frontend stores this and sends it back on the next turn so the model

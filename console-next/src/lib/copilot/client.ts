@@ -21,6 +21,12 @@ import type {
   Conversation,
   ConversationDetailResponse,
   ConversationListResponse,
+  AskWithContextResponse,
+  BriefingV2Highlight,
+  CopilotGoal,
+  CopilotGoalDiagnosisResponse,
+  CopilotLesson,
+  CopilotWatchdog,
   CreateFactResponse,
   Draft,
   DraftRequest,
@@ -267,6 +273,88 @@ export async function listWorkflows(): Promise<Workflow[]> {
 export async function getWorkflow(id: string): Promise<WorkflowDetailResponse> {
   const { data } = await api.get<WorkflowDetailResponse>(
     `/api/copilot/workflow/${encodeURIComponent(id)}`,
+  );
+  return data;
+}
+
+
+// ── Copilot advanced v1.45 ───────────────────────────────────────────
+
+
+export async function listCopilotGoals(limit = 5): Promise<CopilotGoal[]> {
+  const { data } = await api.get<CopilotGoal[]>(
+    `/api/copilot/goals?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return data ?? [];
+}
+
+
+export async function createCopilotGoal(goalText: string): Promise<CopilotGoal> {
+  const { data } = await api.post<CopilotGoal>(
+    "/api/copilot/goals",
+    { goal_text: goalText },
+  );
+  return data;
+}
+
+
+export async function diagnoseCopilotGoal(
+  goalId: string,
+): Promise<CopilotGoalDiagnosisResponse> {
+  const { data } = await api.post<CopilotGoalDiagnosisResponse>(
+    `/api/copilot/goals/${encodeURIComponent(goalId)}/diagnose`,
+    {},
+  );
+  return data;
+}
+
+
+export async function listCopilotBriefingV2(limit = 5): Promise<BriefingV2Highlight[]> {
+  const { data } = await api.get<BriefingV2Highlight[]>(
+    `/api/copilot/briefing/v2?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return data ?? [];
+}
+
+
+export async function listCopilotWatchdogs(limit = 8): Promise<CopilotWatchdog[]> {
+  const { data } = await api.get<CopilotWatchdog[]>(
+    `/api/copilot/watchdogs?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return data ?? [];
+}
+
+
+export async function matchCopilotWatchdogs(
+  intent: string,
+  limit = 5,
+): Promise<CopilotWatchdog[]> {
+  const params = new URLSearchParams({
+    intent,
+    limit: String(limit),
+  });
+  const { data } = await api.get<CopilotWatchdog[]>(
+    `/api/copilot/watchdogs/match?${params.toString()}`,
+  );
+  return data ?? [];
+}
+
+
+export async function listCopilotLessons(limit = 5): Promise<CopilotLesson[]> {
+  const { data } = await api.get<CopilotLesson[]>(
+    `/api/copilot/lessons?enabled_only=true&limit=${encodeURIComponent(String(limit))}`,
+  );
+  return data ?? [];
+}
+
+
+export async function askCopilotWithContext(
+  question: string,
+  pageContext: Record<string, unknown>,
+): Promise<AskWithContextResponse> {
+  const { data } = await api.post<AskWithContextResponse>(
+    "/api/copilot/ask-with-context",
+    { question, page_context: pageContext },
   );
   return data;
 }

@@ -119,7 +119,7 @@ def _viewer_redirect(request: Request, viewer_type: str, **params: str) -> Redir
 
 def _workspace_headers(request: Request) -> dict[str, str]:
     headers: dict[str, str] = {}
-    for name in ("accept", "content-type", "cookie", "x-request-id"):
+    for name in ("accept", "content-type", "cookie", "x-request-id", "x-csrf-token"):
         value = request.headers.get(name)
         if value:
             headers[name] = value
@@ -410,7 +410,9 @@ async def cartridges_viewer_page(request: Request):
     dependencies=[Depends(require_permission("workspace.access"))],
 )
 async def workspace_page(request: Request):
-    return _console_next_response(request, "workspace/index.html")
+    response = FileResponse(STATIC / "workspace.html")
+    set_csrf_cookie(response, request.cookies.get(CSRF_COOKIE_NAME))
+    return response
 
 
 @router.post(
@@ -479,6 +481,18 @@ async def workspace_chat_stream_proxy(request: Request, user: dict = Depends(req
 )
 async def copilot_page(request: Request):
     return _console_next_response(request, "copilot/index.html")
+
+
+@router.get(
+    "/copilot/actions",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+@router.get(
+    "/copilot/actions/",
+    dependencies=[Depends(require_permission("copilot.use"))],
+)
+async def copilot_actions_page(request: Request):
+    return _console_next_response(request, "copilot/actions/index.html")
 
 
 @router.get(

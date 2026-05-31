@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { toast } from "sonner";
@@ -125,9 +126,10 @@ const COMMAND_CATALOG: CommandMeta[] = [
  */
 interface ChatLayoutProps {
   initialPrompt?: string;
+  actionsHref?: string;
 }
 
-export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
+export function ChatLayout({ initialPrompt, actionsHref }: ChatLayoutProps = {}) {
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const preparedPrompt = initialPrompt?.trim();
@@ -346,7 +348,7 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
       visibleStreaming === null);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0">
       {/* Desktop sidebar — visible from md (≥768 px). */}
       <div className="hidden w-72 shrink-0 md:block">
         <ConversationSidebar
@@ -401,7 +403,7 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
 
       <main
         aria-label="Conversación"
-        className="flex min-w-0 flex-1 flex-col bg-background"
+        className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       >
         <header className="flex items-center justify-between gap-2 border-b px-3 py-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -420,6 +422,14 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
             </h1>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {actionsHref ? (
+              <Link
+                href={actionsHref}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md border px-3 text-xs font-medium hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Acciones
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={() => setStreamingEnabled((current) => !current)}
@@ -459,7 +469,7 @@ export function ChatLayout({ initialPrompt }: ChatLayoutProps = {}) {
             aria-live="polite"
             aria-label="Mensajes de la conversación"
             data-testid="chat-messages"
-            className="flex flex-1 items-start justify-center overflow-y-auto p-6"
+            className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6"
           >
             <div className="w-full max-w-2xl space-y-6">
               <div>

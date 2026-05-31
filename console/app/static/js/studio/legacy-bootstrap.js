@@ -15,9 +15,9 @@
  * ende de este shim) se planea para Fase 4C/4D.
  */
 
-import * as legacy from './legacy.js';
-import * as sqlRunner from './sql-runner.js';
-import { wireStudioHandlers } from './wire-handlers.js';
+import * as legacy from './legacy.js?v=studio-autopilot-ui5';
+import * as sqlRunner from './sql-runner.js?v=studio-autopilot-ui5';
+import { wireStudioHandlers } from './wire-handlers.js?v=studio-autopilot-ui5';
 
 const LEGACY_EVENTS = [
   'click',
