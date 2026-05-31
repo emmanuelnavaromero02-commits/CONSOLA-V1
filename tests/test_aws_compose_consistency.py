@@ -135,6 +135,7 @@ def test_aws_cartridge_overlay_ships_release_images():
     assert "${IMAGE_TAG:-v1.44.5}" not in src
     expected = {
         "replicon": "replicon",
+        "hubspot": "hubspot",
         "sap-hcm": "sap_hcm",
         "sap-s4hana": "sap_s4hana",
         "sap-successfactors": "sap_successfactors",

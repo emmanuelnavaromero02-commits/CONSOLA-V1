@@ -50,6 +50,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
     postgres_status="$(container_health mode_postgres)"
     postgres_gold_status="$(container_health mode_postgres_gold)"
     superset_status="$(container_health mode_superset)"
+    hubspot_status="$(container_health mode_hubspot)"
     sap_hcm_status="$(container_health mode_sap_hcm)"
     sap_s4_status="$(container_health mode_sap_s4hana)"
     sap_sf_status="$(container_health mode_sap_successfactors)"
@@ -59,12 +60,13 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
     external_ok=0
     restarting="$(docker ps --filter 'status=restarting' --format '{{.Names}}' 2>/dev/null || true)"
     http_ok "${CONSOLE_READY_URL}" && api_ok=1 || true
-    all_healthy mode_console mode_workspace mode_mcp_infra mode_vault mode_refinement mode_postgres mode_postgres_gold mode_minio mode_airflow omega_replicon && services_ok=1 || true
+    all_healthy mode_console mode_workspace mode_mcp_infra mode_vault mode_refinement mode_postgres mode_postgres_gold mode_minio mode_airflow omega_replicon mode_hubspot && services_ok=1 || true
     if [ "${FULL_STACK}" = "1" ]; then
         all_healthy mode_superset mode_sap_hcm mode_sap_s4hana mode_sap_successfactors && \
             all_http_ok \
                 http://127.0.0.1:8088/health \
                 http://127.0.0.1:8201/health \
+                http://127.0.0.1:8210/health \
                 http://127.0.0.1:8202/health \
                 http://127.0.0.1:8203/health \
                 http://127.0.0.1:8204/health && external_ok=1 || true
@@ -72,7 +74,7 @@ while [ "${SECONDS}" -lt "${deadline}" ]; do
         external_ok=1
     fi
 
-    echo "[wait_for_health] console=${console_status} postgres=${postgres_status} postgres_gold=${postgres_gold_status} superset=${superset_status} sap_hcm=${sap_hcm_status} sap_s4=${sap_s4_status} sap_sf=${sap_sf_status} api=${api_ok} core=${services_ok} external=${external_ok} restarting=${restarting:-none}"
+    echo "[wait_for_health] console=${console_status} postgres=${postgres_status} postgres_gold=${postgres_gold_status} superset=${superset_status} hubspot=${hubspot_status} sap_hcm=${sap_hcm_status} sap_s4=${sap_s4_status} sap_sf=${sap_sf_status} api=${api_ok} core=${services_ok} external=${external_ok} restarting=${restarting:-none}"
 
     if [ "${services_ok}" = "1" ] \
         && [ "${api_ok}" = "1" ] \

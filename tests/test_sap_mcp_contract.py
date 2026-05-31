@@ -8,7 +8,7 @@ Replicon worked by accident: it pinned ``fastmcp`` with no version,
 so pip picked the latest (3.x).
 
 This sprint:
-  * Bumps ``fastmcp`` to ``>=3.3.0,<4.0`` in all 4 cartridges.
+  * Bumps ``fastmcp`` to ``>=3.3.0,<4.0`` in all built-in cartridges.
   * Bumps ``pydantic`` to ``>=2.11.7,<3.0`` (fastmcp 3.x floor).
   * Bumps ``uvicorn[standard]`` to ``>=0.35.0,<1.0`` (fastmcp 3.x
     server extras floor).
@@ -37,6 +37,7 @@ CARTRIDGES = (
     "sap_s4hana",
     "sap_successfactors",
     "replicon",
+    "hubspot",
 )
 
 
@@ -171,9 +172,9 @@ def test_all_cartridges_implement_mcp_invoke_endpoint():
 
 
 def test_all_cartridges_mcp_tools_return_uniform_shape():
-    """Console assumes the same JSON shape from all 4 cartridges:
+    """Console assumes the same JSON shape from all built-in cartridges:
     ``{"tools": [{"name": ..., "description": ..., "input_schema": ...}]}``.
-    Verifies that all 4 main.py files build that shape."""
+    Verifies that all cartridge main.py files build that shape."""
     for cart in CARTRIDGES:
         src = _main(cart)
         for key in ('"name"', '"description"', '"input_schema"', '"tools"'):

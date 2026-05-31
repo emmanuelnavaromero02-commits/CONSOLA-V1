@@ -29,7 +29,7 @@ def test_aws_compose_either_includes_or_documents_cartridges():
     with DAGs that call hosts that don't resolve.
     """
     doc = _doc()
-    cartridges = ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors",
+    cartridges = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors",
                   "sap-hcm", "sap-s4hana", "sap-successfactors")
     declared = set(doc.get("services", {}).keys()) & set(cartridges)
 
@@ -53,7 +53,7 @@ def test_aws_compose_passes_cartridge_url_env_vars_to_airflow():
     component that imports it."""
     raw = AWS_COMPOSE.read_text(encoding="utf-8")
     for env_var in ("SAP_HCM_URL", "SAP_S4HANA_URL",
-                    "SAP_SUCCESSFACTORS_URL", "REPLICON_URL"):
+                    "SAP_SUCCESSFACTORS_URL", "REPLICON_URL", "HUBSPOT_URL"):
         # At least twice — airflow + airflow-scheduler.
         assert raw.count(env_var) >= 2, (
             f"{env_var} should be set on both airflow + airflow-scheduler "

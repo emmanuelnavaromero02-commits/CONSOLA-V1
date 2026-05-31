@@ -26,6 +26,7 @@ _pool: asyncpg.Pool | None = None
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 ALLOWED_MCP_HOSTS = {
+    "hubspot",
     "mcp-infra",
     "replicon",
     "sap-hcm",
@@ -331,12 +332,19 @@ async def startup():
             "category":    "studio",
             "description": "Cartridge & entity management: rename_entity, list_entities, update_entity",
         },
-        # v1.43.1 (Codex P0-3): register the 4 cartridges so the
+        # v1.43.1 (Codex P0-3): register the built-in cartridges so the
         # copilot's tool_manifest sees their /mcp/tools at boot.
         # ``register`` HTTP-fetches /mcp/tools and stores the result in
         # the tools JSONB column, so refreshing the console picks up
         # newly-added tools automatically. Migration 42 also seeds the
         # rows so fresh installs have them even before console boots.
+        {
+            "id":          "hubspot",
+            "name":        "HubSpot CRM",
+            "url":         os.environ.get("HUBSPOT_URL", "http://hubspot:8210"),
+            "category":    "cartridge",
+            "description": "Connector for HubSpot CRM.",
+        },
         {
             "id":          "replicon",
             "name":        "Replicon Time & Attendance",
@@ -442,7 +450,7 @@ def _headers_for(server_id: str, url: str) -> dict[str, str]:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT"
     elif server_id in {"monitoring", "studio_ops"} or "console" in url:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE"
-    elif normalized.startswith("SAP_") or server_id == "replicon":
+    elif normalized.startswith("SAP_") or server_id in {"replicon", "hubspot"}:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE"
     pair_key = os.environ.get(key_env) if key_env else None
     if key_env and os.environ.get("APP_ENV", "production").lower() in {"production", "prod"} and not pair_key:

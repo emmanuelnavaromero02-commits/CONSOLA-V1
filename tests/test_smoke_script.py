@@ -251,6 +251,7 @@ def test_wait_for_health_does_not_accept_exited_containers_as_ready():
         "turn a dead service into a false-positive release gate"
     )
     assert "mode_superset" in body
+    assert "mode_hubspot" in body
     assert "mode_sap_hcm" in body
     assert "mode_sap_s4hana" in body
     assert "mode_sap_successfactors" in body

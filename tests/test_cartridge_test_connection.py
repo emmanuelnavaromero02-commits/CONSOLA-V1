@@ -41,9 +41,10 @@ def test_endpoint_requires_csrf_and_permission():
 
 
 def test_cartridge_port_map_complete():
-    """All 4 cartridges must be mapped to their exposed ports."""
+    """All built-in cartridges must be mapped to their exposed ports."""
     src = _router_source()
     expected = {
+        "hubspot": 8210,
         "replicon": 8201,
         "sap_hcm": 8202,
         "sap_successfactors": 8203,
@@ -51,6 +52,14 @@ def test_cartridge_port_map_complete():
     }
     for cart, port in expected.items():
         assert f'"{cart}": {port}' in src, f"port map missing {cart} -> {port}"
+
+
+def test_test_connection_requires_explicit_ok_status():
+    """degraded/missing_config/auth_error must not render as success."""
+    src = _router_source()
+    assert "def _test_connection_succeeded" in src
+    assert '== "ok"' in src
+    assert 'not in ("error", "fail")' not in src
 
 
 def test_router_registered_in_main():
@@ -72,7 +81,7 @@ def test_cartridge_permissions_registered():
 def test_cartridge_skills_test_connection_routes_exist():
     """Each cartridge exposes /skills/test_connection guarded by verify_api_key."""
     root = Path(__file__).resolve().parents[1] / "cartridges"
-    for cart in ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("hubspot", "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"):
         routes = root / cart / "app" / "api" / "routes_skills.py"
         src = routes.read_text(encoding="utf-8")
         assert '@router.post("/test_connection")' in src, f"{cart} missing /test_connection"

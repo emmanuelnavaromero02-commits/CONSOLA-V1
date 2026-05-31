@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 
 const CARTRIDGES = [
   { id: "replicon", label: "Replicon" },
+  { id: "hubspot", label: "HubSpot CRM" },
   { id: "sap_hcm", label: "SAP HCM" },
   { id: "sap_s4hana", label: "SAP S/4HANA" },
   { id: "sap_successfactors", label: "SAP SuccessFactors" },

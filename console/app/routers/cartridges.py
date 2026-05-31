@@ -32,6 +32,7 @@ router = APIRouter(prefix="/api/cartridges", tags=["Cartridges"])
 # DNS name in compose uses dashes (sap-hcm), service id uses underscores
 # (sap_hcm); this map captures both shapes plus the exposed port.
 _CARTRIDGE_PORTS = {
+    "hubspot": 8210,
     "replicon": 8201,
     "sap_hcm": 8202,
     "sap_successfactors": 8203,
@@ -73,6 +74,13 @@ def _cartridge_internal_headers() -> dict[str, str]:
         "X-Api-Key": key,
         "X-Internal-Service": "console",
     }
+
+
+def _test_connection_succeeded(http_success: bool, payload: dict) -> bool:
+    """Only an explicit cartridge status=ok is a successful credential test."""
+    if not http_success:
+        return False
+    return str(payload.get("status") or "").strip().lower() == "ok"
 
 
 def _running_in_container() -> bool:
@@ -234,10 +242,13 @@ async def test_connection(cartridge: str, request: Request):
             r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"))
         latency_ms = int((time.monotonic() - started) * 1000)
         payload = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-        ok = r.is_success and (payload.get("status") not in ("error", "fail"))
-        message = payload.get("message") or (
+        ok = _test_connection_succeeded(r.is_success, payload)
+        status_label = str(payload.get("status") or "").strip()
+        missing = payload.get("missing")
+        missing_label = f"; missing={missing}" if missing else ""
+        message = payload.get("message") or payload.get("error") or (
             f"Conectado ({latency_ms} ms)" if ok
-            else f"HTTP {r.status_code}"
+            else f"{status_label or 'not_ok'}{missing_label} (HTTP {r.status_code})"
         )
     except Exception as exc:
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -257,7 +268,12 @@ async def test_connection(cartridge: str, request: Request):
         metadata={"latency_ms": latency_ms, "outcome_message": message[:160]},
     )
 
-    return {"ok": ok, "message": message, "latency_ms": latency_ms}
+    result = {"ok": ok, "message": message, "latency_ms": latency_ms}
+    if isinstance(payload.get("status"), str):
+        result["status"] = payload["status"]
+    if isinstance(payload.get("missing"), list):
+        result["missing"] = payload["missing"]
+    return result
 
 
 # ── v1.44.1: credential lifecycle wrappers ────────────────────────────────

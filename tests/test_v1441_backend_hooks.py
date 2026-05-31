@@ -188,17 +188,17 @@ def test_dashboard_freshness_labels_handle_never_and_old():
         )
 
 
-def test_dashboard_freshness_covers_all_4_cartridges():
+def test_dashboard_freshness_covers_all_built_in_cartridges():
     """Per the brief: every cartridge appears in data_freshness even
     if it has zero extraction_runs (status='never'). The helper does
-    this by iterating a constant list — verify the list contains all 4."""
+    this by iterating a constant list — verify the list contains all built-ins."""
     src = _read(DASH_ROUTER)
     cart_list_match = re.search(
         r"_CARTRIDGES\s*=\s*\(([^)]+)\)", src
     )
     assert cart_list_match, "_CARTRIDGES constant not found"
     list_body = cart_list_match.group(1)
-    for cart in ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"):
         assert f'"{cart}"' in list_body, (
             f"dashboard _CARTRIDGES list missing {cart}"
         )

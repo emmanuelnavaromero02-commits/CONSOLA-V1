@@ -61,7 +61,7 @@ def test_full_flow_01_admin_session_and_request_id(admin_session):
 
 
 def test_full_flow_02_tool_manifest_lists_cartridges(admin_session):
-    """v1.43.1 P0-3: the 4 cartridges must appear in the manifest, so
+    """The built-in cartridges must appear in the manifest, so
     the copilot's tool catalog includes them."""
     r = admin_session.get("/api/tools/manifest")
     assert r.status_code == 200, r.text
@@ -73,7 +73,7 @@ def test_full_flow_02_tool_manifest_lists_cartridges(admin_session):
     # [tools]}}, sometimes {servers: [{id, tools}]}. Either shape ok —
     # we just need to confirm the cartridge ids appear somewhere.
     raw = r.text.lower()
-    for cart in ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"):
+    for cart in ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"):
         assert cart in raw, f"manifest does not mention cartridge {cart!r}"
 
 

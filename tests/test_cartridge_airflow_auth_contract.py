@@ -7,12 +7,15 @@ REPO = Path(__file__).resolve().parents[1]
 
 CARTRIDGES = (
     "replicon",
+    "hubspot",
     "sap_hcm",
     "sap_s4hana",
     "sap_successfactors",
 )
 
 SAP_DAGS = (
+    "cartridges/hubspot/dags/hubspot_extract.py",
+    "cartridges/hubspot/dags/hubspot_extract_all.py",
     "cartridges/sap_hcm/dags/sap_hcm_extract.py",
     "cartridges/sap_hcm/dags/sap_hcm_extract_all.py",
     "cartridges/sap_s4hana/dags/sap_s4hana_extract.py",
@@ -33,7 +36,7 @@ def test_cartridges_accept_airflow_pair_key_separately_from_console_key():
             f"cartridges/{cartridge}/app/security.py",
         ):
             src = _read(rel)
-            assert 'service == "airflow"' in src, rel
+            assert 'service == "airflow"' in src or 'x_internal_service == "airflow"' in src, rel
             assert "INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE" in src, rel
             assert "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE" in src, rel
 

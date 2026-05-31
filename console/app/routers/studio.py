@@ -133,8 +133,12 @@ def _schema_entities_from_fields(fields_by_entity: dict[str, list[schema_introsp
 
 
 def _load_static_entity_specs(cartridge_id: str) -> list[dict[str, Any]]:
-    path = Path(__file__).resolve().parents[3] / "cartridges" / cartridge_id / "app" / "config" / "entities.yaml"
-    if not path.exists():
+    candidates = [
+        Path(f"/registry/cartridges/{cartridge_id}/app/config/entities.yaml"),
+        Path(__file__).resolve().parents[3] / "cartridges" / cartridge_id / "app" / "config" / "entities.yaml",
+    ]
+    path = next((candidate for candidate in candidates if candidate.exists()), None)
+    if path is None:
         return []
     parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     raw_entities = parsed.get("entities") if isinstance(parsed, dict) else []
@@ -152,7 +156,6 @@ def _fields_from_static_entity(entity: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(select_fields, list):
         seen = {field["name"] for field in fields}
         primary_key = str(entity.get("primary_key") or "")
-        watermark_field = str(entity.get("watermark_field") or "")
         for name in select_fields:
             name = str(name)
             if name in seen:
@@ -166,7 +169,25 @@ def _fields_from_static_entity(entity: dict[str, Any]) -> list[dict[str, Any]]:
                 "primary_key": name == primary_key,
                 "source_type": "static_select_field",
             })
-    elif entity.get("primary_key"):
+    properties = entity.get("properties")
+    if isinstance(properties, list):
+        seen = {field["name"] for field in fields}
+        primary_key = str(entity.get("primary_key") or entity.get("id_field") or "")
+        for name in properties:
+            name = str(name)
+            if not name or name in seen:
+                continue
+            lower = name.lower()
+            guessed_type = "timestamp" if any(fragment in lower for fragment in ("date", "time", "updated", "modified")) else "string"
+            fields.append({
+                "name": name,
+                "type": guessed_type,
+                "nullable": True,
+                "primary_key": name == primary_key,
+                "source_type": "static_property",
+            })
+            seen.add(name)
+    if not fields and entity.get("primary_key"):
         fields.append({
             "name": str(entity["primary_key"]),
             "type": "string",

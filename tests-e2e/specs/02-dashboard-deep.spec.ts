@@ -113,14 +113,17 @@ test.describe("Dashboard — Freshness table", () => {
     });
   });
 
-  test("table has at least 4 rows (one per cartridge)", async ({ page }) => {
+  test("table has at least 5 rows (one per built-in cartridge)", async ({ page }) => {
     await page.goto("/dashboard");
+    await expect(page.locator(".animate-pulse")).toHaveCount(0, {
+      timeout: 15_000,
+    });
     const rows = page.locator("table tbody tr");
     await expect(rows.first()).toBeVisible({ timeout: 15_000 });
     const count = await rows.count();
     expect(count,
-      "freshness table should have 4 rows — one per known cartridge",
-    ).toBeGreaterThanOrEqual(4);
+      "freshness table should have at least 5 rows — one per built-in cartridge",
+    ).toBeGreaterThanOrEqual(5);
   });
 
   test("each row has a cartridge link", async ({ page }) => {
@@ -128,7 +131,7 @@ test.describe("Dashboard — Freshness table", () => {
     const links = page.locator('table a[href^="/cartridges/"]');
     await expect(links.first()).toBeVisible({ timeout: 15_000 });
     const count = await links.count();
-    expect(count).toBeGreaterThanOrEqual(4);
+    expect(count).toBeGreaterThanOrEqual(5);
   });
 
   test("status badge tone is one of the documented 4", async ({ page }) => {

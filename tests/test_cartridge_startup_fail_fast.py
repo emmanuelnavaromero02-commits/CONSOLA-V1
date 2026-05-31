@@ -26,6 +26,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 CARTRIDGES = [
     ("replicon",           "replicon"),
+    ("hubspot",            "hubspot"),
     ("sap_hcm",            "sap_hcm"),
     ("sap_s4hana",         "sap_s4hana"),
     ("sap_successfactors", "sap_successfactors"),
@@ -145,8 +146,9 @@ def test_cartridge_health_returns_200_when_startup_clean(
         return None
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
     monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
-    # SAP cartridges also call catalog_service._seed_if_empty().
-    if cartridge != "replicon":
+    # SAP cartridges also call catalog_service._seed_if_empty(); HubSpot
+    # imports catalog helpers only inside route handlers.
+    if getattr(main_mod, "catalog_service", None) is not None:
         monkeypatch.setattr(
             main_mod.catalog_service, "_seed_if_empty", lambda: None,
         )
@@ -259,7 +261,7 @@ def test_health_returns_200_with_tool_count_when_healthy(
         return None
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
     monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
-    if cartridge != "replicon":
+    if cartridge != "replicon" and hasattr(main_mod, "catalog_service"):
         monkeypatch.setattr(
             main_mod.catalog_service, "_seed_if_empty", lambda: None,
         )
@@ -301,7 +303,7 @@ def test_health_returns_503_when_mcp_has_no_tools(
         return None
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
     monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
-    if cartridge != "replicon":
+    if cartridge != "replicon" and hasattr(main_mod, "catalog_service"):
         monkeypatch.setattr(
             main_mod.catalog_service, "_seed_if_empty", lambda: None,
         )
@@ -343,7 +345,7 @@ def test_health_returns_503_when_mcp_list_tools_raises(
         return None
     monkeypatch.setattr(main_mod.job_runner, "ensure_schema", _ok)
     monkeypatch.setattr(main_mod.job_runner, "cleanup_stale", _ok)
-    if cartridge != "replicon":
+    if cartridge != "replicon" and hasattr(main_mod, "catalog_service"):
         monkeypatch.setattr(
             main_mod.catalog_service, "_seed_if_empty", lambda: None,
         )

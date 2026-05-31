@@ -9,7 +9,7 @@ import { getDataLineage } from "@/lib/data/client";
 import type { LineageEdge, LineageNode } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
-const CARTRIDGES = ["replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
 const TYPE_ORDER = ["raw", "bronze", "silver", "gold", "master"] as const;
 
 export default function DataLineagePage() {

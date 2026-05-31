@@ -99,7 +99,7 @@ verify_live_cartridges() {
   csrf_token="$(cookie_value csrf_token)"
   [[ -n "${csrf_token}" ]] || fail "csrf_token cookie missing after login"
 
-  for cartridge in replicon sap_hcm sap_s4hana sap_successfactors; do
+  for cartridge in replicon hubspot sap_hcm sap_s4hana sap_successfactors; do
     local body status
     body="$(curl -fsS --max-time 45 \
       -b "${COOKIE_JAR}" \

@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CARTRIDGES = ("replicon", "sap_hcm", "sap_s4hana", "sap_successfactors")
+CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
 
 
 @pytest.fixture()

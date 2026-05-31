@@ -58,7 +58,7 @@ export interface CartridgeActivation {
   [key: string]: unknown;
 }
 
-export const KNOWN_CARTRIDGES = ["replicon", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+export const KNOWN_CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
 export type CartridgeId = typeof KNOWN_CARTRIDGES[number];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

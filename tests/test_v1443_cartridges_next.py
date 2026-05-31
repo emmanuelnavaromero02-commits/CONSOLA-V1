@@ -42,6 +42,21 @@ def test_cartridges_api_helpers_exist():
         )
 
 
+def test_hubspot_is_visible_in_next_cartridge_surfaces():
+    surfaces = [
+        NEXT_SRC / "lib/cartridges.ts",
+        NEXT_SRC / "app/(shell)/cartridges/page.tsx",
+        NEXT_SRC / "app/(shell)/studio/page.tsx",
+        NEXT_SRC / "app/(shell)/monitor/page.tsx",
+        NEXT_SRC / "app/(shell)/data/catalog/page.tsx",
+        NEXT_SRC / "app/(shell)/data/lineage/page.tsx",
+        NEXT_SRC / "app/(shell)/copilot/knowledge/page.tsx",
+        NEXT_SRC / "components/operations/VaultConnectionsTable.tsx",
+    ]
+    for path in surfaces:
+        assert '"hubspot"' in _read(path), f"{path.relative_to(REPO)} omits hubspot"
+
+
 def test_cartridges_helpers_target_correct_endpoints():
     src = _read(NEXT_SRC / "lib/cartridges.ts")
     assert "/api/cartridges" in src

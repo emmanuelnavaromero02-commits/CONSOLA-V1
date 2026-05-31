@@ -97,7 +97,7 @@ def test_bandit_scans_all_python_services():
     raw = SECURITY_WF.read_text(encoding="utf-8")
     for svc in ("console", "workspace", "vault", "refinement", "mcp-infra"):
         assert svc in raw, f"security.yml does not include {svc} in bandit scope"
-    # cartridges directory contains 4 services that ship their own code.
+    # cartridges directory contains services that ship their own code.
     assert "cartridges" in raw, "security.yml missing cartridges scope"
 
 
@@ -120,7 +120,7 @@ def test_pip_audit_discovers_every_requirements_file():
         if ".git" not in p.parts and "node_modules" not in p.parts
         and "vendor" not in p.parts
     )
-    # We expect to see at least the 5 services + 4 cartridges + tests.
+    # We expect to see at least the core services + cartridges + tests.
     assert any("cartridges/" in p for p in real_paths), (
         "test sanity: no cartridge requirements.txt found in repo — "
         "expected the find-loop to cover them"

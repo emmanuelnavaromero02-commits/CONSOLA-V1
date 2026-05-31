@@ -56,11 +56,14 @@ def _login_attempt_lockout_disabled() -> bool:
 
 _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
-    # All 4 cartridges share one key — they play the same role.
+    # Built-in cartridges share the generic cartridge key after their
+    # cartridge-specific worker identity has been authenticated.
     "cartridge-replicon":           "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    "cartridge-hubspot":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
     "cartridge-sap_hcm":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
     "cartridge-sap_s4hana":         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    "hubspot": "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
     # The old whitelist allowed these too; kept via legacy key only outside prod.
     "console":    None,
@@ -595,7 +598,7 @@ def verify_internal_api_key(
     x_internal_service: str | None = Header(None),
 ) -> str:
     # Sprint v1.12: console exposes /internal/* endpoints to workspace and
-    # to the four cartridges. Each pair has its own dedicated key. The
+    # to the built-in cartridges. Each pair has its own dedicated key. The
     # legacy shared INTERNAL_API_KEY is still accepted during migration.
     if not x_internal_service or x_internal_service not in _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV:
         raise HTTPException(status_code=403, detail="Invalid internal service origin")

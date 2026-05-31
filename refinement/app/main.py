@@ -117,6 +117,8 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     # share one key — they play the same role from refinement's side.
     "replicon":             "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-replicon":   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "hubspot":              "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-hubspot":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_hcm":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_s4hana": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
@@ -131,6 +133,12 @@ _SECURITY_SOURCE_BY_SERVICE = {
     "console": {"console", "agent_runner"},
     "workspace": {"workspace"},
     "airflow": {"airflow", "agent_runner"},
+    "hubspot": {"cartridge-hubspot", "hubspot"},
+    "cartridge-hubspot": {"cartridge-hubspot", "hubspot"},
+    "cartridge-replicon": {"cartridge-replicon", "replicon"},
+    "cartridge-sap_hcm": {"cartridge-sap_hcm"},
+    "cartridge-sap_s4hana": {"cartridge-sap_s4hana"},
+    "cartridge-sap_successfactors": {"cartridge-sap_successfactors"},
     "refinement": {"refinement"},
     "mcp-infra": {"mcp-infra"},
 }
@@ -319,7 +327,16 @@ def _dataset_allowed(sec: dict, ds: dict) -> bool:
         return True
     workspace_id = str(ds.get("workspace_id") or "")
     sec_workspace = str(sec.get("workspace_id") or "")
-    if workspace_id and workspace_id != sec_workspace:
+    source = str(sec.get("source") or "")
+    service_materializer = (
+        not sec_workspace
+        and (
+            source == "airflow"
+            or source == "agent_runner"
+            or source.startswith("cartridge-")
+        )
+    )
+    if workspace_id and workspace_id != sec_workspace and not service_materializer:
         return False
     cartridge = str(ds.get("cartridge") or "").strip()
     layer = str(ds.get("layer") or "").strip().lower()

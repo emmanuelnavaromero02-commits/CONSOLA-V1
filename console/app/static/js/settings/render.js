@@ -9,6 +9,7 @@ const CATEGORY_LABELS = {
 
 const VAULT_MANAGED_PREFIXES = [
   'replicon_',
+  'hubspot_',
   'sap_hcm_',
   'sap_s4hana_',
   'sap_successfactors_',

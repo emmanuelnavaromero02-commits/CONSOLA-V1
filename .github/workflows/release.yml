@@ -102,6 +102,8 @@ jobs:
             context: ./infra/airflow
           - service: replicon
             context: ./cartridges/replicon
+          - service: hubspot
+            context: ./cartridges/hubspot
           - service: sap_hcm
             context: ./cartridges/sap_hcm
           - service: sap_s4hana

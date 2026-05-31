@@ -11,15 +11,15 @@ const cartridgeViewerLinks =
   'a[href^="/cartridges/viewer?id="], a[href^="/cartridges/viewer/?id="]';
 
 test.describe("Cartridges grid (Next.js, /cartridges)", () => {
-  test("renders the 4-cartridge grid", async ({ authedPage: page }) => {
+  test("renders the built-in cartridge grid", async ({ authedPage: page }) => {
     await page.goto("/cartridges");
     // Each tile exposes a static-export-safe query-param viewer link.
     const tiles = page.locator(cartridgeViewerLinks);
     await expect(tiles.first()).toBeVisible({ timeout: 10_000 });
     const count = await tiles.count();
     expect(count,
-      "expected 4 cartridge tiles (replicon, sap_hcm, sap_s4hana, sap_successfactors)",
-    ).toBeGreaterThanOrEqual(4);
+      "expected built-in cartridge tiles (hubspot, replicon, sap_hcm, sap_s4hana, sap_successfactors)",
+    ).toBeGreaterThanOrEqual(5);
   });
 
   test("each tile shows name + status badge", async ({ authedPage: page }) => {

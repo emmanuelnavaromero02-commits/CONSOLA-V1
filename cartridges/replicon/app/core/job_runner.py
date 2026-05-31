@@ -230,7 +230,22 @@ async def _trigger_silver_refresh(entity: str) -> dict:
                 "x-api-key": api_key,
                 "x-internal-service": "cartridge-replicon",
             },
-            json={"source": source},
+            json={
+                "source": source,
+                "security_context": {
+                    "trusted": True,
+                    "source": "cartridge-replicon",
+                    "role": "admin",
+                    "permissions": ["datasets.read", "datasets.write"],
+                    "allowed_buckets": ["lakehouse"],
+                    "allowed_cartridges": ["replicon"],
+                    "allowed_prefixes": [
+                        "raw/replicon/",
+                        "silver/replicon/",
+                        "gold/replicon/",
+                    ],
+                },
+            },
         )
         response.raise_for_status()
         try:

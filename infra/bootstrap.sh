@@ -58,6 +58,12 @@ INTERNAL_API_KEY_REPLICON_TO_CONSOLE="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA="$(openssl rand -hex 32)"
 INTERNAL_API_KEY_REPLICON_TO_REFINEMENT="$(openssl rand -hex 32)"
 
+# HubSpot cartridge (same runtime contract as Replicon).
+OMEGA_CARTRIDGE_HUBSPOT_PASSWORD="$(openssl rand -hex 16)"
+INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE="$(openssl rand -hex 32)"
+INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA="$(openssl rand -hex 32)"
+INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT="$(openssl rand -hex 32)"
+
 # Sprint v1.15: Fernet master key for vault encryption at rest.
 # Fernet keys are URL-safe base64 of 32 random bytes. Generate them
 # with Python's stdlib so bootstrap does not depend on host cryptography/cffi.
@@ -121,6 +127,12 @@ INTERNAL_API_KEY_REPLICON_TO_CONSOLE=${INTERNAL_API_KEY_REPLICON_TO_CONSOLE}
 INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA=${INTERNAL_API_KEY_REPLICON_TO_MCP_INFRA}
 INTERNAL_API_KEY_REPLICON_TO_REFINEMENT=${INTERNAL_API_KEY_REPLICON_TO_REFINEMENT}
 
+# === HubSpot cartridge ===
+OMEGA_CARTRIDGE_HUBSPOT_PASSWORD=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD}
+INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE=${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE}
+INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA=${INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA}
+INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT=${INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT}
+
 # === Vault encryption at rest (v1.15) ===
 # Fernet master key. Rotating this key WITHOUT re-encrypting existing rows
 # makes every stored secret unrecoverable. Use \`make rotate-keys\` for a
@@ -182,6 +194,7 @@ MCP_INFRA_URL=http://mcp-infra:8010
 AIRFLOW_URL=http://airflow:8080
 VAULT_URL=http://vault:8300
 REPLICON_URL=http://replicon:8201
+HUBSPOT_URL=http://hubspot:8210
 SAP_HCM_URL=http://sap-hcm:8202
 SAP_S4HANA_URL=http://sap-s4hana:8204
 SAP_SUCCESSFACTORS_URL=http://sap-successfactors:8203
@@ -201,6 +214,10 @@ REPLICON_API_TOKEN=
 REPLICON_BASE_URL=https://na5.replicon.com/analytics
 REPLICON_USE_DEMO=false
 REPLICON_MOCK_USER_COUNT=
+
+# === HubSpot ===
+HUBSPOT_BASE_URL=https://api.hubapi.com
+HUBSPOT_API_TOKEN=
 
 # === Redis / embeddings (compose defaults override if blank) ===
 REDIS_URL=
