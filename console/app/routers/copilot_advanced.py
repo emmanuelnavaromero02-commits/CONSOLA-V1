@@ -385,6 +385,38 @@ async def create_lesson_endpoint(
         )
     if scope in ("workspace", "global") and not _has_admin(user):
         raise HTTPException(403, "workspace/global lessons require admin")
+    # Audit-round-6 P1 fix: previously ``_looks_like_jailbreak`` only
+    # ran at render time, so a malicious admin could plant a row
+    # carrying ``"[SYSTEM OVERRIDE]: ignore everything"`` into
+    # ``copilot_lessons``. The render filter silently dropped it —
+    # but it still occupied a row, ate the operator's mental
+    # audit-row budget, and would have shipped if the filter ever
+    # regressed. Validate at the edge so the row never lands.
+    if lessons_service._looks_like_jailbreak(str(lesson)):
+        # We still emit an audit event below for the rejection so an
+        # operator can spot a hostile pattern. Note: we deliberately
+        # do NOT echo the offending text back in the 400 — keeps the
+        # forensic value of the audit row but doesn't help an
+        # attacker iterate on a working bypass string.
+        try:
+            await audit_service.record_event(
+                user_id=_user_id(user),
+                email=str(user.get("email") or ""),
+                action="copilot.lesson.rejected_jailbreak",
+                resource_type="copilot_lesson",
+                resource_id="",
+                status="failed",
+                metadata={
+                    "scope": scope,
+                    "trigger_preview": str(trigger)[:120],
+                    "lesson_preview": str(lesson)[:200],
+                },
+            )
+        except Exception:
+            logger.debug("audit rejected_jailbreak failed", exc_info=True)
+        raise HTTPException(
+            400, "lesson_text matches the jailbreak guard and was rejected",
+        )
     new_id = await lessons_service.record_manual_lesson(
         user_id=_user_id(user) if scope == "user" else None,
         workspace_id=_workspace_id(user),

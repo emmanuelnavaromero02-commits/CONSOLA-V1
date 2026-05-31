@@ -158,12 +158,32 @@ def _summarise_approval(
     return trigger, lesson_text
 
 
+# Audit-round-5 P2 hardening: the list of secret-suspect substrings
+# grew during review. Order doesn't matter — we just need to drop any
+# key whose name suggests a credential before it lands in the lesson
+# preview that an operator might paste into a ticket. Keep this tight
+# rather than permissive: dropping a non-secret key with a suspicious
+# name is harmless; persisting a real bearer token is not.
+_SECRET_KEY_HINTS = (
+    "password", "passwd", "secret", "token", "bearer",
+    "api_key", "apikey", "auth", "authorization",
+    "credential", "credentials",
+    "private_key", "privatekey", "client_secret",
+    "session_id", "sessionid",
+)
+
+
 def _scrub_args_for_lesson(args: dict[str, Any]) -> dict[str, str]:
     """Render args as short strings, dropping any obvious secret."""
     out: dict[str, str] = {}
     for k, v in args.items():
         lk = str(k).lower()
-        if any(s in lk for s in ("password", "secret", "token", "key", "auth")):
+        if any(hint in lk for hint in _SECRET_KEY_HINTS):
+            continue
+        # Also drop bare-substring matches on the loose "key" suffix to
+        # keep the older "key" guard semantics: a field literally named
+        # "api_key_v2" should still be scrubbed.
+        if lk.endswith("_key") or lk == "key":
             continue
         sval = str(v)
         if len(sval) > 80:

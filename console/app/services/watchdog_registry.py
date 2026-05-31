@@ -84,27 +84,34 @@ async def register_watchdog(
     meta_json = json.dumps(metadata or {}, ensure_ascii=False)
 
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO copilot_watchdogs
-            (cartridge_id, slug, name, description, intent_keywords,
-             agent_slug, tools, risk_level, enabled, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
-        ON CONFLICT (cartridge_id, slug) DO UPDATE
-           SET name            = EXCLUDED.name,
-               description     = EXCLUDED.description,
-               intent_keywords = EXCLUDED.intent_keywords,
-               agent_slug      = EXCLUDED.agent_slug,
-               tools           = EXCLUDED.tools,
-               risk_level      = EXCLUDED.risk_level,
-               enabled         = EXCLUDED.enabled,
-               metadata        = EXCLUDED.metadata
-        RETURNING id::text
-        """,
-        cartridge_id, slug, name, description, keywords,
-        agent_slug, tools_clean, risk_level, enabled, meta_json,
-    )
-    invalidate_list_cache()
+    try:
+        row = await pool.fetchrow(
+            """
+            INSERT INTO copilot_watchdogs
+                (cartridge_id, slug, name, description, intent_keywords,
+                 agent_slug, tools, risk_level, enabled, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+            ON CONFLICT (cartridge_id, slug) DO UPDATE
+               SET name            = EXCLUDED.name,
+                   description     = EXCLUDED.description,
+                   intent_keywords = EXCLUDED.intent_keywords,
+                   agent_slug      = EXCLUDED.agent_slug,
+                   tools           = EXCLUDED.tools,
+                   risk_level      = EXCLUDED.risk_level,
+                   enabled         = EXCLUDED.enabled,
+                   metadata        = EXCLUDED.metadata
+            RETURNING id::text
+            """,
+            cartridge_id, slug, name, description, keywords,
+            agent_slug, tools_clean, risk_level, enabled, meta_json,
+        )
+    finally:
+        # Audit-round-5 P1 fix: always invalidate the list cache, even
+        # if the UPSERT raised. ``ON CONFLICT … DO UPDATE`` can still
+        # have committed a partial mutation (e.g. a trigger fired and
+        # rolled back) — better to drop the cache than to serve
+        # callers a stale view that hides the change they just made.
+        invalidate_list_cache()
     return row["id"]
 
 
@@ -133,14 +140,19 @@ async def unregister_watchdog(*, cartridge_id: str, slug: str) -> bool:
     if not await _has_table():
         return False
     pool = await auth.pool()
-    res = await pool.execute(
-        """
-        DELETE FROM copilot_watchdogs
-         WHERE cartridge_id = $1 AND slug = $2
-        """,
-        cartridge_id.strip().lower(), slug.strip().lower(),
-    )
-    invalidate_list_cache()
+    try:
+        res = await pool.execute(
+            """
+            DELETE FROM copilot_watchdogs
+             WHERE cartridge_id = $1 AND slug = $2
+            """,
+            cartridge_id.strip().lower(), slug.strip().lower(),
+        )
+    finally:
+        # Same belt-and-braces as register_watchdog — invalidate even
+        # on exception so an aborted delete can't leak via a stale
+        # cache entry.
+        invalidate_list_cache()
     return res.endswith("DELETE 1")
 
 
@@ -157,6 +169,12 @@ async def unregister_watchdog(*, cartridge_id: str, slug: str) -> bool:
 # TTL is safe.
 
 _LIST_CACHE_TTL_SECONDS = 60.0
+# Audit-round-5 P1 fix: cap the cache so a client iterating
+# ``(cartridge_id × enabled_only × limit)`` combinations can't grow
+# the dict unbounded. Watchdog rows change at deploy time, not at
+# request time, so a small ceiling here is fine — the worst case is
+# a couple of extra DB hits after a sweep evicts a hot key.
+_LIST_CACHE_MAX_ENTRIES = 256
 _list_cache: dict[tuple[str | None, bool, int], tuple[float, list[dict[str, Any]]]] = {}
 
 
@@ -167,17 +185,33 @@ def invalidate_list_cache() -> None:
     _list_cache.clear()
 
 
+def _normalise_cartridge_id(cartridge_id: str | None) -> str | None:
+    """Normalise once so the cache key matches the SQL filter. The
+    previous version normalised at SQL bind time but cached under the
+    raw input, so callers that bounced between ``"Replicon"`` and
+    ``"replicon"`` doubled their cache footprint and missed every hit.
+    """
+    if cartridge_id is None:
+        return None
+    return cartridge_id.strip().lower()
+
+
 async def list_watchdogs(
     *,
     cartridge_id: str | None = None,
     enabled_only: bool = True,
     limit: int = _MAX_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
-    cache_key = (cartridge_id, enabled_only, limit)
+    norm_cartridge = _normalise_cartridge_id(cartridge_id)
+    cache_key = (norm_cartridge, enabled_only, limit)
     now = time.monotonic()
     cached = _list_cache.get(cache_key)
     if cached and cached[0] > now:
-        return cached[1]
+        # Audit-round-5 P1 fix: return a defensive shallow copy of the
+        # list (and each dict inside) so a downstream mutation by one
+        # caller can't poison the cached entry for the next caller.
+        # ``list(rows)`` would still share the dict objects.
+        return [dict(d) for d in cached[1]]
     if not await _has_table():
         return []
     pool = await auth.pool()
@@ -200,12 +234,17 @@ async def list_watchdogs(
          ORDER BY cartridge_id, slug
          LIMIT $3
         """,
-        cartridge_id.strip().lower() if cartridge_id else None,
-        enabled_only, limit,
+        norm_cartridge, enabled_only, limit,
     )
     out = [dict(r) for r in rows]
+    # Best-effort cap: a single sweeping clear is cheaper than maintaining
+    # an LRU order under asyncio. The TTL takes care of the steady state.
+    if len(_list_cache) >= _LIST_CACHE_MAX_ENTRIES:
+        _list_cache.clear()
     _list_cache[cache_key] = (now + _LIST_CACHE_TTL_SECONDS, out)
-    return out
+    # And hand back a fresh copy so the caller can mutate without
+    # corrupting the cached entry.
+    return [dict(d) for d in out]
 
 
 async def get_watchdog(*, cartridge_id: str, slug: str) -> dict[str, Any] | None:
