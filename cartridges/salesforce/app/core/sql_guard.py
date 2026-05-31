@@ -53,8 +53,18 @@ def _validate_limit_clause(masked_sql: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | list[str]) -> tuple[bool, str | None]:
-    """Validate ad-hoc DuckDB SQL before it reaches query_kb."""
+def validate_kb_sql(
+    sql: str,
+    allowed_bucket_prefix: str | tuple[str, ...] | list[str],
+    *,
+    require_limit: bool = False,
+) -> tuple[bool, str | None]:
+    """Validate ad-hoc DuckDB SQL before it reaches query_kb or run_knowledge_bit.
+
+    When *require_limit* is True (interactive queries), the SQL must contain a
+    LIMIT clause so callers cannot accidentally fetch unbounded result sets.
+    Scheduled KB materialisation passes require_limit=False.
+    """
     if not isinstance(sql, str) or not sql.strip():
         return False, "empty SQL"
 
@@ -70,6 +80,9 @@ def validate_kb_sql(sql: str, allowed_bucket_prefix: str | tuple[str, ...] | lis
         return False, "Multiple statements are not allowed"
     if _COMMENT_RE.search(masked):
         return False, "SQL comments are not allowed"
+
+    if require_limit and not has_limit_clause(stripped):
+        return False, f"Interactive queries must include a LIMIT clause (max {_MAX_LIMIT})"
 
     limit_ok, limit_err = _validate_limit_clause(masked)
     if not limit_ok:

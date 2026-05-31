@@ -21,7 +21,7 @@ def _missing(*names: str) -> list[str]:
     return [n.upper() for n in names if not getattr(settings, n, "")]
 
 
-def check_sap() -> dict[str, Any]:
+def check_salesforce() -> dict[str, Any]:
     return SalesforceClient().configuration_status()
 
 
@@ -42,7 +42,7 @@ def preflight_for_extract() -> dict[str, Any] | None:
     precise error to the user (avoids "Postgres connection failed" hiding
     a missing SAP credential).
     """
-    components = [check_sap(), check_postgres(), check_minio()]
+    components = [check_salesforce(), check_postgres(), check_minio()]
     failing = [c for c in components if not c.get("configured", True)]
     if not failing:
         return None

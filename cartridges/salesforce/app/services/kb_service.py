@@ -99,7 +99,7 @@ def run_knowledge_bit(kb_id: str) -> dict:
     run_id = _create_kb_run(kb_id, started_at)
 
     try:
-        df = run_kb_sql(sql)
+        df = run_kb_sql(resolved_sql)
 
         storage_uri = write_kb_parquet(df, output_path, kb_id, run_id)
 

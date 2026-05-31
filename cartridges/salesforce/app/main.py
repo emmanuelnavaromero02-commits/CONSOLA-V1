@@ -122,9 +122,11 @@ class _MCPStartupGuard:
         ):
             import json as _json
             errors = list(getattr(self._app.state, "startup_errors", []) or [])
+            # Redact detailed error messages before sending to unauthenticated callers.
+            error_count = len(errors)
             body = _json.dumps({
                 "error": "cartridge_not_ready",
-                "startup_errors": errors,
+                "startup_errors_count": error_count,
             }).encode("utf-8")
             await send({
                 "type": "http.response.start",

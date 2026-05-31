@@ -32,7 +32,6 @@
       try {
         const res = await fetch('/api/data/salesforce_velocidad_pipeline');
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
         const rows = Array.isArray(payload) ? payload : (payload.data || payload.rows || []);
         if (!rows.length) {

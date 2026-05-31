@@ -23,8 +23,8 @@ CARTRIDGE_META = {
     "name":        "Salesforce",
     "version":     "1.0.0",
     "description": (
-        "Employee Central — empleados, posiciones, departamentos, "
-        "compensaciones, centros de coste, tiempo y ausencias."
+        "Salesforce Sales Cloud — oportunidades, cuentas, contactos, "
+        "leads, actividades y usuarios del CRM."
     ),
     "pattern":     "dag-based",
     "category":    "cartridge",

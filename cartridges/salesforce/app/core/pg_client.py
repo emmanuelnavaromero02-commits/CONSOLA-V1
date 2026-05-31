@@ -6,6 +6,7 @@ unit tests) does not crash at module import time.
 """
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlparse
 
 import psycopg2
@@ -15,6 +16,7 @@ from sqlalchemy.engine import Engine
 from app.core.config import settings
 
 _engine: Engine | None = None
+_logger = logging.getLogger(__name__)
 
 
 def _get_engine() -> Engine:
@@ -22,6 +24,14 @@ def _get_engine() -> Engine:
     if _engine is None:
         if not settings.database_url:
             raise RuntimeError("DATABASE_URL is not configured")
+        parsed = urlparse(
+            settings.database_url.replace("postgresql+psycopg2://", "postgresql://")
+        )
+        if parsed.username == "postgres":
+            _logger.warning(
+                "DATABASE_URL connects as the 'postgres' superuser — "
+                "use a least-privilege role (e.g. omega_cartridge_salesforce) in production"
+            )
         _engine = create_engine(settings.database_url, future=True, pool_pre_ping=True)
     return _engine
 

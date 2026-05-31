@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})?)?$")
+
+
+def _validate_date(value: str, param: str) -> None:
+    if not _ISO_DATE_RE.match(value):
+        raise HTTPException(status_code=422, detail=f"{param} must be ISO-8601 date/datetime")
 
 from app.api.deps import verify_api_key
 from app.services.catalog_service import get_all_entities, get_entity_config
@@ -172,6 +181,8 @@ def run_incremental_all() -> dict:
 
 @router.post("/run_historical_load/{entity}")
 def run_historical_load(entity: str, from_date: str, to_date: str) -> dict:
+    _validate_date(from_date, "from_date")
+    _validate_date(to_date, "to_date")
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
@@ -188,6 +199,8 @@ def run_historical_load(entity: str, from_date: str, to_date: str) -> dict:
 
 @router.post("/run_historical_load_all")
 def run_historical_load_all(from_date: str, to_date: str) -> dict:
+    _validate_date(from_date, "from_date")
+    _validate_date(to_date, "to_date")
     results = []
     for config in get_all_entities():
         if not config.get("date_field"):

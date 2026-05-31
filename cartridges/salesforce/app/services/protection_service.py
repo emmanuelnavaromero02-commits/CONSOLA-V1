@@ -83,7 +83,7 @@ def apply_protection_for_entity(entity_name: str, rows: list[dict]) -> list[dict
         for field_name, rule in rules.items():
             if field_name not in new_row:
                 _logger.warning(
-                    "Protection rule %r configured for field %r but field absent from row; "
+                    "Field %r absent from row; protection rule %r not applied; "
                     "check that Salesforce API returns PascalCase field names",
                     field_name, rule,
                 )

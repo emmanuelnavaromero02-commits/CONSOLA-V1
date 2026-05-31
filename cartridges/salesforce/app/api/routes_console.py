@@ -17,8 +17,17 @@ Errors:
 from __future__ import annotations
 
 import anyio
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})?)?$")
+
+
+def _validate_date(value: str | None, param: str) -> None:
+    if value and not _ISO_DATE_RE.match(value):
+        raise HTTPException(status_code=422, detail=f"{param} must be ISO-8601 date/datetime")
 
 from app.api.deps import verify_api_key
 from app.core.job_runner import (
@@ -128,6 +137,8 @@ def entity_extract(
     For background batch execution use the MCP ``extract`` tool which
     persists a job in PostgreSQL — this endpoint is the synchronous variant.
     """
+    _validate_date(from_date, "from_date")
+    _validate_date(to_date, "to_date")
     config = _get_entity_or_404(entity_id)
     if mode == "historical" and not config.get("date_field"):
         raise HTTPException(

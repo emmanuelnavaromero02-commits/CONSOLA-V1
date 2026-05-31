@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,8 @@ from sqlalchemy import create_engine, text
 
 from app.core.config import settings
 from app.core.minio_client import upload_file_to_minio
+
+_SAFE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 
 
 def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
@@ -48,6 +51,8 @@ def write_kb_parquet(df: pd.DataFrame, output_path: str, kb_id: str, run_id: str
 
 
 def write_kb_to_postgres(df: pd.DataFrame, pg_table: str) -> None:
+    if not _SAFE_IDENT_RE.match(pg_table):
+        raise ValueError(f"Unsafe pg_table identifier: {pg_table!r}")
     engine = create_engine(settings.database_url)
     try:
         with engine.begin() as conn:
