@@ -103,10 +103,10 @@ jobs:
           AIRFLOW_SECRET_KEY: dummy_airflow_secret_key_for_ci_only
           AIRFLOW_ADMIN_USER: ci_admin
           AIRFLOW_ADMIN_PASSWORD: dummy_airflow_admin_password_for_ci_only
-          # Sprint v1.33 (audit B1 P0): SAP cartridges refuse to start
-          # without a valid Fernet FIELD_ENCRYPTION_KEY. `docker compose
-          # config` interpolates this even when SAP services aren't
-          # spun up, so the CI step needs a real Fernet-shaped value.
+          # Sprint v1.33 (audit B1 P0): SAP and Salesforce cartridges refuse
+          # to start without a valid Fernet FIELD_ENCRYPTION_KEY. `docker
+          # compose config` interpolates this even when those services
+          # aren't spun up, so the CI step needs a real Fernet-shaped value.
           FIELD_ENCRYPTION_KEY: d7to_DkrHVKV5_jOzwCNV-wOl4r6gGCY7Usccczm9dk=
           # Sprint v1.38 (audit B5+B6 P0.5): SAP cartridges + Airflow
           # + Superset switched to dedicated omega_* roles. The

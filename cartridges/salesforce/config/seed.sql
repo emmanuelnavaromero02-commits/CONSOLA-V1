@@ -115,8 +115,10 @@ VALUES
 1. Usa el gold `pggold.gold_salesforce_deals_en_riesgo` (oportunidades abiertas con
    dias_sin_actividad, motivo de riesgo y monto). El KB `kb_salesforce_deals_en_riesgo` ya lo
    devuelve.
-2. Marca en riesgo una oportunidad abierta cuando: no tiene Task/Event en los ultimos
-   ${{dias_sin_actividad}} dias, o su CloseDate ya paso, o lleva demasiado en la misma etapa.
+2. Marca en riesgo una oportunidad abierta cuando: (a) "nunca hubo actividad" — nunca tuvo
+   Task ni Event ligado; (b) "sin actividad reciente" — sin Task/Event en los ultimos
+   ${{dias_sin_actividad}} dias; (c) "cierre vencido" — CloseDate ya paso; (d) estancada en
+   etapa demasiado tiempo. Son cuatro causas distintas; no las mezcles en una sola etiqueta.
 3. Prioriza por monto: lista primero los deals grandes en riesgo. Da el dueño para que actue.
 
 ## Sin alucinaciones
@@ -191,6 +193,7 @@ contra la capacidad de Replicon. Eres el unico agente que cruza dos cartuchos.
 
 ## Sin alucinaciones
 - Necesitas AMBOS lados: si falta el gold de capacidad de Replicon, dilo y no estimes la holgura.
+- `demanda_horas_estimada` usa una tarifa supuesta de 150 USD/hora (no el costo real); si te la preguntan, acláralo.
 - El forecast es ponderado por probabilidad, no ventas firmes; acláralo.
 - Si un dataset no responde, escala con `request_admin_help`; no inventes columnas.$$,
     'Puente entre ventas y operaciones. Alerta clara de meses en sobrecarga con magnitud. Idioma del usuario.',
