@@ -480,6 +480,7 @@ def test_studio_step_tools_stay_whitelisted_and_dag_step_slim(monkeypatch):
 
     expected_local_steps = {
         "approve_goal_step": [1, 2, 3, 4, 5, 6, 7],
+        "autopilot_build_cartridge": [1, 3],
         "cartridge_self_check": [1, 2, 3, 4, 5, 6, 7],
         "create_goal_run": [1, 2, 3, 4, 5, 6, 7],
         "execute_goal_run": [1, 2, 3, 4, 5, 6, 7],

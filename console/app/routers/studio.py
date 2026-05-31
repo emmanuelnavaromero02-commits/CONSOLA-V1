@@ -31,6 +31,7 @@ from app.security import get_internal_api_key
 from app.services.security_context import build_security_context, rls_user_context
 from app.services import (
     audit_service,
+    cartridge_factory_pipeline,
     cartridge_service,
     dag_code_generator,
     dag_templates,
@@ -831,6 +832,265 @@ studio_assistant.register_local_tool(
         "required": ["cartridge_id"],
     },
     handler=_studio_introspect_source,
+)
+
+
+def _autopilot_inline_descriptor(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str, str]:
+    descriptor = args.get("descriptor")
+    if isinstance(descriptor, dict):
+        return descriptor, "provided_descriptor", ""
+
+    spec = _openapi_spec_from_args(args)
+    if isinstance(spec, dict):
+        return {"kind": "openapi", "spec": spec, "auth_type": args.get("auth_type")}, "inline_openapi", ""
+
+    edmx = args.get("edmx") or args.get("metadata")
+    if isinstance(edmx, str) and edmx.strip():
+        if len(edmx.encode("utf-8")) > _MAX_METADATA_BYTES:
+            return None, "inline_odata", "OData metadata content exceeds size limit"
+        return {"kind": "odata", "edmx": edmx, "auth_type": args.get("auth_type")}, "inline_odata", ""
+
+    columns = args.get("columns") or args.get("information_schema")
+    if isinstance(columns, list) and columns:
+        return {"kind": "sql", "columns": columns, "auth_type": args.get("auth_type")}, "inline_sql", ""
+
+    csv_text = args.get("csv") or args.get("text")
+    if isinstance(csv_text, str) and csv_text.strip():
+        if len(csv_text.encode("utf-8")) > _MAX_SPEC_BYTES:
+            return None, "inline_csv", "CSV content exceeds size limit"
+        return {"kind": "file_csv", "csv": csv_text, "auth_type": args.get("auth_type")}, "inline_csv", ""
+
+    if "sample" in args:
+        kind = str(args.get("source_kind") or args.get("kind") or "rest_sample").strip().lower()
+        return {
+            "kind": kind or "rest_sample",
+            "sample": args.get("sample"),
+            "entity_name": args.get("entity_name") or "records",
+            "auth_type": args.get("auth_type"),
+            "paginated": args.get("paginated"),
+            "async_export": args.get("async_export"),
+            "webhook": args.get("webhook"),
+        }, "inline_sample", ""
+
+    return None, "none", "no inline descriptor supplied"
+
+
+async def _autopilot_openapi_url_descriptor(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    spec_url = str(args.get("spec_url") or args.get("openapi_url") or "").strip()
+    if not spec_url:
+        return None, "no OpenAPI spec URL supplied"
+    blocked_reason = _validate_external_spec_url(spec_url)
+    if blocked_reason:
+        return None, blocked_reason
+    try:
+        response = await _pinned_http_request(
+            "GET",
+            spec_url,
+            label="OpenAPI spec URL",
+            headers={"Accept": "application/json,yaml,text/yaml"},
+            max_bytes=_MAX_SPEC_BYTES,
+        )
+    except Exception as exc:
+        return None, f"OpenAPI spec URL request failed: {type(exc).__name__}"
+    if response.is_redirect:
+        return None, "OpenAPI spec URL redirects are blocked"
+    if response.status_code >= 400:
+        return None, f"OpenAPI spec URL returned HTTP {response.status_code}"
+    try:
+        parsed = yaml.safe_load(response.text)
+    except yaml.YAMLError as exc:
+        return None, f"OpenAPI spec parse failed: {exc.__class__.__name__}"
+    if not isinstance(parsed, dict):
+        return None, "OpenAPI spec URL did not return an object"
+    return {"kind": "openapi", "spec": parsed, "auth_type": args.get("auth_type")}, ""
+
+
+def _autopilot_source_kind(cartridge_id: str, connector: dict[str, Any], args: dict[str, Any], source: str) -> str:
+    kind = str(args.get("source_kind") or args.get("kind") or "").strip().lower()
+    if kind:
+        return kind
+    if _looks_odata(cartridge_id, connector, args):
+        return "odata"
+    if source == "live_sql":
+        return "sql"
+    if source in {"live_introspection", "static_introspection"}:
+        return "openapi"
+    return "rest_sample"
+
+
+async def _autopilot_live_descriptor(
+    args: dict[str, Any],
+    user: dict,
+    source_cartridge_id: str,
+) -> tuple[dict[str, Any] | None, str, str]:
+    if not source_cartridge_id:
+        return None, "none", "no source cartridge supplied for live introspection"
+    cartridge_id = _clean_identifier(source_cartridge_id, label="source_cartridge_id")
+    _require_cartridge_visible(user, cartridge_id)
+    from app.routers import cartridges as cartridges_router
+
+    schema = await cartridges_router.connector_schema(cartridge_id, user=user)
+    connector = _connector_payload(schema)
+    can_live = has_permission(user, "studio.write") or has_permission(user, "cartridges.write")
+    reason = "live introspection requires studio.write or cartridges.write"
+    if can_live:
+        live_entities, reason = await _live_introspection(cartridge_id, schema, args)
+        if live_entities:
+            kind = _autopilot_source_kind(cartridge_id, connector, args, "live_introspection")
+            return {
+                "kind": kind,
+                "entities": live_entities,
+                "auth_type": (connector.get("auth") or {}).get("type") or (connector.get("connection") or {}).get("auth_method"),
+            }, "live_introspection", ""
+
+    fallback = _static_introspection_payload(cartridge_id, schema, reason=reason)
+    if fallback.get("entities"):
+        kind = _autopilot_source_kind(cartridge_id, connector, args, "static_introspection")
+        return {
+            "kind": kind,
+            "entities": fallback["entities"],
+            "auth_type": (connector.get("auth") or {}).get("type") or (connector.get("connection") or {}).get("auth_method"),
+        }, "static_introspection", fallback.get("reason") or reason
+    return None, "live_introspection", reason or fallback.get("reason") or "no entities available from live/static introspection"
+
+
+def _autopilot_blueprint_preview(blueprint: dict[str, Any] | None) -> dict[str, Any]:
+    bp = blueprint if isinstance(blueprint, dict) else {}
+    return {
+        "id": bp.get("id"),
+        "name": bp.get("name"),
+        "entities": [e.get("entity") or e.get("name") for e in (bp.get("entities") or []) if isinstance(e, dict)],
+        "datasets": [d.get("name") for d in (bp.get("datasets") or []) if isinstance(d, dict)],
+        "dags": [d.get("dag_id") for d in (bp.get("dags") or []) if isinstance(d, dict)],
+        "kbs": len(bp.get("kbs") or bp.get("knowledge_bits") or []),
+        "agents": len(bp.get("agents") or []),
+    }
+
+
+async def _studio_autopilot_build_cartridge(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
+    """Studio assistant tool: sentence/spec/source -> dry-run cartridge blueprint."""
+    if user is None:
+        raise HTTPException(401, "Authentication required")
+
+    args = args or {}
+    intent = str(args.get("intent") or args.get("message") or "").strip()
+    parsed_intent = cartridge_factory_pipeline.cartridge_intent.parse_build_intent(intent) if intent else {}
+    inferred_source_id = ""
+    if isinstance(parsed_intent.get("primary_source"), dict):
+        inferred_source_id = str(parsed_intent["primary_source"].get("id") or "")
+    source_cartridge_id = str(args.get("source_cartridge_id") or args.get("cartridge_id") or inferred_source_id or "").strip()
+
+    descriptor, source, reason = _autopilot_inline_descriptor(args)
+    if descriptor is None and (args.get("spec_url") or args.get("openapi_url")):
+        descriptor, reason = await _autopilot_openapi_url_descriptor(args)
+        source = "openapi_url" if descriptor else "openapi_url"
+    if descriptor is None and source_cartridge_id and args.get("use_live", True) is not False:
+        descriptor, source, reason = await _autopilot_live_descriptor(args, user, source_cartridge_id)
+
+    if descriptor is None:
+        return {
+            "ok": False,
+            "source": source,
+            "reason": reason or "no descriptor/spec/sample/live introspection available",
+            "dry_run": True,
+        }
+
+    explicit_id = str(args.get("target_cartridge_id") or args.get("new_cartridge_id") or args.get("cartridge_id") or "").strip()
+    explicit_name = str(args.get("name") or args.get("cartridge_name") or "").strip()
+    domain = str(args.get("domain") or args.get("category") or "").strip() or (
+        str((parsed_intent.get("primary_source") or {}).get("domain") or "custom") if isinstance(parsed_intent, dict) else "custom"
+    )
+
+    if explicit_id and explicit_name:
+        plan = cartridge_factory_pipeline.plan_from_descriptor(
+            descriptor,
+            cartridge_id=explicit_id,
+            name=explicit_name,
+            domain=domain,
+        )
+        if parsed_intent:
+            plan["intent"] = parsed_intent
+    elif intent:
+        plan = cartridge_factory_pipeline.plan_from_intent(intent, descriptor)
+        if not plan.get("ok") and explicit_id:
+            plan = cartridge_factory_pipeline.plan_from_descriptor(
+                descriptor,
+                cartridge_id=explicit_id,
+                name=explicit_name or explicit_id.replace("_", " ").title(),
+                domain=domain,
+            )
+            if parsed_intent:
+                plan["intent"] = parsed_intent
+    else:
+        if not explicit_id:
+            return {
+                "ok": False,
+                "source": source,
+                "reason": "cartridge_id/name or intent is required to build a cartridge blueprint",
+                "dry_run": True,
+            }
+        plan = cartridge_factory_pipeline.plan_from_descriptor(
+            descriptor,
+            cartridge_id=explicit_id,
+            name=explicit_name or explicit_id.replace("_", " ").title(),
+            domain=domain,
+        )
+
+    blueprint = plan.get("blueprint") if isinstance(plan, dict) else None
+    apply_requested = bool(args.get("apply") or args.get("write") or args.get("create"))
+    response = {
+        "ok": bool(plan.get("ok")) if isinstance(plan, dict) else False,
+        "source": source,
+        "source_reason": reason,
+        "dry_run": True,
+        "plan": plan,
+        "blueprint": blueprint,
+        "summary": plan.get("summary") if isinstance(plan, dict) else None,
+        "next_action": (
+            "Review the returned blueprint. To write it, run create_full_cartridge "
+            "through a Studio goal run approval."
+        ),
+    }
+    if apply_requested and blueprint:
+        response.update({
+            "approval_required": True,
+            "tool": "studio__create_full_cartridge",
+            "risk_level": "write",
+            "reason": "Autopilot generated the cartridge blueprint but does not write directly.",
+            "args_preview": _autopilot_blueprint_preview(blueprint),
+        })
+    return response
+
+
+studio_assistant.register_local_tool(
+    "autopilot_build_cartridge",
+    description=(
+        "Convierte una frase, spec OpenAPI/OData/SQL/CSV/sample o introspección viva "
+        "en un blueprint completo de cartucho. Dry-run por defecto; no escribe en DB."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string", "description": "Instrucción del usuario, por ejemplo: conecta HubSpot y crea forecast."},
+            "cartridge_id": {"type": "string", "description": "Cartucho origen existente para introspección o id destino si se pasa name."},
+            "source_cartridge_id": {"type": "string", "description": "Cartucho existente del cual introspectar esquema vivo/fallback."},
+            "target_cartridge_id": {"type": "string", "description": "ID destino del cartucho a generar."},
+            "name": {"type": "string", "description": "Nombre visible del cartucho destino."},
+            "domain": {"type": "string", "description": "Dominio: crm, finance, hcm, custom, etc."},
+            "descriptor": {"type": "object", "description": "Descriptor ya cargado: OpenAPI, EDMX, CSV, SQL columns, sample o entities."},
+            "spec": {"type": "object", "description": "OpenAPI/Swagger spec como objeto."},
+            "spec_content": {"type": "string", "description": "OpenAPI YAML/JSON como texto."},
+            "spec_url": {"type": "string", "description": "URL HTTPS pública de OpenAPI/Swagger."},
+            "edmx": {"type": "string", "description": "Contenido OData $metadata."},
+            "sample": {"description": "Payload JSON de ejemplo para REST."},
+            "columns": {"type": "array", "items": {"type": "object"}, "description": "Filas information_schema para SQL."},
+            "csv": {"type": "string", "description": "CSV de muestra."},
+            "source_kind": {"type": "string", "description": "openapi, odata, sql, file_csv, rest_sample, graphql o soap."},
+            "dry_run": {"type": "boolean", "default": True},
+            "apply": {"type": "boolean", "default": False, "description": "Si true, devuelve approval_required; no escribe directo."},
+        },
+    },
+    handler=_studio_autopilot_build_cartridge,
 )
 
 

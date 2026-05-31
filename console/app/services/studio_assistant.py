@@ -20,6 +20,7 @@ from app.services.tool_manifest import classify_tool, requires_approval
 
 STUDIO_TOOLS_WHITELIST = {
     "approve_goal_step",
+    "autopilot_build_cartridge",
     "cartridge_self_check",
     "create_goal_run",
     "execute_goal_run",
@@ -159,6 +160,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
     # Note: cartridge_sync_semantic_to_rag is exposed in step 6 (semantic editing).
     1: {  # RESUMEN — overview, manifest editing
         "create_full_cartridge",
+        "autopilot_build_cartridge",
         "plan_goal_run",
         "cartridge_list_jobs", "cartridge_list_kbs",
         "minio_list_cartridge_specs", "minio_read_spec", "minio_upload_spec",
@@ -173,6 +175,7 @@ STEP_TOOLS: dict[int | str, set[str]] = {
     },
     3: {  # ENTIDADES
         "cartridge_preview", "cartridge_extract", "cartridge_extract_all",
+        "autopilot_build_cartridge",
         "introspect_source",
         "cartridge_get_run_logs", "cartridge_get_job_status", "cartridge_list_jobs",
         "minio_*",
@@ -211,6 +214,7 @@ ANALYST_READ_ONLY_EXACT = {
     "airflow_list_dag_runs",
     "airflow_list_dags",
     "airflow_list_task_instances",
+    "autopilot_build_cartridge",
     "cartridge_get_job_status",
     "cartridge_get_manifest",
     "cartridge_get_run_logs",
@@ -380,6 +384,11 @@ Step RESUMEN — visión general del cartucho activo.
 - Crear cartucho completo: usa `studio__create_full_cartridge` cuando el usuario ya
   entregó nombre, descripción, entidades, DAGs, KBs/agentes/hints. No uses la creación
   mínima si hay metadatos completos; esta tool valida integridad y seed.sql.
+- Crear cartucho desde una frase/spec/fuente: primero usa
+  `studio__autopilot_build_cartridge(intent, descriptor/spec/sample, dry_run=true)`.
+  Esa tool genera un blueprint completo sin escribir en DB. Si el usuario aprueba
+  materializarlo, pasa el blueprint por goal run/aprobación antes de escribir con
+  `studio__create_full_cartridge`.
 - Importar ZIP: indica al usuario que use el botón "Importar ZIP".
 """,
     2: """\
@@ -555,6 +564,7 @@ Flujo OBLIGATORIO ante cualquier pregunta sobre un cartucho:
      · "vocabulario completo"   → `infra__cartridge_get_semantic(cartridge_id)`
      · "últimos jobs"           → `infra__cartridge_list_jobs(cartridge_id)`
      · "manifest completo"      → `infra__cartridge_get_manifest(cartridge_id)`
+     · "crea cartucho desde frase/spec" → `studio__autopilot_build_cartridge(..., dry_run=true)`
      · Paso 2 o 3 sin metadatos → `studio__introspect_source(cartridge_id)` vivo/fallback
      · Crear DAG en Paso 2     → `studio__introspect_source`,
                                   `studio__generate_dag_code`,
@@ -571,6 +581,10 @@ Restricciones globales:
   `studio__introspect_source(cartridge_id)`; trata `source="live"` como la verdad
   primaria, conserva `entities[].fields` con tipos/nullable/primary_key y sólo pide
   YAML si esa introspección falla o el esquema devuelto no contiene metadatos suficientes.
+- Si el usuario pide crear un cartucho nuevo desde una frase, spec, sample o fuente,
+  primero llama `studio__autopilot_build_cartridge` en dry-run. Esa tool NO escribe:
+  devuelve blueprint completo. Para materializarlo, usa goal run/aprobación y después
+  `studio__create_full_cartridge`.
 - Si el usuario pide crear un DAG en el Paso 2, primero llama a
   `studio__introspect_source` para obtener el esquema, luego usa
   `studio__generate_dag_code` con ese esquema y ejecuta silenciosamente
@@ -699,6 +713,10 @@ async def chat(
             "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
         })
         tool_server_map[full_name] = STUDIO_LOCAL_SERVER_ID
+        # Some providers normalize or return the bare function name even when
+        # the schema was exposed with the Studio prefix. Keep local tools
+        # routable either way so the live assistant does not fall through to MCP.
+        tool_server_map.setdefault(t["name"], STUDIO_LOCAL_SERVER_ID)
 
     # Tool slimming: only expose tools relevant to the active step + common ones.
     # Reduces ~60 tools to 10–20 per call, sharply improving LLM accuracy.
@@ -728,7 +746,9 @@ async def chat(
         )
 
     async def _invoke_tool(srv: str, tool: str, args: dict):
-        full_name = f"{srv}__{tool}"
+        if not srv and tool in _LOCAL_TOOL_HANDLERS:
+            srv = STUDIO_LOCAL_SERVER_ID
+        full_name = f"{srv}__{tool}" if srv else tool
         bare_name = _bare_tool_name(full_name)
         if bare_name not in (tools_whitelist or STUDIO_TOOLS_WHITELIST):
             await audit_service.record_event(
@@ -856,14 +876,30 @@ async def chat(
         )
         return result
 
-    reply, viewer_urls, full_msgs = await llm_client.chat(
-        system=system,
-        messages=messages,
-        tools=tools,
-        invoke_tool=_invoke_tool,
-        tool_server_map=tool_server_map,
-        on_event=on_event,
-    )
+    try:
+        reply, viewer_urls, full_msgs = await llm_client.chat(
+            system=system,
+            messages=messages,
+            tools=tools,
+            invoke_tool=_invoke_tool,
+            tool_server_map=tool_server_map,
+            on_event=on_event,
+        )
+    except llm_client.LLMConfigurationError as exc:
+        reply = (
+            "⚠️ El asistente de Studio no tiene proveedor LLM configurado. "
+            f"{exc}. Define la variable correspondiente en `infra/.env` y "
+            "recrea el servicio `console` para probar el chat en vivo."
+        )
+        full_msgs = messages + [{"role": "assistant", "content": reply}]
+        return {"reply": reply, "viewer_urls": [], "messages": full_msgs}
+    except llm_client.LLMProviderError as exc:
+        reply = (
+            "⚠️ El proveedor LLM respondió con error. "
+            f"{exc}. Revisa la key/configuración y vuelve a intentar."
+        )
+        full_msgs = messages + [{"role": "assistant", "content": reply}]
+        return {"reply": reply, "viewer_urls": [], "messages": full_msgs}
 
     # full_msgs already contains the complete conversation including tool calls.
     # The frontend stores this and sends it back on the next turn so the model

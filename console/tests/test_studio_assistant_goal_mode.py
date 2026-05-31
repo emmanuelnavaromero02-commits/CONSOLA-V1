@@ -43,6 +43,58 @@ async def test_studio_assistant_exposes_goal_run_tools(monkeypatch):
     assert "approval_required" in captured["system"]
 
 
+@pytest.mark.asyncio
+async def test_studio_assistant_reports_missing_llm_key_without_500(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+
+    async def list_servers():
+        return []
+
+    monkeypatch.setattr(studio_assistant.mcp_registry, "list_servers", list_servers)
+
+    result = await studio_assistant.chat(
+        "hola",
+        [],
+        step=1,
+        manifest={"id": "hubspot", "name": "HubSpot"},
+        actor_role="analyst",
+        actor_user={"id": "u1", "email": "u@example.com", "workspace_role": "analyst"},
+    )
+
+    assert "ANTHROPIC_API_KEY is required" in result["reply"]
+    assert result["viewer_urls"] == []
+
+
+@pytest.mark.asyncio
+async def test_studio_assistant_reports_provider_error_without_500(monkeypatch):
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+
+    async def list_servers():
+        return []
+
+    async def broken_chat(**_kwargs):
+        raise studio_assistant.llm_client.LLMProviderError(
+            "Anthropic authentication failed; verify ANTHROPIC_API_KEY"
+        )
+
+    monkeypatch.setattr(studio_assistant.mcp_registry, "list_servers", list_servers)
+    monkeypatch.setattr(studio_assistant.llm_client, "chat", broken_chat)
+
+    result = await studio_assistant.chat(
+        "hola",
+        [],
+        step=1,
+        manifest={"id": "hubspot", "name": "HubSpot"},
+        actor_role="analyst",
+        actor_user={"id": "u1", "email": "u@example.com", "workspace_role": "analyst"},
+    )
+
+    assert "proveedor LLM respondió con error" in result["reply"]
+    assert "ANTHROPIC_API_KEY" in result["reply"]
+
+
 def test_approval_tool_requires_explicit_current_user_message():
     studio_assistant = importlib.import_module("app.services.studio_assistant")
 

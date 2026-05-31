@@ -301,6 +301,45 @@ def parse_wsdl_elements(wsdl_xml: str) -> dict[str, list[Field]]:
     return out
 
 
+def _entities_from_descriptor(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize pre-parsed entities supplied by a live caller.
+
+    The router normally parses raw descriptors (OpenAPI, EDMX, CSV, SQL rows).
+    Studio's live introspection already returns canonical entities in some
+    paths, so accepting ``{"entities": [{"name": ..., "fields": [...]}]}``
+    lets the factory pipeline consume the same live result without re-fetching
+    metadata or duplicating parser logic.
+    """
+    entities = descriptor.get("entities")
+    if not isinstance(entities, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for ent in entities:
+        if not isinstance(ent, dict):
+            continue
+        name = str(ent.get("name") or ent.get("entity") or "").strip()
+        if not name:
+            continue
+        fields: list[Field] = []
+        for field in ent.get("fields") or []:
+            if isinstance(field, dict):
+                _append_field(fields, field)
+        if not fields:
+            continue
+        out.append({
+            "name": name,
+            "fields": fields,
+            "primary_key": ent.get("primary_key"),
+            "watermark_field": ent.get("watermark_field"),
+        })
+        if len(out) >= _MAX_ENTITIES:
+            break
+    for ent in out:
+        if len(ent["fields"]) > _MAX_FIELDS_PER_ENTITY:
+            ent["fields"] = ent["fields"][:_MAX_FIELDS_PER_ENTITY]
+    return out
+
+
 def extract_entities(descriptor: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
     """Universal entry: classify the source, parse it, return entities + kind.
 
@@ -310,6 +349,9 @@ def extract_entities(descriptor: dict[str, Any]) -> tuple[list[dict[str, Any]], 
     if not isinstance(descriptor, dict):
         return [], "rest_sample"
     kind = detect_source_kind(descriptor)
+    pre_parsed = _entities_from_descriptor(descriptor)
+    if pre_parsed:
+        return pre_parsed, kind
     by_entity: dict[str, list[Field]] = {}
     if kind == "odata":
         by_entity = schema_introspect.parse_odata_metadata(

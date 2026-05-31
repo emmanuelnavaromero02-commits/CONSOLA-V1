@@ -131,6 +131,35 @@ def test_plan_blueprint_is_create_full_cartridge_shaped():
         assert key in bp, f"missing {key}"
 
 
+def test_plan_from_descriptor_accepts_preparsed_live_entities():
+    """Studio live introspection can hand the factory canonical entities directly."""
+    plan = fp.plan_from_descriptor(
+        {
+            "kind": "openapi",
+            "entities": [{
+                "name": "deals",
+                "fields": [
+                    {"name": "deal_id", "type": "string", "primary_key": True},
+                    {"name": "amount", "type": "float"},
+                    {"name": "hs_lastmodifieddate", "type": "timestamp"},
+                ],
+                "primary_key": "deal_id",
+                "watermark_field": "hs_lastmodifieddate",
+            }],
+        },
+        cartridge_id="hubspot",
+        name="HubSpot",
+        domain="crm",
+    )
+
+    assert plan["ok"] is True, plan.get("validation")
+    entity = plan["blueprint"]["entities"][0]
+    assert entity["entity"] == "deals"
+    assert entity["primary_key"] == "deal_id"
+    assert entity["watermark_field"] == "hs_lastmodifieddate"
+    assert plan["summary"]["gold"] >= 1
+
+
 def test_suggest_analytics_does_not_leak_global():
     """Audit-16: mutating a returned suggestion must not corrupt the global catalog."""
     s = ci.suggest_analytics("crm")
@@ -156,14 +185,14 @@ def test_plan_from_descriptor_non_dict_guard():
 
 def test_highlight_handles_none_desc():
     """Audit-17: None name/desc in a suggestion must not crash highlighting."""
-    import app.services.cartridge_intent as ci
-    orig = ci._DOMAIN_ANALYTICS.get("crm")
-    ci._DOMAIN_ANALYTICS["crm"] = [{"name": None, "desc": None}, {"name": "forecast_x", "desc": "forecast"}]
+    intent_module = fp.cartridge_intent
+    orig = intent_module._DOMAIN_ANALYTICS.get("crm")
+    intent_module._DOMAIN_ANALYTICS["crm"] = [{"name": None, "desc": None}, {"name": "forecast_x", "desc": "forecast"}]
     try:
         plan = fp.plan_from_intent("dame forecast de HubSpot", _crm_sample_descriptor())
         assert any(a["name"] == "forecast_x" for a in plan["highlighted_analytics"])
     finally:
-        ci._DOMAIN_ANALYTICS["crm"] = orig
+        intent_module._DOMAIN_ANALYTICS["crm"] = orig
 
 
 # ── Audit-round-2 regression / new-edge-case tests ──────────────────────────

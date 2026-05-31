@@ -44,16 +44,70 @@ _google_client: google_genai.Client | None = None
 _ollama: AsyncOpenAI | None = None
 
 
+class LLMConfigurationError(RuntimeError):
+    """Raised before provider SDKs are constructed when required config is absent."""
+
+
+class LLMProviderError(RuntimeError):
+    """Sanitized provider failure safe to show to Studio/Copilot callers."""
+
+
+def _current_provider() -> str:
+    return os.environ.get("CHAT_LLM_PROVIDER", CHAT_PROVIDER).strip().lower() or "anthropic"
+
+
+def _provider_config_error(provider: str | None = None) -> str:
+    provider_name = (provider or _current_provider()).strip().lower()
+    if provider_name == "gemini" and not os.environ.get("GEMINI_API_KEY", "").strip():
+        return "GEMINI_API_KEY is required when CHAT_LLM_PROVIDER=gemini"
+    if provider_name == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return "ANTHROPIC_API_KEY is required when CHAT_LLM_PROVIDER=anthropic"
+    if provider_name not in {"anthropic", "gemini", "ollama"}:
+        return f"Unsupported CHAT_LLM_PROVIDER={provider_name!r}"
+    return ""
+
+
+def _ensure_provider_configured(provider: str | None = None) -> None:
+    reason = _provider_config_error(provider)
+    if reason:
+        raise LLMConfigurationError(reason)
+
+
+def _provider_error_message(provider: str, exc: Exception) -> str:
+    msg = str(exc).lower()
+    if any(token in msg for token in ("401", "unauthorized", "invalid api key", "api key", "x-api-key", "authentication")):
+        if provider == "anthropic":
+            return "Anthropic authentication failed; verify ANTHROPIC_API_KEY"
+        if provider == "gemini":
+            return "Gemini authentication failed; verify GEMINI_API_KEY"
+        return f"{provider} authentication failed; verify provider credentials"
+    if any(token in msg for token in ("429", "rate limit", "rate_limit", "resource_exhausted")):
+        return f"{provider} rate limit reached; retry later or use another key"
+    if any(token in msg for token in ("timeout", "timed out")):
+        return f"{provider} request timed out"
+    return f"{provider} provider returned an error; check server logs"
+
+
 def _resolve_chat_model(model: str | None) -> str:
+    provider = _current_provider()
+    provider_default = _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["anthropic"])
+    configured_default = os.environ.get("CHAT_LLM_MODEL", "").strip()
+    if provider == "gemini" and configured_default and not configured_default.startswith("gemini-"):
+        configured_default = ""
+    if provider == "anthropic" and configured_default and configured_default.startswith(("gemini-", "llama")):
+        configured_default = ""
+    if provider == "ollama" and configured_default and configured_default.startswith(("claude-", "gemini-")):
+        configured_default = ""
+    default_model = configured_default or provider_default
     value = (model or "").strip()
     if not value or value == "default":
-        return CHAT_MODEL
-    if CHAT_PROVIDER == "gemini" and not value.startswith("gemini-"):
-        return CHAT_MODEL
-    if CHAT_PROVIDER == "anthropic" and value.startswith(("gemini-", "llama")):
-        return CHAT_MODEL
-    if CHAT_PROVIDER == "ollama" and value.startswith(("claude-", "gemini-")):
-        return CHAT_MODEL
+        return default_model
+    if provider == "gemini" and not value.startswith("gemini-"):
+        return default_model
+    if provider == "anthropic" and value.startswith(("gemini-", "llama")):
+        return default_model
+    if provider == "ollama" and value.startswith(("claude-", "gemini-")):
+        return default_model
     return value
 
 
@@ -93,21 +147,28 @@ async def chat(
     tool invocation and its result, plus a final {'type':'text', 'text': reply}.
     The function still returns the same (reply, viewer_urls, messages) tuple
     so callers that ignore on_event keep working unchanged."""
-    if CHAT_PROVIDER == "gemini":
-        return await _gemini_chat(
+    provider = _current_provider()
+    _ensure_provider_configured(provider)
+    try:
+        if provider == "gemini":
+            return await _gemini_chat(
+                system, messages, tools, invoke_tool, tool_server_map, on_event,
+                model=model, max_tokens=max_tokens, temperature=temperature,
+            )
+        if provider == "ollama":
+            return await _openai_compat_chat(
+                system, messages, tools, invoke_tool, tool_server_map, _ollama_client(),
+                on_event,
+                model=model, max_tokens=max_tokens, temperature=temperature,
+            )
+        return await _anthropic_chat(
             system, messages, tools, invoke_tool, tool_server_map, on_event,
             model=model, max_tokens=max_tokens, temperature=temperature,
         )
-    if CHAT_PROVIDER == "ollama":
-        return await _openai_compat_chat(
-            system, messages, tools, invoke_tool, tool_server_map, _ollama_client(),
-            on_event,
-            model=model, max_tokens=max_tokens, temperature=temperature,
-        )
-    return await _anthropic_chat(
-        system, messages, tools, invoke_tool, tool_server_map, on_event,
-        model=model, max_tokens=max_tokens, temperature=temperature,
-    )
+    except LLMConfigurationError:
+        raise
+    except Exception as exc:
+        raise LLMProviderError(_provider_error_message(provider, exc)) from exc
 
 
 # ── Result summarizer (for tool_result events) ────────────────────────────────

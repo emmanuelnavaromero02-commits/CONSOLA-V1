@@ -64,6 +64,7 @@ READ_ONLY_TOOLS = {
     "cartridge_get_run_logs", "cartridge_get_job_status",
     "cartridge_list_jobs", "cartridge_list_kbs",
     "generate_dag_code",
+    "autopilot_build_cartridge",
     "cartridge_self_check",
     "create_goal_run", "plan_goal_run", "execute_goal_run",
     "get_goal_run_status",
