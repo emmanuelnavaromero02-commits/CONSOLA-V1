@@ -1065,6 +1065,181 @@ async def test_changing_display_name_with_unallowlisted_aad_id_is_still_rejected
     run_turn.assert_not_awaited()
 
 
+# ── Adaptive Card approval flow (Feature 2) ──────────────────────────
+
+APPROVAL_MSG_ID = "00000000-0000-0000-0000-000000000777"
+
+
+def _submit_activity(intent: str, *, conv_id=MAPPING_CONV_ID, message_id=APPROVAL_MSG_ID, aad=AAD):
+    # Teams delivers Adaptive Card button presses as type=message with
+    # value populated and text empty. Mirror that shape exactly.
+    act = _dm_activity(text="", aad=aad)
+    act["value"] = {
+        "intent": intent,
+        "conversation_id": conv_id,
+        "message_id": message_id,
+    }
+    return act
+
+
+@pytest.mark.asyncio
+async def test_requires_approval_response_is_rendered_as_adaptive_card():
+    # When the copilot returns requires_approval=True, the Teams reply must
+    # be an Adaptive Card with Approve / Reject buttons (not just the
+    # legacy plain-text "approve from console" footer). The button payloads
+    # MUST carry the SAME conversation_id + message_id that
+    # copilot_service.approve_pending_action consumes — no parallel ids.
+    ctx, run_turn = _patch_backend()
+    with ctx:
+        service.copilot_service.run_turn.return_value = {
+            "reply": "Voy a borrar el dataset ventas_2022.",
+            "citations": [],
+            "requires_approval": True,
+            "message_id": APPROVAL_MSG_ID,
+            "pending_actions": [
+                {"bare_name": "postgres_drop_table", "tool": "postgres.drop_table",
+                 "server": "postgres", "risk_level": "destructive",
+                 "args": {"table": "ventas_2022"}},
+            ],
+        }
+        res = await service.handle_activity(_dm_activity(text="borra ventas_2022"), cfg=_cfg())
+    assert res.status == "ok"
+    activity = res.activity
+    assert activity and activity["type"] == "message"
+    atts = activity.get("attachments") or []
+    assert atts and atts[0]["contentType"] == "application/vnd.microsoft.card.adaptive"
+    card = atts[0]["content"]
+    assert card["type"] == "AdaptiveCard"
+    # Two actions: approve + reject, both Action.Submit, both carry the
+    # console conversation_id + the assistant message_id verbatim.
+    actions = card.get("actions") or []
+    assert len(actions) == 2
+    intents = {a["data"]["intent"] for a in actions}
+    assert intents == {"msteams.approval.approve", "msteams.approval.reject"}
+    for a in actions:
+        assert a["data"]["conversation_id"] == MAPPING_CONV_ID
+        assert a["data"]["message_id"] == APPROVAL_MSG_ID
+    # The args dict MUST NOT be serialised into the FactSet — the FactSet
+    # surfaces tool/server/risk only. The copilot's reply text is its own
+    # natural-language description and is a separate UX surface; we don't
+    # police the LLM's wording here.
+    factsets = [b for b in card["body"] if b.get("type") == "FactSet"]
+    assert factsets, "approval card must contain a FactSet summary"
+    factset_blob = repr(factsets)
+    # No raw dict-shaped echo of args.
+    assert "'table'" not in factset_blob and '"table"' not in factset_blob, (
+        "approval card FactSet leaked raw tool args"
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_button_routes_to_copilot_service_approve_pending_action():
+    # The Approve button must call EXACTLY copilot_service.approve_pending_action
+    # (no parallel approval surface), with the IDs from the button payload
+    # and the resolved console user dict.
+    ctx, run_turn = _patch_backend()
+    captured = {}
+    with ctx:
+        service.copilot_service.approve_pending_action = AsyncMock(
+            return_value={"reply": "Tabla eliminada"},
+        )
+        service.audit_service.record_event.side_effect = lambda **kw: captured.update(kw)
+        res = await service.handle_activity(
+            _submit_activity("msteams.approval.approve"), cfg=_cfg(),
+        )
+        # Assertions INSIDE the patch context (mocks are restored on exit).
+        service.copilot_service.approve_pending_action.assert_awaited_once()
+        kwargs = service.copilot_service.approve_pending_action.await_args.kwargs
+    assert res.status == "ok"
+    assert kwargs["conversation_id"] == MAPPING_CONV_ID
+    assert kwargs["message_id"] == APPROVAL_MSG_ID
+    assert kwargs["user"]["id"] == 42   # real console user dict from DB lookup
+    assert kwargs["user"]["role"] == "analyst"
+    # Audit: action=msteams.approval, route=msteams.approval.approve
+    assert captured.get("action") == "msteams.approval"
+    assert captured.get("status") == "ok"
+    assert captured.get("metadata", {}).get("route") == "msteams.approval.approve"
+    # Outcome card surfaced back to Teams.
+    atts = res.activity.get("attachments") or []
+    assert atts and atts[0]["contentType"] == "application/vnd.microsoft.card.adaptive"
+
+
+@pytest.mark.asyncio
+async def test_reject_button_audits_without_calling_approve():
+    # Rejection must NOT invoke copilot_service.approve_pending_action.
+    # It audits the decision and shows a rejected card. The pending row
+    # stays pending (operator can still resolve from the console UI).
+    ctx, run_turn = _patch_backend()
+    captured = {}
+    with ctx:
+        service.copilot_service.approve_pending_action = AsyncMock()
+        service.audit_service.record_event.side_effect = lambda **kw: captured.update(kw)
+        res = await service.handle_activity(
+            _submit_activity("msteams.approval.reject"), cfg=_cfg(),
+        )
+        service.copilot_service.approve_pending_action.assert_not_awaited()
+    assert res.status == "ok"
+    assert captured.get("action") == "msteams.approval"
+    assert captured.get("status") == "rejected"
+    assert captured.get("metadata", {}).get("route") == "msteams.approval.reject"
+
+
+@pytest.mark.asyncio
+async def test_approval_submit_re_runs_authorization_gates():
+    # An unallowlisted AAD id presenting a crafted button payload must be
+    # rejected — buttons are not privileged over text messages.
+    ctx, run_turn = _patch_backend()
+    with ctx:
+        service.copilot_service.approve_pending_action = AsyncMock()
+        res = await service.handle_activity(
+            _submit_activity(
+                "msteams.approval.approve",
+                aad="00000000-0000-0000-0000-000000000000",  # not in allowlist
+            ),
+            cfg=_cfg(),
+        )
+        service.copilot_service.approve_pending_action.assert_not_awaited()
+    assert res.status == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_unknown_intent_button_is_ignored_silently():
+    # A button submit with an intent we don't recognise must be audited and
+    # ignored — never raise, never reach the copilot.
+    ctx, run_turn = _patch_backend()
+    with ctx:
+        service.copilot_service.approve_pending_action = AsyncMock()
+        res = await service.handle_activity(
+            _submit_activity("msteams.approval.evil"), cfg=_cfg(),
+        )
+        service.copilot_service.approve_pending_action.assert_not_awaited()
+    assert res.status == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_approval_failure_renders_failed_card_not_500():
+    # If copilot_service.approve_pending_action raises (DB down, permission
+    # mismatch in the copilot, etc.), the channel must contain the error
+    # and surface a rejected card — never a 500 to Teams.
+    ctx, run_turn = _patch_backend()
+    captured = {}
+    with ctx:
+        service.copilot_service.approve_pending_action = AsyncMock(
+            side_effect=RuntimeError("approval failed: secret-internal-detail"),
+        )
+        service.audit_service.record_event.side_effect = lambda **kw: captured.update(kw)
+        res = await service.handle_activity(
+            _submit_activity("msteams.approval.approve"), cfg=_cfg(),
+        )
+    assert res.status == "error"
+    assert res.activity and res.activity["type"] == "message"
+    blob = repr(res.activity)
+    for needle in ("secret-internal-detail", "Traceback", "RuntimeError"):
+        assert needle not in blob, f"failed-card leaked {needle!r}"
+    assert captured.get("action") == "msteams.approval"
+    assert captured.get("status") == "error"
+
+
 def test_citation_label_is_length_capped():
     # A hostile copilot/LLM could return a 10KB citation title and bloat the
     # Teams reply past the ~4KB message body budget, causing silent drops or

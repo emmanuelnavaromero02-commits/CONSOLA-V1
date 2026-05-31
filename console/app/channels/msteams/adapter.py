@@ -55,6 +55,24 @@ def strip_mentions(text: str, mention_texts: list[str]) -> str:
     return out.strip()
 
 
+def adaptive_card_submit_value(activity: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the ``value`` payload when a Teams message is an Adaptive Card
+    ``Action.Submit`` (button press), else None.
+
+    Teams delivers card-button presses as ``type=message`` activities with an
+    empty ``text`` and a populated ``value`` object. We MUST detect them
+    before the empty-text gate fires, and route them to the approval handler
+    instead of the copilot. A non-dict value is treated as "not a submit"
+    (defensive: hostile clients can put anything there).
+    """
+    if not isinstance(activity, dict):
+        return None
+    val = activity.get("value")
+    if isinstance(val, dict) and val.get("intent"):
+        return val
+    return None
+
+
 def parse_activity(activity: dict[str, Any]) -> InboundTeamsEvent:
     """Collapse a raw Teams activity into transport-level facts."""
     if not isinstance(activity, dict):
@@ -178,13 +196,149 @@ def to_internal_request(
     )
 
 
-def from_copilot_response(resp: InternalCopilotResponse) -> dict[str, Any]:
+_APPROVAL_INTENT_APPROVE = "msteams.approval.approve"
+_APPROVAL_INTENT_REJECT = "msteams.approval.reject"
+_ADAPTIVE_CARD_CONTENT_TYPE = "application/vnd.microsoft.card.adaptive"
+
+
+def _approval_card(
+    *, conversation_id: str, message_id: str, pending: list[dict[str, Any]],
+    text: str,
+) -> dict[str, Any]:
+    """Build the Adaptive Card the bot posts when the copilot needs approval.
+
+    The card embeds the SAME identifiers the console UI uses to drive
+    ``copilot_service.approve_pending_action`` (conversation_id + message_id),
+    not a parallel approval namespace. Button payloads are signed implicitly
+    by Bot Framework JWT on the inbound invoke; the service still verifies
+    the AAD allowlist and the per-conversation ownership inside the copilot
+    (so a crafted payload cannot approve someone else's pending action).
+
+    We render only safe, structural fields (tool name + risk_level + a short
+    server hint). We DO NOT echo raw ``args`` — they can carry sensitive data
+    (column values, dataset rows). The operator approves by name, never by
+    raw payload preview.
+    """
+    facts: list[dict[str, str]] = []
+    for action in (pending or [])[:5]:
+        if not isinstance(action, dict):
+            continue
+        name = str(action.get("bare_name") or action.get("tool") or "tool")
+        risk = str(action.get("risk_level") or "")
+        server = str(action.get("server") or "")
+        value = name if not server else f"{name}  ·  {server}"
+        if risk:
+            value = f"{value}  ·  riesgo: {risk}"
+        facts.append({"title": "Acción:", "value": value[:200]})
+    if not facts:
+        facts.append({"title": "Acción:", "value": "(detalle no disponible)"})
+
+    body_text = (text or "").strip() or "El copiloto pide aprobación humana para continuar."
+
+    card: dict[str, Any] = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.4",
+        "body": [
+            {"type": "TextBlock", "text": "Aprobación requerida", "weight": "Bolder", "size": "Medium"},
+            {"type": "TextBlock", "text": body_text, "wrap": True},
+            {"type": "FactSet", "facts": facts},
+            {
+                "type": "TextBlock",
+                "text": (
+                    "Tu identidad de consola se valida en el servidor antes de "
+                    "ejecutar; rechazar audita la decisión pero no borra la "
+                    "acción pendiente (puedes resolverla también desde la consola)."
+                ),
+                "wrap": True, "isSubtle": True, "size": "Small",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Aprobar",
+                "style": "positive",
+                "data": {
+                    "intent": _APPROVAL_INTENT_APPROVE,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "Rechazar",
+                "style": "destructive",
+                "data": {
+                    "intent": _APPROVAL_INTENT_REJECT,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                },
+            },
+        ],
+    }
+    return {
+        "type": "message",
+        "attachments": [{
+            "contentType": _ADAPTIVE_CARD_CONTENT_TYPE,
+            "content": card,
+        }],
+    }
+
+
+def approval_outcome_card(*, status: str, summary: str | None = None) -> dict[str, Any]:
+    """Render an outcome card (approved / rejected / failed) that replaces
+    the approval prompt UX-wise. Plain text — no buttons — so a second
+    accidental tap cannot replay the action."""
+    if status == "approved":
+        head, color = "Acción aprobada", "good"
+    elif status == "rejected":
+        head, color = "Acción rechazada", "attention"
+    else:
+        head, color = "No se pudo procesar la aprobación", "warning"
+    body: list[dict[str, Any]] = [
+        {"type": "TextBlock", "text": head, "weight": "Bolder", "size": "Medium", "color": color},
+    ]
+    if summary:
+        body.append({"type": "TextBlock", "text": summary, "wrap": True, "isSubtle": True})
+    return {
+        "type": "message",
+        "attachments": [{
+            "contentType": _ADAPTIVE_CARD_CONTENT_TYPE,
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.4",
+                "body": body,
+            },
+        }],
+    }
+
+
+def from_copilot_response(
+    resp: InternalCopilotResponse,
+    *,
+    conversation_id: str | None = None,
+) -> dict[str, Any]:
     """Render the internal copilot response as a Teams ``message`` activity.
 
     Teams markdown is limited; we send text as ``textFormat: markdown``.
-    Citations become a compact footer. Adaptive cards / files are future
-    (Level 4) and intentionally not fabricated here.
+    Citations become a compact footer. When the copilot stages a pending
+    action (``requires_approval``), the response becomes an Adaptive Card
+    with Approve / Reject buttons instead of a plain text reply — see
+    ``_approval_card``.
     """
+    # Approval path: render the card if we have everything needed to route
+    # the button press back to copilot_service.approve_pending_action. Falls
+    # back to plain text when ids are missing rather than rendering a
+    # button-less card the user couldn't act on.
+    if resp.requires_approval and resp.requires_approval_message_id and conversation_id:
+        return _approval_card(
+            conversation_id=conversation_id,
+            message_id=resp.requires_approval_message_id,
+            pending=resp.pending_actions or [],
+            text=resp.text or "",
+        )
+
     text = resp.text or ""
     # Citations come from the copilot (DB / LLM extraction) and may be
     # hostile-shaped in edge cases (None entries, non-dict items). This

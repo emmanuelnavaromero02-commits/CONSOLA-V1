@@ -22,6 +22,7 @@ Teams  →  POST /api/msteams/messages  (router: app/routers/msteams.py)
 | 0 | Disabled (`MSTEAMS_ENABLED=false`) — ignores everything | ✅ |
 | 1 | Basic bot — allowlisted users DM the copilot, get a reply; mentions in channels | ✅ |
 | 2 | Allowlisted conversations — admin scopes users/teams/channels | ✅ |
+| 2 | Approval via Adaptive Card (Approve / Reject buttons in Teams) | ✅ |
 | 3 | Post-meeting — read transcripts, attendance, agreements/tasks/risks | 🚧 scaffolded, OFF, fails closed |
 | 4 | Advanced — files, SharePoint/OneDrive, adaptive cards, proactive alerts | 🔌 interfaces only |
 
@@ -137,6 +138,33 @@ the copilot. No welcome / typing UX yet — Level-1 completion items:
 | `typing` | Ignored | Send typing back (Level-1) |
 | `messageReaction` | Ignored | Audit/react (Level-2) |
 | `meeting`-context messages | Routed through group policy; transcript ingestion fails closed | Post-meeting ingestion (Level-3) |
+
+### Approval via Adaptive Card (Level-2 completion)
+
+When the copilot returns `requires_approval=True` (a destructive tool needs
+human sign-off), the bot answers with an **Adaptive Card** containing:
+
+- A short description of the pending action (tool name + risk level + server
+  — never the raw `args` dict, which can carry sensitive payload data),
+- **Aprobar** / **Rechazar** buttons.
+
+Tapping a button sends a Bot Framework `Action.Submit` back to the same
+webhook. The channel re-runs the SAME authorization gates (Bot Framework
+JWT, tenant/dm/group allowlist, console-user resolution) and then:
+
+- **Aprobar** → calls `copilot_service.approve_pending_action(conversation_id,
+  message_id, user)` — the **same** function the console UI calls. There is
+  no parallel approval surface; conversation ownership is enforced inside
+  the copilot, so a forged payload referencing someone else's pending
+  action is rejected there.
+- **Rechazar** → audits the rejection (`action="msteams.approval"`,
+  `status="rejected"`) but does NOT mutate the pending row from the
+  channel (state changes belong to the copilot service). The action stays
+  pending and can also be resolved from the console UI.
+
+Audit signal: `action="msteams.approval"`, `metadata.route` is
+`msteams.approval.approve` or `msteams.approval.reject`,
+`metadata.approval_message_id` carries the pending-message UUID.
 
 ### Reply threading (Level-1 completion item)
 

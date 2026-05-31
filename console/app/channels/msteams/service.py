@@ -58,10 +58,19 @@ async def handle_activity(
         await _audit(None, None, "bad_request", error_type="parse_failed")
         return ChannelResult(status="bad_request", detail="bad request")
 
-    # Only handle message activities with real text. Everything else
-    # (typing, conversationUpdate, reactions…) is acknowledged silently.
+    # Only handle message activities. Everything else (typing,
+    # conversationUpdate, reactions…) is acknowledged silently.
     if event.activity_type != "message":
         return ChannelResult(status="ignored", detail="non_message_activity")
+
+    # ── Adaptive Card button presses ──
+    # Teams delivers card buttons as ``type=message`` with ``value`` populated
+    # and empty ``text``. Route them BEFORE the empty-text guard so the
+    # approval flow doesn't get swallowed as "ignored: empty_text".
+    submit_value = adapter.adaptive_card_submit_value(activity)
+    if submit_value is not None:
+        return await _handle_approval_submit(event, cfg, submit_value)
+
     if not event.text.strip():
         await _audit(event, None, "ignored", error_type="empty_text")
         return ChannelResult(status="ignored", detail="empty_text")
@@ -138,16 +147,14 @@ async def handle_activity(
         return ChannelResult(status="error", activity=adapter.error_activity(), detail="error")
 
     resp = _to_internal_response(turn)
-    activity_out = adapter.from_copilot_response(resp)
+    activity_out = adapter.from_copilot_response(resp, conversation_id=conversation_id)
     await _audit(event, ctx, "ok", route="copilot.run_turn")
     return ChannelResult(status="ok", activity=activity_out)
 
 
 def _to_internal_response(turn: dict[str, Any]) -> InternalCopilotResponse:
     text = str(turn.get("reply") or "")
-    if turn.get("requires_approval"):
-        text = (text + "\n\n_Esta acción requiere aprobación humana y debe aprobarse "
-                "desde la consola; Teams no aprueba acciones en esta versión._").strip()
+    requires_approval = bool(turn.get("requires_approval"))
     raw_citations = turn.get("citations")
     if isinstance(raw_citations, list):
         # Pydantic strictly validates ``list[dict[str, Any]]`` — a hostile
@@ -157,7 +164,19 @@ def _to_internal_response(turn: dict[str, Any]) -> InternalCopilotResponse:
         citations: list[dict[str, Any]] | None = [c for c in raw_citations if isinstance(c, dict)]
     else:
         citations = None
-    return InternalCopilotResponse(text=text, citations=citations)
+    raw_pending = turn.get("pending_actions") if requires_approval else None
+    pending: list[dict[str, Any]] | None = None
+    if isinstance(raw_pending, list):
+        pending = [a for a in raw_pending if isinstance(a, dict)]
+    message_id_raw = turn.get("message_id") if requires_approval else None
+    message_id = str(message_id_raw) if message_id_raw else None
+    return InternalCopilotResponse(
+        text=text,
+        citations=citations,
+        requires_approval=requires_approval,
+        requires_approval_message_id=message_id,
+        pending_actions=pending,
+    )
 
 
 # ── Conversation continuity (Teams conversation → console conversation) ──
@@ -225,6 +244,175 @@ async def _ensure_conversation(event: InboundTeamsEvent, console_user: dict) -> 
 class ConversationFallbackError(RuntimeError):
     """Raised by _ensure_conversation when even the ad-hoc fallback fails.
     Distinguished from a generic copilot turn failure for audit clarity."""
+
+
+# ── Adaptive Card approval flow ──
+
+# Valid intents emitted by ``adapter._approval_card``. Any other intent on a
+# Card Submit is an unknown/forged button — we audit and ignore (never raise).
+_APPROVAL_INTENT_APPROVE = "msteams.approval.approve"
+_APPROVAL_INTENT_REJECT = "msteams.approval.reject"
+
+
+async def _handle_approval_submit(
+    event: InboundTeamsEvent,
+    cfg: MsTeamsConfig,
+    value: dict[str, Any],
+) -> ChannelResult:
+    """Process an Adaptive Card button press from the approval prompt.
+
+    Re-runs the SAME gates as a regular message (tenant / dm|group policy,
+    console-user mapping) so the button cannot bypass authorization, then
+    delegates to ``copilot_service.approve_pending_action`` — the SAME
+    service entrypoint the console UI calls. There is no parallel approval
+    surface; the channel only renders the button and routes the press.
+
+    Trust model for the button payload:
+      * ``conversation_id`` / ``message_id`` come from the client and MUST
+        NOT be trusted on their own. ``approve_pending_action`` enforces
+        conversation-ownership (``conv.user_id == user.id``), so an attacker
+        crafting a payload for someone else's pending action is rejected
+        inside the copilot service. The Teams identity is still established
+        by the Bot Framework JWT + AAD allowlist.
+      * ``intent`` is whitelisted here; any other value is audited as a
+        forged button and ignored.
+    """
+    intent = str(value.get("intent") or "")
+    conv_id = str(value.get("conversation_id") or "")
+    msg_id = str(value.get("message_id") or "")
+
+    if intent not in {_APPROVAL_INTENT_APPROVE, _APPROVAL_INTENT_REJECT}:
+        await _audit(event, None, "ignored", error_type="approval_unknown_intent")
+        return ChannelResult(status="ignored", detail="approval_unknown_intent")
+    if not (conv_id and msg_id):
+        await _audit(event, None, "bad_request", error_type="approval_missing_ids")
+        return ChannelResult(status="bad_request", detail="bad_request")
+
+    # Same authorization gates as for messages — a Card button is not
+    # privileged over a text message.
+    decision, ctx = security.authorize(event, cfg)
+    if not decision.allowed:
+        await _audit(event, ctx, "rejected", error_type=decision.reason)
+        return ChannelResult(status="unauthorized", detail="unauthorized")
+
+    email = security.resolve_console_email(event, cfg)
+    if not email:
+        await _audit(event, ctx, "rejected", error_type="no_console_mapping")
+        return ChannelResult(status="unauthorized", detail="unauthorized")
+
+    try:
+        console_user = await auth.get_user_by_email(email)
+    except Exception:
+        logger.warning("msteams: console user lookup failed", exc_info=True)
+        await _audit(event, ctx, "error", error_type="user_lookup_failed")
+        return ChannelResult(status="error", activity=adapter.error_activity(), detail="error")
+    if not console_user or not console_user.get("id"):
+        await _audit(event, ctx, "rejected", error_type="console_user_not_found")
+        return ChannelResult(status="unauthorized", detail="unauthorized")
+    if not console_user.get("is_active", True):
+        await _audit(event, ctx, "rejected", error_type="console_user_inactive")
+        return ChannelResult(status="unauthorized", detail="unauthorized")
+
+    try:
+        ctx.console_user_id = int(console_user["id"])
+    except (TypeError, ValueError):
+        await _audit(event, ctx, "error", error_type="invalid_user_id")
+        return ChannelResult(status="error", activity=adapter.error_activity(), detail="error")
+    ctx.console_user_email = console_user.get("email")
+
+    # ── Reject branch: audit-only. No copilot side-effects; the pending row
+    # stays pending so an operator can still resolve it from the UI. We do
+    # NOT mark the row "rejected" from here because doing so would push a
+    # state-mutation API into the channel (it'd need its own DB write); the
+    # console UI is the system of record for that side-effect.
+    if intent == _APPROVAL_INTENT_REJECT:
+        await audit_service_record(
+            event, ctx, status="rejected", route="msteams.approval.reject",
+            extra={"approval_conversation_id": conv_id, "approval_message_id": msg_id},
+        )
+        return ChannelResult(
+            status="ok",
+            activity=adapter.approval_outcome_card(
+                status="rejected",
+                summary="Pendiente sin ejecutar. Puedes resolverla desde la consola.",
+            ),
+        )
+
+    # ── Approve branch: route through copilot_service.approve_pending_action
+    # The same function the console UI calls. Conversation ownership is
+    # enforced INSIDE that function — a button payload referencing another
+    # user's conversation is rejected there.
+    try:
+        result = await copilot_service.approve_pending_action(
+            conversation_id=conv_id,
+            message_id=msg_id,
+            user=console_user,
+        )
+    except Exception as exc:
+        logger.warning(
+            "msteams: approval routing failed: %s", type(exc).__name__, exc_info=True,
+        )
+        await audit_service_record(
+            event, ctx, status="error", route="msteams.approval.approve",
+            extra={"approval_message_id": msg_id, "error_type": "approval_failed"},
+        )
+        return ChannelResult(
+            status="error",
+            activity=adapter.approval_outcome_card(
+                status="failed",
+                summary="No se pudo registrar la aprobación. Inténtalo desde la consola.",
+            ),
+            detail="error",
+        )
+
+    await audit_service_record(
+        event, ctx, status="ok", route="msteams.approval.approve",
+        extra={"approval_message_id": msg_id},
+    )
+    # Surface a short tail of the copilot's reply (if any) so the user sees
+    # the immediate outcome, without bringing the full conversation into
+    # the card.
+    summary = ""
+    if isinstance(result, dict):
+        summary = str(result.get("reply") or "")[:300]
+    return ChannelResult(
+        status="ok",
+        activity=adapter.approval_outcome_card(status="approved", summary=summary or None),
+    )
+
+
+async def audit_service_record(
+    event: InboundTeamsEvent,
+    ctx: PermissionsContext,
+    *, status: str, route: str, extra: dict[str, Any],
+) -> None:
+    """Audit an approval-flow decision with the same envelope as ``_audit``
+    plus the approval-specific keys. Errors are swallowed (audit must never
+    break a webhook reply)."""
+    try:
+        metadata: dict[str, Any] = {
+            "channel": "msteams",
+            "tenant_id": event.tenant_id,
+            "teams_user_id": event.aad_object_id or event.user_id,
+            "teams_user_name": event.user_name,
+            "conversation_id": event.conversation_id,
+            "message_id": event.message_id,
+            "mode": event.mode(),
+            "route": route,
+        }
+        metadata.update(extra or {})
+        await audit_service.record_event(
+            user_id=ctx.console_user_id,
+            email=ctx.console_user_email,
+            action="msteams.approval",
+            resource_type="msteams",
+            resource_id=event.conversation_id,
+            status=status,
+            metadata=metadata,
+            conversation_id=None,
+        )
+    except Exception:
+        logger.warning("msteams: approval audit write failed", exc_info=True)
 
 
 # ── Audit (reuses the platform audit_service; no new table) ──

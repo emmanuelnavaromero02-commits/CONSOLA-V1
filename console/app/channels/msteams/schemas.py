@@ -87,6 +87,15 @@ class InternalCopilotResponse(BaseModel):
     files: list[dict[str, Any]] | None = None
     citations: list[dict[str, Any]] | None = None
     error: str | None = None
+    # When the copilot returns ``requires_approval=True`` it stages one or
+    # more pending tool calls on the assistant message identified by
+    # ``requires_approval_message_id``. The Teams adapter uses these to
+    # render an Adaptive Card with Approve / Reject buttons that route back
+    # to ``copilot_service.approve_pending_action`` (same path the console
+    # UI calls) — never a parallel approval surface.
+    requires_approval: bool = False
+    requires_approval_message_id: str | None = None
+    pending_actions: list[dict[str, Any]] | None = None
 
 
 class ChannelResult(BaseModel):
