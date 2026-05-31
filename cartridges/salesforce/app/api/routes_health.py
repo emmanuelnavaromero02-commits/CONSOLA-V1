@@ -24,7 +24,7 @@ async def health(request: Request):
                 "ok": False,
                 "service": _SERVICE,
                 "reason": "startup_failed",
-                "startup_errors": errors,
+                "startup_errors_count": len(errors),
             },
             status_code=503,
         )

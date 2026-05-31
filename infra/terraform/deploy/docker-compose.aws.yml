@@ -593,6 +593,7 @@ services:
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
+      SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
     ports:
       - "8082:8080"
     volumes:
@@ -663,6 +664,7 @@ services:
       SAP_S4HANA_URL:         "${SAP_S4HANA_URL:-http://sap-s4hana:8204}"
       SAP_SUCCESSFACTORS_URL: "${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}"
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
+      SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
     volumes:
       - /opt/modecissions/airflow/dags:/opt/airflow/dags
       - airflow_logs:/opt/airflow/logs

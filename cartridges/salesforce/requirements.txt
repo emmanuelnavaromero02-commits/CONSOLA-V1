@@ -1,6 +1,6 @@
 # v1.43.2 (DevOps R1 follow-up): see console/requirements.txt.
 fastapi==0.136.1
-starlette>=1.0.1
+starlette>=1.0.1,<2.0
 # v1.43.4 — See cartridges/sap_hcm/requirements.txt for the uvicorn
 # floor bump (fastmcp 3.x server extras require uvicorn >= 0.35).
 uvicorn[standard]>=0.35.0,<1.0

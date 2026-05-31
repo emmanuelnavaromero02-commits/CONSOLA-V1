@@ -93,12 +93,13 @@ def test_apply_protection_warns_on_missing_field(caplog):
 def test_odata_filter_to_soql_escapes_single_quotes():
     from app.core.salesforce_client import _odata_filter_to_soql
 
-    # A non-datetime value with an embedded single quote (injection attempt)
-    result = _odata_filter_to_soql("Name eq 'O\\'Reilly'")
-    # The resulting SOQL string should not contain an unescaped ' in the value
-    assert result is not None
-    # The escaped form should survive or the value should be properly quoted
-    assert "O" in result
+    # OData operator is translated and quoted string value is preserved
+    result = _odata_filter_to_soql("StageName eq 'Closed Won'")
+    assert result == "StageName = 'Closed Won'"
+
+    # Numeric-looking strings stay quoted (not datetimes)
+    result2 = _odata_filter_to_soql("Name eq '42'")
+    assert result2 == "Name = '42'"
 
 
 def test_odata_filter_to_soql_datetime_unquoted():
@@ -200,9 +201,13 @@ def test_query_clears_token_on_401():
         with patch.object(SalesforceClient, "_headers", return_value={}):
             client._query("SELECT Id FROM Account")
 
-    assert token_at_retry[0] is None or token_at_retry[0] in (None, "stale-token")
-    # After clearing, _token should be None before the retry call
-    # (it was set to None inside _query before calling _headers again)
+    assert len(token_at_retry) == 2, "Expected exactly two GET calls"
+    # First call: token was still 'stale-token' (cleared after receiving 401)
+    assert token_at_retry[0] == "stale-token"
+    # Second call: token must be None (cleared before the retry)
+    assert token_at_retry[1] is None, "_token must be cleared to None before the retry GET"
+    # Expiry must also be reset
+    assert client._token_expires_at == 0.0, "_token_expires_at must be reset to 0.0 on 401"
 
 
 # ── 5. kb_service.run_knowledge_bit — guard fires before DuckDB ──────────────

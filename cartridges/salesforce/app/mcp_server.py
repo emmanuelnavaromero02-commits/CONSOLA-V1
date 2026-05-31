@@ -19,7 +19,8 @@ from app.core.sql_guard import validate_kb_sql
 from app.services.catalog_service import get_all_entities, get_all_kbs, get_entity_config
 from app.services.duckdb_service import _get_duckdb_connection
 from app.services.extraction_service import run_entity
-from app.services.kb_service import run_knowledge_bit, get_kb_runs
+from app.services.kb_service import run_all_knowledge_bits, run_knowledge_bit, get_kb_runs
+from app.services.runlog_service import get_last_run_status
 from app.services.watermark_service import get_watermark, list_watermarks
 
 
@@ -121,6 +122,40 @@ def get_watermarks() -> list[dict[str, Any]]:
         return list_watermarks()
     except Exception as exc:
         return [{"error": str(exc)}]
+
+
+# ── Tool 1c: get_entity_status ───────────────────────────────────────────────
+
+@mcp.tool()
+def get_entity_status(entity: str) -> dict[str, Any]:
+    """
+    Return the extraction status for a specific Salesforce entity.
+    Includes last run metadata, current watermark, and entity configuration.
+
+    Args:
+        entity: Entity name as listed by list_entities (e.g. "Opportunity", "Contact")
+    """
+    try:
+        entity = _validate_identifier(entity, "entity")
+    except ValueError as exc:
+        return {"error": str(exc)}
+    config = get_entity_config(entity)
+    if not config:
+        return {"error": f"Entity '{entity}' not found"}
+    wf = config.get("watermark_field")
+    last_runs = get_last_run_status(entity_name=entity) or []
+    last_run = last_runs[0] if last_runs else {}
+    return {
+        "entity":              entity,
+        "mode":                config.get("mode", "full"),
+        "enabled":             config.get("enabled", True),
+        "watermark_field":     wf,
+        "last_watermark":      get_watermark(entity) if wf else None,
+        "last_run_status":     last_run.get("status"),
+        "last_run_id":         last_run.get("run_id"),
+        "last_run_started_at": last_run.get("started_at"),
+        "last_run_records":    last_run.get("records_extracted"),
+    }
 
 
 # ── Tool 2: get_schema ────────────────────────────────────────────────────────
@@ -338,6 +373,22 @@ def run_kb(kb_id: str) -> dict[str, Any]:
         return run_knowledge_bit(kb_id)
     except Exception as exc:
         return {"kb_id": kb_id, "status": "failed", "error": str(exc)}
+
+
+# ── Tool 7b: run_all_kb ──────────────────────────────────────────────────────
+
+@mcp.tool()
+def run_all_kb() -> list[dict[str, Any]]:
+    """
+    Execute ALL registered Knowledge Bits in sequence.
+    Each KB's SQL runs against Bronze Parquet data; results are written to
+    Silver Parquet (MinIO) and PostgreSQL.
+    Returns a list of per-KB results with status, records, and storage_uri.
+    """
+    try:
+        return run_all_knowledge_bits()
+    except Exception as exc:
+        return [{"status": "failed", "error": str(exc)}]
 
 
 # ── Tool 8: query_kb ─────────────────────────────────────────────────────────
