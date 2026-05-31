@@ -80,6 +80,26 @@ def test_apps_reference_existing_datasets():
             )
 
 
+def test_all_entities_have_silver_datasets():
+    """Every entity in entities.yaml must have a corresponding silver SQL file.
+
+    Guards against the case where a new entity is added to entities.yaml but
+    its salesforce_{entity}_latest.sql file is omitted — which would make any
+    gold query that JOINs that entity silently unavailable.
+    """
+    data = yaml.safe_load(ENTITIES_YAML.read_text(encoding="utf-8"))
+    entities = data["entities"]
+    assert len(entities) == 14, f"expected 14 entities, got {len(entities)}"
+    datasets_dir = CART / "datasets"
+    for e in entities:
+        name = e["entity"]
+        expected = datasets_dir / f"salesforce_{name.lower()}_latest.sql"
+        assert expected.exists(), (
+            f"Entity {name!r} declared in entities.yaml but missing silver dataset "
+            f"{expected.name}. Create the file to complete the medallion stack."
+        )
+
+
 def test_agent_gold_and_kb_references_exist():
     seed = CART_SEED.read_text(encoding="utf-8")
     kb_ids = {

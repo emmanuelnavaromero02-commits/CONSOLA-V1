@@ -36,6 +36,7 @@ _CARTRIDGE_PORTS = {
     "sap_hcm": 8202,
     "sap_successfactors": 8203,
     "sap_s4hana": 8204,
+    "salesforce": 8205,
 }
 
 
