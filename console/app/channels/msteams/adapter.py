@@ -202,6 +202,11 @@ def from_copilot_response(resp: InternalCopilotResponse) -> dict[str, Any]:
                 or c.get("source")
                 or f"fuente {i}"
             )
+            # Cap per-label length so a hostile/garbage citation title can't
+            # bloat the reply past Teams' message-size budget (~4 KB for the
+            # plain-text body). 200 chars is well above realistic dataset /
+            # tool / entity names.
+            label = str(label)[:200]
             refs.append(f"[{i}] {label}")
         if refs:
             text = f"{text}\n\n---\n" + "  ·  ".join(refs)

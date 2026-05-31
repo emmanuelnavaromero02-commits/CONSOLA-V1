@@ -20,6 +20,8 @@ serviceUrl — a documented Level-1 completion item (see channel README).
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Request
@@ -41,11 +43,29 @@ WEBHOOK_PATH = "/api/msteams/messages"
 # allocating multi-GB before parsing.
 _MAX_BODY_BYTES = 1 * 1024 * 1024
 
+# Hard timeout for receiving the request body. Defeats slowloris-style attacks
+# (chunked transfer with drip-fed bytes) that bypass the Content-Length cap
+# because the header is absent. 15 s is well above realistic Bot Framework
+# latency (sub-second) but tight enough to free the worker quickly under
+# attack. Without this cap, a single hostile connection can pin a worker
+# until socket timeout (potentially minutes).
+_BODY_READ_TIMEOUT = 15.0
+
 router = APIRouter(prefix="/api/msteams", tags=["Microsoft Teams"])
 
 
 def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
+    # Delegate to the platform-wide proxy-aware helper so the Teams webhook
+    # sees the same client IP that the rate-limit middleware uses. Defining
+    # a local request.client.host shortcut would key audit + downstream
+    # services on the REVERSE-PROXY IP instead of the real sender — a real
+    # divergence found in round-2 audit. Import inline to avoid a circular
+    # import at module load (main imports the router).
+    from app.main import _client_ip as _resolve
+    try:
+        return _resolve(request)
+    except Exception:
+        return request.client.host if request.client else None
 
 
 @router.post("/messages")
@@ -72,8 +92,23 @@ async def teams_webhook(request: Request) -> Response:
     if declared_len and declared_len.isdigit() and int(declared_len) > _MAX_BODY_BYTES:
         return JSONResponse({"status": "bad_request"}, status_code=413)
 
+    # Read the body with a hard timeout + post-read size check. Content-Length
+    # can be omitted (chunked encoding) — without a timeout an attacker can
+    # drip-feed bytes and pin a worker until the OS socket gives up. The size
+    # check after reading catches over-cap bodies that hid behind a missing
+    # Content-Length.
     try:
-        activity = await request.json()
+        raw = await asyncio.wait_for(request.body(), timeout=_BODY_READ_TIMEOUT)
+    except asyncio.TimeoutError:
+        return JSONResponse({"status": "bad_request"}, status_code=408)
+    except Exception:
+        return JSONResponse({"status": "bad_request"}, status_code=400)
+
+    if len(raw) > _MAX_BODY_BYTES:
+        return JSONResponse({"status": "bad_request"}, status_code=413)
+
+    try:
+        activity = json.loads(raw or b"{}")
     except Exception:
         # Malformed body — safe, generic, no echo of the payload.
         return JSONResponse({"status": "bad_request"}, status_code=400)

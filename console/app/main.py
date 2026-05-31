@@ -1040,7 +1040,7 @@ async def _rate_limit_api_surface(request: Request, path: str, user: dict | None
     if _rate_limit_disabled():
         return
     matched = None
-    for prefix in ("/api/copilot", "/api/agents", "/api/mcp", "/studio/import", "/api/explorer"):
+    for prefix in ("/api/copilot", "/api/agents", "/api/mcp", "/studio/import", "/api/explorer", "/api/msteams"):
         if path == prefix or path.startswith(prefix + "/"):
             matched = prefix
             break

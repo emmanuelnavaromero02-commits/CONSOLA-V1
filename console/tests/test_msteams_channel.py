@@ -436,6 +436,35 @@ def test_webhook_rejects_oversized_body_before_parsing():
     assert resp.status_code == 413
 
 
+@pytest.mark.asyncio
+async def test_webhook_body_timeout_returns_408_not_pinned_forever():
+    # Slowloris regression: a hostile client can omit Content-Length and
+    # drip-feed the body forever; without a read timeout the worker would be
+    # pinned until the OS gives up. The router wraps request.body() in
+    # asyncio.wait_for(_BODY_READ_TIMEOUT). Drive the handler directly with
+    # a request whose .body() coroutine hangs and confirm the 408 path fires.
+    import asyncio as _asyncio
+    from fastapi import Request
+    from app.routers import msteams as r
+
+    async def _hang():
+        await _asyncio.sleep(60)
+        return b"{}"
+
+    scope = {
+        "type": "http", "method": "POST", "path": "/api/msteams/messages",
+        "headers": [], "query_string": b"", "client": ("127.0.0.1", 0),
+        "app": None, "raw_path": b"/api/msteams/messages", "root_path": "",
+        "scheme": "http", "server": ("test", 80),
+    }
+    req = Request(scope)
+    req.body = _hang  # type: ignore[assignment]
+    with patch.object(r, "load_config", return_value=_cfg()), \
+         patch.object(r, "_BODY_READ_TIMEOUT", 0.05):
+        resp = await r.teams_webhook(req)
+    assert resp.status_code == 408
+
+
 def test_webhook_refuses_jwt_disabled_in_production(monkeypatch):
     client, r = _router_client()
     monkeypatch.setenv("APP_ENV", "production")
@@ -446,11 +475,21 @@ def test_webhook_refuses_jwt_disabled_in_production(monkeypatch):
 
 
 def test_webhook_path_is_rate_limited_in_main_config():
-    # Guard the rate-limit registration — without an entry the public webhook
-    # could exhaust the auth.pool (max_size=4) under load.
+    # Guard the rate-limit wiring at BOTH layers: the RATE_LIMITS dict
+    # registration AND the prefix-matching tuple inside
+    # _rate_limit_api_surface. The original wave-2 test only checked the
+    # dict — round-2 audit caught that the prefix tuple was missing
+    # ``/api/msteams``, so the registration was silently dead config.
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text(encoding="utf-8")
     assert '"/api/msteams"' in src and "RATE_LIMITS" in src
+    # _rate_limit_api_surface iterates a hard-coded tuple of prefixes. The
+    # tuple MUST contain "/api/msteams" or the limit is never applied.
+    surface = src.split("_rate_limit_api_surface", 1)[1].split("def ", 1)[0]
+    assert '"/api/msteams"' in surface, (
+        "_rate_limit_api_surface prefix tuple missing /api/msteams — "
+        "rate-limit registration is dead config without it"
+    )
 
 
 # ── Wave-1 audit regressions ──────────────────────────────────────────
@@ -982,6 +1021,80 @@ def test_status_endpoint_requires_console_session():
     assert any("permission" in n.lower() or "authenticated" in n.lower() for n in all_deps), (
         f"/api/msteams/status missing console-auth dependency; saw: {all_deps}"
     )
+
+
+def test_citation_label_is_length_capped():
+    # A hostile copilot/LLM could return a 10KB citation title and bloat the
+    # Teams reply past the ~4KB message body budget, causing silent drops or
+    # truncation. Round-2 audit flagged the unbounded label. Cap at 200 chars.
+    from app.channels.msteams.schemas import InternalCopilotResponse
+    long_title = "x" * 5000
+    resp = InternalCopilotResponse(text="ok", citations=[{"title": long_title}])
+    out = adapter.from_copilot_response(resp)
+    # The 200-char cap means the rendered text contains at most ~200 chars of
+    # the title (plus brackets/index); definitely well under the 5000.
+    assert long_title not in out["text"]
+    assert "x" * 200 in out["text"]  # the cap is exactly 200
+
+
+def test_authorize_positive_decisions_carry_expected_reason():
+    # Round-2 audit: positive authorize() outcomes were only checked as
+    # ``allowed is True`` — a future mis-mapping of reason strings (e.g. a
+    # DM allowlist hit reported as ``dm_open``) would go undetected. Pin
+    # the reason for each happy-path branch.
+    from app.channels.msteams.schemas import InboundTeamsEvent
+    # DM allowlist hit:
+    ev_dm = adapter.parse_activity(_dm_activity())
+    d, _ = security.authorize(ev_dm, _cfg())
+    assert d.allowed and d.reason == "dm_allowlisted"
+    # DM open:
+    d, _ = security.authorize(ev_dm, _cfg(dm_policy="open", allowed_users=()))
+    assert d.allowed and d.reason == "dm_open"
+    # Group allowlist hit (channel + mention):
+    ev_ch = adapter.parse_activity(_channel_activity())
+    d, _ = security.authorize(ev_ch, _cfg())
+    assert d.allowed and d.reason == "group_allowlisted"
+    # Group open (channel + mention, no allowlists needed):
+    d, _ = security.authorize(ev_ch, _cfg(group_policy="open", allowed_users=()))
+    assert d.allowed and d.reason == "group_open"
+
+
+def test_jwt_invalid_issuer_uses_distinct_reason():
+    # Round-2 audit: tests asserted allowed=False but not the reason for
+    # each jwt_* branch. Pin the unknown-issuer reason so a future swap
+    # with a different rejection path is caught.
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({
+        "iss": "https://evil.example.com",
+        "aud": "app-123",
+        "exp": int(time.time()) + 3600,
+    })
+    d = security.verify_jwt(tok, cfg)
+    assert d.allowed is False and d.reason == "jwt_invalid_issuer"
+
+
+def test_jwt_decode_failed_on_garbage_token():
+    # A malformed JWT (random base64) must trigger jwt_decode_failed, not
+    # any of the claim-validation reasons. Pin the distinct reason.
+    cfg = _cfg(jwt_mode="claims")
+    d = security.verify_jwt("Bearer not.a.jwt", cfg)
+    assert d.allowed is False and d.reason == "jwt_decode_failed"
+
+
+def test_user_map_warning_does_not_log_email_values(caplog):
+    # PII regression: a duplicate-key misconfig used to log the conflicting
+    # emails in plaintext, leaking PII into application logs every parse.
+    # The warning must mention the AAD key but redact email addresses.
+    import logging as _logging
+    raw = "aad-1=keep@org.com,aad-1=other@org.com"
+    with caplog.at_level(_logging.WARNING, logger="msteams.config"):
+        config._parse_user_map(raw)
+    blob = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "duplicate" in blob.lower()
+    assert "keep@org.com" not in blob, "duplicate-key warning leaked an email"
+    assert "other@org.com" not in blob, "duplicate-key warning leaked an email"
+    # The AAD key may be in the warning (operator needs it to find the typo).
 
 
 def test_manifest_does_not_overclaim_file_support_or_member_read():

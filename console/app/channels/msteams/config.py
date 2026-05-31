@@ -111,9 +111,14 @@ def _parse_user_map(raw: str) -> dict[str, str]:
         if not (key and val):
             continue
         if key in out and out[key] != val:
+            # PII hygiene: do NOT log the conflicting email values. Emails are
+            # personal identifiers (GDPR); a duplicate-key misconfig would
+            # otherwise leak BOTH mapped emails into application logs every
+            # time the config is parsed. The AAD key alone is enough for an
+            # operator to find and fix the typo in MSTEAMS_USER_MAP.
             _logger.warning(
-                "msteams: duplicate MSTEAMS_USER_MAP key %r; first mapping kept (%r), discarding %r",
-                key, out[key], val,
+                "msteams: duplicate MSTEAMS_USER_MAP key %r; first mapping kept (emails redacted)",
+                key,
             )
             continue
         out.setdefault(key, val)

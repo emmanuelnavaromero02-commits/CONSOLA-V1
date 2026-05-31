@@ -41,6 +41,12 @@ All variables are documented in `infra/.env.example`. The essentials:
 | `MSTEAMS_USER_MAP` | empty | `aadObjectId=email,…` → console user. |
 | `MSTEAMS_DEFAULT_USER_EMAIL` | empty | Fallback console service account for allowed senders. |
 | `MSTEAMS_GRAPH_ENABLED` / `MSTEAMS_TRANSCRIPTS_ENABLED` | `false` | Level 3 gates. |
+| `MSTEAMS_SHAREPOINT_SITE_ID` | empty | Level-4 scaffold (files/SharePoint). Unused in v0.1. |
+
+The admin `GET /api/msteams/status` endpoint requires a console session AND
+the `settings.read` permission (admin / owner / security_admin /
+workspace_admin roles). Operators without it get a generic 403; the
+response never contains secrets (only counts / booleans).
 
 ## Local setup & testing
 
