@@ -21,6 +21,8 @@ def briefing_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import briefing_v2 as mod
+    from app.services._copilot_helpers import reset_table_cache
+    reset_table_cache()
     return mod
 
 
@@ -93,7 +95,7 @@ def test_briefing_v2_enriches_and_sorts(briefing_mod, monkeypatch):
     monkeypatch.setattr(briefing_mod.proactive_service, "briefing_for_user", fake_briefing)
     monkeypatch.setattr(briefing_mod.watchdog_registry, "relevant_watchdogs", fake_match)
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         briefing_mod.briefing_v2_for_user(user_id=1, limit=6)
     )
     assert len(out) == 2

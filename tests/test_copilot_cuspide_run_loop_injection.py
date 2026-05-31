@@ -99,7 +99,7 @@ def test_run_loop_injects_lessons_block_into_system_prompt(
         fake_lessons,
     )
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         copilot_mod._run_loop(
             conversation_id="11111111-1111-1111-1111-111111111111",
             user={"id": 1, "email": "u@x", "active_workspace_id": None,

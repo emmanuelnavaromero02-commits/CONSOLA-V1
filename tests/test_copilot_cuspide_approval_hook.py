@@ -35,6 +35,8 @@ def lessons_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import lessons_service as mod
+    from app.services._copilot_helpers import reset_table_cache
+    reset_table_cache()
     return mod
 
 
@@ -73,7 +75,7 @@ def test_record_lesson_from_approval_writes_expected_row(lessons_mod, monkeypatc
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
     # Simulate the contract used inside copilot_service.approve_pending_action.
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.record_lesson_from_approval(
             user_id=42,
             workspace_id="b1f1c1b0-1111-2222-3333-444444444444",
@@ -91,7 +93,7 @@ def test_record_lesson_from_decline_writes_expected_row(lessons_mod, monkeypatch
     fake._fetchrow_queue = [FakeRecord(id="lesson-from-decline")]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.record_lesson_from_decline(
             user_id=42,
             workspace_id=None,
@@ -116,7 +118,7 @@ def test_record_lesson_from_approval_idempotent_within_dedupe_window(
     ]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.record_lesson_from_approval(
             user_id=42,
             workspace_id=None,

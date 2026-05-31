@@ -27,6 +27,10 @@ def goal_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import goal_solver as mod
+    # Reset the process-global table-presence cache so cross-file run
+    # order can't leak a cached copilot_goals presence flag.
+    from app.services._copilot_helpers import reset_table_cache
+    reset_table_cache()
     return mod
 
 
@@ -189,7 +193,7 @@ def test_diagnose_goal_persists_plan(goal_mod, monkeypatch):
         assert "JSON" in system or "json" in system
         return raw_llm
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         goal_mod.diagnose_goal(goal_id=GOAL_ID_VALID, user_id=1, llm_call=fake_llm)
     )
     assert out["plan_summary"] == "Stub plan"
@@ -203,7 +207,7 @@ def test_get_goal_returns_none_on_invalid_uuid(goal_mod, monkeypatch):
     fake._fetchval_queue = ["copilot_goals"]
     monkeypatch.setattr(goal_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         goal_mod.get_goal(goal_id="not-a-uuid", user_id=1)
     )
     # The bad uuid never reaches asyncpg; we short-circuit to None
@@ -216,7 +220,7 @@ def test_update_goal_status_drops_bad_workflow_ids(goal_mod, monkeypatch):
     fake._fetchval_queue = ["copilot_goals"]
     monkeypatch.setattr(goal_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         goal_mod.update_goal_status(
             goal_id=GOAL_ID_VALID,
             user_id=1,
@@ -242,7 +246,7 @@ def test_diagnose_goal_raises_on_missing_goal(goal_mod, monkeypatch):
         return "{}"
 
     with pytest.raises(ValueError):
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             goal_mod.diagnose_goal(goal_id="missing", user_id=1, llm_call=fake_llm)
         )
 
@@ -264,7 +268,7 @@ def test_conclude_goal_terminal_status_selection(goal_mod, monkeypatch):
         return "Resumen ejecutivo del resultado."
 
     # one workflow failed → status='failed'
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         goal_mod.conclude_goal(
             goal_id=GOAL_ID_VALID, user_id=1,
             workflow_outcomes=[
@@ -306,7 +310,7 @@ def test_conclude_goal_records_lesson_per_approved_step(goal_mod, monkeypatch):
     async def fake_llm(system, messages):
         return "ok"
 
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         goal_mod.conclude_goal(
             goal_id=GOAL_ID_VALID, user_id=1,
             workflow_outcomes=[{

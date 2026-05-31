@@ -22,6 +22,13 @@ def wd_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import watchdog_registry as mod
+    # Module-level caches (_list_cache here, _table_cache in
+    # _copilot_helpers) are process-global by design. Reset them at the
+    # start of every test so cross-file run order can't leak a cached
+    # row list or table-presence flag into this test.
+    from app.services._copilot_helpers import reset_table_cache
+    reset_table_cache()
+    mod.invalidate_list_cache()
     return mod
 
 
@@ -111,7 +118,7 @@ def test_list_watchdogs_returns_rows(wd_mod, monkeypatch):
     ]]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         wd_mod.list_watchdogs()
     )
     assert len(out) == 1
@@ -124,7 +131,7 @@ def test_register_watchdog_writes_row(wd_mod, monkeypatch):
     fake._fetchrow_queue = [FakeRecord(id="new-id")]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         wd_mod.register_watchdog(
             cartridge_id="replicon",
             slug="margin_watchdog",
@@ -142,7 +149,7 @@ def test_register_watchdog_skips_when_table_missing(wd_mod, monkeypatch):
     fake._fetchval_queue = [None]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         wd_mod.register_watchdog(
             cartridge_id="x", slug="y", name="z",
         )
@@ -157,7 +164,7 @@ def test_register_watchdog_rejects_invalid_risk(wd_mod, monkeypatch):
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
     # risk_level falls back to 'read' silently
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         wd_mod.register_watchdog(
             cartridge_id="c", slug="s", name="n",
             risk_level="WILD",
@@ -185,7 +192,7 @@ def test_relevant_watchdogs_ranks_by_overlap(wd_mod, monkeypatch):
     ]]
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         wd_mod.relevant_watchdogs("revisa el margen este trimestre")
     )
     assert out
@@ -204,8 +211,8 @@ def test_list_watchdogs_caches_within_ttl(wd_mod, monkeypatch):
     fake._fetch_queue = [[]]                        # one fetch only
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    a = asyncio.get_event_loop().run_until_complete(wd_mod.list_watchdogs())
-    b = asyncio.get_event_loop().run_until_complete(wd_mod.list_watchdogs())
+    a = asyncio.run(wd_mod.list_watchdogs())
+    b = asyncio.run(wd_mod.list_watchdogs())
 
     assert a == b == []
     # The second list_watchdogs call hit the in-process cache; the
@@ -233,7 +240,7 @@ def test_register_watchdog_invalidates_cache(wd_mod, monkeypatch):
     wd_mod._list_cache[(None, True, wd_mod._MAX_LIST_LIMIT)] = (
         99999999.0, [{"id": "stale"}],
     )
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         wd_mod.register_watchdog(cartridge_id="c", slug="s", name="n")
     )
     # Post-register, the stale list-cache entry must be gone.
@@ -246,7 +253,7 @@ def test_invoke_watchdog_handles_missing(wd_mod, monkeypatch):
     fake._fetchrow_queue = [None]  # get_watchdog returns nothing
     monkeypatch.setattr(wd_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         wd_mod.invoke_watchdog(
             cartridge_id="x", slug="y",
             user={"id": 1}, input_text="hola",

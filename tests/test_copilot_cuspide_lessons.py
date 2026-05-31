@@ -28,6 +28,11 @@ def lessons_mod():
         if name == "app" or name.startswith("app."):
             del sys.modules[name]
     from app.services import lessons_service as mod
+    # Reset the process-global table-presence cache so a prior test
+    # file can't leave copilot_lessons flagged as present (which would
+    # break the "table missing" tests below).
+    from app.services._copilot_helpers import reset_table_cache
+    reset_table_cache()
     return mod
 
 
@@ -179,7 +184,7 @@ def test_record_lesson_returns_none_when_table_missing(lessons_mod, monkeypatch)
     # _has_table fetchval returns None → table absent
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.record_lesson(
             user_id=1,
             trigger_pattern="t",
@@ -198,7 +203,7 @@ def test_record_lesson_inserts_and_returns_id(lessons_mod, monkeypatch):
     fake._fetchrow_queue = [FakeRecord(id="abc-123")]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.record_lesson(
             user_id=42,
             trigger_pattern="acción: query_kb",
@@ -217,7 +222,7 @@ def test_record_lesson_dedupes_recent_duplicate(lessons_mod, monkeypatch):
     ]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.record_lesson(
             user_id=1,
             trigger_pattern="acción: x",
@@ -248,7 +253,7 @@ def test_fetch_relevant_lessons_ranks_by_overlap(lessons_mod, monkeypatch):
     ]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         lessons_mod.fetch_relevant_lessons(
             user_id=1, workspace_id=None,
             intent_hint="cartera vencida",
@@ -265,7 +270,7 @@ def test_build_system_prompt_with_lessons_identity_when_empty(
     fake._fetchval_queue = [None]  # table missing
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.build_system_prompt_with_lessons(
             user_id=1, workspace_id=None,
             base_prompt="BASE",
@@ -291,7 +296,7 @@ def test_build_system_prompt_with_lessons_appends_block(
     ]
     monkeypatch.setattr(lessons_mod.auth, "pool", AsyncMock(return_value=fake))
 
-    out = asyncio.get_event_loop().run_until_complete(
+    out = asyncio.run(
         lessons_mod.build_system_prompt_with_lessons(
             user_id=1, workspace_id=None,
             base_prompt="BASE",
