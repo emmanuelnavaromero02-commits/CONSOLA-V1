@@ -3,6 +3,8 @@ knowledge_bits:
   - id: kb_salesforce_opportunity_360
     name: "Opportunity 360"
     description: "Vista unificada de la oportunidad: deal + cuenta + dueño + última actividad."
+    pg_table: salesforce_opportunity_360
+    output_path: silver/salesforce/kb_salesforce_opportunity_360
     sql: >
       WITH opp AS (
           SELECT DISTINCT ON (Id) Id, Name, AccountId, OwnerId, Amount, StageName,
@@ -33,6 +35,8 @@ knowledge_bits:
   - id: kb_salesforce_pipeline_forecast
     name: "Pipeline y forecast por vendedor"
     description: "¿Qué vamos a cerrar este mes y trimestre? Pipeline abierto, forecast ponderado y ganado por mes y vendedor."
+    pg_table: salesforce_pipeline_forecast
+    output_path: silver/salesforce/kb_salesforce_pipeline_forecast
     sql: >
       SELECT mes, vendedor, deals_abiertos, monto_pipeline_usd,
              forecast_ponderado_usd, deals_ganados, monto_ganado_usd
@@ -43,6 +47,8 @@ knowledge_bits:
   - id: kb_salesforce_deals_en_riesgo
     name: "Deals en riesgo"
     description: "¿Qué oportunidades se van a caer? Deals abiertos sin actividad reciente o con cierre vencido, priorizados por monto."
+    pg_table: salesforce_deals_en_riesgo
+    output_path: silver/salesforce/kb_salesforce_deals_en_riesgo
     sql: >
       SELECT opportunity_name, vendedor, stage_name, amount, close_date,
              dias_sin_actividad, motivo_riesgo
@@ -53,6 +59,8 @@ knowledge_bits:
   - id: kb_salesforce_velocidad_pipeline
     name: "Velocidad de pipeline"
     description: "¿Cuánto tarda una oportunidad en cada etapa? Días promedio por etapa, desde el historial de oportunidades."
+    pg_table: salesforce_velocidad_pipeline
+    output_path: silver/salesforce/kb_salesforce_velocidad_pipeline
     sql: >
       SELECT stage_name, transiciones, dias_promedio_en_etapa, dias_max_en_etapa
       FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_velocidad_pipeline/**/*.parquet',
@@ -62,6 +70,8 @@ knowledge_bits:
   - id: kb_salesforce_vendedor_margen
     name: "Margen por vendedor"
     description: "¿Quién vende mucho pero con peor margen? Monto ganado y descuento promedio por vendedor (proxy de margen)."
+    pg_table: salesforce_vendedor_margen
+    output_path: silver/salesforce/kb_salesforce_vendedor_margen
     sql: >
       SELECT vendedor, deals_ganados, monto_ganado_usd, descuento_promedio_pct
       FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_vendedor_margen/**/*.parquet',
@@ -71,6 +81,8 @@ knowledge_bits:
   - id: kb_salesforce_cobertura_cuota
     name: "Cobertura de cuota"
     description: "¿Cómo va cada vendedor contra su objetivo? Ganado y forecast ponderado por vendedor (la cuota no es objeto estándar; attainment queda nulo)."
+    pg_table: salesforce_cobertura_cuota
+    output_path: silver/salesforce/kb_salesforce_cobertura_cuota
     sql: >
       SELECT vendedor, ganado_usd, forecast_ponderado_usd, cuota_usd, attainment_pct
       FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_cobertura_cuota/**/*.parquet',
@@ -80,6 +92,8 @@ knowledge_bits:
   - id: kb_salesforce_forecast_vs_capacidad
     name: "Forecast vs capacidad operativa"
     description: "¿El forecast de ventas cuadra contra la capacidad operativa? Cruza el forecast ponderado (Salesforce) con la capacidad en horas (Replicon) por mes. Parcial: requiere el gold de Replicon; si no existe, la capacidad viene nula."
+    pg_table: salesforce_forecast_vs_capacidad
+    output_path: silver/salesforce/kb_salesforce_forecast_vs_capacidad
     sql: >
       SELECT mes, forecast_ponderado_usd, capacidad_horas, demanda_horas_estimada, holgura_horas
       FROM read_parquet('s3://{bucket}/gold/salesforce/salesforce_forecast_vs_capacidad/**/*.parquet',

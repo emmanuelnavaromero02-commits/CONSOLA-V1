@@ -1,10 +1,10 @@
 """
 Salesforce MCP Server
 ===================
-Exposes 8 tools over Streamable HTTP so that Claude (or any MCP client)
+Exposes tools over Streamable HTTP so that Claude (or any MCP client)
 can inspect, extract, and query Salesforce data without writing custom code.
 
-Mount path: /mcp  (configured in main.py)
+Mount path: /mcp/rpc  (configured in main.py)
 """
 from __future__ import annotations
 
@@ -12,6 +12,15 @@ import re
 from typing import Any
 
 from fastmcp import FastMCP
+
+from app.core.config import settings
+from app.core import job_runner
+from app.core.sql_guard import validate_kb_sql
+from app.services.catalog_service import get_all_entities, get_all_kbs, get_entity_config
+from app.services.duckdb_service import _get_duckdb_connection
+from app.services.extraction_service import run_entity
+from app.services.kb_service import run_knowledge_bit, get_kb_runs
+from app.services.watermark_service import get_watermark, list_watermarks
 
 
 # Sprint v1.35 (audit B3 P0): local SQL-identifier validator. We can't
@@ -66,14 +75,6 @@ def _sf_allowed_kb_prefixes() -> tuple[str, str, str]:
         f"s3://{bucket}/gold/salesforce/",
     )
 
-from app.core.config import settings
-from app.core import job_runner
-from app.services.catalog_service import get_all_entities, get_all_kbs, get_entity_config
-from app.services.duckdb_service import run_kb_sql, _get_duckdb_connection
-from app.services.extraction_service import run_entity
-from app.services.kb_service import run_knowledge_bit, get_kb_runs
-from app.services.watermark_service import get_watermark
-
 mcp = FastMCP(
     name="salesforce",
     instructions=(
@@ -105,6 +106,21 @@ def list_entities() -> list[dict[str, Any]]:
             "description":      e.get("description", ""),
         })
     return result
+
+
+# ── Tool 1b: get_watermarks ───────────────────────────────────────────────────
+
+@mcp.tool()
+def get_watermarks() -> list[dict[str, Any]]:
+    """
+    Return the last-recorded watermark for every Salesforce entity.
+    Useful for checking which entities have been extracted and when.
+    Returns a list of {entity_name, watermark_field, last_watermark_value, updated_at}.
+    """
+    try:
+        return list_watermarks()
+    except Exception as exc:
+        return [{"error": str(exc)}]
 
 
 # ── Tool 2: get_schema ────────────────────────────────────────────────────────
@@ -388,16 +404,18 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
     resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
 
     def _tool_fn() -> dict[str, Any]:
-        conn = _get_duckdb_connection()
+        conn = None
         try:
+            conn = _get_duckdb_connection()
             rel = conn.execute(resolved_sql)
             columns = [d[0] for d in rel.description]
             rows = rel.fetchall()
+            return {"columns": columns, "rows": [dict(zip(columns, r)) for r in rows], "count": len(rows)}
         except Exception:
             return {"error": "query_failed", "reason": "DuckDB query failed"}
         finally:
-            conn.close()
-        return {"columns": columns, "rows": [dict(zip(columns, r)) for r in rows], "count": len(rows)}
+            if conn is not None:
+                conn.close()
 
     _tool_fn.__name__ = name
     _tool_fn.__doc__ = description or f"Custom SQL tool: {name}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -7,6 +8,8 @@ from app.core.salesforce_client import SalesforceClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, update_watermark
+
+_logger = logging.getLogger(__name__)
 
 # Flush a parquet file every BATCH_SIZE rows. Buffer is drained after every
 # OData page is appended, so memory stays bounded regardless of total volume —
@@ -81,6 +84,7 @@ def run_entity(
         status="running",
         started_at=datetime.now(timezone.utc),
     )
+    _logger.info("extraction started entity=%s mode=%s run_id=%s", entity, mode, run_id)
 
     try:
         client = SalesforceClient()
@@ -160,7 +164,10 @@ def run_entity(
                     dt - timedelta(minutes=WATERMARK_BUFFER_MINUTES)
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
             except Exception:
-                pass
+                _logger.warning(
+                    "watermark ISO parse failed for entity=%s wm=%r; persisting raw value",
+                    entity, max_wm,
+                )
 
             update_watermark(
                 entity_name=entity,
@@ -176,6 +183,10 @@ def run_entity(
             storage_uri=storage_uri,
             finished_at=datetime.now(timezone.utc),
         )
+        _logger.info(
+            "extraction completed entity=%s run_id=%s records=%d",
+            entity, run_id, total_records,
+        )
 
         return {
             "run_id": run_id,
@@ -190,6 +201,7 @@ def run_entity(
         }
 
     except Exception as exc:
+        _logger.error("extraction failed entity=%s run_id=%s: %s", entity, run_id, exc)
         fail_run(
             run_id=run_id,
             error_message=str(exc),

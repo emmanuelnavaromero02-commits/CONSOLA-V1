@@ -31,6 +31,8 @@
       const grid = document.getElementById('grid');
       try {
         const res = await fetch('/api/data/salesforce_vendedor_margen');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const payload = await res.json();
         const rows = Array.isArray(payload) ? payload : (payload.data || payload.rows || []);
         if (!rows.length) {
@@ -47,7 +49,7 @@
         html += '</tbody>';
         grid.innerHTML = html;
       } catch (e) {
-        grid.innerHTML = '<tbody><tr><td class="note">Error cargando datos: ' + e + '</td></tr></tbody>';
+        const eRow = document.createElement('td'); eRow.className = 'note'; eRow.textContent = 'Error cargando datos: ' + (e.message || e); const eTr = document.createElement('tr'); eTr.appendChild(eRow); const eTbody = document.createElement('tbody'); eTbody.appendChild(eTr); grid.innerHTML = ''; grid.appendChild(eTbody);
       }
     }
     init();
