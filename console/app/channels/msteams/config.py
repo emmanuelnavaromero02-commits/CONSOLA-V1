@@ -86,8 +86,6 @@ class MsTeamsConfig:
     graph_enabled: bool
     transcripts_enabled: bool
     sharepoint_site_id: str
-    # Escape hatch — mutable display-name matching. OFF by default.
-    dangerously_allow_name_matching: bool
 
     def is_level0(self) -> bool:
         return not self.enabled
@@ -153,7 +151,6 @@ def load_config() -> MsTeamsConfig:
         graph_enabled=_flag("MSTEAMS_GRAPH_ENABLED", "false"),
         transcripts_enabled=_flag("MSTEAMS_TRANSCRIPTS_ENABLED", "false"),
         sharepoint_site_id=_str("MSTEAMS_SHAREPOINT_SITE_ID"),
-        dangerously_allow_name_matching=_flag("MSTEAMS_DANGEROUSLY_ALLOW_NAME_MATCHING", "false"),
     )
 
 

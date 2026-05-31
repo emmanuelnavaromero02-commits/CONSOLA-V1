@@ -80,8 +80,8 @@ All variables are documented in `infra/.env.example`. The essentials:
 
 - **Default-closed**: disabled channel, allowlist policies, name matching off.
 - **Stable ids only** for authorization (AAD object id, Bot Framework
-  conversation id). Display names are mutable and never authorize anything
-  unless `MSTEAMS_DANGEROUSLY_ALLOW_NAME_MATCHING=true` (don't).
+  conversation id). Display names are mutable and never authorize anything;
+  there is no name-matching escape hatch in this version.
 - **Empty allowlist + allowlist policy = nobody** (never "everybody").
 - **Secrets**: never logged, never returned by `/status`, never in audit.
 - **Errors**: contained — the webhook returns a generic reply and a safe
@@ -89,6 +89,28 @@ All variables are documented in `infra/.env.example`. The essentials:
 - **Audit**: every interaction → `audit_service.record_event(action="msteams.message")`
   with tenant/user/conversation/mode/status/error_type and message **length**
   (never the raw text — privacy).
+
+### Identity and tenant model — read before deploying
+
+- **Prefer AAD object ids** in `MSTEAMS_ALLOWED_USERS` and `MSTEAMS_USER_MAP`.
+  Bot Framework's `from.id` (`29:…`) is per-bot-conversation and changes
+  between bot apps; AAD object ids are globally unique per user.
+- **B2B guests**: a guest's `aadObjectId` is the **home-tenant** GUID, not the
+  inviting tenant's. Map guests explicitly in `MSTEAMS_USER_MAP`.
+- **Empty `MSTEAMS_ALLOWED_TENANTS`** does NOT mean "nobody" — it means "all
+  tenants allowed by tenant gate". The bot is still gated by `MSTEAMS_USER_MAP`
+  (AAD GUIDs are globally unique, so user map is itself a global allowlist).
+- **`MSTEAMS_DEFAULT_USER_EMAIL` in group/open mode**: every channel member
+  resolves to the same console identity. All audit + history is recorded
+  under that one user.
+- **`MSTEAMS_REQUIRE_MENTION=false` + `MSTEAMS_GROUP_POLICY=open`** is the
+  "fully open in the channel" mode: any tenant member triggers the bot
+  without `@`. Combine intentionally.
+- **Public Microsoft cloud only**: claims-mode JWT validates against the
+  public Bot Framework issuers
+  (`https://api.botframework.com` / `https://login.botframework.com`).
+  Government / sovereign clouds (`*.botframework.us`, `*.botframework.cn`)
+  are NOT supported in this version.
 
 ### JWT signature verification (hardening item)
 

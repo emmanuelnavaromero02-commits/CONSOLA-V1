@@ -42,7 +42,6 @@ def _cfg(**overrides) -> MsTeamsConfig:
         graph_enabled=False,
         transcripts_enabled=False,
         sharepoint_site_id="",
-        dangerously_allow_name_matching=False,
     )
     base.update(overrides)
     return MsTeamsConfig(**base)
@@ -315,6 +314,122 @@ def test_jwt_missing_bearer_rejected_when_not_disabled():
 
 def test_jwt_disabled_allows():
     assert security.verify_jwt(None, _cfg(jwt_mode="disabled")).allowed is True
+
+
+# ── Wave-2 audit regressions ──────────────────────────────────────────
+
+def test_jwt_rejects_missing_exp():
+    # exp must be numeric; missing/None silently passed in the old code.
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({"iss": "https://api.botframework.com", "aud": "app-123"})
+    assert security.verify_jwt(tok, cfg).allowed is False
+
+
+def test_jwt_rejects_string_exp():
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({"iss": "https://api.botframework.com", "aud": "app-123", "exp": str(int(time.time()) + 3600)})
+    assert security.verify_jwt(tok, cfg).allowed is False
+
+
+def test_jwt_rejects_missing_iss():
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({"aud": "app-123", "exp": int(time.time()) + 3600})
+    assert security.verify_jwt(tok, cfg).allowed is False
+
+
+def test_jwt_rejects_when_app_id_unconfigured():
+    import time
+    cfg = _cfg(jwt_mode="claims", app_id="")
+    tok = _mint({"iss": "https://api.botframework.com", "aud": "whatever", "exp": int(time.time()) + 3600})
+    d = security.verify_jwt(tok, cfg)
+    assert d.allowed is False and d.reason == "jwt_app_id_not_configured"
+
+
+def test_jwt_rejects_tid_outside_allowed_tenants():
+    import time
+    cfg = _cfg(jwt_mode="claims", allowed_tenants=("tenant-1",))
+    tok = _mint({
+        "iss": "https://api.botframework.com",
+        "aud": "app-123",
+        "exp": int(time.time()) + 3600,
+        "tid": "evil-tenant",
+    })
+    assert security.verify_jwt(tok, cfg).allowed is False
+
+
+def test_jwt_oversized_auth_header_rejected_without_decoding():
+    cfg = _cfg(jwt_mode="claims")
+    huge = "Bearer " + "x" * (8 * 1024 + 1)
+    d = security.verify_jwt(huge, cfg)
+    assert d.allowed is False and d.reason == "auth_header_too_large"
+
+
+def test_meeting_conversation_type_routes_through_group_policy():
+    # Old behaviour silently treated unknown types as DM, hiding meeting
+    # activities behind dm_policy. Now `meeting` is its own mode and goes
+    # through _authorize_group so allowlists apply.
+    act = _channel_activity()
+    act["conversation"]["conversationType"] = "meeting"
+    ev = adapter.parse_activity(act)
+    assert ev.mode() == "meeting"
+    # And the authorization layer routes mode != "dm" through group.
+    cfg = _cfg()  # group allowlist policy, allowed conversation
+    decision, ctx = security.authorize(ev, cfg)
+    assert decision.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_inactive_console_user_audited_distinctly():
+    ctx_patch, run_turn = _patch_backend()
+    captured = {}
+    with ctx_patch:
+        service.auth.get_user_by_email.return_value = {
+            "id": 42, "email": "agent@org.com", "is_active": False, "role": "analyst",
+        }
+        service.audit_service.record_event.side_effect = lambda **kw: captured.update(kw)
+        res = await service.handle_activity(_dm_activity(), cfg=_cfg())
+    assert res.status == "unauthorized"
+    assert captured.get("metadata", {}).get("error_type") == "console_user_inactive"
+    run_turn.assert_not_awaited()
+
+
+def test_dangerously_allow_name_matching_flag_is_removed_from_config():
+    # The flag was documented as dangerous and never used; previous audit
+    # confirmed dead code. Make sure no future maintainer re-adds it without
+    # implementing it.
+    cfg = config.load_config()
+    assert not hasattr(cfg, "dangerously_allow_name_matching")
+
+
+def test_webhook_rejects_oversized_body_before_parsing():
+    client, r = _router_client()
+    with patch.object(r, "load_config", return_value=_cfg()):
+        resp = client.post(
+            "/api/msteams/messages",
+            data=b"{}",
+            headers={"content-type": "application/json", "content-length": str(2 * 1024 * 1024)},
+        )
+    # 413 Payload Too Large, never reaches service.handle_activity.
+    assert resp.status_code == 413
+
+
+def test_webhook_refuses_jwt_disabled_in_production(monkeypatch):
+    client, r = _router_client()
+    monkeypatch.setenv("APP_ENV", "production")
+    cfg = _cfg(jwt_mode="disabled")
+    with patch.object(r, "load_config", return_value=cfg):
+        resp = client.post("/api/msteams/messages", json=_dm_activity())
+    assert resp.status_code == 503
+
+
+def test_webhook_path_is_rate_limited_in_main_config():
+    # Guard the rate-limit registration — without an entry the public webhook
+    # could exhaust the auth.pool (max_size=4) under load.
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text(encoding="utf-8")
+    assert '"/api/msteams"' in src and "RATE_LIMITS" in src
 
 
 # ── Wave-1 audit regressions ──────────────────────────────────────────

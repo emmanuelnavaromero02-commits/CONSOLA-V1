@@ -971,6 +971,10 @@ RATE_LIMITS = {
     "/api/mcp": (80, 60),
     "/studio/import": (10, RATE_LIMIT_WINDOW_SECONDS),
     "/api/explorer": (180, 60),
+    # Public webhook (Bot Framework JWT). Each request touches the auth DB
+    # pool (max_size=4) — without a cap, a single flooded source IP can
+    # exhaust the pool and lock out every other console session.
+    "/api/msteams": (120, 60),
 }
 # The limiter backend picks Redis when REDIS_URL is set, otherwise falls back
 # to an in-memory sliding window. The in-memory path is per-process and can be

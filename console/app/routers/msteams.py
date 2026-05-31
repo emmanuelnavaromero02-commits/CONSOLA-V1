@@ -36,6 +36,11 @@ logger = logging.getLogger("msteams.router")
 # Azure Bot endpoint config; the value is surfaced via /status for operators.
 WEBHOOK_PATH = "/api/msteams/messages"
 
+# Hard cap on the inbound activity body. Real Bot Framework payloads are
+# tens of KB; 1 MB is comfortably above that and keeps an attacker from
+# allocating multi-GB before parsing.
+_MAX_BODY_BYTES = 1 * 1024 * 1024
+
 router = APIRouter(prefix="/api/msteams", tags=["Microsoft Teams"])
 
 
@@ -49,7 +54,23 @@ async def teams_webhook(request: Request) -> Response:
     cfg = load_config()
     if cfg.is_level0():
         # Disabled: acknowledge without doing anything (no bot advertised).
+        # Body is NOT consumed here — keeps the disabled fast-path immune
+        # from slowloris / oversized-body attacks.
         return Response(status_code=200)
+
+    # Production guard: refuse jwt_validation=disabled when APP_ENV is
+    # production. Disabled mode is documented as local-dev / trusted-gateway
+    # only; if it ever leaks into production config, fail closed loudly.
+    import os as _os
+    if cfg.jwt_mode == "disabled" and _os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}:
+        return Response(status_code=503)
+
+    # Body-size cap: a Bot Framework activity is small (typically < 32 KB).
+    # Reject anything over 1 MB to keep an attacker from filling memory with
+    # multi-GB POSTs before parsing fails.
+    declared_len = request.headers.get("content-length")
+    if declared_len and declared_len.isdigit() and int(declared_len) > _MAX_BODY_BYTES:
+        return JSONResponse({"status": "bad_request"}, status_code=413)
 
     try:
         activity = await request.json()

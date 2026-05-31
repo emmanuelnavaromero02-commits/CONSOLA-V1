@@ -90,8 +90,13 @@ async def handle_activity(
         await _audit(event, ctx, "error", error_type="user_lookup_failed")
         return ChannelResult(status="error", activity=adapter.error_activity(), detail="error")
 
-    if not console_user or not console_user.get("is_active", True) or not console_user.get("id"):
+    if not console_user or not console_user.get("id"):
         await _audit(event, ctx, "rejected", error_type="console_user_not_found")
+        return ChannelResult(status="unauthorized", detail="unauthorized")
+    if not console_user.get("is_active", True):
+        # Distinct error_type so an operator can tell "user disabled" from
+        # "no mapping in DB"; the user-facing response is the same.
+        await _audit(event, ctx, "rejected", error_type="console_user_inactive")
         return ChannelResult(status="unauthorized", detail="unauthorized")
 
     # Guarded int() — a corrupt/non-numeric user id must not 500 the webhook

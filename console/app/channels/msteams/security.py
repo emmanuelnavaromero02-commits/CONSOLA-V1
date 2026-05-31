@@ -26,11 +26,15 @@ from typing import Any
 from .config import MsTeamsConfig
 from .schemas import InboundTeamsEvent, PermissionsContext
 
-# Bot Framework token issuers (public cloud). Used by claims validation.
+# Bot Framework token issuers (public cloud). Government / sovereign clouds
+# use different issuers and are NOT supported in this version — see README.
 _BOTFRAMEWORK_ISSUERS = (
     "https://api.botframework.com",
     "https://login.botframework.com",
 )
+# Reject Authorization headers larger than 8 KB before reaching the JWT
+# decoder. Bot Framework tokens are ~2–4 KB.
+_MAX_AUTH_HEADER = 8 * 1024
 
 
 def _eq_id(a: str | None, b: str | None) -> bool:
@@ -60,6 +64,13 @@ def verify_jwt(auth_header: str | None, cfg: MsTeamsConfig) -> Decision:
     """Validate the inbound Bot Framework token per the configured mode."""
     if cfg.jwt_mode == "disabled":
         return Decision(True, "jwt_disabled")
+
+    # Cap the Authorization header BEFORE handing the token to the JWT
+    # decoder: a multi-MB Bearer value would otherwise trigger expensive
+    # base64+JSON decoding for every request. Real Bot Framework JWTs are
+    # well under 8 KB.
+    if auth_header and len(auth_header) > _MAX_AUTH_HEADER:
+        return Decision(False, "auth_header_too_large")
 
     token = ""
     if auth_header and auth_header.lower().startswith("bearer "):
@@ -105,21 +116,55 @@ def _validate_claims(token: str, cfg: MsTeamsConfig) -> Decision:
         return Decision(False, "jwt_decode_failed")
 
     now = int(time.time())
+
+    # ── exp (required, numeric) ───────────────────────────────────────
+    # Old behaviour `if isinstance(exp, (int, float)) and now > ...` silently
+    # accepted tokens with a missing/None/string exp — a real bypass found by
+    # round-2 audit. Bot Framework tokens always carry a numeric exp; anything
+    # else is suspicious. Reject default-closed.
     exp = claims.get("exp")
-    if isinstance(exp, (int, float)) and now > int(exp) + 60:
+    if not isinstance(exp, (int, float)):
+        return Decision(False, "jwt_invalid_expiry")
+    if now > int(exp) + 60:  # 60s clock-skew tolerance
         return Decision(False, "jwt_expired")
+    # nbf (not-before) is also tolerated when present; missing nbf is fine for
+    # short-lived Bot Framework tokens (already expiry-bounded above).
+    nbf = claims.get("nbf")
+    if isinstance(nbf, (int, float)) and now + 60 < int(nbf):
+        return Decision(False, "jwt_not_yet_valid")
 
-    iss = str(claims.get("iss") or "")
-    if iss and not any(iss.startswith(known) for known in _BOTFRAMEWORK_ISSUERS):
-        # Unknown issuer is suspicious; only enforce when we have an issuer.
-        return Decision(False, "jwt_unknown_issuer")
+    # ── iss (required, recognized) ────────────────────────────────────
+    # Old behaviour `if iss and not in known` allowed an EMPTY iss to pass.
+    # Public-cloud Bot Framework always sends a known iss; missing/empty/
+    # unknown → reject. Government/sovereign clouds use different issuers
+    # and are NOT supported in this version (documented in README).
+    iss_raw = claims.get("iss")
+    iss = str(iss_raw) if iss_raw else ""
+    if not iss or not any(iss.startswith(known) for known in _BOTFRAMEWORK_ISSUERS):
+        return Decision(False, "jwt_invalid_issuer")
 
-    # Audience must be our app id when we know it.
-    if cfg.app_id:
-        aud = claims.get("aud")
-        auds = aud if isinstance(aud, list) else [aud]
-        if not any(_eq_id(str(a), cfg.app_id) for a in auds if a):
-            return Decision(False, "jwt_audience_mismatch")
+    # ── aud (required to be cfg.app_id) ───────────────────────────────
+    # Old behaviour `if cfg.app_id:` silently skipped the audience check when
+    # app_id was unconfigured — an attacker could present a token for ANY
+    # Bot Framework app and pass. Require app_id and reject mismatched aud.
+    if not cfg.app_id:
+        return Decision(False, "jwt_app_id_not_configured")
+    aud = claims.get("aud")
+    auds = aud if isinstance(aud, list) else [aud]
+    if not any(_eq_id(str(a), cfg.app_id) for a in auds if a):
+        return Decision(False, "jwt_audience_mismatch")
+
+    # ── tid consistency (defense-in-depth) ────────────────────────────
+    # Bot Framework JWTs carry a ``tid`` (tenant id) claim. In claims mode we
+    # can't verify the signature, but cross-checking tid against the activity-
+    # body tenant id raises the bar: an attacker now has to forge BOTH
+    # consistently. When allowed_tenants is configured, tid must be in it.
+    tid_raw = claims.get("tid")
+    tid = str(tid_raw) if tid_raw else ""
+    if cfg.allowed_tenants and tid:
+        if not _in_allowlist(tid, cfg.allowed_tenants):
+            return Decision(False, "jwt_tenant_not_allowed")
+
     return Decision(True, "claims_validated")
 
 

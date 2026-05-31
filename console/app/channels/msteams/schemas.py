@@ -48,6 +48,12 @@ class InboundTeamsEvent(BaseModel):
             return "channel"
         if ctype in {"groupchat", "group"}:
             return "group"
+        if ctype == "meeting":
+            # Meeting transcripts/chat are multi-party events; gate them
+            # through the group policy (mention-aware, allowlist-aware)
+            # rather than the DM policy. Level-3 transcript ingestion is a
+            # separate scaffold that doesn't reach this code path yet.
+            return "meeting"
         return "dm"
 
 
