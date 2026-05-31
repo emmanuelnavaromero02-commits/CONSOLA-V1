@@ -241,7 +241,11 @@ class DuckDBEngine:
                 f"s3://{self.minio_bucket}/{source}/"
                 f"tenant_id={tenant}/workspace_id={workspace}/**/*.parquet"
             )
-        return f"s3://{self.minio_bucket}/{source}/**/*.parquet"
+        # Keep unscoped reads on the legacy/global layout only. A recursive glob
+        # over both `load_date=...` and `tenant_id=.../workspace_id=...` layouts
+        # makes DuckDB's hive partition reader fail because the partition keys
+        # differ across files.
+        return f"s3://{self.minio_bucket}/{source}/load_date=*/batch_id=*/*.parquet"
 
     def _bronze_read(self, source: str, user_context: dict | None = None) -> str:
         path = self._bronze_path(source, user_context)
@@ -276,8 +280,6 @@ class DuckDBEngine:
         definitions still reference raw/<cartridge>/<entity>, while execution
         uses only the current tenant/workspace physical path."""
         tenant, workspace = self._scope_values(user_context)
-        if not (tenant and workspace):
-            return sql
 
         out = sql
         for source in sources or []:
@@ -290,7 +292,7 @@ class DuckDBEngine:
                     out = out.replace(legacy.replace("**/*.parquet", "*.parquet"), scoped)
                 except Exception:
                     continue
-            elif src.startswith(("silver/", "gold/")):
+            elif tenant and workspace and src.startswith(("silver/", "gold/")):
                 parts = src.split("/")
                 if len(parts) >= 3:
                     layer, cartridge, name = parts[0], parts[1], parts[2]
@@ -302,6 +304,45 @@ class DuckDBEngine:
                     )
                     out = out.replace(legacy, scoped)
         return out
+
+    def _s3_object_key(self, uri: str) -> str | None:
+        prefix = f"s3://{self.minio_bucket}/"
+        if not str(uri or "").startswith(prefix):
+            return None
+        key = str(uri)[len(prefix):].strip("/")
+        return key or None
+
+    def _delete_s3_prefix(self, uri: str) -> None:
+        """Delete an existing MinIO/S3 object or prefix before DuckDB rewrites it.
+
+        DuckDB 1.2.2 can raise a low-level UnicodeDecodeError when `COPY TO`
+        overwrites an existing MinIO object. Removing the object/prefix first
+        gives materialization idempotent semantics and keeps repeated refreshes
+        from failing under stress.
+        """
+        key = self._s3_object_key(uri)
+        if not key:
+            return
+        from minio import Minio
+
+        client = Minio(
+            self.minio_endpoint,
+            access_key=self.minio_access,
+            secret_key=self.minio_secret,
+            secure=self.minio_secure,
+        )
+        for obj in client.list_objects(self.minio_bucket, prefix=key, recursive=True):
+            client.remove_object(self.minio_bucket, obj.object_name)
+        # In the common case `data.parquet` is a single object, not a prefix.
+        # Removing a missing key is harmless on MinIO/S3-compatible backends.
+        try:
+            client.remove_object(self.minio_bucket, key)
+        except Exception:
+            pass
+
+    def _copy_to_parquet(self, con: duckdb.DuckDBPyConnection, sql: str, parquet_path: str) -> None:
+        self._delete_s3_prefix(parquet_path)
+        con.execute(f"COPY ({sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
 
     def _ensure_scope_columns(
         self,
@@ -853,20 +894,20 @@ class DuckDBEngine:
                         [tenant, workspace],
                     ).fetchone()[0]
                     gold_parquet_path = self._gold_path(cartridge, name, user_context)
-                    con.execute(
-                        f"COPY (SELECT * FROM pggold.{table} "
-                        f"WHERE tenant_id = {_sql_quote(tenant)} "
-                        f"AND workspace_id = {_sql_quote(workspace)}) "
-                        f"TO '{gold_parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)",
+                    self._copy_to_parquet(
+                        con,
+                        (
+                            f"SELECT * FROM pggold.{table} "
+                            f"WHERE tenant_id = {_sql_quote(tenant)} "
+                            f"AND workspace_id = {_sql_quote(workspace)}"
+                        ),
+                        gold_parquet_path,
                     )
                 else:
                     con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
                     row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
                     gold_parquet_path = self._gold_path(cartridge, name)
-                    con.execute(
-                        f"COPY (SELECT * FROM pggold.{table}) TO '{gold_parquet_path}' "
-                        "(FORMAT PARQUET, OVERWRITE_OR_IGNORE true)"
-                    )
+                    self._copy_to_parquet(con, f"SELECT * FROM pggold.{table}", gold_parquet_path)
                 storage_uri = f"postgres_gold:{table}"
 
             else:
@@ -874,7 +915,7 @@ class DuckDBEngine:
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 parquet_path  = self._silver_path(cartridge, name, user_context)
-                con.execute(f"COPY ({effective_sql}) TO '{parquet_path}' (FORMAT PARQUET, OVERWRITE_OR_IGNORE true)")
+                self._copy_to_parquet(con, effective_sql, parquet_path)
                 row_count = con.execute(
                     f"SELECT COUNT(*) FROM read_parquet('{parquet_path}')"
                 ).fetchone()[0]

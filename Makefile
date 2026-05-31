@@ -10,7 +10,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up up-core down nuke logs ps test smoke migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public
+.PHONY: help up up-core down nuke logs ps test smoke stress migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public
 .PHONY: test-hermetic
 
 help:
@@ -28,6 +28,7 @@ help:
 	@echo "  make test-hermetic"
 	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
+	@echo "  make stress       run Locust stress profile against the running stack"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make acceptance   run heavy full-stack acceptance with fake live HubSpot"
 	@echo "  make verify-release"
@@ -117,6 +118,9 @@ test-hermetic:
 # Assumes `make up` has been run; doesn't try to start the stack.
 smoke:
 	@bash scripts/smoke_test.sh
+
+stress:
+	@bash scripts/run_stress.sh
 
 # Sprint v1.44.3.2: Playwright browser-driven E2E suite.
 # Validates the FastAPI-served static console (port 8000), legacy HTML

@@ -81,6 +81,7 @@ airflow/dags/replicon_extract.py
 
 # Local audit / review artefacts (never committed)
 _audit_out/
+artifacts/
 *.zip
 
 # Terraform state and local operator secrets
