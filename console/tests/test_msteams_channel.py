@@ -75,6 +75,12 @@ def _channel_activity(text="<at>Bot</at> hola", conv=CONV, aad=AAD, mention_bot=
     }
 
 
+# Distinct UUIDs so an assertion can tell "the SELECT mapping won" from
+# "create_conversation produced a fresh one" — the previous shared id hid that.
+MAPPING_CONV_ID = "00000000-0000-0000-0000-0000000000aa"   # existing mapping
+CREATED_CONV_ID = "00000000-0000-0000-0000-0000000000bb"   # fresh creation
+
+
 def _patch_backend(reply="respuesta del copiloto", citations=None, raise_turn=False):
     """Patch the three external collaborators on the service module."""
     run_turn = AsyncMock(
@@ -83,7 +89,7 @@ def _patch_backend(reply="respuesta del copiloto", citations=None, raise_turn=Fa
         return_value={"reply": reply, "citations": citations or [], "requires_approval": False},
     )
     fake_conn = AsyncMock()
-    fake_conn.fetchrow = AsyncMock(return_value={"conversation_id": "00000000-0000-0000-0000-0000000000aa"})
+    fake_conn.fetchrow = AsyncMock(return_value={"conversation_id": MAPPING_CONV_ID})
 
     class _PoolCtx:
         async def __aenter__(self):
@@ -99,7 +105,7 @@ def _patch_backend(reply="respuesta del copiloto", citations=None, raise_turn=Fa
         service,
         copilot_service=AsyncMock(
             run_turn=run_turn,
-            create_conversation=AsyncMock(return_value={"id": "00000000-0000-0000-0000-0000000000aa"}),
+            create_conversation=AsyncMock(return_value={"id": CREATED_CONV_ID}),
         ),
         auth=AsyncMock(
             get_user_by_email=AsyncMock(return_value={"id": 42, "email": "agent@org.com", "is_active": True, "role": "analyst"}),
@@ -158,7 +164,10 @@ async def test_valid_dm_drives_copilot_and_renders_reply():
     kwargs = run_turn.await_args.kwargs
     assert kwargs["user_message"] == "hola copiloto"
     assert kwargs["user"]["id"] == 42
-    assert kwargs["conversation_id"] == "00000000-0000-0000-0000-0000000000aa"
+    # MAPPING_CONV_ID (SELECT hit), NOT CREATED_CONV_ID — proves the existing
+    # mapping won. The two mock paths now return distinct ids so the assertion
+    # is no longer circular with the fixture value.
+    assert kwargs["conversation_id"] == MAPPING_CONV_ID
 
 
 @pytest.mark.asyncio
@@ -175,7 +184,7 @@ async def test_channel_mention_allowlisted_is_accepted():
     kwargs = run_turn.await_args.kwargs
     assert kwargs["user_message"] == "resume el dia"
     assert "Bot" not in kwargs["user_message"]
-    assert kwargs["conversation_id"] == "00000000-0000-0000-0000-0000000000aa"
+    assert kwargs["conversation_id"] == MAPPING_CONV_ID
 
 
 @pytest.mark.asyncio
@@ -295,6 +304,18 @@ async def test_audit_records_length_not_raw_text():
     assert "text_len" in md and md["text_len"] == len("dato confidencial 123")
     blob = repr(captured)
     assert "dato confidencial 123" not in blob, "raw message text must not be audited"
+    # Audit-fidelity hardening: the audit record must carry the resolved
+    # console identity (user_id + email) AND the route marker that proves the
+    # copilot actually ran. Without these, an operator can't distinguish
+    # "ok, copilot returned a reply" from "ok, but the audit is missing
+    # provenance".
+    assert captured.get("action") == "msteams.message"
+    assert captured.get("user_id") == 42
+    assert captured.get("email") == "agent@org.com"
+    assert captured.get("status") == "ok"
+    assert md.get("route") == "copilot.run_turn"
+    assert md.get("mode") == "dm"
+    assert md.get("tenant_id") == "tenant-1"
 
 
 # ── JWT posture ──────────────────────────────────────────────────────
@@ -625,7 +646,9 @@ async def test_conversation_mapping_degrades_to_adhoc_on_pool_failure():
     assert res.status == "ok"
     run_turn.assert_awaited_once()
     # The fallback still produced a real conversation id for the copilot turn.
-    assert run_turn.await_args.kwargs["conversation_id"] == "00000000-0000-0000-0000-0000000000aa"
+    # The ad-hoc fallback uses create_conversation, NOT the SELECT mapping.
+    # Distinct UUID proves the test isn't accidentally still hitting the pool.
+    assert run_turn.await_args.kwargs["conversation_id"] == CREATED_CONV_ID
 
 
 @pytest.mark.asyncio
@@ -770,3 +793,207 @@ def test_config_defaults_are_closed(monkeypatch):
     assert cfg.group_policy == "allowlist"
     assert cfg.require_mention is True
     assert config.active_level(cfg) == 0
+
+
+# ── Wave-4 audit regressions (coverage + mock-fidelity) ──────────────
+
+def test_jwt_rejects_missing_aud():
+    # aud is required to equal cfg.app_id; missing aud must reject regardless
+    # of whether app_id is configured (audience check is mandatory).
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({
+        "iss": "https://api.botframework.com",
+        "exp": int(time.time()) + 3600,
+    })
+    d = security.verify_jwt(tok, cfg)
+    assert d.allowed is False and d.reason == "jwt_audience_mismatch"
+
+
+def test_jwt_accepts_aud_list_with_matching_entry():
+    # Bot Framework occasionally sends aud as a list; if the configured
+    # app_id is in the list, accept. Hostile list with no match must reject.
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    good = _mint({
+        "iss": "https://api.botframework.com",
+        "aud": ["other-app", "app-123"],
+        "exp": int(time.time()) + 3600,
+    })
+    assert security.verify_jwt(good, cfg).allowed is True
+    bad = _mint({
+        "iss": "https://api.botframework.com",
+        "aud": ["only-other-app", "another"],
+        "exp": int(time.time()) + 3600,
+    })
+    assert security.verify_jwt(bad, cfg).allowed is False
+
+
+def test_jwt_missing_nbf_passes_when_exp_valid():
+    # nbf is OPTIONAL — Bot Framework tokens are bounded by exp. A token
+    # without nbf must still pass when all other claims are valid.
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({
+        "iss": "https://api.botframework.com",
+        "aud": "app-123",
+        "exp": int(time.time()) + 3600,
+    })
+    assert security.verify_jwt(tok, cfg).allowed is True
+
+
+def test_jwt_rejects_future_nbf_outside_skew():
+    # nbf > now + 60s skew → token "not yet valid", must reject.
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({
+        "iss": "https://api.botframework.com",
+        "aud": "app-123",
+        "exp": int(time.time()) + 7200,
+        "nbf": int(time.time()) + 3600,
+    })
+    d = security.verify_jwt(tok, cfg)
+    assert d.allowed is False and d.reason == "jwt_not_yet_valid"
+
+
+def test_jwt_accepts_nbf_within_clock_skew():
+    # nbf slightly in the future but within the 60s skew tolerance must pass.
+    import time
+    cfg = _cfg(jwt_mode="claims")
+    tok = _mint({
+        "iss": "https://api.botframework.com",
+        "aud": "app-123",
+        "exp": int(time.time()) + 3600,
+        "nbf": int(time.time()) + 30,  # under 60s skew
+    })
+    assert security.verify_jwt(tok, cfg).allowed is True
+
+
+@pytest.mark.asyncio
+async def test_dm_open_policy_allows_any_aad_object_id():
+    # open mode trusts any DM sender (no allowlist consulted) — useful for
+    # "open to the whole tenant" deployments. Still gated by JWT/tenant.
+    ctx, run_turn = _patch_backend(reply="ok")
+    cfg = _cfg(
+        dm_policy="open",
+        allowed_users=(),          # no allowlist; open mode ignores it
+        user_map={},
+        default_user_email="agent@org.com",  # but we still need a console identity
+    )
+    with ctx:
+        res = await service.handle_activity(
+            _dm_activity(aad="ffffffff-ffff-ffff-ffff-ffffffffffff"), cfg=cfg
+        )
+    assert res.status == "ok"
+    run_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dm_disabled_rejects_even_allowlisted_user():
+    # dm_policy=disabled is an operator kill-switch — DMs go dark regardless
+    # of allowlist contents. Regression: ensure the kill-switch is honoured
+    # BEFORE allowlist matching.
+    ctx, run_turn = _patch_backend()
+    with ctx:
+        res = await service.handle_activity(_dm_activity(), cfg=_cfg(dm_policy="disabled"))
+    assert res.status == "unauthorized"
+    run_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_group_disabled_rejects_even_allowlisted_conversation():
+    ctx, run_turn = _patch_backend()
+    with ctx:
+        res = await service.handle_activity(
+            _channel_activity(), cfg=_cfg(group_policy="disabled")
+        )
+    assert res.status == "unauthorized"
+    run_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mention_not_required_with_open_policy_allows_no_mention():
+    # The documented "fully open in the channel" mode: any tenant member
+    # triggers the bot without @mention. Combine intentionally — regression
+    # test guards that both flags must be set for this to work.
+    ctx, run_turn = _patch_backend(reply="ok")
+    cfg = _cfg(
+        group_policy="open",
+        require_mention=False,
+        allowed_users=(),
+        user_map={},
+        default_user_email="agent@org.com",
+    )
+    with ctx:
+        res = await service.handle_activity(
+            _channel_activity(text="hola sin mencion", mention_bot=False), cfg=cfg
+        )
+    assert res.status == "ok"
+    run_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_non_message_activity_acknowledged_silently():
+    # Teams sends conversationUpdate/typing/messageReaction etc. We must
+    # ack them silently — never reach the copilot, never 500.
+    ctx, run_turn = _patch_backend()
+    act = _dm_activity()
+    act["type"] = "conversationUpdate"
+    with ctx:
+        res = await service.handle_activity(act, cfg=_cfg(jwt_mode="disabled"))
+    assert res.status == "ignored"
+    assert res.detail == "non_message_activity"
+    run_turn.assert_not_awaited()
+
+
+def test_active_level_3_with_graph_and_transcripts(monkeypatch):
+    # Level 3 = post-meeting. Requires BOTH Graph + transcripts on; either
+    # missing must NOT report Level 3 (status endpoint truth-in-advertising).
+    monkeypatch.setenv("MSTEAMS_ENABLED", "true")
+    monkeypatch.setenv("MSTEAMS_GRAPH_ENABLED", "true")
+    monkeypatch.setenv("MSTEAMS_TRANSCRIPTS_ENABLED", "true")
+    assert config.active_level() == 3
+    monkeypatch.setenv("MSTEAMS_TRANSCRIPTS_ENABLED", "false")
+    # graph on / transcripts off → falls back to Level 1 or 2 (NOT 3)
+    assert config.active_level() != 3
+
+
+def test_status_endpoint_requires_console_session():
+    # The status endpoint exposes operator config (no secrets) but must NOT
+    # be public. Guard the declared dependency stays wired to a console-auth
+    # gate, so a future refactor can't drop authentication by accident.
+    from app.routers import msteams as r
+    # The dependency name we expect on the route:
+    routes = [route for route in r.router.routes if getattr(route, "path", "").endswith("/status")]
+    assert routes, "/api/msteams/status route missing"
+    # Build a names-of-dependencies set for the route.
+    dep_names = {
+        getattr(getattr(d, "dependency", None), "__name__", "")
+        for d in getattr(routes[0], "dependencies", []) or []
+    }
+    # Plus the parameter-level dependency on require_authenticated.
+    param_dep_names = {
+        getattr(getattr(p.default, "dependency", None), "__name__", "")
+        for p in getattr(routes[0], "dependant", None).dependencies
+        if getattr(p, "default", None) is not None
+    } if getattr(routes[0], "dependant", None) else set()
+    all_deps = dep_names | param_dep_names
+    # Must reference at least one auth/permission gate by callable name.
+    assert any("permission" in n.lower() or "authenticated" in n.lower() for n in all_deps), (
+        f"/api/msteams/status missing console-auth dependency; saw: {all_deps}"
+    )
+
+
+def test_manifest_does_not_overclaim_file_support_or_member_read():
+    # Audit 19 regression: the bot does NOT surface file content (Level-4
+    # future). Claiming supportsFiles=true on the manifest would mislead the
+    # Teams admin reviewing permissions. Member.Read.Group was never used.
+    import json
+    from pathlib import Path
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1] / "app" / "channels" / "msteams"
+         / "manifest.template.json").read_text(encoding="utf-8")
+    )
+    assert manifest["bots"][0]["supportsFiles"] is False
+    perms = {p["name"] for p in manifest["authorization"]["permissions"]["resourceSpecific"]}
+    assert "Member.Read.Group" not in perms, "unused Graph permission resurfaced"

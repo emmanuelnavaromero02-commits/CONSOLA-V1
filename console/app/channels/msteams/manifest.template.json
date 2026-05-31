@@ -29,7 +29,7 @@
       "isNotificationOnly": false,
       "supportsCalling": false,
       "supportsVideo": false,
-      "supportsFiles": true
+      "supportsFiles": false
     }
   ],
   "webApplicationInfo": {
@@ -43,7 +43,6 @@
       "resourceSpecific": [
         { "name": "ChannelMessage.Read.Group", "type": "Application" },
         { "name": "ChannelMessage.Send.Group", "type": "Application" },
-        { "name": "Member.Read.Group", "type": "Application" },
         { "name": "ChatMessage.Read.Chat", "type": "Application" }
       ]
     }
