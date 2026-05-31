@@ -418,19 +418,53 @@ async def pick_watchdogs_for_diagnosis(
 ) -> list[dict[str, Any]]:
     """For each subgoal, find the most relevant watchdog(s) by
     combining the subgoal description with the intent_keywords.
-    Returns a flat list of {subgoal, watchdog} pairs.
+    Returns a flat list of ``{subgoal, watchdog}`` pairs.
+
+    Concurrency note: a goal has ≤4 subgoals × ≤6 cartridges, so the
+    worst-case is ~24 ``relevant_watchdogs`` calls. They're cheap (the
+    registry has a 60s TTL list cache so most lookups don't even hit
+    Postgres), but running them serially still pushed p99 latency past
+    a second under the audit-round-2 stress test. Fan them out with
+    ``asyncio.gather`` and preserve subgoal order in the output —
+    callers (the diagnose endpoint, the briefing-driven launcher) rely
+    on subgoal ordering for the rendered "what we'll do" list.
     """
-    pairs: list[dict[str, Any]] = []
+    import asyncio
+
+    subgoals = diagnosis.get("subgoals", []) or []
     keywords = " ".join(diagnosis.get("intent_keywords") or [])
-    for sg in diagnosis.get("subgoals", []):
-        intent_text = f"{sg['description']} {keywords}"
+    if not subgoals:
+        return []
+
+    # Build the (subgoal, cartridge) work-list, preserving order so we
+    # can zip the gather output back without losing the subgoal -> wds
+    # mapping.
+    plan: list[tuple[dict[str, Any], str | None]] = []
+    for sg in subgoals:
         for cart in sg.get("expected_cartridges") or [None]:
-            wds = await watchdog_registry.relevant_watchdogs(
-                intent_text, cartridge_id=cart,
-                min_score=0.05, limit=limit_per_subgoal,
-            )
-            for wd in wds:
-                pairs.append({"subgoal": sg, "watchdog": wd})
+            plan.append((sg, cart))
+
+    async def _lookup(sg: dict[str, Any], cart: str | None):
+        intent_text = f"{sg.get('description', '')} {keywords}"
+        return await watchdog_registry.relevant_watchdogs(
+            intent_text, cartridge_id=cart,
+            min_score=0.05, limit=limit_per_subgoal,
+        )
+
+    # return_exceptions=True so a single registry hiccup doesn't poison
+    # the whole pick — we drop the failing slot and keep the rest.
+    results = await asyncio.gather(
+        *(_lookup(sg, cart) for sg, cart in plan),
+        return_exceptions=True,
+    )
+
+    pairs: list[dict[str, Any]] = []
+    for (sg, _cart), result in zip(plan, results):
+        if isinstance(result, BaseException):
+            logger.warning("relevant_watchdogs failed for subgoal: %s", result)
+            continue
+        for wd in result or []:
+            pairs.append({"subgoal": sg, "watchdog": wd})
     return pairs
 
 

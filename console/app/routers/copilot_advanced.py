@@ -93,6 +93,57 @@ async def _noop_invoke_tool(*_args, **_kwargs) -> dict:
     return {"error": "tools_disabled_in_this_context"}
 
 
+def _require_uuid_path(value: str, *, label: str) -> str:
+    """Validate a path parameter that must be a UUID *before* it
+    reaches the database. Returns a 400 instead of letting asyncpg
+    surface a 500 on the eventual ``$X::uuid`` cast.
+
+    Path-param validation lives in the router on purpose: by the time
+    the service-layer ``_coerce_uuid_or_none`` runs we've already
+    burned a DB pool checkout and (potentially) audited a request.
+    """
+    from app.services._copilot_helpers import (
+        coerce_uuid_or_none as _coerce,
+    )
+    coerced = _coerce(value)
+    if coerced is None:
+        raise HTTPException(400, f"{label} must be a valid UUID")
+    return coerced
+
+
+async def _conversation_belongs_to_user(
+    conversation_id: str, user_id: int,
+) -> bool:
+    """Stop a client from attaching their goal to another user's
+    conversation. Returns True when the row exists *and* it's owned
+    by the caller, False otherwise. Soft-True on schema-drift (no
+    conversations table → skip the check, the FK already drops bad
+    refs at insert time)."""
+    from app.services import auth
+    pool = await auth.pool()
+    has_table = await pool.fetchval(
+        "SELECT to_regclass('public.conversations')"
+    )
+    if not has_table:
+        return True
+    coerced = conversation_id
+    try:
+        owner = await pool.fetchval(
+            """
+            SELECT user_id
+              FROM conversations
+             WHERE id = $1::uuid
+            """,
+            coerced,
+        )
+    except Exception:
+        # Bad uuid / pool issue — refuse to attach.
+        return False
+    if owner is None:
+        return False
+    return int(owner) == int(user_id)
+
+
 async def _llm_text_call(system: str, messages: list[dict]) -> str:
     """Adapter so memory_service.LLMTextCall (and goal_solver) can hit
     the real llm_client.chat.
@@ -119,7 +170,13 @@ async def _llm_text_call(system: str, messages: list[dict]) -> str:
 # ── Goal solver endpoints ─────────────────────────────────────────────
 
 
-@router.post("/goals", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/goals",
+    dependencies=[
+        Depends(require_csrf),
+        Depends(require_permission("copilot.write")),
+    ],
+)
 async def create_goal_endpoint(
     body: dict = Body(...),
     user: dict = Depends(require_authenticated),
@@ -127,12 +184,25 @@ async def create_goal_endpoint(
     goal_text = (body or {}).get("goal_text") or (body or {}).get("text")
     if not goal_text or not str(goal_text).strip():
         raise HTTPException(400, "goal_text is required")
-    conversation_id = (body or {}).get("conversation_id")
+    conversation_id_raw = (body or {}).get("conversation_id")
+    conversation_id: str | None = None
+    if conversation_id_raw:
+        conversation_id = str(conversation_id_raw)
+        # Defence-in-depth on top of the new FK in migration 93:
+        # reject the request outright when the caller passes a
+        # conversation that belongs to someone else, so the goal
+        # row never gets associated with cross-user metadata.
+        if not await _conversation_belongs_to_user(
+            conversation_id, _user_id(user),
+        ):
+            raise HTTPException(
+                403, "conversation_id does not belong to caller",
+            )
     goal = await goal_solver.create_goal(
         user_id=_user_id(user),
         workspace_id=_workspace_id(user),
         goal_text=str(goal_text),
-        conversation_id=str(conversation_id) if conversation_id else None,
+        conversation_id=conversation_id,
     )
     if goal is None:
         raise HTTPException(503, "copilot_goals table not provisioned")
@@ -152,6 +222,7 @@ async def get_goal_endpoint(
     goal_id: str,
     user: dict = Depends(require_authenticated),
 ):
+    goal_id = _require_uuid_path(goal_id, label="goal_id")
     goal = await goal_solver.get_goal(goal_id=goal_id, user_id=_user_id(user))
     if not goal:
         raise HTTPException(404, "goal not found")
@@ -169,6 +240,7 @@ async def diagnose_goal_endpoint(
     goal_id: str,
     user: dict = Depends(require_authenticated),
 ):
+    goal_id = _require_uuid_path(goal_id, label="goal_id")
     try:
         diagnosis = await goal_solver.diagnose_goal(
             goal_id=goal_id,
@@ -199,6 +271,7 @@ async def conclude_goal_endpoint(
     body: dict = Body(default={}),
     user: dict = Depends(require_authenticated),
 ):
+    goal_id = _require_uuid_path(goal_id, label="goal_id")
     workflow_outcomes = (body or {}).get("workflow_outcomes") or []
     if not isinstance(workflow_outcomes, list):
         raise HTTPException(400, "workflow_outcomes must be a list")
@@ -246,8 +319,14 @@ async def create_lesson_endpoint(
     scope   = (body or {}).get("scope", "user")
     if not trigger or not lesson:
         raise HTTPException(400, "trigger_pattern and lesson_text required")
+    # Reject unknown scopes outright so a typo can't silently land a
+    # lesson into the wrong visibility bucket. The Python service
+    # layer also normalises scope, but that's the second line of
+    # defence — we want a 400 at the edge, not a silent fallback.
     if scope not in ("user", "workspace", "global"):
-        scope = "user"
+        raise HTTPException(
+            400, "scope must be one of: user, workspace, global",
+        )
     if scope in ("workspace", "global") and not _has_admin(user):
         raise HTTPException(403, "workspace/global lessons require admin")
     new_id = await lessons_service.record_manual_lesson(
@@ -280,14 +359,44 @@ async def create_lesson_endpoint(
     return {"id": new_id, "scope": scope}
 
 
+_ADMIN_ROLE_ALLOWLIST = frozenset({
+    "owner", "super_admin", "admin", "workspace_admin",
+})
+
+
 def _has_admin(user: dict[str, Any]) -> bool:
-    perms = user.get("permissions") or []
-    if isinstance(perms, dict):
-        perms = list(perms.keys())
-    return any(
-        p in ("admin", "iam.users.write", "copilot.execute")
-        for p in (perms or [])
-    )
+    """Promote a lesson to workspace / global scope only when the
+    caller is a real admin. We intentionally accept exactly two
+    signals:
+
+    - ``user["role"]`` is one of the four canonical admin roles
+      enumerated in ``permissions.ROLE_PERMISSIONS`` (owner,
+      super_admin, admin, workspace_admin), or
+    - the caller carries the narrow ``iam.users.write`` permission
+      via the effective role-grant set (so a custom role that has
+      been given user-management can also promote lessons).
+
+    The earlier draft accepted ``copilot.execute`` here, but that
+    permission is granted to power users who can run destructive
+    tools — that's *not* the same authority as promoting a lesson
+    into another teammate's prompt. We also dropped the ``"admin"
+    in role`` substring trick: it accidentally matched anything
+    containing "admin" (e.g. a custom role like
+    ``"non_admin_observer"``) which was the wrong direction of
+    failure for an admin gate.
+    """
+    role = str(user.get("role") or "").lower()
+    if role in _ADMIN_ROLE_ALLOWLIST:
+        return True
+    # Effective permissions are role-derived in `permissions.py`, so
+    # this also lets a custom role with `iam.users.write` through.
+    try:
+        from app.services import permissions as _perms
+        if "iam.users.write" in _perms.get_effective_permissions(user):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 @router.post(
@@ -298,6 +407,7 @@ async def disable_lesson_endpoint(
     lesson_id: str,
     user: dict = Depends(require_authenticated),
 ):
+    lesson_id = _require_uuid_path(lesson_id, label="lesson_id")
     ok = await lessons_service.disable_lesson(
         lesson_id=lesson_id, user_id=_user_id(user),
     )
@@ -314,6 +424,7 @@ async def enable_lesson_endpoint(
     lesson_id: str,
     user: dict = Depends(require_authenticated),
 ):
+    lesson_id = _require_uuid_path(lesson_id, label="lesson_id")
     ok = await lessons_service.enable_lesson(
         lesson_id=lesson_id, user_id=_user_id(user),
     )

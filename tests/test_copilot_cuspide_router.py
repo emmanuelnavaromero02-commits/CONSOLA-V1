@@ -20,6 +20,14 @@ from fastapi.testclient import TestClient
 
 _SIBLINGS = ("/cartridges/", "/refinement", "/vault", "/workspace", "/mcp-infra")
 
+# UUID-shaped placeholders for path params. Audit-round-1 added a 400
+# guard in the router that rejects malformed UUIDs before they reach
+# the service layer, so the previous "g1" / "lid" / "abc" shorthands
+# no longer work for the 404 / happy-path tests.
+_GOAL_ID = "11111111-1111-1111-1111-111111111111"
+_LESSON_ID = "22222222-2222-2222-2222-222222222222"
+_MISSING_ID = "33333333-3333-3333-3333-333333333333"
+
 
 @pytest.fixture
 def advanced_router_mod():
@@ -133,8 +141,18 @@ def test_get_goal_404(advanced_router_mod, monkeypatch):
         advanced_router_mod.goal_solver, "get_goal",
         AsyncMock(return_value=None),
     )
-    r = TestClient(api).get("/api/copilot/goals/abc")
+    r = TestClient(api).get(f"/api/copilot/goals/{_GOAL_ID}")
     assert r.status_code == 404
+
+
+def test_get_goal_rejects_bad_uuid(advanced_router_mod, monkeypatch):
+    """Audit-round-1 fix: malformed UUID short-circuits to 400 before
+    reaching the service. Previously it would have hit asyncpg and
+    surfaced a 500 from the failing ``$1::uuid`` cast."""
+    api = _make_app(advanced_router_mod)
+    r = TestClient(api).get("/api/copilot/goals/not-a-uuid")
+    assert r.status_code == 400
+    assert "goal_id" in r.text
 
 
 def test_conclude_goal_happy(advanced_router_mod, monkeypatch):
@@ -142,13 +160,13 @@ def test_conclude_goal_happy(advanced_router_mod, monkeypatch):
     monkeypatch.setattr(
         advanced_router_mod.goal_solver, "conclude_goal",
         AsyncMock(return_value={
-            "goal_id": "g1",
+            "goal_id": _GOAL_ID,
             "status": "completed",
             "outcome_summary": "Cerramos el goal con éxito.",
         }),
     )
     r = TestClient(api).post(
-        "/api/copilot/goals/g1/conclude",
+        f"/api/copilot/goals/{_GOAL_ID}/conclude",
         json={"workflow_outcomes": [{"id": "w1", "status": "completed", "steps": []}]},
     )
     assert r.status_code == 200, r.text
@@ -160,7 +178,7 @@ def test_conclude_goal_happy(advanced_router_mod, monkeypatch):
 def test_conclude_goal_rejects_non_list(advanced_router_mod):
     api = _make_app(advanced_router_mod, with_write=True)
     r = TestClient(api).post(
-        "/api/copilot/goals/g1/conclude",
+        f"/api/copilot/goals/{_GOAL_ID}/conclude",
         json={"workflow_outcomes": "not a list"},
     )
     assert r.status_code == 400
@@ -173,7 +191,7 @@ def test_conclude_goal_404(advanced_router_mod, monkeypatch):
         AsyncMock(return_value=None),
     )
     r = TestClient(api).post(
-        "/api/copilot/goals/missing/conclude",
+        f"/api/copilot/goals/{_MISSING_ID}/conclude",
         json={"workflow_outcomes": []},
     )
     assert r.status_code == 404
@@ -196,7 +214,7 @@ def test_diagnose_goal_invokes_solver_and_picker(advanced_router_mod, monkeypatc
         advanced_router_mod.goal_solver, "pick_watchdogs_for_diagnosis",
         AsyncMock(return_value=[]),
     )
-    r = TestClient(api).post("/api/copilot/goals/g1/diagnose")
+    r = TestClient(api).post(f"/api/copilot/goals/{_GOAL_ID}/diagnose")
     assert r.status_code == 200, r.text
     payload = r.json()
     assert "diagnosis" in payload
@@ -243,8 +261,14 @@ def test_disable_lesson_404(advanced_router_mod, monkeypatch):
         advanced_router_mod.lessons_service, "disable_lesson",
         AsyncMock(return_value=False),
     )
-    r = TestClient(api).post("/api/copilot/lessons/zzz/disable")
+    r = TestClient(api).post(f"/api/copilot/lessons/{_LESSON_ID}/disable")
     assert r.status_code == 404
+
+
+def test_disable_lesson_rejects_bad_uuid(advanced_router_mod):
+    api = _make_app(advanced_router_mod)
+    r = TestClient(api).post("/api/copilot/lessons/not-a-uuid/disable")
+    assert r.status_code == 400
 
 
 def test_enable_lesson_happy(advanced_router_mod, monkeypatch):
@@ -253,11 +277,11 @@ def test_enable_lesson_happy(advanced_router_mod, monkeypatch):
         advanced_router_mod.lessons_service, "enable_lesson",
         AsyncMock(return_value=True),
     )
-    r = TestClient(api).post("/api/copilot/lessons/lid/enable")
+    r = TestClient(api).post(f"/api/copilot/lessons/{_LESSON_ID}/enable")
     assert r.status_code == 200
     body = r.json()
     assert body["enabled"] is True
-    assert body["id"] == "lid"
+    assert body["id"] == _LESSON_ID
 
 
 def test_enable_lesson_404(advanced_router_mod, monkeypatch):
@@ -266,7 +290,7 @@ def test_enable_lesson_404(advanced_router_mod, monkeypatch):
         advanced_router_mod.lessons_service, "enable_lesson",
         AsyncMock(return_value=False),
     )
-    r = TestClient(api).post("/api/copilot/lessons/missing/enable")
+    r = TestClient(api).post(f"/api/copilot/lessons/{_MISSING_ID}/enable")
     assert r.status_code == 404
 
 

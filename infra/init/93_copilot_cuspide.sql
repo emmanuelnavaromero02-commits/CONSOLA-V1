@@ -114,6 +114,123 @@ CREATE INDEX IF NOT EXISTS idx_copilot_watchdogs_enabled
     ON copilot_watchdogs (cartridge_id, enabled);
 
 
+-- ── CHECK constraints (added in audit round 1) ──────────────────────
+--
+-- We validate the same enums in Python (lessons_service.record_lesson,
+-- goal_solver.update_goal_status). Belt-and-braces: a bad UPDATE issued
+-- straight at psql shouldn't be able to corrupt the column. Both
+-- constraints are added idempotently via DO blocks so re-running the
+-- migration on an already-provisioned database is a no-op.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE table_schema = 'public'
+       AND table_name = 'copilot_goals'
+       AND constraint_name = 'copilot_goals_status_check'
+  ) THEN
+    ALTER TABLE copilot_goals
+      ADD CONSTRAINT copilot_goals_status_check
+      CHECK (status IN (
+          'planning', 'running', 'awaiting_approval',
+          'completed', 'failed', 'cancelled'
+      ));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE table_schema = 'public'
+       AND table_name = 'copilot_lessons'
+       AND constraint_name = 'copilot_lessons_scope_check'
+  ) THEN
+    ALTER TABLE copilot_lessons
+      ADD CONSTRAINT copilot_lessons_scope_check
+      CHECK (scope IN ('user', 'workspace', 'global'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE table_schema = 'public'
+       AND table_name = 'copilot_lessons'
+       AND constraint_name = 'copilot_lessons_source_kind_check'
+  ) THEN
+    ALTER TABLE copilot_lessons
+      ADD CONSTRAINT copilot_lessons_source_kind_check
+      CHECK (source_kind IN ('approval', 'decline', 'manual', 'system'));
+  END IF;
+END $$;
+
+
+-- ── FK references (guarded; only attach if the referenced table is
+-- already present). conversations + workspaces both exist in deploys
+-- that ran migrations 13 / 38 first, but we still guard the ADD
+-- CONSTRAINT so this file is safe to re-run on a partial schema.
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'conversations'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE table_schema = 'public'
+       AND table_name = 'copilot_goals'
+       AND constraint_name = 'copilot_goals_conversation_id_fkey'
+  ) THEN
+    ALTER TABLE copilot_goals
+      ADD CONSTRAINT copilot_goals_conversation_id_fkey
+      FOREIGN KEY (conversation_id)
+      REFERENCES conversations(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'workspaces'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE table_schema = 'public'
+       AND table_name = 'copilot_goals'
+       AND constraint_name = 'copilot_goals_workspace_id_fkey'
+  ) THEN
+    ALTER TABLE copilot_goals
+      ADD CONSTRAINT copilot_goals_workspace_id_fkey
+      FOREIGN KEY (workspace_id)
+      REFERENCES workspaces(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'workspaces'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE table_schema = 'public'
+       AND table_name = 'copilot_lessons'
+       AND constraint_name = 'copilot_lessons_workspace_id_fkey'
+  ) THEN
+    ALTER TABLE copilot_lessons
+      ADD CONSTRAINT copilot_lessons_workspace_id_fkey
+      FOREIGN KEY (workspace_id)
+      REFERENCES workspaces(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+
 -- Self-register so the migration tracker knows this file applied.
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('93_copilot_cuspide.sql', NOW())

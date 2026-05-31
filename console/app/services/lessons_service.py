@@ -325,18 +325,64 @@ async def fetch_relevant_lessons(
 # precise; a permissive filter would silence too many legitimate
 # operator-authored lessons.
 _REBEL_KEYWORDS = (
-    "ignora regla", "olvida regla", "anula regla",
-    "ignore previous", "ignore the system",
-    "override the system", "override system prompt",
-    "jailbreak", "disregard the previous",
+    # Spanish — with and without accents so an attacker can't bypass
+    # the filter by stripping diacritics.
+    "ignora regla", "ignora la regla", "ignora las reglas",
+    "olvida regla", "olvida la regla", "olvida las reglas",
+    "olvida estas reglas", "olvida tus reglas",
+    "anula regla", "anula la regla", "anula las reglas",
+    "desobedece",
+    # English
+    "ignore previous", "ignore the system", "ignore the rules",
+    "ignore your rules", "ignore all previous",
+    "override the system", "override system prompt", "override the rules",
+    "disregard the previous", "disregard the rules", "disregard your rules",
+    "forget your instructions", "forget the rules",
+    "jailbreak",
+    # Spanish "rol" / persona swap tricks
+    "actua como si", "actúa como si", "pretende que",
+    "haz como si no tuvieras", "ya no tienes reglas",
 )
+
+
+def _strip_accents(text: str) -> str:
+    """Lowercase + drop common Spanish accents so the rebel matcher
+    catches both `"olvida"` and `"ólvida"`. Keeps the implementation
+    dependency-free (no unicodedata import needed for the small alphabet
+    we actually care about)."""
+    if not text:
+        return ""
+    out = text.lower()
+    for src, dst in (
+        ("á", "a"), ("é", "e"), ("í", "i"),
+        ("ó", "o"), ("ú", "u"), ("ñ", "n"),
+        ("ü", "u"),
+    ):
+        out = out.replace(src, dst)
+    return out
 
 
 def _looks_like_jailbreak(text: str) -> bool:
     if not text:
         return False
-    haystack = text.lower()
+    haystack = _strip_accents(text)
     return any(kw in haystack for kw in _REBEL_KEYWORDS)
+
+
+def _xml_escape(text: str) -> str:
+    """Escape the five XML special characters so a malicious lesson
+    body can't break out of the ``<lesson>...</lesson>`` element.
+    Order matters: ``&`` must be escaped first or it'll double-escape
+    the literal entities we emit afterwards."""
+    if not text:
+        return ""
+    return (
+        text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
+    )
 
 
 def render_lessons_block(lessons: Iterable[dict[str, Any]]) -> str:
@@ -366,9 +412,18 @@ def render_lessons_block(lessons: Iterable[dict[str, Any]]) -> str:
     for lesson in safe:
         text = (lesson.get("lesson_text") or "").strip()[:_MAX_LESSON_TEXT]
         kind = str(lesson.get("source_kind") or "manual")[:32]
-        # Escape closing tag fragments inside the data so a malicious
-        # lesson_text can't break the envelope.
-        text = text.replace("</LEARNED_LESSONS>", "</LEARNED_LESSONS_>")
+        # Full XML escape: a malicious lesson_text containing literal
+        # `<`, `>`, `&`, `"` or `'` characters could otherwise inject a
+        # second `<lesson>` element, terminate the envelope early, or
+        # break attribute parsing. ``_xml_escape`` covers all five
+        # entities; the explicit ``</LEARNED_LESSONS>`` neutralisation
+        # below is a belt-and-braces sentinel for the unlikely case
+        # the LLM's tokenizer somehow re-introduces the literal close
+        # tag after we escape.
+        text = _xml_escape(text).replace(
+            "</LEARNED_LESSONS>", "</LEARNED_LESSONS_>",
+        )
+        kind = _xml_escape(kind)
         out.append(f"  <lesson kind=\"{kind}\">{text}</lesson>\n")
     out.append("</LEARNED_LESSONS>\n")
     return "".join(out)
