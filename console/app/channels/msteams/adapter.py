@@ -131,6 +131,20 @@ def to_internal_request(
     event: InboundTeamsEvent,
     ctx: PermissionsContext | dict,
 ) -> InternalCopilotRequest:
+    """Build the internal copilot request from a Teams event.
+
+    Contract notes (round-3 audit):
+      * ``permissions_context`` is **audit / provenance only**. ``run_turn``
+        does not read it; the copilot recomputes authorization from
+        ``user.role`` via ``permissions.has_permission``. We still pass it so
+        a future copilot, the audit log, or downstream tooling can reason
+        about how Teams resolved the caller.
+      * ``attachments`` carry only safe structural metadata (name +
+        content_type, capped at 10). The current ``run_turn`` ignores them
+        — surfacing file context to the copilot is a documented Level-4
+        item. Until then a Teams user sending a file with no text body
+        looks empty to the copilot.
+    """
     # Accept a model OR a plain dict and let pydantic build the nested model.
     # Passing a dump (not the instance) also sidesteps class-identity issues
     # when callers import PermissionsContext from a differently-loaded module.
@@ -176,7 +190,18 @@ def from_copilot_response(resp: InternalCopilotResponse) -> dict[str, Any]:
         for i, c in enumerate(resp.citations[:5], start=1):
             if not isinstance(c, dict):
                 continue
-            label = c.get("title") or c.get("dataset") or c.get("source") or f"fuente {i}"
+            # Copilot citations carry ``entity`` (dataset/table) and ``tool``
+            # (mcp tool that produced them) plus a ``source`` server id. Prefer
+            # human-readable names; fall back to source (server id) and finally
+            # an ordinal label so the citation footer is never empty.
+            label = (
+                c.get("title")
+                or c.get("dataset")
+                or c.get("entity")
+                or c.get("tool")
+                or c.get("source")
+                or f"fuente {i}"
+            )
             refs.append(f"[{i}] {label}")
         if refs:
             text = f"{text}\n\n---\n" + "  ·  ".join(refs)

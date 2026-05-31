@@ -112,6 +112,27 @@ All variables are documented in `infra/.env.example`. The essentials:
   Government / sovereign clouds (`*.botframework.us`, `*.botframework.cn`)
   are NOT supported in this version.
 
+### Activity types we acknowledge silently
+
+Teams sends several activity types this channel does NOT act on in v0.1.
+They get a 200-empty response so Teams won't retry, and they NEVER reach
+the copilot. No welcome / typing UX yet — Level-1 completion items:
+
+| Activity | Behaviour | Future |
+|---|---|---|
+| `conversationUpdate` (bot installed in a chat) | Ignored | Welcome card (Level-1) |
+| `typing` | Ignored | Send typing back (Level-1) |
+| `messageReaction` | Ignored | Audit/react (Level-2) |
+| `meeting`-context messages | Routed through group policy; transcript ingestion fails closed | Post-meeting ingestion (Level-3) |
+
+### Reply threading (Level-1 completion item)
+
+The current inline-reply path writes the activity body in the webhook
+response. Teams renders this correctly in personal DMs, less well in
+channel threads (the reply may post as a top-level message instead of
+threading on the original). The Bot Connector "reply to activity" proactive
+call against the stored `serviceUrl` is the production fix.
+
 ### JWT signature verification (hardening item)
 
 `claims` mode validates issuer/audience/tenant/expiry of the Bot Framework

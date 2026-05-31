@@ -72,18 +72,37 @@ def _registered_app_paths() -> set[str]:
 
 
 def _router_module_paths() -> set[str]:
+    """Compose ``@identifier.<verb>("path")`` decorators with the prefix that
+    THAT identifier was declared with.
+
+    A naïve "grab the first APIRouter prefix and apply it to every decorator"
+    is wrong for files that declare multiple routers (e.g. copilot_workflows
+    declares ``router`` and ``plural_router`` with different prefixes). Build
+    an identifier→prefix map first, then look each decorator up; identifiers
+    we don't know default to no prefix.
+    """
     routers_dir = REPO_ROOT / "console" / "app" / "routers"
     out: set[str] = set()
+    # `<name> = APIRouter(... prefix="...")` — captures every declaration,
+    # not just the first one. ``prefix`` may be absent.
+    assign_re = re.compile(
+        r"^\s*(\w+)\s*=\s*APIRouter\(([^)]*)\)",
+        re.MULTILINE,
+    )
+    prefix_in_args_re = re.compile(r'prefix\s*=\s*["\']([^"\']*)["\']')
+    decorator_re = re.compile(
+        r'@(\w+)\.(?:get|post|put|delete|patch|head|options)\(\s*["\']([^"\']*)["\']'
+    )
     for path in routers_dir.glob("*.py"):
         if path.name == "__init__.py":
             continue
         text = path.read_text(encoding="utf-8")
-        prefix_match = re.search(r"APIRouter\([^)]*prefix\s*=\s*[\"']([^\"']*)[\"']", text)
-        prefix = prefix_match.group(1) if prefix_match else ""
-        for sub in re.findall(
-            r'@\w+\.(?:get|post|put|delete|patch|head|options)\(\s*["\']([^"\']*)["\']',
-            text,
-        ):
+        prefixes: dict[str, str] = {}
+        for ident, args in assign_re.findall(text):
+            m = prefix_in_args_re.search(args)
+            prefixes[ident] = m.group(1) if m else ""
+        for ident, sub in decorator_re.findall(text):
+            prefix = prefixes.get(ident, "")
             composed = (prefix + sub) or "/"
             out.add(composed)
     return out
@@ -119,3 +138,23 @@ def test_public_prefixes_are_backed_by_a_mount_or_route():
             f'app.mount("{stem}"' in src
             or re.search(rf'@app\.\w+\(\s*["\']{re.escape(stem)}/', src)
         ), f"public prefix {prefix} has no mount or route"
+
+
+def test_router_enumeration_respects_multiple_router_instances_per_file():
+    """Regression: copilot_workflows.py declares ``router`` and
+    ``plural_router`` with different prefixes (``/api/copilot/workflow`` vs
+    ``/api/copilot/workflows``). A naive first-prefix parser would attribute
+    plural_router's routes to the singular prefix and silently mis-report
+    them — a latent false-negative that would let a future public_exact
+    entry on the wrong path appear "registered".
+    """
+    registered = _router_module_paths()
+    # Concrete paths from copilot_workflows.py:
+    # - router (singular):   "/api/copilot/workflow" + ""              = "/api/copilot/workflow"
+    # - plural_router:       "/api/copilot/workflows" + "/{workflow_id}/execute"
+    assert "/api/copilot/workflow" in registered, (
+        "singular router prefix missing — multi-router detection broken"
+    )
+    assert any(p.startswith("/api/copilot/workflows/") for p in registered), (
+        "plural_router routes missing — first-prefix-only parser regressed"
+    )
