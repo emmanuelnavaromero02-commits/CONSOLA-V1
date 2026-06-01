@@ -27,6 +27,8 @@ async def reveal_setting_internal(
         "replicon": ("replicon_",),
         "cartridge-hubspot": ("hubspot_",),
         "hubspot": ("hubspot_",),
+        "cartridge-salesforce": ("salesforce_",),
+        "salesforce": ("salesforce_",),
         "cartridge-sap_hcm": ("sap_hcm_",),
         "cartridge-sap_s4hana": ("sap_s4hana_",),
         "cartridge-sap_successfactors": ("sap_successfactors_",),

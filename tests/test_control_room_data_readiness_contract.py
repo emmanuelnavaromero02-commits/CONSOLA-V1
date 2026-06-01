@@ -72,7 +72,8 @@ def test_dashboard_exposes_data_readiness_in_backend_and_ui():
     ):
         assert needle in backend
         assert needle in ui
-    assert "modulos operativos" not in ui
+    assert "modulos operativos" in ui
+    assert "modulos activos" not in ui
 
 
 def test_readyz_supports_strict_control_room_data_mode():
