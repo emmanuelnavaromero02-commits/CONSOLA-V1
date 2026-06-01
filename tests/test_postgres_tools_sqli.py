@@ -16,6 +16,7 @@ This suite enforces, at the source level, that every callsite which
 interpolates user input into SQL now goes through ``validate_identifier``
 (strict ASCII) and ``validate_bounded_int``.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -76,11 +77,11 @@ def _clean_app_modules():
 
 # ── mcp-infra/app/tools/_validators.py ──────────────────────────────────────
 
+
 @pytest.fixture
 def validators():
     sys.path[:] = [
-        p for p in sys.path
-        if not any(marker in p for marker in SERVICE_PATH_MARKERS)
+        p for p in sys.path if not any(marker in p for marker in SERVICE_PATH_MARKERS)
     ]
     sys.path.insert(0, str(MCP_INFRA_DIR))
     _purge_app_modules()
@@ -96,18 +97,18 @@ def test_validator_accepts_simple_identifier(validators):
 @pytest.mark.parametrize(
     "bad",
     [
-        'users"; DROP TABLE x; --',           # quote-break + comment
-        "users; DROP TABLE x;",                # semicolon + ddl
+        'users"; DROP TABLE x; --',  # quote-break + comment
+        "users; DROP TABLE x;",  # semicolon + ddl
         "users UNION SELECT password FROM x",  # whitespace
-        "1users",                              # leading digit
-        "users.passwords",                     # qualified name (must come split)
-        "users\x00",                           # NUL byte
-        "users--",                             # comment marker
-        "p‮ublic",                        # RTL override unicode
-        "пользователи",                        # cyrillic look-alike
-        "",                                    # empty
-        " users",                              # leading space
-        "users ",                              # trailing space
+        "1users",  # leading digit
+        "users.passwords",  # qualified name (must come split)
+        "users\x00",  # NUL byte
+        "users--",  # comment marker
+        "p‮ublic",  # RTL override unicode
+        "пользователи",  # cyrillic look-alike
+        "",  # empty
+        " users",  # leading space
+        "users ",  # trailing space
     ],
 )
 def test_validator_rejects_sql_injection(validators, bad):
@@ -130,13 +131,13 @@ def test_validate_bounded_int_accepts_in_range(validators, good):
 @pytest.mark.parametrize(
     "bad",
     [
-        "10; DROP TABLE x; --",   # SQLi payload
-        "abc",                    # not numeric
-        "",                       # empty string
-        None,                     # not int
-        1.5,                      # float
-        True,                     # bool (subclass of int but rejected)
-        False,                    # bool false
+        "10; DROP TABLE x; --",  # SQLi payload
+        "abc",  # not numeric
+        "",  # empty string
+        None,  # not int
+        1.5,  # float
+        True,  # bool (subclass of int but rejected)
+        False,  # bool false
     ],
 )
 def test_validate_bounded_int_rejects_invalid(validators, bad):
@@ -152,11 +153,11 @@ def test_validate_bounded_int_rejects_out_of_range(validators, oob):
 
 # ── mcp-infra/app/tools/postgres.py — postgres_get_sample ───────────────────
 
+
 @pytest.fixture
 def postgres_tool():
     sys.path[:] = [
-        p for p in sys.path
-        if not any(marker in p for marker in SERVICE_PATH_MARKERS)
+        p for p in sys.path if not any(marker in p for marker in SERVICE_PATH_MARKERS)
     ]
     sys.path.insert(0, str(MCP_INFRA_DIR))
     _purge_app_modules()
@@ -185,9 +186,7 @@ def test_postgres_get_sample_rejects_sqli_in_schema(postgres_tool):
 def test_postgres_get_sample_rejects_unicode_injection(postgres_tool):
     with patch.object(postgres_tool, "_conn") as mock_conn:
         with pytest.raises(ValueError, match="Invalid schema"):
-            postgres_tool.postgres_get_sample(
-                table="users", schema="p‮ublic", n=10
-            )
+            postgres_tool.postgres_get_sample(table="users", schema="p‮ublic", n=10)
         mock_conn.assert_not_called()
 
 
@@ -203,13 +202,9 @@ def test_postgres_get_sample_rejects_invalid_n(postgres_tool):
 def test_postgres_get_sample_rejects_n_out_of_range(postgres_tool):
     with patch.object(postgres_tool, "_conn") as mock_conn:
         with pytest.raises(ValueError, match="must be 1..100"):
-            postgres_tool.postgres_get_sample(
-                table="users", schema="public", n=0
-            )
+            postgres_tool.postgres_get_sample(table="users", schema="public", n=0)
         with pytest.raises(ValueError, match="must be 1..100"):
-            postgres_tool.postgres_get_sample(
-                table="users", schema="public", n=9999
-            )
+            postgres_tool.postgres_get_sample(table="users", schema="public", n=9999)
         mock_conn.assert_not_called()
 
 
@@ -220,9 +215,7 @@ def test_postgres_get_sample_accepts_valid_inputs(postgres_tool):
     mock_conn = MagicMock()
     mock_conn.cursor.return_value.__enter__.return_value = mock_cur
     with patch.object(postgres_tool, "_conn", return_value=mock_conn):
-        result = postgres_tool.postgres_get_sample(
-            table="users", schema="public", n=10
-        )
+        result = postgres_tool.postgres_get_sample(table="users", schema="public", n=10)
     assert result == {"rows": [], "columns": [], "count": 0}
     # And the SQL we built must be the literal we expect (no escaped payload).
     executed = mock_cur.execute.call_args[0][0]
@@ -230,6 +223,7 @@ def test_postgres_get_sample_accepts_valid_inputs(postgres_tool):
 
 
 # ── mcp-infra/app/tools/postgres.py — postgres_execute_query ───────────────
+
 
 def test_postgres_execute_query_rejects_sqli_in_limit(postgres_tool):
     with patch.object(postgres_tool, "_conn") as mock_conn:
@@ -260,12 +254,12 @@ def test_postgres_execute_query_short_circuits_non_select(postgres_tool):
 @pytest.mark.parametrize(
     "payload",
     [
-        "SELECT 1; DROP TABLE users",                                  # simple stacked
-        "SELECT 1 ; UPDATE users SET role='admin' WHERE id=1",         # spaces
-        "WITH x AS (SELECT 1) SELECT * FROM x; DROP TABLE users",      # WITH form
-        "SELECT 1) UNION SELECT password FROM users; --",              # quote-break + comment
-        "SELECT 1 -- ; DROP TABLE x\nUNION SELECT 1",                  # comment hides ;
-        "SELECT 1 /* ; */ UNION SELECT password FROM users",           # block comment hides ;
+        "SELECT 1; DROP TABLE users",  # simple stacked
+        "SELECT 1 ; UPDATE users SET role='admin' WHERE id=1",  # spaces
+        "WITH x AS (SELECT 1) SELECT * FROM x; DROP TABLE users",  # WITH form
+        "SELECT 1) UNION SELECT password FROM users; --",  # quote-break + comment
+        "SELECT 1 -- ; DROP TABLE x\nUNION SELECT 1",  # comment hides ;
+        "SELECT 1 /* ; */ UNION SELECT password FROM users",  # block comment hides ;
     ],
 )
 def test_postgres_execute_query_rejects_multi_statement_and_comments(
@@ -273,9 +267,9 @@ def test_postgres_execute_query_rejects_multi_statement_and_comments(
 ):
     with patch.object(postgres_tool, "_conn") as mock_conn:
         result = postgres_tool.postgres_execute_query(sql=payload, limit=10)
-        assert "error" in result, (
-            f"payload {payload!r} should be rejected, got result {result!r}"
-        )
+        assert (
+            "error" in result
+        ), f"payload {payload!r} should be rejected, got result {result!r}"
         mock_conn.assert_not_called()
 
 
@@ -344,6 +338,7 @@ def test_postgres_execute_query_strips_single_trailing_semicolon(postgres_tool):
 
 # ── Reviewer #2 finding: explicit parametrized-vs-fstring proofs ────────────
 
+
 def test_postgres_list_tables_uses_parameterized_query(postgres_tool):
     """``postgres_list_tables`` passes ``schema`` as a bound parameter,
     not via f-string. A dangerous-looking value must reach psycopg2 as
@@ -381,6 +376,7 @@ def test_postgres_get_table_schema_uses_parameterized_query(postgres_tool):
 
 # ── Reviewer #2 finding: capture the exact validator that fired ─────────────
 
+
 def test_cartridge_preview_rejects_limit_sqli_specifically(cartridges_tool):
     """Tighten ``test_cartridge_preview_rejects_limit_sqli`` so a refactor
     that swaps the order of identifier vs limit validation still proves
@@ -407,6 +403,7 @@ def test_cartridge_query_kb_rejects_limit_sqli(cartridges_tool):
 
 
 # ── mcp-infra/app/tools/cartridges.py — _bronze_path / cartridge_preview ────
+
 
 @pytest.fixture
 def cartridges_tool(postgres_tool):
@@ -450,6 +447,22 @@ def test_bronze_path_uses_tenant_workspace_scope_when_available(cartridges_tool)
 
     assert "/raw/replicon/TimeEntry/tenant_id=tenant-1/workspace_id=workspace-1/" in out
     assert "/load_date=*/batch_id=*/*.parquet" in out
+
+
+def test_scope_cartridge_sql_rewrites_kb_read_paths_when_context_is_scoped(
+    cartridges_tool,
+):
+    out = cartridges_tool._scope_cartridge_sql(
+        "SELECT * FROM read_parquet('s3://lakehouse/raw/replicon/TimeEntry/**/*.parquet')",
+        "replicon",
+        security_context={
+            "trusted": True,
+            "tenant_id": "tenant-1",
+            "workspace_id": "workspace-1",
+        },
+    )
+
+    assert "raw/replicon/TimeEntry/tenant_id=tenant-1/workspace_id=workspace-1/" in out
 
 
 def test_cartridge_preview_rejects_limit_sqli(cartridges_tool):
@@ -496,8 +509,7 @@ SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
 def _load_sap_mcp_module(cartridge_id: str):
     cart_dir = CARTRIDGES_ROOT / cartridge_id
     sys.path[:] = [
-        p for p in sys.path
-        if "/cartridges/" not in p and "/mcp-infra" not in p
+        p for p in sys.path if "/cartridges/" not in p and "/mcp-infra" not in p
     ]
     sys.path.insert(0, str(cart_dir))
     _purge_app_modules()
@@ -506,7 +518,9 @@ def _load_sap_mcp_module(cartridge_id: str):
 
 @pytest.mark.parametrize("cartridge_id", SAP_CARTRIDGES)
 def test_sap_local_validator_rejects_sqli(cartridge_id, monkeypatch):
-    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", "_lAbgL_v0c1jp9R_jHkR1lHl4o4-XfcExlIRY60n_5o=")
+    monkeypatch.setenv(
+        "FIELD_ENCRYPTION_KEY", "_lAbgL_v0c1jp9R_jHkR1lHl4o4-XfcExlIRY60n_5o="
+    )
     mod = _load_sap_mcp_module(cartridge_id)
     with pytest.raises(ValueError, match="Invalid entity"):
         mod._validate_identifier("X') UNION SELECT 1; --", "entity")
@@ -514,13 +528,16 @@ def test_sap_local_validator_rejects_sqli(cartridge_id, monkeypatch):
 
 @pytest.mark.parametrize("cartridge_id", SAP_CARTRIDGES)
 def test_sap_local_validator_accepts_valid(cartridge_id, monkeypatch):
-    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", "_lAbgL_v0c1jp9R_jHkR1lHl4o4-XfcExlIRY60n_5o=")
+    monkeypatch.setenv(
+        "FIELD_ENCRYPTION_KEY", "_lAbgL_v0c1jp9R_jHkR1lHl4o4-XfcExlIRY60n_5o="
+    )
     mod = _load_sap_mcp_module(cartridge_id)
     assert mod._validate_identifier("TimeEntry", "entity") == "TimeEntry"
     assert mod._validate_bounded_int(50, "limit", lo=1, hi=200) == 50
 
 
 # ── Repo-level guard: no new f-string SQL on schema/table inputs ────────────
+
 
 def test_no_unvalidated_fstring_sql_in_postgres_tool():
     """Static guard: every f-string in postgres.py that builds SQL with
@@ -537,7 +554,9 @@ def test_no_unvalidated_fstring_sql_in_postgres_tool():
 
 
 def test_no_unvalidated_fstring_sql_in_cartridges_tool():
-    src = (MCP_INFRA_DIR / "app" / "tools" / "cartridges.py").read_text(encoding="utf-8")
+    src = (MCP_INFRA_DIR / "app" / "tools" / "cartridges.py").read_text(
+        encoding="utf-8"
+    )
     assert "from app.tools._validators import" in src
     assert "validate_identifier(cartridge_id" in src
     assert "validate_identifier(entity" in src
@@ -550,4 +569,4 @@ def test_no_unvalidated_fstring_sql_in_sap_mcp_server(cartridge_id):
     )
     assert "_validate_identifier" in src
     assert "_validate_bounded_int" in src
-    assert '_validate_identifier(entity' in src
+    assert "_validate_identifier(entity" in src

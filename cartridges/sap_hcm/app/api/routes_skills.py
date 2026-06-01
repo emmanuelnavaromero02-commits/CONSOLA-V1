@@ -50,6 +50,24 @@ def _run_entity_with_context(
         reset_security_context(token)
 
 
+def _run_kb_with_context(kb_id: str, body: dict[str, Any] | None) -> dict:
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
+    try:
+        return run_knowledge_bit(kb_id, ctx)
+    finally:
+        reset_security_context(token)
+
+
+def _run_all_kbs_with_context(body: dict[str, Any] | None) -> list[dict]:
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
+    try:
+        return run_all_knowledge_bits(ctx)
+    finally:
+        reset_security_context(token)
+
+
 def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse:
     response = getattr(exc, "response", None)
     upstream_status = getattr(response, "status_code", None)
@@ -109,12 +127,14 @@ def list_skills() -> dict:
             # v1.44.3.3 R-Mac-Round-3 Task F: ``description`` is
             # the canonical key (matches the orchestrator
             # contract); ``summary`` aliased for one sprint.
-            skills.append({
-                "name":        path,
-                "method":      method,
-                "description": description,
-                "summary":     description,  # alias — remove in v1.44.4
-            })
+            skills.append(
+                {
+                    "name": path,
+                    "method": method,
+                    "description": description,
+                    "summary": description,  # alias — remove in v1.44.4
+                }
+            )
     return {"service": _SERVICE, "skills": skills}
 
 
@@ -131,6 +151,7 @@ def skills_root() -> dict:
 def test_connection() -> dict:
     try:
         from app.core.sap_client import SapHcmClient
+
         return SapHcmClient().test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
@@ -170,7 +191,9 @@ def run_full_load_all(body: dict[str, Any] | None = Body(None)) -> dict:
         try:
             results.append(_run_entity_with_context({**config, "mode": "full"}, body))
         except Exception as exc:
-            results.append({"entity": config.get("entity"), "status": "failed", "error": str(exc)})
+            results.append(
+                {"entity": config.get("entity"), "status": "failed", "error": str(exc)}
+            )
     return {"results": results}
 
 
@@ -182,7 +205,9 @@ def run_incremental_all(body: dict[str, Any] | None = Body(None)) -> dict:
         try:
             results.append(_run_entity_with_context({**config, "mode": mode}, body))
         except Exception as exc:
-            results.append({"entity": config.get("entity"), "status": "failed", "error": str(exc)})
+            results.append(
+                {"entity": config.get("entity"), "status": "failed", "error": str(exc)}
+            )
     return {"results": results}
 
 
@@ -232,7 +257,9 @@ def run_historical_load_all(
                 )
             )
         except Exception as exc:
-            results.append({"entity": config.get("entity"), "status": "failed", "error": str(exc)})
+            results.append(
+                {"entity": config.get("entity"), "status": "failed", "error": str(exc)}
+            )
     return {"results": results}
 
 
@@ -249,12 +276,14 @@ def get_watermarks() -> dict:
 @router.get("/list_tables")
 def list_tables() -> dict:
     from app.core.sap_client import SapHcmClient
+
     return {"tables": SapHcmClient().list_tables()}
 
 
 @router.get("/get_table_schema/{table_id}")
 def get_table_schema(table_id: str) -> dict:
     from app.core.sap_client import SapHcmClient
+
     return SapHcmClient().get_table_schema(table_id)
 
 
@@ -264,16 +293,16 @@ def knowledge_bits() -> dict:
 
 
 @router.post("/run_knowledge_bits/{kb_id}")
-def run_kb(kb_id: str) -> dict:
+def run_kb(kb_id: str, body: dict[str, Any] | None = Body(None)) -> dict:
     config = get_kb_config(kb_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"Knowledge Bit not found: {kb_id}")
-    return run_knowledge_bit(kb_id)
+    return _run_kb_with_context(kb_id, body)
 
 
 @router.post("/run_all_knowledge_bits")
-def run_all_kbs() -> dict:
-    return {"results": run_all_knowledge_bits()}
+def run_all_kbs(body: dict[str, Any] | None = Body(None)) -> dict:
+    return {"results": _run_all_kbs_with_context(body)}
 
 
 @router.get("/get_kb_status")

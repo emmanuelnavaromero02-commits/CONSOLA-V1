@@ -8,6 +8,7 @@ run_logs, mcp_custom_tools).
 Phase 1: tools live alongside replicon's own MCP server. Phase 2 wires them as
 virtual servers in the console registry. Phase 6 deletes the replicon container.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 # ── DuckDB helper (S3 pre-configured) ─────────────────────────────────────────
+
 
 def _duckdb() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
@@ -174,9 +176,42 @@ def _scoped_object_prefix(
 ) -> str:
     normalized = str(prefix or "").strip("/")
     scope = _scope_suffix(security_context, tenant_id, workspace_id)
-    if not normalized or not scope or "tenant_id=" in normalized or "workspace_id=" in normalized:
+    if (
+        not normalized
+        or not scope
+        or "tenant_id=" in normalized
+        or "workspace_id=" in normalized
+    ):
         return normalized
     return f"{normalized}/{scope}"
+
+
+def _scope_cartridge_sql(
+    sql: str,
+    cartridge_id: str,
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    resolved = str(sql or "").replace("{bucket}", settings.minio_bucket)
+    scope = _scope_suffix(security_context, tenant_id, workspace_id)
+    cartridge = validate_identifier(cartridge_id, "cartridge_id")
+    if not scope:
+        return resolved
+    pattern = re.compile(
+        rf"(s3://[^'\"\s)]+/(?:raw|silver|gold)/{re.escape(cartridge)}/)([^'\"\s)]*)"
+    )
+
+    def _scope_path(match: re.Match[str]) -> str:
+        base, rest = match.group(1), match.group(2)
+        if not rest or "tenant_id=" in rest:
+            return match.group(0)
+        head, sep, tail = rest.partition("/")
+        if not sep or not head:
+            return match.group(0)
+        return f"{base}{head}/{scope}/{tail}"
+
+    return pattern.sub(_scope_path, resolved)
 
 
 def _scoped_rag_source_name(
@@ -192,6 +227,7 @@ def _scoped_rag_source_name(
 
 
 # ── Tool · get_semantic ───────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_get_semantic",
@@ -220,8 +256,7 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
             (cartridge_id,),
         )
         terms = [
-            {"term": r[0], "definition": r[1], "maps_to": r[2]}
-            for r in cur.fetchall()
+            {"term": r[0], "definition": r[1], "maps_to": r[2]} for r in cur.fetchall()
         ]
         cur.execute(
             "SELECT dataset, column_name, data_type, description, tags, is_metric "
@@ -231,12 +266,12 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
         )
         columns = [
             {
-                "dataset":     r[0],
-                "column":      r[1],
-                "type":        r[2],
+                "dataset": r[0],
+                "column": r[1],
+                "type": r[2],
                 "description": r[3],
-                "tags":        list(r[4] or []),
-                "is_metric":   r[5],
+                "tags": list(r[4] or []),
+                "is_metric": r[5],
             }
             for r in cur.fetchall()
         ]
@@ -244,6 +279,7 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
 
 
 # ── Tool · sync_semantic_to_rag ───────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_sync_semantic_to_rag",
@@ -256,7 +292,7 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "tenant_id":    {"type": "string"},
+            "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
             "security_context": {"type": "object"},
         },
@@ -300,14 +336,17 @@ async def cartridge_sync_semantic_to_rag(
         for ds, cols in rows_by_ds.items():
             lines = [f"[Cartucho: {cartridge_id} · Dataset: {ds}]"]
             for col, dtype, desc, tags in cols:
-                tags_str = (", ".join(tags or []) if tags else "")
+                tags_str = ", ".join(tags or []) if tags else ""
                 tail = f" [tags: {tags_str}]" if tags_str else ""
                 lines.append(f"- {col} ({dtype or '?'}): {desc}{tail}")
             docs.append("\n".join(lines))
 
     if not docs:
-        return {"cartridge_id": cartridge_id, "documents": 0,
-                "skipped": "no semantic data to sync"}
+        return {
+            "cartridge_id": cartridge_id,
+            "documents": 0,
+            "skipped": "no semantic data to sync",
+        }
 
     content = "\n\n---\n\n".join(docs)
     source_name = _scoped_rag_source_name(
@@ -319,6 +358,7 @@ async def cartridge_sync_semantic_to_rag(
 
     # Delete the previous auto-synced source if present
     from app.rag.store import list_sources, delete_source
+
     for s in await list_sources():
         if s.get("name") == source_name:
             await delete_source(s["id"])
@@ -326,6 +366,7 @@ async def cartridge_sync_semantic_to_rag(
 
     # Ingest fresh content
     from app.tools.rag import _do_ingest
+
     result = await _do_ingest(
         name=source_name,
         content=content,
@@ -333,15 +374,16 @@ async def cartridge_sync_semantic_to_rag(
         mime_type="text/plain",
     )
     return {
-        "cartridge_id":  cartridge_id,
-        "source_name":   source_name,
-        "documents":     len(docs),
+        "cartridge_id": cartridge_id,
+        "source_name": source_name,
+        "documents": len(docs),
         "chunks_parent": result.get("parents") if isinstance(result, dict) else None,
-        "chunks_child":  result.get("children") if isinstance(result, dict) else None,
+        "chunks_child": result.get("children") if isinstance(result, dict) else None,
     }
 
 
 # ── Tool · search_term (fuzzy lookup across both glossaries) ─────────────────
+
 
 @tool(
     name="cartridge_search_term",
@@ -355,7 +397,7 @@ async def cartridge_sync_semantic_to_rag(
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "query":        {"type": "string", "description": "Word or phrase to search"},
+            "query": {"type": "string", "description": "Word or phrase to search"},
         },
         "required": ["cartridge_id", "query"],
     },
@@ -370,8 +412,8 @@ async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]
     # Normalize: try with both spaces and underscores so 'costo hundido' matches 'costo_hundido'
     p_space = f"%{query}%"
     p_under = f"%{query.replace(' ', '_')}%"
-    p_dash  = f"%{query.replace(' ', '-')}%"
-    tag     = query.lower().replace(" ", "_")
+    p_dash = f"%{query.replace(' ', '-')}%"
+    tag = query.lower().replace(" ", "_")
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT term, definition, maps_to FROM semantic_terms "
@@ -382,8 +424,7 @@ async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]
             (cartridge_id, p_space, p_under, p_space, p_space),
         )
         terms = [
-            {"term": r[0], "definition": r[1], "maps_to": r[2]}
-            for r in cur.fetchall()
+            {"term": r[0], "definition": r[1], "maps_to": r[2]} for r in cur.fetchall()
         ]
         cur.execute(
             "SELECT dataset, column_name, data_type, description "
@@ -404,10 +445,13 @@ async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]
     try:
         from app.rag.store import list_sources
         from app.tools.rag import _do_search
+
         target_name = f"_semantic_{cartridge_id}"
         for s in await list_sources():
             if s.get("name") == target_name:
-                rag_results = await _do_search(query=query, top_k=5, source_ids=[s["id"]])
+                rag_results = await _do_search(
+                    query=query, top_k=5, source_ids=[s["id"]]
+                )
                 break
     except Exception as exc:
         rag_results = [{"error": str(exc)}]
@@ -415,22 +459,26 @@ async def cartridge_search_term(cartridge_id: str, query: str) -> dict[str, Any]
     return {
         "query": query,
         "matches_in_semantic_terms": terms,
-        "matches_in_data_catalog":   columns,
-        "matches_in_rag":            rag_results,
-        "rag_synced": any(s.get("name") == f"_semantic_{cartridge_id}"
-                          for s in (await _safe_list_rag_sources())),
+        "matches_in_data_catalog": columns,
+        "matches_in_rag": rag_results,
+        "rag_synced": any(
+            s.get("name") == f"_semantic_{cartridge_id}"
+            for s in (await _safe_list_rag_sources())
+        ),
     }
 
 
 async def _safe_list_rag_sources() -> list[dict]:
     try:
         from app.rag.store import list_sources
+
         return await list_sources()
     except Exception:
         return []
 
 
 # ── Tool · get_manifest ───────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_get_manifest",
@@ -456,9 +504,13 @@ def cartridge_get_manifest(cartridge_id: str) -> dict[str, Any]:
         if not row:
             return {"error": f"Cartridge '{cartridge_id}' not found"}
         header = {
-            "id": row[0], "name": row[1], "version": row[2],
-            "description": row[3], "pattern": row[4],
-            "category": row[5], "bronze_path": row[6],
+            "id": row[0],
+            "name": row[1],
+            "version": row[2],
+            "description": row[3],
+            "pattern": row[4],
+            "category": row[5],
+            "bronze_path": row[6],
         }
         cur.execute(
             "SELECT conn_id, description, auth_type, poll_strategy "
@@ -466,7 +518,12 @@ def cartridge_get_manifest(cartridge_id: str) -> dict[str, Any]:
             (cartridge_id,),
         )
         connections = [
-            {"conn_id": r[0], "description": r[1], "auth_type": r[2], "poll_strategy": r[3]}
+            {
+                "conn_id": r[0],
+                "description": r[1],
+                "auth_type": r[2],
+                "poll_strategy": r[3],
+            }
             for r in cur.fetchall()
         ]
         cur.execute(
@@ -502,6 +559,7 @@ def cartridge_get_hints(cartridge_id: str) -> dict[str, Any]:
 
 # ── Tool 0 · list_cartridges (discovery) ──────────────────────────────────────
 
+
 @tool(
     name="list_cartridges",
     description=(
@@ -526,18 +584,19 @@ def list_cartridges() -> list[dict[str, Any]]:
         rows = cur.fetchall()
     return [
         {
-            "id":          r[0],
-            "name":        r[1],
-            "version":     r[2],
-            "category":    r[3],
+            "id": r[0],
+            "name": r[1],
+            "version": r[2],
+            "category": r[3],
             "description": (r[4] or "").strip(),
-            "entities":    r[5] or 0,
+            "entities": r[5] or 0,
         }
         for r in rows
     ]
 
 
 # ── Tool 1 · list_entities ────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_list_entities",
@@ -571,17 +630,18 @@ def cartridge_list_entities(cartridge_id: str) -> list[dict[str, Any]]:
         rows = cur.fetchall()
     return [
         {
-            "entity":          r[0],
-            "mode":            r[1] or "full",
+            "entity": r[0],
+            "mode": r[1] or "full",
             "watermark_field": r[2],
-            "description":     r[3] or "",
-            "last_watermark":  r[4],
+            "description": r[3] or "",
+            "last_watermark": r[4],
         }
         for r in rows
     ]
 
 
 # ── Tool 2 · get_schema ───────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_get_schema",
@@ -593,7 +653,10 @@ def cartridge_list_entities(cartridge_id: str) -> list[dict[str, Any]]:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "entity":       {"type": "string", "description": "Entity name as listed by cartridge_list_entities"},
+            "entity": {
+                "type": "string",
+                "description": "Entity name as listed by cartridge_list_entities",
+            },
         },
         "required": ["cartridge_id", "entity"],
     },
@@ -615,26 +678,30 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
         # Accept the business name, the full odata_entity, or its last segment.
         resolved = _resolve_entity_name(cur, cartridge_id, entity)
         if resolved is None:
-            return {"error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"}
+            return {
+                "error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"
+            }
 
-        select_sql = ", ".join([
-            "entity",
-            "mode",
-            "watermark_field",
-            col("watermark_format", "NULL::text"),
-            col("page_size", "NULL::integer"),
-            col("select_fields", "NULL::jsonb"),
-            col("effective_dated", "FALSE"),
-            col("date_field", "NULL::text"),
-            col("primary_key", "NULL::text"),
-            col("dag_id", "NULL::text"),
-            col("trigger_type", "'manual'::text"),
-            col("cron_expression", "NULL::text"),
-            col("description", "NULL::text"),
-            col("display_name", "NULL::text"),
-            col("enabled", "TRUE"),
-            col("odata_entity", "NULL::text"),
-        ])
+        select_sql = ", ".join(
+            [
+                "entity",
+                "mode",
+                "watermark_field",
+                col("watermark_format", "NULL::text"),
+                col("page_size", "NULL::integer"),
+                col("select_fields", "NULL::jsonb"),
+                col("effective_dated", "FALSE"),
+                col("date_field", "NULL::text"),
+                col("primary_key", "NULL::text"),
+                col("dag_id", "NULL::text"),
+                col("trigger_type", "'manual'::text"),
+                col("cron_expression", "NULL::text"),
+                col("description", "NULL::text"),
+                col("display_name", "NULL::text"),
+                col("enabled", "TRUE"),
+                col("odata_entity", "NULL::text"),
+            ]
+        )
         cur.execute(
             f"""
             SELECT {select_sql}
@@ -647,26 +714,27 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
     if not row:
         return {"error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"}
     return {
-        "entity":           row[0],
-        "mode":             row[1],
-        "watermark_field":  row[2],
+        "entity": row[0],
+        "mode": row[1],
+        "watermark_field": row[2],
         "watermark_format": row[3],
-        "page_size":        row[4],
-        "select_fields":    row[5],
-        "effective_dated":  row[6],
-        "date_field":       row[7],
-        "primary_key":      row[8],
-        "dag_id":           row[9],
-        "trigger_type":     row[10],
-        "cron_expression":  row[11],
-        "description":      row[12],
-        "display_name":     row[13],
-        "enabled":          row[14],
-        "odata_entity":     row[15],
+        "page_size": row[4],
+        "select_fields": row[5],
+        "effective_dated": row[6],
+        "date_field": row[7],
+        "primary_key": row[8],
+        "dag_id": row[9],
+        "trigger_type": row[10],
+        "cron_expression": row[11],
+        "description": row[12],
+        "display_name": row[13],
+        "enabled": row[14],
+        "odata_entity": row[15],
     }
 
 
 # ── Tool 3 · preview ──────────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_preview",
@@ -678,9 +746,9 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "entity":       {"type": "string"},
-            "limit":        {"type": "integer", "default": 20, "description": "Max 200"},
-            "tenant_id":    {"type": "string"},
+            "entity": {"type": "string"},
+            "limit": {"type": "integer", "default": 20, "description": "Max 200"},
+            "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
             "security_context": {"type": "object"},
         },
@@ -699,21 +767,21 @@ def cartridge_preview(
     # and entity are validated transitively by _bronze_path().
     limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
     path = _bronze_path(cartridge_id, entity, security_context, tenant_id, workspace_id)
-    sql   = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
+    sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _duckdb()
         try:
             rel = conn.execute(sql)
             columns = [desc[0] for desc in rel.description]
-            rows    = rel.fetchall()
+            rows = rel.fetchall()
         finally:
             conn.close()
         return {
             "cartridge_id": cartridge_id,
-            "entity":       entity,
-            "columns":      columns,
-            "rows":         [dict(zip(columns, r)) for r in rows],
-            "count":        len(rows),
+            "entity": entity,
+            "columns": columns,
+            "rows": [dict(zip(columns, r)) for r in rows],
+            "count": len(rows),
         }
     except Exception:
         return {
@@ -728,6 +796,7 @@ def cartridge_preview(
 
 # ── Tool 4 · extract (one entity) ─────────────────────────────────────────────
 
+
 @tool(
     name="cartridge_extract",
     description=(
@@ -739,12 +808,21 @@ def cartridge_preview(
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "entity":       {"type": "string"},
-            "mode":         {"type": "string", "enum": ["full", "incremental", "historical"],
-                             "default": "incremental"},
-            "from_date":    {"type": "string", "description": "ISO date — historical mode only"},
-            "to_date":      {"type": "string", "description": "ISO date — historical mode only"},
-            "tenant_id":    {"type": "string"},
+            "entity": {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": ["full", "incremental", "historical"],
+                "default": "incremental",
+            },
+            "from_date": {
+                "type": "string",
+                "description": "ISO date — historical mode only",
+            },
+            "to_date": {
+                "type": "string",
+                "description": "ISO date — historical mode only",
+            },
+            "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
             "security_context": {"type": "object"},
         },
@@ -752,10 +830,11 @@ def cartridge_preview(
     },
 )
 async def cartridge_extract(
-    cartridge_id: str, entity: str,
+    cartridge_id: str,
+    entity: str,
     mode: str = "incremental",
     from_date: str | None = None,
-    to_date:   str | None = None,
+    to_date: str | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
     security_context: dict[str, Any] | None = None,
@@ -765,7 +844,9 @@ async def cartridge_extract(
     with _conn() as c, c.cursor() as cur:
         resolved = _resolve_entity_name(cur, cartridge_id, entity)
         if resolved is None:
-            return {"error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"}
+            return {
+                "error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"
+            }
         cur.execute(
             "SELECT dag_id FROM entity_config WHERE cartridge_id=%s AND entity=%s",
             (cartridge_id, resolved),
@@ -795,17 +876,18 @@ async def cartridge_extract(
         data = r.json()
 
     return {
-        "run_id":        run_id,
-        "dag_id":        dag_id,
-        "dag_run_id":    data["dag_run_id"],
-        "state":         data["state"],
-        "cartridge_id":  cartridge_id,
-        "entity":        entity,
-        "mode":          mode,
+        "run_id": run_id,
+        "dag_id": dag_id,
+        "dag_run_id": data["dag_run_id"],
+        "state": data["state"],
+        "cartridge_id": cartridge_id,
+        "entity": entity,
+        "mode": mode,
     }
 
 
 # ── Tool 5 · extract_all ──────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_extract_all",
@@ -817,9 +899,12 @@ async def cartridge_extract(
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "mode":         {"type": "string", "enum": ["full", "incremental"],
-                             "default": "incremental"},
-            "tenant_id":    {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": ["full", "incremental"],
+                "default": "incremental",
+            },
+            "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
             "security_context": {"type": "object"},
         },
@@ -866,13 +951,15 @@ async def cartridge_extract_all(
                     json={"conf": conf},
                 )
                 r.raise_for_status()
-                results.append({
-                    "entity":     entity,
-                    "dag_id":     dag_id,
-                    "run_id":     run_id,
-                    "dag_run_id": r.json()["dag_run_id"],
-                    "state":      "queued",
-                })
+                results.append(
+                    {
+                        "entity": entity,
+                        "dag_id": dag_id,
+                        "run_id": run_id,
+                        "dag_run_id": r.json()["dag_run_id"],
+                        "state": "queued",
+                    }
+                )
             except Exception as exc:
                 results.append({"entity": entity, "dag_id": dag_id, "error": str(exc)})
 
@@ -881,6 +968,7 @@ async def cartridge_extract_all(
 
 # ── Tool 6 · get_run_logs ─────────────────────────────────────────────────────
 
+
 @tool(
     name="cartridge_get_run_logs",
     description="Per-step logs for a run_id, ordered by timestamp ascending.",
@@ -888,7 +976,7 @@ async def cartridge_extract_all(
         "type": "object",
         "properties": {
             "run_id": {"type": "string"},
-            "limit":  {"type": "integer", "default": 50, "description": "Max 200"},
+            "limit": {"type": "integer", "default": 50, "description": "Max 200"},
         },
         "required": ["run_id"],
     },
@@ -911,17 +999,20 @@ def cartridge_get_run_logs(run_id: str, limit: int = 50) -> list[dict[str, Any]]
                 detail = json.loads(detail)
             except Exception:
                 pass
-        out.append({
-            "ts":      r[4].isoformat() if r[4] else None,
-            "entity":  r[0],
-            "level":   r[1],
-            "message": r[2],
-            "detail":  detail,
-        })
+        out.append(
+            {
+                "ts": r[4].isoformat() if r[4] else None,
+                "entity": r[0],
+                "level": r[1],
+                "message": r[2],
+                "detail": detail,
+            }
+        )
     return out
 
 
 # ── Tool 7 · get_job_status ───────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_get_job_status",
@@ -948,26 +1039,27 @@ def cartridge_get_job_status(run_id: str) -> dict[str, Any]:
     if not row:
         return {"error": f"Run '{run_id}' not found"}
     return {
-        "run_id":               row[0],
-        "dag_id":               row[1],
-        "cartridge_id":         row[2],
-        "entity":               row[3],
-        "mode":                 row[4],
-        "status":               row[5],
-        "started_at":           row[6].isoformat() if row[6] else None,
-        "finished_at":          row[7].isoformat() if row[7] else None,
-        "duration_seconds":     float(row[8]) if row[8] is not None else None,
-        "record_count":         row[9],
-        "bytes_written":        row[10],
-        "storage_uri":          row[11],
+        "run_id": row[0],
+        "dag_id": row[1],
+        "cartridge_id": row[2],
+        "entity": row[3],
+        "mode": row[4],
+        "status": row[5],
+        "started_at": row[6].isoformat() if row[6] else None,
+        "finished_at": row[7].isoformat() if row[7] else None,
+        "duration_seconds": float(row[8]) if row[8] is not None else None,
+        "record_count": row[9],
+        "bytes_written": row[10],
+        "storage_uri": row[11],
         "watermark_updated_to": row[12],
-        "error_message":        row[13],
-        "airflow_dag_run_id":   row[14],
-        "extra":                row[15],
+        "error_message": row[13],
+        "airflow_dag_run_id": row[14],
+        "extra": row[15],
     }
 
 
 # ── Tool 8 · list_jobs ────────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_list_jobs",
@@ -976,7 +1068,7 @@ def cartridge_get_job_status(run_id: str) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "limit":        {"type": "integer", "default": 10, "description": "Max 50"},
+            "limit": {"type": "integer", "default": 10, "description": "Max 50"},
         },
         "required": ["cartridge_id"],
     },
@@ -998,14 +1090,14 @@ def cartridge_list_jobs(cartridge_id: str, limit: int = 10) -> list[dict[str, An
         rows = cur.fetchall()
     return [
         {
-            "run_id":        r[0],
-            "dag_id":        r[1],
-            "entity":        r[2],
-            "mode":          r[3],
-            "status":        r[4],
-            "started_at":    r[5].isoformat() if r[5] else None,
-            "finished_at":   r[6].isoformat() if r[6] else None,
-            "record_count":  r[7],
+            "run_id": r[0],
+            "dag_id": r[1],
+            "entity": r[2],
+            "mode": r[3],
+            "status": r[4],
+            "started_at": r[5].isoformat() if r[5] else None,
+            "finished_at": r[6].isoformat() if r[6] else None,
+            "record_count": r[7],
             "error_message": r[8],
         }
         for r in rows
@@ -1013,6 +1105,7 @@ def cartridge_list_jobs(cartridge_id: str, limit: int = 10) -> list[dict[str, An
 
 
 # ── Tool 9 · list_kbs ─────────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_list_kbs",
@@ -1033,10 +1126,10 @@ def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
         rows = cur.fetchall()
     return [
         {
-            "kb_id":       r[0],
-            "name":        r[1],
+            "kb_id": r[0],
+            "name": r[1],
             "description": r[2],
-            "pg_table":    r[3],
+            "pg_table": r[3],
             "output_path": r[4],
         }
         for r in rows
@@ -1044,6 +1137,7 @@ def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
 
 
 # ── Tool 10 · run_kb ──────────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_run_kb",
@@ -1055,8 +1149,11 @@ def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
         "type": "object",
         "properties": {
             "cartridge_id": {"type": "string"},
-            "kb_id":        {"type": "string", "description": "ID listed by cartridge_list_kbs"},
-            "tenant_id":    {"type": "string"},
+            "kb_id": {
+                "type": "string",
+                "description": "ID listed by cartridge_list_kbs",
+            },
+            "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
             "security_context": {"type": "object"},
         },
@@ -1078,10 +1175,18 @@ def cartridge_run_kb(
         )
         row = cur.fetchone()
     if not row:
-        return {"error": f"Knowledge Bit '{kb_id}' not found in cartridge '{cartridge_id}'"}
+        return {
+            "error": f"Knowledge Bit '{kb_id}' not found in cartridge '{cartridge_id}'"
+        }
 
     sql, pg_table, output_path = row
-    sql = sql.replace("{bucket}", settings.minio_bucket)
+    sql = _scope_cartridge_sql(
+        sql,
+        cartridge_id,
+        security_context,
+        tenant_id,
+        workspace_id,
+    )
     run_id = uuid.uuid4().hex[:8]
 
     try:
@@ -1097,6 +1202,7 @@ def cartridge_run_kb(
     if output_path:
         try:
             from minio import Minio
+
             mc = Minio(
                 settings.minio_endpoint,
                 access_key=settings.minio_access_key,
@@ -1113,13 +1219,18 @@ def cartridge_run_kb(
             key = f"{scoped_output_path}/load_date={load_date}/batch_id={run_id}/{kb_id}.parquet"
             with tempfile.TemporaryDirectory() as tmp:
                 local = Path(tmp) / f"{kb_id}.parquet"
-                df.to_parquet(local, index=False, engine="pyarrow", compression="snappy")
+                df.to_parquet(
+                    local, index=False, engine="pyarrow", compression="snappy"
+                )
                 mc.fput_object(settings.minio_bucket, key, str(local))
             storage_uri = f"s3://{settings.minio_bucket}/{key}"
         except Exception as exc:
-            return {"kb_id": kb_id, "status": "partial",
-                    "error": f"DuckDB ok but MinIO write failed: {exc}",
-                    "rows": len(df)}
+            return {
+                "kb_id": kb_id,
+                "status": "partial",
+                "error": f"DuckDB ok but MinIO write failed: {exc}",
+                "rows": len(df),
+            }
 
     if pg_table:
         try:
@@ -1129,28 +1240,78 @@ def cartridge_run_kb(
             )
             engine = create_engine(url)
             try:
-                with engine.begin() as conn:
-                    conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
-                df.to_sql(pg_table, engine, schema="knowledge_bits",
-                          if_exists="replace", index=False)
+                tenant, workspace = _scope_values(
+                    security_context, tenant_id, workspace_id
+                )
+                if tenant and workspace:
+                    scoped_df = df.copy()
+                    scoped_df["tenant_id"] = tenant
+                    scoped_df["workspace_id"] = workspace
+                    safe_table = validate_identifier(pg_table, "pg_table")
+                    table_name = f'knowledge_bits."{safe_table}"'
+                    with engine.begin() as conn:
+                        conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
+                        exists = conn.execute(
+                            text("SELECT to_regclass(:table_name)"),
+                            {"table_name": f"knowledge_bits.{safe_table}"},
+                        ).scalar()
+                        if exists:
+                            conn.execute(
+                                text(
+                                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS tenant_id TEXT"
+                                )
+                            )
+                            conn.execute(
+                                text(
+                                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS workspace_id TEXT"
+                                )
+                            )
+                            conn.execute(
+                                text(
+                                    f"DELETE FROM {table_name} WHERE tenant_id=:tenant_id AND workspace_id=:workspace_id"
+                                ),
+                                {"tenant_id": tenant, "workspace_id": workspace},
+                            )
+                    scoped_df.to_sql(
+                        safe_table,
+                        engine,
+                        schema="knowledge_bits",
+                        if_exists="append",
+                        index=False,
+                    )
+                else:
+                    with engine.begin() as conn:
+                        conn.execute(text("CREATE SCHEMA IF NOT EXISTS knowledge_bits"))
+                    df.to_sql(
+                        pg_table,
+                        engine,
+                        schema="knowledge_bits",
+                        if_exists="replace",
+                        index=False,
+                    )
             finally:
                 engine.dispose()
         except Exception as exc:
-            return {"kb_id": kb_id, "status": "partial",
-                    "error": f"Parquet ok but Postgres write failed: {exc}",
-                    "rows": len(df), "storage_uri": storage_uri}
+            return {
+                "kb_id": kb_id,
+                "status": "partial",
+                "error": f"Parquet ok but Postgres write failed: {exc}",
+                "rows": len(df),
+                "storage_uri": storage_uri,
+            }
 
     return {
-        "kb_id":        kb_id,
+        "kb_id": kb_id,
         "cartridge_id": cartridge_id,
-        "status":       "success",
-        "rows":         len(df),
-        "storage_uri":  storage_uri,
-        "pg_table":     f"knowledge_bits.{pg_table}" if pg_table else None,
+        "status": "success",
+        "rows": len(df),
+        "storage_uri": storage_uri,
+        "pg_table": f"knowledge_bits.{pg_table}" if pg_table else None,
     }
 
 
 # ── Tool 11 · query_kb ────────────────────────────────────────────────────────
+
 
 @tool(
     name="cartridge_query_kb",
@@ -1162,10 +1323,15 @@ def cartridge_run_kb(
     input_schema={
         "type": "object",
         "properties": {
-            "cartridge_id": {"type": "string", "description": "Used for context only — SQL must reference paths explicitly"},
-            "sql":          {"type": "string",
-                             "description": "Wrap table refs like read_parquet('s3://{bucket}/raw/<cart>/<entity>/**/*.parquet')"},
-            "limit":        {"type": "integer", "default": 100, "description": "Max 5000"},
+            "cartridge_id": {
+                "type": "string",
+                "description": "Used for context only — SQL must reference paths explicitly",
+            },
+            "sql": {
+                "type": "string",
+                "description": "Wrap table refs like read_parquet('s3://{bucket}/raw/<cart>/<entity>/**/*.parquet')",
+            },
+            "limit": {"type": "integer", "default": 100, "description": "Max 5000"},
         },
         "required": ["cartridge_id", "sql"],
     },
@@ -1182,14 +1348,14 @@ def cartridge_query_kb(cartridge_id: str, sql: str, limit: int = 100) -> dict[st
         try:
             rel = conn.execute(resolved)
             columns = [d[0] for d in rel.description]
-            rows    = rel.fetchall()
+            rows = rel.fetchall()
         finally:
             conn.close()
         return {
             "cartridge_id": cartridge_id,
-            "columns":      columns,
-            "rows":         [dict(zip(columns, r)) for r in rows],
-            "count":        len(rows),
+            "columns": columns,
+            "rows": [dict(zip(columns, r)) for r in rows],
+            "count": len(rows),
         }
     except Exception:
         return {

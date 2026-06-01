@@ -13,11 +13,16 @@ from app.services.extraction_service import run_entity
 from app.services.runlog_service import get_last_run_status
 from app.services.watermark_service import list_watermarks
 from app.services.kb_service import (
-    get_all_knowledge_bits, get_kb_config, run_knowledge_bit,
-    run_all_knowledge_bits, get_kb_runs,
+    get_all_knowledge_bits,
+    get_kb_config,
+    run_knowledge_bit,
+    run_all_knowledge_bits,
+    get_kb_runs,
 )
 
-router = APIRouter(prefix="/skills", tags=["skills"], dependencies=[Depends(verify_api_key)])
+router = APIRouter(
+    prefix="/skills", tags=["skills"], dependencies=[Depends(verify_api_key)]
+)
 _SERVICE = "replicon"
 
 
@@ -38,6 +43,24 @@ def _run_entity_with_context(
     try:
         scoped_config = {**config, "security_context": ctx} if ctx else config
         return run_entity(scoped_config, **kwargs)
+    finally:
+        reset_security_context(token)
+
+
+def _run_kb_with_context(kb_id: str, body: dict[str, Any] | None) -> dict:
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
+    try:
+        return run_knowledge_bit(kb_id, ctx)
+    finally:
+        reset_security_context(token)
+
+
+def _run_all_kbs_with_context(body: dict[str, Any] | None) -> list[dict]:
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
+    try:
+        return run_all_knowledge_bits(ctx)
     finally:
         reset_security_context(token)
 
@@ -89,12 +112,14 @@ def list_skills() -> dict:
                 description = endpoint.__doc__.strip().split("\n", 1)[0].strip()
             if not description:
                 description = _humanise_path(path)
-            skills.append({
-                "name": path,
-                "method": method,
-                "description": description,
-                "summary": description,
-            })
+            skills.append(
+                {
+                    "name": path,
+                    "method": method,
+                    "description": description,
+                    "summary": description,
+                }
+            )
     return {"service": _SERVICE, "skills": skills}
 
 
@@ -109,6 +134,7 @@ def test_connection() -> dict:
     """Validate Replicon credentials without triggering extraction."""
     try:
         from app.core.replicon_client import RepliconClient
+
         return RepliconClient().test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
@@ -118,6 +144,7 @@ def test_connection() -> dict:
 # Entity catalogue
 # ------------------------------------------------------------------
 
+
 @router.get("/entities")
 def entities() -> dict:
     return {"entities": get_all_entities()}
@@ -126,6 +153,7 @@ def entities() -> dict:
 # ------------------------------------------------------------------
 # Extraction
 # ------------------------------------------------------------------
+
 
 @router.post("/run_full_load/{entity}")
 def run_full_load(entity: str, body: dict[str, Any] | None = Body(None)) -> dict:
@@ -156,7 +184,9 @@ def run_full_load_all(body: dict[str, Any] | None = Body(None)) -> dict:
         try:
             results.append(_run_entity_with_context({**config, "mode": "full"}, body))
         except Exception as exc:
-            results.append({"entity": config["entity"], "status": "failed", "error": str(exc)})
+            results.append(
+                {"entity": config["entity"], "status": "failed", "error": str(exc)}
+            )
     return {"results": results}
 
 
@@ -168,7 +198,9 @@ def run_incremental_all(body: dict[str, Any] | None = Body(None)) -> dict:
         try:
             results.append(_run_entity_with_context({**config, "mode": mode}, body))
         except Exception as exc:
-            results.append({"entity": config["entity"], "status": "failed", "error": str(exc)})
+            results.append(
+                {"entity": config["entity"], "status": "failed", "error": str(exc)}
+            )
     return {"results": results}
 
 
@@ -228,13 +260,16 @@ def run_historical_load_all(
                 )
             )
         except Exception as exc:
-            results.append({"entity": config["entity"], "status": "failed", "error": str(exc)})
+            results.append(
+                {"entity": config["entity"], "status": "failed", "error": str(exc)}
+            )
     return {"results": results}
 
 
 # ------------------------------------------------------------------
 # Status / watermarks
 # ------------------------------------------------------------------
+
 
 @router.get("/get_last_run_status")
 def last_run_status(entity: str | None = None) -> dict:
@@ -250,10 +285,12 @@ def get_watermarks() -> dict:
 # Table discovery (pass-through to Replicon API)
 # ------------------------------------------------------------------
 
+
 @router.get("/list_tables")
 def list_tables() -> dict:
     """Return all available Replicon BI tables with their column schemas."""
     from app.core.replicon_client import RepliconClient
+
     client = RepliconClient()
     return {"tables": client.list_tables()}
 
@@ -261,6 +298,7 @@ def list_tables() -> dict:
 @router.get("/get_table_schema/{table_id}")
 def get_table_schema(table_id: str) -> dict:
     from app.core.replicon_client import RepliconClient
+
     client = RepliconClient()
     return client.get_table_schema(table_id)
 
@@ -269,22 +307,23 @@ def get_table_schema(table_id: str) -> dict:
 # Knowledge Bits
 # ------------------------------------------------------------------
 
+
 @router.get("/knowledge_bits")
 def knowledge_bits() -> dict:
     return {"knowledge_bits": get_all_knowledge_bits()}
 
 
 @router.post("/run_knowledge_bits/{kb_id}")
-def run_kb(kb_id: str) -> dict:
+def run_kb(kb_id: str, body: dict[str, Any] | None = Body(None)) -> dict:
     config = get_kb_config(kb_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"Knowledge Bit not found: {kb_id}")
-    return run_knowledge_bit(kb_id)
+    return _run_kb_with_context(kb_id, body)
 
 
 @router.post("/run_all_knowledge_bits")
-def run_all_kbs() -> dict:
-    return {"results": run_all_knowledge_bits()}
+def run_all_kbs(body: dict[str, Any] | None = Body(None)) -> dict:
+    return {"results": _run_all_kbs_with_context(body)}
 
 
 @router.get("/get_kb_status")
