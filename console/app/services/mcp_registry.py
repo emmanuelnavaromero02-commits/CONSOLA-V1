@@ -29,6 +29,7 @@ ALLOWED_MCP_HOSTS = {
     "hubspot",
     "mcp-infra",
     "replicon",
+    "salesforce",
     "sap-hcm",
     "sap-s4hana",
     "sap-successfactors",
@@ -522,7 +523,7 @@ def _headers_for(server_id: str, url: str) -> dict[str, str]:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT"
     elif server_id in {"monitoring", "studio_ops"} or "console" in url:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE"
-    elif normalized.startswith("SAP_") or server_id in {"replicon", "hubspot"}:
+    elif normalized.startswith("SAP_") or server_id in {"replicon", "hubspot", "salesforce"}:
         key_env = "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE"
     pair_key = os.environ.get(key_env) if key_env else None
     if key_env and os.environ.get("APP_ENV", "production").lower() in {"production", "prod"} and not pair_key:
