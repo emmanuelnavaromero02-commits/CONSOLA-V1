@@ -1,24 +1,30 @@
 from __future__ import annotations
 
+import inspect
+from typing import Any
+
 from .base import BaseAdapter
-from .replicon_adapter import RepliconAdapter
 from .sap_hcm_adapter import SapHcmAdapter
-from .sap_s4hana_adapter import SapS4hanaAdapter
-from .sap_successfactors_adapter import SapSuccessFactorsAdapter
+
+
+class SapHcmIt0008Adapter(BaseAdapter):
+    cartridge_id = "sap_hcm"
+
+    async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]):
+        payload = {
+            **action_data,
+            "template_type": action_data.get("template_type") or "sap_hcm_it0008",
+        }
+        result = SapHcmAdapter().execute(payload, credentials, dry_run=False)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
 
 class WriteBackAdapterFactory:
     _MAPPING: dict[str, type[BaseAdapter]] = {
-        "prepare_replicon_adjustment": RepliconAdapter,
-        "prepare_billing_review": RepliconAdapter,
-        "prepare_hcm_access_review": SapHcmAdapter,
-        "prepare_hcm_org_review": SapHcmAdapter,
-        "prepare_sap_review": SapS4hanaAdapter,
-        "prepare_s4_revenue_review": SapS4hanaAdapter,
-        "prepare_s4_business_partner_review": SapS4hanaAdapter,
-        "prepare_s4_procurement_review": SapS4hanaAdapter,
-        "prepare_successfactors_review": SapSuccessFactorsAdapter,
-        "prepare_successfactors_recruiting_review": SapSuccessFactorsAdapter,
+        "prepare_hcm_access_review": SapHcmIt0008Adapter,
+        "sap_hcm_it0008": SapHcmIt0008Adapter,
     }
 
     @classmethod
@@ -26,8 +32,18 @@ class WriteBackAdapterFactory:
         return str(template_type or "") in cls._MAPPING
 
     @classmethod
+    def has_adapter(cls, template_type: str) -> bool:
+        return cls.supports(template_type)
+
+    @classmethod
     def create(cls, template_type: str) -> BaseAdapter:
         adapter_cls = cls._MAPPING.get(str(template_type or ""))
         if not adapter_cls:
-            raise NotImplementedError(f"No production write-back adapter registered for template {template_type!r}")
+            raise NotImplementedError(
+                f"No production write-back adapter registered for template {template_type!r}"
+            )
         return adapter_cls()
+
+    @classmethod
+    def get_adapter(cls, template_type: str) -> BaseAdapter:
+        return cls.create(template_type)
