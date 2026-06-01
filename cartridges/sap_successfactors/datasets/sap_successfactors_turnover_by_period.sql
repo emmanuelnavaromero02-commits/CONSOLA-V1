@@ -1,9 +1,10 @@
 -- sap_successfactors_turnover_by_period  (gold)  cartridge: sap_successfactors
 -- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]
--- description: Rotación de personal: bajas por mes y motivo. Puede venir vacío hasta habilitar la extracción de EmpEmploymentTermination.
+-- description: Rotación de personal: bajas por mes y motivo desde EmpEmploymentTermination.
 
--- NOTA: EmpEmploymentTermination está en entities.yaml pero su extracción no está
--- habilitada en entity_config (Bloque A); este gold se llena cuando lo esté.
+-- NOTA: EmpEmploymentTermination está registrado en entity_config por el seed de
+-- completitud de SAP SuccessFactors; este gold queda vacío solo si el tenant no
+-- trae bajas en la ventana extraída.
 WITH term AS (
     SELECT user_id, termination_date, event_reason
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empemploymenttermination_latest/**/*.parquet')

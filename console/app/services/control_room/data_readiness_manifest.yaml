@@ -1,0 +1,167 @@
+version: 1
+datasets:
+  - cartridge: sap_hcm
+    dataset: manager_hierarchy
+    readiness: partial
+    reason: "Flat hierarchy: HRP1001Set or PA0001.Sbrtr is missing, so real manager chains are not available."
+    blockers:
+      - "Extract manager-worker relationships from HRP1001Set or PA0001.Sbrtr."
+    evidence:
+      - cartridges/sap_hcm/datasets/manager_hierarchy.sql
+      - infra/init/80_sap_hcm_datasets_seed.sql
+  - cartridge: sap_hcm
+    dataset: sap_hcm_org_hierarchy
+    readiness: partial
+    reason: "Parent-child organizational relationships require HRP1001Set."
+    blockers:
+      - "Extract HRP1001Set before using this as a real OM hierarchy."
+    evidence:
+      - cartridges/sap_hcm/datasets/sap_hcm_org_hierarchy.sql
+      - infra/init/80_sap_hcm_datasets_seed.sql
+  - cartridge: sap_hcm
+    dataset: workforce_cost_monthly
+    readiness: stub
+    reason: "The dataset exposes headcount dimensions with salary/cost values as NULL until PA0008 BasicPay is extracted."
+    blockers:
+      - "Extract PA0008 BasicPay and define payroll-cost aggregation rules."
+    evidence:
+      - cartridges/sap_hcm/datasets/workforce_cost_monthly.sql
+      - infra/init/80_sap_hcm_datasets_seed.sql
+  - cartridge: sap_hcm
+    dataset: employees_anomalies
+    readiness: partial
+    reason: "Most anomaly checks are active, but the invalid-manager check depends on a manager source that is not extracted yet."
+    blockers:
+      - "Extract HRP1001Set or PA0001.Sbrtr before claiming complete manager-quality anomaly coverage."
+    evidence:
+      - cartridges/sap_hcm/datasets/employees_anomalies.sql
+      - infra/init/80_sap_hcm_datasets_seed.sql
+  - cartridge: sap_s4hana
+    dataset: cost_center_expense
+    readiness: stub
+    reason: "Purchase-order to cost-center assignment is missing, so total_expense is NULL by design."
+    blockers:
+      - "Extract A_PurchaseOrderAccountAssignment and join it to purchase-order lines."
+    evidence:
+      - cartridges/sap_s4hana/datasets/cost_center_expense.sql
+      - infra/init/81_sap_s4hana_datasets_seed.sql
+  - cartridge: sap_s4hana
+    dataset: inventory_movement_summary
+    readiness: partial
+    reason: "Current view is header-level; material, quantity, and movement-class detail require item extraction."
+    blockers:
+      - "Extract A_MaterialDocumentItem for inventory movement detail."
+    evidence:
+      - cartridges/sap_s4hana/datasets/inventory_movement_summary.sql
+      - infra/init/81_sap_s4hana_datasets_seed.sql
+  - cartridge: sap_s4hana
+    dataset: overdue_billing
+    readiness: partial
+    reason: "Overdue status is estimated from billing age and does not use FI open-item payment state."
+    blockers:
+      - "Extract FI open items to distinguish paid from unpaid invoices."
+    evidence:
+      - cartridges/sap_s4hana/datasets/overdue_billing.sql
+      - infra/init/81_sap_s4hana_datasets_seed.sql
+  - cartridge: sap_s4hana
+    dataset: business_partner_anomalies
+    readiness: partial
+    reason: "Current checks cover missing addresses and duplicate names; tax-number and blocked-partner checks need additional fields."
+    blockers:
+      - "Extract fiscal/tax sub-entities and blocking flags before claiming full business-partner anomaly coverage."
+    evidence:
+      - cartridges/sap_s4hana/datasets/business_partner_anomalies.sql
+      - infra/init/81_sap_s4hana_datasets_seed.sql
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_compensation_distribution
+    readiness: stub
+    reason: "paycompValue is protected in bronze and cannot be safely aggregated in SQL; the dataset exposes an empty schema stub."
+    blockers:
+      - "Define a privacy-safe compensation aggregation design before enabling this dataset."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_compensation_distribution.sql
+      - infra/init/82_sap_successfactors_datasets_seed.sql
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_recruitment_funnel
+    readiness: partial
+    reason: "The current funnel is requisition-level; candidate stages require JobApplication."
+    blockers:
+      - "Extract JobApplication before promising applied/interview/offer stage detail."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_recruitment_funnel.sql
+      - infra/init/82_sap_successfactors_datasets_seed.sql
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_recruitment_pipeline
+    readiness: partial
+    reason: "candidate_pool_total is global because requisition-candidate links require JobApplication."
+    blockers:
+      - "Extract JobApplication to count candidates by requisition."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_recruitment_pipeline.sql
+      - infra/init/82_sap_successfactors_datasets_seed.sql
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_employees_anomalies
+    readiness: partial
+    reason: "Current checks cover department, manager, and job-code anomalies; active-with-termination needs a validated termination cross-check."
+    blockers:
+      - "Validate EmpEmploymentTermination joins before claiming full employee anomaly coverage."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_employees_anomalies.sql
+      - infra/init/82_sap_successfactors_datasets_seed.sql
+knowledge_bits:
+  - cartridge: sap_hcm
+    id: kb_sap_hcm_employees_anomalies_active
+    readiness: partial
+    datasets:
+      - employees_anomalies
+    reason: "This KB reads an anomaly dataset whose manager-quality check is not complete yet."
+    blockers:
+      - "Extract HRP1001Set or PA0001.Sbrtr before exposing the KB as full anomaly coverage."
+  - cartridge: sap_hcm
+    id: kb_sap_hcm_manager_span_of_control
+    readiness: partial
+    datasets:
+      - manager_hierarchy
+    reason: "This KB depends on manager links that are not extracted yet, so span-of-control can be empty."
+    blockers:
+      - "Extract HRP1001Set or PA0001.Sbrtr before exposing span-of-control as complete."
+  - cartridge: sap_s4hana
+    id: kb_sap_s4hana_overdue_invoices
+    readiness: partial
+    datasets:
+      - overdue_billing
+    reason: "This KB uses estimated due dates and lacks actual FI open-item payment state."
+    blockers:
+      - "Extract FI open items before treating overdue status as authoritative."
+  - cartridge: sap_s4hana
+    id: kb_sap_s4hana_inventory_movements_recent
+    readiness: partial
+    datasets:
+      - inventory_movement_summary
+    reason: "This KB reports document counts only; material, quantity, and movement type need item extraction."
+    blockers:
+      - "Extract A_MaterialDocumentItem before exposing material-level movement analytics."
+  - cartridge: sap_s4hana
+    id: kb_sap_s4hana_business_partner_anomalies
+    readiness: partial
+    datasets:
+      - business_partner_anomalies
+    reason: "This KB reads a partial anomaly dataset that does not yet include tax-number or blocked-partner checks."
+    blockers:
+      - "Extract fiscal/tax sub-entities and blocking flags before exposing the KB as full anomaly coverage."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_recruitment_funnel
+    readiness: partial
+    datasets:
+      - sap_successfactors_recruitment_funnel
+    reason: "This KB can answer requisition-level funnel questions only; candidate-stage detail is blocked by JobApplication."
+    blockers:
+      - "Extract JobApplication and update the funnel dataset before exposing candidate-stage answers."
+  - cartridge: sap_successfactors
+    id: kb_sap_successfactors_employees_anomalies
+    readiness: partial
+    datasets:
+      - sap_successfactors_employees_anomalies
+    reason: "This KB reads an anomaly dataset with incomplete active-with-termination coverage."
+    blockers:
+      - "Validate EmpEmploymentTermination joins before exposing the KB as full anomaly coverage."

@@ -194,8 +194,8 @@ FROM latest
 ORDER BY user_id, pay_date
 $seed$, $seed$Última extracción de pagos no recurrentes (bonos, pagos únicos). paycompValue encrypted desde bronze (caja negra; NO agregable).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_empemploymenttermination_latest$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmploymentTermination"]$seed$::jsonb, $seed$
--- NOTA: EmpEmploymentTermination está en entities.yaml pero no en el seed de
--- entity_config (extracción no habilitada en Bloque A); nombres SF estándar.
+-- NOTA: EmpEmploymentTermination está registrado en entity_config por el seed de
+-- completitud de SAP SuccessFactors; nombres SF estándar.
 WITH latest AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmploymentTermination/**/*.parquet',
@@ -212,7 +212,7 @@ SELECT
     load_date
 FROM latest
 ORDER BY user_id, termination_date
-$seed$, $seed$Última extracción de bajas (EmpEmploymentTermination). userId plano. Puede venir vacío si la entidad aún no está habilitada para extracción.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
+$seed$, $seed$Última extracción de bajas (EmpEmploymentTermination). userId plano; la entidad está registrada para extracción.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_focompany_latest$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/FOCompany"]$seed$::jsonb, $seed$
 -- NOTA: FO* no declaran select_fields; el nombre vive en name_defaultValue
 -- (confirmado por los KBs existentes). externalCode es plano (casa con EmpJob).
@@ -601,8 +601,9 @@ GROUP BY department
 ORDER BY open_requisitions DESC, department
 $seed$, $seed$Embudo de reclutamiento por departamento: requisiciones totales y abiertas. Las etapas por candidato requieren JobApplication (no extraída).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_turnover_by_period$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmploymentTermination"]$seed$::jsonb, $seed$
--- NOTA: EmpEmploymentTermination está en entities.yaml pero su extracción no está
--- habilitada en entity_config (Bloque A); este gold se llena cuando lo esté.
+-- NOTA: EmpEmploymentTermination está registrado en entity_config por el seed de
+-- completitud de SAP SuccessFactors; este gold queda vacío solo si el tenant no
+-- trae bajas en la ventana extraída.
 WITH term AS (
     SELECT user_id, termination_date, event_reason
     FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_empemploymenttermination_latest/**/*.parquet')
@@ -615,7 +616,7 @@ SELECT
 FROM term
 GROUP BY DATE_TRUNC('month', termination_date), event_reason
 ORDER BY termination_month DESC, terminations DESC
-$seed$, $seed$Rotación de personal: bajas por mes y motivo. Puede venir vacío hasta habilitar la extracción de EmpEmploymentTermination.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
+$seed$, $seed$Rotación de personal: bajas por mes y motivo desde EmpEmploymentTermination.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
 ($seed$sap_successfactors_manager_hierarchy$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/PerPersonal"]$seed$::jsonb, $seed$
 WITH RECURSIVE emp AS (
     SELECT user_id, full_name, manager_id

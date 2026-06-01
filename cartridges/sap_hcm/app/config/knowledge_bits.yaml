@@ -189,7 +189,7 @@ knowledge_bits:
 
   - id: kb_sap_hcm_employees_anomalies_active
     name: "Anomalías de personal activas"
-    description: "¿Qué anomalías de personal tengo? (empleados sin centro de costo, sin posición, baja-pero-activo). Conteo por tipo y severidad, desde el gold employees_anomalies."
+    description: "¿Qué anomalías de personal tengo? Conteo por tipo y severidad, desde el gold employees_anomalies. PARCIAL: la cobertura de manager inválido requiere HRP1001/Sbrtr."
     sql: >
       SELECT anomaly_type, severity, COUNT(*) AS total_cases
       FROM read_parquet('s3://{bucket}/gold/sap_hcm/employees_anomalies/**/*.parquet',

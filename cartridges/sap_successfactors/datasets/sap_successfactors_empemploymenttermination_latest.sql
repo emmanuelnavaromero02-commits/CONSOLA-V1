@@ -1,9 +1,9 @@
 -- sap_successfactors_empemploymenttermination_latest  (silver)  cartridge: sap_successfactors
 -- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]
--- description: Última extracción de bajas (EmpEmploymentTermination). userId plano. Puede venir vacío si la entidad aún no está habilitada para extracción.
+-- description: Última extracción de bajas (EmpEmploymentTermination). userId plano; la entidad está registrada para extracción.
 
--- NOTA: EmpEmploymentTermination está en entities.yaml pero no en el seed de
--- entity_config (extracción no habilitada en Bloque A); nombres SF estándar.
+-- NOTA: EmpEmploymentTermination está registrado en entity_config por el seed de
+-- completitud de SAP SuccessFactors; nombres SF estándar.
 WITH latest AS (
     SELECT *
     FROM read_parquet('s3://{bucket}/raw/sap_successfactors/EmpEmploymentTermination/**/*.parquet',

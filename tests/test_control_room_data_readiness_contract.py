@@ -3,26 +3,19 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 
 REPO = Path(__file__).resolve().parents[1]
 CONTROL_ROOM = REPO / "console/app/services/control_room_service.py"
 CONTROL_ROOM_CORE = REPO / "console/app/services/control_room/core.py"
 CONTROL_ROOM_UI = REPO / "console-next/src/app/(shell)/control-room/page.tsx"
+READINESS_MANIFEST = REPO / "console/app/services/control_room/data_readiness_manifest.yaml"
 
 
-PARTIAL_OR_STUB_DATASETS = {
-    "manager_hierarchy",
-    "sap_hcm_org_hierarchy",
-    "workforce_cost_monthly",
-    "cost_center_expense",
-    "inventory_movement_summary",
-    "overdue_billing",
-    "sap_successfactors_compensation_distribution",
-    "sap_successfactors_empemploymenttermination_latest",
-    "sap_successfactors_recruitment_funnel",
-    "sap_successfactors_recruitment_pipeline",
-    "sap_successfactors_turnover_by_period",
-}
+def _readiness_entries() -> list[dict]:
+    data = yaml.safe_load(READINESS_MANIFEST.read_text(encoding="utf-8")) or {}
+    return data.get("datasets", [])
 
 
 def _read(path: Path) -> str:
@@ -32,13 +25,18 @@ def _read(path: Path) -> str:
 def test_control_room_readiness_registry_tracks_known_partial_and_stub_datasets():
     src = _read(CONTROL_ROOM)
     core = _read(CONTROL_ROOM_CORE)
-    for dataset in PARTIAL_OR_STUB_DATASETS:
-        assert dataset in src
-        assert dataset in core
-    assert '"data_readiness": "partial"' in src
-    assert '"data_readiness": "stub"' in src
-    assert '"data_readiness": "partial"' in core
-    assert '"data_readiness": "stub"' in core
+    entries = _readiness_entries()
+    assert len(entries) >= 10
+    assert {"partial", "stub"} <= {entry["readiness"] for entry in entries}
+    for entry in entries:
+        assert entry["reason"]
+        assert entry["blockers"]
+    assert "readiness_manifest import dataset_readiness_registry" in src
+    assert "readiness_manifest import dataset_readiness_registry" in core
+    assert "CONTROL_ROOM_DATASET_READINESS" in src
+    assert "CONTROL_ROOM_DATASET_READINESS" in core
+    assert "dataset_readiness_registry()" in src
+    assert "dataset_readiness_registry()" in core
 
 
 def test_control_room_source_contract_columns_match_known_dataset_shapes():

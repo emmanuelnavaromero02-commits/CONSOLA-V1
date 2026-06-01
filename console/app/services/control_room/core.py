@@ -14,6 +14,7 @@ from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.version import app_version
 from app.services import audit_service, auth
+from app.services.control_room.readiness_manifest import dataset_readiness_registry
 from app.services.security_context import build_security_context, rls_user_context
 
 
@@ -258,63 +259,7 @@ DATA_READINESS_STATES = (
 )
 DATA_READY_STATES = {"ready"}
 NON_READY_SOURCE_STATES = {"empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"}
-CONTROL_ROOM_DATASET_READINESS: dict[tuple[str, str], dict[str, Any]] = {
-    ("sap_hcm", "manager_hierarchy"): {
-        "data_readiness": "partial",
-        "reason": "Jerarquia plana: falta HRP1001Set o PA0001.Sbrtr para poblar manager real.",
-        "blockers": ("Extraer relacion jefe-colaborador desde HRP1001Set o PA0001.Sbrtr.",),
-    },
-    ("sap_hcm", "sap_hcm_org_hierarchy"): {
-        "data_readiness": "partial",
-        "reason": "La relacion padre-hijo de unidades organizacionales requiere HRP1001Set.",
-        "blockers": ("Extraer HRP1001Set para reconstruir jerarquia OM.",),
-    },
-    ("sap_hcm", "workforce_cost_monthly"): {
-        "data_readiness": "stub",
-        "reason": "El dataset entrega headcount con costo NULL hasta extraer PA0008 BasicPay.",
-        "blockers": ("Extraer PA0008 BasicPay antes de usarlo para control de nomina.",),
-    },
-    ("sap_s4hana", "cost_center_expense"): {
-        "data_readiness": "stub",
-        "reason": "El gasto real queda NULL hasta extraer AccountAssignment por linea de compra.",
-        "blockers": ("Extraer A_PurchaseOrderAccountAssignment para unir compras con centros de costo.",),
-    },
-    ("sap_s4hana", "inventory_movement_summary"): {
-        "data_readiness": "partial",
-        "reason": "Resumen a nivel cabecera: faltan cantidades/material/clase de movimiento por item.",
-        "blockers": ("Extraer A_MaterialDocumentItem para inventario por material y cantidad.",),
-    },
-    ("sap_s4hana", "overdue_billing"): {
-        "data_readiness": "partial",
-        "reason": "El vencimiento se estima a 30 dias; no usa partidas FI abiertas ni estado de pago real.",
-        "blockers": ("Extraer partidas abiertas FI para distinguir facturas pagadas/no pagadas.",),
-    },
-    ("sap_successfactors", "sap_successfactors_compensation_distribution"): {
-        "data_readiness": "stub",
-        "reason": "paycompValue esta protegido y no es agregable; el dataset expone schema vacio.",
-        "blockers": ("Definir regla de privacidad que permita agregacion salarial segura.",),
-    },
-    ("sap_successfactors", "sap_successfactors_empemploymenttermination_latest"): {
-        "data_readiness": "partial",
-        "reason": "Puede venir vacio hasta activar EmpEmploymentTermination en entity_config.",
-        "blockers": ("Activar extraccion de EmpEmploymentTermination.",),
-    },
-    ("sap_successfactors", "sap_successfactors_recruitment_funnel"): {
-        "data_readiness": "partial",
-        "reason": "Embudo por requisicion/departamento; las etapas por candidato requieren JobApplication.",
-        "blockers": ("Extraer JobApplication para etapas aplicado-entrevista-oferta.",),
-    },
-    ("sap_successfactors", "sap_successfactors_recruitment_pipeline"): {
-        "data_readiness": "partial",
-        "reason": "candidate_pool_total es global; el enlace requisicion-candidato requiere JobApplication.",
-        "blockers": ("Extraer JobApplication para contar candidatos por requisicion.",),
-    },
-    ("sap_successfactors", "sap_successfactors_turnover_by_period"): {
-        "data_readiness": "partial",
-        "reason": "Puede venir vacio hasta activar la extraccion de EmpEmploymentTermination.",
-        "blockers": ("Activar EmpEmploymentTermination antes de prometer rotacion operacional.",),
-    },
-}
+CONTROL_ROOM_DATASET_READINESS: dict[tuple[str, str], dict[str, Any]] = dataset_readiness_registry()
 
 
 @dataclass(frozen=True)

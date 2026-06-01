@@ -204,7 +204,7 @@ knowledge_bits:
 
   - id: kb_sap_successfactors_turnover_recent
     name: "Rotación reciente"
-    description: "¿Cuál es mi rotación reciente y por qué motivos? Bajas por mes y motivo de salida, desde el gold sap_successfactors_turnover_by_period. Parcial, pendiente bronze: puede venir vacío hasta activar la extracción de EmpEmploymentTermination."
+    description: "¿Cuál es mi rotación reciente y por qué motivos? Bajas por mes y motivo de salida, desde el gold sap_successfactors_turnover_by_period basado en EmpEmploymentTermination."
     sql: >
       SELECT termination_month, event_reason, terminations
       FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_turnover_by_period/**/*.parquet',
@@ -226,7 +226,7 @@ knowledge_bits:
 
   - id: kb_sap_successfactors_employees_anomalies
     name: "Anomalías de empleados"
-    description: "¿Qué anomalías tengo en datos de empleados? (sin manager, sin departamento, job code inválido). Conteo por tipo y severidad, desde el gold sap_successfactors_employees_anomalies."
+    description: "¿Qué anomalías tengo en datos de empleados? Conteo por tipo y severidad, desde el gold sap_successfactors_employees_anomalies. Parcial: la cobertura activo-con-baja requiere validar el cruce con EmpEmploymentTermination."
     sql: >
       SELECT anomaly_type, severity, COUNT(*) AS total_cases
       FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employees_anomalies/**/*.parquet',

@@ -175,7 +175,7 @@ function renderCompanyChart(compRows){
 function renderTurnoverChart(){
   if(charts['chart-turnover']) charts['chart-turnover'].destroy();
   const ctx = document.getElementById('chart-turnover');
-  if(!TURN.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos de rotación (pendiente activar EmpEmploymentTermination)</div>'; return; }
+  if(!TURN.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos de rotación en la ventana extraída</div>'; return; }
   const agg = {};
   TURN.forEach(r=>{ const m = String(r.termination_month||''); agg[m] = (agg[m]||0) + Number(r.terminations||0); });
   const months = Object.keys(agg).filter(Boolean).sort();

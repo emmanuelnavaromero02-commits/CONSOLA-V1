@@ -77,8 +77,8 @@ asistente sigue estas reglas además de las globales.
   el gold `compensation_distribution` queda limitado por ese cifrado.
 - **`recruitment_funnel` es parcial**: las etapas por candidato requieren `JobApplication`
   (no extraída); hoy es a nivel de requisición.
-- **`turnover_by_period`** puede venir vacío hasta activar la extracción de
-  `EmpEmploymentTermination`.
+- **`turnover_by_period`** se basa en `EmpEmploymentTermination`; si no hay bajas
+  en la ventana extraída, el resultado será vacío.
 - **Composición por tipo de empleo** se lee del silver (no hay gold dedicado).
 - El entityset de Learning (`LearningItem`) usa el default y no está verificado contra un
   entorno externo.
