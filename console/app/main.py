@@ -1205,6 +1205,11 @@ def _is_api_like(path: str, accept: str) -> bool:
     return "application/json" in (accept or "")
 
 
+def _is_direct_static_html_request(path: str) -> bool:
+    lowered = path.lower()
+    return lowered.startswith("/static/") and lowered.endswith((".html", ".htm"))
+
+
 def _uses_rbac_dependency(path: str) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in _RBAC_DEPENDENCY_PREFIXES)
 
@@ -1221,6 +1226,9 @@ def _is_agent_runner_request(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    if _is_direct_static_html_request(path):
+        return _apply_security_headers(JSONResponse({"detail": "not found"}, status_code=404), path)
 
     # Internal routes (server-to-server) bypass session auth.
     # Their own router-level dependency (verify_internal_api_key) handles auth via header.

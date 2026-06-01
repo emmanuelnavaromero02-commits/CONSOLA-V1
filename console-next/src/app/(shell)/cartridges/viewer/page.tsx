@@ -6,22 +6,12 @@ import { useSearchParams } from "next/navigation";
 
 import { CredentialsForm } from "@/components/cartridges/CredentialsForm";
 import { useConnectorSchema } from "@/lib/hooks/useCartridges";
-import type { ConnectorSchema } from "@/lib/cartridges";
-
-function fallbackSchema(id: string): ConnectorSchema {
-  return {
-    name: id,
-    fields: [
-      { name: "base_url", type: "url", label: "Base URL", required: true },
-      { name: "token", type: "password", label: "Bearer token", required: true },
-    ],
-  };
-}
 
 function CartridgeViewerShell() {
   const params = useSearchParams();
   const id = params.get("id")?.trim() || "";
   const schemaQuery = useConnectorSchema(id || undefined);
+  const schema = schemaQuery.data;
 
   if (!id) {
     return (
@@ -47,13 +37,17 @@ function CartridgeViewerShell() {
       </nav>
 
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{schemaQuery.data?.name ?? id}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{schema?.name ?? id}</h1>
         <p className="text-sm text-muted-foreground">
-          {schemaQuery.data?.description ?? "Configura credenciales, prueba la conexión y deja el cartucho listo para extracción."}
+          {schema?.description ?? "Configura credenciales, prueba la conexión y deja el cartucho listo para extracción."}
         </p>
       </header>
 
-      {schemaQuery.isError ? (
+      {schemaQuery.isLoading ? (
+        <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+          Cargando esquema de configuración...
+        </div>
+      ) : schemaQuery.isError ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm">
           <p className="font-medium text-destructive">
             No se pudo cargar el esquema de configuración.
@@ -66,8 +60,12 @@ function CartridgeViewerShell() {
             Reintentar
           </button>
         </div>
+      ) : schema ? (
+        <CredentialsForm cartridgeId={id} schema={schema} />
       ) : (
-        <CredentialsForm cartridgeId={id} schema={schemaQuery.data ?? fallbackSchema(id)} />
+        <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          El esquema de configuración no está disponible para este cartucho.
+        </div>
       )}
     </main>
   );

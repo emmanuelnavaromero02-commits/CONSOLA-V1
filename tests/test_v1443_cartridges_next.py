@@ -208,6 +208,18 @@ def test_cartridge_detail_page_exists_and_uses_query_param():
     assert "CredentialsForm" in src
 
 
+def test_cartridge_detail_never_uses_generic_schema_fallback():
+    page = NEXT_SRC / "app/(shell)/cartridges/viewer/page.tsx"
+    src = _read(page)
+    assert "fallbackSchema" not in src
+    assert "schemaQuery.data ??" not in src
+    assert 'name: "base_url"' not in src
+    assert 'name: "token"' not in src
+    assert "schemaQuery.isLoading" in src
+    assert ") : schema ? (" in src
+    assert "schema={schema}" in src
+
+
 def test_grid_derives_status_from_kpi_freshness():
     """The grid avoids a second per-cartridge endpoint by reading
     /api/dashboard/kpis.data_freshness. Lock the mapping:
