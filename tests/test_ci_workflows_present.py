@@ -171,6 +171,27 @@ def test_console_next_coverage_is_published_in_ci():
     assert "@vitest/coverage-v8" in package
 
 
+def test_console_next_component_tests_cover_operational_shell():
+    """Audit guard: keep frontend unit coverage above the old 2-test floor."""
+    src = REPO / "console-next" / "src"
+    test_files = {
+        p.relative_to(src).as_posix()
+        for p in src.rglob("*.test.ts*")
+        if "node_modules" not in p.parts
+    }
+
+    assert len(test_files) >= 8
+    for expected in (
+        "components/AppSidebar.test.tsx",
+        "components/cartridges/StatusBadge.test.tsx",
+        "components/dashboard/FreshnessTable.test.tsx",
+        "components/dashboard/KpiCard.test.tsx",
+        "components/monitor/JobTable.test.tsx",
+        "components/monitor/StatusPill.test.tsx",
+    ):
+        assert expected in test_files
+
+
 @pytest.mark.parametrize("path", [LINT_WF, SECURITY_WF],
                          ids=lambda p: p.name)
 def test_workflows_declare_least_privilege_permissions(path):
