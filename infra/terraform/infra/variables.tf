@@ -90,6 +90,36 @@ variable "alarm_email" {
   type        = string
 }
 
+variable "bedrock_model_ids" {
+  description = "Bedrock foundation model IDs the app role may invoke."
+  type        = list(string)
+  default     = ["amazon.titan-embed-text-v2:0"]
+
+  validation {
+    condition = alltrue([
+      for model_id in var.bedrock_model_ids :
+      length(trimspace(model_id)) > 0
+      && !strcontains(model_id, "*")
+      && !strcontains(model_id, "/")
+    ])
+    error_message = "bedrock_model_ids must be non-empty Bedrock model IDs without wildcards or path separators."
+  }
+}
+
+variable "bedrock_model_resource_arns" {
+  description = "Optional additional Bedrock model or inference-profile ARNs the app role may invoke."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for arn in var.bedrock_model_resource_arns :
+      can(regex("^arn:aws[a-zA-Z-]*:bedrock:[a-z0-9-]+:[0-9]*:(foundation-model|inference-profile|application-inference-profile)/[^*]+$", arn))
+    ])
+    error_message = "bedrock_model_resource_arns must be specific Bedrock model/profile ARNs without wildcards."
+  }
+}
+
 variable "vpn_admin_allowed_cidrs" {
   description = "CIDRs allowed to reach the wg-easy admin UI. Empty means no public admin UI ingress."
   type        = list(string)

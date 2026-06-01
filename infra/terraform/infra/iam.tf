@@ -51,10 +51,21 @@ resource "aws_iam_role_policy" "app_s3" {
   policy = data.aws_iam_policy_document.app_s3.json
 }
 
+locals {
+  bedrock_foundation_model_arns = [
+    for model_id in var.bedrock_model_ids :
+    "arn:aws:bedrock:${var.aws_region}::foundation-model/${model_id}"
+  ]
+  bedrock_invoke_model_resources = concat(
+    local.bedrock_foundation_model_arns,
+    var.bedrock_model_resource_arns,
+  )
+}
+
 data "aws_iam_policy_document" "app_bedrock" {
   statement {
     actions   = ["bedrock:InvokeModel"]
-    resources = ["*"]
+    resources = local.bedrock_invoke_model_resources
   }
 }
 

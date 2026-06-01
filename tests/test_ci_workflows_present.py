@@ -19,6 +19,7 @@ WF_DIR = REPO / ".github" / "workflows"
 
 LINT_WF     = WF_DIR / "lint.yml"
 SECURITY_WF = WF_DIR / "security.yml"
+DOCKER_WF   = WF_DIR / "docker-image.yml"
 
 
 def _load(path: Path):
@@ -27,6 +28,10 @@ def _load(path: Path):
 
 def test_lint_workflow_exists():
     assert LINT_WF.exists(), f"missing {LINT_WF}"
+
+
+def test_docker_image_workflow_exists():
+    assert DOCKER_WF.exists(), f"missing {DOCKER_WF}"
 
 
 def test_security_workflow_exists():
@@ -132,6 +137,25 @@ def test_lint_workflow_scans_all_python_services():
     for svc in ("console", "workspace", "vault", "refinement", "mcp-infra",
                 "cartridges"):
         assert svc in raw, f"lint.yml does not include {svc} in ruff scope"
+
+
+def test_python_coverage_is_published_in_ci():
+    raw = DOCKER_WF.read_text(encoding="utf-8")
+    assert "coverage run --parallel-mode" in raw
+    assert "coverage combine" in raw
+    assert "python-coverage.xml" in raw
+    assert "python-coverage.json" in raw
+    assert "name: python-coverage" in raw
+
+
+def test_console_next_coverage_is_published_in_ci():
+    raw = LINT_WF.read_text(encoding="utf-8")
+    package = (REPO / "console-next" / "package.json").read_text(encoding="utf-8")
+    assert "test:coverage" in raw
+    assert "console-next-coverage" in raw
+    assert "console-next/coverage/" in raw
+    assert "--coverage.all=true" in package
+    assert "@vitest/coverage-v8" in package
 
 
 @pytest.mark.parametrize("path", [LINT_WF, SECURITY_WF],

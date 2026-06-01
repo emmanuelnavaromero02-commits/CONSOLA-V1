@@ -11,7 +11,8 @@
     "start": "python3 -m http.server 8001 -d out",
     "typecheck": "rm -rf .next && tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.all=true --coverage.include='src/**/*.{ts,tsx}' --coverage.exclude='src/**/*.test.{ts,tsx}' --coverage.reporter=text --coverage.reporter=lcov --coverage.reporter=json-summary"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -38,6 +39,7 @@
     "eslint-config-next": "^16.2.6",
     "postcss": "8.5.14",
     "tailwindcss": "^3.4.13",
+    "@vitest/coverage-v8": "^4.1.7",
     "typescript": "^5.6.2",
     "vitest": "^4.1.7"
   },

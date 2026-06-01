@@ -93,6 +93,24 @@ def test_iam_policy_uses_arn_specific_resources():
     assert "secret.arn" in body
 
 
+def test_bedrock_policy_uses_specific_model_resources():
+    variables = _read(TF / "variables.tf")
+    src = _read(TF / "iam.tf")
+    block = re.search(
+        r'data\s+"aws_iam_policy_document"\s+"app_bedrock"\s+\{(?P<body>[\s\S]*?)\n\}',
+        src,
+    )
+    assert block, "missing app_bedrock policy document"
+    body = block.group("body")
+    assert "bedrock:InvokeModel" in body
+    assert 'resources = ["*"]' not in body
+    assert "local.bedrock_invoke_model_resources" in body
+    assert "foundation-model/${model_id}" in src
+    assert 'default     = ["amazon.titan-embed-text-v2:0"]' in variables
+    assert "bedrock_model_resource_arns" in variables
+    assert "without wildcards" in variables
+
+
 def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     src = _read(REPO / "scripts/aws-entrypoint.sh")
     assert "set -Eeuo pipefail" in src
