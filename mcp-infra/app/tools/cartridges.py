@@ -186,6 +186,11 @@ def _scoped_object_prefix(
     return f"{normalized}/{scope}"
 
 
+_SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE: dict[str, tuple[str, ...]] = {
+    "replicon": ("fx_rates", "excel_billing"),
+}
+
+
 def _scope_cartridge_sql(
     sql: str,
     cartridge_id: str,
@@ -201,6 +206,14 @@ def _scope_cartridge_sql(
     pattern = re.compile(
         rf"(s3://[^'\"\s)]+/(?:raw|silver|gold)/{re.escape(cartridge)}/)([^'\"\s)]*)"
     )
+    shared_roots = _SHARED_RAW_SCOPEABLE_ROOTS_BY_CARTRIDGE.get(cartridge, ())
+    shared_pattern = (
+        re.compile(
+            rf"(s3://[^'\"\s)]+/raw/(?:{'|'.join(map(re.escape, shared_roots))})/)([^'\"\s)]*)"
+        )
+        if shared_roots
+        else None
+    )
 
     def _scope_path(match: re.Match[str]) -> str:
         base, rest = match.group(1), match.group(2)
@@ -211,7 +224,10 @@ def _scope_cartridge_sql(
             return match.group(0)
         return f"{base}{head}/{scope}/{tail}"
 
-    return pattern.sub(_scope_path, resolved)
+    resolved = pattern.sub(_scope_path, resolved)
+    if shared_pattern:
+        resolved = shared_pattern.sub(_scope_path, resolved)
+    return resolved
 
 
 def _scoped_rag_source_name(

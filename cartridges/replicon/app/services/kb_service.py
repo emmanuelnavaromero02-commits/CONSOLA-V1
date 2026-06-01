@@ -16,8 +16,12 @@ from app.services.duckdb_service import (
 )
 
 CARTRIDGE_ID = "replicon"
+_SHARED_RAW_ROOTS = ("fx_rates", "excel_billing")
 _SQL_STORAGE_PATH_RE = re.compile(
     rf"(s3://[^'\"\s)]+/(?:raw|silver|gold)/{re.escape(CARTRIDGE_ID)}/)([^'\"\s)]*)"
+)
+_SQL_SHARED_RAW_PATH_RE = re.compile(
+    rf"(s3://[^'\"\s)]+/raw/(?:{'|'.join(map(re.escape, _SHARED_RAW_ROOTS))})/)([^'\"\s)]*)"
 )
 
 
@@ -36,7 +40,8 @@ def _scope_kb_sql(sql: str, security_context: dict[str, Any] | None = None) -> s
             return match.group(0)
         return f"{base}{head}/{scope}{tail}"
 
-    return _SQL_STORAGE_PATH_RE.sub(_scope_path, resolved)
+    resolved = _SQL_STORAGE_PATH_RE.sub(_scope_path, resolved)
+    return _SQL_SHARED_RAW_PATH_RE.sub(_scope_path, resolved)
 
 
 def get_all_knowledge_bits() -> list[dict]:

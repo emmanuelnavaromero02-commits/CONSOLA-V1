@@ -465,6 +465,36 @@ def test_scope_cartridge_sql_rewrites_kb_read_paths_when_context_is_scoped(
     assert "raw/replicon/TimeEntry/tenant_id=tenant-1/workspace_id=workspace-1/" in out
 
 
+def test_scope_cartridge_sql_rewrites_replicon_shared_kb_inputs_when_context_is_scoped(
+    cartridges_tool,
+):
+    out = cartridges_tool._scope_cartridge_sql(
+        """
+        SELECT *
+        FROM read_parquet('s3://lakehouse/raw/fx_rates/mxn_usd/fx_rates.parquet') fx
+        JOIN read_parquet('s3://lakehouse/raw/excel_billing/invoices/load_date=*/*.parquet') inv
+          ON true
+        """,
+        "replicon",
+        security_context={
+            "trusted": True,
+            "tenant_id": "tenant-1",
+            "workspace_id": "workspace-1",
+        },
+    )
+
+    assert (
+        "raw/fx_rates/mxn_usd/tenant_id=tenant-1/workspace_id=workspace-1/fx_rates.parquet"
+        in out
+    )
+    assert (
+        "raw/excel_billing/invoices/tenant_id=tenant-1/workspace_id=workspace-1/load_date=*/*.parquet"
+        in out
+    )
+    assert "raw/fx_rates/mxn_usd/fx_rates.parquet" not in out
+    assert "raw/excel_billing/invoices/load_date=*/*.parquet" not in out
+
+
 def test_cartridge_preview_rejects_limit_sqli(cartridges_tool):
     with patch.object(cartridges_tool, "_duckdb") as mock_duck:
         with pytest.raises(ValueError):
