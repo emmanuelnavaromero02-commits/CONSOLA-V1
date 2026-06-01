@@ -1717,8 +1717,35 @@ async def _dependency_health(name: str, url: str, server: str | None = None) -> 
         return {"status": "down", "error": type(exc).__name__}
 
 
+async def _control_room_data_check(*, require_data: bool = False) -> dict:
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            operational_items = int(await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                  FROM control_room_items
+                 WHERE COALESCE(item_kind, '') <> 'source_state'
+                """
+            ) or 0)
+    except Exception as exc:
+        logger.warning("readiness probe failed for control_room_data", exc_info=True)
+        return {
+            "status": "degraded",
+            "required": require_data,
+            "operational_items": 0,
+            "error": type(exc).__name__,
+        }
+    return {
+        "status": "up" if operational_items > 0 else "degraded",
+        "required": require_data,
+        "operational_items": operational_items,
+        "reason": "" if operational_items > 0 else "no_operational_control_room_items",
+    }
+
+
 @app.get("/readyz")
-async def readyz():
+async def readyz(request: Request):
     """Dependency-aware readiness probe.
 
     `/healthz` only proves the process can answer. `/readyz` is stricter:
@@ -1743,7 +1770,19 @@ async def readyz():
     for name, (url, server) in deps.items():
         checks[name] = await _dependency_health(name, url, server)
 
-    ok = all(check.get("status") == "up" for check in checks.values())
+    require_data = (
+        os.environ.get("CONTROL_ROOM_REQUIRE_DATA_READY", "").strip().lower() in {"1", "true", "yes", "on"}
+        or str(request.query_params.get("require_data") or "").strip().lower() in {"1", "true", "yes", "on"}
+    )
+    checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
+
+    dependency_ok = all(
+        check.get("status") == "up"
+        for name, check in checks.items()
+        if name != "control_room_data"
+    )
+    data_ok = checks["control_room_data"].get("status") == "up" or not require_data
+    ok = dependency_ok and data_ok
     return JSONResponse(
         {"ok": ok, "service": "console", "checks": checks},
         status_code=200 if ok else 503,

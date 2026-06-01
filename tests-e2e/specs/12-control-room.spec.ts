@@ -65,6 +65,8 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.cartridges.length, "active cartridges must come from backend catalog").toBeGreaterThan(0);
     expect(dashboard.summary.active_connectors, "dashboard must distinguish commercial connectors").toBeGreaterThan(0);
     expect(dashboard.summary.active_modules, "dashboard must expose operational modules").toBeGreaterThan(0);
+    expect(dashboard.summary.data_ready_modules, "dashboard must expose data-ready module count").toBeGreaterThanOrEqual(0);
+    expect(dashboard.summary.data_readiness, "dashboard must expose source data-readiness rollup").toBeTruthy();
     expect(dashboard.summary.alerts.total, "dashboard must expose operational alert queue").toBeGreaterThan(0);
     expect(dashboard.summary.alerts.push_ready, "external push must stay disabled until delivery connectors exist").toBe(0);
     const alertsResponse = await page.request.get(`${LEGACY}/api/control-room/alerts`, { timeout: 30_000 });
@@ -74,6 +76,12 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(dashboard.meta?.live_mode, "dashboard must expose live refresh mode").toBe("polling");
     expect(dashboard.meta?.refresh_interval_seconds, "dashboard must publish polling interval").toBe(30);
     expect(dashboard.sources.every((source: { checked_at?: string }) => Boolean(source.checked_at))).toBe(true);
+    expect(dashboard.sources.every((source: { data_readiness?: string; operationally_ready?: boolean }) => (
+      Boolean(source.data_readiness) && typeof source.operationally_ready === "boolean"
+    ))).toBe(true);
+    expect(dashboard.sources.every((source: { data_readiness?: string; operationally_ready?: boolean }) => (
+      !["partial", "stub"].includes(source.data_readiness || "") || source.operationally_ready === false
+    ))).toBe(true);
     const csrf = await csrfToken(page);
     const seededThreshold = {
       cartridge_id: "replicon",

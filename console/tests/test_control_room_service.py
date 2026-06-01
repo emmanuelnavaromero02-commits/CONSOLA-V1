@@ -159,6 +159,68 @@ async def test_list_anomalies_marks_missing_dataset_unavailable_without_failing(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_marks_partial_and_stub_sources_not_operationally_ready():
+    async def readiness_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        rows = {key: list(value) for key, value in SAMPLE_ROWS.items()}
+        rows["manager_hierarchy"] = [
+            {
+                "pernr": "1001",
+                "full_name": "Ana Gomez",
+                "manager_pernr": None,
+                "manager_name": None,
+                "direct_reports": 0,
+                "depth": 0,
+            }
+        ]
+        rows["workforce_cost_monthly"] = [
+            {
+                "cost_month": "2026-06-01",
+                "org_unit_id": "ORG-1",
+                "org_unit_name": "People",
+                "cost_center": "CC-10",
+                "active_headcount": 8,
+                "total_base_salary": None,
+            }
+        ]
+        return rows[dataset]
+
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {"cartridge_id": "sap_hcm", "installation_status": "ready", "label": "SAP HCM"},
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=readiness_fetcher)
+
+    manager_source = next(source for source in result["sources"] if source["dataset"] == "manager_hierarchy")
+    payroll_source = next(source for source in result["sources"] if source["dataset"] == "workforce_cost_monthly")
+    assert manager_source["status"] == "ok"
+    assert manager_source["data_readiness"] == "partial"
+    assert manager_source["operationally_ready"] is False
+    assert manager_source["readiness_blockers"]
+    assert payroll_source["status"] == "ok"
+    assert payroll_source["data_readiness"] == "stub"
+    assert payroll_source["operationally_ready"] is False
+
+    summary = result["summary"]
+    assert summary["data_readiness"]["partial"] >= 1
+    assert summary["data_readiness"]["stub"] >= 1
+    assert summary["partial_modules"] >= 1
+    assert summary["stub_modules"] >= 1
+    assert summary["data_ready_modules"] < summary["active_modules"]
+    source_state_types = {item["anomaly_type"] for item in result["items"] if item["kind"] == "source_state"}
+    assert {"source_partial", "source_stub"} <= source_state_types
+
+
+@pytest.mark.asyncio
 async def test_dashboard_exposes_real_financial_metrics_from_available_sources():
     async def finance_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
         rows = {key: list(value) for key, value in SAMPLE_ROWS.items()}

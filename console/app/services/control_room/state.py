@@ -304,10 +304,18 @@ def _threshold_ref(
 
 
 @_bind_to_core
-def _source_state_item(source: ControlRoomSource, status: str, error: str | None = None) -> dict[str, Any] | None:
-    if status == "ok":
+def _source_state_item(
+    source: ControlRoomSource,
+    status: str,
+    error: str | None = None,
+    data_readiness: str | None = None,
+    readiness_reason: str | None = None,
+    readiness_blockers: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    readiness = data_readiness or ("ready" if status == "ok" else status)
+    if status == "ok" and readiness == "ready":
         return None
-    severity = "high" if status in {"unavailable", "invalid_schema", "blocked", "no_permission"} else "medium"
+    severity = "high" if status in {"unavailable", "invalid_schema", "blocked", "no_permission"} or readiness == "stub" else "medium"
     title_by_status = {
         "empty": "Fuente sin datos materializados",
         "missing": "Dataset requerido no registrado",
@@ -315,6 +323,8 @@ def _source_state_item(source: ControlRoomSource, status: str, error: str | None
         "invalid_schema": "Dataset con contrato invalido",
         "blocked": "Cartucho inactivo o bloqueado",
         "no_permission": "Cartucho sin permiso para este usuario",
+        "partial": "Fuente parcial: no apta para operacion completa",
+        "stub": "Fuente stub: no apta para decisiones operativas",
     }
     description_by_status = {
         "empty": f"{source.dataset} existe pero no tiene filas para el workspace activo.",
@@ -323,18 +333,29 @@ def _source_state_item(source: ControlRoomSource, status: str, error: str | None
         "invalid_schema": f"{source.dataset} no cumple el contrato esperado por la Sala de Control.",
         "blocked": f"{source.module_label} esta instalado pero no esta activo para el workspace.",
         "no_permission": f"{source.module_label} no esta permitido para este usuario.",
+        "partial": readiness_reason or f"{source.dataset} devuelve datos, pero su contrato aun es parcial.",
+        "stub": readiness_reason or f"{source.dataset} conserva placeholders/TODO y no debe contarse como operativo.",
     }
     item = _base_item(
         source,
-        {"severity": severity, "details": {"source_status": status, "error": error or ""}},
-        f"source_{status}",
+        {
+            "severity": severity,
+            "details": {
+                "source_status": status,
+                "data_readiness": readiness,
+                "readiness_reason": readiness_reason or "",
+                "readiness_blockers": list(readiness_blockers or ()),
+                "error": error or "",
+            },
+        },
+        f"source_{readiness}",
         source.dataset,
         source.dataset,
     )
     item.update({
         "kind": "source_state",
-        "title": title_by_status.get(status, "Fuente requiere atencion"),
-        "description": description_by_status.get(status, f"{source.dataset} requiere revision."),
+        "title": title_by_status.get(readiness, title_by_status.get(status, "Fuente requiere atencion")),
+        "description": description_by_status.get(readiness, description_by_status.get(status, f"{source.dataset} requiere revision.")),
         "recommendation": "Validar instalacion, credenciales, materializacion y scope tenant/workspace antes de operar con el cliente.",
         "root_cause": "La cadena de datos no esta lista para entregar senales de negocio confiables.",
         "impact": "El cartucho puede aparecer activo pero sin datos accionables en la sala.",

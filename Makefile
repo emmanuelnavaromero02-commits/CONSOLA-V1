@@ -52,7 +52,7 @@ demo-check:
 	@echo "  1) make preflight"
 	@echo "  2) docker compose -f infra/docker-compose.yml config -q"
 	@echo "  3) make up"
-	@echo "  4) curl :8000/healthz"
+	@echo "  4) curl 'http://localhost:8000/readyz?require_data=1'"
 	@echo "  5) make smoke"
 	@echo "  6) make test"
 	@echo "  7) cd tests-e2e && npx playwright test specs/12-control-room.spec.ts"

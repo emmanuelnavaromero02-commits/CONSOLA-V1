@@ -28,7 +28,8 @@ import { cn } from "@/lib/utils";
 
 type Severity = "critical" | "high" | "medium" | "low";
 type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
-type SourceRollup = SourceState | "attention" | "inactive" | "no_sources";
+type DataReadiness = "ready" | "partial" | "stub" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
+type SourceRollup = SourceState | "partial" | "stub" | "attention" | "inactive" | "no_sources";
 type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;
 type AlertOperation = "ack" | "snooze" | "assign" | "false-positive";
@@ -42,6 +43,11 @@ interface SourceStatus {
   module: string;
   status: SourceState;
   count: number;
+  data_readiness?: DataReadiness;
+  operationally_ready?: boolean;
+  readiness_reason?: string;
+  readiness_blockers?: string[];
+  contract_warnings?: string[];
   error?: string;
   checked_at?: string;
 }
@@ -63,6 +69,8 @@ interface DomainModule {
   item_count: number;
   critical_count: number;
   source_status: SourceRollup;
+  data_readiness?: DataReadiness;
+  operationally_ready?: boolean;
   kpis: Kpi[];
 }
 
@@ -91,6 +99,8 @@ interface Cartridge {
   item_count: number;
   critical_count: number;
   source_status: SourceRollup;
+  data_readiness?: DataReadiness;
+  operationally_ready?: boolean;
   datasets: SourceStatus[];
 }
 
@@ -372,6 +382,11 @@ interface Dashboard {
     active_cartridges: number;
     operational_cartridges: number;
     source_states: Record<SourceState, number>;
+    data_readiness?: Record<DataReadiness, number>;
+    data_ready_sources?: number;
+    data_ready_modules?: number;
+    partial_modules?: number;
+    stub_modules?: number;
     cycle_counts?: Record<string, number>;
     thresholds?: {
       active: number;
@@ -429,8 +444,11 @@ const severityLabels: Record<Severity, string> = {
   low: "Baja",
 };
 
-const sourceStateLabels: Record<SourceState | SourceRollup, string> = {
+const sourceStateLabels: Record<SourceState | SourceRollup | DataReadiness, string> = {
   ok: "Operativa",
+  ready: "Data-ready",
+  partial: "Parcial",
+  stub: "Stub",
   empty: "Vacia",
   missing: "Faltante",
   unavailable: "No disponible",
@@ -563,9 +581,10 @@ function activityDescription(entry: ActivityEntry): string {
   return entry.label || entry.status || entry.type;
 }
 
-function sourceStateTone(status: SourceState | SourceRollup): string {
-  if (status === "ok") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+function sourceStateTone(status: SourceState | SourceRollup | DataReadiness): string {
+  if (status === "ok" || status === "ready") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   if (status === "empty" || status === "inactive" || status === "no_sources") return "border-muted bg-muted/30 text-muted-foreground";
+  if (status === "stub") return "border-destructive/40 bg-destructive/10 text-destructive";
   return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
@@ -729,6 +748,12 @@ export default function ControlRoomPage() {
   const activeConnectorCount = dashboard?.summary.active_connectors
     ?? new Set(activeModules.map((item) => item.connector_id || item.id)).size;
   const activeModuleCount = dashboard?.summary.active_modules ?? activeModules.length;
+  const dataReadyModuleCount = dashboard?.summary.data_ready_modules
+    ?? activeModules.filter((item) => item.operationally_ready).length;
+  const partialModuleCount = dashboard?.summary.partial_modules
+    ?? activeModules.filter((item) => item.data_readiness === "partial").length;
+  const stubModuleCount = dashboard?.summary.stub_modules
+    ?? activeModules.filter((item) => item.data_readiness === "stub").length;
 
   useEffect(() => {
     if (urlHydrated || !dashboard) return;
@@ -874,7 +899,7 @@ export default function ControlRoomPage() {
     level: "portfolio",
     title: "Dashboard Operativo",
     eyebrow: "Sala de Control OMEGA",
-    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} modulos operativos`,
+    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} modulos activos · ${dataReadyModuleCount} data-ready`,
   };
 
   const selected = filtered.find((item) => item.id === selectedId)
@@ -1245,21 +1270,10 @@ export default function ControlRoomPage() {
     }
   }
 
-  const contextSourceStates = useMemo(() => {
-    const states = {
-      ok: 0,
-      empty: 0,
-      missing: 0,
-      unavailable: 0,
-      invalid_schema: 0,
-      blocked: 0,
-      no_permission: 0,
-    } satisfies Record<SourceState, number>;
-    contextSources.forEach((source) => {
-      states[source.status] = (states[source.status] ?? 0) + 1;
-    });
-    return states;
-  }, [contextSources]);
+  const contextDataReadySources = useMemo(
+    () => contextSources.filter((source) => source.operationally_ready).length,
+    [contextSources],
+  );
 
   const contextCycleCounts = useMemo(() => {
     if (domain === "all" && cartridge === "all" && severity === "all") return dashboard?.summary.cycle_counts;
@@ -1295,6 +1309,9 @@ export default function ControlRoomPage() {
         period={dashboard?.period || "Periodo operativo"}
         activeConnectors={activeConnectorCount}
         activeModules={activeModuleCount}
+        dataReadyModules={dataReadyModuleCount}
+        partialModules={partialModuleCount}
+        stubModules={stubModuleCount}
         loading={state === "loading" || refreshing}
         lastUpdated={timeAgo(lastUpdatedAt, clockTick)}
         nextRefresh={timeUntil(nextRefreshAt, clockTick)}
@@ -1328,6 +1345,7 @@ export default function ControlRoomPage() {
           totalItems={dashboard?.summary.total_items ?? 0}
           activeConnectors={activeConnectorCount}
           activeModules={activeModuleCount}
+          dataReadyModules={dataReadyModuleCount}
           domain={domain}
           cartridge={cartridge}
           onAll={navigateAll}
@@ -1375,7 +1393,7 @@ export default function ControlRoomPage() {
             visibleDomains={visibleDomains}
             context={activeContext}
             contextSources={contextSources}
-            contextSourceStates={contextSourceStates}
+            contextDataReadySources={contextDataReadySources}
             contextModules={contextModules}
             contextLessons={contextLessons}
             contextAlerts={contextAlerts}
@@ -1421,6 +1439,9 @@ function Header({
   period,
   activeConnectors,
   activeModules,
+  dataReadyModules,
+  partialModules,
+  stubModules,
   loading,
   lastUpdated,
   nextRefresh,
@@ -1438,6 +1459,9 @@ function Header({
   period: string;
   activeConnectors: number;
   activeModules: number;
+  dataReadyModules: number;
+  partialModules: number;
+  stubModules: number;
   loading: boolean;
   lastUpdated: string;
   nextRefresh: string;
@@ -1494,7 +1518,14 @@ function Header({
           </span>
           <span className="rounded-full border bg-card px-3 py-1.5">Actualizado {lastUpdated}</span>
           <span className="rounded-full border bg-card px-3 py-1.5">Siguiente {nextRefresh}</span>
-          <span className="rounded-full border bg-card px-3 py-1.5">{activeConnectors} conectores · {activeModules} modulos operativos</span>
+          <span className="rounded-full border bg-card px-3 py-1.5">
+            {activeConnectors} conectores · {activeModules} modulos activos · {dataReadyModules} data-ready
+          </span>
+          {partialModules || stubModules ? (
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-amber-700 dark:text-amber-300">
+              {partialModules} parciales · {stubModules} stub
+            </span>
+          ) : null}
           <button
             type="button"
             onClick={onRefresh}
@@ -1517,6 +1548,7 @@ function Sidebar({
   totalItems,
   activeConnectors,
   activeModules,
+  dataReadyModules,
   domain,
   cartridge,
   onAll,
@@ -1528,6 +1560,7 @@ function Sidebar({
   totalItems: number;
   activeConnectors: number;
   activeModules: number;
+  dataReadyModules: number;
   domain: string;
   cartridge: string;
   onAll: () => void;
@@ -1581,7 +1614,7 @@ function Sidebar({
           </section>
         ))}
       </div>
-      <p className="border-t pt-3 text-xs text-muted-foreground">{activeConnectors} conectores · {activeModules} modulos</p>
+      <p className="border-t pt-3 text-xs text-muted-foreground">{activeConnectors} conectores · {activeModules} modulos activos · {dataReadyModules} data-ready</p>
     </aside>
   );
 }
@@ -1593,7 +1626,7 @@ function DashboardView({
   visibleDomains,
   context,
   contextSources,
-  contextSourceStates,
+  contextDataReadySources,
   contextModules,
   contextLessons,
   contextAlerts,
@@ -1634,7 +1667,7 @@ function DashboardView({
   visibleDomains: Domain[];
   context: ActiveContext;
   contextSources: SourceStatus[];
-  contextSourceStates: Record<SourceState, number>;
+  contextDataReadySources: number;
   contextModules: Cartridge[];
   contextLessons: Lesson[];
   contextAlerts: ControlAlert[];
@@ -1704,7 +1737,7 @@ function DashboardView({
 
       <section className="grid gap-4 lg:grid-cols-4" aria-label="Ciclo y salud operativa">
         <OmegaCycleBar steps={dashboard?.omega_steps ?? defaultOmegaSteps} counts={contextCycleCounts} />
-        <SourceHealthPanel sourceStates={contextSourceStates} totalSources={contextSources.length} />
+        <SourceHealthPanel dataReadySources={contextDataReadySources} totalSources={contextSources.length} />
         <MiniPanel title="Umbrales" value={`${dashboard?.summary.thresholds?.active ?? contextThresholds.length}/${dashboard?.summary.thresholds?.total ?? contextThresholds.length}`} detail="reglas activas" />
         <MiniPanel title="Aprendizaje" value={lessonsLoading ? "..." : contextLessons.length} detail="reglas visibles" />
       </section>
@@ -1914,12 +1947,12 @@ function OmegaCycleBar({ steps, counts }: { steps: Array<{ id: string; label: st
   );
 }
 
-function SourceHealthPanel({ sourceStates, totalSources }: { sourceStates: Record<SourceState, number>; totalSources: number }) {
+function SourceHealthPanel({ dataReadySources, totalSources }: { dataReadySources: number; totalSources: number }) {
   return (
     <article className="rounded-lg border bg-card p-4">
       <p className="text-xs font-semibold uppercase text-muted-foreground">Salud de fuentes</p>
-      <strong className="mt-2 block text-2xl">{sourceStates.ok}/{totalSources}</strong>
-      <p className="text-sm text-muted-foreground">Operativa</p>
+      <strong className="mt-2 block text-2xl">{dataReadySources}/{totalSources}</strong>
+      <p className="text-sm text-muted-foreground">Data-ready</p>
     </article>
   );
 }
@@ -1962,11 +1995,11 @@ function DomainSection({ domain, collapsed, onToggle }: { domain: Domain; collap
 }
 
 function SourceInventoryPanel({ context, sources }: { context: ActiveContext; sources: SourceStatus[] }) {
-  const states: SourceState[] = ["ok", "empty", "missing", "invalid_schema", "unavailable", "blocked", "no_permission"];
-  const counts = states.reduce((acc, state) => {
-    acc[state] = sources.filter((source) => source.status === state).length;
+  const readinessStates: DataReadiness[] = ["ready", "partial", "stub", "empty", "missing", "invalid_schema", "unavailable", "blocked", "no_permission"];
+  const readinessCounts = readinessStates.reduce((acc, state) => {
+    acc[state] = sources.filter((source) => (source.data_readiness || "ready") === state).length;
     return acc;
-  }, {} as Record<SourceState, number>);
+  }, {} as Record<DataReadiness, number>);
   const sortedSources = [...sources].sort((left, right) => left.module.localeCompare(right.module) || left.dataset.localeCompare(right.dataset));
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Inventario de fuentes">
@@ -1978,23 +2011,26 @@ function SourceInventoryPanel({ context, sources }: { context: ActiveContext; so
         <span className="text-sm text-muted-foreground">{sources.length} datasets</span>
       </div>
       <div className="mb-4 flex flex-wrap gap-2" aria-label="Estados de fuentes del contexto">
-        {states.map((state) => (
+        {readinessStates.map((state) => (
           <span className={cn("rounded-full border px-2.5 py-1 text-xs", sourceStateTone(state))} key={state}>
-            {sourceStateLabels[state]} <strong>{counts[state]}</strong>
+            {sourceStateLabels[state]} <strong>{readinessCounts[state]}</strong>
           </span>
         ))}
       </div>
       <div className="space-y-2">
         {sortedSources.length ? sortedSources.map((source) => (
-          <article className="grid gap-2 rounded-md border bg-background p-3 text-sm md:grid-cols-[1fr_140px_100px_160px]" key={`${source.module_id}-${source.dataset}`}>
+          <article className="grid gap-2 rounded-md border bg-background p-3 text-sm md:grid-cols-[1fr_120px_120px_90px_150px]" key={`${source.module_id}-${source.dataset}`}>
             <div>
               <strong>{source.dataset}</strong>
               <p className="text-xs text-muted-foreground">{source.module} · {source.cartridge}</p>
             </div>
             <span className={cn("w-fit rounded-full border px-2.5 py-1 text-xs", sourceStateTone(source.status))}>{sourceStateLabels[source.status]}</span>
+            <span className={cn("w-fit rounded-full border px-2.5 py-1 text-xs", sourceStateTone(source.data_readiness || "ready"))}>{sourceStateLabels[source.data_readiness || "ready"]}</span>
             <span>{source.count} filas</span>
             <span className="text-muted-foreground">{source.checked_at ? `Revisada ${timeAgo(parseDate(source.checked_at), 0)}` : "Sin revision"}</span>
-            {source.error ? <p className="md:col-span-4 text-xs text-destructive">{source.error}</p> : null}
+            {source.readiness_reason ? <p className="md:col-span-5 text-xs text-amber-700 dark:text-amber-300">{source.readiness_reason}</p> : null}
+            {source.readiness_blockers?.length ? <p className="md:col-span-5 text-xs text-muted-foreground">{source.readiness_blockers.join(" · ")}</p> : null}
+            {source.error ? <p className="md:col-span-5 text-xs text-destructive">{source.error}</p> : null}
           </article>
         )) : <StatePanel icon={AlertTriangle} text="No hay fuentes visibles para este contexto." />}
       </div>

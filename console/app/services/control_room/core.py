@@ -235,10 +235,86 @@ class ControlRoomSource:
     kind: str = "anomaly"
     normalizer: str = "standard_anomaly"
     module_id: str | None = None
+    data_readiness: str = "ready"
+    readiness_reason: str = ""
+    readiness_blockers: tuple[str, ...] = ()
+    contract_warnings: tuple[str, ...] = ()
 
     @property
     def visible_module_id(self) -> str:
         return self.module_id or self.cartridge
+
+
+DATA_READINESS_STATES = (
+    "ready",
+    "partial",
+    "stub",
+    "empty",
+    "missing",
+    "unavailable",
+    "invalid_schema",
+    "blocked",
+    "no_permission",
+)
+DATA_READY_STATES = {"ready"}
+NON_READY_SOURCE_STATES = {"empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"}
+CONTROL_ROOM_DATASET_READINESS: dict[tuple[str, str], dict[str, Any]] = {
+    ("sap_hcm", "manager_hierarchy"): {
+        "data_readiness": "partial",
+        "reason": "Jerarquia plana: falta HRP1001Set o PA0001.Sbrtr para poblar manager real.",
+        "blockers": ("Extraer relacion jefe-colaborador desde HRP1001Set o PA0001.Sbrtr.",),
+    },
+    ("sap_hcm", "sap_hcm_org_hierarchy"): {
+        "data_readiness": "partial",
+        "reason": "La relacion padre-hijo de unidades organizacionales requiere HRP1001Set.",
+        "blockers": ("Extraer HRP1001Set para reconstruir jerarquia OM.",),
+    },
+    ("sap_hcm", "workforce_cost_monthly"): {
+        "data_readiness": "stub",
+        "reason": "El dataset entrega headcount con costo NULL hasta extraer PA0008 BasicPay.",
+        "blockers": ("Extraer PA0008 BasicPay antes de usarlo para control de nomina.",),
+    },
+    ("sap_s4hana", "cost_center_expense"): {
+        "data_readiness": "stub",
+        "reason": "El gasto real queda NULL hasta extraer AccountAssignment por linea de compra.",
+        "blockers": ("Extraer A_PurchaseOrderAccountAssignment para unir compras con centros de costo.",),
+    },
+    ("sap_s4hana", "inventory_movement_summary"): {
+        "data_readiness": "partial",
+        "reason": "Resumen a nivel cabecera: faltan cantidades/material/clase de movimiento por item.",
+        "blockers": ("Extraer A_MaterialDocumentItem para inventario por material y cantidad.",),
+    },
+    ("sap_s4hana", "overdue_billing"): {
+        "data_readiness": "partial",
+        "reason": "El vencimiento se estima a 30 dias; no usa partidas FI abiertas ni estado de pago real.",
+        "blockers": ("Extraer partidas abiertas FI para distinguir facturas pagadas/no pagadas.",),
+    },
+    ("sap_successfactors", "sap_successfactors_compensation_distribution"): {
+        "data_readiness": "stub",
+        "reason": "paycompValue esta protegido y no es agregable; el dataset expone schema vacio.",
+        "blockers": ("Definir regla de privacidad que permita agregacion salarial segura.",),
+    },
+    ("sap_successfactors", "sap_successfactors_empemploymenttermination_latest"): {
+        "data_readiness": "partial",
+        "reason": "Puede venir vacio hasta activar EmpEmploymentTermination en entity_config.",
+        "blockers": ("Activar extraccion de EmpEmploymentTermination.",),
+    },
+    ("sap_successfactors", "sap_successfactors_recruitment_funnel"): {
+        "data_readiness": "partial",
+        "reason": "Embudo por requisicion/departamento; las etapas por candidato requieren JobApplication.",
+        "blockers": ("Extraer JobApplication para etapas aplicado-entrevista-oferta.",),
+    },
+    ("sap_successfactors", "sap_successfactors_recruitment_pipeline"): {
+        "data_readiness": "partial",
+        "reason": "candidate_pool_total es global; el enlace requisicion-candidato requiere JobApplication.",
+        "blockers": ("Extraer JobApplication para contar candidatos por requisicion.",),
+    },
+    ("sap_successfactors", "sap_successfactors_turnover_by_period"): {
+        "data_readiness": "partial",
+        "reason": "Puede venir vacio hasta activar la extraccion de EmpEmploymentTermination.",
+        "blockers": ("Activar EmpEmploymentTermination antes de prometer rotacion operacional.",),
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -280,8 +356,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Personal",
                 entity_kind="Departamento",
-                entity_id_field="department",
-                entity_label_field="department",
+                entity_id_field="org_id",
+                entity_label_field="org_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_hcm",
@@ -382,8 +458,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Estructura Org",
                 entity_kind="Posicion",
-                entity_id_field="position_type",
-                entity_label_field="position_type",
+                entity_id_field="employee_group",
+                entity_label_field="employee_group",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_hcm_org",
@@ -414,8 +490,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Employee Central",
                 entity_kind="Departamento",
-                entity_id_field="department",
-                entity_label_field="department",
+                entity_id_field="department_id",
+                entity_label_field="department_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors",
@@ -426,8 +502,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Employee Central",
                 entity_kind="Periodo",
-                entity_id_field="period",
-                entity_label_field="period",
+                entity_id_field="termination_month",
+                entity_label_field="termination_month",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors",
@@ -447,9 +523,9 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 cartridge="sap_successfactors",
                 domain="Recursos Humanos",
                 module_label="Reclutamiento",
-                entity_kind="Requisicion",
-                entity_id_field="job_req_id",
-                entity_label_field="job_req_id",
+                entity_kind="Departamento",
+                entity_id_field="department",
+                entity_label_field="department",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_recruiting",
@@ -482,8 +558,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Desempeno",
                 entity_kind="Grupo",
-                entity_id_field="department",
-                entity_label_field="department",
+                entity_id_field="department_id",
+                entity_label_field="department_id",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_performance",
@@ -505,7 +581,7 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 module_label="Estructura Org",
                 entity_kind="Manager",
                 entity_id_field="manager_id",
-                entity_label_field="manager_name",
+                entity_label_field="manager_id",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_org",
@@ -516,8 +592,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Estructura Org",
                 entity_kind="Unidad",
-                entity_id_field="org_unit",
-                entity_label_field="org_unit",
+                entity_id_field="department_id",
+                entity_label_field="department_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_org",
@@ -669,9 +745,9 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 cartridge="sap_s4hana",
                 domain="Operacion",
                 module_label="Inventario",
-                entity_kind="Material",
-                entity_id_field="material",
-                entity_label_field="material",
+                entity_kind="Mes",
+                entity_id_field="posting_month",
+                entity_label_field="posting_month",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_s4hana_inventory",
@@ -874,6 +950,90 @@ ANOMALY_COPY: dict[str, dict[str, str]] = {
 
 DatasetFetcher = Callable[[str, dict | None, int], Awaitable[list[dict[str, Any]]]]
 ThresholdMap = dict[tuple[str, str, str], dict[str, Any]]
+
+
+def _readiness_contract(source: ControlRoomSource) -> dict[str, Any]:
+    registry = CONTROL_ROOM_DATASET_READINESS.get((source.cartridge, source.dataset), {})
+    data_readiness = str(source.data_readiness or registry.get("data_readiness") or "ready")
+    if data_readiness == "ready" and registry:
+        data_readiness = str(registry.get("data_readiness") or "ready")
+    if data_readiness not in DATA_READINESS_STATES:
+        data_readiness = "partial"
+    blockers = tuple(source.readiness_blockers or registry.get("blockers") or ())
+    warnings = tuple(source.contract_warnings or registry.get("warnings") or ())
+    return {
+        "data_readiness": data_readiness,
+        "readiness_reason": source.readiness_reason or str(registry.get("reason") or ""),
+        "readiness_blockers": list(blockers),
+        "contract_warnings": list(warnings),
+    }
+
+
+def _source_status_payload(
+    source: ControlRoomSource,
+    status: str,
+    *,
+    count: int,
+    checked_at: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    readiness = _readiness_contract(source)
+    data_readiness = readiness["data_readiness"]
+    blockers = list(readiness["readiness_blockers"])
+    reason = str(readiness["readiness_reason"] or "")
+    if status in NON_READY_SOURCE_STATES:
+        data_readiness = status
+        if not reason:
+            reason = {
+                "empty": "La consulta fue valida pero no devolvio filas para el workspace activo.",
+                "missing": "El dataset no esta registrado o materializado para este workspace.",
+                "unavailable": "Refinement no pudo consultar el dataset.",
+                "invalid_schema": "La tabla no cumple el contrato esperado por Control Room.",
+                "blocked": "El cartucho no esta activo para el workspace.",
+                "no_permission": "El usuario no puede ver este cartucho en el workspace activo.",
+            }.get(status, "La fuente requiere revision.")
+        if status not in blockers:
+            blockers.append(status)
+    operationally_ready = status == "ok" and count > 0 and data_readiness in DATA_READY_STATES
+    payload = {
+        "dataset": source.dataset,
+        "cartridge": source.cartridge,
+        "connector_id": source.cartridge,
+        "module_id": source.visible_module_id,
+        "domain": source.domain,
+        "module": source.module_label,
+        "status": status,
+        "count": count,
+        "checked_at": checked_at,
+        "data_readiness": data_readiness,
+        "operationally_ready": operationally_ready,
+        "readiness_reason": reason,
+        "readiness_blockers": blockers,
+        "contract_warnings": list(readiness["contract_warnings"]),
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _readiness_counts(sources: Iterable[dict[str, Any]]) -> dict[str, int]:
+    counts = {state: 0 for state in DATA_READINESS_STATES}
+    for source in sources:
+        state = str(source.get("data_readiness") or "ready")
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def _module_data_readiness(module_sources: list[dict[str, Any]]) -> str:
+    if not module_sources:
+        return "missing"
+    if all(source.get("operationally_ready") for source in module_sources):
+        return "ready"
+    states = {str(source.get("data_readiness") or source.get("status") or "unavailable") for source in module_sources}
+    for state in ("invalid_schema", "blocked", "no_permission", "unavailable", "missing", "stub", "partial", "empty"):
+        if state in states:
+            return state
+    return "partial"
 
 # Implementation modules bind their functions back into this module namespace.
 # That keeps the historical `app.services.control_room_service.<name>` import

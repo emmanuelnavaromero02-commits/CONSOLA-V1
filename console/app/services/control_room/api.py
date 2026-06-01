@@ -258,31 +258,21 @@ async def _fetch_source(
         rows = await fetcher(source.dataset, user, limit_per_source)
     except HTTPException as exc:
         status = "missing" if exc.status_code == 404 else "unavailable"
-        return [], {
-            "dataset": source.dataset,
-            "cartridge": source.cartridge,
-            "connector_id": source.cartridge,
-            "module_id": source.visible_module_id,
-            "domain": source.domain,
-            "module": source.module_label,
-            "status": status,
-            "error": str(exc.detail),
-            "count": 0,
-            "checked_at": checked_at,
-        }
+        return [], _source_status_payload(
+            source,
+            status,
+            count=0,
+            checked_at=checked_at,
+            error=str(exc.detail),
+        )
     except Exception as exc:
-        return [], {
-            "dataset": source.dataset,
-            "cartridge": source.cartridge,
-            "connector_id": source.cartridge,
-            "module_id": source.visible_module_id,
-            "domain": source.domain,
-            "module": source.module_label,
-            "status": "unavailable",
-            "error": str(exc),
-            "count": 0,
-            "checked_at": checked_at,
-        }
+        return [], _source_status_payload(
+            source,
+            "unavailable",
+            count=0,
+            checked_at=checked_at,
+            error=str(exc),
+        )
 
     if rows and source.normalizer == "standard_anomaly":
         missing_contract = all(
@@ -290,29 +280,19 @@ async def _fetch_source(
             for row in rows
         )
         if missing_contract:
-            return [], {
-                "dataset": source.dataset,
-                "cartridge": source.cartridge,
-                "connector_id": source.cartridge,
-                "module_id": source.visible_module_id,
-                "domain": source.domain,
-                "module": source.module_label,
-                "status": "invalid_schema",
-                "error": f"missing expected fields: {source.entity_id_field}/{source.entity_label_field}",
-                "count": len(rows),
-                "checked_at": checked_at,
-            }
-    return rows, {
-        "dataset": source.dataset,
-        "cartridge": source.cartridge,
-        "connector_id": source.cartridge,
-        "module_id": source.visible_module_id,
-        "domain": source.domain,
-        "module": source.module_label,
-        "status": "empty" if not rows else "ok",
-        "count": len(rows),
-        "checked_at": checked_at,
-    }
+            return [], _source_status_payload(
+                source,
+                "invalid_schema",
+                count=len(rows),
+                checked_at=checked_at,
+                error=f"missing expected fields: {source.entity_id_field}/{source.entity_label_field}",
+            )
+    return rows, _source_status_payload(
+        source,
+        "empty" if not rows else "ok",
+        count=len(rows),
+        checked_at=checked_at,
+    )
 
 
 @_bind_to_core
@@ -935,22 +915,24 @@ async def _collect_items(
         installation = installation_by_cartridge.get(module.cartridge, {})
         if module.cartridge not in active:
             for source in module.sources:
-                source_status = {
-                    "dataset": source.dataset,
-                    "cartridge": source.cartridge,
-                    "connector_id": source.cartridge,
-                    "module_id": source.visible_module_id,
-                    "domain": source.domain,
-                    "module": source.module_label,
-                    "status": "blocked",
-                    "error": str(installation.get("error_message") or installation.get("current_step") or ""),
-                    "count": 0,
-                    "checked_at": datetime.now(UTC).isoformat(),
-                }
+                source_status = _source_status_payload(
+                    source,
+                    "blocked",
+                    count=0,
+                    checked_at=datetime.now(UTC).isoformat(),
+                    error=str(installation.get("error_message") or installation.get("current_step") or ""),
+                )
                 rows_by_dataset[source.dataset] = []
                 sources.append(source_status)
                 if include_source_state_items:
-                    source_item = _source_state_item(source, "blocked", source_status.get("error"))
+                    source_item = _source_state_item(
+                        source,
+                        "blocked",
+                        source_status.get("error"),
+                        source_status.get("data_readiness"),
+                        source_status.get("readiness_reason"),
+                        source_status.get("readiness_blockers"),
+                    )
                     if source_item:
                         items.append(source_item)
             continue
@@ -959,7 +941,14 @@ async def _collect_items(
             rows_by_dataset[source.dataset] = rows if source_status["status"] == "ok" else []
             sources.append(source_status)
             if include_source_state_items:
-                source_item = _source_state_item(source, source_status["status"], source_status.get("error"))
+                source_item = _source_state_item(
+                    source,
+                    source_status["status"],
+                    source_status.get("error"),
+                    source_status.get("data_readiness"),
+                    source_status.get("readiness_reason"),
+                    source_status.get("readiness_blockers"),
+                )
                 if source_item:
                     items.append(source_item)
             if source_status["status"] != "ok":
@@ -998,10 +987,15 @@ def _source_rollup_status(module_sources: list[dict[str, Any]]) -> str:
         "invalid_schema",
         "unavailable",
         "missing",
+        "stub",
+        "partial",
         "empty",
         "ok",
     ]
-    statuses = {str(source.get("status") or "no_sources") for source in module_sources}
+    statuses = {
+        "ok" if source.get("operationally_ready") else str(source.get("data_readiness") or source.get("status") or "no_sources")
+        for source in module_sources
+    }
     if statuses == {"ok"}:
         return "ok"
     for status in priority:
@@ -1033,6 +1027,7 @@ def _domain_payload(
         ]
         source_count = sum(int(source.get("count") or 0) for source in module_sources)
         source_status = _source_rollup_status(module_sources)
+        data_readiness = _module_data_readiness(module_sources)
         module_payload.append({
             "id": module.visible_id,
             "connector_id": module.cartridge,
@@ -1043,12 +1038,14 @@ def _domain_payload(
             "item_count": len(module_items),
             "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
             "source_status": source_status,
+            "data_readiness": data_readiness,
+            "operationally_ready": data_readiness == "ready",
             "kpis": [
                 {
                     "label": "Registros fuente",
                     "value": source_count,
                     "tone": "neutral",
-                    "bad": source_status not in {"ok", "no_sources"},
+                    "bad": data_readiness != "ready" and source_status != "no_sources",
                     "sql": " UNION ALL ".join(
                         f"SELECT COUNT(*) AS registros, '{source['dataset']}' AS dataset FROM {source['dataset']}"
                         for source in module_sources
@@ -1137,6 +1134,7 @@ async def dashboard(
         ]
         module_sources = [source for source in sources if source.get("module_id") == module.visible_id]
         source_status = _source_rollup_status(module_sources)
+        data_readiness = _module_data_readiness(module_sources)
         installation_status = str(row.get("installation_status") or "ready")
         cartridges.append({
             "id": cartridge_id,
@@ -1153,6 +1151,8 @@ async def dashboard(
             "item_count": len(module_items),
             "critical_count": sum(1 for item in module_items if item["severity"] == "critical"),
             "source_status": source_status,
+            "data_readiness": data_readiness,
+            "operationally_ready": data_readiness == "ready",
             "datasets": module_sources,
         })
 
@@ -1164,6 +1164,10 @@ async def dashboard(
             if source.domain not in domain_labels:
                 domain_labels.append(source.domain)
     domains = [_domain_payload(domain, modules, items, sources) for domain in domain_labels]
+    data_readiness = _readiness_counts(sources)
+    data_ready_modules = [row for row in cartridges if row["active"] and row.get("operationally_ready")]
+    partial_modules = [row for row in cartridges if row["active"] and row.get("data_readiness") == "partial"]
+    stub_modules = [row for row in cartridges if row["active"] and row.get("data_readiness") == "stub"]
 
     return {
         "meta": {
@@ -1209,6 +1213,11 @@ async def dashboard(
                 status: sum(1 for source in sources if source["status"] == status)
                 for status in ["ok", "empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"]
             },
+            "data_readiness": data_readiness,
+            "data_ready_sources": data_readiness.get("ready", 0),
+            "data_ready_modules": len(data_ready_modules),
+            "partial_modules": len(partial_modules),
+            "stub_modules": len(stub_modules),
             "cycle_counts": _cycle_counts(items),
             "financial": financial,
             "thresholds": {
