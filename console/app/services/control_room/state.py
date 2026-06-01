@@ -542,6 +542,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "execution": {
                 "status": execution_status,
                 "external_writeback_enabled": _external_writeback_enabled(),
+                "supervised_execution_enabled": True,
+                "execution_contract": "supervised_execution",
                 "supported_writeback_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
                 "templates": action_templates,
                 "actions": [
@@ -575,8 +577,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                     {
                         "id": "internal_writeback",
                         "sys": "omega",
-                        "act": "Crear seguimiento operativo interno",
-                        "label": "Write-back interno soportado",
+                        "act": "Crear seguimiento operativo supervisado",
+                        "label": "Ejecucion supervisada",
                         "done": execution_status == "executed",
                         "approved": execution_status == "executed",
                         "auto": False,
@@ -1080,10 +1082,17 @@ def _execution_to_activity(row: Any) -> dict[str, Any]:
     data = _row_to_public(row)
     mode = str(data.get("mode") or "execution")
     status = str(data.get("status") or "")
+    result = _details(data.get("result"))
+    if mode == "execute_live" and result.get("external_write"):
+        execute_label = "Write-back ERP"
+    elif mode == "execute_live":
+        execute_label = "Ejecucion supervisada"
+    else:
+        execute_label = "Ejecucion"
     label_by_mode = {
         "preview": "Preview generado",
         "dry_run": "Dry-run validado",
-        "execute_live": "Ejecucion productiva",
+        "execute_live": execute_label,
     }
     return {
         "id": f"execution:{data.get('id')}",

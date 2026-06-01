@@ -66,7 +66,7 @@ ACTIVITY_LABELS = {
     "action_preview": "Preview generado",
     "action_dry_run": "Dry-run validado",
     "action_blocked": "Ejecucion bloqueada",
-    "action_executed": "Write-back interno ejecutado",
+    "action_executed": "Ejecucion supervisada registrada",
     "action_failed": "Ejecucion fallida",
     "auto_run_completed": "Modo automatico completado",
     "approved": "Aprobacion registrada",
@@ -2143,33 +2143,49 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
     if template_id in SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES:
         return {
             "supported": True,
-            "mode": "internal_followup_task",
+            "mode": "supervised_execution",
             "target": "decision_actions",
             "external": False,
-            "requires_flag": True,
+            "requires_flag": False,
+            "requires_external_writeback_flag": False,
             "requires_confirmation": True,
             "requires_decision": True,
             "requires_dry_run": True,
             "permission": "control_room.execute",
             "status": "supported",
-            "description": "Crea un seguimiento operativo real en la bitacora de decisiones; no escribe en ERP.",
+            "description": "Crea un seguimiento operativo auditado en decision_actions; no escribe en ERP.",
         }
     template_type = _writeback_template_type(template)
     has_adapter = WriteBackAdapterFactory.has_adapter(template_type)
+    external_enabled = _external_writeback_enabled()
     return {
-        "supported": has_adapter,
+        "supported": has_adapter and external_enabled,
         "mode": "external_writeback",
         "target": str(template.get("cartridge_id") or "external_system"),
         "external": True,
         "adapter": template_type if has_adapter else None,
+        "adapter_available": has_adapter,
         "template_type": template_type,
         "requires_flag": True,
+        "requires_external_writeback_flag": True,
         "requires_confirmation": True,
         "requires_decision": True,
         "requires_dry_run": True,
         "permission": "control_room.execute",
-        "status": "supported" if has_adapter else "adapter_missing",
-        "reason": None if has_adapter else "No hay adapter productivo aprobado para este template.",
+        "status": (
+            "supported"
+            if has_adapter and external_enabled
+            else "external_writeback_disabled"
+            if has_adapter
+            else "adapter_missing"
+        ),
+        "reason": (
+            None
+            if has_adapter and external_enabled
+            else "Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada."
+            if has_adapter
+            else "No hay adapter ERP aprobado para este template."
+        ),
     }
 
 
@@ -2631,6 +2647,8 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
     return {
         "mode": mode,
         "external_writeback_enabled": _external_writeback_enabled(),
+        "supervised_execution_enabled": True,
+        "execution_contract": "supervised_execution",
         "dry_run": mode != "execute_live",
         "template": template,
         "target_system": template.get("cartridge_id") if template.get("cartridge_id") != "platform" else item.get("cartridge"),
@@ -2669,7 +2687,9 @@ def _execution_payload(item: dict[str, Any], mode: str, template: dict[str, Any]
         ],
         "guardrails": {
             "human_approval_required": True,
-            "writeback_blocked_by_default": True,
+            "supervised_execution_available": True,
+            "external_writeback_blocked_by_default": not _external_writeback_enabled(),
+            "writeback_blocked_by_default": not _external_writeback_enabled(),
             "feature_flag": "CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK",
             "supported_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
         },
@@ -2912,6 +2932,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "execution": {
                 "status": execution_status,
                 "external_writeback_enabled": _external_writeback_enabled(),
+                "supervised_execution_enabled": True,
+                "execution_contract": "supervised_execution",
                 "supported_writeback_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
                 "templates": action_templates,
                 "actions": [
@@ -2945,8 +2967,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                     {
                         "id": "internal_writeback",
                         "sys": "omega",
-                        "act": "Crear seguimiento operativo interno",
-                        "label": "Write-back interno soportado",
+                        "act": "Crear seguimiento operativo supervisado",
+                        "label": "Ejecucion supervisada",
                         "done": execution_status == "executed",
                         "approved": execution_status == "executed",
                         "auto": False,
@@ -3604,11 +3626,13 @@ async def dashboard(
             "live_mode": "polling",
             "source_count": len(sources),
             "item_count": len(items),
-            # Beta-8: runtime confidence — the UI surfaces these so an
-            # operator sees the real version/env and that write-back is
-            # blocked, without trusting a hardcoded label.
+            # Runtime confidence: the UI surfaces the real version/env and
+            # distinguishes supervised execution from external ERP write-back.
             "version": app_version(),
             "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
+            "execution_mode": "supervised_execution",
+            "supervised_execution_enabled": True,
+            "external_writeback_enabled": _external_writeback_enabled(),
             "write_back_enabled": _external_writeback_enabled(),
         },
         "workspace": {
@@ -3800,8 +3824,12 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
         "lessons": lessons_total,
         "thresholds_active": thresholds_total,
         "last_item_seen_at": last_item_at.isoformat() if last_item_at else None,
+        "execution_mode": "supervised_execution",
+        "supervised_execution_enabled": True,
+        "external_writeback_enabled": writeback_enabled,
         "write_back_enabled": writeback_enabled,
         "writeback_blocked_by_default": not writeback_enabled,
+        "external_writeback_blocked_by_default": not writeback_enabled,
         "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower() in {"1", "true", "yes", "on"},
     }
 
@@ -3933,10 +3961,17 @@ def _execution_to_activity(row: Any) -> dict[str, Any]:
     data = _row_to_public(row)
     mode = str(data.get("mode") or "execution")
     status = str(data.get("status") or "")
+    result = _details(data.get("result"))
+    if mode == "execute_live" and result.get("external_write"):
+        execute_label = "Write-back ERP"
+    elif mode == "execute_live":
+        execute_label = "Ejecucion supervisada"
+    else:
+        execute_label = "Ejecucion"
     label_by_mode = {
         "preview": "Preview generado",
         "dry_run": "Dry-run validado",
-        "execute_live": "Ejecucion productiva",
+        "execute_live": execute_label,
     }
     return {
         "id": f"execution:{data.get('id')}",
@@ -5854,7 +5889,8 @@ async def execute_item(
     payload = _execution_payload(item, "execute_live", template)
     pool = await auth.pool()
     await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
-    if not _external_writeback_enabled():
+    capability = _writeback_capability(template)
+    if capability.get("external") and not _external_writeback_enabled():
         await _record_execute_block(
             pool,
             user=user,
@@ -5863,12 +5899,11 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="Write-back productivo deshabilitado por feature flag.",
+            message="Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada.",
             error="CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=false",
         )
-        raise HTTPException(409, "external write-back is disabled for Control Room V1")
+        raise HTTPException(409, "external ERP write-back is not available in Control Room V1")
 
-    capability = _writeback_capability(template)
     if not capability.get("supported") and not capability.get("external"):
         await _record_execute_block(
             pool,
@@ -5878,10 +5913,10 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="No hay adapter productivo aprobado para este template.",
+            message="No hay ejecucion supervisada aprobada para este template.",
             error="unsupported_writeback_template",
         )
-        raise HTTPException(501, "write-back template is not supported in Control Room V1")
+        raise HTTPException(501, "execution template is not supported in Control Room V1")
 
     if not _confirmed_for_execute(confirm_execute):
         await _record_execute_block(
@@ -5892,7 +5927,7 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="Confirmacion explicita requerida antes de ejecutar write-back.",
+            message="Confirmacion explicita requerida antes de ejecutar la accion supervisada.",
             error="explicit_confirmation_required",
         )
         raise HTTPException(409, "explicit execution confirmation is required")
@@ -5906,7 +5941,7 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="Se requiere decision aprobada antes del write-back interno.",
+            message="Se requiere decision aprobada antes de la ejecucion supervisada.",
             error="decision_required",
         )
         raise HTTPException(409, "decision is required before execution")
@@ -5920,10 +5955,10 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="Item cerrado no puede ejecutar write-back.",
+            message="Item cerrado no puede ejecutar acciones supervisadas.",
             error="terminal_item",
         )
-        raise HTTPException(409, "terminal control room item cannot execute write-back")
+        raise HTTPException(409, "terminal control room item cannot execute supervised action")
 
     try:
         existing = await _existing_executed_writeback(
@@ -5943,10 +5978,10 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="No se pudo validar idempotencia antes del write-back interno.",
+            message="No se pudo validar idempotencia antes de la ejecucion supervisada.",
             error="idempotency_lookup_failed",
         )
-        raise HTTPException(503, "write-back idempotency lookup failed") from exc
+        raise HTTPException(503, "execution idempotency lookup failed") from exc
     if existing:
         existing_result = _details(existing.get("result"))
         public_item = _with_omega({**item, "execution_status": "executed"})
@@ -5968,7 +6003,7 @@ async def execute_item(
             payload=payload,
             ip=ip,
             user_agent=user_agent,
-            message="Se requiere dry-run validado antes del write-back interno.",
+            message="Se requiere dry-run validado antes de la ejecucion supervisada.",
             error="dry_run_required",
         )
         raise HTTPException(409, "dry-run validation is required before execution")

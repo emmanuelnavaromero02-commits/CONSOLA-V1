@@ -12,9 +12,24 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function extractCsrfFromSetCookie(setCookie: string | undefined): string | null {
+  const match = (setCookie || "").match(/csrf_token=([^;,\s]+)/);
+  return match?.[1] || null;
+}
+
 async function csrfToken(page: Page): Promise<string> {
-  const cookies = await page.context().cookies(LEGACY);
-  const token = cookies.find((cookie) => cookie.name === "csrf_token")?.value;
+  let cookies = await page.context().cookies(LEGACY);
+  let token = cookies.find((cookie) => cookie.name === "csrf_token")?.value;
+  if (!token) {
+    const response = await page.request.get(`${LEGACY}/login`, { timeout: 30_000 });
+    cookies = await page.context().cookies(LEGACY);
+    token = cookies.find((cookie) => cookie.name === "csrf_token")?.value;
+    const seeded = token || extractCsrfFromSetCookie(response.headers()["set-cookie"]);
+    if (seeded && !token) {
+      await page.context().addCookies([{ name: "csrf_token", value: seeded, url: LEGACY }]);
+      token = seeded;
+    }
+  }
   expect(token, "csrf_token cookie must be present for control-room mutations").toBeTruthy();
   return token || "";
 }
@@ -95,9 +110,9 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     await expect(page.getByText(/vivo 30s/i).first()).toBeVisible();
     await expect(page.getByText(/siguiente/i).first()).toBeVisible();
-    // Runtime confidence: external ERP/SAP write-back is visibly blocked unless
-    // a narrow internal adapter is explicitly enabled.
-    await expect(page.getByText(/write-back (externo bloqueado v1|interno on)/i).first()).toBeVisible();
+    // Runtime confidence: Control Room V1 is explicit about supervised execution
+    // and only advertises ERP write-back when the external flag is enabled.
+    await expect(page.getByText(/(ejecucion supervisada v1|write-back erp flag on)/i).first()).toBeVisible();
     await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/cola interna/i);
@@ -352,7 +367,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
 
     await page.getByRole("tab", { name: /ejecucion/i }).click();
     // Execution clarity: V1 does not promise universal ERP/SAP write-back.
-    await expect(page.getByText(/sap\/erp continua bloqueado|sin adapter productivo|write-back interno/i).first()).toBeVisible();
+    await expect(page.getByText(/v1 registra ejecucion supervisada|seguimiento auditado disponible|sin ejecucion disponible/i).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /^preview$/i }).first()).toBeVisible();
     await page.getByRole("button", { name: /^preview$/i }).first().click();
     await expect(page.getByText(/preview_generated/i)).toBeVisible({
@@ -465,7 +480,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     const cleanupResponse = await page.request.post(
       `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/reopen`,
       {
-        headers: { "X-CSRF-Token": csrf },
+        headers: { "X-CSRF-Token": await csrfToken(page) },
         data: { reason: "E2E cleanup after approval assertion" },
       },
     );
