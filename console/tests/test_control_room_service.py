@@ -1304,13 +1304,14 @@ async def test_apply_item_lesson_rejects_unrelated_pattern():
 @pytest.mark.asyncio
 async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
-    item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
+    items = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
         USER,
         fetcher=finance_fetcher,
         include_source_state_items=True,
         persist=False,
         use_catalog=False,
-    ))["items"][0]
+    ))["items"]
+    item = next(candidate for candidate in items if candidate["cartridge"] == "sap_hcm")
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
@@ -1318,7 +1319,7 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
         "id": 3,
         "workspace_id": "workspace-A",
         "item_id": item["id"],
-        "template_id": "request_owner_review",
+        "template_id": "prepare_hcm_access_review",
         "mode": "execute_live",
         "status": "blocked",
         "payload": {},
@@ -1341,7 +1342,12 @@ async def test_execute_live_is_blocked_by_default_and_audited(monkeypatch):
         patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
-            await control_room_service.execute_item(item["id"], USER, fetcher=finance_fetcher)
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="prepare_hcm_access_review",
+                fetcher=finance_fetcher,
+            )
 
     assert exc.value.status_code == 409
     assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
@@ -1636,7 +1642,7 @@ async def test_execute_live_idempotent_replay_still_requires_confirmation(monkey
 
 
 @pytest.mark.asyncio
-async def test_execute_live_external_template_without_adapter_fails_and_audits(monkeypatch):
+async def test_execute_live_external_template_without_adapter_blocks_before_preflight(monkeypatch):
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
         USER,
@@ -1648,12 +1654,11 @@ async def test_execute_live_external_template_without_adapter_fails_and_audits(m
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
     mock_pool.fetchrow = AsyncMock(side_effect=[
-        None,
         _execution_row(
             item,
-            status="failed",
+            status="blocked",
             template_id="prepare_billing_review",
-            result={"ok": False, "adapter": "prepare_billing_review"},
+            result={"ok": False, "blocked": True, "reason": "adapter_missing"},
         ),
     ])
     mock_pool.fetch.return_value = []
@@ -1662,7 +1667,8 @@ async def test_execute_live_external_template_without_adapter_fails_and_audits(m
     with (
         patch.object(control_room_service.auth, "pool", return_value=mock_pool),
         patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
-        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as audit_event,
+        patch.object(control_room_service, "_record_writeback_audit_event", new=AsyncMock()) as writeback_audit,
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
     ):
         with pytest.raises(HTTPException) as exc:
             await control_room_service.execute_item(
@@ -1674,15 +1680,13 @@ async def test_execute_live_external_template_without_adapter_fails_and_audits(m
             )
 
     assert exc.value.status_code == 501
-    assert "No write-back adapter registered" in str(exc.value.detail)
+    assert "adapter is not available" in str(exc.value.detail)
     assert any("INSERT INTO control_room_action_executions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
-    assert any("action_failed" in str(call.args) for call in mock_pool.execute.call_args_list)
-    assert audit_event.await_count == 2
-    assert audit_event.await_args_list[0].kwargs["action"] == "control_room.action.execute.external.preflight"
-    assert audit_event.await_args_list[0].kwargs["status"] == "pending"
-    assert audit_event.await_args_list[1].kwargs["action"] == "control_room.action.execute"
-    assert audit_event.await_args_list[1].kwargs["status"] == "failure"
-    assert audit_event.await_args_list[1].kwargs["metadata"]["error_type"] == "NotImplementedError"
+    assert any("action_blocked" in str(call.args) for call in mock_pool.execute.call_args_list)
+    writeback_audit.assert_not_awaited()
+    audit_event.assert_awaited_once()
+    assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "adapter_missing"
 
 
 @pytest.mark.asyncio

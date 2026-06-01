@@ -71,36 +71,35 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
 
     has_adapter = WriteBackAdapterFactory.supports(template_id)
     external_enabled = _external_writeback_enabled()
-    if has_adapter:
-        return {
-            "supported": external_enabled,
-            "mode": "external_adapter",
-            "target": str(template.get("cartridge_id") or "external_system"),
-            "external": True,
-            "adapter_available": True,
-            "requires_flag": True,
-            "requires_external_writeback_flag": True,
-            "requires_confirmation": True,
-            "requires_decision": True,
-            "requires_dry_run": True,
-            "permission": "control_room.execute",
-            "status": "supported" if external_enabled else "external_writeback_disabled",
-            "description": "Ejecuta write-back ERP mediante adapter auditado y circuito por cartucho.",
-            "reason": None if external_enabled else "Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada.",
-        }
     return {
-        "supported": False,
-        "mode": "unsupported",
+        "supported": has_adapter and external_enabled,
+        "mode": "external_writeback",
         "target": str(template.get("cartridge_id") or "external_system"),
         "external": True,
+        "adapter": template_id if has_adapter else None,
+        "adapter_available": has_adapter,
+        "template_type": template_id,
         "requires_flag": True,
         "requires_external_writeback_flag": True,
         "requires_confirmation": True,
         "requires_decision": True,
         "requires_dry_run": True,
         "permission": "control_room.execute",
-        "status": "unsupported",
-        "reason": "No hay adapter ERP aprobado para este template.",
+        "status": (
+            "supported"
+            if has_adapter and external_enabled
+            else "external_writeback_disabled"
+            if has_adapter
+            else "adapter_missing"
+        ),
+        "description": "Ejecuta write-back ERP mediante adapter auditado y circuito por cartucho.",
+        "reason": (
+            None
+            if has_adapter and external_enabled
+            else "Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada."
+            if has_adapter
+            else "No hay adapter ERP aprobado para este template."
+        ),
     }
 
 
@@ -2046,6 +2045,20 @@ async def execute_item(
     pool = await auth.pool()
     await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
     capability = _writeback_capability(template)
+    if capability.get("external") and not capability.get("adapter_available"):
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message=str(capability.get("reason") or "No hay adapter ERP aprobado para este template."),
+            error="adapter_missing",
+        )
+        raise HTTPException(501, "external ERP write-back adapter is not available for this template")
+
     if capability.get("external") and not _external_writeback_enabled():
         await _record_execute_block(
             pool,
@@ -2060,7 +2073,7 @@ async def execute_item(
         )
         raise HTTPException(409, "external ERP write-back is not available in Control Room V1")
 
-    if not capability.get("supported"):
+    if not capability.get("supported") and not capability.get("external"):
         await _record_execute_block(
             pool,
             user=user,

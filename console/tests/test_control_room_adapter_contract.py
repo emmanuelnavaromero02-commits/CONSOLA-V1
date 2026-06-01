@@ -55,6 +55,29 @@ def test_active_control_room_does_not_claim_billing_review_writeback_support(
     assert capability["reason"] == "No hay adapter ERP aprobado para este template."
 
 
+def test_modular_control_room_matches_monolith_writeback_capability(monkeypatch):
+    from app.services import control_room as modular_control_room
+    from app.services import control_room_service
+
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+
+    for template_id in ("prepare_billing_review", "prepare_hcm_access_review"):
+        template = control_room_service.ACTION_TEMPLATES[template_id]
+        modular = modular_control_room._writeback_capability(template)  # noqa: SLF001 - drift guard
+        monolith = control_room_service._writeback_capability(template)  # noqa: SLF001 - drift guard
+
+        for key in (
+            "supported",
+            "mode",
+            "target",
+            "external",
+            "adapter_available",
+            "status",
+            "reason",
+        ):
+            assert modular.get(key) == monolith.get(key)
+
+
 @pytest.mark.asyncio
 async def test_sap_hcm_factory_bridge_executes_it0008_with_live_semantics(monkeypatch):
     from app.services.adapters import factory

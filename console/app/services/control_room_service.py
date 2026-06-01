@@ -6080,6 +6080,20 @@ async def execute_item(
     pool = await auth.pool()
     await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
     capability = _writeback_capability(template)
+    if capability.get("external") and not capability.get("adapter_available"):
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message=str(capability.get("reason") or "No hay adapter ERP aprobado para este template."),
+            error="adapter_missing",
+        )
+        raise HTTPException(501, "external ERP write-back adapter is not available for this template")
+
     if capability.get("external") and not _external_writeback_enabled():
         await _record_execute_block(
             pool,
