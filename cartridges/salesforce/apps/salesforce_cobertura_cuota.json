@@ -1,0 +1,6 @@
+{
+  "name": "salesforce_cobertura_cuota",
+  "title": "Cobertura de Cuota por Vendedor",
+  "description": "Ganado vs. forecast ponderado por vendedor y mes. La cuota (attainment_pct) aparece NULL porque Sales Cloud no incluye un objeto Quota estándar; el agente la compara vs. el promedio del equipo.",
+  "datasets_used": ["salesforce_cobertura_cuota"]
+}

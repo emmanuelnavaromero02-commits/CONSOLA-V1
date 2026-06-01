@@ -19,7 +19,7 @@ services:
       # Sprint v1.38 (audit B5+B6): added six more roles for SAP
       # cartridges, Airflow and Superset (see
       # infra/init/36_cartridge_and_meta_roles.sql).
-      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-}"
+      PGOPTIONS: "-c app.omega_console_password=${OMEGA_CONSOLE_PASSWORD:-} -c app.omega_refinement_password=${OMEGA_REFINEMENT_PASSWORD:-} -c app.omega_vault_password=${OMEGA_VAULT_PASSWORD:-} -c app.omega_workspace_password=${OMEGA_WORKSPACE_PASSWORD:-} -c app.omega_mcp_infra_password=${OMEGA_MCP_INFRA_PASSWORD:-} -c app.omega_cartridge_sap_hcm_password=${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:-} -c app.omega_cartridge_sap_s4_password=${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:-} -c app.omega_cartridge_sap_sf_password=${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:-} -c app.omega_airflow_dag_password=${OMEGA_AIRFLOW_DAG_PASSWORD:-} -c app.omega_airflow_meta_password=${OMEGA_AIRFLOW_META_PASSWORD:-} -c app.omega_superset_meta_password=${OMEGA_SUPERSET_META_PASSWORD:-} -c app.omega_cartridge_replicon_password=${OMEGA_CARTRIDGE_REPLICON_PASSWORD:-} -c app.omega_cartridge_salesforce_password=${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:-} -c app.omega_cartridge_hubspot_password=${OMEGA_CARTRIDGE_HUBSPOT_PASSWORD:-}"
     ports:
       - "15432:5432"
     volumes:
@@ -482,6 +482,56 @@ services:
       minio:
         condition: service_healthy
 
+  salesforce:
+    build:
+      context: ../cartridges/salesforce
+      dockerfile: Dockerfile
+    container_name: omega_salesforce
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for Salesforce cartridge}
+      CONSOLE_URL: http://console:8000
+      MCP_INFRA_URL: http://mcp-infra:8010
+      REFINEMENT_URL: http://refinement:8500
+      # Salesforce-specific host vars map to the container's SF_* env (which
+      # app/core/config.py reads) so they don't collide with SAP SuccessFactors'
+      # own SF_* host vars. In production these come from the Console Vault.
+      SF_BASE_URL: ${SALESFORCE_BASE_URL:-}
+      SF_TOKEN_URL: ${SALESFORCE_TOKEN_URL:-https://login.salesforce.com/services/oauth2/token}
+      SF_CLIENT_ID: ${SALESFORCE_CLIENT_ID:-}
+      SF_CLIENT_SECRET: ${SALESFORCE_CLIENT_SECRET:-}
+      SF_USERNAME: ${SALESFORCE_USERNAME:-}
+      SF_PASSWORD: ${SALESFORCE_PASSWORD:-}
+      SF_SECURITY_TOKEN: ${SALESFORCE_SECURITY_TOKEN:-}
+      SF_API_VERSION: ${SALESFORCE_API_VERSION:-v60.0}
+      # Sprint v1.38 (audit B6 pattern): least-privilege DB role.
+      # See infra/init/93_salesforce_role_and_tables.sql.
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_salesforce:${OMEGA_CARTRIDGE_SALESFORCE_PASSWORD:?OMEGA_CARTRIDGE_SALESFORCE_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET: lakehouse
+      MINIO_SECURE: "false"
+    ports:
+      - "8205:8205"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8205/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
   # HubSpot CRM cartridge follows the Replicon runtime contract: internal
   # microservice, dedicated DB role, Vault-backed credentials, and Airflow DAGs.
   hubspot:
@@ -895,6 +945,8 @@ services:
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
       - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
+      # Salesforce Sales Cloud cartridge DAGs ship inside the cartridge.
+      - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -994,6 +1046,8 @@ services:
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
       - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
+      # Salesforce Sales Cloud cartridge DAGs ship inside the cartridge.
+      - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1084,6 +1138,8 @@ services:
       - ../cartridges/replicon/dags:/opt/airflow/dags/replicon:ro
       # HubSpot CRM cartridge DAGs ship inside the cartridge (same pattern).
       - ../cartridges/hubspot/dags:/opt/airflow/dags/hubspot:ro
+      # Salesforce Sales Cloud cartridge DAGs ship inside the cartridge.
+      - ../cartridges/salesforce/dags:/opt/airflow/dags/salesforce:ro
     depends_on:
       postgres:
         condition: service_healthy

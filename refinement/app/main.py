@@ -113,8 +113,8 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "console":   "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_REFINEMENT",
     "airflow":   "INTERNAL_API_KEY_AIRFLOW_TO_REFINEMENT",
-    # All 4 cartridges (replicon, sap_hcm, sap_s4hana, sap_successfactors)
-    # share one key — they play the same role from refinement's side.
+    # All cartridges (replicon, sap_hcm, sap_s4hana, sap_successfactors,
+    # salesforce) share one key — they play the same role from refinement's side.
     "replicon":             "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-replicon":   "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "hubspot":              "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
@@ -122,6 +122,8 @@ _ALLOWED_SERVICES_TO_KEY_ENV: dict[str, str] = {
     "cartridge-sap_hcm":    "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_s4hana": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "cartridge-salesforce": "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
+    "salesforce":           "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
     # refinement and mcp-infra don't call refinement today, but the old
     # whitelist allowed them so we keep them accepted via legacy key only.
     "refinement": None,

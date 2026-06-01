@@ -1,0 +1,6 @@
+{
+  "name": "salesforce_vendedor_margen",
+  "title": "Margen por Vendedor",
+  "description": "Monto ganado vs descuento promedio por vendedor (proxy de margen). Fuente: gold salesforce_vendedor_margen.",
+  "datasets_used": ["salesforce_vendedor_margen"]
+}

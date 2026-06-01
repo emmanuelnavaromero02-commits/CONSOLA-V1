@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Deals en Riesgo</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 24px; background: #0f1115; color: #e6e6e6; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p.sub { color: #9aa0a6; margin: 0 0 20px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #232733; white-space: nowrap; }
+    th { color: #9aa0a6; font-weight: 600; position: sticky; top: 0; background: #0f1115; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .note { margin-top: 16px; color: #9aa0a6; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Deals en Riesgo</h1>
+  <p class="sub">Dataset: <code>gold/salesforce/salesforce_deals_en_riesgo</code></p>
+  <table id="grid"><tbody><tr><td class="note">Cargando…</td></tr></tbody></table>
+  <p class="note">Datos en vivo desde <code>/api/data/salesforce_deals_en_riesgo</code>. Si aparece vacío, ejecuta la extracción y materializa el gold.</p>
+  <script>
+    function fmt(v) {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'number') return v.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+      return String(v);
+    }
+    function isNum(v) { return typeof v === 'number'; }
+    async function init() {
+      const grid = document.getElementById('grid');
+      try {
+        const res = await fetch('/api/data/salesforce_deals_en_riesgo');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const payload = await res.json();
+        const rows = Array.isArray(payload) ? payload : (payload.data || payload.rows || []);
+        if (!rows.length) {
+          grid.innerHTML = '<tbody><tr><td class="note">Sin datos todavía.</td></tr></tbody>';
+          return;
+        }
+        const cols = Object.keys(rows[0]);
+        let html = '<thead><tr>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>';
+        for (const row of rows) {
+          html += '<tr>' + cols.map(function (c) {
+            return '<td class="' + (isNum(row[c]) ? 'num' : '') + '">' + fmt(row[c]) + '</td>';
+          }).join('') + '</tr>';
+        }
+        html += '</tbody>';
+        grid.innerHTML = html;
+      } catch (e) {
+        const eRow = document.createElement('td'); eRow.className = 'note'; eRow.textContent = 'Error cargando datos: ' + (e.message || e); const eTr = document.createElement('tr'); eTr.appendChild(eRow); const eTbody = document.createElement('tbody'); eTbody.appendChild(eTr); grid.innerHTML = ''; grid.appendChild(eTbody);
+      }
+    }
+    init();
+  </script>
+</body>
+</html>

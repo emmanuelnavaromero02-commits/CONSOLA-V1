@@ -1,0 +1,6 @@
+{
+  "name": "salesforce_deals_en_riesgo",
+  "title": "Deals en Riesgo",
+  "description": "Oportunidades abiertas en riesgo (cierre vencido o sin actividad reciente), priorizadas por monto. Fuente: gold salesforce_deals_en_riesgo.",
+  "datasets_used": ["salesforce_deals_en_riesgo"]
+}

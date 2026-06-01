@@ -1,0 +1,6 @@
+{
+  "name": "salesforce_forecast_vs_capacidad",
+  "title": "Forecast vs. Capacidad Operativa",
+  "description": "Cruza el forecast ponderado de ventas (Salesforce) contra la capacidad operativa del equipo (Replicon). Muestra la holgura de horas por mes. Si falta el gold de Replicon, la columna capacidad_horas aparece NULL.",
+  "datasets_used": ["salesforce_forecast_vs_capacidad"]
+}

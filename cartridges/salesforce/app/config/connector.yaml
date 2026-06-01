@@ -1,0 +1,101 @@
+connector:
+  id: salesforce
+  name: Salesforce Sales Cloud
+  description: "Conecta Salesforce Sales Cloud vía SOQL (OAuth2 username-password o bearer token estático)."
+  version: "1.0"
+  auth:
+    # OAuth2 username-password flow by default (server-to-server). The client
+    # also supports client_credentials and a static bearer token; pick via the
+    # Vault connection's auth_method.
+    type: oauth2_password
+    token_url_env: SF_TOKEN_URL
+    client_id_env: SF_CLIENT_ID
+    client_secret_env: SF_CLIENT_SECRET
+    username_env: SF_USERNAME
+    password_env: SF_PASSWORD
+    security_token_env: SF_SECURITY_TOKEN
+  api:
+    base_url_env: SF_BASE_URL
+    api_version_env: SF_API_VERSION
+    timeout_seconds: 120
+    retry_max: 3
+    retry_backoff_factor: 2
+    page_size_default: 2000
+  storage:
+    layer: bronze
+    format: parquet
+    compression: snappy
+    path_template: "raw/salesforce/{entity}/load_date={load_date}/batch_id={run_id}/"
+    bucket_env: MINIO_BUCKET
+  watermark:
+    storage: postgres
+    buffer_minutes: 5
+    field_format: iso8601
+
+# UI form fields — rendered by the /cartridges credentials form.
+# name maps to the vault connection key; type=password fields are masked in the UI.
+fields:
+  - name: instance_url
+    type: url
+    label: "URL de la instancia"
+    description: "URL de tu org de Salesforce, p.ej. https://miempresa.my.salesforce.com"
+    required: true
+    pattern: "^https://.+\\.salesforce\\.com.*$"
+
+  - name: auth_method
+    type: select
+    label: "Método de autenticación"
+    description: "oauth2_password para flujo usuario+contraseña. bearer para token estático de larga duración."
+    required: true
+    default: oauth2_password
+    options:
+      - value: oauth2_password
+        label: "OAuth2 — usuario y contraseña (recomendado)"
+      - value: bearer
+        label: "Bearer token estático"
+
+  - name: client_id
+    type: string
+    label: "Consumer Key (Client ID)"
+    description: "Consumer Key de tu Connected App en Salesforce → Setup → App Manager."
+    required: true
+    min_length: 10
+
+  - name: client_secret
+    type: password
+    label: "Consumer Secret (Client Secret)"
+    description: "Consumer Secret de tu Connected App. Nunca se almacena en texto claro."
+    required: true
+
+  - name: token_url
+    type: url
+    label: "Token URL"
+    description: "https://login.salesforce.com/services/oauth2/token (producción) o https://test.salesforce.com/... (sandbox)."
+    required: true
+    default: "https://login.salesforce.com/services/oauth2/token"
+
+  - name: username
+    type: string
+    label: "Usuario de Salesforce"
+    description: "Email del usuario de integración (flujo oauth2_password). No aplica para bearer token."
+    required: false
+
+  - name: password
+    type: password
+    label: "Contraseña"
+    description: "Contraseña del usuario de integración. Ignorada si auth_method=bearer."
+    required: false
+
+  - name: security_token
+    type: password
+    label: "Security Token"
+    description: "Token de seguridad de Salesforce (se añade a la contraseña). Obtenerlo en Perfil → Restablecer Security Token."
+    required: false
+
+  - name: api_version
+    type: string
+    label: "Versión de API"
+    description: "Versión de la REST/SOQL API de Salesforce, p.ej. v60.0"
+    required: false
+    default: "v60.0"
+    pattern: "^v[0-9]+\\.0$"

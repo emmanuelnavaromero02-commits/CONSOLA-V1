@@ -110,6 +110,8 @@ jobs:
             context: ./cartridges/sap_s4hana
           - service: sap_successfactors
             context: ./cartridges/sap_successfactors
+          - service: salesforce
+            context: ./cartridges/salesforce
 
     steps:
       - uses: actions/checkout@v4
