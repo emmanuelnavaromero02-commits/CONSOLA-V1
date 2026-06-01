@@ -26,6 +26,8 @@ AWS_START = REPO / "infra/terraform/deploy/start.sh"
 AWS_UPDATE = REPO / "infra/terraform/deploy/update.sh"
 AWS_ENTRYPOINT = REPO / "scripts/aws-entrypoint.sh"
 AWS_USERDATA = REPO / "infra/terraform/infra/user_data/app.sh.tpl"
+VPN_USERDATA = REPO / "infra/terraform/infra/user_data/vpn.sh.tpl"
+TERRAFORM_INFRA = REPO / "infra/terraform/infra"
 RELEASE_WORKFLOW = REPO / ".github/workflows/release.yml"
 
 
@@ -212,6 +214,36 @@ def test_aws_env_file_defaults_to_documented_deploy_env():
     src = AWS.read_text(encoding="utf-8")
     assert "${AWS_ENV_FILE:-.env}" in src
     assert "${AWS_ENV_FILE:-../../.env}" not in src
+
+
+def test_aws_console_mounts_cartridges_read_only():
+    """Prod console must never mutate the cartridge registry mounted from
+    the host. Runtime writes belong in scoped tenant/workspace storage."""
+    src = AWS.read_text(encoding="utf-8")
+    assert re.search(
+        r"^\s*-\s+/opt/modecissions/cartridges:/registry/cartridges:ro\s*$",
+        src,
+        re.MULTILINE,
+    )
+    assert not re.search(
+        r"^\s*-\s+/opt/modecissions/cartridges:/registry/cartridges\s*$",
+        src,
+        re.MULTILINE,
+    )
+
+
+def test_vpn_admin_password_hash_is_required_not_hardcoded():
+    """The wg-easy admin password hash must be injected at deploy time so
+    every environment can rotate it and the repo never ships a live hash."""
+    user_data = VPN_USERDATA.read_text(encoding="utf-8")
+    variables = (TERRAFORM_INFRA / "variables.tf").read_text(encoding="utf-8")
+    ec2_vpn = (TERRAFORM_INFRA / "ec2_vpn.tf").read_text(encoding="utf-8")
+
+    assert "PASSWORD_HASH=$$2b$$" not in user_data
+    assert "PASSWORD_HASH=${vpn_password_hash}" in user_data
+    assert 'variable "vpn_admin_password_hash"' in variables
+    assert "sensitive   = true" in variables
+    assert 'replace(var.vpn_admin_password_hash, "$", "$$")' in ec2_vpn
 
 
 def test_prod_compose_does_not_mount_dev_init_seeds():

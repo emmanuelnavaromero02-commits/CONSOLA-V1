@@ -11,7 +11,7 @@ MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
 .PHONY: help up up-core down nuke logs ps test smoke stress migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public
-.PHONY: test-hermetic
+.PHONY: test-hermetic reconcile-db-passwords
 
 help:
 	@echo "MODecissionsPaaS — targets:"
@@ -36,6 +36,8 @@ help:
 	@echo "  make verify-v1-public"
 	@echo "                    verify public HTTPS staging with Playwright/live probes"
 	@echo "  make migrate      apply pending infra/init SQL migrations to running Postgres"
+	@echo "  make reconcile-db-passwords"
+	@echo "                    rotate existing local DB roles to match infra/.env"
 	@echo "  make rotate-keys  back up infra/.env, generate fresh secrets"
 
 # Read-only preflight: Docker daemon, compose plugin, infra/.env, host
@@ -163,6 +165,9 @@ verify-release:
 
 migrate:
 	@bash scripts/apply_db_migrations.sh
+
+reconcile-db-passwords:
+	@bash scripts/reconcile_db_passwords.sh
 
 # Sprint v1.14: real implementation. Backs up the current infra/.env to
 # infra/.env.save (gitignored), then regenerates ALL secrets via

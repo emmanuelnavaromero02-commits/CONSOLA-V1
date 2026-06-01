@@ -11,6 +11,7 @@ import { state } from './legacy-state.js';
         if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket;
         if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = d.airflow_url.replace(/\/+$/, '');
         if (d.superset_url) state.SUPERSET_PUBLIC_URL = d.superset_url.replace(/\/+$/, '');
+        document.getElementById('analytics-superset-link')?.setAttribute('href', supersetUrl());
       })
       .catch(() => {});
 
@@ -20,7 +21,10 @@ import { state } from './legacy-state.js';
     }
 
     function supersetUrl() {
-      return state.SUPERSET_PUBLIC_URL || '#';
+      if (state.SUPERSET_PUBLIC_URL) return state.SUPERSET_PUBLIC_URL;
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') return `${window.location.protocol}//${host}:8088`;
+      return '#';
     }
 
     function readCookie(name) {
@@ -2331,7 +2335,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
               Describe los KPIs que necesitas y el asistente los configura por ti.</p>
           </div>
-          <a class="btn btn-sm btn-amber" role="button" href="${esc(supersetUrl())}" target="_blank" rel="noopener">Abrir Superset ↗</a>
+          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetUrl())}" target="_blank" rel="noopener">Abrir Superset ↗</a>
         </div>
 
         <div class="card">
@@ -2419,6 +2423,21 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         `LIMIT 100;`;
       viewer.style.display = 'block';
     }
+
+    document.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const sqlButton = target.closest('#btn-analytics-sql');
+      if (sqlButton) {
+        event.preventDefault();
+        showAnalyticsSql();
+        return;
+      }
+      const supersetLink = target.closest('#analytics-superset-link');
+      if (supersetLink) {
+        supersetLink.setAttribute('href', supersetUrl());
+      }
+    });
 
     export async function loadAppsInStep5() {
       const el = document.getElementById('apps-step5-list');
@@ -3614,7 +3633,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
                   <button class="btn btn-sm" style="color:var(--cyan);border-color:var(--cyan)"
                           onclick="sendDagToAssistantStudio()" title="Enviar al asistente">✎ Asistente</button>
                   <button class="btn btn-sm" id="btn-dag-rename" style="color:var(--amber);border-color:var(--amber)"
-                          title="Renombrar DAG">✎ Renombrar</button>
+                          onclick="renameDag()" title="Renombrar DAG">✎ Renombrar</button>
                   <button class="btn btn-sm" id="btn-dag-delete" style="color:var(--red);border-color:var(--red)"
                           title="Eliminar DAG">✕ Eliminar</button>
                   <span class="deploy-msg" id="deploy-msg"></span>
@@ -3877,10 +3896,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export async function renameDag() {
       // The visible form is safe in every environment; the actual write
       // remains gated in submitDagRename via _gateDevOnlyAction.
-      if (!state._selectedDag || state._selectedDag === '__new__') {
+      const visibleDagId = document.getElementById('dag-editor-name')?.textContent?.trim() || '';
+      const currentDagId = state._selectedDag || visibleDagId;
+      if (!currentDagId || currentDagId === '__new__' || currentDagId === 'nuevo_dag' || currentDagId === '—') {
         setDeployMsg('Selecciona un DAG primero', 'err'); return;
       }
-      const oldId = state._selectedDag;
+      state._selectedDag = currentDagId;
+      const oldId = currentDagId;
       document.getElementById('dag-rename-panel')?.remove();
       const panel = document.createElement('form');
       panel.id = 'dag-rename-panel';

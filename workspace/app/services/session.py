@@ -16,6 +16,7 @@ import asyncpg
 COOKIE_NAME      = "mod_session"
 SESSION_LIFETIME = timedelta(days=7)
 SESSION_SLIDE    = timedelta(days=1)
+MAX_SESSION_LIFETIME = timedelta(hours=12)
 
 _POOL: asyncpg.Pool | None = None
 
@@ -114,7 +115,7 @@ async def get_session_user(token: str, requested_workspace_id: str | None = None
         return None
     p = await pool()
     row = await p.fetchrow(
-        """SELECT s.token, s.expires_at,
+        """SELECT s.token, s.expires_at, s.created_at,
                   u.id, u.email, u.name, u.role, u.is_active, u.must_change_password
              FROM user_sessions s
              JOIN users u ON u.id = s.user_id
@@ -123,9 +124,13 @@ async def get_session_user(token: str, requested_workspace_id: str | None = None
     )
     if not row:
         return None
+    now = datetime.now(timezone.utc)
+    if row["created_at"] is not None and (now - row["created_at"]) > MAX_SESSION_LIFETIME:
+        await p.execute("DELETE FROM user_sessions WHERE token = $1", token)
+        return None
     # Sliding window
-    new_exp = datetime.now(timezone.utc) + SESSION_LIFETIME
-    if (row["expires_at"] - datetime.now(timezone.utc)) < (SESSION_LIFETIME - SESSION_SLIDE):
+    new_exp = now + SESSION_LIFETIME
+    if (row["expires_at"] - now) < (SESSION_LIFETIME - SESSION_SLIDE):
         await p.execute("UPDATE user_sessions SET expires_at = $1 WHERE token = $2",
                         new_exp, token)
     user = {
