@@ -112,18 +112,41 @@ def test_raw_layer_behaviour_unchanged():
     assert _prefix_allowed(sec, "raw/replicon/Entity/") is False
 
 
-def test_declared_source_physical_glob_allowed_for_scoped_query():
+def test_declared_source_physical_glob_requires_scope_for_scoped_query():
     sec = _scoped_sec(cartridges=("sap_hcm",))
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_path_scope(
+            sec,
+            "s3://lakehouse/raw/sap_hcm/EmployeeMaster/**/*.parquet",
+            sources=["raw/sap_hcm/EmployeeMaster"],
+        )
+    assert exc.value.status_code == 403
+
     refinement_main._require_sql_path_scope(
         sec,
-        "s3://lakehouse/raw/sap_hcm/EmployeeMaster/**/*.parquet",
+        "s3://lakehouse/raw/sap_hcm/EmployeeMaster/tenant_id=tenant-1/workspace_id=ws-1/**/*.parquet",
         sources=["raw/sap_hcm/EmployeeMaster"],
     )
+
+
+def test_declared_source_physical_glob_rejects_foreign_scope_for_scoped_query():
+    sec = _scoped_sec(cartridges=("sap_hcm",))
+    with pytest.raises(HTTPException) as exc:
+        refinement_main._require_sql_path_scope(
+            sec,
+            "s3://lakehouse/raw/sap_hcm/EmployeeMaster/tenant_id=tenant-9/workspace_id=ws-9/**/*.parquet",
+            sources=["raw/sap_hcm/EmployeeMaster"],
+        )
+    assert exc.value.status_code == 403
 
 
 def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeypatch):
     sec = _scoped_sec(cartridges=("sap_hcm",))
     path = "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/**/*.parquet"
+    scoped_path = (
+        "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/"
+        "tenant_id=tenant-1/workspace_id=ws-1/**/*.parquet"
+    )
 
     def fake_get_dataset(name: str):
         if name != "sap_hcm_employee_master_full":
@@ -139,7 +162,10 @@ def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeyp
     with pytest.raises(HTTPException):
         refinement_main._require_sql_path_scope(sec, path)
 
-    refinement_main._require_sql_path_scope(sec, path, allow_registered_dataset_paths=True)
+    with pytest.raises(HTTPException):
+        refinement_main._require_sql_path_scope(sec, path, allow_registered_dataset_paths=True)
+
+    refinement_main._require_sql_path_scope(sec, scoped_path, allow_registered_dataset_paths=True)
 
 
 # 4. Unscoped admin (no tenant/workspace, allowed_cartridges == ["*"]) sees everything.
@@ -254,10 +280,14 @@ def test_gold_sql_scope_allows_declared_registered_silver_source_path(monkeypatc
         return None
 
     monkeypatch.setattr(refinement_main.store, "get_dataset", fake_get_dataset)
-    sql = "SELECT * FROM read_parquet('s3://lakehouse/silver/replicon/timeentry_clean/data.parquet')"
+    sql = (
+        "SELECT * FROM read_parquet('s3://lakehouse/silver/replicon/timeentry_clean/"
+        "tenant_id=tenant-1/workspace_id=ws-1/data.parquet')"
+    )
+    broad_sql = "SELECT * FROM read_parquet('s3://lakehouse/silver/replicon/timeentry_clean/data.parquet')"
 
     with pytest.raises(HTTPException):
-        refinement_main._require_sql_storage_scope(_body(), sql, ["timeentry_clean"])
+        refinement_main._require_sql_storage_scope(_body(), broad_sql, ["timeentry_clean"])
 
     refinement_main._require_sql_storage_scope(
         _body(),

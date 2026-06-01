@@ -259,8 +259,14 @@ def _prefix_allowed(sec: dict, value: str) -> bool:
     value = (value or "").lstrip("/")
     if not value:
         return False
+    if _has_invalid_scoped_storage_path(sec, value):
+        return False
     prefixes = [str(p).lstrip("/") for p in (sec.get("allowed_prefixes") or [])]
-    if any(value.startswith(prefix) for prefix in prefixes):
+    if any(
+        value == prefix.rstrip("/") or value.startswith(prefix.rstrip("/") + "/")
+        for prefix in prefixes
+        if prefix.rstrip("/")
+    ):
         return True
     if _is_unscoped_admin_security_context(sec):
         return True
@@ -305,6 +311,60 @@ def _prefix_allowed(sec: dict, value: str) -> bool:
             return parts[3] == f"tenant_id={tenant}" and parts[4] == f"workspace_id={workspace}"
         return not scoped and value.startswith(f"{layer}/{cartridge}/")
     return False
+
+
+def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
+    tenant: str | None = None
+    workspace: str | None = None
+    for part in str(key or "").strip("/").split("/"):
+        if part.startswith("tenant_id="):
+            tenant = part.split("=", 1)[1]
+        elif part.startswith("workspace_id="):
+            workspace = part.split("=", 1)[1]
+    return tenant, workspace
+
+
+def _has_tenant_workspace_scope(sec: dict) -> bool:
+    return bool(str(sec.get("tenant_id") or "").strip() and str(sec.get("workspace_id") or "").strip())
+
+
+def _is_physical_storage_key(key: str) -> bool:
+    parts = str(key or "").strip("/").split("/")
+    if not parts:
+        return False
+    root = parts[0]
+    if root in {"raw", "silver", "gold"}:
+        return len(parts) > 3
+    if root == "uploads":
+        return len(parts) > 2
+    return False
+
+
+def _has_foreign_storage_scope(sec: dict, key: str) -> bool:
+    """Reject physical S3 paths pinned to a different tenant/workspace.
+
+    Logical paths such as ``raw/replicon/TimeEntry`` deliberately have no
+    physical scope marker and are later rewritten by DuckDBEngine. Once a
+    caller supplies explicit ``tenant_id=.../workspace_id=...`` markers,
+    those markers must match the trusted backend context exactly.
+    """
+    expected_tenant = str(sec.get("tenant_id") or "").strip()
+    expected_workspace = str(sec.get("workspace_id") or "").strip()
+    if not (expected_tenant and expected_workspace):
+        return False
+    tenant, workspace = _storage_scope_markers(key)
+    if tenant is None and workspace is None:
+        return False
+    return tenant != expected_tenant or workspace != expected_workspace
+
+
+def _has_invalid_scoped_storage_path(sec: dict, key: str) -> bool:
+    if not _has_tenant_workspace_scope(sec) or not _is_physical_storage_key(key):
+        return False
+    expected_tenant = str(sec.get("tenant_id") or "").strip()
+    expected_workspace = str(sec.get("workspace_id") or "").strip()
+    tenant, workspace = _storage_scope_markers(key)
+    return tenant != expected_tenant or workspace != expected_workspace
 
 
 def _require_cartridge_scope(sec: dict, cartridge_id: str) -> None:
@@ -547,6 +607,8 @@ def _reader_storage_key(path: str) -> str:
 
 
 def _storage_path_matches_declared_source(sec: dict, key: str, sources: list[str] | None) -> bool:
+    if _has_invalid_scoped_storage_path(sec, key):
+        return False
     parts = key.split("/")
     if len(parts) < 3:
         return False
@@ -556,6 +618,8 @@ def _storage_path_matches_declared_source(sec: dict, key: str, sources: list[str
 
 
 def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[str] | None = None) -> bool:
+    if _has_invalid_scoped_storage_path(sec, key):
+        return False
     parts = key.split("/")
     if len(parts) < 3 or parts[0] not in {"silver", "gold"}:
         return False

@@ -42,6 +42,10 @@ _MCP_INFRA_TEST_ENV = {
     "SUPERSET_USER": "ci",
     "SUPERSET_PASSWORD": "ci",
     "INTERNAL_API_KEY": "test-internal-api-key-not-default-aaaaaaaaaaaaaaaaa",
+    "DATABASE_URL": "postgresql+psycopg2://test:test@postgres:5432/modecissions",
+    "GOLD_DATABASE_URL": "postgresql+psycopg2://test:test@postgres_gold:5433/modecissions_gold",
+    "MINIO_ACCESS_KEY": "test-minio-access",
+    "MINIO_SECRET_KEY": "test-minio-secret",
 }
 for _k, _v in _MCP_INFRA_TEST_ENV.items():
     os.environ.setdefault(_k, _v)

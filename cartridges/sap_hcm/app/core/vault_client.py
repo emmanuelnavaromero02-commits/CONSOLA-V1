@@ -23,9 +23,18 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 
 _SERVICE_HEADERS: dict[str, tuple[str, ...]] = {
     "replicon": ("replicon", "cartridge-replicon"),
+    "hubspot": ("hubspot", "cartridge-hubspot"),
     "sap_hcm": ("cartridge-sap_hcm",),
     "sap_s4hana": ("cartridge-sap_s4hana",),
     "sap_successfactors": ("cartridge-sap_successfactors",),
+}
+
+_SERVICE_KEY_ENVS: dict[str, str] = {
+    "replicon": "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
+    "hubspot": "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+    "sap_hcm": "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+    "sap_s4hana": "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+    "sap_successfactors": "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
 }
 
 
@@ -36,15 +45,11 @@ def _is_production() -> bool:
 def _auth_options(service_name: str) -> list[tuple[str, str]]:
     service = service_name.strip().lower()
     options: list[tuple[str, str]] = []
-    if service == "replicon":
-        key = os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", "")
-        if key:
-            options.append((key, "replicon"))
-    key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "")
+    key_env = _SERVICE_KEY_ENVS.get(service)
+    key = os.environ.get(key_env or "", "") if key_env else ""
     if key:
         for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
-            if header != "replicon":
-                options.append((key, header))
+            options.append((key, header))
     if not options and not _is_production():
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:

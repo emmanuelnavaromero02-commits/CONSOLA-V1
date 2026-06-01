@@ -20,10 +20,14 @@ def _call(sql: str, limit: int = 1):
     return fn(sql, limit)
 
 
+def _message(res: dict) -> str:
+    return f"{res.get('error', '')} {res.get('reason', '')}"
+
+
 def test_query_kb_rejects_drop_table():
     res = _call("DROP TABLE foo")
     assert "error" in res
-    assert "SELECT/WITH" in res["error"] or "Forbidden" in res["error"]
+    assert "SELECT/WITH" in _message(res) or "Forbidden" in _message(res)
 
 
 def test_query_kb_rejects_attach():
@@ -49,7 +53,7 @@ def test_query_kb_rejects_install():
 def test_query_kb_rejects_select_followed_by_attach():
     res = _call("SELECT 1; ATTACH 'foo.db' AS x")
     assert "error" in res
-    assert "ATTACH" in res["error"]
+    assert "Multiple statements" in _message(res) or "ATTACH" in _message(res)
 
 
 def test_query_kb_accepts_select():
@@ -57,12 +61,12 @@ def test_query_kb_accepts_select():
     # The select itself may fail with DuckDB error (no MinIO mounted in
     # the test harness) but the guardrail must NOT short-circuit it.
     if "error" in res:
-        assert "SELECT/WITH" not in res["error"]
-        assert "Forbidden" not in res["error"]
+        assert "SELECT/WITH" not in _message(res)
+        assert "Forbidden" not in _message(res)
 
 
 def test_query_kb_accepts_with_cte():
     res = _call("WITH cte AS (SELECT 1 AS x) SELECT * FROM cte")
     if "error" in res:
-        assert "SELECT/WITH" not in res["error"]
-        assert "Forbidden" not in res["error"]
+        assert "SELECT/WITH" not in _message(res)
+        assert "Forbidden" not in _message(res)

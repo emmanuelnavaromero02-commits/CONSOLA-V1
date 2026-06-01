@@ -13,6 +13,7 @@ from app.api.deps import verify_api_key
 from app.api.routes_health import router as health_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
+from app.core.request_context import reset_security_context, set_security_context
 from app.mcp_server import mcp, load_custom_tools
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 
@@ -226,7 +227,11 @@ async def mcp_invoke(body: dict, request: Request):
 
     try:
         import json as _json
-        result = await tool.run(args)
+        token = set_security_context(body.get("security_context"))
+        try:
+            result = await tool.run(args)
+        finally:
+            reset_security_context(token)
 
         # FastMCP returns a ToolResult object with .content list of TextContent
         content_items = None

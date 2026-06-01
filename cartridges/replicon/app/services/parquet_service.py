@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.core.request_context import scoped_prefix
 from app.core.minio_client import upload_file_to_minio
 from app.services.protection_service import apply_protection_for_entity
 
@@ -39,6 +40,7 @@ def write_parquet_and_upload(
     run_id: str,
     load_type: str,
     watermark_field: str | None = None,
+    security_context: dict[str, Any] | None = None,
 ) -> str:
     extracted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -62,9 +64,10 @@ def write_parquet_and_upload(
         local_path = Path(tmpdir) / f"{entity}.parquet"
         df.to_parquet(local_path, index=False, engine="pyarrow", compression="snappy")
 
+        scope = scoped_prefix(security_context)
         object_name = (
-            f"raw/replicon/{entity}/load_date={load_date}/"
-            f"batch_id={run_id}/{entity}.parquet"
+            f"raw/replicon/{entity}/{scope}"
+            f"load_date={load_date}/batch_id={run_id}/{entity}.parquet"
         )
         upload_file_to_minio(local_path=str(local_path), object_name=object_name)
 

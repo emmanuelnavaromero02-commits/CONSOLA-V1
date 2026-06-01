@@ -272,22 +272,22 @@ def _is_security_admin_context(ctx: dict) -> bool:
 _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
     "replicon": {
         "replicon": ("INTERNAL_API_KEY_REPLICON_TO_CONSOLE",),
-        "cartridge-replicon": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "cartridge-replicon": ("INTERNAL_API_KEY_REPLICON_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
     "hubspot": {
         "hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
-        "cartridge-hubspot": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "cartridge-hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
     "sap_hcm": {
-        "cartridge-sap_hcm": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "cartridge-sap_hcm": ("INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",),
     },
     "sap_s4hana": {
-        "cartridge-sap_s4hana": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "cartridge-sap_s4hana": ("INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",),
     },
     "sap_successfactors": {
-        "cartridge-sap_successfactors": ("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",),
+        "cartridge-sap_successfactors": ("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",),
     },
 }
 
