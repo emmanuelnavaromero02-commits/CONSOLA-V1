@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.conftest import load_cartridge_app
 
+
+CARTRIDGES = [
+    "replicon",
+    "hubspot",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+    "salesforce",
+]
 
 PREVIEW_SCOPE_CASES = [
     ("replicon", "TimeEntry"),
@@ -12,6 +23,15 @@ PREVIEW_SCOPE_CASES = [
     ("sap_s4hana", "BusinessPartner"),
     ("sap_successfactors", "User"),
     ("salesforce", "Opportunity"),
+]
+
+P0_EXFIL_SQL = [
+    "SELECT current_setting('s3_secret_access_key')",
+    "SELECT * FROM duckdb_settings()",
+    "SELECT * FROM pragma_database_size()",
+    "SELECT * FROM pragma_database_list()",
+    "SELECT * FROM information_schema.tables",
+    "PRAGMA database_list",
 ]
 
 
@@ -28,6 +48,39 @@ def test_query_kb_blocks_file_read_before_duckdb(cartridge, monkeypatch):
 
     assert result["error"] == "sql_blocked"
     assert "S3 prefix" in result["reason"]
+
+
+@pytest.mark.parametrize("cartridge", CARTRIDGES)
+@pytest.mark.parametrize("sql", P0_EXFIL_SQL)
+def test_query_kb_blocks_duckdb_metadata_exfil_before_duckdb(cartridge, sql, monkeypatch):
+    load_cartridge_app(cartridge)
+    from app import mcp_server
+
+    def fail_get_connection():
+        raise AssertionError("DuckDB should not be opened for metadata exfil SQL")
+
+    monkeypatch.setattr(mcp_server, "_get_duckdb_connection", fail_get_connection)
+    result = mcp_server.query_kb(sql)
+
+    assert result["error"] == "sql_blocked"
+
+
+@pytest.mark.parametrize("cartridge", CARTRIDGES)
+@pytest.mark.parametrize("sql", P0_EXFIL_SQL)
+def test_validate_kb_sql_blocks_duckdb_metadata_exfil(cartridge, sql):
+    load_cartridge_app(cartridge)
+    from app.core.sql_guard import validate_kb_sql
+
+    prefixes = (
+        f"s3://lakehouse/raw/{cartridge}/",
+        f"s3://lakehouse/silver/{cartridge}/",
+        f"s3://lakehouse/gold/{cartridge}/",
+    )
+
+    ok, reason = validate_kb_sql(sql, prefixes)
+
+    assert not ok
+    assert reason
 
 
 @pytest.mark.parametrize(
@@ -134,3 +187,20 @@ def test_preview_reads_forwarded_tenant_workspace_scope(cartridge, entity, monke
         "tenant_id=tenant-1/workspace_id=ws-1/load_date=*/batch_id=*/*.parquet"
     )
     assert expected in executed[0]
+
+
+@pytest.mark.parametrize("cartridge", CARTRIDGES)
+def test_duckdb_service_locks_filesystem_and_configuration(cartridge):
+    service_path = (
+        Path(__file__).resolve().parents[1]
+        / "cartridges"
+        / cartridge
+        / "app"
+        / "services"
+        / "duckdb_service.py"
+    )
+    src = service_path.read_text(encoding="utf-8")
+
+    assert "SET disabled_filesystems='LocalFileSystem';" in src
+    assert "SET lock_configuration=true;" in src
+    assert src.index("SET s3_secret_access_key") < src.index("SET lock_configuration=true;")

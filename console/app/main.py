@@ -1794,8 +1794,11 @@ async def readyz(request: Request):
     )
     data_ok = checks["control_room_data"].get("status") == "up" or not require_data
     ok = dependency_ok and data_ok
+    body = {"ok": ok, "service": "console"}
+    if getattr(request.state, "user", None):
+        body["checks"] = checks
     return JSONResponse(
-        {"ok": ok, "service": "console", "checks": checks},
+        body,
         status_code=200 if ok else 503,
     )
 
@@ -3978,7 +3981,18 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    await _audit.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="vault.connection.reveal",
+        resource_type="vault_connection",
+        resource_id=f"{cartridge}/{conn_id}",
+        status="success",
+        metadata={"cartridge": cartridge, "connection_id": conn_id},
+        critical=True,
+    )
+    return data
 
 @app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):

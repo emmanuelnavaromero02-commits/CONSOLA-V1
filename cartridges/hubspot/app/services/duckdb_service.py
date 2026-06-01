@@ -28,6 +28,8 @@ def _get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     conn.execute(f"SET s3_secret_access_key='{settings.minio_secret_key}';")
     conn.execute(f"SET s3_use_ssl={'true' if settings.minio_secure else 'false'};")
     conn.execute("SET s3_url_style='path';")
+    conn.execute("SET disabled_filesystems='LocalFileSystem';")
+    conn.execute("SET lock_configuration=true;")
     return conn
 
 

@@ -33,8 +33,6 @@ def metrics_module():
 def _make_app(mod, fetchval_seq, fetch_rows):
     """fetchval_seq drives the 4 fetchval() calls in order; fetch_rows
     is returned by the single fetch() (slowest_entities_7d)."""
-    from app.dependencies import require_authenticated
-
     seq = list(fetchval_seq)
 
     class _FakeConn:
@@ -57,7 +55,7 @@ def _make_app(mod, fetchval_seq, fetch_rows):
 
     api = FastAPI()
     api.include_router(mod.router)
-    api.dependency_overrides[require_authenticated] = lambda: {
+    api.dependency_overrides[mod.require_operations_read] = lambda: {
         "id": 1, "email": "admin@example.com", "role": "admin",
     }
     return api
@@ -108,3 +106,9 @@ def test_metrics_router_registered_in_main():
                 / "console" / "app" / "main.py").read_text(encoding="utf-8")
     assert "metrics_router" in main_src
     assert "app.include_router(metrics_router.router)" in main_src
+
+
+def test_metrics_requires_operations_read_permission(metrics_module):
+    src = Path(metrics_module.__file__).read_text(encoding="utf-8")
+    assert 'require_permission("operations.read")' in src
+    assert "Depends(require_authenticated)" not in src

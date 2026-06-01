@@ -62,7 +62,18 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    await _audit.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="vault.connection.reveal",
+        resource_type="vault_connection",
+        resource_id=f"{cartridge}/{conn_id}",
+        status="success",
+        metadata={"cartridge": cartridge, "connection_id": conn_id},
+        critical=True,
+    )
+    return data
 
 # /api/vault/connections/{cartridge}/{conn_id}
 @router.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
