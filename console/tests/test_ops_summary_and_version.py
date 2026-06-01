@@ -87,6 +87,8 @@ async def test_ops_summary_shape_and_counts():
     assert out["lessons"] == 5
     assert out["thresholds_active"] == 2
     assert out["last_item_seen_at"] == "2026-05-27T12:00:00+00:00"
+    assert out["execution_mode"] == "supervised_execution"
+    assert out["supervised_execution_enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -103,13 +105,17 @@ async def test_ops_summary_write_back_reflects_real_flag(monkeypatch):
     with patch.object(control_room_service.auth, "pool", return_value=_ops_pool()):
         out = await control_room_service.ops_summary(USER)
     assert out["write_back_enabled"] is False
+    assert out["external_writeback_enabled"] is False
     assert out["writeback_blocked_by_default"] is True
+    assert out["external_writeback_blocked_by_default"] is True
 
     monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
     with patch.object(control_room_service.auth, "pool", return_value=_ops_pool()):
         out = await control_room_service.ops_summary(USER)
     assert out["write_back_enabled"] is True
+    assert out["external_writeback_enabled"] is True
     assert out["writeback_blocked_by_default"] is False
+    assert out["external_writeback_blocked_by_default"] is False
 
 
 @pytest.mark.asyncio

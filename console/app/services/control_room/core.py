@@ -64,7 +64,7 @@ ACTIVITY_LABELS = {
     "action_preview": "Preview generado",
     "action_dry_run": "Dry-run validado",
     "action_blocked": "Ejecucion bloqueada",
-    "action_executed": "Write-back interno ejecutado",
+    "action_executed": "Ejecucion supervisada registrada",
     "auto_run_completed": "Modo automatico completado",
     "approved": "Aprobacion registrada",
     "lesson_recorded": "Leccion registrada",

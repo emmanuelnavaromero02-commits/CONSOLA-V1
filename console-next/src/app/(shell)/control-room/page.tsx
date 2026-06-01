@@ -110,6 +110,8 @@ interface OmegaOption {
 interface WritebackCapability {
   supported: boolean;
   status: string;
+  mode?: string;
+  external?: boolean;
   reason?: string;
   description?: string;
 }
@@ -350,6 +352,9 @@ interface Dashboard {
     live_mode?: "polling" | string;
     version?: string;
     app_env?: string;
+    execution_mode?: string;
+    supervised_execution_enabled?: boolean;
+    external_writeback_enabled?: boolean;
     write_back_enabled?: boolean;
   };
   workspace: {
@@ -518,7 +523,12 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function executionTemplate(item: ControlItem): ActionTemplate | undefined {
-  return item.action_templates?.find((template) => template.writeback?.supported) || item.action_templates?.[0];
+  return (
+    item.action_templates?.find((template) => template.writeback?.supported && template.writeback.external === false) ||
+    item.action_templates?.find((template) => template.writeback?.supported && template.writeback.mode === "supervised_execution") ||
+    item.action_templates?.find((template) => template.writeback?.supported) ||
+    item.action_templates?.[0]
+  );
 }
 
 function dedupeLessons(lessons: Lesson[]): Lesson[] {
@@ -1090,15 +1100,15 @@ export default function ControlRoomPage() {
   async function executeLive(item: ControlItem) {
     const template = executionTemplate(item);
     if (!template?.writeback?.supported) {
-      const message = template?.writeback?.reason || "Sin adapter productivo para este item.";
+      const message = template?.writeback?.reason || "Sin ejecucion supervisada para este item.";
       setActionError(message);
       return;
     }
-    const confirmed = window.confirm("Ejecutar write-back interno auditado. ERP/SAP externo sigue bloqueado en V1.");
+    const confirmed = window.confirm("Registrar ejecucion supervisada auditada. No se escribira en ERP/SAP externo.");
     if (!confirmed) return;
     await mutateItem(
       `execute:${item.id}`,
-      "Write-back interno bloqueado",
+      "Ejecucion supervisada bloqueada",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/execute`,
@@ -1110,7 +1120,7 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Write-back interno ejecutado",
+      "Ejecucion supervisada registrada",
     );
   }
 
@@ -1476,7 +1486,7 @@ function Header({
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span className="rounded-full border bg-card px-3 py-1.5">Beta{version ? ` ${version}` : ""}{appEnv ? ` · ${appEnv}` : ""}</span>
           <span className={cn("rounded-full border px-3 py-1.5", writeBackEnabled ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300")}>
-            {writeBackEnabled ? "Write-back interno ON" : "Write-back externo bloqueado V1"}
+            {writeBackEnabled ? "Write-back ERP flag ON" : "Ejecucion supervisada V1"}
           </span>
           <span className={cn("inline-flex items-center gap-1 rounded-full border bg-card px-3 py-1.5", syncError ? "border-amber-500/40 text-amber-700 dark:text-amber-300" : "")}>
             <Activity aria-hidden className="h-3.5 w-3.5" />
@@ -1832,7 +1842,7 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
         <div>
           <p className="text-xs font-semibold uppercase text-muted-foreground">Alertas y prioridad</p>
           <h2 className="text-lg font-semibold">{alerts.length} alertas activas para {context.title}</h2>
-          <p className="text-sm text-muted-foreground">{pushReady} listas para ruteo · {critical} criticas · sin push externo en V1</p>
+          <p className="text-sm text-muted-foreground">{pushReady} listas para ruteo · {critical} criticas · ejecucion supervisada</p>
         </div>
         <span className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm">
           <Bell aria-hidden className="h-4 w-4" />
@@ -2212,7 +2222,7 @@ function DetailPage({
       {mode === "auto" ? (
         <section className="rounded-lg border bg-card p-4" aria-label="Modo automatico">
           <h3 className="text-lg font-semibold">Modo automatico seguro</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Completa investigacion, opcion, decision y dry-run. El write-back externo sigue bloqueado.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Completa investigacion, opcion, decision y dry-run; registra seguimiento supervisado.</p>
           <button type="button" onClick={() => onRunAuto(item)} disabled={busyAction !== "" || terminalStatuses.has(item.status)} className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
             {busyAction === `auto:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Play aria-hidden className="h-4 w-4" />}
             Ejecutar modo automatico
@@ -2371,7 +2381,7 @@ function ExecutionStep({ item, busyAction, onPreview, onDryRun, onExecute }: { i
   return (
     <div className="mt-4 space-y-4">
       <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-        SAP/ERP continua bloqueado en V1 salvo write-back interno auditado; {template?.writeback?.supported ? "write-back interno disponible." : "sin adapter productivo para este item."}
+        V1 registra ejecucion supervisada en OMEGA; {template?.writeback?.supported ? "seguimiento auditado disponible." : "sin ejecucion disponible para este item."}
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <InfoBlock label="Template" value={template?.label || "Sin template"} />
@@ -2381,7 +2391,7 @@ function ExecutionStep({ item, busyAction, onPreview, onDryRun, onExecute }: { i
       <div className="flex flex-wrap gap-2">
         <ActionButton loading={busyAction === `preview:${item.id}`} disabled={busyAction !== ""} onClick={() => onPreview(item)} icon={Play}>Preview</ActionButton>
         <ActionButton loading={busyAction === `dryrun:${item.id}`} disabled={busyAction !== ""} onClick={() => onDryRun(item)} icon={CheckCircle2}>Dry-run</ActionButton>
-        <ActionButton loading={busyAction === `execute:${item.id}`} disabled={busyAction !== "" || !template?.writeback?.supported} onClick={() => onExecute(item)} icon={Activity}>Ejecutar</ActionButton>
+        <ActionButton loading={busyAction === `execute:${item.id}`} disabled={busyAction !== "" || !template?.writeback?.supported} onClick={() => onExecute(item)} icon={Activity}>Registrar seguimiento</ActionButton>
       </div>
     </div>
   );

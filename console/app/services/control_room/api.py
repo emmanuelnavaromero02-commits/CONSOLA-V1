@@ -1172,11 +1172,13 @@ async def dashboard(
             "live_mode": "polling",
             "source_count": len(sources),
             "item_count": len(items),
-            # Beta-8: runtime confidence — the UI surfaces these so an
-            # operator sees the real version/env and that write-back is
-            # blocked, without trusting a hardcoded label.
+            # Runtime confidence: the UI surfaces the real version/env and
+            # distinguishes supervised execution from external ERP write-back.
             "version": app_version(),
             "app_env": os.environ.get("APP_ENV", "production").strip().lower(),
+            "execution_mode": "supervised_execution",
+            "supervised_execution_enabled": True,
+            "external_writeback_enabled": _external_writeback_enabled(),
             "write_back_enabled": _external_writeback_enabled(),
         },
         "workspace": {
@@ -1371,8 +1373,12 @@ async def ops_summary(user: dict | None) -> dict[str, Any]:
         "lessons": lessons_total,
         "thresholds_active": thresholds_total,
         "last_item_seen_at": last_item_at.isoformat() if last_item_at else None,
+        "execution_mode": "supervised_execution",
+        "supervised_execution_enabled": True,
+        "external_writeback_enabled": writeback_enabled,
         "write_back_enabled": writeback_enabled,
         "writeback_blocked_by_default": not writeback_enabled,
+        "external_writeback_blocked_by_default": not writeback_enabled,
         "has_demo_seed": _os.environ.get("CONTROL_ROOM_DEMO_SEED", "").strip().lower() in {"1", "true", "yes", "on"},
     }
 

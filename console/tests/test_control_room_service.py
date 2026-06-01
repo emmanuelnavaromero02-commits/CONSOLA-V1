@@ -1324,13 +1324,20 @@ def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
     assert adapter.__class__.__name__ == "SapHcmAdapter"
 
 
-def test_hcm_access_template_is_wired_to_builtin_it0008_adapter():
+def test_hcm_access_template_is_wired_to_builtin_it0008_adapter(monkeypatch):
+    monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     template = control_room_service.ACTION_TEMPLATES["prepare_hcm_access_review"]
     capability = control_room_service._writeback_capability(template)  # noqa: SLF001 - registry wiring test
 
     assert template["template_type"] == "sap_hcm_it0008"
-    assert capability["supported"] is True
     assert capability["mode"] == "external_writeback"
+    assert capability["adapter_available"] is True
+    assert capability["supported"] is False
+    assert capability["status"] == "external_writeback_disabled"
+
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    capability = control_room_service._writeback_capability(template)  # noqa: SLF001 - registry wiring test
+    assert capability["supported"] is True
     assert capability["adapter"] == "sap_hcm_it0008"
 
 
@@ -1391,7 +1398,7 @@ class _TransactionalPool:
 
 @pytest.mark.asyncio
 async def test_execute_live_supported_followup_writes_decision_action_and_audits(monkeypatch):
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     base_item = (await control_room_service._collect_items(  # noqa: SLF001 - targeted service unit test
         USER,
         fetcher=finance_fetcher,
@@ -1436,6 +1443,8 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
     assert result["executed"] is True
     assert result["idempotent"] is False
     assert result["result"]["target"] == "decision_actions"
+    assert result["payload"]["writeback"]["mode"] == "supervised_execution"
+    assert result["payload"]["external_writeback_enabled"] is False
     assert result["decision_action"]["id"] == 101
     assert result["item"]["execution_status"] == "executed"
     assert any("INSERT INTO decision_actions" in call.args[0] for call in mock_pool.fetchrow.call_args_list)
