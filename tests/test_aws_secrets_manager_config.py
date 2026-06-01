@@ -33,6 +33,9 @@ REQUIRED_SECRET_NAMES = {
     "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
     "INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA",
     "INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT",
+    "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+    "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+    "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
     "INTERNAL_API_KEY_MCP_INFRA_TO_VAULT",
     "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
     "INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT",
@@ -55,6 +58,7 @@ REQUIRED_SECRET_NAMES = {
     "OMEGA_CARTRIDGE_SAP_S4_PASSWORD",
     "OMEGA_CARTRIDGE_SAP_SF_PASSWORD",
     "OMEGA_CARTRIDGE_REPLICON_PASSWORD",
+    "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD",
     "OMEGA_CARTRIDGE_HUBSPOT_PASSWORD",
     "AIRFLOW_SECRET_KEY",
     "AIRFLOW_ADMIN_PASSWORD",
@@ -123,6 +127,13 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
     required_block = re.search(r"required_secrets=\(([\s\S]*?)\)\n\noptional_secrets=", src)
     assert required_block
     assert "SUPERSET_SERVICE_PASSWORD" in required_block.group(1)
+    for secret_name in (
+        "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD",
+    ):
+        assert secret_name in required_block.group(1)
     assert "GHCR_OWNER" in src
     assert "IMAGE_TAG" in src
     assert "CONSOLE_URL" in src
@@ -174,6 +185,7 @@ def test_aws_env_example_does_not_document_static_aws_keys():
     assert "AWS_SECRET_ACCESS_KEY=" not in src
     assert "instance profile" in src
     assert "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE=" in src
+    assert "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD=" in src
     assert "SAP_HCM_BASE_URL=" in src
     assert "HUBSPOT_BASE_URL=" in src
     assert "HUBSPOT_URL=" in src

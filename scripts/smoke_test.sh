@@ -82,6 +82,12 @@ else
   fail "health hubspot did not respond (port 8210)"
 fi
 
+if fetch "http://localhost:8205/health"; then
+  pass "health salesforce (port 8205)"
+else
+  fail "health salesforce did not respond (port 8205)"
+fi
+
 # ── SAP cartridges (v1.40.3) ──
 for pair in "sap-hcm:8202" "sap-successfactors:8203" "sap-s4hana:8204"; do
   name="${pair%:*}"
@@ -99,6 +105,8 @@ auth_gate_check "http://localhost:8201/mcp/tools" "replicon /mcp/tools"
 auth_gate_check "http://localhost:8201/skills/entities" "replicon /skills/*"
 auth_gate_check "http://localhost:8210/mcp/tools" "hubspot /mcp/tools"
 auth_gate_check "http://localhost:8210/skills/entities" "hubspot /skills/*"
+auth_gate_check "http://localhost:8205/mcp/tools" "salesforce /mcp/tools"
+auth_gate_check "http://localhost:8205/skills/entities" "salesforce /skills/*"
 
 # ── Detect containers in restart loop ──
 restarting="$(docker ps --filter 'status=restarting' --format '{{.Names}}' 2>/dev/null)"
@@ -166,9 +174,9 @@ if [ -f "infra/.env" ]; then
   fi
 fi
 if [ -z "$CARTRIDGE_KEY" ]; then
-    echo "[smoke] WARN  INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE not found in infra/.env — skipping 5 MCP tool probes"
+    echo "[smoke] WARN  INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE not found in infra/.env — skipping 6 MCP tool probes"
 else
-  for pair in "replicon:8201" "hubspot:8210" "sap_hcm:8202" "sap_successfactors:8203" "sap_s4hana:8204"; do
+  for pair in "replicon:8201" "hubspot:8210" "salesforce:8205" "sap_hcm:8202" "sap_successfactors:8203" "sap_s4hana:8204"; do
     name="${pair%:*}"
     port="${pair#*:}"
     BODY="$(curl -sS --max-time 5 \
@@ -267,7 +275,7 @@ fi
 # game over. The cartridge_and_meta_roles migration applies an
 # explicit REVOKE on users (and 13 sibling tables); verify the
 # REVOKE held on users for all operational roles.
-for v138_role in omega_cartridge_sap_hcm omega_cartridge_sap_s4 omega_cartridge_sap_sf omega_cartridge_hubspot omega_airflow_dag; do
+for v138_role in omega_cartridge_sap_hcm omega_cartridge_sap_s4 omega_cartridge_sap_sf omega_cartridge_salesforce omega_cartridge_hubspot omega_airflow_dag; do
   NO_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
                "SELECT has_table_privilege('${v138_role}', 'users', 'SELECT');" 2>/dev/null || echo '')"
   NO_ACCESS="${NO_ACCESS//[[:space:]]/}"
@@ -297,6 +305,15 @@ if [ "$HAS_ACCESS" = "t" ]; then
   pass "omega_cartridge_hubspot still has SELECT on entity_config (operational reads OK)"
 else
   fail "omega_cartridge_hubspot lost SELECT on entity_config (got: '${HAS_ACCESS}')"
+fi
+
+HAS_ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+              "SELECT has_table_privilege('omega_cartridge_salesforce', 'entity_config', 'SELECT');" 2>/dev/null || echo '')"
+HAS_ACCESS="${HAS_ACCESS//[[:space:]]/}"
+if [ "$HAS_ACCESS" = "t" ]; then
+  pass "omega_cartridge_salesforce still has SELECT on entity_config (operational reads OK)"
+else
+  fail "omega_cartridge_salesforce lost SELECT on entity_config (got: '${HAS_ACCESS}')"
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────
