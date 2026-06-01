@@ -5,6 +5,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SCOPED_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
+SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
 
 
 def _read(path: str) -> str:
@@ -28,8 +30,8 @@ def test_console_entity_run_forwards_backend_security_context_to_cartridge_skill
     assert 'json={"security_context": security_context}' in source
 
 
-def test_replicon_and_hubspot_skills_preserve_forwarded_workspace_scope():
-    for cartridge in ("replicon", "hubspot"):
+def test_skills_preserve_forwarded_workspace_scope():
+    for cartridge in SCOPED_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/app/api/routes_skills.py")
 
         assert "Body(None)" in source
@@ -39,8 +41,20 @@ def test_replicon_and_hubspot_skills_preserve_forwarded_workspace_scope():
         assert "reset_security_context(token)" in source
 
 
+def test_sap_console_extract_routes_preserve_forwarded_workspace_scope():
+    for cartridge in SAP_CARTRIDGES:
+        source = _read(f"cartridges/{cartridge}/app/api/routes_console.py")
+
+        assert "Body(None)" in source
+        assert "def _security_context(" in source
+        assert "token = set_security_context(ctx)" in source
+        assert 'return {**config, "security_context": ctx} if ctx else config' in source
+        assert "_mark_external_job(_trigger_silver_refresh, entity_id, ctx)" in source
+        assert "reset_security_context(token)" in source
+
+
 def test_cartridge_job_runners_pass_scope_to_airflow_conf():
-    for cartridge in ("replicon", "hubspot"):
+    for cartridge in SCOPED_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/app/core/job_runner.py")
 
         assert 'conf["security_context"] = security_context' in source
@@ -59,6 +73,24 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
     assert "skill_body = {" in hubspot
     assert 'for key in ("tenant_id", "workspace_id", "security_context")' in hubspot
     assert "json=skill_body" in hubspot
+
+    for cartridge in SAP_CARTRIDGES:
+        source = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract.py")
+        assert "skill_body = {" in source
+        assert 'for key in ("tenant_id", "workspace_id", "security_context")' in source
+        assert "json=skill_body" in source
+        extract_all = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract_all.py")
+        assert "skill_body = {" in extract_all
+        assert 'for key in ("tenant_id", "workspace_id", "security_context")' in extract_all
+        assert "json=skill_body" in extract_all
+
+
+def test_scoped_allowed_prefixes_are_emitted_for_all_live_cartridges():
+    for cartridge in SCOPED_CARTRIDGES:
+        source = _read(f"cartridges/{cartridge}/app/core/request_context.py")
+        assert 'scope = f"tenant_id={tenant}/workspace_id={workspace}/"' in source
+        assert f'f"raw/{{CARTRIDGE_ID}}/{{scope}}"' in source or f'f"raw/{cartridge}/{{scope}}"' in source
+        assert "allowed_prefixes = allowed_prefixes" in source or '"allowed_prefixes": allowed_prefixes' in source
 
 
 def test_mcp_infra_injects_trusted_scope_before_cartridge_execution():
