@@ -192,6 +192,7 @@ def test_aws_env_example_does_not_document_static_aws_keys():
     assert "SAP_HCM_BASE_URL=" in src
     assert "HUBSPOT_BASE_URL=" in src
     assert "HUBSPOT_URL=" in src
+    assert "SALESFORCE_URL=" in src
     assert "SF_TOKEN_URL=" in src
 
 

@@ -211,7 +211,8 @@ async def test_airflow_create_dag_refuses_when_app_env_unset(monkeypatch):
 # superset-init) don't read APP_ENV.
 _LOCAL_APP_SERVICES = [
     "console", "workspace", "refinement", "vault", "mcp-infra",
-    "replicon", "sap-successfactors", "sap-hcm", "sap-s4hana",
+    "replicon", "hubspot", "salesforce",
+    "sap-successfactors", "sap-hcm", "sap-s4hana",
 ]
 
 

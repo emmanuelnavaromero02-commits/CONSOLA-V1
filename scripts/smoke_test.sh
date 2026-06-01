@@ -216,6 +216,15 @@ else
   fail "postgres has only ${RESULT} public tables (migrations may have failed)"
 fi
 
+SALESFORCE_MCP_ROW="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
+          "SELECT COALESCE((SELECT category || '|' || url FROM mcp_servers WHERE id='salesforce'), '');" 2>/dev/null || echo '')"
+SALESFORCE_MCP_ROW="${SALESFORCE_MCP_ROW//[[:space:]]/}"
+if [ "$SALESFORCE_MCP_ROW" = "cartridge|http://salesforce:8205" ]; then
+  pass "mcp_servers registers salesforce cartridge"
+else
+  fail "mcp_servers missing salesforce cartridge row (got: '${SALESFORCE_MCP_ROW}')"
+fi
+
 # ── 11. omega_vault HAS SELECT on vault_entries (role + GRANT applied) ─
 ACCESS="$(docker exec mode_postgres psql -U postgres -d modecissions -tAc \
           "SELECT has_table_privilege('omega_vault', 'vault_entries', 'SELECT');" 2>/dev/null || echo '')"

@@ -294,6 +294,8 @@ def test_smoke_script_checks_salesforce_cartridge_contract():
     assert 'auth_gate_check "http://localhost:8205/mcp/tools"' in body
     assert 'auth_gate_check "http://localhost:8205/skills/entities"' in body
     assert '"salesforce:8205"' in body
+    assert "mcp_servers registers salesforce cartridge" in body
+    assert "mcp_servers WHERE id='salesforce'" in body
     assert "omega_cartridge_salesforce" in body
     assert "skipping 6 MCP tool probes" in body
     assert "skipping 5 MCP tool probes" not in body

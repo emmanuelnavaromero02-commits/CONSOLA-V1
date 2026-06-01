@@ -201,6 +201,7 @@ AIRFLOW_URL=http://airflow:8080
 VAULT_URL=http://vault:8300
 REPLICON_URL=http://replicon:8201
 HUBSPOT_URL=http://hubspot:8210
+SALESFORCE_URL=http://salesforce:8205
 SAP_HCM_URL=http://sap-hcm:8202
 SAP_S4HANA_URL=http://sap-s4hana:8204
 SAP_SUCCESSFACTORS_URL=http://sap-successfactors:8203

@@ -418,6 +418,13 @@ async def startup():
             "description": "Connector for Replicon workforce management platform.",
         },
         {
+            "id":          "salesforce",
+            "name":        "Salesforce Sales Cloud",
+            "url":         os.environ.get("SALESFORCE_URL", "http://salesforce:8205"),
+            "category":    "cartridge",
+            "description": "Connector for Salesforce Sales Cloud.",
+        },
+        {
             "id":          "sap_hcm",
             "name":        "SAP HCM Core",
             "url":         os.environ.get("SAP_HCM_URL", "http://sap-hcm:8202"),
