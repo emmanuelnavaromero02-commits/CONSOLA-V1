@@ -62,3 +62,17 @@ def test_scoped_admin_query_kb_allows_own_physical_path():
         },
         _ctx(),
     )
+
+
+def test_broad_allowed_prefixes_do_not_grant_unlisted_cartridge_scope():
+    ctx = _ctx(allowed_prefixes=["raw/", "silver/", "gold/", "cartridges/"])
+    ctx["allowed_cartridges"] = ["replicon"]
+
+    with pytest.raises(PermissionError, match="cartridge not allowed"):
+        mcp_registry._enforce_outbound_scope(
+            "hubspot",
+            "cartridge",
+            "list_entities",
+            {},
+            ctx,
+        )

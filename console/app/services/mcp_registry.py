@@ -153,14 +153,26 @@ def _is_unscoped_admin_context(ctx: dict) -> bool:
     return "*" in allowed
 
 
+def _allowed_prefix_matches(ctx: dict, value: str) -> bool:
+    """Match explicit prefixes without letting root prefixes grant all data."""
+    prefixes = [str(p).lstrip("/").rstrip("/") for p in (ctx.get("allowed_prefixes") or [])]
+    for prefix in prefixes:
+        if not prefix:
+            continue
+        if len(prefix.split("/")) < 2:
+            continue
+        if value == prefix or value.startswith(prefix + "/"):
+            return True
+    return False
+
+
 def _prefix_allowed(ctx: dict, value: str) -> bool:
     value = (value or "").lstrip("/")
     if not value:
         return False
     if _has_invalid_scoped_storage_path(ctx, value):
         return False
-    prefixes = [str(p).lstrip("/") for p in (ctx.get("allowed_prefixes") or [])]
-    if any(value.startswith(prefix.rstrip("/") + "/") or value == prefix.rstrip("/") for prefix in prefixes):
+    if _allowed_prefix_matches(ctx, value):
         return True
     if _is_unscoped_admin_context(ctx):
         return True

@@ -70,6 +70,16 @@ def test_scoped_user_denied_when_cartridge_not_allowed():
     assert _dataset_allowed(_scoped_sec(cartridges=("replicon",)), ds) is False
 
 
+def test_broad_allowed_prefixes_do_not_override_cartridge_allowlist():
+    sec = _scoped_sec(cartridges=("replicon",))
+    sec["allowed_prefixes"] = ["raw/", "silver/", "gold/", "cartridges/"]
+
+    ds = _dataset(cartridge="hubspot", name="hubspot_deals_latest")
+
+    assert _prefix_allowed(sec, "silver/hubspot/hubspot_deals_latest/") is False
+    assert _dataset_allowed(sec, ds) is False
+
+
 # 3. Dataset in a different workspace -> denied.
 def test_scoped_user_denied_other_workspace():
     ds = _dataset(workspace="ws-OTHER")

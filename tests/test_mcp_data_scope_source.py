@@ -78,6 +78,8 @@ def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     source = MCP_MAIN.read_text(encoding="utf-8")
     ast.parse(source)
 
+    assert "def _allowed_prefix_matches" in source
+    assert "len(prefix.split(\"/\")) < 2" in source
     assert "_validate_cartridge_query_sql" in source
     assert "_postgres_mentioned_tables" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source
