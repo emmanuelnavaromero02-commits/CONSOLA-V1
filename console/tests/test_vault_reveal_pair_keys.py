@@ -84,3 +84,21 @@ def test_vault_reveal_dedicated_key_cannot_spoof_sibling_cartridge(monkeypatch):
     assert console_main._is_cartridge_vault_reveal_request(
         _request("/api/vault/connections/replicon/default/reveal", "cartridge-replicon", replicon)
     ) is True
+
+
+def test_salesforce_reveal_requires_salesforce_dedicated_key(monkeypatch):
+    console_main = _console_main()
+    shared = "shared-cartridge-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    salesforce = "salesforce-dedicated-key-yyyyyyyyyyyyyyyyyyyy"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", shared)
+    monkeypatch.setenv("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE", salesforce)
+
+    path = "/api/vault/connections/salesforce/default/reveal"
+
+    assert console_main._is_cartridge_vault_reveal_request(
+        _request(path, "cartridge-salesforce", shared)
+    ) is False
+    assert console_main._is_cartridge_vault_reveal_request(
+        _request(path, "cartridge-salesforce", salesforce)
+    ) is True

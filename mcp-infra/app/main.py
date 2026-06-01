@@ -256,15 +256,23 @@ _SECURITY_SOURCE_BY_SERVICE = {
     "mcp-infra": {"mcp-infra"},
 }
 _SENSITIVE_TABLES = {
-    "users",
-    "user_sessions",
-    "refresh_tokens",
-    "user_tokens",
-    "system_settings",
+    "activation_tokens",
     "audit_events",
+    "decision_actions",
+    "decisions",
     "login_attempts",
     "password_reset_tokens",
-    "activation_tokens",
+    "refresh_tokens",
+    "roles",
+    "system_settings",
+    "tenants",
+    "users",
+    "user_sessions",
+    "user_tokens",
+    "user_workspace_roles",
+    "vault_access_log",
+    "vault_entries",
+    "workspaces",
 }
 _PUBLIC_METADATA_TABLES = {
     "cartridges",
@@ -705,6 +713,7 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
             if supplied and supplied != value:
                 raise HTTPException(403, detail=f"DAG {key} scope mismatch")
             conf[key] = value
+        conf["security_context"] = ctx
         args["conf"] = conf
 
     if dag_id in _SHARED_PLATFORM_DAGS and not _is_unscoped_admin_context(ctx):
@@ -721,6 +730,16 @@ def _validate_airflow_trigger_scope(ctx: dict[str, Any], args: dict[str, Any]) -
 
     if not _is_unscoped_admin_context(ctx):
         raise HTTPException(403, detail="DAG trigger requires cartridge_id outside admin context")
+
+
+def _inject_cartridge_execution_scope(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    args["security_context"] = ctx
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if tenant_id:
+        args["tenant_id"] = tenant_id
+    if workspace_id:
+        args["workspace_id"] = workspace_id
 
 
 def _extract_s3_keys(sql: str) -> list[str]:
@@ -927,7 +946,8 @@ def _filter_airflow_payload(tool: str, payload: Any, ctx: dict[str, Any]) -> Any
 
 def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None) -> dict[str, Any] | None:
     tool = req.tool
-    args = req.args or {}
+    args = req.args if isinstance(req.args, dict) else {}
+    req.args = args
     if tool in _DATA_WRITE_TOOLS:
         ctx = _require_context_permission(req, "datasets.write", internal_service)
     elif tool in _RAG_WRITE_TOOLS:
@@ -1062,6 +1082,8 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     elif tool in _CARTRIDGE_READ_TOOLS | _CARTRIDGE_EXECUTE_TOOLS:
         if tool != "list_cartridges":
             _require_cartridge_scope(ctx, str(args.get("cartridge_id") or args.get("id") or ""))
+        if tool in _CARTRIDGE_EXECUTE_TOOLS:
+            _inject_cartridge_execution_scope(ctx, args)
 
     return ctx
 

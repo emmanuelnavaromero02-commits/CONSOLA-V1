@@ -33,6 +33,7 @@ REQUIRED_SECRET_NAMES = {
     "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
     "INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA",
     "INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT",
+    "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
     "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
     "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
@@ -131,6 +132,7 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
         "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
         "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD",
     ):
         assert secret_name in required_block.group(1)
@@ -185,6 +187,7 @@ def test_aws_env_example_does_not_document_static_aws_keys():
     assert "AWS_SECRET_ACCESS_KEY=" not in src
     assert "instance profile" in src
     assert "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE=" in src
+    assert "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE=" in src
     assert "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD=" in src
     assert "SAP_HCM_BASE_URL=" in src
     assert "HUBSPOT_BASE_URL=" in src

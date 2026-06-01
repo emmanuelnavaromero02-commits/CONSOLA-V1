@@ -84,10 +84,15 @@ def hubspot_extract():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
+        skill_body = {
+            key: conf[key]
+            for key in ("tenant_id", "workspace_id", "security_context")
+            if conf.get(key)
+        }
         with httpx.Client(timeout=600) as client:
             res = client.post(
                 f"{CARTRIDGE_URL}/skills/{endpoint}/{entity}",
-                json={},
+                json=skill_body,
                 headers=headers,
             )
             res.raise_for_status()

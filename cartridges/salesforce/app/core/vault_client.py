@@ -37,6 +37,11 @@ _SERVICE_HEADERS: dict[str, tuple[str, ...]] = {
     "salesforce": ("cartridge-salesforce",),
 }
 
+_SERVICE_KEY_ENVS: dict[str, str] = {
+    "replicon": "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
+    "salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
+}
+
 
 def _is_production() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
@@ -45,14 +50,16 @@ def _is_production() -> bool:
 def _auth_options(service_name: str) -> list[tuple[str, str]]:
     service = service_name.strip().lower()
     options: list[tuple[str, str]] = []
-    if service == "replicon":
-        key = os.environ.get("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", "")
+    key_env = _SERVICE_KEY_ENVS.get(service)
+    if key_env:
+        key = os.environ.get(key_env, "")
         if key:
-            options.append((key, "replicon"))
-    key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "")
-    if key:
-        for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
-            if header != "replicon":
+            for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
+                options.append((key, header))
+    if not options and not _is_production():
+        key = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "")
+        if key:
+            for header in _SERVICE_HEADERS.get(service, (f"cartridge-{service}",)):
                 options.append((key, header))
     if not options and not _is_production():
         legacy = os.environ.get("INTERNAL_API_KEY", "")

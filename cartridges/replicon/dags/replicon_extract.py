@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -53,6 +54,7 @@ except ModuleNotFoundError:  # pragma: no cover - Airflow mounts app code separa
 DEFAULT_CONN_ID = "default"
 LEGACY_CONN_IDS = ("analytics",)
 logger = logging.getLogger(__name__)
+_SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 # Entity → connection and watermark config read from entity_config table.
@@ -221,13 +223,35 @@ def _minio_client():
     )
 
 
-def _upload_parquet(df, entity: str, run_id: str) -> str:
+def _safe_scope_segment(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or not _SAFE_SCOPE_SEGMENT.fullmatch(text):
+        return ""
+    return text
+
+
+def _scope_prefix(tenant_id: object = None, workspace_id: object = None) -> str:
+    tenant = _safe_scope_segment(tenant_id)
+    workspace = _safe_scope_segment(workspace_id)
+    if not (tenant and workspace):
+        return ""
+    return f"tenant_id={tenant}/workspace_id={workspace}/"
+
+
+def _upload_parquet(
+    df,
+    entity: str,
+    run_id: str,
+    tenant_id: object = None,
+    workspace_id: object = None,
+) -> str:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     bucket = Variable.get("minio_bucket")
     today  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key    = f"raw/replicon/{entity}/load_date={today}/batch_id={run_id}/{entity}.parquet"
+    scope = _scope_prefix(tenant_id, workspace_id)
+    key = f"raw/replicon/{entity}/{scope}load_date={today}/batch_id={run_id}/{entity}.parquet"
 
     table = pa.Table.from_pandas(df)
     buf   = io.BytesIO()
@@ -382,6 +406,9 @@ def replicon_extract():
         from_date = conf.get("from_date") or None
         to_date   = conf.get("to_date")   or None
         conn_id   = conf.get("connection_id") or DEFAULT_CONN_ID
+        security_context = conf.get("security_context") if isinstance(conf.get("security_context"), dict) else {}
+        tenant_id = conf.get("tenant_id") or security_context.get("tenant_id")
+        workspace_id = conf.get("workspace_id") or security_context.get("workspace_id")
 
         base_url, connection, resolved_conn_id = _resolve_connection(entity, conn_id)
         logger.warning(
@@ -413,7 +440,7 @@ def replicon_extract():
                 df = df[df[watermark_field].astype(str) <= to_date]
 
         run_id      = str(uuid.uuid4())
-        storage_uri = _upload_parquet(df, entity, run_id)
+        storage_uri = _upload_parquet(df, entity, run_id, tenant_id, workspace_id)
         count       = len(df)
 
         # ── Actualizar watermark ───────────────────────────────────────────

@@ -280,6 +280,10 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         "cartridge-hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
     },
+    "salesforce": {
+        "salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
+        "cartridge-salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
+    },
     "sap_hcm": {
         "cartridge-sap_hcm": ("INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",),
     },

@@ -446,7 +446,7 @@ const severityLabels: Record<Severity, string> = {
 
 const sourceStateLabels: Record<SourceState | SourceRollup | DataReadiness, string> = {
   ok: "Operativa",
-  ready: "Data-ready",
+  ready: "Operativa",
   partial: "Parcial",
   stub: "Stub",
   empty: "Vacia",
@@ -899,7 +899,7 @@ export default function ControlRoomPage() {
     level: "portfolio",
     title: "Dashboard Operativo",
     eyebrow: "Sala de Control OMEGA",
-    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} modulos activos · ${dataReadyModuleCount} data-ready`,
+    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} modulos operativos · ${dataReadyModuleCount} data-ready`,
   };
 
   const selected = filtered.find((item) => item.id === selectedId)
@@ -1519,7 +1519,7 @@ function Header({
           <span className="rounded-full border bg-card px-3 py-1.5">Actualizado {lastUpdated}</span>
           <span className="rounded-full border bg-card px-3 py-1.5">Siguiente {nextRefresh}</span>
           <span className="rounded-full border bg-card px-3 py-1.5">
-            {activeConnectors} conectores · {activeModules} modulos activos · {dataReadyModules} data-ready
+            {activeConnectors} conectores · {activeModules} modulos operativos · {dataReadyModules} data-ready
           </span>
           {partialModules || stubModules ? (
             <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-amber-700 dark:text-amber-300">
@@ -1614,7 +1614,7 @@ function Sidebar({
           </section>
         ))}
       </div>
-      <p className="border-t pt-3 text-xs text-muted-foreground">{activeConnectors} conectores · {activeModules} modulos activos · {dataReadyModules} data-ready</p>
+      <p className="border-t pt-3 text-xs text-muted-foreground">{activeConnectors} conectores · {activeModules} modulos operativos · {dataReadyModules} data-ready</p>
     </aside>
   );
 }

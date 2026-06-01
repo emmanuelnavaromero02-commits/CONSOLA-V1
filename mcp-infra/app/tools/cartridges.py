@@ -11,6 +11,7 @@ virtual servers in the console registry. Phase 6 deletes the replicon container.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,9 @@ from app.middleware.request_id import request_id_var
 from app.registry import tool
 from app.tools._validators import validate_bounded_int, validate_identifier
 from app.tools.postgres import _conn
+
+
+_SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 # ── DuckDB helper (S3 pre-configured) ─────────────────────────────────────────
@@ -104,6 +108,77 @@ def _request_headers() -> dict[str, str] | None:
     return {"X-Request-ID": rid} if rid else None
 
 
+def _attach_security_scope(
+    conf: dict[str, Any],
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, Any]:
+    if isinstance(security_context, dict) and security_context.get("trusted"):
+        conf["security_context"] = security_context
+        tenant_id = tenant_id or security_context.get("tenant_id")
+        workspace_id = workspace_id or security_context.get("workspace_id")
+    if tenant_id:
+        conf["tenant_id"] = tenant_id
+    if workspace_id:
+        conf["workspace_id"] = workspace_id
+    return conf
+
+
+def _safe_scope_segment(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or not _SAFE_SCOPE_SEGMENT.fullmatch(text):
+        return ""
+    return text
+
+
+def _scope_values(
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> tuple[str, str]:
+    if isinstance(security_context, dict) and security_context.get("trusted"):
+        tenant_id = tenant_id or security_context.get("tenant_id")
+        workspace_id = workspace_id or security_context.get("workspace_id")
+    return _safe_scope_segment(tenant_id), _safe_scope_segment(workspace_id)
+
+
+def _scope_suffix(
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    tenant, workspace = _scope_values(security_context, tenant_id, workspace_id)
+    if not (tenant and workspace):
+        return ""
+    return f"tenant_id={tenant}/workspace_id={workspace}"
+
+
+def _scoped_object_prefix(
+    prefix: str,
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    normalized = str(prefix or "").strip("/")
+    scope = _scope_suffix(security_context, tenant_id, workspace_id)
+    if not normalized or not scope or "tenant_id=" in normalized or "workspace_id=" in normalized:
+        return normalized
+    return f"{normalized}/{scope}"
+
+
+def _scoped_rag_source_name(
+    base_name: str,
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    tenant, workspace = _scope_values(security_context, tenant_id, workspace_id)
+    if not (tenant and workspace):
+        return base_name
+    return f"{base_name}:tenant:{tenant}:workspace:{workspace}"
+
+
 # ── Tool · get_semantic ───────────────────────────────────────────────────────
 
 @tool(
@@ -167,11 +242,21 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
     ),
     input_schema={
         "type": "object",
-        "properties": {"cartridge_id": {"type": "string"}},
+        "properties": {
+            "cartridge_id": {"type": "string"},
+            "tenant_id":    {"type": "string"},
+            "workspace_id": {"type": "string"},
+            "security_context": {"type": "object"},
+        },
         "required": ["cartridge_id"],
     },
 )
-async def cartridge_sync_semantic_to_rag(cartridge_id: str) -> dict[str, Any]:
+async def cartridge_sync_semantic_to_rag(
+    cartridge_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     docs: list[str] = []
     with _conn() as c, c.cursor() as cur:
         # 1. Glossary terms — one doc each (few)
@@ -213,7 +298,12 @@ async def cartridge_sync_semantic_to_rag(cartridge_id: str) -> dict[str, Any]:
                 "skipped": "no semantic data to sync"}
 
     content = "\n\n---\n\n".join(docs)
-    source_name = f"_semantic_{cartridge_id}"
+    source_name = _scoped_rag_source_name(
+        f"_semantic_{cartridge_id}",
+        security_context,
+        tenant_id,
+        workspace_id,
+    )
 
     # Delete the previous auto-synced source if present
     from app.rag.store import list_sources, delete_source
@@ -626,6 +716,9 @@ def cartridge_preview(cartridge_id: str, entity: str, limit: int = 20) -> dict[s
                              "default": "incremental"},
             "from_date":    {"type": "string", "description": "ISO date — historical mode only"},
             "to_date":      {"type": "string", "description": "ISO date — historical mode only"},
+            "tenant_id":    {"type": "string"},
+            "workspace_id": {"type": "string"},
+            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id", "entity"],
     },
@@ -635,6 +728,9 @@ async def cartridge_extract(
     mode: str = "incremental",
     from_date: str | None = None,
     to_date:   str | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Look up the DAG bound to this entity. Accept the business name, the full
     # odata_entity, or its last segment (uniform MCP lookup contract).
@@ -658,6 +754,7 @@ async def cartridge_extract(
         conf["from_date"] = from_date
     if to_date:
         conf["to_date"] = to_date
+    _attach_security_scope(conf, security_context, tenant_id, workspace_id)
 
     async with httpx.AsyncClient(
         auth=_airflow_auth(), timeout=30, headers=_request_headers()
@@ -694,11 +791,20 @@ async def cartridge_extract(
             "cartridge_id": {"type": "string"},
             "mode":         {"type": "string", "enum": ["full", "incremental"],
                              "default": "incremental"},
+            "tenant_id":    {"type": "string"},
+            "workspace_id": {"type": "string"},
+            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id"],
     },
 )
-async def cartridge_extract_all(cartridge_id: str, mode: str = "incremental") -> dict[str, Any]:
+async def cartridge_extract_all(
+    cartridge_id: str,
+    mode: str = "incremental",
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT entity, dag_id FROM entity_config "
@@ -715,17 +821,21 @@ async def cartridge_extract_all(cartridge_id: str, mode: str = "incremental") ->
     ) as client:
         for entity, dag_id in rows:
             run_id = uuid.uuid4().hex[:8]
+            conf = _attach_security_scope(
+                {
+                    "job_id": run_id,
+                    "run_id": run_id,
+                    "entity": entity,
+                    "mode": mode,
+                },
+                security_context,
+                tenant_id,
+                workspace_id,
+            )
             try:
                 r = await client.post(
                     f"{settings.airflow_url.rstrip('/')}/api/v1/dags/{dag_id}/dagRuns",
-                    json={
-                        "conf": {
-                            "job_id": run_id,
-                            "run_id": run_id,
-                            "entity": entity,
-                            "mode": mode,
-                        }
-                    },
+                    json={"conf": conf},
                 )
                 r.raise_for_status()
                 results.append({
@@ -918,11 +1028,20 @@ def cartridge_list_kbs(cartridge_id: str) -> list[dict[str, Any]]:
         "properties": {
             "cartridge_id": {"type": "string"},
             "kb_id":        {"type": "string", "description": "ID listed by cartridge_list_kbs"},
+            "tenant_id":    {"type": "string"},
+            "workspace_id": {"type": "string"},
+            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id", "kb_id"],
     },
 )
-def cartridge_run_kb(cartridge_id: str, kb_id: str) -> dict[str, Any]:
+def cartridge_run_kb(
+    cartridge_id: str,
+    kb_id: str,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     with _conn() as c, c.cursor() as cur:
         cur.execute(
             "SELECT sql, pg_table, output_path FROM kb_config "
@@ -957,7 +1076,13 @@ def cartridge_run_kb(cartridge_id: str, kb_id: str) -> dict[str, Any]:
                 secure=settings.minio_secure,
             )
             load_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            key = f"{output_path}/load_date={load_date}/batch_id={run_id}/{kb_id}.parquet"
+            scoped_output_path = _scoped_object_prefix(
+                output_path,
+                security_context,
+                tenant_id,
+                workspace_id,
+            )
+            key = f"{scoped_output_path}/load_date={load_date}/batch_id={run_id}/{kb_id}.parquet"
             with tempfile.TemporaryDirectory() as tmp:
                 local = Path(tmp) / f"{kb_id}.parquet"
                 df.to_parquet(local, index=False, engine="pyarrow", compression="snappy")
