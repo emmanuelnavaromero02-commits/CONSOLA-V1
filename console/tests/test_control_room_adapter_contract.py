@@ -5,6 +5,16 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_control_room_service_is_modular_core_alias():
+    from app.services import control_room_service
+    from app.services.control_room import core
+
+    assert control_room_service is core
+    assert hasattr(control_room_service, "execute_item")
+    assert hasattr(control_room_service, "BaseAdapter")
+    assert hasattr(control_room_service, "ControlRoomService")
+
+
 def test_adapter_package_exports_runtime_contract():
     from app.services.adapters import (
         AdapterCircuitOpenError,

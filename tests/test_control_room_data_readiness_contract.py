@@ -9,6 +9,8 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 CONTROL_ROOM = REPO / "console/app/services/control_room_service.py"
 CONTROL_ROOM_CORE = REPO / "console/app/services/control_room/core.py"
+CONTROL_ROOM_API = REPO / "console/app/services/control_room/api.py"
+CONTROL_ROOM_STATE = REPO / "console/app/services/control_room/state.py"
 CONTROL_ROOM_UI = REPO / "console-next/src/app/(shell)/control-room/page.tsx"
 READINESS_MANIFEST = REPO / "console/app/services/control_room/data_readiness_manifest.yaml"
 
@@ -31,16 +33,14 @@ def test_control_room_readiness_registry_tracks_known_partial_and_stub_datasets(
     for entry in entries:
         assert entry["reason"]
         assert entry["blockers"]
-    assert "readiness_manifest import dataset_readiness_registry" in src
+    assert "from app.services.control_room import core as _core" in src
     assert "readiness_manifest import dataset_readiness_registry" in core
-    assert "CONTROL_ROOM_DATASET_READINESS" in src
     assert "CONTROL_ROOM_DATASET_READINESS" in core
-    assert "dataset_readiness_registry()" in src
     assert "dataset_readiness_registry()" in core
 
 
 def test_control_room_source_contract_columns_match_known_dataset_shapes():
-    src = _read(CONTROL_ROOM)
+    src = _read(CONTROL_ROOM_CORE)
     for bad_field in (
         'entity_id_field="period"',
         'entity_id_field="org_unit"',
@@ -58,7 +58,7 @@ def test_control_room_source_contract_columns_match_known_dataset_shapes():
 
 
 def test_dashboard_exposes_data_readiness_in_backend_and_ui():
-    backend = _read(CONTROL_ROOM)
+    backend = "\n".join(_read(path) for path in (CONTROL_ROOM_CORE, CONTROL_ROOM_API, CONTROL_ROOM_STATE))
     ui = _read(CONTROL_ROOM_UI)
     for needle in (
         "operationally_ready",

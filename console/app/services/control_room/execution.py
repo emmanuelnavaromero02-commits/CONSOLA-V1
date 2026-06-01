@@ -67,18 +67,17 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
             "status": "supported",
             "description": "Crea un seguimiento operativo auditado en decision_actions; no escribe en ERP.",
         }
-    from app.services.adapters import WriteBackAdapterFactory
-
-    has_adapter = WriteBackAdapterFactory.supports(template_id)
+    template_type = str(template.get("template_type") or template_id)
+    has_adapter = WriteBackAdapterFactory.has_adapter(template_type)
     external_enabled = _external_writeback_enabled()
     return {
         "supported": has_adapter and external_enabled,
         "mode": "external_writeback",
         "target": str(template.get("cartridge_id") or "external_system"),
         "external": True,
-        "adapter": template_id if has_adapter else None,
+        "adapter": template_type if has_adapter else None,
         "adapter_available": has_adapter,
-        "template_type": template_id,
+        "template_type": template_type,
         "requires_flag": True,
         "requires_external_writeback_flag": True,
         "requires_confirmation": True,
@@ -1804,6 +1803,7 @@ def _external_action_data(
     details = item.get("details") if isinstance(item.get("details"), dict) else {}
     return {
         "template_id": template.get("template_id"),
+        "template_type": template.get("template_type") or template.get("template_id"),
         "action_kind": template.get("action_kind"),
         "cartridge_id": template.get("cartridge_id") or item.get("cartridge"),
         "item_id": item.get("id"),
@@ -1822,6 +1822,106 @@ def _external_action_data(
 
 
 @_bind_to_core
+def _writeback_template_type(template: dict[str, Any]) -> str:
+    return str(template.get("template_type") or template.get("template_id") or "").strip().lower()
+
+
+@_bind_to_core
+def _adapter_result_to_dict(result: ExecutionResult | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(result, ExecutionResult):
+        return result.to_dict()
+    if isinstance(result, dict):
+        return dict(result)
+    raise TypeError("write-back adapter returned an invalid result")
+
+
+@_bind_to_core
+def _writeback_credentials_for_action(
+    *,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = _details(item.get("metadata"))
+    connection = _details(metadata.get("connection"))
+    credentials = _details(payload.get("credentials"))
+    return {
+        **connection,
+        **credentials,
+        "cartridge_id": template.get("cartridge_id") or item.get("cartridge"),
+        "template_type": _writeback_template_type(template),
+        "workspace_id": payload.get("workspace_id"),
+    }
+
+
+@_bind_to_core
+async def _record_adapter_success_lesson(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    execution: dict[str, Any],
+    result: dict[str, Any],
+    adapter_name: str,
+    template_type: str,
+) -> dict[str, Any] | None:
+    tenant_id, workspace_id = _workspace_scope(user)
+    cartridge_id = str(item.get("cartridge") or template.get("cartridge_id") or "platform")
+    anomaly_type = str(item.get("anomaly_type") or "control_room_item")
+    decision_id = int(item["decision_id"]) if item.get("decision_id") else None
+    confidence = _impact_for_item(item).get("confidence") or 0.85
+    rule = (
+        f"Para {cartridge_id}/{anomaly_type}, sugerir {template.get('label') or template.get('template_id')} "
+        f"cuando una anomalia similar aparezca: adapter {adapter_name} ejecuto correctamente."
+    )
+    metadata = {
+        "autonomous_learning": True,
+        "source": "adapter_success",
+        "execution_id": execution.get("id"),
+        "result_status": result.get("status") or result.get("adapter_result", {}).get("status"),
+        "suggested_action": {
+            "template_id": template.get("template_id"),
+            "template_type": template_type,
+            "label": template.get("label"),
+            "action_kind": template.get("action_kind"),
+            "target": result.get("target") or template.get("cartridge_id") or item.get("cartridge"),
+            "adapter": adapter_name,
+        },
+    }
+    try:
+        await pool.execute(
+            """
+            INSERT INTO control_room_lessons (
+                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type,
+                rule, source_decision_id, confidence, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            cartridge_id,
+            anomaly_type,
+            rule,
+            decision_id,
+            confidence,
+            json.dumps(metadata),
+        )
+    except Exception:
+        return None
+    return {
+        "item_id": item["id"],
+        "cartridge_id": cartridge_id,
+        "anomaly_type": anomaly_type,
+        "rule": rule,
+        "source_decision_id": decision_id,
+        "confidence": confidence,
+        "metadata": metadata,
+    }
+
+
+@_bind_to_core
 async def _execute_external_writeback(
     pool: Any,
     *,
@@ -1833,8 +1933,7 @@ async def _execute_external_writeback(
     ip: str | None,
     user_agent: str | None,
 ) -> dict[str, Any]:
-    from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError, WriteBackAdapterFactory
-    from app.services.vault_utils import get_connection_for_worker
+    from app.services.adapters import AdapterCircuitOpenError, AdapterExecutionError
 
     cartridge_id = str(template.get("cartridge_id") or item.get("cartridge") or "").strip()
     if not cartridge_id:
@@ -1857,6 +1956,14 @@ async def _execute_external_writeback(
         payload=payload,
         idempotency_key=idempotency_key,
     )
+    template_type = _writeback_template_type(template)
+    target = template.get("cartridge_id") or item.get("cartridge") or "external_system"
+    adapter_name = template_type
+    before = {
+        "execution_status": item.get("execution_status") or "not_started",
+        "status": item.get("status") or "open",
+        "decision_id": item.get("decision_id"),
+    }
 
     try:
         await _record_writeback_audit_event(
@@ -1870,7 +1977,9 @@ async def _execute_external_writeback(
             status="pending",
             metadata={
                 "template_id": template["template_id"],
-                "cartridge_id": cartridge_id,
+                "template_type": template_type,
+                "target": target,
+                "adapter": adapter_name,
                 "item_id": item["id"],
                 "idempotency_key": idempotency_key,
                 "fail_closed": True,
@@ -1879,10 +1988,20 @@ async def _execute_external_writeback(
     except Exception as exc:
         raise HTTPException(503, "write-back audit preflight failed") from exc
 
+    public_validation_result = {
+        "ok": True,
+        "status": "audit_preflight_recorded",
+        "message": "Audit preflight recorded before external write-back.",
+    }
+
     try:
-        credentials = await get_connection_for_worker(cartridge_id)
-        adapter = WriteBackAdapterFactory.create(str(template["template_id"]))
-        adapter_result = await adapter.execute(action_data, credentials)
+        credentials = _writeback_credentials_for_action(item=item, template=template, payload=payload)
+        adapter = WriteBackAdapterFactory.get_adapter(template_type)
+        adapter_name = adapter.__class__.__name__
+        adapter_result = adapter.execute(action_data, credentials, dry_run=False)
+        if inspect.isawaitable(adapter_result):
+            adapter_result = await adapter_result
+        public_adapter_result = _adapter_result_to_dict(adapter_result)
     except AdapterCircuitOpenError as exc:
         result = {
             "ok": False,
@@ -1979,17 +2098,31 @@ async def _execute_external_writeback(
         )
         raise HTTPException(502, result) from exc
 
+    ok = bool(public_adapter_result.get("ok", True))
+    execution_status = "executed" if ok else "failed"
+    after = public_adapter_result.get("after")
+    if not isinstance(after, dict):
+        after = {"execution_status": execution_status, "target": target}
+    message = str(
+        public_adapter_result.get("message")
+        or ("Write-back externo ejecutado." if ok else "Write-back externo fallido.")
+    )
     result = {
         "ok": True,
         "mode": "execute_live",
-        "executed": True,
+        "executed": ok,
         "external_write": True,
         "internal_write": False,
-        "adapter": cartridge_id,
-        "target": cartridge_id,
+        "adapter": adapter_name,
+        "target": target,
+        "template_type": template_type,
         "idempotency_key": idempotency_key,
-        "writeback_result": adapter_result.to_dict(),
-        "message": adapter_result.message,
+        "before": before,
+        "after": after,
+        "message": message,
+        "validation_result": public_validation_result,
+        "adapter_result": public_adapter_result,
+        "writeback_result": public_adapter_result,
     }
     execution = await _record_action_execution(
         pool,
@@ -1997,32 +2130,73 @@ async def _execute_external_writeback(
         item=item,
         template=template,
         mode="execute_live",
-        status="executed",
-        payload={**payload, "idempotency_key": idempotency_key},
+        status=execution_status,
+        payload=action_data,
         result=result,
+        error=None if ok else message,
         critical=True,
     )
-    await _set_execution_status(pool, user=user, item=item, execution_status="executed", critical=True)
+    await _set_execution_status(pool, user=user, item=item, execution_status=execution_status, critical=True)
     await _record_item_event(
         pool,
         user=user,
         item=item,
-        event_type="action_executed",
+        event_type="action_executed" if ok else "action_failed",
         metadata={
             "template_id": template["template_id"],
+            "template_type": template_type,
             "execution_id": execution.get("id"),
-            "target": cartridge_id,
-            "external_write": True,
+            "target": target,
+            "adapter": adapter_name,
         },
         critical=True,
     )
-    public_item = _with_omega({**item, "execution_status": "executed"})
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="success" if ok else "failure",
+        metadata={
+            "template_id": template["template_id"],
+            "template_type": template_type,
+            "target": target,
+            "adapter": adapter_name,
+            "execution_id": execution.get("id"),
+            "before": before,
+            "after": after,
+            "validation_result": public_validation_result,
+            "adapter_result": public_adapter_result,
+        },
+    )
+    if not ok:
+        raise HTTPException(502, message)
+    learning_lesson = await _record_adapter_success_lesson(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        execution=execution,
+        result=result,
+        adapter_name=adapter_name,
+        template_type=template_type,
+    )
+    suggested_actions = _suggested_actions_from_lessons(item, [learning_lesson] if learning_lesson else [])
+    public_item = _with_omega({
+        **item,
+        "execution_status": "executed",
+        "suggested_actions": suggested_actions,
+    })
     return {
         "executed": True,
         "idempotent": False,
         "execution": execution,
-        "payload": payload,
+        "payload": action_data,
         "result": result,
+        "learning_lesson": learning_lesson,
         "item": public_item,
     }
 

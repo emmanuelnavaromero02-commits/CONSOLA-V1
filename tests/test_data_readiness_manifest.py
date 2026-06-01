@@ -77,11 +77,12 @@ def test_manifest_entries_are_complete_and_evidence_exists():
 
 def test_control_room_uses_manifest_not_inline_readiness_table():
     core = CONTROL_ROOM_CORE.read_text(encoding="utf-8")
-    monolith = CONTROL_ROOM.read_text(encoding="utf-8")
-    for source in (core, monolith):
-        assert "from app.services.control_room.readiness_manifest import dataset_readiness_registry" in source
-        assert "CONTROL_ROOM_DATASET_READINESS" in source
-        assert "dataset_readiness_registry()" in source
+    facade = CONTROL_ROOM.read_text(encoding="utf-8")
+    assert "from app.services.control_room.readiness_manifest import dataset_readiness_registry" in core
+    assert "CONTROL_ROOM_DATASET_READINESS" in core
+    assert "dataset_readiness_registry()" in core
+    assert "from app.services.control_room import core as _core" in facade
+    for source in (core, facade):
         assert '("sap_hcm", "manager_hierarchy")' not in source
         assert '("sap_successfactors", "sap_successfactors_recruitment_funnel")' not in source
 

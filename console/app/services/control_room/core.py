@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Iterable
@@ -79,6 +81,68 @@ ACTIVITY_LABELS = {
 }
 
 SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES = {"create_followup_task"}
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    ok: bool
+    status: str
+    message: str
+    data: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "ok": self.ok,
+            "status": self.status,
+            "message": self.message,
+        }
+        if self.data is not None:
+            payload["data"] = self.data
+        return payload
+
+
+class BaseAdapter(ABC):
+    @abstractmethod
+    def execute(
+        self,
+        action_data: dict[str, Any],
+        credentials: dict[str, Any],
+        dry_run: bool = True,
+    ) -> ExecutionResult | dict[str, Any] | Awaitable[ExecutionResult | dict[str, Any]]:
+        """Execute an approved external write-back action."""
+
+
+class WriteBackAdapterFactory:
+    _registry: dict[str, type[BaseAdapter]] = {}
+
+    @classmethod
+    def _ensure_builtin_adapters(cls) -> None:
+        from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
+
+        cls._registry.setdefault("sap_hcm_it0008", SapHcmAdapter)
+
+    @classmethod
+    def register_adapter(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
+        if not issubclass(adapter_cls, BaseAdapter):
+            raise TypeError("adapter_cls must inherit BaseAdapter")
+        cls._registry[str(template_type)] = adapter_cls
+
+    @classmethod
+    def get_adapter(cls, template_type: str) -> BaseAdapter:
+        cls._ensure_builtin_adapters()
+        adapter_cls = cls._registry.get(str(template_type))
+        if not adapter_cls:
+            raise NotImplementedError(f"No write-back adapter registered for {template_type}")
+        return adapter_cls()
+
+    @classmethod
+    def has_adapter(cls, template_type: str) -> bool:
+        cls._ensure_builtin_adapters()
+        return str(template_type) in cls._registry
+
+    @classmethod
+    def supports(cls, template_type: str) -> bool:
+        return cls.has_adapter(template_type)
 
 OMEGA_STEP_EVENT_TYPES = {
     "signals": "signals_opened",
@@ -183,6 +247,7 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "prepare_hcm_access_review": {
         "template_id": "prepare_hcm_access_review",
+        "template_type": "sap_hcm_it0008",
         "cartridge_id": "sap_hcm",
         "label": "Preparar revision HCM acceso/nomina",
         "description": "Prepara baja, bloqueo de usuario, evidencia de posicion y posible cola de nomina.",
