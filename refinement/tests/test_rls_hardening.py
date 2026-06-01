@@ -128,22 +128,22 @@ def test_rls_inject_cte(engine):
 def test_rls_inject_union(engine):
     """Both branches of a UNION must be filtered."""
     e, mock_conn = engine
-    mock_conn.execute.return_value.fetchall.return_value = _describe_cols("tenant_id")
+    mock_conn.execute.return_value.fetchall.return_value = _describe_cols("tenant_id", "workspace_id")
     sql = "SELECT * FROM pggold.t1 UNION ALL SELECT * FROM pggold.t2"
-    rls_sql, params = e.get_rls_filters(sql, {"tenant_id": "t-A"})
-    # Two ? placeholders, two t-A params.
-    assert rls_sql.count("tenant_id = ?") == 2, rls_sql
-    assert params == ["t-A", "t-A"]
+    rls_sql, params = e.get_rls_filters(sql, {"tenant_id": "t-A", "workspace_id": "ws-A"})
+    # Two pggold branches, each requiring tenant + workspace.
+    assert rls_sql.count("tenant_id = ? AND workspace_id = ?") == 2, rls_sql
+    assert params == ["t-A", "ws-A", "t-A", "ws-A"]
 
 
 def test_rls_inject_subquery(engine):
     """A FROM (SELECT ... FROM pggold.X) wrapper must still filter pggold.X."""
     e, mock_conn = engine
-    mock_conn.execute.return_value.fetchall.return_value = _describe_cols("tenant_id")
+    mock_conn.execute.return_value.fetchall.return_value = _describe_cols("tenant_id", "workspace_id")
     sql = "SELECT * FROM (SELECT * FROM pggold.t1) sub"
-    rls_sql, params = e.get_rls_filters(sql, {"tenant_id": "t-A"})
-    assert "tenant_id = ?" in rls_sql
-    assert params == ["t-A"]
+    rls_sql, params = e.get_rls_filters(sql, {"tenant_id": "t-A", "workspace_id": "ws-A"})
+    assert "tenant_id = ? AND workspace_id = ?" in rls_sql
+    assert params == ["t-A", "ws-A"]
 
 
 def test_rls_inject_alias_preserved(engine):

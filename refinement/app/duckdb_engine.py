@@ -792,28 +792,25 @@ class DuckDBEngine:
     def _rls_filter_clause(self, cols: list, user_context: dict, params: list) -> str:
         """Return the WHERE clause body for a pggold table (no leading WHERE).
 
-        The same precedence chain as the legacy regex-based RLS: tenant_id,
-        then workspace_id, then project_id, then user_id, then revenue_manager.
-        If none of the recognised tenancy columns are present we return "1=0"
-        (default-deny) and the caller appends no params for this table.
+        Gold reads are workspace-strict for non-admin callers. Tables without a
+        workspace_id column are treated as unsafe legacy/global data and default
+        to deny. Tables with both tenant_id and workspace_id must match both
+        values so one workspace cannot read a sibling workspace in the same
+        tenant.
         """
-        if 'tenant_id' in cols:
-            params.append(str(user_context.get("tenant_id") or ""))
-            return "tenant_id = ?"
-        if 'workspace_id' in cols:
-            params.append(str(user_context.get("workspace_id") or ""))
-            return "workspace_id = ?"
-        if 'project_id' in cols:
-            params.append(str(user_context.get("project_id") or ""))
-            return "project_id = ?"
-        if 'user_id' in cols:
-            params.append(str(user_context.get("id") or ""))
-            return "user_id = ?"
-        if 'revenue_manager' in cols:
-            params.append(str(user_context.get("email", "")))
-            params.append(str(user_context.get("name") or ""))
-            return "(revenue_manager = ? OR revenue_manager = ? OR revenue_manager = 'N/D')"
-        return "1=0"
+        tenant = str(user_context.get("tenant_id") or "")
+        workspace = str(user_context.get("workspace_id") or "")
+        colset = set(cols)
+
+        if "workspace_id" not in colset or not workspace:
+            return "1=0"
+        if "tenant_id" in colset:
+            if not tenant:
+                return "1=0"
+            params.extend([tenant, workspace])
+            return "tenant_id = ? AND workspace_id = ?"
+        params.append(workspace)
+        return "workspace_id = ?"
 
     def _inject_rls_ast(self, sql: str, user_context: dict) -> tuple[str, list]:
         """AST-based RLS injection using sqlglot.
