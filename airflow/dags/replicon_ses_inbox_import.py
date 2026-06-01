@@ -4,7 +4,7 @@ DAG: replicon_ses_inbox_import
 Reads emails received by Amazon SES Inbound at
     s3://${INBOX_BUCKET}/inbound/
 extracts every attachment, and lands them in the lakehouse uploads area:
-    s3://${LAKEHOUSE_BUCKET}/uploads/replicon/in/<filename>
+    s3://${LAKEHOUSE_BUCKET}/uploads/replicon/tenant_id=<tenant>/workspace_id=<workspace>/in/<filename>
 
 Behavior:
 - ZIP attachments are extracted; each file inside the archive is uploaded.
@@ -22,11 +22,13 @@ Airflow UI and the Studio entity row gets per-step logs:
 `record_run` writes a row to pipeline_runs (via mcp-infra) so the studio
 "última ejecución" badge picks up status, finished_at and counts.
 """
+
 from __future__ import annotations
 
 import email
 import io
 import os
+import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 from email.message import Message
@@ -40,33 +42,44 @@ from airflow.operators.python import PythonOperator
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-CARTRIDGE_ID  = "replicon"
-ENTITY        = "SESInboxJobNoEntity"
+CARTRIDGE_ID = "replicon"
+ENTITY = "SESInboxJobNoEntity"
 MCP_INFRA_URL = "http://mcp-infra:8010"
 
-INBOX_BUCKET   = Variable.get("ses_inbox_bucket",
-                              default_var="modecissions-mail-inbound-36243c")
-INBOX_PREFIX   = Variable.get("ses_inbox_prefix",
-                              default_var="inbound/")
-DONE_PREFIX    = Variable.get("ses_inbox_processed_prefix",
-                              default_var="inbound-processed/")
+INBOX_BUCKET = Variable.get(
+    "ses_inbox_bucket", default_var="modecissions-mail-inbound-36243c"
+)
+INBOX_PREFIX = Variable.get("ses_inbox_prefix", default_var="inbound/")
+DONE_PREFIX = Variable.get(
+    "ses_inbox_processed_prefix", default_var="inbound-processed/"
+)
 
-LAKE_BUCKET    = Variable.get("lakehouse_bucket",
-                              default_var="modecissions-lakehouse-0baf85")
-UPLOADS_PREFIX = Variable.get("lakehouse_uploads_prefix",
-                              default_var="uploads/replicon/in/")
+LAKE_BUCKET = Variable.get(
+    "lakehouse_bucket", default_var="modecissions-lakehouse-0baf85"
+)
+UPLOADS_PREFIX = Variable.get(
+    "lakehouse_uploads_prefix", default_var="uploads/replicon/in/"
+)
 
 # Attachments we actually want to land on the lakehouse.
 PASSTHROUGH_EXTS = {".xlsx", ".xls", ".csv", ".pdf", ".tsv", ".txt"}
 # Filenames produced by SES tooling that are not real mail.
-SKIP_NAMES       = {"AMAZON_SES_SETUP_NOTIFICATION"}
+SKIP_NAMES = {"AMAZON_SES_SETUP_NOTIFICATION"}
 MAX_ZIP_MEMBERS = int(os.environ.get("SES_IMPORT_MAX_ZIP_MEMBERS", "100"))
-MAX_ZIP_MEMBER_BYTES = int(os.environ.get("SES_IMPORT_MAX_ZIP_MEMBER_BYTES", str(50 * 1024 * 1024)))
-MAX_ZIP_TOTAL_BYTES = int(os.environ.get("SES_IMPORT_MAX_ZIP_TOTAL_BYTES", str(250 * 1024 * 1024)))
+MAX_ZIP_MEMBER_BYTES = int(
+    os.environ.get("SES_IMPORT_MAX_ZIP_MEMBER_BYTES", str(50 * 1024 * 1024))
+)
+MAX_ZIP_TOTAL_BYTES = int(
+    os.environ.get("SES_IMPORT_MAX_ZIP_TOTAL_BYTES", str(250 * 1024 * 1024))
+)
+_SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
 def _is_production() -> bool:
-    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _internal_key(env_name: str) -> str:
@@ -77,7 +90,9 @@ def _internal_key(env_name: str) -> str:
         legacy = os.environ.get("INTERNAL_API_KEY", "")
         if legacy:
             return legacy
-    raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
+    raise RuntimeError(
+        f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production"
+    )
 
 
 default_args = {
@@ -100,18 +115,36 @@ dag = DAG(
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _s3():
     endpoint = os.environ.get("S3_ENDPOINT_URL")
     if not endpoint:
-        minio_endpoint = os.environ.get("MINIO_ENDPOINT") or Variable.get("minio_endpoint", default_var="")
+        minio_endpoint = os.environ.get("MINIO_ENDPOINT") or Variable.get(
+            "minio_endpoint", default_var=""
+        )
         if minio_endpoint:
-            secure = (os.environ.get("MINIO_SECURE") or Variable.get("minio_secure", default_var="false")).lower() == "true"
+            secure = (
+                os.environ.get("MINIO_SECURE")
+                or Variable.get("minio_secure", default_var="false")
+            ).lower() == "true"
             endpoint = f"{'https' if secure else 'http'}://{minio_endpoint}"
-    kwargs = {"region_name": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"}
+    kwargs = {
+        "region_name": os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "us-east-1"
+    }
     if endpoint:
         kwargs["endpoint_url"] = endpoint
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY") or Variable.get("minio_access_key", default_var="")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY") or Variable.get("minio_secret_key", default_var="")
+    access_key = (
+        os.environ.get("AWS_ACCESS_KEY_ID")
+        or os.environ.get("MINIO_ACCESS_KEY")
+        or Variable.get("minio_access_key", default_var="")
+    )
+    secret_key = (
+        os.environ.get("AWS_SECRET_ACCESS_KEY")
+        or os.environ.get("MINIO_SECRET_KEY")
+        or Variable.get("minio_secret_key", default_var="")
+    )
     if access_key and secret_key:
         kwargs["aws_access_key_id"] = access_key
         kwargs["aws_secret_access_key"] = secret_key
@@ -123,6 +156,76 @@ def _safe_name(name: str) -> str:
     for ch in ("..", "/", "\\"):
         base = base.replace(ch, "")
     return base or "unnamed"
+
+
+def _safe_scope_segment(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not _SAFE_SCOPE_SEGMENT.fullmatch(text):
+        raise ValueError(f"{label} inválido para partición SaaS")
+    return text
+
+
+def _dag_conf(context: dict) -> dict:
+    dag_run = context.get("dag_run")
+    conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+    return conf if isinstance(conf, dict) else {}
+
+
+def _scope_values(context: dict) -> tuple[str, str]:
+    conf = _dag_conf(context)
+    security_context = (
+        conf.get("security_context")
+        if isinstance(conf.get("security_context"), dict)
+        else {}
+    )
+    tenant = (
+        conf.get("tenant_id")
+        or security_context.get("tenant_id")
+        or Variable.get("replicon_tenant_id", default_var="")
+    )
+    workspace = (
+        conf.get("workspace_id")
+        or security_context.get("workspace_id")
+        or Variable.get("replicon_workspace_id", default_var="")
+    )
+    tenant_id = _safe_scope_segment(tenant, "tenant_id")
+    workspace_id = _safe_scope_segment(workspace, "workspace_id")
+    if tenant_id and workspace_id:
+        return tenant_id, workspace_id
+    if not _is_production() and Variable.get(
+        "replicon_allow_unscoped_ses_uploads", default_var="false"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return "", ""
+    raise ValueError(
+        "tenant_id and workspace_id are required for replicon_ses_inbox_import"
+    )
+
+
+def _scoped_uploads_prefix(tenant_id: str, workspace_id: str) -> str:
+    prefix = (UPLOADS_PREFIX or "uploads/replicon/in/").strip().strip("/")
+    if "tenant_id=" in prefix or "workspace_id=" in prefix:
+        expected = f"tenant_id={tenant_id}/workspace_id={workspace_id}"
+        if tenant_id and workspace_id and expected not in prefix:
+            raise ValueError(
+                "lakehouse_uploads_prefix scope does not match dag_run scope"
+            )
+        return f"{prefix}/"
+
+    parts = [part for part in prefix.split("/") if part]
+    if parts and parts[-1] == "in":
+        parts = parts[:-1]
+    if tenant_id and workspace_id:
+        parts.extend([f"tenant_id={tenant_id}", f"workspace_id={workspace_id}", "in"])
+    else:
+        parts.append("in")
+    return "/".join(parts) + "/"
 
 
 def _is_passthrough(name: str) -> bool:
@@ -154,10 +257,15 @@ def _pipeline_run_save(**kwargs) -> None:
         }
         requests.post(
             f"{MCP_INFRA_URL}/mcp/invoke",
-            json={"tool": "pipeline_run_save",
-                  "args": {"dag_id": "replicon_ses_inbox_import",
-                           "cartridge_id": CARTRIDGE_ID,
-                           "entity": ENTITY, **kwargs}},
+            json={
+                "tool": "pipeline_run_save",
+                "args": {
+                    "dag_id": "replicon_ses_inbox_import",
+                    "cartridge_id": CARTRIDGE_ID,
+                    "entity": ENTITY,
+                    **kwargs,
+                },
+            },
             headers=headers,
             timeout=10,
         )
@@ -167,14 +275,24 @@ def _pipeline_run_save(**kwargs) -> None:
 
 # ── Tasks ────────────────────────────────────────────────────────────────────
 
+
 def list_inbox(**context) -> dict:
     """List unprocessed mail objects in s3://INBOX_BUCKET/INBOX_PREFIX.
     Pushes the list of keys to XCom for the next task."""
     started_at = datetime.now(timezone.utc).isoformat()
-    run_id     = context["run_id"]
+    run_id = context["run_id"]
+    tenant_id, workspace_id = _scope_values(context)
+    upload_prefix = _scoped_uploads_prefix(tenant_id, workspace_id)
 
-    _pipeline_run_save(run_id=run_id, status="running",
-                       started_at=started_at, mode="full")
+    _pipeline_run_save(
+        run_id=run_id,
+        status="running",
+        started_at=started_at,
+        mode="full",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        storage_uri=f"s3://{LAKE_BUCKET}/{upload_prefix}",
+    )
 
     s3 = _s3()
     paginator = s3.get_paginator("list_objects_v2")
@@ -194,30 +312,40 @@ def list_inbox(**context) -> dict:
         print(f"  · …and {len(keys) - 10} more")
 
     ti = context["task_instance"]
-    ti.xcom_push(key="keys",       value=keys)
+    ti.xcom_push(key="keys", value=keys)
     ti.xcom_push(key="started_at", value=started_at)
-    ti.xcom_push(key="run_id",     value=run_id)
+    ti.xcom_push(key="run_id", value=run_id)
+    ti.xcom_push(key="tenant_id", value=tenant_id)
+    ti.xcom_push(key="workspace_id", value=workspace_id)
+    ti.xcom_push(key="upload_prefix", value=upload_prefix)
     return {"messages_found": len(keys)}
 
 
 def extract_attachments(**context) -> dict:
     """For every queued mail object, pull the .eml from S3, parse it, and
-    upload each interesting attachment under uploads/replicon/in/. ZIPs are
-    expanded. Records which keys succeeded so the next task can archive them."""
-    ti   = context["task_instance"]
+    upload each interesting attachment under the scoped Replicon upload prefix.
+    ZIPs are expanded. Records which keys succeeded so the next task can
+    archive them."""
+    ti = context["task_instance"]
     keys = ti.xcom_pull(task_ids="list_inbox", key="keys") or []
+    upload_prefix = ti.xcom_pull(task_ids="list_inbox", key="upload_prefix")
+    if not upload_prefix:
+        tenant_id, workspace_id = _scope_values(context)
+        upload_prefix = _scoped_uploads_prefix(tenant_id, workspace_id)
 
     s3 = _s3()
     succeeded: list[str] = []
-    failed:    list[dict] = []
+    failed: list[dict] = []
     landed_total = 0
-    bytes_total  = 0
+    bytes_total = 0
 
     for key in keys:
         try:
             raw = s3.get_object(Bucket=INBOX_BUCKET, Key=key)["Body"].read()
             msg: Message = email.message_from_bytes(raw)
-            print(f"\n📩 {key}\n   From: {msg.get('From', '?')}\n   Subject: {msg.get('Subject', '?')}")
+            print(
+                f"\n📩 {key}\n   From: {msg.get('From', '?')}\n   Subject: {msg.get('Subject', '?')}"
+            )
 
             for part in msg.walk():
                 if part.get_content_disposition() != "attachment":
@@ -236,14 +364,20 @@ def extract_attachments(**context) -> dict:
                             for member in _safe_zip_members(zf):
                                 inner_name = _safe_name(member.filename)
                                 if not _is_passthrough(inner_name):
-                                    print(f"   skip (zip member, unknown ext): {inner_name}")
+                                    print(
+                                        f"   skip (zip member, unknown ext): {inner_name}"
+                                    )
                                     continue
                                 inner = zf.read(member)
-                                target_key = f"{UPLOADS_PREFIX}{inner_name}"
-                                s3.put_object(Bucket=LAKE_BUCKET, Key=target_key, Body=inner)
+                                target_key = f"{upload_prefix}{inner_name}"
+                                s3.put_object(
+                                    Bucket=LAKE_BUCKET, Key=target_key, Body=inner
+                                )
                                 landed_total += 1
-                                bytes_total  += len(inner)
-                                print(f"   ✓ {inner_name} ({len(inner)} bytes) → s3://{LAKE_BUCKET}/{target_key}")
+                                bytes_total += len(inner)
+                                print(
+                                    f"   ✓ {inner_name} ({len(inner)} bytes) → s3://{LAKE_BUCKET}/{target_key}"
+                                )
                     except zipfile.BadZipFile as exc:
                         print(f"   ✗ corrupt zip {name}: {exc}")
                     except ValueError as exc:
@@ -254,32 +388,40 @@ def extract_attachments(**context) -> dict:
                     print(f"   skip (unknown ext): {name}")
                     continue
 
-                target_key = f"{UPLOADS_PREFIX}{name}"
+                target_key = f"{upload_prefix}{name}"
                 s3.put_object(Bucket=LAKE_BUCKET, Key=target_key, Body=payload)
                 landed_total += 1
-                bytes_total  += len(payload)
-                print(f"   ✓ {name} ({len(payload)} bytes) → s3://{LAKE_BUCKET}/{target_key}")
+                bytes_total += len(payload)
+                print(
+                    f"   ✓ {name} ({len(payload)} bytes) → s3://{LAKE_BUCKET}/{target_key}"
+                )
 
             succeeded.append(key)
-        except Exception as exc:                                   # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             print(f"   ✗ failed {key}: {exc}")
             failed.append({"key": key, "error": str(exc)})
 
-    print(f"\nExtracted: {landed_total} attachments ({bytes_total} bytes); "
-          f"{len(succeeded)} mails OK, {len(failed)} failed")
+    print(
+        f"\nExtracted: {landed_total} attachments ({bytes_total} bytes); "
+        f"{len(succeeded)} mails OK, {len(failed)} failed"
+    )
 
-    ti.xcom_push(key="succeeded",    value=succeeded)
-    ti.xcom_push(key="failed",       value=failed)
+    ti.xcom_push(key="succeeded", value=succeeded)
+    ti.xcom_push(key="failed", value=failed)
     ti.xcom_push(key="landed_total", value=landed_total)
-    ti.xcom_push(key="bytes_total",  value=bytes_total)
-    return {"landed": landed_total, "bytes": bytes_total,
-            "succeeded": len(succeeded), "failed": len(failed)}
+    ti.xcom_push(key="bytes_total", value=bytes_total)
+    return {
+        "landed": landed_total,
+        "bytes": bytes_total,
+        "succeeded": len(succeeded),
+        "failed": len(failed),
+    }
 
 
 def archive_processed(**context) -> dict:
     """Move every successfully-processed mail object out of inbound/ to
     inbound-processed/. Failed messages stay in inbound/ for retry/inspection."""
-    ti        = context["task_instance"]
+    ti = context["task_instance"]
     succeeded = ti.xcom_pull(task_ids="extract_attachments", key="succeeded") or []
 
     s3 = _s3()
@@ -295,7 +437,7 @@ def archive_processed(**context) -> dict:
             s3.delete_object(Bucket=INBOX_BUCKET, Key=key)
             moved += 1
             print(f"   → archived {key} as {done_key}")
-        except Exception as exc:                                   # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             print(f"   ✗ archive failed for {key}: {exc}")
 
     print(f"\nArchived: {moved}/{len(succeeded)}")
@@ -306,21 +448,29 @@ def archive_processed(**context) -> dict:
 def record_run(**context) -> dict:
     """Final write to pipeline_runs so the studio entity row reflects the
     run's status, end time and counts."""
-    ti        = context["task_instance"]
-    keys      = ti.xcom_pull(task_ids="list_inbox",         key="keys")          or []
-    succeeded = ti.xcom_pull(task_ids="extract_attachments", key="succeeded")    or []
-    failed    = ti.xcom_pull(task_ids="extract_attachments", key="failed")       or []
-    landed    = ti.xcom_pull(task_ids="extract_attachments", key="landed_total") or 0
-    written   = ti.xcom_pull(task_ids="extract_attachments", key="bytes_total")  or 0
-    archived  = ti.xcom_pull(task_ids="archive_processed",   key="archived")     or 0
-    started   = ti.xcom_pull(task_ids="list_inbox",         key="started_at")
-    run_id    = ti.xcom_pull(task_ids="list_inbox",         key="run_id") or context["run_id"]
+    ti = context["task_instance"]
+    keys = ti.xcom_pull(task_ids="list_inbox", key="keys") or []
+    succeeded = ti.xcom_pull(task_ids="extract_attachments", key="succeeded") or []
+    failed = ti.xcom_pull(task_ids="extract_attachments", key="failed") or []
+    landed = ti.xcom_pull(task_ids="extract_attachments", key="landed_total") or 0
+    written = ti.xcom_pull(task_ids="extract_attachments", key="bytes_total") or 0
+    archived = ti.xcom_pull(task_ids="archive_processed", key="archived") or 0
+    started = ti.xcom_pull(task_ids="list_inbox", key="started_at")
+    run_id = ti.xcom_pull(task_ids="list_inbox", key="run_id") or context["run_id"]
+    tenant_id = ti.xcom_pull(task_ids="list_inbox", key="tenant_id")
+    workspace_id = ti.xcom_pull(task_ids="list_inbox", key="workspace_id")
+    upload_prefix = ti.xcom_pull(task_ids="list_inbox", key="upload_prefix")
+    if not upload_prefix:
+        tenant_id, workspace_id = _scope_values(context)
+        upload_prefix = _scoped_uploads_prefix(tenant_id, workspace_id)
 
     finished = datetime.now(timezone.utc).isoformat()
     duration = None
     try:
         if started:
-            duration = (datetime.fromisoformat(finished) - datetime.fromisoformat(started)).total_seconds()
+            duration = (
+                datetime.fromisoformat(finished) - datetime.fromisoformat(started)
+            ).total_seconds()
     except Exception:
         pass
 
@@ -334,19 +484,23 @@ def record_run(**context) -> dict:
     status = "success" if not failed else ("partial" if succeeded else "failed")
 
     _pipeline_run_save(
-        run_id           = run_id,
-        status           = status,
-        started_at       = started,
-        finished_at      = finished,
-        duration_seconds = duration,
-        record_count     = landed,
-        bytes_written    = written,
-        storage_uri      = f"s3://{LAKE_BUCKET}/{UPLOADS_PREFIX}",
-        error_message    = error_msg,
-        extra            = {"messages_seen": len(keys),
-                            "messages_ok":   len(succeeded),
-                            "messages_failed": len(failed),
-                            "archived":      archived},
+        run_id=run_id,
+        status=status,
+        started_at=started,
+        finished_at=finished,
+        duration_seconds=duration,
+        record_count=landed,
+        bytes_written=written,
+        storage_uri=f"s3://{LAKE_BUCKET}/{upload_prefix}",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        error_message=error_msg,
+        extra={
+            "messages_seen": len(keys),
+            "messages_ok": len(succeeded),
+            "messages_failed": len(failed),
+            "archived": archived,
+        },
     )
 
     print(f"\n=== Run summary ===")
@@ -358,8 +512,12 @@ def record_run(**context) -> dict:
     if error_msg:
         print(f"  first error:   {error_msg}")
 
-    return {"status": status, "landed": landed, "archived": archived,
-            "failed": len(failed)}
+    return {
+        "status": status,
+        "landed": landed,
+        "archived": archived,
+        "failed": len(failed),
+    }
 
 
 # ── DAG wiring ───────────────────────────────────────────────────────────────
@@ -385,7 +543,7 @@ t_archive = PythonOperator(
 t_record = PythonOperator(
     task_id="record_run",
     python_callable=record_run,
-    trigger_rule="all_done",   # always summarize, even if upstream failed
+    trigger_rule="all_done",  # always summarize, even if upstream failed
     dag=dag,
 )
 

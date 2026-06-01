@@ -4,6 +4,7 @@ import email
 import imaplib
 import io
 import os
+import re
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -38,8 +39,20 @@ MINIO_BAK_PATH = "uploads/replicon/bak"
 CARTRIDGE_ID = "replicon"
 ENTITY = "ProjectAudit"
 MAX_ZIP_MEMBERS = int(os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_MEMBERS", "25"))
-MAX_ZIP_MEMBER_BYTES = int(os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_MEMBER_BYTES", str(50 * 1024 * 1024)))
-MAX_ZIP_TOTAL_BYTES = int(os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_TOTAL_BYTES", str(100 * 1024 * 1024)))
+MAX_ZIP_MEMBER_BYTES = int(
+    os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_MEMBER_BYTES", str(50 * 1024 * 1024))
+)
+MAX_ZIP_TOTAL_BYTES = int(
+    os.environ.get("OUTLOOK_IMPORT_MAX_ZIP_TOTAL_BYTES", str(100 * 1024 * 1024))
+)
+_SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {
+        "production",
+        "prod",
+    }
 
 
 def _required_variable(name: str) -> str:
@@ -47,6 +60,74 @@ def _required_variable(name: str) -> str:
     if not value:
         raise ValueError(f"Airflow Variable '{name}' is required")
     return value
+
+
+def _safe_scope_segment(value: object, label: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not _SAFE_SCOPE_SEGMENT.fullmatch(text):
+        raise ValueError(f"{label} inválido para partición SaaS")
+    return text
+
+
+def _dag_conf(context: dict) -> dict:
+    dag_run = context.get("dag_run")
+    conf = dag_run.conf if dag_run and isinstance(dag_run.conf, dict) else {}
+    return conf if isinstance(conf, dict) else {}
+
+
+def _scope_values(context: dict) -> tuple[str, str]:
+    conf = _dag_conf(context)
+    security_context = (
+        conf.get("security_context")
+        if isinstance(conf.get("security_context"), dict)
+        else {}
+    )
+    tenant = (
+        conf.get("tenant_id")
+        or security_context.get("tenant_id")
+        or Variable.get("replicon_tenant_id", default_var="")
+    )
+    workspace = (
+        conf.get("workspace_id")
+        or security_context.get("workspace_id")
+        or Variable.get("replicon_workspace_id", default_var="")
+    )
+    tenant_id = _safe_scope_segment(tenant, "tenant_id")
+    workspace_id = _safe_scope_segment(workspace, "workspace_id")
+    if tenant_id and workspace_id:
+        return tenant_id, workspace_id
+    if not _is_production() and Variable.get(
+        "replicon_allow_unscoped_outlook_uploads", default_var="false"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return "", ""
+    raise ValueError(
+        "tenant_id and workspace_id are required for replicon_outlook_audit_report_import"
+    )
+
+
+def _scoped_path(base: str, tenant_id: str, workspace_id: str, suffix: str = "") -> str:
+    path = base.strip().strip("/")
+    if "tenant_id=" in path or "workspace_id=" in path:
+        expected = f"tenant_id={tenant_id}/workspace_id={workspace_id}"
+        if tenant_id and workspace_id and expected not in path:
+            raise ValueError(f"{base} scope does not match dag_run scope")
+    elif tenant_id and workspace_id:
+        parts = [part for part in path.split("/") if part]
+        tail = parts.pop() if parts and parts[-1] in {"in", "bak"} else ""
+        parts.extend([f"tenant_id={tenant_id}", f"workspace_id={workspace_id}"])
+        if tail:
+            parts.append(tail)
+        path = "/".join(parts)
+    if suffix:
+        path = f"{path}/{suffix.strip('/')}"
+    return path
 
 
 def _minio_settings() -> dict:
@@ -144,10 +225,15 @@ def fetch_outlook_attachment(**context):
     ti.xcom_push(key="csv_path", value=tmp_csv_path)
     ti.xcom_push(key="csv_filename", value=CSV_FILENAME)
     ti.xcom_push(key="csv_bytes", value=len(csv_content))
-    return {"status": "success", "csv_file": CSV_FILENAME, "csv_bytes": len(csv_content)}
+    return {
+        "status": "success",
+        "csv_file": CSV_FILENAME,
+        "csv_bytes": len(csv_content),
+    }
 
 
 def upload_csv_to_minio(**context):
+    tenant_id, workspace_id = _scope_values(context)
     csv_path = context["task_instance"].xcom_pull(
         task_ids="fetch_outlook_attachment",
         key="csv_path",
@@ -161,13 +247,17 @@ def upload_csv_to_minio(**context):
 
     bucket = _ensure_bucket()
     client = _minio_client()
-    minio_csv_path = f"{MINIO_UPLOAD_PATH}/{csv_filename}"
+    minio_csv_path = _scoped_path(
+        MINIO_UPLOAD_PATH, tenant_id, workspace_id, csv_filename
+    )
     file_size = os.path.getsize(csv_path)
     with open(csv_path, "rb") as f:
         client.put_object(bucket, minio_csv_path, f, file_size)
 
     uri = f"s3://{bucket}/{minio_csv_path}"
     context["task_instance"].xcom_push(key="minio_csv_uri", value=uri)
+    context["task_instance"].xcom_push(key="tenant_id", value=tenant_id)
+    context["task_instance"].xcom_push(key="workspace_id", value=workspace_id)
     return {"status": "success", "minio_csv_uri": uri}
 
 
@@ -182,12 +272,21 @@ def csv_to_parquet(**context):
     batch_id = str(uuid.uuid4())
     started_at = datetime.now(timezone.utc).isoformat()
     df = pd.read_csv(csv_path, sep=",", encoding="utf-8", header=0)
+    tenant_id, workspace_id = _scope_values(context)
+    if tenant_id:
+        df["tenant_id"] = tenant_id
+    if workspace_id:
+        df["workspace_id"] = workspace_id
     row_count = len(df)
 
     bucket = _ensure_bucket()
     client = _minio_client()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    parquet_prefix = f"raw/{CARTRIDGE_ID}/{ENTITY}/load_date={today}/"
+    parquet_prefix = (
+        f"raw/{CARTRIDGE_ID}/{ENTITY}/"
+        f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
+        f"load_date={today}/"
+    )
     parquet_key = f"{parquet_prefix}data.parquet"
 
     for obj in client.list_objects(bucket, prefix=parquet_prefix, recursive=True):
@@ -198,7 +297,9 @@ def csv_to_parquet(**context):
     pq.write_table(table, buf)
     buf.seek(0)
     bytes_written = buf.getbuffer().nbytes
-    client.put_object(bucket, parquet_key, buf, bytes_written, content_type="application/octet-stream")
+    client.put_object(
+        bucket, parquet_key, buf, bytes_written, content_type="application/octet-stream"
+    )
 
     parquet_uri = f"s3://{bucket}/{parquet_key}"
     ti.xcom_push(key="batch_id", value=batch_id)
@@ -207,6 +308,8 @@ def csv_to_parquet(**context):
     ti.xcom_push(key="bytes_written", value=bytes_written)
     ti.xcom_push(key="started_at", value=started_at)
     ti.xcom_push(key="finished_at", value=datetime.now(timezone.utc).isoformat())
+    ti.xcom_push(key="tenant_id", value=tenant_id)
+    ti.xcom_push(key="workspace_id", value=workspace_id)
     return {
         "status": "success",
         "batch_id": batch_id,
@@ -220,12 +323,18 @@ def move_csv_to_backup(**context):
     ti = context["task_instance"]
     minio_csv_uri = ti.xcom_pull(task_ids="upload_csv_to_minio", key="minio_csv_uri")
     csv_filename = ti.xcom_pull(task_ids="fetch_outlook_attachment", key="csv_filename")
+    tenant_id = ti.xcom_pull(task_ids="upload_csv_to_minio", key="tenant_id")
+    workspace_id = ti.xcom_pull(task_ids="upload_csv_to_minio", key="workspace_id")
+    if not (tenant_id and workspace_id):
+        tenant_id, workspace_id = _scope_values(context)
 
     bucket = _ensure_bucket()
     client = _minio_client()
     src_key = minio_csv_uri.removeprefix(f"s3://{bucket}/")
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    dst_key = f"{MINIO_BAK_PATH}/{ts}_{csv_filename}"
+    dst_key = _scoped_path(
+        MINIO_BAK_PATH, tenant_id, workspace_id, f"{ts}_{csv_filename}"
+    )
 
     client.copy_object(bucket, dst_key, CopySource(bucket, src_key))
     client.remove_object(bucket, src_key)
