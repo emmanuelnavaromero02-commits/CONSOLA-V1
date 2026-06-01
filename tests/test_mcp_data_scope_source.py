@@ -83,6 +83,9 @@ def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     assert "_DIRECT_STORAGE_SCAN_RE" in source
     assert "cartridge SQL must read only direct s3:// file literals" in source
     assert "cartridge SQL cannot read service database schemas" in source
+    assert 'if tool == "cartridge_preview":' in source
+    assert "cartridge preview requires tenant/workspace scope" in source
+    assert "_inject_cartridge_execution_scope(ctx, args)" in source
     assert "_has_invalid_scoped_storage_path" in source
     assert 'if tool == "cartridge_query_kb":' in source
     assert 'tool == "cartridge_query_kb" and not _is_unscoped_admin_context' not in source

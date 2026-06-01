@@ -437,6 +437,21 @@ def test_bronze_path_accepts_valid_identifiers(cartridges_tool):
     assert out.startswith("s3://")
 
 
+def test_bronze_path_uses_tenant_workspace_scope_when_available(cartridges_tool):
+    out = cartridges_tool._bronze_path(
+        cartridge_id="replicon",
+        entity="TimeEntry",
+        security_context={
+            "trusted": True,
+            "tenant_id": "tenant-1",
+            "workspace_id": "workspace-1",
+        },
+    )
+
+    assert "/raw/replicon/TimeEntry/tenant_id=tenant-1/workspace_id=workspace-1/" in out
+    assert "/load_date=*/batch_id=*/*.parquet" in out
+
+
 def test_cartridge_preview_rejects_limit_sqli(cartridges_tool):
     with patch.object(cartridges_tool, "_duckdb") as mock_duck:
         with pytest.raises(ValueError):
@@ -446,6 +461,31 @@ def test_cartridge_preview_rejects_limit_sqli(cartridges_tool):
                 limit="10; DROP TABLE x; --",
             )
         mock_duck.assert_not_called()
+
+
+def test_cartridge_preview_error_does_not_leak_sql_or_path(cartridges_tool):
+    conn = MagicMock()
+    conn.execute.side_effect = RuntimeError(
+        "read_parquet('s3://lakehouse/raw/replicon/TimeEntry/secret.parquet') failed"
+    )
+    with patch.object(cartridges_tool, "_duckdb", return_value=conn):
+        result = cartridges_tool.cartridge_preview(
+            cartridge_id="replicon",
+            entity="TimeEntry",
+            security_context={
+                "trusted": True,
+                "tenant_id": "tenant-1",
+                "workspace_id": "workspace-1",
+            },
+        )
+
+    assert result["error"] == "preview_failed"
+    assert result["reason"] == "DuckDB preview failed"
+    serialized = str(result)
+    assert "s3://" not in serialized
+    assert "read_parquet" not in serialized
+    assert "secret.parquet" not in serialized
+    conn.close.assert_called_once()
 
 
 # ── SAP cartridges — preview() validates entity / limit ─────────────────────

@@ -1074,7 +1074,11 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
     if tool in _CARTRIDGE_DATA_TOOLS:
         cartridge_id = str(args.get("cartridge_id") or "").strip()
         _require_cartridge_scope(ctx, cartridge_id)
-        if tool == "cartridge_query_kb":
+        if tool == "cartridge_preview":
+            if not _is_unscoped_admin_context(ctx) and not _has_tenant_workspace_scope(ctx):
+                raise HTTPException(403, detail="cartridge preview requires tenant/workspace scope")
+            _inject_cartridge_execution_scope(ctx, args)
+        elif tool == "cartridge_query_kb":
             _validate_cartridge_query_sql(ctx, cartridge_id, str(args.get("sql") or ""))
 
     if tool in _RUN_ID_SCOPED_TOOLS:

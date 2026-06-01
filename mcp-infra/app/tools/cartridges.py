@@ -49,7 +49,13 @@ def _duckdb() -> duckdb.DuckDBPyConnection:
     return conn
 
 
-def _bronze_path(cartridge_id: str, entity: str) -> str:
+def _bronze_path(
+    cartridge_id: str,
+    entity: str,
+    security_context: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
     # Sprint v1.35 (audit B3 P0): validate cartridge_id / entity as SQL
     # identifiers before they go into the f-string. The returned path is
     # consumed by DuckDB's read_parquet() inside another f-string in
@@ -58,6 +64,12 @@ def _bronze_path(cartridge_id: str, entity: str) -> str:
     # close the read_parquet() argument and inject a different query.
     cartridge_id = validate_identifier(cartridge_id, "cartridge_id")
     entity = validate_identifier(entity, "entity")
+    scope = _scope_suffix(security_context, tenant_id, workspace_id)
+    if scope:
+        return (
+            f"s3://{settings.minio_bucket}/raw/{cartridge_id}/{entity}/"
+            f"{scope}/load_date=*/batch_id=*/*.parquet"
+        )
     return f"s3://{settings.minio_bucket}/raw/{cartridge_id}/{entity}/load_date=*/batch_id=*/*.parquet"
 
 
@@ -668,15 +680,25 @@ def cartridge_get_schema(cartridge_id: str, entity: str) -> dict[str, Any]:
             "cartridge_id": {"type": "string"},
             "entity":       {"type": "string"},
             "limit":        {"type": "integer", "default": 20, "description": "Max 200"},
+            "tenant_id":    {"type": "string"},
+            "workspace_id": {"type": "string"},
+            "security_context": {"type": "object"},
         },
         "required": ["cartridge_id", "entity"],
     },
 )
-def cartridge_preview(cartridge_id: str, entity: str, limit: int = 20) -> dict[str, Any]:
+def cartridge_preview(
+    cartridge_id: str,
+    entity: str,
+    limit: int = 20,
+    tenant_id: str | None = None,
+    workspace_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     # Sprint v1.35 (audit B3 P0): force limit to a bounded int. cartridge_id
     # and entity are validated transitively by _bronze_path().
     limit = validate_bounded_int(limit, "limit", lo=1, hi=200)
-    path  = _bronze_path(cartridge_id, entity)
+    path = _bronze_path(cartridge_id, entity, security_context, tenant_id, workspace_id)
     sql   = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _duckdb()
@@ -693,9 +715,15 @@ def cartridge_preview(cartridge_id: str, entity: str, limit: int = 20) -> dict[s
             "rows":         [dict(zip(columns, r)) for r in rows],
             "count":        len(rows),
         }
-    except Exception as exc:
-        return {"cartridge_id": cartridge_id, "entity": entity,
-                "error": str(exc), "rows": [], "columns": []}
+    except Exception:
+        return {
+            "cartridge_id": cartridge_id,
+            "entity": entity,
+            "error": "preview_failed",
+            "reason": "DuckDB preview failed",
+            "rows": [],
+            "columns": [],
+        }
 
 
 # ── Tool 4 · extract (one entity) ─────────────────────────────────────────────
