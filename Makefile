@@ -52,7 +52,7 @@ demo-check:
 	@echo "  1) make preflight"
 	@echo "  2) docker compose -f infra/docker-compose.yml config -q"
 	@echo "  3) make up"
-	@echo "  4) curl :8000/healthz"
+	@echo "  4) curl 'http://localhost:8000/readyz?require_data=1'"
 	@echo "  5) make smoke"
 	@echo "  6) make test"
 	@echo "  7) cd tests-e2e && npx playwright test specs/12-control-room.spec.ts"
@@ -138,6 +138,8 @@ verify-v1-public:
 	@bash scripts/verify_v1_public.sh
 
 verify-release:
+	@test -f infra/.env || bash infra/bootstrap.sh
+	bash infra/bootstrap-keys.sh infra/.env
 	$(RUFF) check .
 	npm --prefix console-next ci
 	npm --prefix console-next run lint
@@ -153,7 +155,7 @@ verify-release:
 		$(PIP_AUDIT) -r "$$req" --vulnerability-service=pypi --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2025-185; \
 	done
 	docker compose -f infra/docker-compose.yml --profile sap config -q
-	docker compose -f infra/docker-compose.yml --profile sap build
+	docker compose -f infra/docker-compose.yml --profile sap up -d --build --force-recreate
 	bash scripts/wait_for_health.sh
 	$(MAKE) test
 	$(MAKE) smoke

@@ -56,6 +56,19 @@ def scoped_prefix(ctx: dict[str, Any] | None = None) -> str:
 def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     ctx = ctx if ctx is not None else get_security_context()
     tenant, workspace = scope_values(ctx)
+    if tenant and workspace:
+        scope = f"tenant_id={tenant}/workspace_id={workspace}/"
+        allowed_prefixes = [
+            f"raw/{CARTRIDGE_ID}/{scope}",
+            f"silver/{CARTRIDGE_ID}/{scope}",
+            f"gold/{CARTRIDGE_ID}/{scope}",
+        ]
+    else:
+        allowed_prefixes = [
+            f"raw/{CARTRIDGE_ID}/",
+            f"silver/{CARTRIDGE_ID}/",
+            f"gold/{CARTRIDGE_ID}/",
+        ]
     base: dict[str, Any] = {
         "trusted": True,
         "source": SERVICE_SOURCE,
@@ -63,11 +76,7 @@ def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, 
         "permissions": ["datasets.read", "datasets.write"],
         "allowed_buckets": ["lakehouse"],
         "allowed_cartridges": [CARTRIDGE_ID],
-        "allowed_prefixes": [
-            f"raw/{CARTRIDGE_ID}/",
-            f"silver/{CARTRIDGE_ID}/",
-            f"gold/{CARTRIDGE_ID}/",
-        ],
+        "allowed_prefixes": allowed_prefixes,
     }
     if isinstance(ctx, dict):
         base["request_user_id"] = ctx.get("user_id") or ctx.get("request_user_id")

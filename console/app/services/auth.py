@@ -56,14 +56,18 @@ def _login_attempt_lockout_disabled() -> bool:
 
 _ALLOWED_INTERNAL_SERVICES_TO_KEY_ENV: dict[str, str | None] = {
     "workspace": "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
-    # Built-in cartridges share the generic cartridge key after their
-    # cartridge-specific worker identity has been authenticated.
-    "cartridge-replicon":           "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-    "cartridge-hubspot":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-    "cartridge-sap_hcm":            "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-    "cartridge-sap_s4hana":         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
-    "cartridge-sap_successfactors": "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+    "replicon": "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
+    "cartridge-replicon": "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
     "hubspot": "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+    "cartridge-hubspot": "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+    "sap_hcm": "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+    "cartridge-sap_hcm": "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+    "sap_s4hana": "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+    "cartridge-sap_s4hana": "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+    "sap_successfactors": "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+    "cartridge-sap_successfactors": "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+    "salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
+    "cartridge-salesforce": "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     "airflow": "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
     # The old whitelist allowed these too; kept via legacy key only outside prod.
     "console":    None,

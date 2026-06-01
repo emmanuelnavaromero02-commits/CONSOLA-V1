@@ -14,6 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATION = REPO / "infra/init/42_cartridges_in_mcp_servers.sql"
+BACKFILL = REPO / "infra/init/96_salesforce_mcp_server_registry.sql"
 
 
 def _src() -> str:
@@ -22,11 +23,19 @@ def _src() -> str:
 
 def test_migration_exists():
     assert MIGRATION.exists(), f"missing {MIGRATION}"
+    assert BACKFILL.exists(), f"missing {BACKFILL}"
 
 
 def test_migration_42_adds_builtin_cartridges():
     src = _src()
-    for cart_id in ("hubspot", "replicon", "sap_hcm", "sap_successfactors", "sap_s4hana"):
+    for cart_id in (
+        "hubspot",
+        "replicon",
+        "salesforce",
+        "sap_hcm",
+        "sap_successfactors",
+        "sap_s4hana",
+    ):
         assert f"'{cart_id}'" in src, (
             f"migration 42 missing INSERT for cartridge {cart_id!r}"
         )
@@ -37,7 +46,7 @@ def test_migration_42_uses_cartridge_category():
     manifest filter (which groups by category) sees them in the
     right bucket."""
     src = _src()
-    assert src.count("'cartridge'") >= 5
+    assert src.count("'cartridge'") >= 6
 
 
 def test_migration_42_idempotent():
@@ -72,9 +81,31 @@ def test_migration_42_ordering():
     names = sorted(p.name for p in init.glob("*.sql"))
     assert names.index("00_schema.sql") < names.index("42_cartridges_in_mcp_servers.sql")
     assert names.index("41_copilot_query_indexes.sql") < names.index("42_cartridges_in_mcp_servers.sql")
+    assert names.index("42_cartridges_in_mcp_servers.sql") < names.index("96_salesforce_mcp_server_registry.sql")
 
 
-def test_mcp_registry_startup_includes_4_cartridges():
+def test_salesforce_backfill_migration_idempotent_and_preserves_health_state():
+    """Existing DBs may have already run migration 42 before Salesforce was
+    listed. The backfill must add/update only static metadata and leave
+    runtime-owned registry columns alone."""
+    src = BACKFILL.read_text(encoding="utf-8")
+    assert "'salesforce'" in src
+    assert "'http://salesforce:8205'" in src
+    assert "'cartridge'" in src
+    assert "ON CONFLICT (id) DO UPDATE" in src
+    set_clause_match = re.search(
+        r"ON CONFLICT \(id\) DO UPDATE SET\b(.+?);",
+        src,
+        re.DOTALL,
+    )
+    assert set_clause_match, "DO UPDATE SET clause not found"
+    set_body = set_clause_match.group(1)
+    assert "tools" not in set_body
+    assert "healthy" not in set_body
+    assert "last_seen" not in set_body
+
+
+def test_mcp_registry_startup_includes_builtin_cartridges():
     """v1.43.1: console boot must HTTP-sync each cartridge's /mcp/tools.
     Verify by reading the source — the builtin list in startup() has
     entries for all built-in cartridges with category='cartridge'."""
@@ -83,13 +114,20 @@ def test_mcp_registry_startup_includes_4_cartridges():
     m = re.search(r"async def startup\(\).*?\n    for server in builtin:", src, re.DOTALL)
     assert m, "startup() function not found"
     body = m.group(0)
-    for cart_id in ("hubspot", "replicon", "sap_hcm", "sap_successfactors", "sap_s4hana"):
+    for cart_id in (
+        "hubspot",
+        "replicon",
+        "salesforce",
+        "sap_hcm",
+        "sap_successfactors",
+        "sap_s4hana",
+    ):
         assert f'"id":          "{cart_id}"' in body, (
             f"startup() missing cartridge {cart_id!r}"
         )
     # And every cartridge is in the cartridge category, not the
     # legacy 'mcp' or 'monitoring' buckets.
-    assert body.count('"category":    "cartridge"') == 5
+    assert body.count('"category":    "cartridge"') == 6
 
 
 def test_mcp_registry_startup_cartridge_urls_from_env():
@@ -99,6 +137,7 @@ def test_mcp_registry_startup_cartridge_urls_from_env():
     for env_var, default in [
         ("HUBSPOT_URL",           "http://hubspot:8210"),
         ("REPLICON_URL",           "http://replicon:8201"),
+        ("SALESFORCE_URL",         "http://salesforce:8205"),
         ("SAP_HCM_URL",            "http://sap-hcm:8202"),
         ("SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203"),
         ("SAP_S4HANA_URL",         "http://sap-s4hana:8204"),

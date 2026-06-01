@@ -159,6 +159,7 @@ services:
       INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE:-}
       INTERNAL_API_KEY_REPLICON_TO_CONSOLE: ${INTERNAL_API_KEY_REPLICON_TO_CONSOLE:-}
       INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: ${INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE:-}
+      INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: ${INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE:-}
       INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:-}
       INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:-}
       INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:-}
@@ -183,6 +184,12 @@ services:
       MCP_INFRA_URL:     http://mcp-infra:8010
       VAULT_URL:         http://vault:8300
       CONSOLE_INTERNAL_URL: http://console:8000
+      REPLICON_URL:      ${REPLICON_URL:-http://replicon:8201}
+      HUBSPOT_URL:       ${HUBSPOT_URL:-http://hubspot:8210}
+      SALESFORCE_URL:    ${SALESFORCE_URL:-http://salesforce:8205}
+      SAP_HCM_URL:       ${SAP_HCM_URL:-http://sap-hcm:8202}
+      SAP_S4HANA_URL:    ${SAP_S4HANA_URL:-http://sap-s4hana:8204}
+      SAP_SUCCESSFACTORS_URL: ${SAP_SUCCESSFACTORS_URL:-http://sap-successfactors:8203}
       AGENT_RUNNER_TOKEN: ${AGENT_RUNNER_TOKEN:-}
       SUPERSET_URL:      http://superset:8088
       AIRFLOW_PUBLIC_URL: ${AIRFLOW_PUBLIC_URL:-http://localhost:8082}
@@ -494,6 +501,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-production}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: ${INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE:?INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE is required}
       INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
       INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
       INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
@@ -1031,6 +1039,7 @@ services:
       # without operators having to touch compose first.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
+      SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
       # Conexiones API — definir aquí o en Airflow UI > Admin > Connections
     ports:
       - "8082:8080"
@@ -1126,6 +1135,7 @@ services:
       # v1.43.1 R1 Security-F3: mirror docker-compose.aws.yml.
       REPLICON_URL:           "${REPLICON_URL:-http://replicon:8201}"
       HUBSPOT_URL:            "${HUBSPOT_URL:-http://hubspot:8210}"
+      SALESFORCE_URL:         "${SALESFORCE_URL:-http://salesforce:8205}"
     volumes:
       # Kept read-write on purpose: the per-cartridge DAGs below are nested
       # bind mounts under this directory (/opt/airflow/dags/<cartridge>), and

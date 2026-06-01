@@ -144,7 +144,7 @@ knowledge_bits:
 
   - id: kb_sap_s4hana_business_partner_anomalies
     name: "Anomalías de business partners"
-    description: "¿Qué problemas de calidad tengo en mis partners de negocio? Conteo por tipo de anomalía y severidad, desde el gold business_partner_anomalies."
+    description: "¿Qué problemas de calidad tengo en mis partners de negocio? Conteo por tipo de anomalía y severidad, desde el gold business_partner_anomalies. Parcial: faltan checks de tax number y bloqueo operacional."
     sql: >
       SELECT anomaly_type, severity, COUNT(*) AS total_cases
       FROM read_parquet('s3://{bucket}/gold/sap_s4hana/business_partner_anomalies/**/*.parquet',

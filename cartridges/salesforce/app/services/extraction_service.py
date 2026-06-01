@@ -59,6 +59,7 @@ def run_entity(
     watermark_field = config.get("watermark_field")
     page_size = config.get("page_size", 200)
     raw_select_fields = config.get("select_fields", [])
+    security_context = config.get("security_context")
     if isinstance(raw_select_fields, (list, tuple)):
         select_fields = list(raw_select_fields)
     elif isinstance(raw_select_fields, str) and raw_select_fields:
@@ -113,6 +114,7 @@ def run_entity(
                 load_type=mode,
                 watermark_field=watermark_field,
                 expected_columns=expected_columns,
+                security_context=security_context,
             )
             batch_num += 1
             buffer = []

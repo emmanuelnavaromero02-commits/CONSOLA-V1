@@ -83,6 +83,12 @@ airflow/dags/replicon_extract.py
 _audit_out/
 artifacts/
 *.zip
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+**/coverage/
+**/htmlcov/
 
 # Terraform state and local operator secrets
 terraform.tfstate

@@ -270,6 +270,13 @@ async def _trigger_airflow(
         "watermark_field":   config.get("watermark_field") or "",
         "connection_id":     config.get("connection_id") or DEFAULT_CONN_ID,
     }
+    security_context = config.get("security_context")
+    if isinstance(security_context, dict):
+        conf["security_context"] = security_context
+        if security_context.get("tenant_id"):
+            conf["tenant_id"] = security_context["tenant_id"]
+        if security_context.get("workspace_id"):
+            conf["workspace_id"] = security_context["workspace_id"]
     url = f"{settings.airflow_url}/api/v1/dags/hubspot_extract/dagRuns"
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(

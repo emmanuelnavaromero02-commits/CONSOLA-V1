@@ -17,6 +17,12 @@ from fastapi import HTTPException
 LEGACY     = "legacy_internal_key_with_more_than_thirty_two_characters_aaaa"
 WS_KEY     = "workspace_to_console_dedicated_key_64_chars_xxxxxxxxxxxxxxxxxx"
 CART_KEY   = "cartridge_to_console_dedicated_key_64_chars_yyyyyyyyyyyyyyyyy"
+REPLICON_KEY = "replicon_to_console_dedicated_key_64_chars_aaaaaaaaaaaaaaa"
+HUBSPOT_KEY = "hubspot_to_console_dedicated_key_64_chars_bbbbbbbbbbbbbbbb"
+SAP_HCM_KEY = "sap_hcm_to_console_dedicated_key_64_chars_ccccccccccccccc"
+SAP_S4HANA_KEY = "sap_s4hana_to_console_dedicated_key_64_chars_dddddddddddd"
+SAP_SUCCESSFACTORS_KEY = "sap_successfactors_to_console_dedicated_key_64_chars"
+SALESFORCE_KEY = "salesforce_to_console_dedicated_key_64_chars_zzzzzzzzzzz"
 
 
 def _module(**attrs):
@@ -31,6 +37,12 @@ def auth_module(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
     monkeypatch.setenv("INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE", WS_KEY)
     monkeypatch.setenv("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", CART_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_REPLICON_TO_CONSOLE", REPLICON_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE", HUBSPOT_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE", SAP_HCM_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE", SAP_S4HANA_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", SAP_SUCCESSFACTORS_KEY)
+    monkeypatch.setenv("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE", SALESFORCE_KEY)
     monkeypatch.setitem(sys.modules, "bcrypt", _module())
     monkeypatch.setitem(sys.modules, "asyncpg", _module())
     import app.services as _svc_pkg
@@ -54,9 +66,56 @@ def test_workspace_pair_key_accepted(auth_module):
 
 
 def test_cartridge_pair_key_accepted_per_cartridge(auth_module):
-    for cart in ("cartridge-replicon", "cartridge-sap_hcm",
-                 "cartridge-sap_s4hana", "cartridge-sap_successfactors"):
-        auth_module.verify_internal_api_key(x_api_key=CART_KEY, x_internal_service=cart)
+    pairs = {
+        "replicon": REPLICON_KEY,
+        "cartridge-replicon": REPLICON_KEY,
+        "hubspot": HUBSPOT_KEY,
+        "cartridge-hubspot": HUBSPOT_KEY,
+        "sap_hcm": SAP_HCM_KEY,
+        "cartridge-sap_hcm": SAP_HCM_KEY,
+        "sap_s4hana": SAP_S4HANA_KEY,
+        "cartridge-sap_s4hana": SAP_S4HANA_KEY,
+        "sap_successfactors": SAP_SUCCESSFACTORS_KEY,
+        "cartridge-sap_successfactors": SAP_SUCCESSFACTORS_KEY,
+        "salesforce": SALESFORCE_KEY,
+        "cartridge-salesforce": SALESFORCE_KEY,
+    }
+    for service, key in pairs.items():
+        auth_module.verify_internal_api_key(x_api_key=key, x_internal_service=service)
+
+
+def test_generic_cartridge_key_rejected_for_all_builtin_cartridges(auth_module, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    for service in (
+        "replicon",
+        "cartridge-replicon",
+        "hubspot",
+        "cartridge-hubspot",
+        "sap_hcm",
+        "cartridge-sap_hcm",
+        "sap_s4hana",
+        "cartridge-sap_s4hana",
+        "sap_successfactors",
+        "cartridge-sap_successfactors",
+        "salesforce",
+        "cartridge-salesforce",
+    ):
+        with pytest.raises(HTTPException) as exc:
+            auth_module.verify_internal_api_key(x_api_key=CART_KEY, x_internal_service=service)
+        assert exc.value.status_code == 403
+
+
+def test_salesforce_uses_dedicated_console_key(auth_module):
+    auth_module.verify_internal_api_key(
+        x_api_key=SALESFORCE_KEY,
+        x_internal_service="cartridge-salesforce",
+    )
+    with pytest.raises(HTTPException) as exc:
+        auth_module.verify_internal_api_key(
+            x_api_key=CART_KEY,
+            x_internal_service="cartridge-salesforce",
+        )
+    assert exc.value.status_code == 403
 
 
 def test_workspace_key_does_not_authorize_cartridge_caller(auth_module):
@@ -65,7 +124,8 @@ def test_workspace_key_does_not_authorize_cartridge_caller(auth_module):
     assert exc.value.status_code == 403
 
 
-def test_legacy_key_still_accepted(auth_module):
+def test_legacy_key_still_accepted_outside_production(auth_module, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
     auth_module.verify_internal_api_key(x_api_key=LEGACY, x_internal_service="workspace")
     auth_module.verify_internal_api_key(x_api_key=LEGACY, x_internal_service="cartridge-replicon")
 

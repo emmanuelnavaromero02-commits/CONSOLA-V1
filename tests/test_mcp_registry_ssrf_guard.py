@@ -30,6 +30,7 @@ def _run(coro):
     [
         "http://replicon:8201/health",
         "http://hubspot:8210/health",
+        "http://salesforce:8205/health",
         "http://sap-hcm:8202/mcp",
         "http://sap-s4hana:8204/mcp",
         "http://sap-successfactors:8203/mcp",
@@ -123,3 +124,14 @@ def test_invoke_refuses_malicious_stored_url(registry_module, monkeypatch):
 def test_mcp_registry_allows_operator_configured_private_cidr(registry_module, monkeypatch):
     monkeypatch.setenv("MCP_ALLOWED_CIDRS", "10.42.0.0/16")
     registry_module._validate_mcp_url("http://10.42.5.10:8201/mcp")
+
+
+def test_salesforce_registry_uses_console_to_cartridge_pair_key(registry_module, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "pair-key")
+    monkeypatch.setenv("INTERNAL_API_KEY", "legacy-key")
+
+    headers = registry_module._headers_for("salesforce", "http://salesforce:8205")
+
+    assert headers["x-api-key"] == "pair-key"
+    assert headers["x-internal-service"] == "console"

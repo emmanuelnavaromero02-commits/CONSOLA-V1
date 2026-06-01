@@ -33,15 +33,43 @@ def test_rls_default_deny(engine):
     assert "WHERE1=0" in rls_sql.replace(" ", "")
     assert len(params) == 0
 
-def test_rls_tenant_isolation(engine):
+def test_rls_default_denies_tenant_only_gold_table(engine):
     e, mock_conn = engine
     mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
     sql = "SELECT * FROM pggold.gold_sales"
     ctx = {"tenant_id": "tenant123"}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
-    assert "tenant_id = ?" in rls_sql
-    assert "tenant123" in params
+    assert "WHERE1=0" in rls_sql.replace(" ", "")
+    assert params == []
+
+
+def test_rls_requires_tenant_and_workspace_when_both_columns_exist(engine):
+    e, mock_conn = engine
+    mock_conn.execute.return_value.fetchall.return_value = [
+        ('tenant_id', 'varchar'),
+        ('workspace_id', 'varchar'),
+    ]
+    sql = "SELECT * FROM pggold.gold_sales"
+    ctx = {"tenant_id": "tenant123", "workspace_id": "ws-456"}
+
+    rls_sql, params = e.get_rls_filters(sql, ctx)
+    assert "tenant_id = ? AND workspace_id = ?" in rls_sql
+    assert params == ["tenant123", "ws-456"]
+
+
+def test_rls_default_denies_when_workspace_context_missing(engine):
+    e, mock_conn = engine
+    mock_conn.execute.return_value.fetchall.return_value = [
+        ('tenant_id', 'varchar'),
+        ('workspace_id', 'varchar'),
+    ]
+    sql = "SELECT * FROM pggold.gold_sales"
+    ctx = {"tenant_id": "tenant123"}
+
+    rls_sql, params = e.get_rls_filters(sql, ctx)
+    assert "WHERE1=0" in rls_sql.replace(" ", "")
+    assert params == []
 
 def test_rls_intercepts_pggold_table_without_gold_prefix(engine):
     e, mock_conn = engine
@@ -51,8 +79,8 @@ def test_rls_intercepts_pggold_table_without_gold_prefix(engine):
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
     assert "pggold.billing" in rls_sql
-    assert "tenant_id = ?" in rls_sql
-    assert "tenant-billing" in params
+    assert "WHERE1=0" in rls_sql.replace(" ", "")
+    assert params == []
 
 def test_rls_workspace_isolation(engine):
     e, mock_conn = engine
@@ -71,8 +99,8 @@ def test_rls_user_isolation(engine):
     ctx = {"id": "user-789"}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
-    assert "user_id = ?" in rls_sql
-    assert "user-789" in params
+    assert "WHERE1=0" in rls_sql.replace(" ", "")
+    assert params == []
 
 @pytest.mark.parametrize("sql", [
     'SELECT * FROM pggold."gold_sales"',
@@ -87,13 +115,17 @@ def test_rls_user_isolation(engine):
 ])
 def test_rls_blocks_bypass_attempts(engine, sql):
     e, mock_conn = engine
-    mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
-    ctx = {"tenant_id": "tenantA"}
+    mock_conn.execute.return_value.fetchall.return_value = [
+        ('tenant_id', 'varchar'),
+        ('workspace_id', 'varchar'),
+    ]
+    ctx = {"tenant_id": "tenantA", "workspace_id": "workspaceA"}
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
 
-    assert "tenant_id = ?" in rls_sql, f"RLS bypass for: {sql!r} -> {rls_sql!r}"
+    assert "tenant_id = ? AND workspace_id = ?" in rls_sql, f"RLS bypass for: {sql!r} -> {rls_sql!r}"
     assert "tenantA" in params
+    assert "workspaceA" in params
 
 
 def test_rls_admin_bypass(engine):
@@ -114,13 +146,16 @@ def test_rls_admin_role_alone_does_not_bypass(engine):
     body alone — admin bypass requires the upstream service to opt in
     explicitly after authenticating its own user."""
     e, mock_conn = engine
-    mock_conn.execute.return_value.fetchall.return_value = [('tenant_id', 'varchar')]
+    mock_conn.execute.return_value.fetchall.return_value = [
+        ('tenant_id', 'varchar'),
+        ('workspace_id', 'varchar'),
+    ]
     sql = "SELECT * FROM pggold.gold_sales"
     ctx = {"role": "admin"}  # no server trust marker
 
     rls_sql, params = e.get_rls_filters(sql, ctx)
-    assert "tenant_id = ?" in rls_sql, f"forged admin bypassed RLS: {rls_sql!r}"
-    assert params == [""], "tenant filter should be applied with empty tenant"
+    assert "WHERE1=0" in rls_sql.replace(" ", ""), f"forged admin bypassed RLS: {rls_sql!r}"
+    assert params == []
 
 def test_preview_sql_returns_schema_dicts(engine):
     e, mock_conn = engine
@@ -229,7 +264,10 @@ def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
     e, mock_conn = engine
 
     describe_cursor = MagicMock()
-    describe_cursor.fetchall.return_value = [('tenant_id', 'varchar')]
+    describe_cursor.fetchall.return_value = [
+        ('tenant_id', 'varchar'),
+        ('workspace_id', 'varchar'),
+    ]
 
     execute_cursor = MagicMock()
     execute_cursor.description = [('col', 'VARCHAR')]
@@ -239,14 +277,21 @@ def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
     mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
 
     sql = "SELECT col FROM pggold.gold_sales WHERE col = ?"
-    e.preview_sql(sql, params=["Garcia"], user_context={"tenant_id": "t-123"})
+    e.preview_sql(
+        sql,
+        params=["Garcia"],
+        user_context={"tenant_id": "t-123", "workspace_id": "ws-123"},
+    )
 
-    # Final execute call must have combined_params = [rls_param, caller_param]
+    # Final execute call must have combined_params = [rls params..., caller_param]
     final_call = mock_conn.execute.call_args_list[-1]
     _, combined_params = final_call[0]
     assert "t-123" in combined_params, "RLS tenant_id param missing from execute call"
+    assert "ws-123" in combined_params, "RLS workspace_id param missing from execute call"
     assert "Garcia" in combined_params, "Caller param missing from execute call"
     assert combined_params.index("t-123") < combined_params.index("Garcia"), \
+        "RLS params must precede caller params (positional order)"
+    assert combined_params.index("ws-123") < combined_params.index("Garcia"), \
         "RLS params must precede caller params (positional order)"
 
 
@@ -298,7 +343,10 @@ def test_query_dataset_does_not_double_apply_rls(engine):
     e, mock_conn = engine
 
     describe_cursor = MagicMock()
-    describe_cursor.fetchall.return_value = [('tenant_id', 'varchar')]
+    describe_cursor.fetchall.return_value = [
+        ('tenant_id', 'varchar'),
+        ('workspace_id', 'varchar'),
+    ]
 
     execute_cursor = MagicMock()
     execute_cursor.description = [('col', 'VARCHAR')]
@@ -307,11 +355,17 @@ def test_query_dataset_does_not_double_apply_rls(engine):
     mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
 
     ds = {"name": "gold_sales", "sql_def": "SELECT col FROM pggold.gold_sales"}
-    e.query_dataset(ds, filters={"col": "x"}, user_context={"tenant_id": "t-abc"})
+    e.query_dataset(
+        ds,
+        filters={"col": "x"},
+        user_context={"tenant_id": "t-abc", "workspace_id": "ws-abc"},
+    )
 
-    # Check the final SELECT call — tenant_id should appear exactly once
+    # Check the final SELECT call — tenant_id/workspace_id should appear exactly once
     final_sql_call = mock_conn.execute.call_args_list[-1][0][0]
     assert final_sql_call.count("tenant_id = ?") == 1, \
+        f"RLS applied multiple times: {final_sql_call}"
+    assert final_sql_call.count("workspace_id = ?") == 1, \
         f"RLS applied multiple times: {final_sql_call}"
 
 

@@ -190,12 +190,67 @@ def _lesson_insights(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 @_bind_to_core
+def _suggested_action_from_lesson(lesson: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = _details(lesson.get("metadata"))
+    if not metadata.get("autonomous_learning"):
+        return None
+    action = metadata.get("suggested_action")
+    if not isinstance(action, dict):
+        return None
+    template_id = str(action.get("template_id") or "").strip()
+    if not template_id:
+        return None
+    return {
+        "template_id": template_id,
+        "template_type": action.get("template_type"),
+        "label": action.get("label") or template_id.replace("_", " ").title(),
+        "action_kind": action.get("action_kind"),
+        "target": action.get("target") or lesson.get("cartridge_id"),
+        "adapter": action.get("adapter"),
+        "confidence": lesson.get("confidence"),
+        "lesson_id": lesson.get("id"),
+        "source_item_id": lesson.get("item_id"),
+        "source_decision_id": lesson.get("source_decision_id"),
+        "reason": lesson.get("rule"),
+    }
+
+
+@_bind_to_core
+def _suggested_actions_from_lessons(
+    item: dict[str, Any],
+    lesson_rows: Iterable[dict[str, Any]],
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for lesson in lesson_rows:
+        if not _lesson_matches_item(lesson, item):
+            continue
+        suggestion = _suggested_action_from_lesson(lesson)
+        if not suggestion:
+            continue
+        key = str(suggestion.get("template_id") or suggestion.get("lesson_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        suggestions.append(suggestion)
+    suggestions.sort(key=lambda row: float(row.get("confidence") or 0.0), reverse=True)
+    return suggestions[: max(1, min(int(limit or 5), 20))]
+
+
+@_bind_to_core
 def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not items:
         return []
     if not lesson_rows:
         return [
-            _with_omega({**item, "related_lessons": item.get("related_lessons") or [], "lesson_count": 0})
+            _with_omega({
+                **item,
+                "related_lessons": item.get("related_lessons") or [],
+                "lesson_count": 0,
+                "suggested_actions": item.get("suggested_actions") or [],
+            })
             for item in items
         ]
 
@@ -220,6 +275,7 @@ def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict
             "related_lessons": related[:5],
             "lesson_count": len(related),
             "learned_rules": rules[:5],
+            "suggested_actions": _suggested_actions_from_lessons(item, related),
         }))
     enriched.sort(key=_status_sort_key)
     return enriched
@@ -304,10 +360,18 @@ def _threshold_ref(
 
 
 @_bind_to_core
-def _source_state_item(source: ControlRoomSource, status: str, error: str | None = None) -> dict[str, Any] | None:
-    if status == "ok":
+def _source_state_item(
+    source: ControlRoomSource,
+    status: str,
+    error: str | None = None,
+    data_readiness: str | None = None,
+    readiness_reason: str | None = None,
+    readiness_blockers: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    readiness = data_readiness or ("ready" if status == "ok" else status)
+    if status == "ok" and readiness == "ready":
         return None
-    severity = "high" if status in {"unavailable", "invalid_schema", "blocked", "no_permission"} else "medium"
+    severity = "high" if status in {"unavailable", "invalid_schema", "blocked", "no_permission"} or readiness == "stub" else "medium"
     title_by_status = {
         "empty": "Fuente sin datos materializados",
         "missing": "Dataset requerido no registrado",
@@ -315,6 +379,8 @@ def _source_state_item(source: ControlRoomSource, status: str, error: str | None
         "invalid_schema": "Dataset con contrato invalido",
         "blocked": "Cartucho inactivo o bloqueado",
         "no_permission": "Cartucho sin permiso para este usuario",
+        "partial": "Fuente parcial: no apta para operacion completa",
+        "stub": "Fuente stub: no apta para decisiones operativas",
     }
     description_by_status = {
         "empty": f"{source.dataset} existe pero no tiene filas para el workspace activo.",
@@ -323,18 +389,29 @@ def _source_state_item(source: ControlRoomSource, status: str, error: str | None
         "invalid_schema": f"{source.dataset} no cumple el contrato esperado por la Sala de Control.",
         "blocked": f"{source.module_label} esta instalado pero no esta activo para el workspace.",
         "no_permission": f"{source.module_label} no esta permitido para este usuario.",
+        "partial": readiness_reason or f"{source.dataset} devuelve datos, pero su contrato aun es parcial.",
+        "stub": readiness_reason or f"{source.dataset} conserva placeholders/TODO y no debe contarse como operativo.",
     }
     item = _base_item(
         source,
-        {"severity": severity, "details": {"source_status": status, "error": error or ""}},
-        f"source_{status}",
+        {
+            "severity": severity,
+            "details": {
+                "source_status": status,
+                "data_readiness": readiness,
+                "readiness_reason": readiness_reason or "",
+                "readiness_blockers": list(readiness_blockers or ()),
+                "error": error or "",
+            },
+        },
+        f"source_{readiness}",
         source.dataset,
         source.dataset,
     )
     item.update({
         "kind": "source_state",
-        "title": title_by_status.get(status, "Fuente requiere atencion"),
-        "description": description_by_status.get(status, f"{source.dataset} requiere revision."),
+        "title": title_by_status.get(readiness, title_by_status.get(status, "Fuente requiere atencion")),
+        "description": description_by_status.get(readiness, description_by_status.get(status, f"{source.dataset} requiere revision.")),
         "recommendation": "Validar instalacion, credenciales, materializacion y scope tenant/workspace antes de operar con el cliente.",
         "root_cause": "La cadena de datos no esta lista para entregar senales de negocio confiables.",
         "impact": "El cartucho puede aparecer activo pero sin datos accionables en la sala.",
@@ -603,6 +680,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "lessons": {
                 "rules": lessons,
                 "applied": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
+                "suggested_actions": item.get("suggested_actions") if isinstance(item.get("suggested_actions"), list) else [],
             },
         },
     }
@@ -1525,6 +1603,41 @@ async def list_lessons(
     }
 
 
+@_bind_to_core
+async def get_suggested_actions(
+    user: dict,
+    item: dict[str, Any],
+    *,
+    limit: int = 5,
+) -> dict[str, Any]:
+    lesson_rows = await _load_lesson_rows(
+        user,
+        cartridge_id=item.get("cartridge"),
+        anomaly_type=item.get("anomaly_type"),
+        limit=100,
+    )
+    item_lessons = await _load_lesson_rows(user, item_id=item.get("id"), limit=100)
+    lessons = _dedupe_lessons([*lesson_rows, *item_lessons])
+    suggestions = _suggested_actions_from_lessons(item, lessons, limit=limit)
+    return {
+        "item_id": item.get("id"),
+        "cartridge_id": item.get("cartridge"),
+        "anomaly_type": item.get("anomaly_type"),
+        "suggested_actions": suggestions,
+    }
+
+
+class ControlRoomService:
+    async def get_suggested_actions(
+        self,
+        user: dict,
+        item: dict[str, Any],
+        *,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        return await get_suggested_actions(user, item, limit=limit)
+
+
 __all__ = (
     '_row_to_public',
     '_threshold_to_public',
@@ -1533,6 +1646,8 @@ __all__ = (
     '_lesson_to_public',
     '_load_lesson_rows',
     '_lesson_insights',
+    '_suggested_action_from_lesson',
+    '_suggested_actions_from_lessons',
     '_attach_lessons_to_items',
     '_threshold_map',
     '_threshold_rule',
@@ -1568,5 +1683,7 @@ __all__ = (
     '_dedupe_lessons',
     'list_thresholds',
     'upsert_threshold',
-    'list_lessons'
+    'list_lessons',
+    'get_suggested_actions',
+    'ControlRoomService'
 )

@@ -82,7 +82,6 @@ def _vault_url() -> str:
 
 from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest
 from app.services import cartridge_service
-from app.services import marketplace_service
 from app.services import agent_service as _agents
 from app.services import agent_runtime as _agent_runtime
 from app.services import auth as _auth
@@ -279,6 +278,10 @@ _CARTRIDGE_VAULT_REVEAL_KEYS: dict[str, dict[str, tuple[str, ...]]] = {
         "hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
         "cartridge-hubspot": ("INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",),
         "airflow": ("INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",),
+    },
+    "salesforce": {
+        "salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
+        "cartridge-salesforce": ("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",),
     },
     "sap_hcm": {
         "cartridge-sap_hcm": ("INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",),
@@ -1201,6 +1204,11 @@ def _is_api_like(path: str, accept: str) -> bool:
     return "application/json" in (accept or "")
 
 
+def _is_direct_static_html_request(path: str) -> bool:
+    lowered = path.lower()
+    return lowered.startswith("/static/") and lowered.endswith((".html", ".htm"))
+
+
 def _uses_rbac_dependency(path: str) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in _RBAC_DEPENDENCY_PREFIXES)
 
@@ -1217,6 +1225,9 @@ def _is_agent_runner_request(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    if _is_direct_static_html_request(path):
+        return _apply_security_headers(JSONResponse({"detail": "not found"}, status_code=404), path)
 
     # Internal routes (server-to-server) bypass session auth.
     # Their own router-level dependency (verify_internal_api_key) handles auth via header.
@@ -1717,8 +1728,35 @@ async def _dependency_health(name: str, url: str, server: str | None = None) -> 
         return {"status": "down", "error": type(exc).__name__}
 
 
+async def _control_room_data_check(*, require_data: bool = False) -> dict:
+    try:
+        pool = await _get_db_pool()
+        async with pool.acquire() as conn:
+            operational_items = int(await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                  FROM control_room_items
+                 WHERE COALESCE(item_kind, '') <> 'source_state'
+                """
+            ) or 0)
+    except Exception as exc:
+        logger.warning("readiness probe failed for control_room_data", exc_info=True)
+        return {
+            "status": "degraded",
+            "required": require_data,
+            "operational_items": 0,
+            "error": type(exc).__name__,
+        }
+    return {
+        "status": "up" if operational_items > 0 else "degraded",
+        "required": require_data,
+        "operational_items": operational_items,
+        "reason": "" if operational_items > 0 else "no_operational_control_room_items",
+    }
+
+
 @app.get("/readyz")
-async def readyz():
+async def readyz(request: Request):
     """Dependency-aware readiness probe.
 
     `/healthz` only proves the process can answer. `/readyz` is stricter:
@@ -1743,7 +1781,19 @@ async def readyz():
     for name, (url, server) in deps.items():
         checks[name] = await _dependency_health(name, url, server)
 
-    ok = all(check.get("status") == "up" for check in checks.values())
+    require_data = (
+        os.environ.get("CONTROL_ROOM_REQUIRE_DATA_READY", "").strip().lower() in {"1", "true", "yes", "on"}
+        or str(request.query_params.get("require_data") or "").strip().lower() in {"1", "true", "yes", "on"}
+    )
+    checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
+
+    dependency_ok = all(
+        check.get("status") == "up"
+        for name, check in checks.items()
+        if name != "control_room_data"
+    )
+    data_ok = checks["control_room_data"].get("status") == "up" or not require_data
+    ok = dependency_ok and data_ok
     return JSONResponse(
         {"ok": ok, "service": "console", "checks": checks},
         status_code=200 if ok else 503,
@@ -3647,224 +3697,6 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
 @app.get("/studio", dependencies=[Depends(require_permission("studio.read"))])
 async def studio_page():
     return FileResponse(STATIC / "studio.html")
-
-@app.get("/marketplace", dependencies=[Depends(require_permission("marketplace.read"))])
-async def marketplace_page(request: Request):
-    from app.routers.pages import _console_next_response
-
-    return _console_next_response(request, "marketplace/index.html")
-
-@app.get("/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
-async def customer_cartridges_page(request: Request):
-    from app.routers.pages import _console_next_response
-
-    return _console_next_response(request, "customer/cartridges/index.html")
-
-@app.get(
-    "/admin/installations",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def admin_installations_page(request: Request):
-    from app.routers.pages import _console_next_response
-
-    return _console_next_response(request, "admin/installations/index.html")
-
-@app.get(
-    "/admin/licenses",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def admin_licenses_page(request: Request):
-    from app.routers.pages import _console_next_response
-
-    return _console_next_response(request, "admin/licenses/index.html")
-
-@app.get("/api/marketplace/products", dependencies=[Depends(require_permission("marketplace.read"))])
-async def api_marketplace_products(user: dict = Depends(require_authenticated)):
-    try:
-        return await marketplace_service.list_products(user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.get("/api/marketplace/products/{cartridge_id}", dependencies=[Depends(require_permission("marketplace.read"))])
-async def api_marketplace_product(cartridge_id: str, user: dict = Depends(require_authenticated)):
-    try:
-        return {"product": await marketplace_service.get_product(cartridge_id, user)}
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(404, str(exc)) from exc
-
-@app.get("/api/marketplace/installations", dependencies=[Depends(require_permission("marketplace.read"))])
-async def api_marketplace_installations(user: dict = Depends(require_authenticated)):
-    try:
-        return await marketplace_service.list_installations(user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.get("/api/customer/cartridges", dependencies=[Depends(require_permission("marketplace.read"))])
-async def api_customer_cartridges(user: dict = Depends(require_authenticated)):
-    try:
-        return await marketplace_service.list_installations(user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/marketplace/products/{cartridge_id}/request",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.request")),
-    ],
-)
-async def api_marketplace_request(cartridge_id: str, user: dict = Depends(require_authenticated)):
-    try:
-        return await marketplace_service.request_product(cartridge_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/marketplace/products/{cartridge_id}/activate",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_marketplace_activate(cartridge_id: str, user: dict = Depends(require_authenticated)):
-    try:
-        return await marketplace_service.activate_product(cartridge_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/marketplace/installations/{installation_id}/retry",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.request")),
-    ],
-)
-async def api_marketplace_retry(installation_id: str, user: dict = Depends(require_authenticated)):
-    try:
-        return await marketplace_service.retry_installation(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        message = str(exc)
-        lowered = message.lower()
-        status = 403 if "permission" in lowered or "access" in lowered or "allowed" in lowered else (
-            409 if "approval" in lowered or "active" in lowered or "state" in lowered or "status" in lowered else 404
-        )
-        raise HTTPException(status, message) from exc
-
-@app.get(
-    "/api/admin/installations",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installations(user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.list_admin_installations(user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(403, str(exc)) from exc
-
-@app.get(
-    "/api/admin/installations/{installation_id}",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation(installation_id: str, user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.get_admin_installation(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(404, str(exc)) from exc
-
-@app.get(
-    "/api/admin/installations/{installation_id}/access",
-    dependencies=[
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation_access(installation_id: str, user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.list_installation_access(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(404, str(exc)) from exc
-
-@app.patch(
-    "/api/admin/installations/{installation_id}/access/{target_user_id}",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation_user_access(
-    installation_id: str,
-    target_user_id: int,
-    payload: dict = Body(default_factory=dict),
-    user: dict = Depends(get_current_global_user),
-):
-    try:
-        return await marketplace_service.set_installation_user_access(
-            installation_id,
-            target_user_id,
-            payload.get("mode"),
-            payload.get("reason"),
-            user,
-        )
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/admin/installations/{installation_id}/approve",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation_approve(installation_id: str, user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.approve_installation(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/admin/installations/{installation_id}/pause",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation_pause(installation_id: str, user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.pause_installation(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/admin/installations/{installation_id}/revoke",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation_revoke(installation_id: str, user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.revoke_installation(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-@app.post(
-    "/api/admin/installations/{installation_id}/reactivate",
-    dependencies=[
-        Depends(require_csrf),
-        Depends(require_permission("marketplace.admin")),
-    ],
-)
-async def api_admin_installation_reactivate(installation_id: str, user: dict = Depends(get_current_global_user)):
-    try:
-        return await marketplace_service.reactivate_installation(installation_id, user)
-    except marketplace_service.MarketplaceError as exc:
-        raise HTTPException(400, str(exc)) from exc
 
 def _viewer_redirect(request: Request, viewer_type: str, **params: str) -> RedirectResponse:
     query = dict(request.query_params)
@@ -5969,6 +5801,7 @@ from app.routers import copilot_memory as copilot_memory_router       # v1.44.2 
 from app.routers import copilot_workflows as copilot_workflows_router # v1.44.2 Tarea I
 from app.routers import dashboard as dashboard_router      # v1.44.1 Tarea E
 from app.routers import freshness as freshness_router
+from app.routers import marketplace as marketplace_router
 from app.routers import metrics as metrics_router
 from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
 from app.routers import studio as studio_router             # v1.44.3.3 Task B
@@ -5984,6 +5817,7 @@ app.include_router(control_room.router)
 app.include_router(security.router)
 app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)
+app.include_router(marketplace_router.router)
 app.include_router(metrics_router.router)
 app.include_router(copilot_router.router)
 app.include_router(dashboard_router.router)               # v1.44.1 Tarea E

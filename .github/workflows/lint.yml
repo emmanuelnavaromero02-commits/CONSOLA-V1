@@ -56,8 +56,15 @@ jobs:
       - name: ESLint
         run: npm --prefix console-next run lint
 
-      - name: Vitest
-        run: npm --prefix console-next run test
+      - name: Vitest coverage
+        run: npm --prefix console-next run test:coverage
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: console-next-coverage
+          path: console-next/coverage/
+          if-no-files-found: error
 
       - name: TypeScript
         run: npm --prefix console-next run typecheck

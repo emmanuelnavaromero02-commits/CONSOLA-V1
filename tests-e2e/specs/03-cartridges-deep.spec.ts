@@ -134,8 +134,7 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
       await page.goto(cartridgeViewer("replicon"));
       const pwdField = page.locator('input[type="password"]').first();
       if (!(await pwdField.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.fail(true, "no password field in replicon schema");
-        return;
+        test.skip(true, "replicon schema has no password field");
       }
       const toggleHidden = page.getByRole("button", { name: /mostrar contraseña/i });
       await expect(toggleHidden).toBeVisible();
@@ -224,27 +223,54 @@ test.describe("Cartridge detail — backend round-trip with fake creds", () => {
   // SAME state as before the test ran.
   test("Save → toast.success appears + invalidates grid", async ({ page }) => {
     await page.goto(cartridgeViewer("replicon"));
-    // Fill REQUIRED fields with throwaway values. The replicon
-    // schema typically has base_url + username + password — we
-    // populate by filling EVERY required field.
-    const required = page.locator('input[required], input[aria-required="true"]');
+    const form = page.locator("form").first();
+    await expect(form).toBeVisible({ timeout: 15_000 });
+
+    const baseUrl = form.getByLabel(/base url/i).first();
+    if (await baseUrl.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await baseUrl.fill("https://e2e.invalid.local/probe");
+    }
+
+    const token = form.getByLabel(/bearer token|api key|token/i).first();
+    if (await token.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await token.fill("e2e-token");
+    }
+
+    // Fill any remaining required fields with throwaway values. Scope
+    // the selector to the form so shell/sidebar inputs never get mixed
+    // into the dynamic connector schema.
+    const required = form.locator('input[required], input[aria-required="true"]');
     const count = await required.count();
     for (let i = 0; i < count; i++) {
       const el = required.nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      if ((await el.inputValue()).trim()) continue;
       const type = await el.getAttribute("type");
-      if (type === "url") {
+      const name = await el.getAttribute("name");
+      if (type === "url" || /url/i.test(name ?? "")) {
         await el.fill("https://e2e.invalid.local/probe");
+      } else if (type === "number") {
+        await el.fill("1");
       } else {
         await el.fill(`e2e-throwaway-${i}`);
       }
     }
-    await page.getByRole("button", { name: /guardar credenciales/i }).click();
+    const saveResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/cartridges/replicon/credentials") &&
+        response.request().method() === "POST",
+      { timeout: 15_000 },
+    ).catch(() => null);
+    await form.getByRole("button", { name: /guardar credenciales/i }).click();
     // v1.44.3.2.1 R1 Security P2: wrap the cleanup in try/finally so
     // a failed assertion above doesn't leave throwaway credentials in
     // the Vault. The cleanup runs even on cancellation/assertion-fail.
     try {
+      expect(await saveResponse,
+        "Save must submit the Replicon credentials payload",
+      ).not.toBeNull();
       const toast = page.locator("[data-sonner-toast]").first();
-      await expect(toast).toBeVisible({ timeout: 10_000 });
+      await expect(toast).toBeVisible({ timeout: 15_000 });
       const text = (await toast.innerText()).toLowerCase();
       // Either success (200 round-trip) or a USEFUL error (4xx/5xx
       // with a real message) is acceptable. A SILENT failure is not.

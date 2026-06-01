@@ -7,6 +7,7 @@
 
 pytest>=7.4
 pytest-asyncio>=0.23
+coverage==7.6.1
 httpx>=0.28.1        # required by fastmcp 3.x + supported by fastapi.testclient
 
 # Cartridge runtime imports pulled in transitively when TestClient boots an app

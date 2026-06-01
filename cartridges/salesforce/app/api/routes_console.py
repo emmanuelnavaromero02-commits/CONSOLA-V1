@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import anyio
 import re
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})?)?$")
@@ -35,6 +36,7 @@ from app.core.job_runner import (
     fail_external_job,
     finish_external_job,
 )
+from app.core.request_context import reset_security_context, set_security_context
 from app.core.salesforce_client import SalesforceClientError
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
@@ -64,6 +66,17 @@ def _mark_external_job(func, *args) -> None:
         anyio.from_thread.run(func, *args)
     except RuntimeError:
         anyio.run(func, *args)
+
+
+def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
+    ctx = body.get("security_context") if isinstance(body, dict) else None
+    if not isinstance(ctx, dict) or not ctx.get("trusted"):
+        return None
+    return ctx
+
+
+def _scoped_config(config: dict[str, Any], ctx: dict[str, Any] | None) -> dict[str, Any]:
+    return {**config, "security_context": ctx} if ctx else config
 
 
 # ── Catalogue ────────────────────────────────────────────────────────────────
@@ -131,6 +144,7 @@ def entity_extract(
     from_date: str | None = None,
     to_date: str | None = None,
     job_id: str | None = None,
+    body: dict[str, Any] | None = Body(None),
 ):
     """Trigger an extraction for one entity (synchronous, returns when done).
 
@@ -150,9 +164,15 @@ def entity_extract(
     if report is not None:
         return _degraded_503(report)
 
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
     try:
-        result = run_entity({**config, "mode": mode}, from_date=from_date, to_date=to_date)
-        _mark_external_job(_trigger_silver_refresh, entity_id)
+        result = run_entity(
+            _scoped_config({**config, "mode": mode}, ctx),
+            from_date=from_date,
+            to_date=to_date,
+        )
+        _mark_external_job(_trigger_silver_refresh, entity_id, ctx)
         _mark_external_job(finish_external_job, job_id, result)
         return result
     except SalesforceClientError as exc:
@@ -165,36 +185,44 @@ def entity_extract(
     except Exception as exc:
         _mark_external_job(fail_external_job, job_id, str(exc))
         raise
+    finally:
+        reset_security_context(token)
 
 
 @router.post("/extract-all")
 def extract_all(
     mode: str = Query("incremental", pattern="^(full|incremental)$"),
+    body: dict[str, Any] | None = Body(None),
 ):
     """Run every enabled entity, one after the other."""
     report = preflight_for_extract()
     if report is not None:
         return _degraded_503(report)
 
-    results = []
-    for config in get_all_entities():
-        effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
-        try:
-            result = run_entity({**config, "mode": effective_mode})
-            _mark_external_job(_trigger_silver_refresh, config.get("entity"))
-            results.append(result)
-        except SalesforceClientError as exc:
-            results.append({
-                "entity": config.get("entity"),
-                "status": "degraded",
-                "error": str(exc),
-            })
-        except Exception as exc:                       # noqa: BLE001
-            results.append({
-                "entity": config.get("entity"),
-                "status": "failed",
-                "error": str(exc),
-            })
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
+    try:
+        results = []
+        for config in get_all_entities():
+            effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
+            try:
+                result = run_entity(_scoped_config({**config, "mode": effective_mode}, ctx))
+                _mark_external_job(_trigger_silver_refresh, config.get("entity"), ctx)
+                results.append(result)
+            except SalesforceClientError as exc:
+                results.append({
+                    "entity": config.get("entity"),
+                    "status": "degraded",
+                    "error": str(exc),
+                })
+            except Exception as exc:                       # noqa: BLE001
+                results.append({
+                    "entity": config.get("entity"),
+                    "status": "failed",
+                    "error": str(exc),
+                })
+    finally:
+        reset_security_context(token)
     failures = [r for r in results if r.get("status") in {"degraded", "failed"}]
     if failures:
         return JSONResponse(

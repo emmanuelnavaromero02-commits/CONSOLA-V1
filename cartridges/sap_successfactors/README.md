@@ -85,8 +85,8 @@ leen los golds vía `GET /api/data/<dataset>` usando el **nombre completo con pr
 
 > Adaptaciones a columnas reales: `recruitment_funnel` no tiene columna de estado, así que
 > las barras muestran requisiciones **por departamento** (total vs abiertas), no por estado;
-> `turnover_by_period` usa `event_reason` y puede venir vacío hasta activar
-> EmpEmploymentTermination; `manager_hierarchy.direct_reports` está poblado (managerId real
+> `turnover_by_period` usa `event_reason` desde EmpEmploymentTermination; si no hay bajas
+> en la ventana extraída, el resultado será vacío. `manager_hierarchy.direct_reports` está poblado (managerId real
 > en SF), por lo que el histograma de span of control es válido. El filtro por compañía aplica
 > a los widgets de compañía (los golds de departamento/ubicación/rotación no llevan company).
 
@@ -107,7 +107,7 @@ arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
 | `kb_sap_successfactors_headcount_by_location` | ¿Distribución por ubicación? | headcount_by_location |
 | `kb_sap_successfactors_headcount_by_company` | ¿Distribución por compañía/legal entity? | headcount_by_company |
 | `kb_sap_successfactors_recruitment_funnel` | ¿Embudo de reclutamiento? (parcial) | recruitment_funnel |
-| `kb_sap_successfactors_turnover_recent` | ¿Rotación reciente y motivos? (parcial) | turnover_by_period |
+| `kb_sap_successfactors_turnover_recent` | ¿Rotación reciente y motivos? | turnover_by_period |
 | `kb_sap_successfactors_manager_hierarchy_depth` | ¿Niveles de management? (managerId real) | manager_hierarchy |
 | `kb_sap_successfactors_employees_anomalies` | ¿Anomalías en datos de empleados? | employees_anomalies |
 | `kb_sap_successfactors_workforce_distribution` | ¿Composición por tipo de empleo? | empemployment_latest (silver) |
@@ -115,8 +115,8 @@ arrancar y el copiloto los ejecuta en DuckDB sobre parquet (no pggold).
 > Notas: los datasets gold de SF llevan el prefijo `sap_successfactors_` en el nombre,
 > por lo que la ruta parquet lo repite (`gold/sap_successfactors/sap_successfactors_<x>/`).
 > Parciales por bronze pendiente: `recruitment_funnel` es a nivel de requisición
-> (JobApplication no extraída); `turnover_by_period` puede venir vacío hasta activar
-> EmpEmploymentTermination. `workforce_distribution` lee el silver `empemployment_latest`
+> (JobApplication no extraída). `turnover_by_period` se basa en EmpEmploymentTermination
+> y queda vacío solo si no hay bajas extraídas. `workforce_distribution` lee el silver `empemployment_latest`
 > porque ningún gold expone `employee_class`.
 
 **Hints del asistente (Bloque E):** `hints/assistant.md` se carga en

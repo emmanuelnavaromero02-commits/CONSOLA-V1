@@ -121,7 +121,14 @@ def test_compose_exposes_cartridge_url_env_vars():
     Airflow worker so the DAGs see the same defaults they had before
     the env-var refactor."""
     compose = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
-    for env in ("SAP_HCM_URL", "SAP_S4HANA_URL", "SAP_SUCCESSFACTORS_URL"):
+    for env in (
+        "REPLICON_URL",
+        "HUBSPOT_URL",
+        "SALESFORCE_URL",
+        "SAP_HCM_URL",
+        "SAP_S4HANA_URL",
+        "SAP_SUCCESSFACTORS_URL",
+    ):
         # Each variable appears at least twice (airflow + airflow-scheduler).
         assert compose.count(env) >= 2, (
             f"{env} must be set on both airflow and airflow-scheduler "

@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,32 @@ def test_smoke_script_passes_bash_syntax_check():
     assert result.returncode == 0, (
         f"bash -n rejected the smoke script:\n{result.stderr}"
     )
+
+
+@pytest.mark.parametrize(
+    "script",
+    (
+        "infra/bootstrap-keys.sh",
+        "scripts/aws-entrypoint.sh",
+        "scripts/wait_for_health.sh",
+        "scripts/smoke_test.sh",
+    ),
+)
+def test_release_gate_scripts_pass_bash_syntax_check(script: str):
+    if not shutil.which("bash"):
+        pytest.skip("bash not available in this environment")
+    result = subprocess.run(
+        ["bash", "-n", str(REPO_ROOT / script)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode < 0:
+        pytest.skip(
+            f"Python subprocess crashed with signal {-result.returncode} "
+            f"spawning bash (host runtime quirk, not a script defect). "
+            f"This path is covered by Linux CI."
+        )
+    assert result.returncode == 0, f"bash -n rejected {script}:\n{result.stderr}"
 
 
 # ── Coverage of the 5 app services ──────────────────────────────────
@@ -251,10 +278,58 @@ def test_wait_for_health_does_not_accept_exited_containers_as_ready():
         "turn a dead service into a false-positive release gate"
     )
     assert "mode_superset" in body
+    assert "omega_salesforce" in body
+    assert "salesforce_status" in body
+    assert "http://127.0.0.1:8205/health" in body
+    assert "salesforce=${salesforce_status}" in body
     assert "mode_hubspot" in body
     assert "mode_sap_hcm" in body
     assert "mode_sap_s4hana" in body
     assert "mode_sap_successfactors" in body
+
+
+def test_smoke_script_checks_salesforce_cartridge_contract():
+    body = SCRIPT.read_text(encoding="utf-8")
+    assert "http://localhost:8205/health" in body
+    assert 'auth_gate_check "http://localhost:8205/mcp/tools"' in body
+    assert 'auth_gate_check "http://localhost:8205/skills/entities"' in body
+    assert '"salesforce:8205"' in body
+    assert "mcp_servers registers salesforce cartridge" in body
+    assert "mcp_servers WHERE id='salesforce'" in body
+    assert "omega_cartridge_salesforce" in body
+    assert "skipping 6 MCP tool probes" in body
+    assert "skipping 5 MCP tool probes" not in body
+
+
+def test_bootstrap_keys_backfills_all_runtime_db_role_passwords():
+    body = (REPO_ROOT / "infra" / "bootstrap-keys.sh").read_text(encoding="utf-8")
+    for key in (
+        "OMEGA_REFINEMENT_GOLD_PASSWORD",
+        "OMEGA_AIRFLOW_DAG_PASSWORD",
+        "OMEGA_AIRFLOW_META_PASSWORD",
+        "OMEGA_SUPERSET_META_PASSWORD",
+        "OMEGA_CARTRIDGE_SAP_HCM_PASSWORD",
+        "OMEGA_CARTRIDGE_SAP_S4_PASSWORD",
+        "OMEGA_CARTRIDGE_SAP_SF_PASSWORD",
+        "OMEGA_CARTRIDGE_REPLICON_PASSWORD",
+        "OMEGA_CARTRIDGE_SALESFORCE_PASSWORD",
+        "OMEGA_CARTRIDGE_HUBSPOT_PASSWORD",
+    ):
+        assert f'"{key}"' in body
+
+
+def test_verify_release_bootstraps_env_and_recreates_full_stack():
+    body = MAKEFILE.read_text(encoding="utf-8")
+    m = re.search(r"^verify-release:\s*$([\s\S]+?)(?=^\S|\Z)", body, re.MULTILINE)
+    assert m, "verify-release target not found in Makefile"
+    target_body = m.group(1)
+    assert "infra/bootstrap-keys.sh infra/.env" in target_body
+    assert "--profile sap config -q" in target_body
+    assert "up -d --build --force-recreate" in target_body
+    assert "docker compose -f infra/docker-compose.yml --profile sap build" not in target_body
+    assert "scripts/wait_for_health.sh" in target_body
+    assert target_body.index("bootstrap-keys.sh") < target_body.index("config -q")
+    assert target_body.index("up -d --build --force-recreate") < target_body.index("scripts/wait_for_health.sh")
 
 
 # ── Idempotency contract (documented by inspection) ─────────────────

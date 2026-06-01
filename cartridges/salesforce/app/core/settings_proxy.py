@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 _CACHE: dict[str, tuple[float, str]] = {}
 _CACHE_TTL_SECONDS = 30
 _CONSOLE_URL = os.environ.get("CONSOLE_URL", "http://console:8000")
-_INTERNAL_KEY = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "")
+_INTERNAL_KEY = os.environ.get("INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE", "")
+if not _INTERNAL_KEY and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
+    _INTERNAL_KEY = os.environ.get("INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE", "")
 if not _INTERNAL_KEY and os.environ.get("APP_ENV", "production").strip().lower() not in {"production", "prod"}:
     _INTERNAL_KEY = os.environ.get("INTERNAL_API_KEY", "")
 

@@ -61,6 +61,15 @@ def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, 
     """
     ctx = ctx if ctx is not None else get_security_context()
     tenant, workspace = scope_values(ctx)
+    if tenant and workspace:
+        scope = f"tenant_id={tenant}/workspace_id={workspace}/"
+        allowed_prefixes = [
+            f"raw/hubspot/{scope}",
+            f"silver/hubspot/{scope}",
+            f"gold/hubspot/{scope}",
+        ]
+    else:
+        allowed_prefixes = ["raw/hubspot/", "silver/hubspot/", "gold/hubspot/"]
     base: dict[str, Any] = {
         "trusted": True,
         "source": "cartridge-hubspot",
@@ -68,7 +77,7 @@ def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, 
         "permissions": ["datasets.read", "datasets.write"],
         "allowed_buckets": ["lakehouse"],
         "allowed_cartridges": ["hubspot"],
-        "allowed_prefixes": ["raw/hubspot/", "silver/hubspot/", "gold/hubspot/"],
+        "allowed_prefixes": allowed_prefixes,
     }
     if isinstance(ctx, dict):
         base.update(

@@ -6,6 +6,7 @@ can inspect, extract, and query SAP S/4HANA data without writing custom code.
 
 Mount path: /mcp  (configured in main.py)
 """
+
 from __future__ import annotations
 
 import re
@@ -66,12 +67,18 @@ def _s4hana_allowed_kb_prefixes() -> tuple[str, str, str]:
         f"s3://{bucket}/gold/sap_s4hana/",
     )
 
+
 from app.core.config import settings
 from app.core import job_runner
-from app.services.catalog_service import get_all_entities, get_all_kbs, get_entity_config
+from app.core.request_context import scoped_prefix
+from app.services.catalog_service import (
+    get_all_entities,
+    get_all_kbs,
+    get_entity_config,
+)
 from app.services.duckdb_service import run_kb_sql, _get_duckdb_connection
 from app.services.extraction_service import run_entity
-from app.services.kb_service import run_knowledge_bit, get_kb_runs
+from app.services.kb_service import _scope_kb_sql, run_knowledge_bit, get_kb_runs
 from app.services.watermark_service import get_watermark
 
 mcp = FastMCP(
@@ -86,6 +93,7 @@ mcp = FastMCP(
 
 # ── Tool 1: list_entities ─────────────────────────────────────────────────────
 
+
 @mcp.tool()
 def list_entities() -> list[dict[str, Any]]:
     """
@@ -97,17 +105,20 @@ def list_entities() -> list[dict[str, Any]]:
     for e in entities:
         name = e.get("entity") or e.get("name", "")
         wf = e.get("watermark_field")
-        result.append({
-            "entity":           name,
-            "mode":             e.get("mode", "full"),
-            "watermark_field":  wf,
-            "last_watermark":   get_watermark(name) if wf else None,
-            "description":      e.get("description", ""),
-        })
+        result.append(
+            {
+                "entity": name,
+                "mode": e.get("mode", "full"),
+                "watermark_field": wf,
+                "last_watermark": get_watermark(name) if wf else None,
+                "description": e.get("description", ""),
+            }
+        )
     return result
 
 
 # ── Tool 2: get_schema ────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def get_schema(entity: str) -> dict[str, Any]:
@@ -122,19 +133,20 @@ def get_schema(entity: str) -> dict[str, Any]:
     if not config:
         return {"error": f"Entity '{entity}' not found"}
     return {
-        "entity":           config.get("entity"),
-        "mode":             config.get("mode"),
-        "watermark_field":  config.get("watermark_field"),
+        "entity": config.get("entity"),
+        "mode": config.get("mode"),
+        "watermark_field": config.get("watermark_field"),
         "watermark_format": config.get("watermark_format"),
-        "page_size":        config.get("page_size"),
-        "select_fields":    config.get("select_fields"),
-        "effective_dated":  config.get("effective_dated"),
-        "date_field":       config.get("date_field"),
-        "description":      config.get("description"),
+        "page_size": config.get("page_size"),
+        "select_fields": config.get("select_fields"),
+        "effective_dated": config.get("effective_dated"),
+        "date_field": config.get("date_field"),
+        "description": config.get("description"),
     }
 
 
 # ── Tool 3: preview ───────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def preview(entity: str, limit: int = 20) -> dict[str, Any]:
@@ -153,7 +165,8 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     entity = _validate_identifier(entity, "entity")
     limit = _validate_bounded_int(limit, "limit", lo=1, hi=200)
     bucket = settings.minio_bucket
-    path = f"s3://{bucket}/raw/sap_s4hana/{entity}/load_date=*/batch_id=*/*.parquet"
+    scope = scoped_prefix()
+    path = f"s3://{bucket}/raw/sap_s4hana/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()
@@ -164,16 +177,17 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
         finally:
             conn.close()
         return {
-            "entity":  entity,
+            "entity": entity,
             "columns": columns,
-            "rows":    [dict(zip(columns, r)) for r in rows],
-            "count":   len(rows),
+            "rows": [dict(zip(columns, r)) for r in rows],
+            "count": len(rows),
         }
     except Exception as exc:
         return {"entity": entity, "error": str(exc), "rows": [], "columns": []}
 
 
 # ── Tool 4: extract (BATCH — returns immediately) ─────────────────────────────
+
 
 @mcp.tool()
 async def extract(
@@ -199,10 +213,13 @@ async def extract(
         return {"error": f"Entity '{entity}' not found"}
     overridden = dict(config)
     overridden["mode"] = mode
-    return await job_runner.create_extract_job(overridden, from_date=from_date, to_date=to_date)
+    return await job_runner.create_extract_job(
+        overridden, from_date=from_date, to_date=to_date
+    )
 
 
 # ── Tool 4b: extract_all (BATCH — extrae todas las entidades) ────────────────
+
 
 @mcp.tool()
 async def extract_all(mode: str = "incremental") -> dict[str, Any]:
@@ -223,6 +240,7 @@ async def extract_all(mode: str = "incremental") -> dict[str, Any]:
 
 # ── Tool 4c: get_run_logs ─────────────────────────────────────────────────────
 
+
 @mcp.tool()
 async def get_run_logs(job_id: str, limit: int = 50) -> list[dict[str, Any]]:
     """
@@ -239,9 +257,11 @@ async def get_run_logs(job_id: str, limit: int = 50) -> list[dict[str, Any]]:
         "SELECT entity, level, message, detail, ts "
         "FROM run_logs WHERE run_id=$1 AND cartridge='sap_s4hana' "
         "ORDER BY ts ASC LIMIT $2",
-        job_id, limit,
+        job_id,
+        limit,
     )
     import json as _json
+
     result = []
     for row in rows:
         detail = row["detail"]
@@ -250,17 +270,20 @@ async def get_run_logs(job_id: str, limit: int = 50) -> list[dict[str, Any]]:
                 detail = _json.loads(detail)
             except Exception:
                 pass
-        result.append({
-            "ts":      row["ts"].isoformat(),
-            "entity":  row["entity"],
-            "level":   row["level"],
-            "message": row["message"],
-            "detail":  detail,
-        })
+        result.append(
+            {
+                "ts": row["ts"].isoformat(),
+                "entity": row["entity"],
+                "level": row["level"],
+                "message": row["message"],
+                "detail": detail,
+            }
+        )
     return result
 
 
 # ── Tool 5: get_job_status ────────────────────────────────────────────────────
+
 
 @mcp.tool()
 async def get_job_status(job_id: str) -> dict[str, Any]:
@@ -275,6 +298,7 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
 
 # ── Tool 5b: list_jobs ────────────────────────────────────────────────────────
 
+
 @mcp.tool()
 async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
     """
@@ -288,6 +312,7 @@ async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
 
 # ── Tool 6: list_kbs ─────────────────────────────────────────────────────────
 
+
 @mcp.tool()
 def list_kbs() -> list[dict[str, Any]]:
     """
@@ -297,10 +322,10 @@ def list_kbs() -> list[dict[str, Any]]:
     kbs = get_all_kbs()
     return [
         {
-            "kb_id":       kb.get("kb_id") or kb.get("id"),
-            "name":        kb.get("name"),
+            "kb_id": kb.get("kb_id") or kb.get("id"),
+            "name": kb.get("name"),
             "description": kb.get("description"),
-            "pg_table":    kb.get("pg_table"),
+            "pg_table": kb.get("pg_table"),
             "output_path": kb.get("output_path"),
         }
         for kb in kbs
@@ -308,6 +333,7 @@ def list_kbs() -> list[dict[str, Any]]:
 
 
 # ── Tool 7: run_kb ────────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def run_kb(kb_id: str) -> dict[str, Any]:
@@ -325,6 +351,7 @@ def run_kb(kb_id: str) -> dict[str, Any]:
 
 
 # ── Tool 8: query_kb ─────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
@@ -345,7 +372,7 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
     except ValueError as exc:
         return {"error": "invalid_limit", "reason": str(exc)}
 
-    resolved = sql.replace("{bucket}", settings.minio_bucket)
+    resolved = _scope_kb_sql(str(sql or ""))
     ok, err = validate_kb_sql(resolved, _s4hana_allowed_kb_prefixes())
     if not ok:
         return {"error": "sql_blocked", "reason": err}
@@ -361,14 +388,15 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
             conn.close()
         return {
             "columns": columns,
-            "rows":    [dict(zip(columns, r)) for r in rows],
-            "count":   len(rows),
+            "rows": [dict(zip(columns, r)) for r in rows],
+            "count": len(rows),
         }
     except Exception:
         return {"error": "query_failed", "reason": "DuckDB query failed"}
 
 
 # ── Custom tools loader ───────────────────────────────────────────────────────
+
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
     """Register a SQL-query custom tool on the mcp instance."""
@@ -377,6 +405,7 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
     ok, err = validate_kb_sql(resolved_sql, _s4hana_allowed_kb_prefixes())
     if not ok:
+
         def _blocked_tool_fn(reason: str | None = err) -> dict[str, Any]:
             return {"error": "sql_blocked", "reason": reason}
 
@@ -385,19 +414,22 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
         mcp.add_tool(_blocked_tool_fn)
         return
 
-    resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
-
     def _tool_fn() -> dict[str, Any]:
+        scoped_sql = f"SELECT * FROM ({_scope_kb_sql(sql)}) _q LIMIT 100"
         conn = _get_duckdb_connection()
         try:
-            rel = conn.execute(resolved_sql)
+            rel = conn.execute(scoped_sql)
             columns = [d[0] for d in rel.description]
             rows = rel.fetchall()
         except Exception:
             return {"error": "query_failed", "reason": "DuckDB query failed"}
         finally:
             conn.close()
-        return {"columns": columns, "rows": [dict(zip(columns, r)) for r in rows], "count": len(rows)}
+        return {
+            "columns": columns,
+            "rows": [dict(zip(columns, r)) for r in rows],
+            "count": len(rows),
+        }
 
     _tool_fn.__name__ = name
     _tool_fn.__doc__ = description or f"Custom SQL tool: {name}"
@@ -406,6 +438,7 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
 
 def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> None:
     """Register an entity-extract custom tool on the mcp instance."""
+
     def _tool_fn() -> dict[str, Any]:
         config = get_entity_config(entity)
         if not config:
@@ -424,6 +457,7 @@ def _make_extract_tool(name: str, description: str, entity: str, mode: str) -> N
 
 def _make_kb_tool(name: str, description: str, kb_id: str) -> None:
     """Register a Knowledge Bit runner custom tool on the mcp instance."""
+
     def _tool_fn() -> dict[str, Any]:
         try:
             return run_knowledge_bit(kb_id)
@@ -442,6 +476,7 @@ def load_custom_tools() -> int:
     """
     try:
         from app.core.pg_client import get_connection
+
         conn = get_connection()
         try:
             with conn.cursor() as cur:

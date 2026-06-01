@@ -50,12 +50,17 @@ def sap_successfactors_extract_all():
             "X-Api-Key": _internal_key(),
             "X-Internal-Service": "airflow",
         }
+        skill_body = {
+            key: conf[key]
+            for key in ("tenant_id", "workspace_id", "security_context")
+            if conf.get(key)
+        }
 
         with httpx.Client(timeout=300) as client:
             res = client.post(
                 f"{CARTRIDGE_URL}/extract-all",
                 params={"mode": conf.get("mode") or "incremental"},
-                json={},
+                json=skill_body,
                 headers=headers,
             )
             res.raise_for_status()

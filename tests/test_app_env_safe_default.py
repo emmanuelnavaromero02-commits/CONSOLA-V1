@@ -78,12 +78,17 @@ def test_console_auth_is_production_defaults_true(monkeypatch):
     # this test we only care about the helper's polarity.
     for env in (
         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
+        "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
         "INTERNAL_API_KEY_REFINEMENT_TO_CONSOLE",
         "INTERNAL_API_KEY_VAULT_TO_CONSOLE",
         "INTERNAL_API_KEY_MCP_INFRA_TO_CONSOLE",
         "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
         "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)
     monkeypatch.delenv("APP_ENV", raising=False)
@@ -96,6 +101,11 @@ def test_console_dependencies_default_to_production(monkeypatch):
         "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
         "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+        "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)
@@ -111,6 +121,11 @@ async def test_workspace_cartridge_dataset_fallback_denied_when_env_unset(monkey
         "INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE",
         "INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE",
         "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+        "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+        "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
         "INTERNAL_API_KEY_WORKSPACE_TO_CONSOLE",
     ):
         monkeypatch.setenv(env, "x" * 32)
@@ -196,7 +211,8 @@ async def test_airflow_create_dag_refuses_when_app_env_unset(monkeypatch):
 # superset-init) don't read APP_ENV.
 _LOCAL_APP_SERVICES = [
     "console", "workspace", "refinement", "vault", "mcp-infra",
-    "replicon", "sap-successfactors", "sap-hcm", "sap-s4hana",
+    "replicon", "hubspot", "salesforce",
+    "sap-successfactors", "sap-hcm", "sap-s4hana",
 ]
 
 

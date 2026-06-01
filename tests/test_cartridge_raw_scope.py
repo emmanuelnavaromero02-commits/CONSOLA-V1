@@ -13,6 +13,7 @@ from tests.conftest import load_cartridge_app
         ("sap_s4hana", "BusinessPartner"),
         ("sap_successfactors", "User"),
         ("hubspot", "deals"),
+        ("salesforce", "Opportunity"),
     ],
 )
 def test_raw_parquet_upload_path_uses_forwarded_tenant_workspace_scope(cartridge, entity, monkeypatch):

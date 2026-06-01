@@ -176,14 +176,18 @@ async def entities(cartridge: str, user: dict = Depends(require_authenticated)):
 )
 async def run_entity(cartridge: str, entity: str, request: Request, mode: str = "incremental"):
     """Trigger entity extraction via the cartridge /skills router."""
-    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
+    user = getattr(request.state, "user", None) or {}
+    _require_cartridge_visible(user, cartridge)
     if mode not in {"full", "incremental"}:
         raise HTTPException(400, "mode must be 'full' or 'incremental'")
     skill = "run_full_load" if mode == "full" else "run_incremental"
+    security_context = build_security_context(user)
     async with httpx.AsyncClient(timeout=30.0, headers=_cartridge_internal_headers()) as c:
-        r = await c.post(_cartridge_url(cartridge, f"/skills/{skill}/{entity}"))
+        r = await c.post(
+            _cartridge_url(cartridge, f"/skills/{skill}/{entity}"),
+            json={"security_context": security_context},
+        )
     if r.status_code >= 400:
-        user = getattr(request.state, "user", None) or {}
         await audit_service.record_event(
             user_id=user.get("id"),
             email=user.get("email"),
@@ -203,7 +207,6 @@ async def run_entity(cartridge: str, entity: str, request: Request, mode: str = 
                 },
             )
         raise HTTPException(r.status_code, r.text[:500])
-    user = getattr(request.state, "user", None) or {}
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

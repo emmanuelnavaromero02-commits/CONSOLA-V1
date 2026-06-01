@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Iterable
@@ -14,6 +16,7 @@ from app.middleware.request_id import request_id_var
 from app.security import get_internal_api_key
 from app.version import app_version
 from app.services import audit_service, auth
+from app.services.control_room.readiness_manifest import dataset_readiness_registry
 from app.services.security_context import build_security_context, rls_user_context
 
 
@@ -78,6 +81,68 @@ ACTIVITY_LABELS = {
 }
 
 SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES = {"create_followup_task"}
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    ok: bool
+    status: str
+    message: str
+    data: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "ok": self.ok,
+            "status": self.status,
+            "message": self.message,
+        }
+        if self.data is not None:
+            payload["data"] = self.data
+        return payload
+
+
+class BaseAdapter(ABC):
+    @abstractmethod
+    def execute(
+        self,
+        action_data: dict[str, Any],
+        credentials: dict[str, Any],
+        dry_run: bool = True,
+    ) -> ExecutionResult | dict[str, Any] | Awaitable[ExecutionResult | dict[str, Any]]:
+        """Execute an approved external write-back action."""
+
+
+class WriteBackAdapterFactory:
+    _registry: dict[str, type[BaseAdapter]] = {}
+
+    @classmethod
+    def _ensure_builtin_adapters(cls) -> None:
+        from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
+
+        cls._registry.setdefault("sap_hcm_it0008", SapHcmAdapter)
+
+    @classmethod
+    def register_adapter(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
+        if not issubclass(adapter_cls, BaseAdapter):
+            raise TypeError("adapter_cls must inherit BaseAdapter")
+        cls._registry[str(template_type)] = adapter_cls
+
+    @classmethod
+    def get_adapter(cls, template_type: str) -> BaseAdapter:
+        cls._ensure_builtin_adapters()
+        adapter_cls = cls._registry.get(str(template_type))
+        if not adapter_cls:
+            raise NotImplementedError(f"No write-back adapter registered for {template_type}")
+        return adapter_cls()
+
+    @classmethod
+    def has_adapter(cls, template_type: str) -> bool:
+        cls._ensure_builtin_adapters()
+        return str(template_type) in cls._registry
+
+    @classmethod
+    def supports(cls, template_type: str) -> bool:
+        return cls.has_adapter(template_type)
 
 OMEGA_STEP_EVENT_TYPES = {
     "signals": "signals_opened",
@@ -182,6 +247,7 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "prepare_hcm_access_review": {
         "template_id": "prepare_hcm_access_review",
+        "template_type": "sap_hcm_it0008",
         "cartridge_id": "sap_hcm",
         "label": "Preparar revision HCM acceso/nomina",
         "description": "Prepara baja, bloqueo de usuario, evidencia de posicion y posible cola de nomina.",
@@ -235,10 +301,30 @@ class ControlRoomSource:
     kind: str = "anomaly"
     normalizer: str = "standard_anomaly"
     module_id: str | None = None
+    data_readiness: str = "ready"
+    readiness_reason: str = ""
+    readiness_blockers: tuple[str, ...] = ()
+    contract_warnings: tuple[str, ...] = ()
 
     @property
     def visible_module_id(self) -> str:
         return self.module_id or self.cartridge
+
+
+DATA_READINESS_STATES = (
+    "ready",
+    "partial",
+    "stub",
+    "empty",
+    "missing",
+    "unavailable",
+    "invalid_schema",
+    "blocked",
+    "no_permission",
+)
+DATA_READY_STATES = {"ready"}
+NON_READY_SOURCE_STATES = {"empty", "missing", "unavailable", "invalid_schema", "blocked", "no_permission"}
+CONTROL_ROOM_DATASET_READINESS: dict[tuple[str, str], dict[str, Any]] = dataset_readiness_registry()
 
 
 @dataclass(frozen=True)
@@ -280,8 +366,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Personal",
                 entity_kind="Departamento",
-                entity_id_field="department",
-                entity_label_field="department",
+                entity_id_field="org_id",
+                entity_label_field="org_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_hcm",
@@ -382,8 +468,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Estructura Org",
                 entity_kind="Posicion",
-                entity_id_field="position_type",
-                entity_label_field="position_type",
+                entity_id_field="employee_group",
+                entity_label_field="employee_group",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_hcm_org",
@@ -414,8 +500,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Employee Central",
                 entity_kind="Departamento",
-                entity_id_field="department",
-                entity_label_field="department",
+                entity_id_field="department_id",
+                entity_label_field="department_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors",
@@ -426,8 +512,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Employee Central",
                 entity_kind="Periodo",
-                entity_id_field="period",
-                entity_label_field="period",
+                entity_id_field="termination_month",
+                entity_label_field="termination_month",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors",
@@ -447,9 +533,9 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 cartridge="sap_successfactors",
                 domain="Recursos Humanos",
                 module_label="Reclutamiento",
-                entity_kind="Requisicion",
-                entity_id_field="job_req_id",
-                entity_label_field="job_req_id",
+                entity_kind="Departamento",
+                entity_id_field="department",
+                entity_label_field="department",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_recruiting",
@@ -482,8 +568,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Desempeno",
                 entity_kind="Grupo",
-                entity_id_field="department",
-                entity_label_field="department",
+                entity_id_field="department_id",
+                entity_label_field="department_id",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_performance",
@@ -505,7 +591,7 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 module_label="Estructura Org",
                 entity_kind="Manager",
                 entity_id_field="manager_id",
-                entity_label_field="manager_name",
+                entity_label_field="manager_id",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_org",
@@ -516,8 +602,8 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 domain="Recursos Humanos",
                 module_label="Estructura Org",
                 entity_kind="Unidad",
-                entity_id_field="org_unit",
-                entity_label_field="org_unit",
+                entity_id_field="department_id",
+                entity_label_field="department_name",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_successfactors_org",
@@ -669,9 +755,9 @@ MODULES: tuple[ControlRoomModule, ...] = (
                 cartridge="sap_s4hana",
                 domain="Operacion",
                 module_label="Inventario",
-                entity_kind="Material",
-                entity_id_field="material",
-                entity_label_field="material",
+                entity_kind="Mes",
+                entity_id_field="posting_month",
+                entity_label_field="posting_month",
                 kind="metric",
                 normalizer="metric_snapshot",
                 module_id="sap_s4hana_inventory",
@@ -874,6 +960,90 @@ ANOMALY_COPY: dict[str, dict[str, str]] = {
 
 DatasetFetcher = Callable[[str, dict | None, int], Awaitable[list[dict[str, Any]]]]
 ThresholdMap = dict[tuple[str, str, str], dict[str, Any]]
+
+
+def _readiness_contract(source: ControlRoomSource) -> dict[str, Any]:
+    registry = CONTROL_ROOM_DATASET_READINESS.get((source.cartridge, source.dataset), {})
+    data_readiness = str(source.data_readiness or registry.get("data_readiness") or "ready")
+    if data_readiness == "ready" and registry:
+        data_readiness = str(registry.get("data_readiness") or "ready")
+    if data_readiness not in DATA_READINESS_STATES:
+        data_readiness = "partial"
+    blockers = tuple(source.readiness_blockers or registry.get("blockers") or ())
+    warnings = tuple(source.contract_warnings or registry.get("warnings") or ())
+    return {
+        "data_readiness": data_readiness,
+        "readiness_reason": source.readiness_reason or str(registry.get("reason") or ""),
+        "readiness_blockers": list(blockers),
+        "contract_warnings": list(warnings),
+    }
+
+
+def _source_status_payload(
+    source: ControlRoomSource,
+    status: str,
+    *,
+    count: int,
+    checked_at: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    readiness = _readiness_contract(source)
+    data_readiness = readiness["data_readiness"]
+    blockers = list(readiness["readiness_blockers"])
+    reason = str(readiness["readiness_reason"] or "")
+    if status in NON_READY_SOURCE_STATES:
+        data_readiness = status
+        if not reason:
+            reason = {
+                "empty": "La consulta fue valida pero no devolvio filas para el workspace activo.",
+                "missing": "El dataset no esta registrado o materializado para este workspace.",
+                "unavailable": "Refinement no pudo consultar el dataset.",
+                "invalid_schema": "La tabla no cumple el contrato esperado por Control Room.",
+                "blocked": "El cartucho no esta activo para el workspace.",
+                "no_permission": "El usuario no puede ver este cartucho en el workspace activo.",
+            }.get(status, "La fuente requiere revision.")
+        if status not in blockers:
+            blockers.append(status)
+    operationally_ready = status == "ok" and count > 0 and data_readiness in DATA_READY_STATES
+    payload = {
+        "dataset": source.dataset,
+        "cartridge": source.cartridge,
+        "connector_id": source.cartridge,
+        "module_id": source.visible_module_id,
+        "domain": source.domain,
+        "module": source.module_label,
+        "status": status,
+        "count": count,
+        "checked_at": checked_at,
+        "data_readiness": data_readiness,
+        "operationally_ready": operationally_ready,
+        "readiness_reason": reason,
+        "readiness_blockers": blockers,
+        "contract_warnings": list(readiness["contract_warnings"]),
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _readiness_counts(sources: Iterable[dict[str, Any]]) -> dict[str, int]:
+    counts = {state: 0 for state in DATA_READINESS_STATES}
+    for source in sources:
+        state = str(source.get("data_readiness") or "ready")
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def _module_data_readiness(module_sources: list[dict[str, Any]]) -> str:
+    if not module_sources:
+        return "missing"
+    if all(source.get("operationally_ready") for source in module_sources):
+        return "ready"
+    states = {str(source.get("data_readiness") or source.get("status") or "unavailable") for source in module_sources}
+    for state in ("invalid_schema", "blocked", "no_permission", "unavailable", "missing", "stub", "partial", "empty"):
+        if state in states:
+            return state
+    return "partial"
 
 # Implementation modules bind their functions back into this module namespace.
 # That keeps the historical `app.services.control_room_service.<name>` import

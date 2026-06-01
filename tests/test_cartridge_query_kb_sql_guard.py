@@ -5,6 +5,16 @@ import pytest
 from tests.conftest import load_cartridge_app
 
 
+PREVIEW_SCOPE_CASES = [
+    ("replicon", "TimeEntry"),
+    ("hubspot", "deals"),
+    ("sap_hcm", "EmployeeMaster"),
+    ("sap_s4hana", "BusinessPartner"),
+    ("sap_successfactors", "User"),
+    ("salesforce", "Opportunity"),
+]
+
+
 @pytest.mark.parametrize("cartridge", ["replicon", "hubspot"])
 def test_query_kb_blocks_file_read_before_duckdb(cartridge, monkeypatch):
     load_cartridge_app(cartridge)
@@ -80,3 +90,47 @@ def test_preview_rejects_identifier_injection_before_duckdb(cartridge, monkeypat
 
     assert result["error"] == "invalid_argument"
     assert "Invalid entity" in result["reason"]
+
+
+@pytest.mark.parametrize("cartridge,entity", PREVIEW_SCOPE_CASES)
+def test_preview_reads_forwarded_tenant_workspace_scope(cartridge, entity, monkeypatch):
+    load_cartridge_app(cartridge)
+    from app import mcp_server
+    from app.core import request_context
+
+    executed: list[str] = []
+
+    class FakeConnection:
+        description = [("id", "VARCHAR")]
+
+        def execute(self, sql: str):
+            executed.append(sql)
+            return self
+
+        def fetchall(self):
+            return [("1",)]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_server, "_get_duckdb_connection", lambda: FakeConnection())
+
+    token = request_context.set_security_context(
+        {
+            "trusted": True,
+            "tenant_id": "tenant-1",
+            "workspace_id": "ws-1",
+        }
+    )
+    try:
+        result = mcp_server.preview(entity, limit=20)
+    finally:
+        request_context.reset_security_context(token)
+
+    assert result["count"] == 1
+    assert executed
+    expected = (
+        f"raw/{cartridge}/{entity}/"
+        "tenant_id=tenant-1/workspace_id=ws-1/load_date=*/batch_id=*/*.parquet"
+    )
+    assert expected in executed[0]

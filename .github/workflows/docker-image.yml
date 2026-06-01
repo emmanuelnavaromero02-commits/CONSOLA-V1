@@ -24,32 +24,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pytest
-        run: pip install pytest pytest-asyncio
+      - name: Install pytest and coverage tooling
+        run: pip install pytest pytest-asyncio coverage==7.6.1
 
       - name: Install console requirements
         run: pip install -r console/requirements.txt
 
       - name: Run console tests
-        run: pytest console/tests/ -q
+        run: coverage run --parallel-mode --source=console/app -m pytest console/tests/ -q
 
       - name: Install refinement requirements
         run: pip install -r refinement/requirements.txt
 
       - name: Run refinement tests
-        run: pytest refinement/tests/ -q
+        run: PYTHONPATH=. coverage run --parallel-mode --source=refinement/app -m pytest refinement/tests/ -q
 
       - name: Install vault requirements
         run: pip install -r vault/requirements.txt
 
       - name: Run vault tests
-        run: pytest vault/tests/ -q
+        run: PYTHONPATH=vault coverage run --parallel-mode --source=vault/app -m pytest vault/tests/ -q
 
       - name: Check for workspace tests
         run: |
           if [ -d workspace/tests ]; then
             pip install -r workspace/requirements.txt
-            pytest workspace/tests/ -q
+            PYTHONPATH=workspace coverage run --parallel-mode --source=workspace/app -m pytest workspace/tests/ -q
           else
             echo "::warning::workspace/tests/ no existe — pendiente de crear suite"
           fi
@@ -75,7 +75,10 @@ jobs:
           # and the unit-only path skips E2E cleanly.
           E2E_REQUIRE_STACK: ""
           E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
-        run: pytest tests/ -q
+        run: |
+          coverage run --parallel-mode \
+            --source=console/app,refinement/app,vault/app,workspace/app,mcp-infra/app,cartridges \
+            -m pytest tests/ -q
 
       # Beta-8: gate the per-cartridge suite too. The conftest shim that lets
       # `import app` resolve to the right cartridge (and that fixed
@@ -83,7 +86,24 @@ jobs:
       # so a regression could silently re-break it. Deps are already installed
       # above.
       - name: Run cartridges/ suite
-        run: pytest cartridges -q
+        run: |
+          coverage run --parallel-mode --source=cartridges -m pytest cartridges -q
+
+      - name: Publish Python coverage artifacts
+        if: always()
+        run: |
+          mkdir -p coverage
+          coverage combine || true
+          coverage xml -o coverage/python-coverage.xml
+          coverage json -o coverage/python-coverage.json
+          coverage report --skip-covered || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-coverage
+          path: coverage/
+          if-no-files-found: error
 
   compose-validate:
     runs-on: ubuntu-latest
@@ -130,6 +150,7 @@ jobs:
           INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE: dummy_hubspot_to_console_key_for_ci_only_32chars_xxxxxxx
           INTERNAL_API_KEY_HUBSPOT_TO_MCP_INFRA: dummy_hubspot_to_mcp_key_for_ci_only_32chars_xxxxxxxxxx
           INTERNAL_API_KEY_HUBSPOT_TO_REFINEMENT: dummy_hubspot_to_refinement_key_for_ci_only_32chars_xx
+          INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE: dummy_salesforce_to_console_key_for_ci_only_32chars_xxxx
           INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: dummy_sap_hcm_to_console_key_for_ci_only_32chars_xxxxxxxx
           INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: dummy_sap_s4hana_to_console_key_for_ci_only_32chars_xxxx
           INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: dummy_sap_sf_to_console_key_for_ci_only_32chars_xxxxx
