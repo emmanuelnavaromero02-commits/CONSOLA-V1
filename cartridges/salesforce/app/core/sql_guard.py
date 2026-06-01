@@ -11,6 +11,12 @@ _FORBIDDEN_RE = re.compile(
     r"TRUNCATE|ALTER|SET|EXPORT|IMPORT_DATABASE|IMPORT|CALL)\b",
     re.IGNORECASE,
 )
+_METADATA_EXFIL_RE = re.compile(
+    r"\b(current_setting|duckdb_settings|duckdb_secrets|duckdb_extensions|"
+    r"duckdb_functions|duckdb_tables|duckdb_columns|duckdb_databases|"
+    r"pragma_[a-z0-9_]+|database_list|information_schema)\b",
+    re.IGNORECASE,
+)
 _READER_FN_RE = re.compile(
     r"\b(read_[a-z0-9_]+|parquet_scan|csv_auto|csv_scan)\s*\(",
     re.IGNORECASE,
@@ -83,6 +89,9 @@ def validate_kb_sql(
 
     if require_limit and not has_limit_clause(stripped):
         return False, f"Interactive queries must include a LIMIT clause (max {_MAX_LIMIT})"
+
+    if _METADATA_EXFIL_RE.search(stripped):
+        return False, "DuckDB metadata/settings access (PRAGMA/current_setting/duckdb_settings) is not allowed in query_kb"
 
     limit_ok, limit_err = _validate_limit_clause(masked)
     if not limit_ok:

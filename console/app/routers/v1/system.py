@@ -91,8 +91,11 @@ async def readyz(request: Request):
     )
     data_ok = checks["control_room_data"].get("status") == "up" or not require_data
     ok = dependency_ok and data_ok
+    body = {"ok": ok, "service": "console"}
+    if getattr(request.state, "user", None):
+        body["checks"] = checks
     return JSONResponse(
-        {"ok": ok, "service": "console", "checks": checks},
+        body,
         status_code=200 if ok else 503,
     )
 

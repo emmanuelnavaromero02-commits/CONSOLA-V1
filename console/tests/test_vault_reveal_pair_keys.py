@@ -102,3 +102,18 @@ def test_salesforce_reveal_requires_salesforce_dedicated_key(monkeypatch):
     assert console_main._is_cartridge_vault_reveal_request(
         _request(path, "cartridge-salesforce", salesforce)
     ) is True
+
+
+def test_vault_reveal_connection_records_critical_audit_event():
+    for path in (
+        CONSOLE_ROOT / "app" / "main.py",
+        CONSOLE_ROOT / "app" / "routers" / "v1" / "vault.py",
+    ):
+        src = path.read_text(encoding="utf-8")
+        section = src.split('connections/{cartridge}/{conn_id}/reveal"', 1)[1]
+        section = section.split("api_vault_upsert_connection", 1)[0]
+        assert "_audit.record_event" in section
+        assert 'action="vault.connection.reveal"' in section
+        assert 'resource_type="vault_connection"' in section
+        assert "request_id" not in section or "request_id_var" in src
+        assert "critical=True" in section

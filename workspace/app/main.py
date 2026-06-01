@@ -923,11 +923,26 @@ async def api_data_query(request: Request, dataset: str, body: dict):
 
 @app.get("/api/users")
 async def api_users_list(request: Request):
-    require_user(request)
+    user = require_user(request)
     p = await pg()
-    rows = await p.fetch(
-        "SELECT id, email, name, role FROM users WHERE is_active = TRUE ORDER BY email"
-    )
+    workspace_id = _current_workspace_id(user)
+    if not workspace_id:
+        rows = await p.fetch(
+            "SELECT id, email, name, role FROM users WHERE id = $1 AND is_active = TRUE ORDER BY email",
+            user.get("id"),
+        )
+    else:
+        rows = await p.fetch(
+            """
+            SELECT DISTINCT u.id, u.email, u.name, u.role
+              FROM users u
+              JOIN user_workspace_roles uwr ON uwr.user_id = u.id
+             WHERE u.is_active = TRUE
+               AND uwr.workspace_id = $1::uuid
+             ORDER BY u.email
+            """,
+            workspace_id,
+        )
     return {"users": [dict(r) for r in rows]}
 
 

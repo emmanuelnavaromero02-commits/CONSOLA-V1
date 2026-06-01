@@ -13,14 +13,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import require_authenticated
 from app.services import auth
+from app.services.permissions import require_permission
 
+
+require_operations_read = require_permission("operations.read")
 
 router = APIRouter(
     prefix="/api/metrics",
     tags=["metrics"],
-    dependencies=[Depends(require_authenticated)],
+    dependencies=[Depends(require_operations_read)],
 )
 
 
