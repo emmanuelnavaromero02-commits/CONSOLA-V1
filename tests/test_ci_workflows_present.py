@@ -148,6 +148,19 @@ def test_python_coverage_is_published_in_ci():
     assert "name: python-coverage" in raw
 
 
+def test_compose_validate_declares_required_pair_keys():
+    raw = DOCKER_WF.read_text(encoding="utf-8")
+    for key in (
+        "INTERNAL_API_KEY_REPLICON_TO_CONSOLE",
+        "INTERNAL_API_KEY_HUBSPOT_TO_CONSOLE",
+        "INTERNAL_API_KEY_SALESFORCE_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE",
+        "INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE",
+    ):
+        assert key in raw
+
+
 def test_console_next_coverage_is_published_in_ci():
     raw = LINT_WF.read_text(encoding="utf-8")
     package = (REPO / "console-next" / "package.json").read_text(encoding="utf-8")

@@ -17,7 +17,9 @@ class _FakeAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def post(self, url):
+    async def post(self, url, **kwargs):
+        self.url = url
+        self.kwargs = kwargs
         return self._response
 
 
