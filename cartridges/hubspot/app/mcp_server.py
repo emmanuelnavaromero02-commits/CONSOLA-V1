@@ -22,6 +22,53 @@ from app.services.extraction_service import run_entity
 from app.services.kb_service import run_knowledge_bit, get_kb_runs
 from app.services.watermark_service import get_watermark
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_MAX_QUERY_LIMIT = 5000
+
+
+def _validate_identifier(value: str, kind: str) -> str:
+    if not isinstance(value, str) or not _SAFE_IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(
+            f"Invalid {kind}: {value!r}. Must match ^[a-zA-Z_][a-zA-Z0-9_]*$"
+        )
+    return value
+
+
+def _validate_bounded_int(value, kind: str, lo: int, hi: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"Invalid {kind}: {value!r} (expected int)")
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {kind}: {value!r} (expected int)") from exc
+    if coerced < lo or coerced > hi:
+        raise ValueError(f"{kind} must be {lo}..{hi}, got {coerced}")
+    return coerced
+
+
+def _query_limit(value: int | str | None, default: int = 100) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("limit must be a positive integer")
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be a positive integer") from exc
+    if coerced < 1:
+        raise ValueError("limit must be a positive integer")
+    return min(coerced, _MAX_QUERY_LIMIT)
+
+
+def _hubspot_allowed_kb_prefixes() -> tuple[str, str, str]:
+    bucket = settings.minio_bucket
+    return (
+        f"s3://{bucket}/raw/hubspot/",
+        f"s3://{bucket}/silver/hubspot/",
+        f"s3://{bucket}/gold/hubspot/",
+    )
+
+
 mcp = FastMCP(
     name="hubspot",
     instructions=(
@@ -94,7 +141,11 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
         entity: Entity name (e.g. "deals", "companies")
         limit:  Maximum number of rows to return (default 20, max 200)
     """
-    limit = min(limit, 200)
+    try:
+        entity = _validate_identifier(entity, "entity")
+        limit = _validate_bounded_int(limit, "limit", lo=1, hi=200)
+    except ValueError as exc:
+        return {"error": "invalid_argument", "reason": str(exc), "rows": [], "columns": []}
     bucket = settings.minio_bucket
     scope = scoped_prefix()
     path = f"s3://{bucket}/raw/hubspot/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
@@ -278,22 +329,19 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
                read_parquet('s3://{bucket}/raw/hubspot/deals/**/*.parquet')
         limit: Safety row cap applied if the query has no LIMIT clause (default 100)
     """
-    limit = min(limit, 5000)
-    stripped = (sql or "").strip()
-    if not re.match(r"^(select|with)\b", stripped, flags=re.IGNORECASE):
-        return {"error": "Only SELECT/WITH statements are allowed"}
-    forbidden = re.search(
-        r"\b(attach|copy|create|delete|drop|insert|install|load|pragma|update|alter|truncate)\b",
-        stripped,
-        flags=re.IGNORECASE,
-    )
-    if forbidden:
-        return {"error": f"Forbidden SQL keyword: {forbidden.group(1).upper()}"}
-    if ";" in stripped.rstrip(";"):
-        return {"error": "Forbidden SQL statement separator"}
-    resolved = sql.replace("{bucket}", settings.minio_bucket)
-    if "limit" not in resolved.lower():
-        resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
+    from app.core.sql_guard import validate_kb_sql
+
+    try:
+        limit = _query_limit(limit)
+    except ValueError as exc:
+        return {"error": "invalid_limit", "reason": str(exc)}
+
+    resolved = str(sql or "").replace("{bucket}", settings.minio_bucket)
+    ok, err = validate_kb_sql(resolved, _hubspot_allowed_kb_prefixes())
+    if not ok:
+        return {"error": "sql_blocked", "reason": err}
+
+    resolved = f"SELECT * FROM ({resolved}) _q LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()
         try:
@@ -307,17 +355,28 @@ def query_kb(sql: str, limit: int = 100) -> dict[str, Any]:
             "rows":    [dict(zip(columns, r)) for r in rows],
             "count":   len(rows),
         }
-    except Exception as exc:
-        return {"error": str(exc), "sql": resolved}
+    except Exception:
+        return {"error": "query_failed", "reason": "DuckDB query failed"}
 
 
 # ── Custom tools loader ───────────────────────────────────────────────────────
 
 def _make_sql_tool(name: str, description: str, sql: str) -> None:
     """Register a SQL-query custom tool on the mcp instance."""
+    from app.core.sql_guard import validate_kb_sql
+
     resolved_sql = sql.replace("{bucket}", settings.minio_bucket)
-    if "limit" not in resolved_sql.lower():
-        resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
+    ok, err = validate_kb_sql(resolved_sql, _hubspot_allowed_kb_prefixes())
+    if not ok:
+        def _blocked_tool_fn(reason: str | None = err) -> dict[str, Any]:
+            return {"error": "sql_blocked", "reason": reason}
+
+        _blocked_tool_fn.__name__ = name
+        _blocked_tool_fn.__doc__ = description or f"Blocked custom SQL tool: {name}"
+        mcp.add_tool(_blocked_tool_fn)
+        return
+
+    resolved_sql = f"SELECT * FROM ({resolved_sql}) _q LIMIT 100"
 
     def _tool_fn() -> dict[str, Any]:
         conn = _get_duckdb_connection()
@@ -325,6 +384,8 @@ def _make_sql_tool(name: str, description: str, sql: str) -> None:
             rel = conn.execute(resolved_sql)
             columns = [d[0] for d in rel.description]
             rows = rel.fetchall()
+        except Exception:
+            return {"error": "query_failed", "reason": "DuckDB query failed"}
         finally:
             conn.close()
         return {"columns": columns, "rows": [dict(zip(columns, r)) for r in rows], "count": len(rows)}

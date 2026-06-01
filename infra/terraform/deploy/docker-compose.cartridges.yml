@@ -84,6 +84,7 @@ services:
         required: false
     environment:
       <<: *cartridge-env
+      INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE:?INTERNAL_API_KEY_SAP_HCM_TO_CONSOLE is required}
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_hcm:${OMEGA_CARTRIDGE_SAP_HCM_PASSWORD:?OMEGA_CARTRIDGE_SAP_HCM_PASSWORD is required}@postgres:5432/modecissions"
       SAP_HCM_BASE_URL: ${SAP_HCM_BASE_URL:?SAP_HCM_BASE_URL is required}
       SAP_HCM_USER: ${SAP_HCM_USER:?SAP_HCM_USER is required}
@@ -109,6 +110,7 @@ services:
         required: false
     environment:
       <<: *cartridge-env
+      INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:?INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE is required}
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_sf:${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:?OMEGA_CARTRIDGE_SAP_SF_PASSWORD is required}@postgres:5432/modecissions"
       SF_BASE_URL: ${SF_BASE_URL:?SF_BASE_URL is required}
       SF_COMPANY_ID: ${SF_COMPANY_ID:?SF_COMPANY_ID is required}
@@ -135,6 +137,7 @@ services:
         required: false
     environment:
       <<: *cartridge-env
+      INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE:?INTERNAL_API_KEY_SAP_S4HANA_TO_CONSOLE is required}
       DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_s4:${OMEGA_CARTRIDGE_SAP_S4_PASSWORD:?OMEGA_CARTRIDGE_SAP_S4_PASSWORD is required}@postgres:5432/modecissions"
       SAP_S4_BASE_URL: ${SAP_S4_BASE_URL:?SAP_S4_BASE_URL is required}
       SAP_S4_USER: ${SAP_S4_USER:?SAP_S4_USER is required}

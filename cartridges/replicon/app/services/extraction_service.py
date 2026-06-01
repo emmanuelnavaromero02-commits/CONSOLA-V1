@@ -59,6 +59,7 @@ def run_entity(
         mode = "historical"
     else:
         mode = config.get("mode", "full")
+    security_context = config.get("security_context")
 
     run_id = create_run(
         cartridge_id="replicon",
@@ -109,6 +110,7 @@ def run_entity(
                 run_id=batch_run_id,
                 load_type=mode,
                 watermark_field=watermark_field,
+                security_context=security_context,
             )
 
         for i in range(0, max(len(all_rows), 1), BATCH_SIZE):

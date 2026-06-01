@@ -68,6 +68,7 @@ def run_entity(
         mode = "historical"
     else:
         mode = config.get("mode", "full")
+    security_context = config.get("security_context")
     expected_columns = list(dict.fromkeys([
         *(select_fields or []),
         *([watermark_field] if watermark_field else []),
@@ -109,6 +110,7 @@ def run_entity(
                 load_type=mode,
                 watermark_field=watermark_field,
                 expected_columns=expected_columns,
+                security_context=security_context,
             )
             batch_num += 1
             buffer = []

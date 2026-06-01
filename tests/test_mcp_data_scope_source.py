@@ -83,6 +83,9 @@ def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     assert "_DIRECT_STORAGE_SCAN_RE" in source
     assert "cartridge SQL must read only direct s3:// file literals" in source
     assert "cartridge SQL cannot read service database schemas" in source
+    assert "_has_invalid_scoped_storage_path" in source
+    assert 'if tool == "cartridge_query_kb":' in source
+    assert 'tool == "cartridge_query_kb" and not _is_unscoped_admin_context' not in source
     assert "RAG source is outside caller scope" in source
     assert "source = next((s for s in sources" in source
 
@@ -107,6 +110,9 @@ def test_console_registry_scopes_direct_cartridge_mcp_calls():
     assert "trusted security_context required" in source
     assert "cartridge SQL cannot read service database schemas" in source
     assert "_DIRECT_STORAGE_SCAN_RE" in source
+    assert "_has_invalid_scoped_storage_path" in source
+    assert 'if tool == "query_kb":' in source
+    assert 'tool == "query_kb" and not _is_admin_context' not in source
     assert "except HTTPException" in source
     assert "MCP transport failed" in source
     assert "MCP invoke failed" in source

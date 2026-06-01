@@ -21,6 +21,7 @@ import httpx
 import requests as _requests
 
 from app.core.config import settings
+from app.core.request_context import get_security_context, refinement_security_context
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 DEFAULT_CONN_ID = "default"
@@ -148,6 +149,9 @@ async def create_extract_job(
     mode   = config.get("mode", "full")
     job_id = str(uuid.uuid4())[:8]
     args   = {"entity": entity, "mode": mode, "from_date": from_date, "to_date": to_date}
+    security_context = get_security_context()
+    if security_context:
+        config = {**config, "security_context": security_context}
 
     await _insert(job_id, "replicon__extract", args)
 
@@ -176,9 +180,10 @@ async def create_extract_all_job(mode: str = "incremental") -> dict:
     """
     job_id = str(uuid.uuid4())[:8]
     await _insert(job_id, "replicon__extract_all", {"mode": mode})
+    security_context = get_security_context()
 
     task = asyncio.create_task(
-        _run_extract_all(job_id, mode),
+        _run_extract_all(job_id, mode, security_context),
         name=f"extract-all-{job_id}",
     )
     _tasks[job_id] = task
@@ -211,7 +216,7 @@ async def list_jobs(limit: int = 10) -> list[dict]:
 
 # ── Silver refresh trigger ────────────────────────────────────────────────────
 
-async def _trigger_silver_refresh(entity: str) -> dict:
+async def _trigger_silver_refresh(entity: str, security_context: dict | None = None) -> dict:
     """
     Notifica al refinement engine que hay nuevos datos Bronze para esta entidad.
     El engine re-materializa todos los datasets Silver que dependen de esa fuente.
@@ -232,19 +237,7 @@ async def _trigger_silver_refresh(entity: str) -> dict:
             },
             json={
                 "source": source,
-                "security_context": {
-                    "trusted": True,
-                    "source": "cartridge-replicon",
-                    "role": "admin",
-                    "permissions": ["datasets.read", "datasets.write"],
-                    "allowed_buckets": ["lakehouse"],
-                    "allowed_cartridges": ["replicon"],
-                    "allowed_prefixes": [
-                        "raw/replicon/",
-                        "silver/replicon/",
-                        "gold/replicon/",
-                    ],
-                },
+                "security_context": refinement_security_context(security_context),
             },
         )
         response.raise_for_status()
@@ -291,7 +284,7 @@ async def _trigger_airflow(
 
 # ── Background executor ───────────────────────────────────────────────────────
 
-async def _run_extract_all(job_id: str, mode: str) -> None:
+async def _run_extract_all(job_id: str, mode: str, security_context: dict | None = None) -> None:
     from app.services.catalog_service import get_all_entities
     from app.services.extraction_service import run_entity
 
@@ -315,11 +308,13 @@ async def _run_extract_all(job_id: str, mode: str) -> None:
             try:
                 overridden = dict(config)
                 overridden["mode"] = mode
+                if security_context:
+                    overridden["security_context"] = security_context
                 result = await loop.run_in_executor(
                     None, lambda c=overridden: run_entity(c)
                 )
                 count = result.get("record_count", 0)
-                refresh = await _trigger_silver_refresh(entity)
+                refresh = await _trigger_silver_refresh(entity, security_context)
                 completed += 1
                 await _log(
                     job_id, entity, "INFO",
@@ -382,7 +377,7 @@ async def _run_extract(
             lambda: run_entity(config, from_date=from_date, to_date=to_date),
         )
         count = result.get("record_count", 0)
-        refresh = await _trigger_silver_refresh(entity)
+        refresh = await _trigger_silver_refresh(entity, config.get("security_context"))
         result = {**result, "silver_refresh": refresh}
         await _update(
             job_id, "done",

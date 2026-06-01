@@ -157,6 +157,8 @@ def _prefix_allowed(ctx: dict, value: str) -> bool:
     value = (value or "").lstrip("/")
     if not value:
         return False
+    if _has_invalid_scoped_storage_path(ctx, value):
+        return False
     prefixes = [str(p).lstrip("/") for p in (ctx.get("allowed_prefixes") or [])]
     if any(value.startswith(prefix.rstrip("/") + "/") or value == prefix.rstrip("/") for prefix in prefixes):
         return True
@@ -190,6 +192,53 @@ def _prefix_allowed(ctx: dict, value: str) -> bool:
     scoped_marker = f"tenant_id={tenant_id}/workspace_id={workspace_id}"
     normalized = value.rstrip("/")
     return f"/{scoped_marker}/" in f"/{normalized}/" or normalized.endswith(f"/{scoped_marker}")
+
+
+def _storage_scope_markers(key: str) -> tuple[str | None, str | None]:
+    tenant: str | None = None
+    workspace: str | None = None
+    for part in str(key or "").strip("/").split("/"):
+        if part.startswith("tenant_id="):
+            tenant = part.split("=", 1)[1]
+        elif part.startswith("workspace_id="):
+            workspace = part.split("=", 1)[1]
+    return tenant, workspace
+
+
+def _has_tenant_workspace_scope(ctx: dict) -> bool:
+    return bool(str(ctx.get("tenant_id") or "").strip() and str(ctx.get("workspace_id") or "").strip())
+
+
+def _is_physical_storage_key(key: str) -> bool:
+    parts = str(key or "").strip("/").split("/")
+    if not parts:
+        return False
+    root = parts[0]
+    if root in {"raw", "silver", "gold"}:
+        return len(parts) > 3
+    if root == "uploads":
+        return len(parts) > 2
+    return False
+
+
+def _has_foreign_storage_scope(ctx: dict, key: str) -> bool:
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    if not (tenant_id and workspace_id):
+        return False
+    tenant, workspace = _storage_scope_markers(key)
+    if tenant is None and workspace is None:
+        return False
+    return tenant != tenant_id or workspace != workspace_id
+
+
+def _has_invalid_scoped_storage_path(ctx: dict, key: str) -> bool:
+    if not _has_tenant_workspace_scope(ctx) or not _is_physical_storage_key(key):
+        return False
+    tenant_id = str(ctx.get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or "").strip()
+    tenant, workspace = _storage_scope_markers(key)
+    return tenant != tenant_id or workspace != workspace_id
 
 
 def _require_context(ctx: dict, *permissions: str) -> None:
@@ -236,7 +285,11 @@ def _reader_storage_key(path: str) -> str:
 
 def _require_direct_cartridge_sql_path(ctx: dict, cartridge_id: str, path: str) -> None:
     key = _reader_storage_key(path)
-    if not (key.startswith(f"raw/{cartridge_id}/") or key.startswith(f"silver/{cartridge_id}/")):
+    if not (
+        key.startswith(f"raw/{cartridge_id}/")
+        or key.startswith(f"silver/{cartridge_id}/")
+        or key.startswith(f"gold/{cartridge_id}/")
+    ):
         raise PermissionError("cartridge SQL must stay inside its cartridge prefix")
     if not _prefix_allowed(ctx, key):
         raise PermissionError("cartridge SQL path not allowed")
@@ -276,7 +329,7 @@ def _enforce_outbound_scope(server_id: str, category: str, tool: str, args: dict
         _require_context(ctx, "cartridges.read")
 
     _require_cartridge_scope(ctx, server_id)
-    if tool == "query_kb" and not _is_admin_context(ctx):
+    if tool == "query_kb":
         _validate_direct_cartridge_sql(ctx, server_id, str((args or {}).get("sql") or ""))
 
 

@@ -1038,5 +1038,9 @@ def cartridge_query_kb(cartridge_id: str, sql: str, limit: int = 100) -> dict[st
             "rows":         [dict(zip(columns, r)) for r in rows],
             "count":        len(rows),
         }
-    except Exception as exc:
-        return {"cartridge_id": cartridge_id, "error": str(exc), "sql": resolved}
+    except Exception:
+        return {
+            "cartridge_id": cartridge_id,
+            "error": "query_failed",
+            "reason": "DuckDB query failed",
+        }
