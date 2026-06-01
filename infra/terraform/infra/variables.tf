@@ -132,3 +132,14 @@ variable "vpn_admin_allowed_cidrs" {
     error_message = "vpn_admin_allowed_cidrs must not include 0.0.0.0/0 or ::/0."
   }
 }
+
+variable "vpn_admin_password_hash" {
+  description = "bcrypt password hash for the wg-easy admin UI. Pass a rotated hash through tfvars or TF_VAR_vpn_admin_password_hash."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^\\$2[aby]\\$[0-9]{2}\\$", var.vpn_admin_password_hash))
+    error_message = "vpn_admin_password_hash must be a bcrypt hash such as $2b$12$..."
+  }
+}

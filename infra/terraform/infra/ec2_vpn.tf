@@ -15,7 +15,8 @@ resource "aws_instance" "vpn" {
   }
 
   user_data = templatefile("${path.module}/user_data/vpn.sh.tpl", {
-    vpn_public_ip = aws_eip.vpn.public_ip
+    vpn_public_ip     = aws_eip.vpn.public_ip
+    vpn_password_hash = replace(var.vpn_admin_password_hash, "$", "$$")
   })
 
   tags = {

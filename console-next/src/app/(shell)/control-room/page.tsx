@@ -1297,9 +1297,11 @@ export default function ControlRoomPage() {
     : filtered.filter((item) => Boolean(item.decision_id)).length;
 
   function refreshAll() {
-    void loadDashboard(selectedId, false);
-    void loadLessons();
-    void loadThresholds();
+    void Promise.allSettled([
+      loadDashboard(selectedId, false),
+      loadLessons(),
+      loadThresholds(),
+    ]);
   }
 
   return (
@@ -1312,7 +1314,7 @@ export default function ControlRoomPage() {
         dataReadyModules={dataReadyModuleCount}
         partialModules={partialModuleCount}
         stubModules={stubModuleCount}
-        loading={state === "loading" || refreshing}
+        loading={state === "loading"}
         lastUpdated={timeAgo(lastUpdatedAt, clockTick)}
         nextRefresh={timeUntil(nextRefreshAt, clockTick)}
         syncError={syncError}
