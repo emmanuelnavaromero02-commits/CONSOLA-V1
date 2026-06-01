@@ -70,6 +70,7 @@ def _s4hana_allowed_kb_prefixes() -> tuple[str, str, str]:
 
 from app.core.config import settings
 from app.core import job_runner
+from app.core.request_context import scoped_prefix
 from app.services.catalog_service import (
     get_all_entities,
     get_all_kbs,
@@ -164,7 +165,8 @@ def preview(entity: str, limit: int = 20) -> dict[str, Any]:
     entity = _validate_identifier(entity, "entity")
     limit = _validate_bounded_int(limit, "limit", lo=1, hi=200)
     bucket = settings.minio_bucket
-    path = f"s3://{bucket}/raw/sap_s4hana/{entity}/load_date=*/batch_id=*/*.parquet"
+    scope = scoped_prefix()
+    path = f"s3://{bucket}/raw/sap_s4hana/{entity}/{scope}load_date=*/batch_id=*/*.parquet"
     sql = f"SELECT * FROM read_parquet('{path}', hive_partitioning=true) LIMIT {limit}"
     try:
         conn = _get_duckdb_connection()
