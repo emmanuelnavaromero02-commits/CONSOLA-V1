@@ -9,19 +9,19 @@ knowledge_bits:
       WITH opp AS (
           SELECT DISTINCT ON (Id) Id, Name, AccountId, OwnerId, Amount, StageName,
                  Probability, CloseDate, IsClosed, IsWon
-          FROM read_parquet('s3://{bucket}/raw/salesforce/Opportunity/load_date=*/batch_id=*/*.parquet',
+          FROM read_parquet('s3://{bucket}/raw/salesforce/Opportunity/**/*.parquet',
                             hive_partitioning = true, union_by_name = true)
           ORDER BY Id, load_date DESC
       ),
       acc AS (
           SELECT DISTINCT ON (Id) Id, Name AS account_name, Industry
-          FROM read_parquet('s3://{bucket}/raw/salesforce/Account/load_date=*/batch_id=*/*.parquet',
+          FROM read_parquet('s3://{bucket}/raw/salesforce/Account/**/*.parquet',
                             hive_partitioning = true, union_by_name = true)
           ORDER BY Id, load_date DESC
       ),
       usr AS (
           SELECT DISTINCT ON (Id) Id, Name AS owner_name
-          FROM read_parquet('s3://{bucket}/raw/salesforce/User/load_date=*/batch_id=*/*.parquet',
+          FROM read_parquet('s3://{bucket}/raw/salesforce/User/**/*.parquet',
                             hive_partitioning = true, union_by_name = true)
           ORDER BY Id, load_date DESC
       )

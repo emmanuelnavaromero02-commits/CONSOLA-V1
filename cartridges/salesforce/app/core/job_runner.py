@@ -21,6 +21,7 @@ import httpx
 import requests as _requests
 
 from app.core.config import settings
+from app.core.request_context import get_security_context, refinement_security_context
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 
@@ -159,6 +160,12 @@ async def create_extract_job(
     mode   = config.get("mode", "full")
     job_id = str(uuid.uuid4())[:8]
     args   = {"entity": entity, "mode": mode, "from_date": from_date, "to_date": to_date}
+    security_context = config.get("security_context")
+    if not isinstance(security_context, dict):
+        security_context = get_security_context()
+    if security_context:
+        config = {**config, "security_context": security_context}
+        args["security_context"] = security_context
 
     await _insert(job_id, "salesforce__extract", args)
 
@@ -180,16 +187,23 @@ async def create_extract_job(
     }
 
 
-async def create_extract_all_job(mode: str = "incremental") -> dict:
+async def create_extract_all_job(
+    mode: str = "incremental",
+    security_context: dict | None = None,
+) -> dict:
     """
     Extract all enabled entities in parallel (max 4 concurrent).
     Logs progress to run_logs; updates job message after each entity.
     """
     job_id = str(uuid.uuid4())[:8]
-    await _insert(job_id, "salesforce__extract_all", {"mode": mode})
+    security_context = security_context if security_context is not None else get_security_context()
+    args = {"mode": mode}
+    if security_context:
+        args["security_context"] = security_context
+    await _insert(job_id, "salesforce__extract_all", args)
 
     task = asyncio.create_task(
-        _run_extract_all(job_id, mode),
+        _run_extract_all(job_id, mode, security_context),
         name=f"extract-all-{job_id}",
     )
     _tasks[job_id] = task
@@ -222,7 +236,10 @@ async def list_jobs(limit: int = 10) -> list[dict]:
 
 # ── Silver refresh trigger ────────────────────────────────────────────────────
 
-async def _trigger_silver_refresh(entity: str) -> None:
+async def _trigger_silver_refresh(
+    entity: str,
+    security_context: dict | None = None,
+) -> dict:
     """
     Notifica al refinement engine que hay nuevos datos Bronze para esta entidad.
     El engine re-materializa todos los datasets Silver que dependen de esa fuente.
@@ -243,24 +260,22 @@ async def _trigger_silver_refresh(entity: str) -> None:
             },
             json={
                 "source": source,
-                "security_context": {
-                    "trusted": True,
-                    "source": "cartridge-salesforce",
-                    "role": "admin",
-                    "permissions": ["datasets.read", "datasets.write"],
-                    "allowed_prefixes": [
-                        "raw/salesforce/",
-                        "silver/salesforce/",
-                        "gold/salesforce/",
-                    ],
-                },
+                "security_context": refinement_security_context(security_context),
             },
         )
     response.raise_for_status()
-    payload = response.json()
-    errors = [r for r in payload.get("results", []) if r.get("status") == "error"]
-    if errors or payload.get("error"):
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"raw": response.text}
+    errors = [
+        r
+        for r in payload.get("results", [])
+        if isinstance(r, dict) and r.get("status") == "error"
+    ] if isinstance(payload, dict) else []
+    if errors or (isinstance(payload, dict) and payload.get("error")):
         raise RuntimeError(f"refresh-by-source failed for {source}: {payload}")
+    return {"source": source, "status_code": response.status_code, "result": payload}
 
 
 # ── Airflow trigger ───────────────────────────────────────────────────────────
@@ -282,6 +297,13 @@ async def _trigger_airflow(
         "watermark_field":   config.get("watermark_field") or "",
         "sf_base_url": settings.sf_base_url,
     }
+    security_context = config.get("security_context")
+    if isinstance(security_context, dict):
+        conf["security_context"] = security_context
+        if security_context.get("tenant_id"):
+            conf["tenant_id"] = security_context["tenant_id"]
+        if security_context.get("workspace_id"):
+            conf["workspace_id"] = security_context["workspace_id"]
     url = f"{settings.airflow_url}/api/v1/dags/salesforce_extract/dagRuns"
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
@@ -297,7 +319,11 @@ async def _trigger_airflow(
 
 # ── Background executor ───────────────────────────────────────────────────────
 
-async def _run_extract_all(job_id: str, mode: str) -> None:
+async def _run_extract_all(
+    job_id: str,
+    mode: str,
+    security_context: dict | None = None,
+) -> None:
     from app.services.catalog_service import get_all_entities
     from app.services.extraction_service import run_entity
 
@@ -321,19 +347,25 @@ async def _run_extract_all(job_id: str, mode: str) -> None:
             try:
                 overridden = dict(config)
                 overridden["mode"] = mode
+                if security_context:
+                    overridden["security_context"] = security_context
                 result = await loop.run_in_executor(
                     None, lambda c=overridden: run_entity(c)
                 )
                 count = result.get("record_count", 0)
-                await _trigger_silver_refresh(entity)
+                refresh = await _trigger_silver_refresh(entity, security_context)
                 completed += 1
                 await _log(
                     job_id, entity, "INFO",
                     f"Completado — {count:,} registros y refresh downstream",
-                    {"record_count": count, "storage_uri": result.get("storage_uri")},
+                    {
+                        "record_count": count,
+                        "storage_uri": result.get("storage_uri"),
+                        "silver_refresh": refresh,
+                    },
                 )
                 results.append({"entity": entity, "status": "success",
-                                 "record_count": count})
+                                 "record_count": count, "silver_refresh": refresh})
             except Exception as exc:
                 failed += 1
                 await _log(job_id, entity, "ERROR", f"Error: {exc}",
@@ -385,7 +417,8 @@ async def _run_extract(
             None,
             lambda: run_entity(config, from_date=from_date, to_date=to_date),
         )
-        await _trigger_silver_refresh(entity)
+        refresh = await _trigger_silver_refresh(entity, config.get("security_context"))
+        result = {**result, "silver_refresh": refresh}
         count = result.get("record_count", 0)
         await _update(
             job_id, "done",

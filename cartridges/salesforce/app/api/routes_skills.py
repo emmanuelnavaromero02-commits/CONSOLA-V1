@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})?)?$")
@@ -13,6 +14,7 @@ def _validate_date(value: str, param: str) -> None:
         raise HTTPException(status_code=422, detail=f"{param} must be ISO-8601 date/datetime")
 
 from app.api.deps import verify_api_key
+from app.core.request_context import reset_security_context, set_security_context
 from app.services.catalog_service import get_all_entities, get_entity_config
 from app.services.extraction_service import run_entity
 from app.services.kb_service import (
@@ -33,6 +35,27 @@ router = APIRouter(
 
 
 _SERVICE = "salesforce"
+
+
+def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
+    ctx = body.get("security_context") if isinstance(body, dict) else None
+    if not isinstance(ctx, dict) or not ctx.get("trusted"):
+        return None
+    return ctx
+
+
+def _run_entity_with_context(
+    config: dict[str, Any],
+    body: dict[str, Any] | None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    ctx = _security_context(body)
+    token = set_security_context(ctx)
+    try:
+        scoped_config = {**config, "security_context": ctx} if ctx else config
+        return run_entity(scoped_config, **kwargs)
+    finally:
+        reset_security_context(token)
 
 
 def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse:
@@ -127,33 +150,33 @@ def entities() -> dict:
 # ── Extraction ────────────────────────────────────────────────────────────────
 
 @router.post("/run_full_load/{entity}")
-def run_full_load(entity: str) -> dict:
+def run_full_load(entity: str, body: dict[str, Any] | None = Body(None)) -> dict:
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
     try:
-        return run_entity({**config, "mode": "full"})
+        return _run_entity_with_context({**config, "mode": "full"}, body)
     except Exception as exc:
         return _external_failure(exc, entity)
 
 
 @router.post("/run_incremental/{entity}")
-def run_incremental(entity: str) -> dict:
+def run_incremental(entity: str, body: dict[str, Any] | None = Body(None)) -> dict:
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
     try:
-        return run_entity({**config, "mode": "incremental"})
+        return _run_entity_with_context({**config, "mode": "incremental"}, body)
     except Exception as exc:
         return _external_failure(exc, entity)
 
 
 @router.post("/run_full_load_all")
-def run_full_load_all() -> dict:
+def run_full_load_all(body: dict[str, Any] | None = Body(None)) -> dict:
     results = []
     for config in get_all_entities():
         try:
-            results.append(run_entity({**config, "mode": "full"}))
+            results.append(_run_entity_with_context({**config, "mode": "full"}, body))
         except Exception as exc:
             results.append({
                 "entity": config.get("entity"),
@@ -164,12 +187,12 @@ def run_full_load_all() -> dict:
 
 
 @router.post("/run_incremental_all")
-def run_incremental_all() -> dict:
+def run_incremental_all(body: dict[str, Any] | None = Body(None)) -> dict:
     results = []
     for config in get_all_entities():
         mode = "incremental" if config.get("watermark_field") else "full"
         try:
-            results.append(run_entity({**config, "mode": mode}))
+            results.append(_run_entity_with_context({**config, "mode": mode}, body))
         except Exception as exc:
             results.append({
                 "entity": config.get("entity"),
@@ -180,7 +203,12 @@ def run_incremental_all() -> dict:
 
 
 @router.post("/run_historical_load/{entity}")
-def run_historical_load(entity: str, from_date: str, to_date: str) -> dict:
+def run_historical_load(
+    entity: str,
+    from_date: str,
+    to_date: str,
+    body: dict[str, Any] | None = Body(None),
+) -> dict:
     _validate_date(from_date, "from_date")
     _validate_date(to_date, "to_date")
     config = get_entity_config(entity)
@@ -192,13 +220,22 @@ def run_historical_load(entity: str, from_date: str, to_date: str) -> dict:
             detail=f"Entity {entity} has no date_field. Use run_full_load instead.",
         )
     try:
-        return run_entity(dict(config), from_date=from_date, to_date=to_date)
+        return _run_entity_with_context(
+            dict(config),
+            body,
+            from_date=from_date,
+            to_date=to_date,
+        )
     except Exception as exc:
         return _external_failure(exc, entity)
 
 
 @router.post("/run_historical_load_all")
-def run_historical_load_all(from_date: str, to_date: str) -> dict:
+def run_historical_load_all(
+    from_date: str,
+    to_date: str,
+    body: dict[str, Any] | None = Body(None),
+) -> dict:
     _validate_date(from_date, "from_date")
     _validate_date(to_date, "to_date")
     results = []
@@ -206,7 +243,14 @@ def run_historical_load_all(from_date: str, to_date: str) -> dict:
         if not config.get("date_field"):
             continue
         try:
-            results.append(run_entity(dict(config), from_date=from_date, to_date=to_date))
+            results.append(
+                _run_entity_with_context(
+                    dict(config),
+                    body,
+                    from_date=from_date,
+                    to_date=to_date,
+                )
+            )
         except Exception as exc:
             results.append({
                 "entity": config.get("entity"),

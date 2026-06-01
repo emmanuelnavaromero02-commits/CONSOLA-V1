@@ -14,6 +14,7 @@ from app.api.routes_health import router as health_router
 from app.api.routes_console import router as console_router
 from app.api.routes_skills import router as skills_router
 from app.core import job_runner
+from app.core.request_context import reset_security_context, set_security_context
 from app.mcp_server import load_custom_tools, mcp
 from app.security import InternalApiKeyASGIGuard, get_internal_api_key
 from app.services import catalog_service
@@ -212,7 +213,11 @@ async def mcp_invoke(body: dict, request: Request):
         return JSONResponse({"error": f"Tool '{tool_name}' not found"}, status_code=404)
 
     try:
-        result = await tool.run(args)
+        token = set_security_context(body.get("security_context"))
+        try:
+            result = await tool.run(args)
+        finally:
+            reset_security_context(token)
 
         content_items = None
         if hasattr(result, "content"):

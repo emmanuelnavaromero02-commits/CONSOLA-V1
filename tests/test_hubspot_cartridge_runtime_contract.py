@@ -103,12 +103,16 @@ def test_hubspot_extraction_preserves_console_workspace_scope():
     extraction = (REPO / "cartridges/hubspot/app/services/extraction_service.py").read_text(encoding="utf-8")
     parquet = (REPO / "cartridges/hubspot/app/services/parquet_service.py").read_text(encoding="utf-8")
     mcp = (REPO / "cartridges/hubspot/app/mcp_server.py").read_text(encoding="utf-8")
+    extract_all_dag = (REPO / "cartridges/hubspot/dags/hubspot_extract_all.py").read_text(encoding="utf-8")
     assert "set_security_context(body.get(\"security_context\"))" in main
     assert 'config = {**config, "security_context": security_context}' in job_runner
     assert 'overridden["security_context"] = security_context' in job_runner
     assert 'security_context=security_context' in extraction
     assert 'f"raw/hubspot/{entity}/{scope}"' in parquet
     assert "scope = scoped_prefix()" in mcp
+    assert "skill_body = {" in extract_all_dag
+    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in extract_all_dag
+    assert "json=skill_body" in extract_all_dag
 
 
 def test_refinement_accepts_hubspot_internal_origin():

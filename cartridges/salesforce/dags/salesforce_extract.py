@@ -68,10 +68,15 @@ def salesforce_extract():
                     "job_id": conf.get("job_id") or None,
                 }.items() if v
             }
+            skill_body = {
+                key: conf[key]
+                for key in ("tenant_id", "workspace_id", "security_context")
+                if conf.get(key)
+            }
             res = client.post(
                 f"{CARTRIDGE_URL}/entities/{entity}/extract",
                 params=params,
-                json={},
+                json=skill_body,
                 headers=headers,
             )
             res.raise_for_status()

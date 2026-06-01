@@ -5,7 +5,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCOPED_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
+SCOPED_CARTRIDGES = (
+    "replicon",
+    "hubspot",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+    "salesforce",
+)
 SAP_CARTRIDGES = ("sap_hcm", "sap_s4hana", "sap_successfactors")
 
 
@@ -53,6 +60,17 @@ def test_sap_console_extract_routes_preserve_forwarded_workspace_scope():
         assert "reset_security_context(token)" in source
 
 
+def test_salesforce_console_extract_routes_preserve_forwarded_workspace_scope():
+    source = _read("cartridges/salesforce/app/api/routes_console.py")
+
+    assert "Body(None)" in source
+    assert "def _security_context(" in source
+    assert "token = set_security_context(ctx)" in source
+    assert 'return {**config, "security_context": ctx} if ctx else config' in source
+    assert "_mark_external_job(_trigger_silver_refresh, entity_id, ctx)" in source
+    assert "reset_security_context(token)" in source
+
+
 def test_cartridge_job_runners_pass_scope_to_airflow_conf():
     for cartridge in SCOPED_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/app/core/job_runner.py")
@@ -65,6 +83,9 @@ def test_cartridge_job_runners_pass_scope_to_airflow_conf():
 def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
     replicon = _read("cartridges/replicon/dags/replicon_extract.py")
     hubspot = _read("cartridges/hubspot/dags/hubspot_extract.py")
+    hubspot_extract_all = _read("cartridges/hubspot/dags/hubspot_extract_all.py")
+    salesforce = _read("cartridges/salesforce/dags/salesforce_extract.py")
+    salesforce_extract_all = _read("cartridges/salesforce/dags/salesforce_extract_all.py")
 
     assert "def _scope_prefix(" in replicon
     assert 'return f"tenant_id={tenant}/workspace_id={workspace}/"' in replicon
@@ -73,6 +94,15 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
     assert "skill_body = {" in hubspot
     assert 'for key in ("tenant_id", "workspace_id", "security_context")' in hubspot
     assert "json=skill_body" in hubspot
+    assert "skill_body = {" in hubspot_extract_all
+    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in hubspot_extract_all
+    assert "json=skill_body" in hubspot_extract_all
+    assert "skill_body = {" in salesforce
+    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in salesforce
+    assert "json=skill_body" in salesforce
+    assert "skill_body = {" in salesforce_extract_all
+    assert 'for key in ("tenant_id", "workspace_id", "security_context")' in salesforce_extract_all
+    assert "json=skill_body" in salesforce_extract_all
 
     for cartridge in SAP_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract.py")
@@ -116,6 +146,13 @@ def test_mcp_infra_injects_trusted_scope_before_cartridge_execution():
         "cartridge_run_kb",
     ):
         assert {"tenant_id", "workspace_id", "security_context"} <= _function_args(tools, fn_name)
+
+
+def test_direct_scoped_cartridge_mcp_invokes_load_forwarded_context():
+    for cartridge in ("hubspot", "replicon", "sap_hcm", "sap_s4hana", "sap_successfactors", "salesforce"):
+        source = _read(f"cartridges/{cartridge}/app/main.py")
+        assert "set_security_context(body.get(\"security_context\"))" in source
+        assert "reset_security_context(token)" in source
 
 
 def test_mcp_admin_sql_sensitive_table_denylist_covers_tenant_and_vault_tables():
