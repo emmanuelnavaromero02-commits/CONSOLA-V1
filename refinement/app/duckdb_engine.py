@@ -533,14 +533,26 @@ class DuckDBEngine:
             cols = {str(r[0]).lower() for r in rows}
         except Exception:
             cols = set()
-        extras = []
-        if "tenant_id" not in cols:
-            extras.append(f"{_sql_quote(tenant)} AS tenant_id")
-        if "workspace_id" not in cols:
-            extras.append(f"{_sql_quote(workspace)} AS workspace_id")
-        if not extras:
-            return sql
-        return f"SELECT {', '.join(extras)}, _scope_q.* FROM ({sql}) _scope_q"
+        # Security (P0-RLS-001): the caller MUST NOT choose the tenant/workspace
+        # scope of the rows it materializes. Any caller-supplied tenant_id /
+        # workspace_id is OVERRIDDEN with the server-derived session scope — not
+        # merely added when absent — so a workspace_admin cannot smuggle another
+        # tenant's tenant_id/workspace_id into the shared gold table. Columns
+        # already present are rewritten in place via `* REPLACE (...)` (preserves
+        # their position so INSERT INTO ... SELECT * stays column-aligned with the
+        # existing table); genuinely-missing columns are prepended, matching the
+        # historical ordering.
+        scope_value = {
+            "tenant_id": f"{_sql_quote(tenant)} AS tenant_id",
+            "workspace_id": f"{_sql_quote(workspace)} AS workspace_id",
+        }
+        present = [c for c in ("tenant_id", "workspace_id") if c in cols]
+        missing = [c for c in ("tenant_id", "workspace_id") if c not in cols]
+        prefix = "".join(f"{scope_value[c]}, " for c in missing)
+        replace = ""
+        if present:
+            replace = " REPLACE (" + ", ".join(scope_value[c] for c in present) + ")"
+        return f"SELECT {prefix}_scope_q.*{replace} FROM ({sql}) _scope_q"
 
     def _resolve_latest_date(self, source: str, user_context: dict | None = None) -> str | None:
         """Devuelve el load_date más reciente disponible en una fuente Bronze."""
