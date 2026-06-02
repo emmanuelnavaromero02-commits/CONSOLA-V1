@@ -1093,7 +1093,7 @@ async def test_files_disabled_does_not_call_graph(monkeypatch):
     # Default-closed regression: when MSTEAMS_FILES_ENABLED=false the channel
     # must NOT contact Graph even for a Graph-shaped attachment URL. The
     # copilot still gets the user's plain text.
-    from app.channels.msteams import graph as g
+    g = service.graph
     called = {"download": 0, "token": 0}
 
     async def _fail_download(*a, **kw):
@@ -1118,7 +1118,7 @@ async def test_files_disabled_does_not_call_graph(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_supported_text_attachment_is_downloaded_and_appended(monkeypatch):
-    from app.channels.msteams import graph as g
+    g = service.graph
 
     async def _fake_dl(url, *, cfg, max_bytes):
         return g.GraphResult(ok=True, content=b"hola desde el archivo", content_type="text/plain; charset=utf-8")
@@ -1148,7 +1148,7 @@ async def test_supported_text_attachment_is_downloaded_and_appended(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_unsupported_attachment_type_is_skipped_with_audit(monkeypatch):
-    from app.channels.msteams import graph as g
+    g = service.graph
     called = {"download": 0}
 
     async def _fake_dl(*a, **kw):
@@ -1173,7 +1173,7 @@ async def test_unsupported_attachment_type_is_skipped_with_audit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_oversized_attachment_is_capped_and_audited(monkeypatch):
-    from app.channels.msteams import graph as g
+    g = service.graph
 
     async def _fake_dl(*a, **kw):
         return g.GraphResult(ok=False, reason="download_too_large")
@@ -1193,7 +1193,7 @@ async def test_oversized_attachment_is_capped_and_audited(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_graph_token_unavailable_does_not_break_copilot_turn(monkeypatch):
-    from app.channels.msteams import graph as g
+    g = service.graph
 
     async def _fake_dl(*a, **kw):
         return g.GraphResult(ok=False, reason="token_unavailable")
@@ -1215,7 +1215,7 @@ async def test_graph_token_unavailable_does_not_break_copilot_turn(monkeypatch):
 async def test_per_turn_attachment_cap_is_enforced(monkeypatch):
     # 7 attachments → 5 processed, 2 audited as overflow. Download stub is
     # called at most 5 times.
-    from app.channels.msteams import graph as g
+    g = service.graph
     dl_calls = {"n": 0}
 
     async def _fake_dl(*a, **kw):
