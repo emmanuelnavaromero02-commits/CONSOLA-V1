@@ -538,10 +538,10 @@ class DuckDBEngine:
         # workspace_id is OVERRIDDEN with the server-derived session scope — not
         # merely added when absent — so a workspace_admin cannot smuggle another
         # tenant's tenant_id/workspace_id into the shared gold table. Columns
-        # already present are rewritten in place via `* REPLACE (...)` (preserves
-        # their position so INSERT INTO ... SELECT * stays column-aligned with the
-        # existing table); genuinely-missing columns are prepended, matching the
-        # historical ordering.
+        # already present are rewritten in place via `* REPLACE (...)` (which keeps
+        # their position; the gold INSERT additionally lists columns by name, so
+        # alignment never depends on order); genuinely-missing columns are
+        # prepended.
         scope_value = {
             "tenant_id": f"{_sql_quote(tenant)} AS tenant_id",
             "workspace_id": f"{_sql_quote(workspace)} AS workspace_id",
