@@ -87,7 +87,51 @@ def test_partial_forge_only_tenant_present(engine_and_con):
     assert rec["v"] == 9
 
 
+def test_partial_forge_only_workspace_present(engine_and_con):
+    e, con = engine_and_con
+    ctx = {"tenant_id": "t1", "workspace_id": "w1"}
+    out = e._ensure_scope_columns(con, "SELECT 'EVIL' AS workspace_id, 9 AS v", ctx)
+    cols, rows = _run(con, out)
+    rec = dict(zip(cols, rows[0]))
+    assert rec["workspace_id"] == "w1"   # present -> overridden
+    assert rec["tenant_id"] == "t1"      # missing -> added
+    assert rec["v"] == 9
+
+
+def test_mixed_case_forged_columns_are_overridden(engine_and_con):
+    e, con = engine_and_con
+    ctx = {"tenant_id": "t1", "workspace_id": "w1"}
+    forged = "SELECT 'EVIL' AS \"Tenant_Id\", 'EVIL2' AS \"Workspace_Id\", 3 AS v"
+    out = e._ensure_scope_columns(con, forged, ctx)
+    cols, rows = _run(con, out)
+    rec = {str(k).lower(): v for k, v in zip(cols, rows[0])}
+    assert rec["tenant_id"] == "t1"
+    assert rec["workspace_id"] == "w1"
+    assert rec["v"] == 3
+    # case-insensitive REPLACE must not duplicate the scope columns
+    assert sum(1 for c in cols if str(c).lower() == "tenant_id") == 1
+    assert sum(1 for c in cols if str(c).lower() == "workspace_id") == 1
+
+
 def test_no_scope_context_is_passthrough(engine_and_con):
     e, con = engine_and_con
     out = e._ensure_scope_columns(con, "SELECT 1 AS v", {})
     assert out == "SELECT 1 AS v"
+
+
+def test_named_insert_aligns_by_name_not_position(engine_and_con):
+    """SQL-correctness audit regression: a gold table whose physical column order
+    differs from the producing SELECT must still load correctly because the
+    materialize INSERT now lists columns by NAME (via _quoted_columns), not a
+    positional SELECT *. A positional insert would mis-map a -> tenant_id."""
+    e, con = engine_and_con
+    con.execute("CREATE TABLE g (tenant_id TEXT, workspace_id TEXT, a INTEGER, b TEXT)")
+    producing = "SELECT 5 AS a, 't1' AS tenant_id, 'x' AS b, 'w1' AS workspace_id"
+    col_list = e._quoted_columns(con, producing)
+    con.execute(f"INSERT INTO g ({col_list}) SELECT {col_list} FROM ({producing}) _q")
+    cols = [d[0] for d in con.execute("SELECT * FROM g").description]
+    rec = dict(zip(cols, con.execute("SELECT * FROM g").fetchall()[0]))
+    assert rec["tenant_id"] == "t1"
+    assert rec["workspace_id"] == "w1"
+    assert rec["a"] == 5
+    assert rec["b"] == "x"

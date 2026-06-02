@@ -55,15 +55,15 @@ BEGIN
       USING (
         coalesce(current_setting('omega.rls_enforce', true), 'off') <> 'on'
         OR (
-          tenant_id    = current_setting('omega.tenant_id', true)
-          AND workspace_id = current_setting('omega.workspace_id', true)
+          tenant_id::text    = current_setting('omega.tenant_id', true)
+          AND workspace_id::text = current_setting('omega.workspace_id', true)
         )
       )
       WITH CHECK (
         coalesce(current_setting('omega.rls_enforce', true), 'off') <> 'on'
         OR (
-          tenant_id    = current_setting('omega.tenant_id', true)
-          AND workspace_id = current_setting('omega.workspace_id', true)
+          tenant_id::text    = current_setting('omega.tenant_id', true)
+          AND workspace_id::text = current_setting('omega.workspace_id', true)
         )
       )
   $p$, polname, target);

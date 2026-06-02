@@ -1006,6 +1006,18 @@ class DuckDBEngine:
         except Exception:
             return None
 
+    def _quoted_columns(self, con: duckdb.DuckDBPyConnection, sql: str) -> str:
+        """Return the comma-separated, double-quoted column list of ``sql``.
+
+        Used to INSERT by explicit column NAME (not positional ``SELECT *``) so a
+        pre-existing gold table whose physical column order differs from the
+        current ``effective_sql`` (e.g. a dataset that later emits tenant_id/
+        workspace_id at non-leading positions) stays aligned by name instead of
+        being corrupted by position.
+        """
+        rows = con.execute(f"DESCRIBE SELECT * FROM ({sql}) _q LIMIT 0").fetchall()
+        return ", ".join('"' + str(r[0]).replace('"', '""') + '"' for r in rows)
+
     def _ensure_scoped_gold_table(
         self,
         con: duckdb.DuckDBPyConnection,
@@ -1070,8 +1082,14 @@ class DuckDBEngine:
                         f"DELETE FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
                         [tenant, workspace],
                     )
+                    # Insert by explicit column NAME (not positional SELECT *) so a
+                    # pre-existing gold table whose physical column order differs
+                    # from the current effective_sql stays aligned by name instead
+                    # of corrupting by position.
+                    col_list = self._quoted_columns(con, effective_sql)
                     con.execute(
-                        f"INSERT INTO pggold.{table} SELECT * FROM ({effective_sql}) _q"
+                        f"INSERT INTO pggold.{table} ({col_list}) "
+                        f"SELECT {col_list} FROM ({effective_sql}) _q"
                     )
                     row_count = con.execute(
                         f"SELECT COUNT(*) FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
