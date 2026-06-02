@@ -1,0 +1,849 @@
+[
+  {
+    "id": "P0-RLS-001",
+    "title": "Escritura cross-tenant en tablas gold compartidas via columnas tenant_id/workspace_id forjadas en el SQL del dataset",
+    "severity": "P0",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "refinement/app/duckdb_engine.py:1050",
+      "refinement/app/duckdb_engine.py:1058",
+      "refinement/app/duckdb_engine.py:1062",
+      "refinement/app/duckdb_engine.py:537-543",
+      "console/app/routers/v1/data.py:109",
+      "console/app/routers/v1/data.py:76",
+      "console/app/services/permissions.py:152-157"
+    ],
+    "impact": "Un workspace_admin (admin de WORKSPACE, no de plataforma) tiene datasets.write y puede guardar un sql_def arbitrario con layer=gold y dispararel materialize. La tabla gold es `gold_{name}` COMPARTIDA sin prefijo de tenant; `_ensure_scope_columns` solo AGREGA tenant_id/workspace_id si faltan y NO los sobrescribe; el DELETE previo usa el scope de la sesion (atacante). Resultado: filas con tenant_id/workspace_id de la VICTIMA forjados por literal sobreviven al INSERT en la tabla compartida y luego el filtro RLS de lectura se las sirve a la victima. Inyeccion/integridad cross-tenant.",
+    "reproduction": "Como workspace_admin de WS-A: POST /api/datasets/save {name:'X', layer:'gold', cartridge:'<permitido>', sources:[], sql:\"SELECT 'VICTIM_TENANT' AS tenant_id, 'VICTIM_WS' AS workspace_id, 'forged' AS v\"}. El SQL no referencia tablas => pasa _require_sql_storage_scope. Luego POST /datasets/X/refresh => materialize gold => _ensure_scope_columns ve las columnas presentes y no las pisa => INSERT INTO pggold.gold_X SELECT * FROM (sql). El DELETE solo borro el scope del atacante. La fila forjada de la victima persiste. End-to-end requiere DB viva (no ejecutable en sandbox sin Docker).",
+    "evidence": "duckdb_engine.py:1050 `table = f\"gold_{name}\"` (sin prefijo tenant); :537-540 `if \"tenant_id\" not in cols: extras.append(...)` (solo agrega); :1058 `DELETE FROM pggold.{table} WHERE tenant_id=? AND workspace_id=?` [tenant_sesion]; :1062 `INSERT INTO pggold.{table} SELECT * FROM ({effective_sql}) _q`. permissions.py:152-157 workspace_admin incluye datasets.write/read/delete.",
+    "recommended_fix": "En el path de materialize gold, proyectar a la fuerza el scope del servidor: descartar cualquier tenant_id/workspace_id provisto por el caller y reañadirlos como constantes server-side (SELECT <const> AS tenant_id, <const> AS workspace_id, _q.* EXCLUDE(tenant_id, workspace_id) FROM (sql) _q). Adicionalmente desplegar RLS Postgres WITH CHECK (ver P0-RLS-002).",
+    "tests_to_add": [
+      "refinement: materialize gold con sql_def que emite tenant_id/workspace_id ajenos => las filas deben quedar con el scope de la sesion, no el forjado",
+      "console e2e: workspace_admin de WS-A no puede inyectar filas con workspace_id de WS-B"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P0-RLS-002",
+    "title": "No existe RLS a nivel Postgres en el esquema de produccion; las tablas gold conviven todos los tenants con aislamiento solo a nivel aplicacion",
+    "severity": "P0",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "infra/init_gold/00_schema.sql",
+      "infra/init_gold/34_postgres_gold_role.sql:23",
+      "refinement/app/duckdb_engine.py:1062",
+      "console/tests/test_cross_tenant_api_isolation.py:215-238"
+    ],
+    "impact": "Busqueda repo-wide de `ROW LEVEL SECURITY|CREATE POLICY` devuelve UN solo match: el test console/tests/test_cross_tenant_api_isolation.py, que crea la policy DENTRO del test sobre la tabla `datasets`. El esquema de produccion (infra/init, infra/init_gold) no tiene ninguna policy. Las tablas pggold.gold_* guardan filas de todos los tenants distinguidas solo por columnas tenant_id/workspace_id, y el rol omega_refinement_gold tiene SELECT/INSERT/UPDATE/DELETE. No hay backstop de BD: cualquier ruta que consulte gold_* sin pasar por el inyector RLS app-layer (o un fallo de parseo sqlglot) = lectura cross-tenant total.",
+    "reproduction": "rg -rn -i 'row level security|create policy|force row level' --glob '!.git'  => unico match en el archivo de test. Confirma que produccion no despliega RLS. El equipo TIENE el test que demuestra la tecnica pero no la aplico a las tablas de datos.",
+    "evidence": "Grep repo-wide: solo console/tests/test_cross_tenant_api_isolation.py:229-238 contiene ALTER TABLE datasets ENABLE/FORCE ROW LEVEL SECURITY + CREATE POLICY (scope de test). infra/init_gold/34_postgres_gold_role.sql:23 `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO omega_refinement_gold;`.",
+    "recommended_fix": "Activar RLS real en cada tabla gold_*/master_*: ALTER TABLE ... ENABLE ROW LEVEL SECURITY; CREATE POLICY tenant_iso USING (tenant_id=current_setting('app.tenant_id') AND workspace_id=current_setting('app.workspace_id')) WITH CHECK (...); y que refinement fije esos GUCs por request. Tratar el RLS app-layer (sqlglot AST) como defensa en profundidad, no como control unico.",
+    "tests_to_add": [
+      "Test de esquema que falla si alguna tabla gold_*/master_* no tiene ENABLE ROW LEVEL SECURITY desplegado en infra/init_gold"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-MCP-001",
+    "title": "mcp-infra cartridge_query_kb ejecuta SQL DuckDB arbitrario sin guard in-tool; la seguridad depende de un guard duplicado y propenso a drift en main.py",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "mcp-infra/app/tools/cartridges.py:1355-1381",
+      "mcp-infra/app/tools/cartridges.py:40-51",
+      "mcp-infra/app/main.py:792-811",
+      "mcp-infra/app/main.py:1086-1094",
+      "mcp-infra/app/main.py:288-307"
+    ],
+    "impact": "El tool cartridge_query_kb corre raw SQL en _duckdb() sin validate_kb_sql, sin scope param, y con un DuckDB menos endurecido (sin disabled_filesystems/lock_configuration). Hoy esta contenido por un guard SEPARADO en main.py (_validate_cartridge_query_sql). Si ese gate se refactoriza o el tool se expone por otra ruta, se vuelve lectura arbitraria cross-tenant + posible exfil de credenciales MinIO. Gaps reales aun con gate: LIMIT no acotado por valor; _DUCKDB_SCHEMA_RE no bloquea current_setting/duckdb_settings/information_schema (a diferencia del guard de cartridge).",
+    "reproduction": "Trazado estatico: POST /mcp/invoke {tool:cartridge_query_kb} => invoke_tool (main.py:1114) => _enforce_data_scope => rama _CARTRIDGE_DATA_TOOLS (:1086) => _validate_cartridge_query_sql (:792) => registry.invoke => cartridge_query_kb (cartridges.py:1355) ejecuta sin validar.",
+    "evidence": "cartridges.py:1358-1365 `resolved = sql.replace('{bucket}', ...)`; `conn=_duckdb()`; `rel = conn.execute(resolved)` sin validate_kb_sql. _duckdb() (40-51) no setea disabled_filesystems/lock_configuration.",
+    "recommended_fix": "Mover la validacion DENTRO de cartridge_query_kb (mismo guard compartido), añadir disabled_filesystems='LocalFileSystem' + lock_configuration=true a _duckdb(), acotar el valor de LIMIT, y añadir el regex de metadata DuckDB a main.py. Un solo modulo guard compartido para todas las superficies SQL.",
+    "tests_to_add": [
+      "mcp-infra: cartridge_query_kb rechaza SQL no-SELECT, current_setting/duckdb_settings, y LIMIT > max aun llamando al tool directamente"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-MCP-002",
+    "title": "El transporte /mcp/rpc de cartridges no aplica scoping de tenant (security_context vacio => lecturas a nivel cartridge sobre todos los tenants)",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "cartridges/sap_successfactors/app/main.py:143",
+      "cartridges/sap_successfactors/app/mcp_server.py:375",
+      "cartridges/sap_successfactors/app/services/kb_service.py:24-28",
+      "cartridges/sap_successfactors/app/core/request_context.py:48-52"
+    ],
+    "impact": "query_kb/preview en el mount /mcp/rpc corren con security_context vacio => _scope_kb_sql no aplica filtro de tenant => un lector con la internal API key puede leer todas las particiones bajo el prefijo del cartridge (read_parquet('s3://{bucket}/raw/sap_successfactors/User/**')). Contenido porque /mcp/rpc exige X-Api-Key + X-Internal-Service (no alcanzable por un tenant externo directamente), pero es deuda de defensa en profundidad: cualquier caller interno que olvide setear el contexto pierde el aislamiento. Identico en los 6 cartridges.",
+    "reproduction": "Estatico: /mcp/rpc POST => InternalApiKeyASGIGuard(_mcp_app) (no llama set_security_context) => FastMCP dispatch query_kb => _scope_kb_sql(sql) con ContextVar None => scope='' => kb_service.py:27 `if not scope: return resolved` (sin scope) => validate_kb_sql pasa por prefijo de cartridge => DuckDB lee todas las particiones. Contrastar con /mcp/invoke (main.py:214) que SI setea contexto.",
+    "evidence": "kb_service.py:24-28 `scope = scoped_prefix(security_context)` (None=>''); `if not scope: return resolved`. main.py:143 mount /mcp/rpc sin set_security_context.",
+    "recommended_fix": "Hacer que el mount /mcp/rpc requiera/establezca un security_context por request y falle-cerrado cuando falte para tools de datos; o que query_kb/preview rechacen cuando scoped_prefix() esta vacio (deny-by-default) salvo contexto admin-unscoped explicito.",
+    "tests_to_add": [
+      "cartridge: query_kb via /mcp/rpc sin contexto debe denegar en vez de leer cartridge-wide"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-RLS-003",
+    "title": "El inyector RLS del engine no es default-deny por si solo para identificadores de 3 partes (pggold.main.x lo evade); depende del gate de main.py",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "refinement/app/duckdb_engine.py:863-867",
+      "refinement/app/main.py:723-725"
+    ],
+    "impact": "_inject_rls_ast filtra por node.db. Para pggold.main.gold_sales sqlglot pone catalog='pggold', db='main' => node.db != 'pggold' => NO se inyecta el filtro y la tabla se devuelve sin filtrar. Hoy bloqueado aguas arriba porque _require_sql_storage_scope rechaza catalog no vacio; pero el engine NO es self-contained default-deny: cualquier ruta que llame engine.preview_sql/query_dataset sin ese gate pierde el aislamiento.",
+    "reproduction": "Validado en vivo contra sqlglot 25.16.1: parse 'SELECT * FROM pggold.main.gold_sales' => _inject_rls_ast devuelve el SQL SIN WHERE (params=[]); el gate de main.py levanta 403 por catalog!=vacio de forma independiente.",
+    "evidence": "duckdb_engine.py:866 `if (node.db or '').lower() != 'pggold': return node` — el 3-part pggold.main.x tiene db='main' y pasa sin filtrar.",
+    "recommended_fix": "En el transformer, tratar una referencia pggold que aparezca en node.db O node.catalog como in-scope; adoptar allowlist real: denegar (1=0/raise) cualquier tabla cuyo schema resuelto no sea un CTE permitido o un pggold.gold_* reconocido, en vez de dejar pasar tablas desconocidas.",
+    "tests_to_add": [
+      "refinement: _inject_rls_ast filtra (o deniega) pggold.main.gold_sales y memory.pggold.gold_sales"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-SQL-005",
+    "title": "El blocklist _validate_safe_sql del engine omite INSERT/UPDATE/DELETE/TRUNCATE sobre una conexion read-write con rol DB de DML completo",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "refinement/app/duckdb_engine.py:636-647",
+      "refinement/app/duckdb_engine.py:129",
+      "refinement/app/main.py:148-151"
+    ],
+    "impact": "_validate_safe_sql bloquea read_csv/ATTACH/INSTALL/LOAD/PRAGMA/COPY FROM/CREATE/DROP pero NO INSERT/UPDATE/DELETE/TRUNCATE/MERGE. Como la conexion DuckDB es read-write (linea 129, sin read_only) y el rol gold tiene DML completo, el engine no aporta proteccion de escritura por si mismo. Hoy las escrituras se bloquean solo en el borde API (_SQL_FORBIDDEN_RE). Cualquier caller que alcance preview_sql/query_dataset sin ese gate ejecuta DELETE FROM pggold.gold_x (destruccion cross-tenant).",
+    "reproduction": "Comparar duckdb_engine.py:636-647 (sin verbos DML) vs main.py:149 (attach|call|copy|create|delete|drop|...|update). engine.preview_sql('DELETE FROM pggold.gold_sales', ...) ejecutaria el delete sin que _validate_safe_sql levante.",
+    "evidence": "duckdb_engine.py:638-646 lista de patrones prohibidos sin INSERT/UPDATE/DELETE/TRUNCATE; :129 `self._con = duckdb.connect()` (sin read_only/access_mode).",
+    "recommended_fix": "Añadir INSERT|UPDATE|DELETE|TRUNCATE|MERGE|REPLACE|UPSERT a _DANGEROUS_PATTERNS, y/o correr los paths de lectura sobre una conexion DuckDB read_only=True / rol DB SELECT-only.",
+    "tests_to_add": [
+      "refinement: _validate_safe_sql levanta ante DELETE/UPDATE/INSERT/TRUNCATE"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-RLS-004",
+    "title": "Los claims de RLS del README son falsos/engañosos (no hay regex, ni read_only, ni _read_conn, ni apply_rls, ni RLS parametrizado en BD)",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "README.md:4",
+      "README.md:7",
+      "README.md:27",
+      "refinement/app/duckdb_engine.py:825",
+      "refinement/app/duckdb_engine.py:129"
+    ],
+    "impact": "El README afirma (1) 'una expresion regular intercepta CUALQUIER query a pggold', (2) 'read_only=True via _read_conn()', (4) 'apply_rls intercept logic' y la tabla dice 'Strict RLS (default-deny) via parameterized queries'. En realidad: es AST/sqlglot (el propio codigo dice 'There is no regex'), _read_conn/read_only/access_mode NO existen (conexion read-write + rol DML completo), no hay funcion apply_rls, y no hay policies RLS en BD. Un operador creeria que la BD esta protegida de escritura y con RLS DB cuando ninguna de las dos cosas es cierta — postura de seguridad falsa que enmascara P0-RLS-001/002.",
+    "reproduction": "rg -rn '_read_conn|read_only|apply_rls|access_mode' . => solo el README los menciona (y apply_rls solo aparece en un nombre de test). rg -n 'duckdb.connect' refinement/app => un solo duckdb.connect() sin read_only en :129.",
+    "evidence": "duckdb_engine.py:825 comentario `There is no regex fallback (that was the v1.0 design weakness called out by audit).`; :129 `self._con = duckdb.connect()`.",
+    "recommended_fix": "Reescribir README seccion 1/4 y la tabla para describir el mecanismo AST real; implementar una conexion de lectura genuinamente read-only o quitar el claim; no anunciar RLS a nivel BD hasta cerrar P0-RLS-002.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": false
+  },
+  {
+    "id": "P1-CR-001",
+    "title": "Write-back externo de Control Room: el codigo SI implementa un adapter live SAP HCM IT0008 (flag-gated, default OFF=>409) pero el runbook afirma 'no hay write-back SAP'",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/services/adapters/sap_hcm_adapter.py:12",
+      "console/app/services/adapters/sap_hcm_adapter.py:43",
+      "console/app/services/adapters/factory.py:23-26",
+      "console/app/services/control_room/execution.py:33-34",
+      "console/app/services/control_room/execution.py:2236-2248",
+      "docs/runbook/09_demo_beta.md:17",
+      "docs/runbook/09_demo_beta.md:21"
+    ],
+    "impact": "El baseline decia 'bloqueado y no implementado'. Realidad: por DEFAULT esta bloqueado (CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK='false' => execution.py:2248 devuelve HTTP 409), PERO existe un adapter real que hace POST a /sap/opu/odata/sap/ZHR_IT0008_SRV/BasicPaySet. El runbook 09_demo_beta.md:21 afirma '❌ No hay write-back SAP/Replicon', lo que es ENGAÑOSO: un solo env var (=true) habilita mutaciones reales en SAP sin que el operador sepa que el path existe. Discrepancia codigo/runbook en ambos sentidos (no se puede vender 'sin write-back' ni 'write-back productivo').",
+    "reproduction": "Default seguro: POST /api/control-room/items/{id}/execute con template external => 409 'external ERP write-back is not available in Control Room V1'. Con CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK=true y template_id=prepare_hcm_access_review => el adapter dispara client.post a SAP (sap_hcm_adapter.py:43).",
+    "evidence": "execution.py:34 default 'false'; :2236-2248 rama 409 cuando external y flag off. sap_hcm_adapter.py:12 DEFAULT_IT0008_PATH; :43 `response = client.post(url, json=payload, headers=headers, auth=auth)`. runbook:21 '❌ No hay write-back SAP/Replicon.'",
+    "recommended_fix": "Corregir docs/runbook/09_demo_beta.md: el write-back SAP HCM IT0008 ESTA implementado pero flag-gated; añadir advertencia explicita de que activar el flag ejecuta mutaciones reales en SAP. Decidir el claim de producto por estado (demo: off; beta: documentar; prod: endurecer/aprobar el path antes de venderlo).",
+    "tests_to_add": [
+      "console: con flag off, todo template external => 409 stopped_before_writeback; con flag on, ruta de adapter cubierta por test con SAP mock"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-CI-001",
+    "title": "release.yml puede publicar imagenes sin ruff, pip-audit, bandit, suite pytest completa, smoke ni e2e",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      ".github/workflows/release.yml:13-82",
+      ".github/workflows/release.yml:42-49",
+      "Makefile:142-164"
+    ],
+    "impact": "Un tag de release puede empujar 12 imagenes Docker a GHCR sin: ruff check, pip-audit (CVE), bandit (SAST), las suites pytest de console/refinement/vault/workspace/cartridges, make smoke (34 health checks) ni make e2e (Playwright). Los 5 tests de release.yml son solo consistencia de infra. make verify-release SI corre todo eso => la barra de release real es mucho mas debil que la documentada.",
+    "reproduction": "Empujar un tag con una ruta rota en console/app/main.py: release.yml pasa; el mismo codigo falla make verify-release.",
+    "evidence": "release.yml:42-49 unicamente corre 5 tests estaticos (test_aws_compose_consistency.py, etc.); no hay bandit/pip-audit/ruff/console-tests/smoke/e2e.",
+    "recommended_fix": "Invocar el job de tests de docker-image.yml + jobs de security.yml como required checks del tag (workflow_call), o añadir todos los pasos faltantes a release.yml:validate-release.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-INFRA-002",
+    "title": "AWS compose suelta vault de depends_on en console/mcp-infra/refinement => race en cada cold boot de produccion",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "infra/terraform/deploy/docker-compose.aws.yml:168-176",
+      "infra/terraform/deploy/docker-compose.aws.yml:252-257",
+      "infra/terraform/deploy/docker-compose.aws.yml:370-377",
+      "infra/docker-compose.yml:242-252"
+    ],
+    "impact": "El compose local declara `vault: condition: service_healthy` para console/refinement/mcp-infra; el de AWS lo OMITE. En cold boot con vault lento (vault espera a postgres), console/mcp-infra/refinement pueden arrancar antes de que vault acepte conexiones => 500s en endpoints que dependen de vault (reveal de conexiones, auth de cartridge) durante la ventana de race. (Revalidacion de P1-INFRA-001: el claim original 'service_started' queda REFUTADO — no hay service_started; este es el riesgo real de ordenamiento.)",
+    "reproduction": "docker compose -f docker-compose.aws.yml up -d con postgres frio (8-15s) => console healthy solo tras vault, pero trafico ALB/CLI durante la ventana ve fallos en rutas vault.",
+    "evidence": "aws.yml console depends_on (168-176) lista postgres/redis/mcp-infra/mailhog SIN vault; local (242-252) incluye vault: service_healthy.",
+    "recommended_fix": "Añadir `vault: condition: service_healthy` a depends_on de console, mcp-infra y refinement en docker-compose.aws.yml, espejando el local.",
+    "tests_to_add": [
+      "tests/test_aws_compose_consistency: console/mcp-infra/refinement deben depender de vault:service_healthy en ambos compose"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P1-ENV-002",
+    "title": "bootstrap.sh no invoca bootstrap-keys.sh => 18 claves per-pair INTERNAL_API_KEY_* sin generar => el compose AWS aborta en el primer boot",
+    "severity": "P1",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "infra/bootstrap.sh",
+      "infra/bootstrap-keys.sh:17-51",
+      "infra/terraform/deploy/docker-compose.aws.yml:537-540"
+    ],
+    "impact": "(Revalidacion de P1-ENV-001: el claim original 'faltan vars / mismatch BOOTSTRAP_ADMIN_NAME' queda REFUTADO — .env.example cubre las vars y el nombre correcto es BOOTSTRAP_ADMIN_FULL_NAME, presente.) El problema real: bootstrap.sh genera secretos pero NO llama a bootstrap-keys.sh (grep -c bootstrap-keys bootstrap.sh => 0). El compose AWS marca las claves per-pair como `:?` requeridas. Un operador que siga 'bash infra/bootstrap.sh' (unico primer paso documentado en SECURITY.md sin el segundo) tendra 18 claves vacias => docker compose up aborta en airflow/vault/workspace.",
+    "reproduction": "bash infra/bootstrap.sh && docker compose -f docker-compose.aws.yml up => error de variable requerida ausente (p.ej. INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT).",
+    "evidence": "aws.yml:537-540 `INTERNAL_API_KEY_AIRFLOW_TO_CONSOLE: ${...:?...required}`; bootstrap.sh no contiene llamada a bootstrap-keys.sh.",
+    "recommended_fix": "Al final de bootstrap.sh, invocar `bash \"${SCRIPT_DIR}/bootstrap-keys.sh\" \"${ENV_FILE}\"` para hacer atomico el dos-pasos (el Makefile `up` ya encadena ambos, pero el flujo manual documentado no).",
+    "tests_to_add": [
+      "Test que tras ejecutar bootstrap.sh, infra/.env contiene las 28 claves per-pair requeridas por el compose AWS"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-WS-XSS-001",
+    "title": "workspace.js renderMarkdown acepta URLs protocol-relative (//host) desde salida del LLM => open-link/phishing via prompt injection",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/static/js/workspace.js:114-115",
+      "console/app/static/js/workspace.js:132-133",
+      "console/app/routers/pages.py:408-415"
+    ],
+    "impact": "Una respuesta del LLM (potencialmente prompt-injected via documento ingerido) que emita [click](//attacker.com) genera <a href=\"//attacker.com\" target=\"_blank\" rel=noopener>. La URL protocol-relative resuelve al esquema actual + dominio del atacante => phishing de credenciales contra usuarios autenticados. El CSP no bloquea navegacion por click, solo ejecucion de script. rel=noopener evita window.opener pero no la navegacion. Servido en /workspace (auth-gated, workspace.access).",
+    "reproduction": "En el chat de workspace, inducir al LLM a devolver [click here](//evil.example.com) (o inyectar via documento). El mensaje renderizado contiene <a href=//evil.example.com> clickeable.",
+    "evidence": "workspace.js:114-115 regex `/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+|\\/[^)]*)\\)/g` — el alternante `/[^)]*` matchea //attacker.com; escHtml no escapa // .",
+    "recommended_fix": "Cambiar el regex a `(https?:\\/\\/[^)]+|\\/(?!\\/)[^)]*)` para permitir /rutas/seguras pero rechazar //dominio.",
+    "tests_to_add": [
+      "FE/unit: renderMarkdown convierte [x](//evil) en texto plano o lo rechaza, no en <a>"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-MCP-003",
+    "title": "Fuga de excepciones crudas (str(exc)) a los callers MCP en preview/run_kb/extract de todos los cartridges",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "cartridges/sap_successfactors/app/mcp_server.py:186",
+      "cartridges/sap_successfactors/app/mcp_server.py:350",
+      "cartridges/salesforce/app/mcp_server.py:140"
+    ],
+    "impact": "preview/run_kb/custom tools devuelven str(exc) con paths s3://.../tenant_id=.../, info de columnas y fragmentos de SQL — util para enumeracion de tenant/path y mapeo de schema. query_kb si es generico ('DuckDB query failed'), pero preview/run_kb no, y leen el mismo data lake.",
+    "reproduction": "rg -n '\"error\": str\\(exc\\)' cartridges/*/app/mcp_server.py => 30+ hits. preview(entity='User') contra path inexistente => respuesta con path S3 absoluto + error DuckDB.",
+    "evidence": "sap_successfactors/app/mcp_server.py:185-186 `except Exception as exc: return {'entity': entity, 'error': str(exc), ...}`.",
+    "recommended_fix": "Espejar el patron de query_kb: razon generica + request_id, log del detalle solo server-side.",
+    "tests_to_add": [
+      "cartridge: preview/run_kb con error no filtran path/SQL al caller"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-HEADERS-004",
+    "title": "CSP global retiene style-src 'unsafe-inline' en todas las paginas de console/workspace",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/main.py:826",
+      "workspace/app/main.py:295"
+    ],
+    "impact": "script-src ya es 'self' estricto (bien, bloquea el vector XSS principal). Pero style-src 'unsafe-inline' permite CSS-injection/exfil por estilos si existiera un sink de inyeccion HTML. (Nota: el baseline SECURITY.md/README hablaba de script-src unsafe-inline; eso ya fue corregido — solo queda style-src.)",
+    "reproduction": "curl -sI http://localhost:8000/ | grep -i content-security-policy => style-src 'self' 'unsafe-inline'.",
+    "evidence": "console/app/main.py:826 `\"style-src 'self' 'unsafe-inline'; \"`.",
+    "recommended_fix": "Mover bloques <style> inline a CSS externo y quitar 'unsafe-inline' de style-src (refactor ya reconocido como diferido en los comentarios del codigo).",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-AUTH-002",
+    "title": "JWT blacklist fail-open: sin REDIS_URL el logout no revoca el access token (ventana <= TTL de access token, 15 min)",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/services/jwt_blacklist.py:42-45",
+      "console/app/services/jwt_blacklist.py:83-92",
+      "console/app/services/jwt_auth.py:13"
+    ],
+    "impact": "Tras POST /auth/logout, un access token bearer robado sigue valido hasta su exp (default 15 min) si REDIS_URL no esta seteado o Redis cae. La cookie de sesion y el refresh SI se invalidan al instante; solo afecta el path bearer y la ventana es corta y acotada. Hallado por dos carriles (AppSec + Observabilidad); reconciliado a P2 por la ventana de 15 min (no 24h).",
+    "reproduction": "Sin REDIS_URL: login => capturar access_token => logout => GET /auth/me-jwt con el token sigue 200 hasta exp.",
+    "evidence": "jwt_blacklist.py:44-45 `if not url: return None` (revoke/is_revoked no-op); :88-92 except => return False (fail-open).",
+    "recommended_fix": "Hacer REDIS_URL obligatorio en produccion (espejar guards fail-closed de ALLOWED_ORIGINS/INTERNAL_API_KEY) y/o acortar TTL; al minimo, WARNING de arranque si prod sin Redis.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-AUTH-003",
+    "title": "Clave compartida legacy INTERNAL_API_KEY aceptada en hops internos fuera de produccion",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/services/auth.py:618-619",
+      "vault/app/main.py:365",
+      "mcp-infra/app/main.py:101"
+    ],
+    "impact": "En dev/staging-no-prod una sola clave compartida filtrada abre todos los hops internos (vault/refinement/mcp-infra). Correctamente deshabilitada cuando APP_ENV in {production,prod}, y prod rehusa arrancar sin claves per-pair. Exposicion solo en no-prod.",
+    "reproduction": "Con APP_ENV=development, llamar /internal/* o /mcp/invoke con la INTERNAL_API_KEY compartida y x-internal-service: console => aceptado.",
+    "evidence": "auth.py:618-619 `legacy = get_internal_api_key(); if legacy and not _is_production(): accepted.append(legacy)`.",
+    "recommended_fix": "Rastrear y remover el path de aceptacion legacy; asegurar claves per-pair en cualquier entorno no-prod con red expuesta.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-CI-002",
+    "title": "Todas las GitHub Actions en tags flotantes mutables, cero pins por SHA",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      ".github/workflows/release.yml:126-136",
+      ".github/workflows/lint.yml:21",
+      ".github/workflows/security.yml:31-33"
+    ],
+    "impact": "Un tag mutado de docker/build-push-action@v6 (o hashicorp/setup-terraform@v3, que baja binarios) correria en un job con secrets.GITHUB_TOKEN packages:write => exfil o envenenamiento de imagen. Cero pins SHA en los 5 workflows.",
+    "reproduction": "grep -E '@[a-f0-9]{40}' .github/workflows/*.yml => vacio.",
+    "evidence": "release.yml:126-136 docker/login-action@v3, setup-buildx-action@v3, build-push-action@v6.",
+    "recommended_fix": "Pinear cada action a su SHA de 40 chars; usar dependabot con groups para actualizarlos.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-CI-004",
+    "title": "cartridges/hubspot/requirements.txt tiene 9 dependencias completamente sin pinear",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "cartridges/hubspot/requirements.txt"
+    ],
+    "impact": "sqlalchemy, psycopg2-binary, minio, pandas, pyarrow, pyyaml, cryptography, duckdb, asyncpg sin version => cada build Docker resuelve a la ultima de PyPI. Un major roto se publica en silencio; los CVEs son invisibles a pip-audit en builds reproducibles. sap_hcm/s4hana/salesforce SI pinean esos mismos paquetes.",
+    "reproduction": "Leer cartridges/hubspot/requirements.txt vs cartridges/sap_hcm/requirements.txt.",
+    "evidence": "Lineas con nombres de paquete sin '==' en hubspot/requirements.txt.",
+    "recommended_fix": "Copiar los pins de cartridges/sap_hcm/requirements.txt (paquetes identicos).",
+    "tests_to_add": [
+      "tests/test_compose_images_pinned-style: todas las requirements de cartridges deben estar pineadas con =="
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-CI-005",
+    "title": "starlette con pin solo-piso (>=1.0.1) sin cota superior en los 5 servicios core",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/requirements.txt:8",
+      "vault/requirements.txt:3",
+      "workspace/requirements.txt:3",
+      "refinement/requirements.txt:3",
+      "mcp-infra/requirements.txt:4"
+    ],
+    "impact": "Sin cota superior, un futuro starlette mayor podria instalarse en el proximo docker build y romper en runtime sin que ningun test lo atrape antes del deploy. El comentario del propio requirements describe gestion cuidadosa de CVE de starlette, que el pin solo-piso socava.",
+    "reproduction": "Leer las lineas starlette de los 5 requirements.",
+    "evidence": "console/requirements.txt:8 `starlette>=1.0.1` sin cota.",
+    "recommended_fix": "Añadir cota: starlette>=1.0.1,<2.0 (espejar el patron uvicorn[standard]>=0.35.0,<1.0 de los cartridges).",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-CI-COV-001",
+    "title": "Revalidacion coverage: SE publica como artefacto pero sin umbral --fail-under ni servicio externo (codecov)",
+    "severity": "P2",
+    "status": "refuted",
+    "confidence": "high",
+    "files": [
+      ".github/workflows/docker-image.yml:93-99",
+      ".github/workflows/lint.yml:59-67"
+    ],
+    "impact": "El claim del baseline 'CI no publica coverage' queda REFUTADO: docker-image.yml corre coverage run/xml/json y sube artefacto python-coverage; lint.yml corre vitest --coverage con if-no-files-found:error. Residual P2: no hay coverage report --fail-under (un 1% pasa verde) ni integracion codecov/coveralls (tendencia invisible entre PRs).",
+    "reproduction": "Leer los pasos de coverage en docker-image.yml y lint.yml.",
+    "evidence": "docker-image.yml:93-99 coverage combine/xml/json; lint.yml:59-67 vitest run --coverage + artifact.",
+    "recommended_fix": "Añadir `coverage report --fail-under=<umbral>` antes del upload y un paso codecov/codecov-action para diff-coverage en PRs.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-OBS-001",
+    "title": "mcp_registry._fetch_tools() traga todas las excepciones con bare pass => servidores aparecen con cero tools sin log",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/services/mcp_registry.py:610-619"
+    ],
+    "impact": "Cualquier error de red/TLS/DNS/5xx de un cartridge devuelve [] en silencio. El cartridge aparece registrado pero sin tools; sin warning. El operador no tiene señal de que el descubrimiento de tools esta roto => degradacion silenciosa de capacidad MCP.",
+    "reproduction": "Apagar un cartridge y observar lista de tools vacia sin entrada de log.",
+    "evidence": "mcp_registry.py:612-619 try/except Exception: pass; return [].",
+    "recommended_fix": "logger.warning('mcp_registry: tool fetch failed for %s (%s)', server_id, url, exc_info=True) antes del return [].",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-OBS-003",
+    "title": "Los cartridges no tienen RequestIDMiddleware => correlacion de trazas cross-service rota",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "cartridges/hubspot/app/main.py",
+      "console/app/main.py:478"
+    ],
+    "impact": "console reenvia X-Request-ID al invocar un cartridge, pero el cartridge no lo extrae a su contexto de logging. Errores del lado cartridge no se pueden correlacionar con la request originante de console. console/refinement/vault/workspace SI tienen RequestIDMiddleware.",
+    "reproduction": "Comparar middlewares de console/app/main.py vs cartridges/*/app/main.py.",
+    "evidence": "Ausencia de RequestIDMiddleware en cartridges/*/app; presente en console/app/main.py:478.",
+    "recommended_fix": "Añadir RequestIDMiddleware (o extraccion ContextVar) a cada cartridge app/main.py.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-DIVERGE-003",
+    "title": "Superset corre con --reload (servidor de desarrollo Werkzeug) tambien en el compose AWS de produccion",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "infra/docker-compose.yml:895",
+      "infra/terraform/deploy/docker-compose.aws.yml:484"
+    ],
+    "impact": "`superset run -h 0.0.0.0 -p 8088 --with-threads --reload` en produccion: file-watching reloader, mayor CPU/memoria, crashes conocidos en restarts, modelo de proceso incorrecto para prod.",
+    "reproduction": "Leer command de superset en docker-compose.aws.yml.",
+    "evidence": "aws.yml:484 command con --reload.",
+    "recommended_fix": "Quitar --reload del compose AWS; usar gunicorn workers.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-INFRA-PORTS-001",
+    "title": "Superset/Airflow/vault/mcp-infra/Mailhog publicados en 0.0.0.0 en el compose local (UI de analitica/SMTP sin auth en todas las interfaces)",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "infra/docker-compose.yml:897",
+      "infra/docker-compose.yml:428"
+    ],
+    "impact": "En la maquina del dev, Superset (con credenciales admin) y Mailhog (lee tokens de reset/invite sin auth) quedan expuestos en toda interfaz de red (VPN, WiFi publica, bridge WSL). El compose AWS si restringe a 127.0.0.1. 'Levanta el stack local' en una demo expone el backend de analitica.",
+    "reproduction": "Leer ports de superset/mailhog/vault/mcp-infra en docker-compose.yml local.",
+    "evidence": "docker-compose.yml:897 `- \"8088:8088\"`; :428 `- \"8025:8025\"`.",
+    "recommended_fix": "Bindear a 127.0.0.1 en el compose local (127.0.0.1:8088:8088, 127.0.0.1:8025:8025, etc.).",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-ENV-003",
+    "title": "APP_BASE_URL, GHCR_OWNER e IMAGE_TAG usados por el compose AWS pero ausentes de .env.example",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "infra/terraform/deploy/docker-compose.aws.yml:148",
+      "infra/.env.example"
+    ],
+    "impact": "IMAGE_TAG es :? requerido => docker compose up falla sin el. APP_BASE_URL ausente => links de email de invite rotos. GHCR_OWNER sin documentar. Operadores que parten de .env.example no saben que setear.",
+    "reproduction": "comm contra .env.example.",
+    "evidence": "aws.yml:148 `APP_BASE_URL: ${APP_BASE_URL:-}`; IMAGE_TAG/GHCR_OWNER usados pero no en .env.example.",
+    "recommended_fix": "Documentar APP_BASE_URL, GHCR_OWNER, IMAGE_TAG en .env.example con comentarios.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-CART-UX-001",
+    "title": "Cartridge viewer muestra campos genericos base_url/token cuando el connector.yaml usa el shape legacy connector.api.base_url_env",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console-next/src/lib/cartridges.ts:123-152",
+      "cartridges/hubspot/app/config/connector.yaml:20-21"
+    ],
+    "impact": "Con el shape legacy {connector:{api:{base_url_env},auth:{type:bearer_token}}}, el form muestra dos campos sin etiqueta humana (descripcion = nombre de la env var). Riesgo principal = confusion del operador al ingresar credenciales (no XSS; Zod bloquea campos vacios).",
+    "reproduction": "/cartridges/viewer?id=hubspot => form con Base URL descrito 'HUBSPOT_BASE_URL'.",
+    "evidence": "cartridges.ts:128-146 inyecta base_url/token genericos con description = env var.",
+    "recommended_fix": "Migrar connector.yaml al shape {fields:[...]} (ya usado por salesforce/sap_s4hana) y deprecar el fallback.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-FE-UNIT-001",
+    "title": "Componentes console-next criticos sin ningun unit test (AppChrome, CredentialsForm, ChatMessages, Control Room page, operations admin)",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console-next/src/components/AppChrome.tsx",
+      "console-next/src/components/cartridges/CredentialsForm.tsx",
+      "console-next/src/app/(shell)/control-room/page.tsx"
+    ],
+    "impact": "La pagina Control Room de 2573 lineas, el path de escritura de credenciales (CredentialsForm => vault), el pipeline de render de salida LLM (ChatMessages/Message) y todos los componentes de operations-admin no tienen cobertura de regresion automatizada. Cualquier refactor/bug pasa hasta runtime e2e.",
+    "reproduction": "Listar *.test.tsx en console-next/src vs componentes criticos.",
+    "evidence": "Existen tests para AppSidebar/StatusBadge/KpiCard/JobTable; ausentes para AppChrome/CredentialsForm/ChatMessages/control-room/CreateUserForm/VaultConnectionsTable.",
+    "recommended_fix": "Suite minima: CredentialsForm (validacion Zod, save/delete), AppChrome (auth state, localStorage), CreateUserForm (validacion+CSRF), ChatMessages/Message (render por tipo).",
+    "tests_to_add": [
+      "console-next: tests de CredentialsForm, AppChrome, CreateUserForm, ChatMessages"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": true,
+    "blocks_production": true
+  },
+  {
+    "id": "P2-KB-001",
+    "title": "KBs SAP con datasets stub/vacios (compensation_distribution WHERE FALSE, recruitment_pipeline orphan, workforce_cost NULL) — divulgados honestamente pero con datasets huerfanos",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "cartridges/sap_successfactors/datasets/sap_successfactors_compensation_distribution.sql:10-17",
+      "cartridges/sap_successfactors/datasets/sap_successfactors_recruitment_pipeline.sql:22-24",
+      "cartridges/sap_hcm/datasets/workforce_cost_monthly.sql:21",
+      "cartridges/sap_successfactors/app/config/knowledge_bits.yaml:196-203"
+    ],
+    "impact": "compensation_distribution devuelve 0 filas (WHERE FALSE; paycompValue cifrado), workforce_cost devuelve NULL (PA0008 no extraido), recruitment_pipeline cuenta candidatos global no por requisicion. Si se demuestran como analitica funcional = claim de capacidad falso. Mitigantes: cada stub tiene TODO honesto; los KB cableados en knowledge_bits.yaml divulgan la limitacion; compensation_distribution/recruitment_pipeline son datasets HUERFANOS (no referenciados por ningun KB) => no llegan a la UI.",
+    "reproduction": "Leer compensation_distribution.sql (WHERE FALSE) y grep de referencias a los .sql huerfanos.",
+    "evidence": "compensation_distribution.sql:10-17 SELECT de NULLs WHERE FALSE.",
+    "recommended_fix": "Eliminar o marcar los .sql stub huerfanos; asegurar que cualquier listado UI lleve la misma divulgacion 'pending bronze'; no anunciar esos analytics como funcionales para beta.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-RLS-006",
+    "title": "Comentario obsoleto afirma que preview_sql omite RLS cuando se pasan params (nunca lo hace) — footgun latente para una regresion P0",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "refinement/app/main.py:1283-1287",
+      "refinement/app/duckdb_engine.py:683-707"
+    ],
+    "impact": "El comentario dice que pasar params hace que preview_sql salte la inyeccion RLS. Es FALSO — preview_sql siempre llama get_rls_filters. El codigo es seguro hoy; el comentario invita a una regresion cross-tenant si un mantenedor confia en el.",
+    "reproduction": "Leer main.py:1285-1287 y duckdb_engine.py:704-708.",
+    "evidence": "main.py:1285-1286 comentario erroneo; duckdb_engine.py:685-686 docstring correcto 'RLS is ALWAYS applied'.",
+    "recommended_fix": "Corregir/borrar el comentario: 'RLS siempre se aplica; los params del caller se añaden despues de los de RLS.'",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P2-PORT-001",
+    "title": "control_room/api.py:305 usa f-string con comillas anidadas (PEP 701) => SyntaxError en Python 3.11; ruff (target py312) no lo detecta",
+    "severity": "P2",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/services/control_room/api.py:305",
+      "ruff.toml:25"
+    ],
+    "impact": "El f-string `f\"WHERE {source.entity_id_field} = '{str(entity_id or label).replace(\\\"'\\\", \\\"''\\\")}' \"` usa comillas dobles anidadas (valido solo en Python 3.12+). En Python 3.11 lanza SyntaxError y rompe el import de TODO control_room. Docker/CI usan 3.12 => produccion no afectada, PERO ruff target py312 lo deja pasar => el repo perdio soporte 3.11 sin que ninguna barra lo marque, y rompe la suite console/tests para cualquiera en 3.11. Nota adicional: el mismo f-string interpola source.entity_id_field crudo en SQL de write-back (origen de config, no input de usuario, pero merece allowlist).",
+    "reproduction": "python3.11 -c \"import ast; ast.parse(open('console/app/services/control_room/api.py').read())\" => SyntaxError unterminated string literal line 305. python3.12 parsea OK.",
+    "evidence": "api.py:303-307 technical_sql f-string con replace(\\\"'\\\", \\\"''\\\") anidado en comillas dobles.",
+    "recommended_fix": "Reescribir el f-string con comillas simples externas o una variable intermedia (compatible 3.11), y validar source.entity_id_field contra una allowlist de columnas. Fijar requires-python/target-version coherentes con el runtime soportado.",
+    "tests_to_add": [
+      "CI: añadir un job que importe los modulos en el Python minimo soportado, o documentar 3.12 como minimo y enforce requires-python"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-AUTH-001",
+    "title": "settings _require_admin consulta workspace_role crudo (latente, NO explotable porque users.role es NOT NULL DEFAULT 'user')",
+    "severity": "P3",
+    "status": "refuted",
+    "confidence": "high",
+    "files": [
+      "console/app/routers/settings.py:11",
+      "infra/init/05_users.sql:9",
+      "console/app/services/auth.py:209"
+    ],
+    "impact": "settings.py:11 `role = user.get('role') or user.get('workspace_role')`. Un agente lo marco como escalada workspace_admin=>secretos globales. REFUTADO como explotable: users.role es NOT NULL DEFAULT 'user' (05_users.sql:9) y la creacion siempre asigna role (auth.py:209,227) => user['role'] SIEMPRE es truthy => el `or` nunca cae a workspace_role. Queda como code-smell latente: _require_admin no deberia consultar workspace_role para settings globales.",
+    "reproduction": "Leer 05_users.sql:9 (NOT NULL DEFAULT 'user'); el or de settings.py:11 no se alcanza para usuarios reales.",
+    "evidence": "infra/init/05_users.sql:9 `role TEXT NOT NULL DEFAULT 'user'`.",
+    "recommended_fix": "Gatear settings globales solo por el rol de cuenta global (no consultar workspace_role), o normalizar via permissions.workspace_role() primero.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-MCP-004",
+    "title": "Seis copias divergentes de sql_guard.py (sap_hcm/sap_s4hana ya driftaron — sin el bloque anti-tautologia)",
+    "severity": "P3",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "cartridges/sap_hcm/app/core/sql_guard.py",
+      "cartridges/sap_successfactors/app/core/sql_guard.py:31-34",
+      "mcp-infra/app/main.py:792"
+    ],
+    "impact": "sap_hcm/sap_s4hana carecen del bloque _TAUTOLOGY_RE que sap_successfactors/otros si tienen (drift probado). El guard de mcp-infra es una tercera implementacion independiente con gaps distintos. Drift = proteccion inconsistente por integracion; el proximo refactor puede debilitar una en silencio.",
+    "reproduction": "diff cartridges/sap_hcm/app/core/sql_guard.py cartridges/sap_successfactors/app/core/sql_guard.py => lineas anti-tautologia solo en SuccessFactors.",
+    "evidence": "sap_successfactors/sql_guard.py:83-84 `if _TAUTOLOGY_RE.search(masked): return False` (ausente en HCM/S4).",
+    "recommended_fix": "Extraer un modulo guard compartido (vendored) consumido por los 6 cartridges y por mcp-infra, con un test de paridad byte-a-byte.",
+    "tests_to_add": [
+      "tests: paridad de sql_guard entre los 6 cartridges + mcp-infra"
+    ],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-STATIC-001",
+    "title": "HTML/JS legacy no-Studio bajo console/app/static es codigo muerto (404 por middleware) — solo limpieza",
+    "severity": "P3",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/main.py:1207-1230",
+      "console/app/static/cartridges.html",
+      "console/app/static/copilot.html"
+    ],
+    "impact": "(Revalidacion de P2-STATIC-001: baseline sobrestimado.) _is_direct_static_html_request bloquea cualquier /static/*.html con 404 antes de auth. cartridges.html/copilot.html/monitor.html/viewers/*.html son inalcanzables. Unico HTML legacy vivo no-Studio: workspace.html en /workspace (auth-gated). Sin superficie de ataque viva; solo clutter de disco.",
+    "reproduction": "GET /static/cartridges.html => 404 (middleware main.py:1207-1230).",
+    "evidence": "main.py:1207-1230 _is_direct_static_html_request => JSONResponse 404.",
+    "recommended_fix": "Borrar los HTML legacy inalcanzables (excluyendo Studio y los 3 forms de auth servidos por ruta dedicada).",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-OBS-001",
+    "title": "copilot_service.py con 16 except Exception que tragan errores y devuelven data vacia/stale sin log",
+    "severity": "P3",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/services/copilot_service.py:592",
+      "console/app/services/copilot_service.py:911"
+    ],
+    "impact": "Fallos de audit-log no-criticos silenciados; extraccion de citas silenciada; deserializacion de tool_calls/results => None sin log. Brechas de telemetria invisibles salvo query manual.",
+    "reproduction": "rg -n 'except Exception' console/app/services/copilot_service.py => 16 hits.",
+    "evidence": "copilot_service.py:911-912 `except Exception: extracted = []`.",
+    "recommended_fix": "Añadir logger.warning(exc_info=True) en cada except que traga y continua.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-OBS-002",
+    "title": "console/app/routers/pages.py:151 usa httpx.AsyncClient(timeout=None) en el proxy de streaming (stall ilimitado del worker)",
+    "severity": "P3",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console/app/routers/pages.py:151"
+    ],
+    "impact": "Un upstream colgado/lento mantiene una task asyncio indefinidamente; bajo carga puede agotar el pool de workers uvicorn. timeout=None deshabilita TODOS los timeouts httpx incluido connect. (No es SSRF: la URL es WORKSPACE_INTERNAL_URL constante interna.)",
+    "reproduction": "Leer pages.py:151-152.",
+    "evidence": "pages.py:151 `client = httpx.AsyncClient(timeout=None)`.",
+    "recommended_fix": "httpx.Timeout(connect=5, read=300, write=10, pool=5) — generoso para streaming pero acotando connect/write.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-WS-LS-001",
+    "title": "Email del usuario en localStorage (XSS-robable, baja severidad: no es token de auth)",
+    "severity": "P3",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      "console-next/src/app/login/page.tsx:66",
+      "console-next/src/components/AppChrome.tsx:30"
+    ],
+    "impact": "El email se guarda en localStorage para el hint de nombre del shell. No es JWT/sesion (auth via cookie HttpOnly). Si hubiera XSS, el email es robable; tambien lo lee cualquier extension con permisos amplios.",
+    "reproduction": "login => localStorage omega_user_email.",
+    "evidence": "login/page.tsx:66 `window.localStorage.setItem('omega_user_email', email)`.",
+    "recommended_fix": "Obtener el email de /api/me en vez de cachearlo en localStorage.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "P3-CI-FORMAT-001",
+    "title": "ruff format --check es advisory (continue-on-error: true) — drift de formato pasa CI en silencio",
+    "severity": "P3",
+    "status": "confirmed",
+    "confidence": "high",
+    "files": [
+      ".github/workflows/lint.yml:37"
+    ],
+    "impact": "Violaciones de formato nunca bloquean un PR. ruff check (lint) SI bloquea; solo format esta silenciado.",
+    "reproduction": "Leer lint.yml:36-40.",
+    "evidence": "lint.yml:37 `continue-on-error: true` en el paso ruff format --check.",
+    "recommended_fix": "Quitar continue-on-error; correr ruff format . una vez y enforce.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "REFUTED-P1-SQL-001",
+    "title": "Baseline P1-SQL-001 (SuccessFactors query_kb sin sql_guard) — REFUTADO",
+    "severity": "P1",
+    "status": "refuted",
+    "confidence": "high",
+    "files": [
+      "cartridges/sap_successfactors/app/mcp_server.py:368-376",
+      "cartridges/sap_hcm/app/mcp_server.py:368-376",
+      "cartridges/sap_s4hana/app/mcp_server.py:368-376",
+      "cartridges/sap_successfactors/app/core/sql_guard.py:66-119"
+    ],
+    "impact": "Ninguno por este vector. Los 3 cartridges SAP llaman validate_kb_sql identico en query_kb; SuccessFactors es incluso MAS estricto (bloque anti-tautologia que HCM/S4 no tienen). Los 6 cartridges tienen sql_guard.py. El guard exige SELECT/WITH-only, sin ';', sin comentarios, sin metadata-exfil, readers en allowlist, prefijo S3 forzado, anti path-traversal.",
+    "reproduction": "rg -n 'validate_kb_sql|def query_kb' cartridges/*/app/mcp_server.py => los 3 SAP en lineas 368/376 identicas.",
+    "evidence": "sap_successfactors/app/mcp_server.py:376 `ok, err = validate_kb_sql(resolved, _sf_allowed_kb_prefixes())`.",
+    "recommended_fix": "Cerrar el baseline como refutado. (El riesgo real reframeado es P1-MCP-001 en mcp-infra.)",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "REFUTED-P1-CR-CSP-001",
+    "title": "Baseline P1-CR-CSP-001 (Control Room permite script-src unsafe-inline) — REFUTADO",
+    "severity": "P1",
+    "status": "refuted",
+    "confidence": "high",
+    "files": [
+      "console/app/main.py:876-888",
+      "console/app/routers/pages.py:82-92",
+      "console/tests/test_strict_csp_phase3.py:187-193"
+    ],
+    "impact": "Ninguno. CONTROL_ROOM_SECURITY_HEADERS sirve script-src 'self' (sin unsafe-inline); la ruta /control-room computa hashes SHA-256 para los scripts inline RSC de Next. Solo style-src lleva unsafe-inline (global, => P2-HEADERS-004). El baseline esta desactualizado.",
+    "reproduction": "Leer main.py:876-888 y pages.py:82-92.",
+    "evidence": "main.py:880 `\"script-src 'self'; \"`; pages.py:82-92 calcula hashes sha256 de los scripts inline.",
+    "recommended_fix": "Cerrar como refutado.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "REFUTED-BANDIT-B613",
+    "title": "Bandit HIGH B613 Trojan Source en lessons_service.py:449 — REFUTADO (lista defensiva anti-prompt-injection)",
+    "severity": "P3",
+    "status": "refuted",
+    "confidence": "high",
+    "files": [
+      "console/app/services/lessons_service.py:447-460"
+    ],
+    "impact": "Ninguno. Los caracteres bidi/invisibles son una tupla _INVISIBLE_CHARS usada para DETECTAR y eliminar intentos de prompt-injection en el copiloto (el codigo comenta '<- the attack'). Es defensa, no vulnerabilidad; bandit la marca por contener los caracteres.",
+    "reproduction": "Leer lessons_service.py:447-460.",
+    "evidence": "lessons_service.py:451 comentario `# LRO / RLO  <- the attack` dentro de _INVISIBLE_CHARS.",
+    "recommended_fix": "Anotar # nosec B613 con justificacion para silenciar el falso positivo.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  },
+  {
+    "id": "REFUTED-TF-IAM-S3",
+    "title": "Terraform IAM wildcards / S3 public access — REFUTADOS (least-privilege + public access bloqueado)",
+    "severity": "P0",
+    "status": "refuted",
+    "confidence": "high",
+    "files": [
+      "infra/terraform/infra/iam.tf",
+      "infra/terraform/infra/s3.tf:17-24"
+    ],
+    "impact": "Ninguno. IAM usa ARNs especificos (S3 scoped, Bedrock InvokeModel en modelos especificos validados contra wildcards, SecretsManager GetSecretValue en ARNs explicitos); sin Action:* ni Resource:*. S3 con los 4 block public access en true. (Revision estatica: terraform binary no instalado, no se corrio terraform validate.)",
+    "reproduction": "Leer iam.tf y s3.tf.",
+    "evidence": "s3.tf:17-24 block_public_acls/policy/ignore/restrict = true.",
+    "recommended_fix": "Sin accion. Documentar en runbook que 51820/udp (WireGuard) esta abierto por diseño.",
+    "tests_to_add": [],
+    "blocks_demo": false,
+    "blocks_private_beta": false,
+    "blocks_production": false
+  }
+]
