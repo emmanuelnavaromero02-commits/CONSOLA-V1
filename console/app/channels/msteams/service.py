@@ -16,7 +16,7 @@ from typing import Any
 
 from app.services import audit_service, auth, copilot_service
 
-from . import adapter, security
+from . import adapter, files, graph, security
 from .config import MsTeamsConfig, active_level, load_config
 from .schemas import (
     ChannelResult,
@@ -119,9 +119,23 @@ async def handle_activity(
     ctx.console_user_email = console_user.get("email")
     ctx.level = active_level(cfg)
 
+    # ── Optional file ingestion (operator opt-in via MSTEAMS_FILES_ENABLED) ──
+    # When enabled, supported text attachments are downloaded via Graph and
+    # appended to the user's prompt as a fenced footer. Each attachment
+    # audits its own outcome ("file_attached" / "file_skipped_type" /
+    # "file_skipped_size" / "file_download_failed") so an operator can see
+    # what the copilot actually saw. Failures NEVER block the turn — the
+    # copilot still runs on the user's text.
+    file_excerpt = ""
+    if cfg.files_enabled and event.raw_attachments:
+        file_excerpt = await _ingest_attachments(event, ctx, cfg)
+
     # Normalize to the internal copilot contract (transport → InternalCopilotRequest).
     # Teams logic stops here; the copilot speaks this contract, not Teams JSON.
     req = adapter.to_internal_request(event, ctx)
+    user_message = req.text
+    if file_excerpt:
+        user_message = f"{user_message}\n\n---\n{file_excerpt}" if user_message else file_excerpt
 
     # ── Drive the EXISTING copilot ──
     try:
@@ -134,7 +148,7 @@ async def handle_activity(
     try:
         turn = await copilot_service.run_turn(
             conversation_id=conversation_id,
-            user_message=req.text,
+            user_message=user_message,
             user=console_user,
             ip=ip,
             user_agent=user_agent or "msteams",
@@ -244,6 +258,140 @@ async def _ensure_conversation(event: InboundTeamsEvent, console_user: dict) -> 
 class ConversationFallbackError(RuntimeError):
     """Raised by _ensure_conversation when even the ad-hoc fallback fails.
     Distinguished from a generic copilot turn failure for audit clarity."""
+
+
+# ── File ingestion (Level-4 partial: text attachments via Graph) ──
+
+# Per-turn cap. Beyond this many attachments we audit "file_skipped_overflow"
+# and stop — a chat user attaching 50 files is almost always wrong, and the
+# LLM prompt budget caps out long before then anyway.
+_MAX_ATTACHMENTS_PER_TURN = 5
+
+
+async def _ingest_attachments(
+    event: InboundTeamsEvent,
+    ctx: PermissionsContext,
+    cfg: MsTeamsConfig,
+) -> str:
+    """Download supported text attachments via Graph, decode, and render a
+    fenced excerpt suitable for appending to the user's prompt.
+
+    Each attachment audits its own outcome:
+      * ``file_attached``        — content extracted and surfaced to copilot
+      * ``file_skipped_type``    — unsupported content type / extension
+      * ``file_skipped_size``    — server-declared or streamed > files_max_bytes
+      * ``file_token_unavailable`` — Graph app-only token could not be obtained
+      * ``file_download_failed`` — Graph download error (HTTP non-200, network)
+      * ``file_decode_failed``   — bytes could not be decoded as text
+      * ``file_skipped_overflow``— more attachments than the per-turn cap
+
+    Returns the rendered excerpt (empty string when no attachment yielded
+    text). Never raises — file ingestion must NEVER break a copilot turn.
+    """
+    summaries: list[dict[str, Any]] = []
+    raw = [a for a in (event.raw_attachments or []) if isinstance(a, dict)]
+    for idx, att in enumerate(raw):
+        if idx >= _MAX_ATTACHMENTS_PER_TURN:
+            await _audit_file(
+                event, ctx, status="ignored", reason="file_skipped_overflow",
+                name=str(att.get("name") or ""),
+            )
+            continue
+        name = str(att.get("name") or "")
+        content_type = str(att.get("contentType") or "")
+        # Teams puts the Graph-compatible download URL in contentUrl. For
+        # non-file activities (link previews, image cards, etc.) it can be a
+        # public URL — we still require token-authenticated GET, so non-Graph
+        # URLs simply fail at the download step.
+        url = str(att.get("contentUrl") or "")
+        if not files.is_supported_text(content_type, name):
+            await _audit_file(
+                event, ctx, status="ignored", reason="file_skipped_type",
+                name=name, content_type=content_type,
+            )
+            continue
+        if not url:
+            await _audit_file(
+                event, ctx, status="ignored", reason="file_skipped_no_url",
+                name=name, content_type=content_type,
+            )
+            continue
+        result = await graph.download_attachment(
+            url, cfg=cfg, max_bytes=cfg.files_max_bytes,
+        )
+        if not result.ok:
+            # Granular audit so an operator can distinguish "token broken"
+            # from "file too big" from "Microsoft Graph 404'd".
+            status = "ignored" if result.reason == "download_too_large" else "error"
+            await _audit_file(
+                event, ctx, status=status, reason=f"file_{result.reason}",
+                name=name, content_type=content_type,
+            )
+            continue
+        text = files.decode_text(result.content or b"", result.content_type)
+        if text is None:
+            await _audit_file(
+                event, ctx, status="error", reason="file_decode_failed",
+                name=name, content_type=content_type,
+            )
+            continue
+        # Per-attachment char cap before we hand it to the renderer (which
+        # also enforces a total budget across all attachments).
+        excerpt = text[: files.TEXT_BUDGET_CHARS]
+        summaries.append({"name": name or "archivo", "text": excerpt})
+        await _audit_file(
+            event, ctx, status="ok", reason="file_attached",
+            name=name, content_type=content_type,
+            bytes_len=len(result.content or b""), text_len=len(excerpt),
+        )
+    return files.render_for_copilot(summaries)
+
+
+async def _audit_file(
+    event: InboundTeamsEvent,
+    ctx: PermissionsContext,
+    *,
+    status: str,
+    reason: str,
+    name: str = "",
+    content_type: str = "",
+    bytes_len: int | None = None,
+    text_len: int | None = None,
+) -> None:
+    """Audit a per-attachment outcome with action="msteams.file".
+
+    Privacy: we record the file NAME (operator forensics — "who tried to
+    upload payroll.csv") plus lengths, NEVER the file contents.
+    """
+    try:
+        metadata: dict[str, Any] = {
+            "channel": "msteams",
+            "tenant_id": event.tenant_id,
+            "teams_user_id": event.aad_object_id or event.user_id,
+            "teams_user_name": event.user_name,
+            "conversation_id": event.conversation_id,
+            "message_id": event.message_id,
+            "mode": event.mode(),
+            "file_name": name,
+            "file_content_type": content_type,
+            "reason": reason,
+        }
+        if bytes_len is not None:
+            metadata["file_bytes_len"] = bytes_len
+        if text_len is not None:
+            metadata["file_text_len"] = text_len
+        await audit_service.record_event(
+            user_id=ctx.console_user_id,
+            email=ctx.console_user_email,
+            action="msteams.file",
+            resource_type="msteams",
+            resource_id=event.conversation_id,
+            status=status,
+            metadata=metadata,
+            conversation_id=None,
+        )
+    except Exception:
+        logger.warning("msteams: file audit write failed", exc_info=True)
 
 
 # ── Adaptive Card approval flow ──
@@ -482,6 +630,8 @@ def status_snapshot(cfg: MsTeamsConfig | None = None) -> dict[str, Any]:
         "has_default_user": bool(cfg.default_user_email),
         "graph_enabled": cfg.graph_enabled,
         "transcripts_enabled": cfg.transcripts_enabled,
+        "files_enabled": cfg.files_enabled,
+        "files_max_bytes": cfg.files_max_bytes,
         # Never expose app_password / tenant secrets.
         "app_id_configured": bool(cfg.app_id),
     }

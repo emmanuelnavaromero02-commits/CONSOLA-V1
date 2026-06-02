@@ -24,7 +24,7 @@ Teams  →  POST /api/msteams/messages  (router: app/routers/msteams.py)
 | 2 | Allowlisted conversations — admin scopes users/teams/channels | ✅ |
 | 2 | Approval via Adaptive Card (Approve / Reject buttons in Teams) | ✅ |
 | 3 | Post-meeting — read transcripts, attendance, agreements/tasks/risks | 🚧 scaffolded, OFF, fails closed |
-| 4 | Advanced — files, SharePoint/OneDrive, adaptive cards, proactive alerts | 🔌 interfaces only |
+| 4 | Advanced — files (text), SharePoint/OneDrive, adaptive cards, proactive alerts | 🟡 partial: text-file ingestion behind `MSTEAMS_FILES_ENABLED` |
 
 ## Environment
 
@@ -165,6 +165,48 @@ JWT, tenant/dm/group allowlist, console-user resolution) and then:
 Audit signal: `action="msteams.approval"`, `metadata.route` is
 `msteams.approval.approve` or `msteams.approval.reject`,
 `metadata.approval_message_id` carries the pending-message UUID.
+
+### File ingestion (Level-4 partial)
+
+When `MSTEAMS_FILES_ENABLED=true`, the bot will download **text-shaped**
+attachments via Microsoft Graph (app-only token, client_credentials grant
+on the channel's existing Bot credentials) and append the content to the
+user's prompt as a fenced footer the copilot can read.
+
+Supported v0.1:
+
+- Content types starting with `text/` (e.g. `text/plain`, `text/markdown`,
+  `text/csv`) **and** `application/json` / `application/xml`.
+- Extensions `.txt`, `.md`, `.markdown`, `.log`, `.csv`.
+
+Binary formats (PDF, DOCX, XLSX, images) are **NOT** decoded yet — they
+audit `file_skipped_type` and the copilot only sees their structural
+metadata (name + content-type). Each format will land in a follow-up PR
+with its own parser + safety review (zip-bomb, embedded macros, OCR).
+
+Limits and safety:
+
+- Each attachment downloaded with a hard size cap (`MSTEAMS_FILES_MAX_BYTES`,
+  default 5 MB). The cap is enforced **both** on the Content-Length header
+  and on the streaming read, so a sender lying about size cannot OOM the
+  worker.
+- Per-attachment text budget: 8 000 chars handed to the copilot.
+- Per-turn cap: 5 attachments max, total 20 000 chars across them.
+- A failed download (token error, Graph 404, network timeout) is contained
+  — the copilot still runs on the user's plain text. Each outcome is
+  audited under `action="msteams.file"` with a granular `reason`
+  (`file_attached` / `file_skipped_type` / `file_skipped_size` /
+  `file_token_unavailable` / `file_download_failed` / `file_decode_failed`
+  / `file_skipped_overflow`).
+
+Permissions to grant in Azure / Teams admin (Application permissions):
+
+- `Files.Read.Selected` (recommended — per-resource, scoped by Teams) or
+- `Files.Read.All` (broader; only if your security team approves).
+
+The channel's status snapshot (`GET /api/msteams/status`) exposes
+`files_enabled` and `files_max_bytes` so an operator can confirm the
+posture at runtime; no secret values are surfaced.
 
 ### Reply threading (Level-1 completion item)
 

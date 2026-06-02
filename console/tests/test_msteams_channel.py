@@ -42,6 +42,8 @@ def _cfg(**overrides) -> MsTeamsConfig:
         graph_enabled=False,
         transcripts_enabled=False,
         sharepoint_site_id="",
+        files_enabled=False,
+        files_max_bytes=5 * 1024 * 1024,
     )
     base.update(overrides)
     return MsTeamsConfig(**base)
@@ -1065,6 +1067,220 @@ async def test_changing_display_name_with_unallowlisted_aad_id_is_still_rejected
     run_turn.assert_not_awaited()
 
 
+# ── File ingestion (Feature 3) ────────────────────────────────────────
+
+
+def _file_dm(*, name="notas.txt", content_type="text/plain",
+             content_url="https://graph.microsoft.com/v1.0/sites/x/drive/items/abc/content"):
+    """A DM activity carrying a single text attachment (Graph-style URL)."""
+    act = _dm_activity(text="Resume el archivo")
+    act["attachments"] = [{
+        "name": name,
+        "contentType": content_type,
+        "contentUrl": content_url,
+    }]
+    return act
+
+
+def _files_cfg(**overrides):
+    base = dict(files_enabled=True, files_max_bytes=1024)
+    base.update(overrides)
+    return _cfg(**base)
+
+
+@pytest.mark.asyncio
+async def test_files_disabled_does_not_call_graph(monkeypatch):
+    # Default-closed regression: when MSTEAMS_FILES_ENABLED=false the channel
+    # must NOT contact Graph even for a Graph-shaped attachment URL. The
+    # copilot still gets the user's plain text.
+    from app.channels.msteams import graph as g
+    called = {"download": 0, "token": 0}
+
+    async def _fail_download(*a, **kw):
+        called["download"] += 1
+        return g.GraphResult(ok=False, reason="should_not_be_called")
+
+    async def _fail_token(*a, **kw):
+        called["token"] += 1
+        return None
+
+    monkeypatch.setattr(g, "download_attachment", _fail_download)
+    monkeypatch.setattr(g, "get_app_token", _fail_token)
+
+    ctx, run_turn = _patch_backend(reply="ok")
+    with ctx:
+        res = await service.handle_activity(_file_dm(), cfg=_cfg(files_enabled=False))
+    assert res.status == "ok"
+    assert called == {"download": 0, "token": 0}
+    # Copilot saw the user's plain text only (no fenced footer).
+    assert "```" not in run_turn.await_args.kwargs["user_message"]
+
+
+@pytest.mark.asyncio
+async def test_supported_text_attachment_is_downloaded_and_appended(monkeypatch):
+    from app.channels.msteams import graph as g
+
+    async def _fake_dl(url, *, cfg, max_bytes):
+        return g.GraphResult(ok=True, content=b"hola desde el archivo", content_type="text/plain; charset=utf-8")
+
+    monkeypatch.setattr(g, "download_attachment", _fake_dl)
+    ctx, run_turn = _patch_backend(reply="ok")
+    captured = []
+    with ctx:
+        service.audit_service.record_event.side_effect = lambda **kw: captured.append(kw)
+        res = await service.handle_activity(_file_dm(), cfg=_files_cfg())
+    assert res.status == "ok"
+    msg = run_turn.await_args.kwargs["user_message"]
+    # User's original text preserved + the file content fenced under its name.
+    assert "Resume el archivo" in msg
+    assert "Archivo adjunto: notas.txt" in msg
+    assert "hola desde el archivo" in msg
+    # Audit: a per-file record with action="msteams.file" and reason="file_attached".
+    file_events = [e for e in captured if e.get("action") == "msteams.file"]
+    assert file_events, "expected a per-file audit event"
+    md = file_events[0]["metadata"]
+    assert md.get("reason") == "file_attached"
+    assert md.get("file_name") == "notas.txt"
+    assert md.get("file_bytes_len") == len(b"hola desde el archivo")
+    # Content NEVER leaks into audit.
+    assert "hola desde el archivo" not in repr(captured)
+
+
+@pytest.mark.asyncio
+async def test_unsupported_attachment_type_is_skipped_with_audit(monkeypatch):
+    from app.channels.msteams import graph as g
+    called = {"download": 0}
+
+    async def _fake_dl(*a, **kw):
+        called["download"] += 1
+        return g.GraphResult(ok=True, content=b"", content_type="")
+
+    monkeypatch.setattr(g, "download_attachment", _fake_dl)
+    ctx, run_turn = _patch_backend(reply="ok")
+    captured = []
+    with ctx:
+        service.audit_service.record_event.side_effect = lambda **kw: captured.append(kw)
+        act = _file_dm(name="diagrama.png", content_type="image/png")
+        res = await service.handle_activity(act, cfg=_files_cfg())
+    assert res.status == "ok"
+    # Unsupported type ⇒ no download attempted.
+    assert called["download"] == 0
+    # Copilot saw the original text without any fenced file footer.
+    assert "```" not in run_turn.await_args.kwargs["user_message"]
+    skips = [e for e in captured if e.get("metadata", {}).get("reason") == "file_skipped_type"]
+    assert skips, "expected file_skipped_type audit"
+
+
+@pytest.mark.asyncio
+async def test_oversized_attachment_is_capped_and_audited(monkeypatch):
+    from app.channels.msteams import graph as g
+
+    async def _fake_dl(*a, **kw):
+        return g.GraphResult(ok=False, reason="download_too_large")
+
+    monkeypatch.setattr(g, "download_attachment", _fake_dl)
+    ctx, run_turn = _patch_backend(reply="ok")
+    captured = []
+    with ctx:
+        service.audit_service.record_event.side_effect = lambda **kw: captured.append(kw)
+        res = await service.handle_activity(_file_dm(), cfg=_files_cfg(files_max_bytes=10))
+    assert res.status == "ok"
+    skips = [e for e in captured if e.get("metadata", {}).get("reason") == "file_download_too_large"]
+    assert skips, "expected file_download_too_large audit"
+    # No fenced excerpt — the user's text is the only payload the copilot saw.
+    assert "```" not in run_turn.await_args.kwargs["user_message"]
+
+
+@pytest.mark.asyncio
+async def test_graph_token_unavailable_does_not_break_copilot_turn(monkeypatch):
+    from app.channels.msteams import graph as g
+
+    async def _fake_dl(*a, **kw):
+        return g.GraphResult(ok=False, reason="token_unavailable")
+
+    monkeypatch.setattr(g, "download_attachment", _fake_dl)
+    ctx, run_turn = _patch_backend(reply="ok")
+    captured = []
+    with ctx:
+        service.audit_service.record_event.side_effect = lambda **kw: captured.append(kw)
+        res = await service.handle_activity(_file_dm(), cfg=_files_cfg())
+    assert res.status == "ok"
+    fails = [e for e in captured if e.get("metadata", {}).get("reason") == "file_token_unavailable"]
+    assert fails
+    # Copilot still ran on the original text.
+    run_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_per_turn_attachment_cap_is_enforced(monkeypatch):
+    # 7 attachments → 5 processed, 2 audited as overflow. Download stub is
+    # called at most 5 times.
+    from app.channels.msteams import graph as g
+    dl_calls = {"n": 0}
+
+    async def _fake_dl(*a, **kw):
+        dl_calls["n"] += 1
+        return g.GraphResult(ok=True, content=b"x", content_type="text/plain")
+
+    monkeypatch.setattr(g, "download_attachment", _fake_dl)
+    ctx, run_turn = _patch_backend(reply="ok")
+    captured = []
+    act = _dm_activity(text="ok")
+    act["attachments"] = [
+        {"name": f"f{i}.txt", "contentType": "text/plain",
+         "contentUrl": f"https://graph.microsoft.com/v1.0/items/{i}"} for i in range(7)
+    ]
+    with ctx:
+        service.audit_service.record_event.side_effect = lambda **kw: captured.append(kw)
+        res = await service.handle_activity(act, cfg=_files_cfg())
+    assert res.status == "ok"
+    assert dl_calls["n"] == 5
+    overflow = [e for e in captured if e.get("metadata", {}).get("reason") == "file_skipped_overflow"]
+    assert len(overflow) == 2
+
+
+def test_files_render_for_copilot_respects_total_budget():
+    from app.channels.msteams import files as f
+    # Use marker chars that do NOT appear in the rendered labels
+    # ("Archivo adjunto: …") so counts isolate just the file content.
+    summaries = [
+        {"name": "1.txt", "text": "z" * 10000},
+        {"name": "2.txt", "text": "y" * 10000},
+        {"name": "3.txt", "text": "w" * 10000},
+    ]
+    rendered = f.render_for_copilot(summaries, total_budget=15000)
+    # First two attachments fit; the third has no budget left.
+    assert "1.txt" in rendered and "2.txt" in rendered
+    assert "3.txt" not in rendered
+    # Total CONTENT chars across all surviving attachments stay within budget.
+    assert rendered.count("z") + rendered.count("y") == 15000
+    assert rendered.count("w") == 0
+
+
+def test_files_is_supported_text_whitelist():
+    from app.channels.msteams import files as f
+    assert f.is_supported_text("text/plain", "x.txt") is True
+    assert f.is_supported_text("text/markdown", "x.md") is True
+    assert f.is_supported_text("application/json", "x.json") is True
+    assert f.is_supported_text("application/octet-stream", "x.bin") is False
+    assert f.is_supported_text("image/png", "x.png") is False
+    # Falls back to extension-based detection when content-type is missing.
+    assert f.is_supported_text(None, "notes.md") is True
+    assert f.is_supported_text("", "binary.exe") is False
+    # Defensive: both inputs missing → fail closed.
+    assert f.is_supported_text(None, None) is False
+
+
+def test_files_decode_text_honours_charset_then_falls_back():
+    from app.channels.msteams import files as f
+    # Honour charset hint.
+    assert f.decode_text("ñ".encode("latin-1"), "text/plain; charset=latin-1") == "ñ"
+    # Bogus charset → fall back to utf-8 with replacement (no exception).
+    assert f.decode_text(b"hola", "text/plain; charset=DOES-NOT-EXIST") is not None
+    # Non-bytes input → None (defensive).
+    assert f.decode_text("not bytes", "text/plain") is None
+
+
 # ── Adaptive Card approval flow (Feature 2) ──────────────────────────
 
 APPROVAL_MSG_ID = "00000000-0000-0000-0000-000000000777"
@@ -1314,16 +1530,21 @@ def test_user_map_warning_does_not_log_email_values(caplog):
     # The AAD key may be in the warning (operator needs it to find the typo).
 
 
-def test_manifest_does_not_overclaim_file_support_or_member_read():
-    # Audit 19 regression: the bot does NOT surface file content (Level-4
-    # future). Claiming supportsFiles=true on the manifest would mislead the
-    # Teams admin reviewing permissions. Member.Read.Group was never used.
+def test_manifest_permissions_match_implemented_capabilities():
+    # Manifest honesty regression. supportsFiles=true and the
+    # Files.Read.Selected resource-specific permission are present only
+    # because Feature 3 (text-file ingestion via Graph) actually consumes
+    # them. Member.Read.Group remains absent (it was claimed without use
+    # in the v0.1 draft and audited out in wave 4).
     import json
     from pathlib import Path
     manifest = json.loads(
         (Path(__file__).resolve().parents[1] / "app" / "channels" / "msteams"
          / "manifest.template.json").read_text(encoding="utf-8")
     )
-    assert manifest["bots"][0]["supportsFiles"] is False
+    assert manifest["bots"][0]["supportsFiles"] is True
     perms = {p["name"] for p in manifest["authorization"]["permissions"]["resourceSpecific"]}
+    assert "Files.Read.Selected" in perms, (
+        "Files.Read.Selected required for file ingestion is missing"
+    )
     assert "Member.Read.Group" not in perms, "unused Graph permission resurfaced"

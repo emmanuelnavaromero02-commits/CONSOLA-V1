@@ -37,6 +37,15 @@ def _str(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _int_env(name: str, default: int) -> int:
+    """Parse an integer env var with a safe fallback. Empty / non-numeric
+    values fall back to ``default`` (config must never crash boot)."""
+    raw = os.environ.get(name, "")
+    if not raw or not raw.strip().lstrip("-").isdigit():
+        return default
+    return int(raw.strip())
+
+
 def _csv(name: str) -> tuple[str, ...]:
     """Parse a comma/space separated allowlist into a tuple of stable ids.
 
@@ -86,6 +95,12 @@ class MsTeamsConfig:
     graph_enabled: bool
     transcripts_enabled: bool
     sharepoint_site_id: str
+    # Level-4 partial: file ingestion via Microsoft Graph (Files.Read.All
+    # delegated/app permission required). Operator OPT-IN. When false, the
+    # channel still surfaces attachment metadata (name + content type) but
+    # never downloads contents. Size cap is enforced before download.
+    files_enabled: bool
+    files_max_bytes: int
 
     def is_level0(self) -> bool:
         return not self.enabled
@@ -156,6 +171,10 @@ def load_config() -> MsTeamsConfig:
         graph_enabled=_flag("MSTEAMS_GRAPH_ENABLED", "false"),
         transcripts_enabled=_flag("MSTEAMS_TRANSCRIPTS_ENABLED", "false"),
         sharepoint_site_id=_str("MSTEAMS_SHAREPOINT_SITE_ID"),
+        files_enabled=_flag("MSTEAMS_FILES_ENABLED", "false"),
+        # 5 MB default. Larger uploads almost never end with the LLM reading the
+        # WHOLE thing; a hard server-side cap also bounds Graph egress cost.
+        files_max_bytes=_int_env("MSTEAMS_FILES_MAX_BYTES", 5 * 1024 * 1024),
     )
 
 
