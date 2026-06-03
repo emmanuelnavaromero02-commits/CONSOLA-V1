@@ -68,6 +68,9 @@ describe("AppSidebar", () => {
         "datasets.read",
         "workspace.access",
         "copilot.use",
+        "security.audit.read",
+        "vault.connections.read",
+        "operations.read",
         "apps.read",
         "marketplace.read",
         "monitor.read",
@@ -78,10 +81,14 @@ describe("AppSidebar", () => {
     expect(markup).toContain("Usuarios");
     expect(markup).toContain("Control Room");
     expect(markup).toContain("Copiloto");
+    expect(markup).toContain("Tokens");
+    expect(markup).toContain("Auditoría");
+    expect(markup).toContain("Vault");
+    expect(markup).toContain("Métricas");
     expect(markup).not.toContain("Conocimiento");
     expect(markup).not.toContain("Consulta Bronce");
     expect(markup).not.toContain("Studio");
     expect(markup).not.toContain("Seguridad");
-    expect(markup).not.toContain("Vault");
+    expect(markup).not.toContain("Ajustes");
   });
 });

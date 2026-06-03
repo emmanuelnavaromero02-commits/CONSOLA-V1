@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 
 from app.services import auth
-from app.services.permissions import require_permission
+from app.services.permissions import canonical_role, require_permission
 
 
 require_operations_read = require_permission("operations.read")
@@ -42,6 +42,33 @@ def _float(value: object) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _is_platform_admin(user: dict | None) -> bool:
+    return canonical_role((user or {}).get("role")) in {"owner", "super_admin", "admin"}
+
+
+def _tenant_workspace(user: dict | None) -> tuple[str | None, str | None]:
+    if not user:
+        return None, None
+    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip() or None
+    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip() or None
+    return tenant_id, workspace_id
+
+
+def _scoped_where(user: dict | None, table_alias: str = "", *, metadata: bool = False) -> tuple[str, tuple]:
+    if _is_platform_admin(user):
+        return "", ()
+    tenant_id, workspace_id = _tenant_workspace(user)
+    if not tenant_id or not workspace_id:
+        return " AND FALSE", ()
+    prefix = f"{table_alias}." if table_alias else ""
+    if metadata:
+        return (
+            f" AND ({prefix}metadata->>'workspace_id' = $1 OR {prefix}metadata->>'tenant_id' = $2)",
+            (workspace_id, tenant_id),
+        )
+    return f" AND {prefix}workspace_id = $1::uuid", (workspace_id,)
 
 
 async def _safe_fetchval(conn, query: str, *args, default: object = 0) -> object:
@@ -80,99 +107,122 @@ def _backup_status() -> dict:
 
 
 @router.get("/operational")
-async def operational_metrics() -> dict:
+async def operational_metrics(user: dict = Depends(require_operations_read)) -> dict:
     pool = await auth.pool()
     async with pool.acquire() as conn:
-        extractions_24h = await _safe_fetchval(conn,
-            """
-            SELECT COUNT(*) FROM extraction_runs
-            WHERE started_at >= now() - INTERVAL '24 hours'
-            """
-        )
-        errors_24h = await _safe_fetchval(conn,
-            """
-            SELECT COUNT(*) FROM extraction_runs
-            WHERE started_at >= now() - INTERVAL '24 hours'
-              AND status = 'failed'
-            """
-        )
-        avg_duration_sec = await _safe_fetchval(conn,
-            """
-            SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))
-            FROM extraction_runs
-            WHERE started_at >= now() - INTERVAL '24 hours'
-              AND status = 'success'
-              AND finished_at IS NOT NULL
-            """
-        )
-        slowest = await _safe_fetch(conn,
-            """
-            SELECT cartridge_id, entity_name,
-                   AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) AS avg_sec
-            FROM extraction_runs
-            WHERE started_at >= now() - INTERVAL '7 days'
-              AND status = 'success'
-              AND finished_at IS NOT NULL
-            GROUP BY cartridge_id, entity_name
-            ORDER BY avg_sec DESC NULLS LAST
-            LIMIT 5
-            """
-        )
+        platform = _is_platform_admin(user)
+        if platform:
+            extractions_24h = await _safe_fetchval(conn,
+                """
+                SELECT COUNT(*) FROM extraction_runs
+                WHERE started_at >= now() - INTERVAL '24 hours'
+                """
+            )
+            errors_24h = await _safe_fetchval(conn,
+                """
+                SELECT COUNT(*) FROM extraction_runs
+                WHERE started_at >= now() - INTERVAL '24 hours'
+                  AND status = 'failed'
+                """
+            )
+            avg_duration_sec = await _safe_fetchval(conn,
+                """
+                SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))
+                FROM extraction_runs
+                WHERE started_at >= now() - INTERVAL '24 hours'
+                  AND status = 'success'
+                  AND finished_at IS NOT NULL
+                """
+            )
+            slowest = await _safe_fetch(conn,
+                """
+                SELECT cartridge_id, entity_name,
+                       AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) AS avg_sec
+                FROM extraction_runs
+                WHERE started_at >= now() - INTERVAL '7 days'
+                  AND status = 'success'
+                  AND finished_at IS NOT NULL
+                GROUP BY cartridge_id, entity_name
+                ORDER BY avg_sec DESC NULLS LAST
+                LIMIT 5
+                """
+            )
+        else:
+            extractions_24h = errors_24h = avg_duration_sec = 0
+            slowest = []
+        audit_where, audit_args = _scoped_where(user, "a", metadata=True)
         audit_count_24h = await _safe_fetchval(conn,
-            """
-            SELECT COUNT(*) FROM audit_events
-            WHERE created_at >= now() - INTERVAL '24 hours'
-            """
+            f"""
+            SELECT COUNT(*) FROM audit_events a
+            WHERE a.created_at >= now() - INTERVAL '24 hours'
+            {audit_where}
+            """,
+            *audit_args,
         )
+        cr_where, cr_args = _scoped_where(user)
         action_executions_24h = await _safe_fetchval(conn,
-            """
+            f"""
             SELECT COUNT(*) FROM control_room_action_executions
             WHERE created_at >= now() - INTERVAL '24 hours'
-            """
+            {cr_where}
+            """,
+            *cr_args,
         )
         external_writebacks_24h = await _safe_fetchval(conn,
-            """
+            f"""
             SELECT COUNT(*) FROM control_room_action_executions
             WHERE created_at >= now() - INTERVAL '24 hours'
               AND mode = 'execute_live'
               AND COALESCE(result->>'external_write', 'false') = 'true'
-            """
+            {cr_where}
+            """,
+            *cr_args,
         )
         writeback_failures_24h = await _safe_fetchval(conn,
-            """
+            f"""
             SELECT COUNT(*) FROM control_room_action_executions
             WHERE created_at >= now() - INTERVAL '24 hours'
               AND mode = 'execute_live'
               AND status IN ('failed', 'blocked')
-            """
+            {cr_where}
+            """,
+            *cr_args,
         )
-        jobs_24h = await _safe_fetchval(conn,
-            """
-            SELECT COUNT(*) FROM jobs
-            WHERE created_at >= now() - INTERVAL '24 hours'
-            """
-        )
-        failed_jobs_24h = await _safe_fetchval(conn,
-            """
-            SELECT COUNT(*) FROM jobs
-            WHERE created_at >= now() - INTERVAL '24 hours'
-              AND status IN ('failed', 'error')
-            """
-        )
+        if platform:
+            jobs_24h = await _safe_fetchval(conn,
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE created_at >= now() - INTERVAL '24 hours'
+                """
+            )
+            failed_jobs_24h = await _safe_fetchval(conn,
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE created_at >= now() - INTERVAL '24 hours'
+                  AND status IN ('failed', 'error')
+                """
+            )
+        else:
+            jobs_24h = failed_jobs_24h = 0
+        token_where, token_args = _scoped_where(user)
         llm_tokens_24h = await _safe_fetchval(conn,
-            """
+            f"""
             SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
             FROM token_usage
             WHERE ts >= now() - INTERVAL '24 hours'
-            """
+            {token_where}
+            """,
+            *token_args,
         )
         llm_errors_24h = await _safe_fetchval(conn,
-            """
-            SELECT COUNT(*) FROM audit_events
-            WHERE created_at >= now() - INTERVAL '24 hours'
-              AND (action LIKE 'copilot.%' OR action LIKE 'studio.%')
-              AND COALESCE(status, '') IN ('error', 'failure', 'failed')
-            """
+            f"""
+            SELECT COUNT(*) FROM audit_events a
+            WHERE a.created_at >= now() - INTERVAL '24 hours'
+              AND (a.action LIKE 'copilot.%' OR a.action LIKE 'studio.%')
+              AND COALESCE(a.status, '') IN ('error', 'failure', 'failed')
+            {audit_where}
+            """,
+            *audit_args,
         )
         return {
             "extractions_24h": _int(extractions_24h),
@@ -192,7 +242,8 @@ async def operational_metrics() -> dict:
             "llm": {
                 "provider": os.environ.get("CHAT_LLM_PROVIDER", "anthropic") or "anthropic",
                 "model": os.environ.get("CHAT_LLM_MODEL", ""),
-                "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+                "scope": "platform" if platform else "workspace",
+                "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()) if platform else None,
                 "tokens_24h": _int(llm_tokens_24h),
                 "errors_24h": _int(llm_errors_24h),
             },

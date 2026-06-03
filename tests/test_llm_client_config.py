@@ -61,6 +61,51 @@ async def test_stale_gemini_provider_is_coerced_to_anthropic(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tenant_anthropic_key_is_loaded_from_workspace_vault(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    llm_client = _load_llm_client()
+    captured = {}
+
+    async def fake_vault_secret(scope, key):
+        captured["scope"] = scope
+        captured["key"] = key
+        return "tenant-anthropic-key"
+
+    async def fake_anthropic(*_args, **kwargs):
+        captured["api_key"] = kwargs.get("api_key")
+        captured["user_context"] = kwargs.get("user_context")
+        return "ok", [], []
+
+    monkeypatch.setattr(llm_client, "_vault_secret", fake_vault_secret)
+    monkeypatch.setattr(llm_client, "_anthropic_chat", fake_anthropic)
+
+    user_context = {
+        "id": 42,
+        "role": "user",
+        "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+    }
+    reply, _viewer, _messages = await llm_client.chat(
+        system="sys",
+        messages=[],
+        tools=[],
+        invoke_tool=None,
+        tool_server_map={},
+        user_context=user_context,
+    )
+
+    assert reply == "ok"
+    assert captured["scope"] == (
+        "tenant_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa__"
+        "workspace_11111111-1111-1111-1111-111111111111__llm"
+    )
+    assert captured["key"] == "anthropic_api_key"
+    assert captured["api_key"] == "tenant-anthropic-key"
+    assert captured["user_context"] == user_context
+
+
+@pytest.mark.asyncio
 async def test_chat_sanitizes_anthropic_auth_error(monkeypatch):
     monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key-for-test")

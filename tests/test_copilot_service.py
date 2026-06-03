@@ -211,7 +211,7 @@ def test_copilot_read_tool_executes_immediately(
         invoked.append((server_id, tool, args))
         return {"dags": ["sap_hcm_full", "replicon_users"]}
 
-    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
         # Simulate the LLM calling one read tool then replying.
         result = await invoke_tool("infra", "airflow_list_dags", {})
         assert "dags" in result
@@ -249,7 +249,7 @@ def test_copilot_destructive_tool_blocks_without_approval(
 
     captured = []
 
-    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
         r = await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
         captured.append(r)
         return ("Necesito tu aprobación.", [], [])
@@ -288,7 +288,7 @@ def test_copilot_write_tool_blocks_without_approval(
 
     captured = []
 
-    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
         r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
         captured.append(r)
         return ("Necesito aprobación.", [], [])

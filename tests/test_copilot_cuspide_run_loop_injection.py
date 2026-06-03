@@ -48,7 +48,7 @@ def test_run_loop_injects_lessons_block_into_system_prompt(
 
     async def fake_chat(*, system, messages, tools, invoke_tool,
                         tool_server_map, on_event=None,
-                        model=None, max_tokens=None, temperature=None):
+                        model=None, max_tokens=None, temperature=None, **_kw):
         captured["system"] = system
         captured["messages"] = messages
         return ("respuesta mock", [], messages)

@@ -148,8 +148,11 @@ def console_main(monkeypatch):
     async def assistant_chat(message, history):
         return {"reply": f"echo:{message}", "history": history}
 
-    async def token_summary():
-        return {"total_tokens": 123}
+    async def token_summary(user_context=None):
+        return {
+            "total_tokens": 123,
+            "workspace_id": (user_context or {}).get("active_workspace_id"),
+        }
 
     async def list_recent_jobs(limit=20):
         return [{"id": "job-1", "status": "ok"}]
@@ -585,7 +588,7 @@ def test_jobs_with_valid_jwt_returns_200(console_main):
     assert response.json()["jobs"][0]["id"] == "job-1"
 
 
-def test_tokens_summary_rejects_viewer(console_main):
+def test_tokens_summary_allows_scoped_copilot_viewer(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
@@ -593,7 +596,8 @@ def test_tokens_summary_rejects_viewer(console_main):
 
     response = client.get("/tokens/summary", headers={"Authorization": f"Bearer {token}"})
 
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["workspace_id"] == "11111111-1111-1111-1111-111111111111"
 
 
 def test_tokens_summary_allows_admin(console_main):
@@ -655,6 +659,31 @@ def test_api_admin_users_routes_reject_non_admin(console_main, method, path, jso
     response = getattr(client, method)(path, **kwargs)
 
     assert response.status_code == 403
+
+
+def test_visible_user_ids_for_workspace_admin_hides_platform_admin(console_main, monkeypatch):
+    workspace_id = "11111111-1111-1111-1111-111111111111"
+    other_workspace_id = "22222222-2222-2222-2222-222222222222"
+    admin = {
+        "id": 42,
+        "role": "user",
+        "workspaces": [{"workspace_id": workspace_id}],
+    }
+    users = [
+        {"id": 1, "role": "admin", "workspaces": [{"workspace_id": workspace_id}]},
+        {"id": 42, "role": "user", "workspaces": [{"workspace_id": workspace_id}]},
+        {"id": 43, "role": "user", "workspaces": [{"workspace_id": workspace_id}]},
+        {"id": 44, "role": "user", "workspaces": [{"workspace_id": other_workspace_id}]},
+    ]
+
+    async def unavailable_pool():
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    monkeypatch.setattr(console_main, "_get_db_pool", unavailable_pool)
+
+    visible_ids = asyncio.run(console_main._visible_user_ids_for_admin(admin, users))
+
+    assert visible_ids == {42, 43}
 
 
 def test_api_admin_users_create_with_admin_still_works(console_main):

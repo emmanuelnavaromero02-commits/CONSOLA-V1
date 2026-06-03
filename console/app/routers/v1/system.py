@@ -290,7 +290,7 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             # "workspace_admin" keeps the intent explicit and prevents a
             # future copy-paste from re-introducing a global-admin check on
             # a workspace-scoped flag.
-            "can_admin_workspace":     workspace_role_resolved == "workspace_admin",
+            "can_admin_workspace":     workspace_role_resolved in {"workspace_admin", "tenant_admin"},
             "can_view_audit":          "security.audit.read" in effective,
             "can_view_sessions":       "security.sessions.read" in effective,
         },
@@ -313,7 +313,7 @@ async def api_me_change_password(body: dict, user: dict = Depends(require_authen
     return resp
 
 # /tokens/summary
-@router.get("/tokens/summary", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
+@router.get("/tokens/summary")
 @_bind_to_main
-async def tokens_summary():
-    return await token_store.summary()
+async def tokens_summary(user: dict = Depends(require_permission("copilot.use"))):
+    return await token_store.summary(user_context=user)

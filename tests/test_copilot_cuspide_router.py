@@ -406,7 +406,7 @@ def test_ask_with_context_passes_context_to_llm(advanced_router_mod, monkeypatch
     api = _make_app(advanced_router_mod)
     seen: dict = {}
 
-    async def fake_llm(system, messages):
+    async def fake_llm(system, messages, **_kw):
         seen["system"] = system
         seen["messages"] = messages
         return "Respuesta mock"
@@ -512,7 +512,7 @@ def test_ask_with_context_truncates_long_question(advanced_router_mod, monkeypat
 
     captured: dict = {}
 
-    async def fake_llm(system, messages):
+    async def fake_llm(system, messages, **_kw):
         captured["content"] = messages[0]["content"]
         return "ok"
 

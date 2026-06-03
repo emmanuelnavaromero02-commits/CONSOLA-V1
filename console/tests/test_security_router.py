@@ -16,12 +16,13 @@ from app.routers.security import router
 _ADMIN_USER = {"id": 1, "role": "admin", "email": "admin@example.com"}
 
 
-def _make_app():
+def _make_app(user=None):
     application = FastAPI()
+    injected_user = user or _ADMIN_USER
 
     @application.middleware("http")
     async def inject_user(request: Request, call_next):
-        request.state.user = _ADMIN_USER
+        request.state.user = injected_user
         return await call_next(request)
 
     application.include_router(router)
@@ -108,3 +109,52 @@ def test_get_audit_events(mock_pool):
     data = response.json()
     assert len(data) == 1
     assert data[0]["details"] == {"ip": "127.0.0.1"}
+
+
+@patch.object(security_router._auth, "pool", new_callable=AsyncMock)
+def test_tenant_permissions_payload_is_scoped(mock_pool):
+    tenant_user = {
+        "id": 2,
+        "role": "user",
+        "workspace_role": "tenant_admin",
+        "email": "tenant-admin@example.com",
+        "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+        "workspaces": [{
+            "tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "workspace_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_role": "tenant_admin",
+        }],
+    }
+    tenant_client = TestClient(_make_app(tenant_user))
+    mock_conn = AsyncMock()
+    mock_pool.return_value = mock_conn
+    mock_conn.fetchval = AsyncMock(return_value=True)
+
+    async def fetch_side_effect(query, *args):
+        if "SELECT name, description FROM roles" in query:
+            return [
+                {"name": "admin", "description": "global"},
+                {"name": "tenant_admin", "description": "tenant"},
+                {"name": "viewer", "description": "viewer"},
+            ]
+        return []
+
+    mock_conn.fetch.side_effect = fetch_side_effect
+
+    response = tenant_client.get("/security/permissions")
+
+    assert response.status_code == 200
+    body = response.json()
+    role_names = {role["name"] for role in body["roles"]}
+    permission_keys = {permission["key"] for permission in body["permissions"]}
+    assert "tenant_admin" in role_names
+    assert "admin" not in role_names
+    assert "owner" not in body["matrix"]
+    assert "admin" not in body["matrix"]
+    assert body["db_roles"] == [{"name": "tenant_admin", "description": "tenant"}, {"name": "viewer", "description": "viewer"}]
+    assert "vault.connections.write" in permission_keys
+    assert "vault.secrets.read_masked" in permission_keys
+    assert "vault.secrets.reveal" not in permission_keys
+    assert "studio.read" not in permission_keys
+    assert "settings.read" not in permission_keys

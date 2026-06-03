@@ -884,6 +884,7 @@ async def chat(
             invoke_tool=_invoke_tool,
             tool_server_map=tool_server_map,
             on_event=on_event,
+            user_context=actor_user,
         )
     except llm_client.LLMConfigurationError as exc:
         reply = (

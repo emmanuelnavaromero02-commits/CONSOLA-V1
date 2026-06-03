@@ -97,11 +97,11 @@ ROLE_DEFINITIONS = {
         "assignable": True,
         "builtin": True,
         "legacy": False,
-        "assignment_note": "Assignable in users.role; workspace membership assignment is not wired yet.",
+        "assignment_note": "Platform-assignable; tenant-created users receive workspace membership separately.",
     },
     "tenant_admin": {
         "label": "Tenant Admin",
-        "description": "Workspace-scoped account administrator without Studio, Bronze, Vault or global security access.",
+        "description": "Workspace-scoped account administrator without Studio, Bronze or global security access.",
         "assignable": True,
         "builtin": True,
         "legacy": False,
@@ -113,7 +113,7 @@ ROLE_DEFINITIONS = {
         "assignable": True,
         "builtin": True,
         "legacy": False,
-        "assignment_note": "Assignable in users.role; workspace membership assignment is not wired yet.",
+        "assignment_note": "Assignable as a workspace role by tenant admins.",
     },
     "auditor": {
         "label": "Auditor",
@@ -128,7 +128,7 @@ ROLE_DEFINITIONS = {
         "assignable": True,
         "builtin": True,
         "legacy": False,
-        "assignment_note": "Assignable in users.role; workspace membership assignment is not wired yet.",
+        "assignment_note": "Assignable as a workspace role by tenant admins.",
     },
     "workspace_user": {
         "label": "Workspace User",
@@ -177,10 +177,14 @@ ROLE_PERMISSIONS = {
         # Customer tenant admins can manage users in their own workspace and
         # operate their assigned business surfaces. They deliberately cannot
         # access internal builder/data-admin surfaces: Knowledge Center,
-        # Bronze query, Studio, Vault, global security, settings or platform
-        # operations.
+        # Bronze query, Studio, global settings or platform operations. Audit,
+        # Vault and metrics are exposed only through workspace-scoped backend
+        # filters, never as global platform views.
         "iam.users.read", "iam.users.write", "iam.roles.read",
-        "datasets.read", "pipelines.read", "monitor.read",
+        "security.audit.read",
+        "vault.connections.read", "vault.connections.write",
+        "vault.secrets.read_masked",
+        "datasets.read", "pipelines.read", "monitor.read", "operations.read",
         "workspace.access", "control_room.write", "control_room.execute",
         "apps.read", "cartridges.read", "marketplace.read", "marketplace.request",
         "copilot.use",

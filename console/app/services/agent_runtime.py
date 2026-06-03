@@ -681,6 +681,7 @@ async def run(
             model=agent.model,
             max_tokens=agent.max_tokens,
             temperature=agent.temperature,
+            user_context=user,
         )
     except _asyncio.CancelledError:
         await _finish_run(run_id, status="cancelled", tool_calls=tool_calls_log,

@@ -13,14 +13,18 @@ import json
 import os
 import re
 from typing import Any, Callable
+from urllib.parse import quote
 
 import anthropic
+import httpx
 from openai import AsyncOpenAI
 
+from app.security import get_internal_api_key
 from app.services import token_store
 
 CHAT_PROVIDER       = os.environ.get("CHAT_LLM_PROVIDER", "anthropic")
 OLLAMA_URL          = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434").rstrip("/")
+VAULT_URL           = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 
 _PROVIDER_DEFAULTS = {
     "anthropic": "claude-haiku-4-5-20251001",
@@ -68,6 +72,66 @@ def _ensure_provider_configured(provider: str | None = None) -> None:
         raise LLMConfigurationError(reason)
 
 
+def _is_platform_admin_context(user_context: dict | None) -> bool:
+    role = str((user_context or {}).get("role") or "").strip()
+    return role in {"owner", "super_admin", "admin"}
+
+
+def _tenant_scope_parts(user_context: dict | None) -> tuple[str | None, str | None]:
+    if not user_context:
+        return None, None
+    tenant_id = str(
+        user_context.get("active_tenant_id") or user_context.get("tenant_id") or ""
+    ).strip() or None
+    workspace_id = str(
+        user_context.get("active_workspace_id") or user_context.get("workspace_id") or ""
+    ).strip() or None
+    return tenant_id, workspace_id
+
+
+def _tenant_llm_vault_scope(user_context: dict) -> str:
+    tenant_id, workspace_id = _tenant_scope_parts(user_context)
+    if not tenant_id or not workspace_id:
+        raise LLMConfigurationError("active tenant/workspace is required for workspace LLM credentials")
+    return f"tenant_{tenant_id}__workspace_{workspace_id}__llm"
+
+
+def _vault_headers() -> dict[str, str]:
+    pair_key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_VAULT") or get_internal_api_key()
+    return {"x-api-key": pair_key, "x-internal-service": "console"}
+
+
+async def _vault_secret(scope: str, key: str) -> str | None:
+    try:
+        async with httpx.AsyncClient(headers=_vault_headers(), timeout=5) as client:
+            response = await client.get(
+                f"{VAULT_URL}/secrets/{quote(scope, safe='')}/{quote(key, safe='')}"
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:  # noqa: BLE001
+        raise LLMConfigurationError("workspace LLM credential lookup failed") from exc
+    value = data.get("value") if isinstance(data, dict) else None
+    return str(value).strip() if value else None
+
+
+async def _resolve_anthropic_api_key(user_context: dict | None = None) -> str:
+    if user_context and not _is_platform_admin_context(user_context):
+        scope = _tenant_llm_vault_scope(user_context)
+        value = await _vault_secret(scope, "anthropic_api_key")
+        if value:
+            return value
+        raise LLMConfigurationError(
+            "Anthropic API key is required for this workspace; configure it in Operations > Vault"
+        )
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise LLMConfigurationError("ANTHROPIC_API_KEY is required when CHAT_LLM_PROVIDER=anthropic")
+    return api_key
+
+
 def _provider_error_message(provider: str, exc: Exception) -> str:
     msg = str(exc).lower()
     if any(token in msg for token in ("401", "unauthorized", "invalid api key", "api key", "x-api-key", "authentication")):
@@ -104,8 +168,10 @@ def _resolve_chat_model(model: str | None) -> str:
     return value
 
 
-def _anthropic_client() -> anthropic.AsyncAnthropic:
+def _anthropic_client(api_key: str | None = None) -> anthropic.AsyncAnthropic:
     global _ant
+    if api_key:
+        return anthropic.AsyncAnthropic(api_key=api_key)
     if _ant is None:
         _ant = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
     return _ant
@@ -128,23 +194,31 @@ async def chat(
     model: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    user_context: dict | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     """If `on_event` is provided, it is awaited with dicts describing every
     tool invocation and its result, plus a final {'type':'text', 'text': reply}.
     The function still returns the same (reply, viewer_urls, messages) tuple
     so callers that ignore on_event keep working unchanged."""
     provider = _current_provider()
-    _ensure_provider_configured(provider)
+    anthropic_api_key: str | None = None
+    if provider == "anthropic":
+        anthropic_api_key = await _resolve_anthropic_api_key(user_context)
+    else:
+        _ensure_provider_configured(provider)
     try:
         if provider == "ollama":
             return await _openai_compat_chat(
                 system, messages, tools, invoke_tool, tool_server_map, _ollama_client(),
                 on_event,
                 model=model, max_tokens=max_tokens, temperature=temperature,
+                user_context=user_context,
             )
         return await _anthropic_chat(
             system, messages, tools, invoke_tool, tool_server_map, on_event,
             model=model, max_tokens=max_tokens, temperature=temperature,
+            api_key=anthropic_api_key,
+            user_context=user_context,
         )
     except LLMConfigurationError:
         raise
@@ -292,6 +366,8 @@ async def _anthropic_chat(
     model: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    api_key: str | None = None,
+    user_context: dict | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     chat_model = _resolve_chat_model(model)
     chat_max_tokens = int(max_tokens or 32000)
@@ -330,7 +406,7 @@ async def _anthropic_chat(
         }
         if temperature is not None:
             kwargs["temperature"] = temperature
-        async with _anthropic_client().messages.stream(**kwargs) as stream:
+        async with _anthropic_client(api_key).messages.stream(**kwargs) as stream:
             async for text_delta in stream.text_stream:
                 if text_delta:
                     await _emit(on_event, {"type": "text_delta", "text": text_delta})
@@ -342,6 +418,7 @@ async def _anthropic_chat(
             "anthropic", chat_model,
             usage.input_tokens, usage.output_tokens,
             cache_create, cache_read,
+            user_context=user_context,
         )
         content_dicts = _content_to_dicts(response.content)
         tool_use_blocks = [b for b in content_dicts if b.get("type") == "tool_use"]
@@ -454,6 +531,7 @@ async def _openai_compat_chat(
     model: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    user_context: dict | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     chat_model = _resolve_chat_model(model)
     oai_tools = _to_oai_tools(tools) if tools else []
@@ -483,6 +561,7 @@ async def _openai_compat_chat(
                 CHAT_PROVIDER, chat_model,
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
+                user_context=user_context,
             )
 
         tool_calls = _oai_message_value(msg, "tool_calls") or []

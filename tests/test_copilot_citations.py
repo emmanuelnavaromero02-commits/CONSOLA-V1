@@ -247,7 +247,7 @@ def test_citations_persisted_to_jsonb_and_returned_on_turn(copilot_module):
         }
 
     async def fake_chat(*, system, messages, tools, invoke_tool,
-                        tool_server_map, on_event=None):
+                        tool_server_map, on_event=None, **_kw):
         await invoke_tool("sap_hcm", "get_employees", {})
         final = list(messages) + [
             {"role": "assistant", "content": [

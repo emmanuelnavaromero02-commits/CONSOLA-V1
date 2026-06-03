@@ -9,11 +9,22 @@ import { getMeAccess } from "@/lib/admin-surfaces";
 import { useCreateUser } from "@/lib/operations/hooks";
 
 
-const ROLES: { value: string; label: string }[] = [
+const PLATFORM_ROLES: { value: string; label: string }[] = [
   { value: "viewer",          label: "Viewer" },
   { value: "analyst",         label: "Analyst" },
+  { value: "tenant_admin",    label: "Tenant admin" },
   { value: "workspace_admin", label: "Workspace admin" },
+  { value: "auditor",         label: "Auditor" },
+  { value: "security_admin",  label: "Security admin" },
   { value: "admin",           label: "Admin" },
+  { value: "super_admin",     label: "Super admin" },
+];
+
+const TENANT_ROLES: { value: string; label: string }[] = [
+  { value: "viewer",       label: "Viewer" },
+  { value: "analyst",      label: "Analyst" },
+  { value: "workspace_user", label: "Workspace user" },
+  { value: "tenant_admin", label: "Tenant admin" },
 ];
 
 const MAX_EMAIL  = 254;
@@ -54,6 +65,7 @@ export function CreateUserForm() {
   const [role,     setRole]     = useState<string>("viewer");
   const [open,     setOpen]     = useState(false);
   const workspaceId = access.data?.workspace?.workspace_id?.trim() ?? "";
+  const roles = access.data?.role?.is_platform_admin ? PLATFORM_ROLES : TENANT_ROLES;
 
   function reset() {
     setEmail("");
@@ -177,7 +189,7 @@ export function CreateUserForm() {
             onChange={(e) => setRole(e.target.value)}
             className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {ROLES.map((r) => (
+            {roles.map((r) => (
               <option key={r.value} value={r.value}>
                 {r.label}
               </option>

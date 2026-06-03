@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import require_authenticated, ROLE_ADMIN
 from app.services import operations_service
+from app.services.permissions import canonical_role, require_permission
 
 
 async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
@@ -11,6 +12,10 @@ async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
     if role not in {ROLE_ADMIN, "owner", "super_admin"}:
         raise HTTPException(status_code=403, detail="admin role required")
     return user
+
+
+def _is_platform_admin(user: dict | None) -> bool:
+    return canonical_role((user or {}).get("role")) in {"owner", "super_admin", ROLE_ADMIN}
 
 
 router = APIRouter(
@@ -25,7 +30,15 @@ async def list_migrations(_: dict = Depends(_require_admin)):
 
 
 @router.get("/health")
-async def system_health(_: dict = Depends(_require_admin)):
+async def system_health(user: dict = Depends(require_permission("operations.read"))):
+    if not _is_platform_admin(user):
+        version = await operations_service.get_system_version()
+        return {
+            "version": version,
+            "services": [],
+            "summary": {"total": 0, "up": 0, "down": 0},
+            "scope": "workspace",
+        }
     services = await operations_service.probe_services()
     up = sum(1 for s in services if s["status"] == "up")
     version = await operations_service.get_system_version()

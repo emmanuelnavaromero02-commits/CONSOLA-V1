@@ -147,7 +147,7 @@ async def _conversation_belongs_to_user(
 _LLM_HARD_TIMEOUT_SECONDS = 60.0
 
 
-async def _llm_text_call(system: str, messages: list[dict]) -> str:
+async def _llm_text_call(system: str, messages: list[dict], user_context: dict | None = None) -> str:
     """Adapter so memory_service.LLMTextCall (and goal_solver) can hit
     the real llm_client.chat.
 
@@ -177,6 +177,7 @@ async def _llm_text_call(system: str, messages: list[dict]) -> str:
                 invoke_tool=_noop_invoke_tool,
                 tool_server_map={},
                 on_event=None,
+                user_context=user_context,
             )
         except ValueError:
             # Surface upstream parse errors so the goal-solver's own
@@ -763,7 +764,7 @@ async def ask_with_context_endpoint(
 
     messages = [{"role": "user", "content": str(question)[:_QUESTION_MAX_LEN]}]
     try:
-        answer = await _llm_text_call(final_prompt, messages)
+        answer = await _llm_text_call(final_prompt, messages, user_context=user)
     except RuntimeError as exc:
         # ``_llm_text_call`` raises ``RuntimeError("llm_call_timeout")``
         # or ``RuntimeError("llm_call_failed")``. Map both to sanitised

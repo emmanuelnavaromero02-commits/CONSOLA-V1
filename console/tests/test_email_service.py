@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 
 import pytest
 
@@ -16,7 +17,12 @@ def _reload_email(monkeypatch, *, provider: str):
     monkeypatch.setenv("SMTP_PASSWORD", "smtp-pass")
     monkeypatch.setenv("SMTP_FROM", "no-reply@example.test")
     monkeypatch.setenv("SMTP_USE_TLS", "true")
-    return importlib.reload(email_service_module)
+    module_name = email_service_module.__name__
+    module = sys.modules.get(module_name)
+    if module is not email_service_module:
+        sys.modules[module_name] = email_service_module
+        module = email_service_module
+    return importlib.reload(module)
 
 
 def test_send_sync_uses_smtp_provider(monkeypatch):

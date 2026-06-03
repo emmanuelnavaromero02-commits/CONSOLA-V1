@@ -2076,9 +2076,9 @@ async def get_job(job_id: str, user: dict = Depends(require_authenticated)):
 
 # ── Token usage ───────────────────────────────────────────────────────────────
 
-@app.get("/tokens/summary", dependencies=[Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
-async def tokens_summary():
-    return await token_store.summary()
+@app.get("/tokens/summary")
+async def tokens_summary(user: dict = Depends(require_permission("copilot.use"))):
+    return await token_store.summary(user_context=user)
 
 
 # ── Assistant ─────────────────────────────────────────────────────────────────
@@ -4004,12 +4004,56 @@ async def api_agent_run_detail(request: Request, run_id: int):
 _VAULT_URL = _vault_url()
 _RAG_URL   = os.environ.get("RAG_URL",   "http://mcp-infra:8010")  # migrado
 
+
+def _tenant_vault_prefix(user: dict) -> str | None:
+    if _is_global_iam_admin(user):
+        return None
+    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        raise HTTPException(400, "active tenant/workspace is required for vault access")
+    return f"tenant_{tenant_id}__workspace_{workspace_id}__"
+
+
+def _tenant_vault_conn_id(user: dict, conn_id: str) -> str:
+    clean = (conn_id or "").strip()
+    if not clean:
+        raise HTTPException(400, "connection id is required")
+    prefix = _tenant_vault_prefix(user)
+    return clean if prefix is None else f"{prefix}{clean}"
+
+
+def _tenant_vault_display_conn(user: dict, conn: dict) -> dict | None:
+    prefix = _tenant_vault_prefix(user)
+    if prefix is None:
+        return conn
+    key = str(conn.get("conn_id") or conn.get("id") or conn.get("key") or "")
+    if not key.startswith(prefix):
+        return None
+    display = {**conn, "conn_id": key[len(prefix):]}
+    if "id" in display:
+        display["id"] = display["conn_id"]
+    return display
+
+
+def _tenant_vault_scope(user: dict, scope: str) -> str:
+    clean = (scope or "").strip()
+    if not clean:
+        raise HTTPException(400, "vault scope is required")
+    if _is_global_iam_admin(user):
+        return clean
+    if clean in {"global", "platform", "studio", "system", "_system"}:
+        raise HTTPException(403, "global vault scope requires platform admin")
+    prefix = _tenant_vault_prefix(user)
+    assert prefix is not None
+    return f"{prefix}{clean}"
+
 @app.get("/api/vault/connections/{cartridge}", dependencies=[Depends(require_permission("vault.connections.read"))])
 async def api_vault_list_connections(cartridge: str, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
     try:
         async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-            r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
+            r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
         if r.status_code in (404, 204):
             return {"connections": []}
         if r.status_code >= 500:
@@ -4022,14 +4066,27 @@ async def api_vault_list_connections(cartridge: str, user: dict = Depends(requir
         raise HTTPException(502, "Vault request failed") from exc
     if not data:
         return {"connections": []}
-    return data
+    connections = data.get("connections") if isinstance(data, dict) else []
+    if not isinstance(connections, list):
+        return {"connections": []}
+    visible: list[dict] = []
+    for conn in connections:
+        if not isinstance(conn, dict):
+            continue
+        display = _tenant_vault_display_conn(user, conn)
+        if display is not None:
+            visible.append(display)
+    return {"connections": visible}
 
 @app.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(_internal_or_authenticated)):
     """Returns full credentials including token (not masked)."""
     _require_cartridge_visible(user, cartridge)
+    vault_conn_id = _tenant_vault_conn_id(user, conn_id)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
+        r = await c.get(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
+        )
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
@@ -4041,28 +4098,74 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
         resource_type="vault_connection",
         resource_id=f"{cartridge}/{conn_id}",
         status="success",
-        metadata={"cartridge": cartridge, "connection_id": conn_id},
+        metadata={
+            "cartridge": cartridge,
+            "connection_id": conn_id,
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
         critical=True,
     )
+    if isinstance(data, dict) and vault_conn_id != conn_id:
+        data["conn_id"] = conn_id
+        if "id" in data:
+            data["id"] = conn_id
     return data
 
-@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@app.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
+    vault_conn_id = _tenant_vault_conn_id(user, conn_id)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
+        r = await c.put(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}",
+            json=body,
+        )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "vault.connection.upsert", "vault_connection", f"{cartridge}/{conn_id}",
+        status="success",
+        metadata={
+            "cartridge": cartridge,
+            "connection_id": conn_id,
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
+    )
+    if isinstance(data, dict) and vault_conn_id != conn_id:
+        data["conn_id"] = conn_id
+        if "id" in data:
+            data["id"] = conn_id
+    return data
 
-@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@app.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
+    vault_conn_id = _tenant_vault_conn_id(user, conn_id)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
+        r = await c.delete(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
+        )
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_conn_id != conn_id:
+        data["conn_id"] = conn_id
+        if "id" in data:
+            data["id"] = conn_id
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "vault.connection.deleted", "vault_connection", f"{cartridge}/{conn_id}",
+        status="success",
+        metadata={
+            "cartridge": cartridge,
+            "connection_id": conn_id,
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
+    )
+    return data
 
 
 def _require_vault_scope_visible(user: dict, scope: str) -> None:
@@ -4071,44 +4174,78 @@ def _require_vault_scope_visible(user: dict, scope: str) -> None:
         if not _is_global_iam_admin(user):
             raise HTTPException(403, "global vault scope requires platform admin")
         return
-    _require_cartridge_visible(user, scope)
+    if _is_global_iam_admin(user):
+        return
 
 
 @app.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_permission("vault.secrets.read_masked"))])
 async def api_vault_list_secrets(scope: str, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
+    vault_scope = _tenant_vault_scope(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/secrets/{scope}")
+        r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_scope != scope:
+        data["scope"] = scope
+    return data
 
 @app.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 async def api_vault_reveal_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
+    vault_scope = _tenant_vault_scope(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/secrets/{scope}/{key}")
+        r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/{quote(key, safe='')}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
         return r.json()
 
-@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@app.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_upsert_secret(scope: str, key: str, body: dict, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
+    vault_scope = _tenant_vault_scope(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
+        r = await c.put(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/{quote(key, safe='')}", json=body)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_scope != scope:
+        data["scope"] = scope
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "vault.secret.upsert", "vault_secret", f"{scope}/{key}",
+        status="success",
+        metadata={
+            "scope": scope,
+            "key": key,
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
+    )
+    return data
 
-@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@app.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 async def api_vault_delete_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
+    vault_scope = _tenant_vault_scope(user, scope)
     async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")
+        r = await c.delete(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/{quote(key, safe='')}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_scope != scope:
+        data["scope"] = scope
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "vault.secret.deleted", "vault_secret", f"{scope}/{key}",
+        status="success",
+        metadata={
+            "scope": scope,
+            "key": key,
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
+    )
+    return data
 
 
 # ── RAG proxy ─────────────────────────────────────────────────────────────────
@@ -5263,7 +5400,7 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
 _GLOBAL_ASSIGNABLE_ROLES = {"owner", "super_admin", ROLE_ADMIN, "security_admin", "auditor"}
-_WORKSPACE_ASSIGNABLE_ROLES = {"tenant_admin", "workspace_admin", "analyst", "viewer", "workspace_user", "user"}
+_WORKSPACE_ASSIGNABLE_ROLES = {"tenant_admin", "analyst", "viewer", "workspace_user", "user"}
 
 
 def _assignable_role(value: str | None, actor_user: dict | None = None) -> str:
@@ -5358,6 +5495,11 @@ async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> se
     workspace_ids = sorted(_session_workspace_ids(admin_user))
     if not workspace_ids:
         return set()
+    user_by_id = {
+        int(u["id"]): u
+        for u in users
+        if u.get("id") is not None
+    }
     try:
         pool = await _get_db_pool()
     except (RuntimeError, AttributeError) as exc:
@@ -5367,6 +5509,8 @@ async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> se
         admin_id = admin_user.get("id")
         for candidate in users:
             candidate_id = candidate.get("id")
+            if candidate_id != admin_id and _is_global_iam_admin(candidate):
+                continue
             candidate_workspaces = _session_workspace_ids(candidate)
             if candidate_id == admin_id or candidate_workspaces.intersection(workspace_ids):
                 visible.add(int(candidate_id))
@@ -5379,7 +5523,17 @@ async def _visible_user_ids_for_admin(admin_user: dict, users: list[dict]) -> se
         """,
         workspace_ids,
     )
-    return {int(row["user_id"]) for row in rows}
+    visible: set[int] = set()
+    for row in rows:
+        user_id = int(row["user_id"])
+        if user_id == admin_user.get("id"):
+            visible.add(user_id)
+            continue
+        candidate = user_by_id.get(user_id)
+        if candidate and _is_global_iam_admin(candidate):
+            continue
+        visible.add(user_id)
+    return visible
 
 
 async def _set_workspace_role_for_user(user_id: int, workspace_id: str, role: str) -> None:
