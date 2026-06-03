@@ -1,8 +1,10 @@
 resource "aws_instance" "vpn" {
+  count = var.enable_vpn ? 1 : 0
+
   ami                         = data.aws_ami.ubuntu_2204.id
   instance_type               = var.vpn_instance_type
   subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.vpn.id]
+  vpc_security_group_ids      = [aws_security_group.vpn[0].id]
   key_name                    = var.key_pair_name
   iam_instance_profile        = aws_iam_instance_profile.vpn.name
   associate_public_ip_address = true
@@ -15,7 +17,7 @@ resource "aws_instance" "vpn" {
   }
 
   user_data = templatefile("${path.module}/user_data/vpn.sh.tpl", {
-    vpn_public_ip     = aws_eip.vpn.public_ip
+    vpn_public_ip     = aws_eip.vpn[0].public_ip
     vpn_password_hash = replace(var.vpn_admin_password_hash, "$", "$$")
   })
 
@@ -25,6 +27,8 @@ resource "aws_instance" "vpn" {
 }
 
 resource "aws_eip_association" "vpn" {
-  instance_id   = aws_instance.vpn.id
-  allocation_id = aws_eip.vpn.id
+  count = var.enable_vpn ? 1 : 0
+
+  instance_id   = aws_instance.vpn[0].id
+  allocation_id = aws_eip.vpn[0].id
 }

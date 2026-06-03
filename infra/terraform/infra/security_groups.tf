@@ -1,4 +1,6 @@
 resource "aws_security_group" "vpn" {
+  count = var.enable_vpn ? 1 : 0
+
   name        = "modecissions-sg-vpn"
   description = "WireGuard VPN bastion: SSH, wg UDP, wg-easy UI"
   vpc_id      = aws_vpc.main.id
@@ -42,6 +44,34 @@ resource "aws_security_group" "vpn" {
 
   tags = {
     Name = "modecissions-sg-vpn"
+  }
+}
+
+resource "aws_security_group" "nat" {
+  count = local.use_nat_instance ? 1 : 0
+
+  name        = "modecissions-sg-nat-instance"
+  description = "Low-cost NAT instance: outbound egress for private subnets"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "Private subnet egress through NAT instance"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    description = "Outbound internet"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "modecissions-sg-nat-instance"
   }
 }
 
@@ -103,12 +133,15 @@ resource "aws_security_group" "app" {
   description = "App EC2: internal services from VPN, public console/workspace from ALB"
   vpc_id      = aws_vpc.main.id
 
-  ingress {
-    description     = "All traffic from VPN SG"
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    security_groups = [aws_security_group.vpn.id]
+  dynamic "ingress" {
+    for_each = var.enable_vpn ? [1] : []
+    content {
+      description     = "All traffic from VPN SG"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      security_groups = [aws_security_group.vpn[0].id]
+    }
   }
 
   ingress {

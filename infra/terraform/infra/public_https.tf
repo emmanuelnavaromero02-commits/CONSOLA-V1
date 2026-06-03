@@ -362,6 +362,8 @@ resource "aws_cloudwatch_metric_alarm" "app_ec2_status_check" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "vpn_ec2_status_check" {
+  count = var.enable_vpn ? 1 : 0
+
   alarm_name          = "modecissions-vpn-ec2-status-check"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -376,6 +378,6 @@ resource "aws_cloudwatch_metric_alarm" "vpn_ec2_status_check" {
   ok_actions          = [aws_sns_topic.public_alarms.arn]
 
   dimensions = {
-    InstanceId = aws_instance.vpn.id
+    InstanceId = aws_instance.vpn[0].id
   }
 }

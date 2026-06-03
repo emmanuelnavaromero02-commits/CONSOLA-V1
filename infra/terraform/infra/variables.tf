@@ -45,6 +45,29 @@ variable "vpn_instance_type" {
   default     = "t3.nano"
 }
 
+variable "enable_vpn" {
+  description = "Whether to run the WireGuard VPN bastion. Keep false for public ALB + SSM-only low-cost staging."
+  type        = bool
+  default     = true
+}
+
+variable "egress_mode" {
+  description = "Private subnet outbound internet mode. nat_gateway is managed and pricier; nat_instance is cheaper and single-node."
+  type        = string
+  default     = "nat_gateway"
+
+  validation {
+    condition     = contains(["nat_gateway", "nat_instance"], var.egress_mode)
+    error_message = "egress_mode must be nat_gateway or nat_instance."
+  }
+}
+
+variable "nat_instance_type" {
+  description = "EC2 instance type for low-cost NAT instance egress when egress_mode is nat_instance."
+  type        = string
+  default     = "t3.micro"
+}
+
 variable "app_env" {
   description = "Runtime APP_ENV injected into the EC2 app host. Use production only with public HTTPS configured."
   type        = string
@@ -113,6 +136,115 @@ variable "ssh_allowed_cidrs" {
 variable "alarm_email" {
   description = "Email address subscribed to v1 public CloudWatch alarms."
   type        = string
+}
+
+variable "enable_monthly_budget" {
+  description = "Create an AWS Budgets monthly cost guardrail using alarm_email."
+  type        = bool
+  default     = true
+}
+
+variable "monthly_budget_limit_usd" {
+  description = "Monthly AWS budget limit in USD for this account guardrail."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.monthly_budget_limit_usd > 0
+    error_message = "monthly_budget_limit_usd must be greater than zero."
+  }
+}
+
+variable "budget_actual_thresholds" {
+  description = "Actual spend percentage thresholds that send budget emails."
+  type        = list(number)
+  default     = [50, 80, 100]
+
+  validation {
+    condition     = length(var.budget_actual_thresholds) > 0 && alltrue([for threshold in var.budget_actual_thresholds : threshold > 0])
+    error_message = "budget_actual_thresholds must contain positive percentage values."
+  }
+}
+
+variable "budget_forecast_thresholds" {
+  description = "Forecasted spend percentage thresholds that send budget emails."
+  type        = list(number)
+  default     = [100]
+
+  validation {
+    condition     = alltrue([for threshold in var.budget_forecast_thresholds : threshold > 0])
+    error_message = "budget_forecast_thresholds must contain positive percentage values."
+  }
+}
+
+variable "smtp_host" {
+  description = "SMTP host for transactional email. Use email-smtp.<region>.amazonaws.com for SES SMTP after domain approval."
+  type        = string
+  default     = "mailhog"
+}
+
+variable "email_provider" {
+  description = "Transactional email provider. smtp uses SMTP_HOST; ses uses the EC2 IAM role and Amazon SES SendRawEmail."
+  type        = string
+  default     = "smtp"
+
+  validation {
+    condition     = contains(["smtp", "ses"], var.email_provider)
+    error_message = "email_provider must be smtp or ses."
+  }
+}
+
+variable "ses_sender_domain" {
+  description = "Optional sender domain to verify in Amazon SES. Leave empty until the Google-managed domain is ready."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.ses_sender_domain == "" || can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.ses_sender_domain))
+    error_message = "ses_sender_domain must be empty or a DNS hostname."
+  }
+}
+
+variable "ses_mail_from_subdomain" {
+  description = "MAIL FROM subdomain for SES bounce handling, e.g. mail for mail.example.com."
+  type        = string
+  default     = "mail"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9]$", var.ses_mail_from_subdomain))
+    error_message = "ses_mail_from_subdomain must be a single DNS label."
+  }
+}
+
+variable "smtp_port" {
+  description = "SMTP port for transactional email."
+  type        = number
+  default     = 1025
+}
+
+variable "smtp_user" {
+  description = "SMTP username. For SES SMTP this is the generated SMTP user, not the AWS access key id."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "smtp_from" {
+  description = "Transactional email sender address."
+  type        = string
+  default     = "noreply@modecissions.local"
+}
+
+variable "smtp_from_domain" {
+  description = "Sender domain used by the application for email links and diagnostics."
+  type        = string
+  default     = "modecissions.local"
+}
+
+variable "smtp_use_tls" {
+  description = "Whether the application should issue STARTTLS for SMTP."
+  type        = bool
+  default     = false
 }
 
 variable "bedrock_model_ids" {

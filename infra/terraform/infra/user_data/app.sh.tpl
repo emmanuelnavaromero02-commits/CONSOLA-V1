@@ -75,6 +75,13 @@ APP_BASE_URL=${public_console_url}
 AIRFLOW_PUBLIC_URL=http://$APP_PRIVATE_IP:8082
 SUPERSET_PUBLIC_URL=http://$APP_PRIVATE_IP:8088
 ALLOWED_ORIGINS=${public_console_url},${public_workspace_url}
+EMAIL_PROVIDER=${email_provider}
+SMTP_HOST=${smtp_host}
+SMTP_PORT=${smtp_port}
+SMTP_USER=${smtp_user}
+SMTP_FROM=${smtp_from}
+SMTP_FROM_DOMAIN=${smtp_from_domain}
+SMTP_USE_TLS=${smtp_use_tls}
 MODECISSIONS_ENV_FILE=/opt/modecissions/infra/terraform/deploy/.env
 %{ for name, arn in secret_arns ~}
 MODECISSIONS_SECRET_${name}_ARN=${arn}

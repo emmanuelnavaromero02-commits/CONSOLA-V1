@@ -4,6 +4,15 @@ github_repo_url = "git@github.com:emmanuelnavaromero02-commits/CONSOLA-BETA.git"
 deploy_ref      = "v1.0.0-rc3"
 image_tag       = "v1.0.0-rc3"
 
+# Low-cost staging defaults:
+# - nat_instance avoids the always-on NAT Gateway hourly/data-processing cost.
+# - enable_vpn=false keeps public ALB + SSM access only.
+app_env           = "staging"
+app_instance_type = "m7i-flex.large"
+egress_mode       = "nat_instance"
+nat_instance_type = "t3.micro"
+enable_vpn        = false
+
 public_console_domain   = "console.example.com"
 public_workspace_domain = "workspace.example.com"
 
@@ -25,5 +34,32 @@ ssh_allowed_cidrs = []
 
 # Required for SNS alarm subscription confirmation.
 alarm_email = "ops@example.com"
+
+enable_monthly_budget    = true
+monthly_budget_limit_usd = 50
+budget_actual_thresholds = [50, 80, 100]
+budget_forecast_thresholds = [100]
+
+# Transactional email. Keep MailHog until a real sender domain exists.
+# For Amazon SES API after domain verification/sandbox approval:
+# email_provider   = "ses"
+# ses_sender_domain = "example.com"
+# smtp_from        = "no-reply@example.com"
+# smtp_from_domain = "example.com"
+#
+# Keep SMTP only for MailHog/dev or an external SMTP provider:
+# email_provider   = "smtp"
+# smtp_host        = "smtp.example.com"
+# smtp_port        = 587
+# smtp_user        = "<smtp-username>"
+# smtp_use_tls     = true
+email_provider   = "smtp"
+ses_sender_domain = ""
+smtp_host        = "mailhog"
+smtp_port        = 1025
+smtp_user        = ""
+smtp_from        = "noreply@modecissions.local"
+smtp_from_domain = "modecissions.local"
+smtp_use_tls     = false
 
 vpn_admin_allowed_cidrs = []
