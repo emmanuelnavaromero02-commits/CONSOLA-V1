@@ -2016,14 +2016,23 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         # The front-end uses these flags to decide what to render. They are
         # *display hints only*; every action endpoint enforces its own gate.
         # IMPORTANT: each flag must replicate the FULL guard chain of the
-        # target page. /iam, /admin/users, /settings, /operations require
-        # both the permission AND `require_admin` (global admin role).
+        # target page. /iam, /settings, /operations and global admin
+        # surfaces require both the permission AND `require_admin`
+        # (global admin role). /operations/users is the exception:
+        # tenant admins may enter, while its API remains workspace-scoped.
         # If we only checked the permission, a security_admin user (who
         # has iam.users.read but is not a global admin) would see the
         # link and get a 403 on click. The backend still rejects, but the
         # UI must not lie.
         "ui_capabilities": {
             "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
+            "can_manage_workspace_users": (
+                "iam.users.read" in effective
+                and (
+                    role_canonical in {"owner", "super_admin", "admin"}
+                    or workspace_role_resolved in {"workspace_admin", "tenant_admin"}
+                )
+            ),
             "can_admin_marketplace":   "marketplace.admin" in effective,
             # `workspace_role()` already normalizes the legacy database
             # workspace_role values (admin/owner/super_admin/security_admin)
@@ -2031,7 +2040,7 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
             # "workspace_admin" keeps the intent explicit and prevents a
             # future copy-paste from re-introducing a global-admin check on
             # a workspace-scoped flag.
-            "can_admin_workspace":     workspace_role_resolved == "workspace_admin",
+            "can_admin_workspace":     workspace_role_resolved in {"workspace_admin", "tenant_admin"},
             "can_view_audit":          "security.audit.read" in effective,
             "can_view_sessions":       "security.sessions.read" in effective,
         },
@@ -5254,7 +5263,7 @@ async def api_decisions_add_action(decision_id: int, body: dict, user: dict = De
 # ── Users (assignee picker, all logged-in users) ────────────────────────────
 
 _GLOBAL_ASSIGNABLE_ROLES = {"owner", "super_admin", ROLE_ADMIN, "security_admin", "auditor"}
-_WORKSPACE_ASSIGNABLE_ROLES = {"workspace_admin", "analyst", "viewer", "workspace_user", "user"}
+_WORKSPACE_ASSIGNABLE_ROLES = {"tenant_admin", "workspace_admin", "analyst", "viewer", "workspace_user", "user"}
 
 
 def _assignable_role(value: str | None, actor_user: dict | None = None) -> str:
@@ -5283,7 +5292,7 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
 
 # ── Admin user management ───────────────────────────────────────────────────
 
-@app.get("/admin/users", dependencies=[Depends(require_admin)])
+@app.get("/admin/users", dependencies=[Depends(require_permission("iam.users.read"))])
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
     # Compatibility URL, but not a separate users app anymore:
     # /admin/users now enters the IAM ecosystem and opens the Users tab.

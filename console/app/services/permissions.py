@@ -99,6 +99,14 @@ ROLE_DEFINITIONS = {
         "legacy": False,
         "assignment_note": "Assignable in users.role; workspace membership assignment is not wired yet.",
     },
+    "tenant_admin": {
+        "label": "Tenant Admin",
+        "description": "Workspace-scoped account administrator without Studio, Bronze, Vault or global security access.",
+        "assignable": True,
+        "builtin": True,
+        "legacy": False,
+        "assignment_note": "Assignable only as a workspace role by non-platform admins.",
+    },
     "analyst": {
         "label": "Analyst",
         "description": "Read/query datasets, monitor operations and use safe Studio read flows.",
@@ -165,8 +173,20 @@ ROLE_PERMISSIONS = {
         # v1.42: workspace admins drive the copilot end-to-end.
         "copilot.use", "copilot.write", "copilot.execute",
     },
+    "tenant_admin": {
+        # Customer tenant admins can manage users in their own workspace and
+        # operate their assigned business surfaces. They deliberately cannot
+        # access internal builder/data-admin surfaces: Knowledge Center,
+        # Bronze query, Studio, Vault, global security, settings or platform
+        # operations.
+        "iam.users.read", "iam.users.write", "iam.roles.read",
+        "datasets.read", "pipelines.read", "monitor.read",
+        "workspace.access", "control_room.write", "control_room.execute",
+        "apps.read", "cartridges.read", "marketplace.read", "marketplace.request",
+        "copilot.use",
+    },
     "analyst": {
-        "datasets.read", "pipelines.read", "studio.read", "monitor.read",
+        "datasets.read", "pipelines.read", "monitor.read",
         "workspace.access", "apps.read", "cartridges.read", "marketplace.read", "marketplace.request",
         # v1.42: analysts query data via the copilot — read-only.
         "copilot.use",
@@ -177,9 +197,9 @@ ROLE_PERMISSIONS = {
         # v1.42: auditors read via the copilot to investigate incidents.
         "copilot.use",
     },
-    "viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"},
+    "viewer": {"monitor.read", "workspace.access", "apps.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"},
     "workspace_user": {"workspace.access", "apps.read", "marketplace.read", "marketplace.request"},
-    "user": {"monitor.read", "workspace.access", "apps.read", "studio.read", "marketplace.read"},
+    "user": {"monitor.read", "workspace.access", "apps.read", "marketplace.read"},
 }
 
 RESOURCE_ACTION_PERMISSIONS = {

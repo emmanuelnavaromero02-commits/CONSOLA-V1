@@ -72,8 +72,15 @@ def _build_app(fake_user: dict | None) -> TestClient:
                 # security_admin / auditor users who have the permission
                 # but are not platform admins.
                 "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
+                "can_manage_workspace_users": (
+                    "iam.users.read" in effective
+                    and (
+                        role_canonical in {"owner", "super_admin", "admin"}
+                        or workspace_role_resolved in {"workspace_admin", "tenant_admin"}
+                    )
+                ),
                 "can_admin_marketplace":   "marketplace.admin" in effective,
-                "can_admin_workspace":     workspace_role_resolved == "workspace_admin",
+                "can_admin_workspace":     workspace_role_resolved in {"workspace_admin", "tenant_admin"},
                 "can_view_audit":          "security.audit.read" in effective,
                 "can_view_sessions":       "security.sessions.read" in effective,
             },
@@ -107,6 +114,7 @@ def test_me_access_returns_global_and_workspace_role_separately():
     # The same payload must say the user CAN administer their workspace
     # but CANNOT administer the platform marketplace.
     assert body["ui_capabilities"]["can_admin_workspace"] is True
+    assert body["ui_capabilities"]["can_manage_workspace_users"] is True
     assert body["ui_capabilities"]["can_admin_marketplace"] is False
 
 
@@ -125,6 +133,28 @@ def test_workspace_role_admin_legacy_is_downgraded_to_workspace_admin():
     body = client.get("/api/me/access").json()
     assert body["workspace"]["workspace_role"] == "workspace_admin"
     assert body["ui_capabilities"]["can_admin_marketplace"] is False
+
+
+def test_tenant_admin_can_manage_workspace_users_without_internal_surfaces():
+    client = _build_app({
+        "id": 55,
+        "email": "tenant-admin@example.com",
+        "role": "user",
+        "workspace_role": "tenant_admin",
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+    })
+    body = client.get("/api/me/access").json()
+    assert body["workspace"]["workspace_role"] == "tenant_admin"
+    assert body["ui_capabilities"]["can_manage_workspace_users"] is True
+    assert body["ui_capabilities"]["can_admin_workspace"] is True
+    assert "iam.users.read" in body["permissions"]
+    assert "iam.users.write" in body["permissions"]
+    assert "studio.read" not in body["permissions"]
+    assert "studio.write" not in body["permissions"]
+    assert "datasets.write" not in body["permissions"]
+    assert "vault.connections.read" not in body["permissions"]
+    assert "security.audit.read" not in body["permissions"]
 
 
 def test_platform_admin_capabilities():

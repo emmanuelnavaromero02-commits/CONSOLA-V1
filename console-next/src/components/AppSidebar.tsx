@@ -66,7 +66,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/dashboard", label: "Panel", icon: LayoutDashboard, section: "Núcleo", keywords: "dashboard inicio kpis" },
       { href: "/workspace", label: "Espacio de Trabajo", icon: AppWindow, section: "Núcleo", permission: "workspace.access", keywords: "workspace trabajo chat contexto" },
       { href: "/copilot", label: "Copiloto", icon: Bot, section: "Núcleo", permission: "copilot.use", matchNested: false, keywords: "chat agente ia streaming" },
-      { href: "/copilot/knowledge", label: "Conocimiento", icon: Layers3, section: "Núcleo", permission: "copilot.use", keywords: "rag conocimiento fuentes vectorial" },
+      { href: "/copilot/knowledge", label: "Conocimiento", icon: Layers3, section: "Núcleo", permission: "mcp.registry.read", adminOnly: true, keywords: "rag conocimiento fuentes vectorial" },
       { href: "/copilot/tokens", label: "Tokens", icon: Coins, section: "Núcleo", permission: "copilot.write", keywords: "costos llm consumo metricas" },
       { href: "/marketplace", label: "Marketplace", icon: Package, section: "Núcleo", permission: "marketplace.read", active: ["/marketplace", "/customer/cartridges", "/admin/installations", "/admin/licenses"], keywords: "market cartuchos licencias instalaciones" },
       { href: "/apps-gallery", label: "Apps", icon: Boxes, section: "Núcleo", permission: "apps.read", keywords: "aplicaciones galeria" },
@@ -98,7 +98,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Configuración/Admin",
     items: [
       { href: "/operations/audit", label: "Auditoría", icon: ShieldCheck, section: "Configuración/Admin", permission: "security.audit.read", adminOnly: true, keywords: "logs auditoria seguridad" },
-      { href: "/operations/users", label: "Usuarios", icon: Users, section: "Configuración/Admin", permission: "iam.users.read", adminOnly: true, keywords: "iam usuarios roles" },
+      { href: "/operations/users", label: "Usuarios", icon: Users, section: "Configuración/Admin", permission: "iam.users.read", capability: "can_manage_workspace_users", keywords: "iam usuarios roles" },
       { href: "/settings", label: "Ajustes", icon: Settings, section: "Configuración/Admin", permission: "settings.read", adminOnly: true, keywords: "configuracion settings ajustes" },
       { href: "/security", label: "Seguridad", icon: ShieldCheck, section: "Configuración/Admin", permission: "security.audit.read", keywords: "seguridad sesiones intentos" },
       { href: "/decisions", label: "Decisiones", icon: GitBranch, section: "Configuración/Admin", adminOnly: true, keywords: "decisiones approvals" },

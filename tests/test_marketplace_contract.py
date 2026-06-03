@@ -144,8 +144,13 @@ def test_marketplace_permissions_distinguish_request_from_admin():
     assert '"marketplace.request"' in source
     assert '"marketplace.admin"' in source
     assert '"workspace_user": {"workspace.access", "apps.read", "marketplace.read", "marketplace.request"}' in source
-    assert '"viewer": {"monitor.read", "workspace.access", "apps.read", "studio.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"}' in source
-    assert '"user": {"monitor.read", "workspace.access", "apps.read", "studio.read", "marketplace.read"}' in source
+    assert '"viewer": {"monitor.read", "workspace.access", "apps.read", "pipelines.read", "datasets.read", "cartridges.read", "marketplace.read", "copilot.use"}' in source
+    assert '"user": {"monitor.read", "workspace.access", "apps.read", "marketplace.read"}' in source
+    assert '"tenant_admin": {' in source
+    tenant_admin_section = source.split('"tenant_admin": {', 2)[2].split('},', 1)[0]
+    assert '"iam.users.write"' in tenant_admin_section
+    assert '"studio.read"' not in tenant_admin_section
+    assert '"datasets.write"' not in tenant_admin_section
 
 
 def test_marketplace_admin_and_retry_do_not_escalate_customer_access():

@@ -264,7 +264,7 @@ async def operations_page(request: Request):
 
 @router.get(
     "/operations/users",
-    dependencies=[Depends(require_permission("iam.users.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("iam.users.read"))],
 )
 async def operations_users_page(request: Request):
     return _console_next_response(request, "operations/users/index.html")
@@ -497,11 +497,11 @@ async def copilot_actions_page(request: Request):
 
 @router.get(
     "/copilot/knowledge",
-    dependencies=[Depends(require_permission("copilot.use"))],
+    dependencies=[Depends(require_permission("mcp.registry.read")), Depends(require_admin)],
 )
 @router.get(
     "/copilot/knowledge/",
-    dependencies=[Depends(require_permission("copilot.use"))],
+    dependencies=[Depends(require_permission("mcp.registry.read")), Depends(require_admin)],
 )
 async def copilot_knowledge_page(request: Request):
     return _console_next_response(request, "copilot/knowledge/index.html")

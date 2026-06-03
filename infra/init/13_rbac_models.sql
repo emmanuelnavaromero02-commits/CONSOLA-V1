@@ -43,6 +43,7 @@ INSERT INTO roles (name, description)
 VALUES
     ('admin', 'Full administrative access'),
     ('workspace_admin', 'Administrative access within an assigned workspace'),
+    ('tenant_admin', 'Tenant/workspace account administration without platform-wide admin access'),
     ('analyst', 'Create and analyze datasets and decisions within an assigned workspace'),
     ('viewer', 'Read-only access within an assigned workspace')
 ON CONFLICT (name) DO UPDATE
