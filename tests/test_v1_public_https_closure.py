@@ -42,7 +42,9 @@ def test_public_https_variables_outputs_and_alb_exist():
 
     assert 'resource "aws_lb" "public"' in alb
     assert 'resource "aws_acm_certificate" "public"' in alb
-    assert 'resource "aws_lb_listener" "http"' in alb
+    assert 'resource "aws_lb_listener" "http_redirect"' in alb
+    assert 'resource "aws_lb_listener" "http_console_technical"' in alb
+    assert 'resource "aws_lb_listener" "http_workspace_technical"' in alb
     assert 'resource "aws_lb_listener" "https"' in alb
     assert "manual_acm_validation_complete" in alb
     assert 'path                = "/readyz"' in alb
@@ -82,12 +84,12 @@ def test_no_public_ssh_or_internal_app_ports():
 
 def test_userdata_sets_browser_urls_to_https_public_domains():
     userdata = _read(TF / "user_data/app.sh.tpl")
-    assert "APP_ENV=production" in userdata
-    assert "COOKIE_SECURE=true" in userdata
-    assert "CONSOLE_URL=https://${public_console_domain}" in userdata
-    assert "WORKSPACE_PUBLIC_URL=https://${public_workspace_domain}" in userdata
-    assert "APP_BASE_URL=https://${public_console_domain}" in userdata
-    assert "ALLOWED_ORIGINS=https://${public_console_domain},https://${public_workspace_domain}" in userdata
+    assert "APP_ENV=${app_env}" in userdata
+    assert "COOKIE_SECURE=${cookie_secure}" in userdata
+    assert "CONSOLE_URL=${public_console_url}" in userdata
+    assert "WORKSPACE_PUBLIC_URL=${public_workspace_url}" in userdata
+    assert "APP_BASE_URL=${public_console_url}" in userdata
+    assert "ALLOWED_ORIGINS=${public_console_url},${public_workspace_url}" in userdata
     assert "CONSOLE_URL=http://$APP_PRIVATE_IP:8000" not in userdata
     assert "WORKSPACE_PUBLIC_URL=http://$APP_PRIVATE_IP:8001" not in userdata
 
