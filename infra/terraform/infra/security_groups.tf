@@ -51,7 +51,7 @@ resource "aws_security_group" "alb" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTP redirect to HTTPS"
+    description = "HTTP console"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -64,6 +64,17 @@ resource "aws_security_group" "alb" {
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  dynamic "ingress" {
+    for_each = local.public_https_enabled ? [] : [1]
+    content {
+      description = "Technical HTTP workspace listener without public domain"
+      from_port   = 8081
+      to_port     = 8081
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
   }
 
   egress {

@@ -33,23 +33,48 @@ variable "key_pair_name" {
   default     = "modecissions-key"
 }
 
-variable "public_console_domain" {
-  description = "Public HTTPS hostname for the console, e.g. console.example.com."
+variable "app_instance_type" {
+  description = "EC2 instance type for the single-node app host."
   type        = string
+  default     = "m6i.xlarge"
+}
+
+variable "vpn_instance_type" {
+  description = "EC2 instance type for the VPN bastion."
+  type        = string
+  default     = "t3.nano"
+}
+
+variable "app_env" {
+  description = "Runtime APP_ENV injected into the EC2 app host. Use production only with public HTTPS configured."
+  type        = string
+  default     = "production"
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.public_console_domain))
-    error_message = "public_console_domain must be a DNS hostname, not a URL."
+    condition     = contains(["production", "staging", "development"], lower(var.app_env))
+    error_message = "app_env must be production, staging, or development."
+  }
+}
+
+variable "public_console_domain" {
+  description = "Public HTTPS hostname for the console, e.g. console.example.com. Leave empty for technical HTTP-only AWS validation."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.public_console_domain == "" || can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.public_console_domain))
+    error_message = "public_console_domain must be empty or a DNS hostname, not a URL."
   }
 }
 
 variable "public_workspace_domain" {
-  description = "Public HTTPS hostname for the workspace, e.g. workspace.example.com."
+  description = "Public HTTPS hostname for the workspace, e.g. workspace.example.com. Leave empty for technical HTTP-only AWS validation."
   type        = string
+  default     = ""
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.public_workspace_domain))
-    error_message = "public_workspace_domain must be a DNS hostname, not a URL."
+    condition     = var.public_workspace_domain == "" || can(regex("^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$", var.public_workspace_domain))
+    error_message = "public_workspace_domain must be empty or a DNS hostname, not a URL."
   }
 }
 

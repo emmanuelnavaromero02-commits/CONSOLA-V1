@@ -49,13 +49,13 @@ output "ssm_wg_easy_port_forward_command" {
 }
 
 output "public_console_url" {
-  description = "Public HTTPS URL for the console"
-  value       = "https://${var.public_console_domain}"
+  description = "Public console URL. Uses ALB HTTP in technical mode and HTTPS domain in production mode."
+  value       = local.console_public_url
 }
 
 output "public_workspace_url" {
-  description = "Public HTTPS URL for the workspace"
-  value       = "https://${var.public_workspace_domain}"
+  description = "Public workspace URL. Uses ALB HTTP :8081 in technical mode and HTTPS domain in production mode."
+  value       = local.workspace_public_url
 }
 
 output "alb_dns_name" {
