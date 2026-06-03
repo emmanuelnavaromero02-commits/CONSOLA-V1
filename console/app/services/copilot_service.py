@@ -1284,6 +1284,7 @@ async def _run_loop(
             invoke_tool=invoke_tool,
             tool_server_map=server_map,
             on_event=emit_event if on_event is not None else None,
+            user_context=user,
         )
     except Exception as exc:                    # noqa: BLE001
         # Log the full exception server-side; surface a sanitised
@@ -1303,13 +1304,24 @@ async def _run_loop(
             # (set by RequestIDMiddleware), but the conversation row is
             # standalone and might be re-read later. Keep the warning
             # short and actionable.
+            if isinstance(exc, llm_client.LLMConfigurationError):
+                safe_message = (
+                    "⚠️ El copiloto no tiene proveedor LLM configurado. "
+                    f"{exc}."
+                )
+            elif isinstance(exc, llm_client.LLMProviderError):
+                safe_message = f"⚠️ El proveedor LLM respondió con error. {exc}."
+            else:
+                safe_message = (
+                    "⚠️ El proveedor de LLM devolvió un error. "
+                    "Reintenta en unos segundos o contacta al operador."
+                )
             await _persist_message(
                 conn, conversation_id=conversation_id,
                 role="assistant",
-                content="⚠️ El proveedor de LLM devolvió un error. "
-                        "Reintenta en unos segundos o contacta al operador.",
+                content=safe_message,
             )
-        raise HTTPException(502, "llm provider error")
+        raise HTTPException(502, safe_message)
 
     # Walk the new chunk and persist messages preserving the Anthropic
     # tool_use.id / tool_result.tool_use_id pairing so the next turn's
@@ -1469,6 +1481,7 @@ async def _run_loop(
                 user_id=int(user["id"]),
                 history=history,
                 reply_text=reply_text,
+                user_context=user,
             )
         except Exception:                          # noqa: BLE001
             import logging as _lg
@@ -1488,7 +1501,7 @@ async def _run_loop(
 
 
 async def _maybe_extract_facts(
-    *, user_id: int, history: list[dict], reply_text: str
+    *, user_id: int, history: list[dict], reply_text: str, user_context: dict | None = None
 ) -> None:
     """Append the assistant's reply to ``history`` and ask the memory
     service to extract any durable facts. Cheap-and-bounded: only
@@ -1507,6 +1520,7 @@ async def _maybe_extract_facts(
             invoke_tool=lambda *_args, **_kw: {},
             tool_server_map={},
             on_event=None,
+            user_context=user_context,
         )
         return reply or ""
     await memory_service.extract_facts_from_turn(

@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import { Activity, FileSearch, KeySquare, ShieldCheck, Users, Workflow } from "lucide-react";
 
+import { getMeAccess } from "@/lib/admin-surfaces";
 import { cn } from "@/lib/utils";
 
 
@@ -12,6 +14,8 @@ interface SubNavItem {
   href:  string;
   label: string;
   icon:  LucideIcon;
+  permission?: string;
+  capability?: string;
 }
 
 /**
@@ -30,11 +34,11 @@ interface SubNavItem {
  */
 const ITEMS: SubNavItem[] = [
   { href: "/operations",        label: "Resumen",  icon: ShieldCheck },
-  { href: "/operations/users",  label: "Usuarios", icon: Users },
-  { href: "/operations/audit",  label: "Auditoría", icon: FileSearch },
-  { href: "/operations/vault",  label: "Vault",    icon: KeySquare },
-  { href: "/operations/workflows", label: "Workflows", icon: Workflow },
-  { href: "/operations/metrics",   label: "Métricas",  icon: Activity },
+  { href: "/operations/users",  label: "Usuarios", icon: Users, permission: "iam.users.read", capability: "can_manage_workspace_users" },
+  { href: "/operations/audit",  label: "Auditoría", icon: FileSearch, permission: "security.audit.read" },
+  { href: "/operations/vault",  label: "Vault",    icon: KeySquare, permission: "vault.connections.read" },
+  { href: "/operations/workflows", label: "Workflows", icon: Workflow, permission: "copilot.execute" },
+  { href: "/operations/metrics",   label: "Métricas",  icon: Activity, permission: "operations.read" },
 ];
 
 
@@ -46,13 +50,21 @@ function isActive(pathname: string, href: string): boolean {
 
 export function OperationsSubNav() {
   const pathname = usePathname() ?? "";
+  const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
+  const permissions = new Set(access.data?.permissions ?? []);
+  const capabilities = access.data?.ui_capabilities ?? {};
+  const visibleItems = ITEMS.filter((item) => {
+    if (item.permission && !permissions.has(item.permission)) return false;
+    if (item.capability && capabilities[item.capability] !== true) return false;
+    return true;
+  });
   return (
     <nav
       aria-label="Secciones de Operaciones"
       className="overflow-x-auto border-b"
     >
       <ul className="mx-auto flex max-w-7xl items-center gap-1 px-6">
-        {ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const Icon   = item.icon;
           const active = isActive(pathname, item.href);
           return (

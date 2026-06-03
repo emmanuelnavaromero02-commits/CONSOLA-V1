@@ -203,7 +203,8 @@ services:
       CONSOLE_URL:       ${CONSOLE_URL:-http://localhost:8000}
       WORKSPACE_URL:     ${WORKSPACE_PUBLIC_URL:-http://localhost:8001}
       RAG_URL:           http://mcp-infra:8010   # RAG migrado a mcp-infra
-      # SMTP (MailHog en dev; AWS SES en prod)
+      # Email (MailHog/SMTP in dev; SES API in prod after domain verification)
+      EMAIL_PROVIDER:    ${EMAIL_PROVIDER:-smtp}
       SMTP_HOST:         ${SMTP_HOST:-mailhog}
       SMTP_PORT:         ${SMTP_PORT:-1025}
       SMTP_USER:         ${SMTP_USER:-}

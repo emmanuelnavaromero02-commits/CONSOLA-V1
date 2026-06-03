@@ -219,7 +219,7 @@ async def api_users_list(user: dict = Depends(require_permission("iam.users.read
     return {"users": [u for u in users if u.get("id") in visible_ids]}
 
 # /admin/users
-@router.get("/admin/users", dependencies=[Depends(require_admin)])
+@router.get("/admin/users", dependencies=[Depends(require_permission("iam.users.read"))])
 @_bind_to_main
 async def viewer_admin_users(request: Request, user: dict = Depends(require_permission("iam.users.read"))):
     # Compatibility URL, but not a separate users app anymore:

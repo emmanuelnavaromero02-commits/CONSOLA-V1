@@ -557,8 +557,27 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "selected": False,
         },
     ]
+    intelligence = item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
+    intelligence_options = intelligence.get("options") if isinstance(intelligence.get("options"), list) else []
+    if intelligence_options:
+        options = [
+            {
+                "id": str(option.get("option_id") or option.get("id") or f"option_{index + 1}"),
+                "label": str(option.get("label") or "Opcion supervisada"),
+                "action": str(option.get("action_kind") or option.get("label") or "accion_supervisada"),
+                "money": f"${float(option.get('impact_expected') or 0):,.0f} USD esperado",
+                "time": f"{float(option.get('time_cost') or 0):,.0f} puntos tiempo",
+                "score": int(round(float(option.get("score") or 0))),
+                "risk": f"{float(option.get('risk') or 0):,.0f}",
+                "auto": False,
+                "recommendation": str(option.get("score_explanation") or item.get("recommendation") or ""),
+                "selected": bool(option.get("selected")),
+            }
+            for index, option in enumerate(intelligence_options[:3])
+            if isinstance(option, dict)
+        ] or options
     if selected_option_id not in {option["id"] for option in options}:
-        selected_option_id = "remediate"
+        selected_option_id = options[0]["id"] if options else "remediate"
     for option in options:
         option["selected"] = option["id"] == selected_option_id
     lessons = _lessons_for_item(item)
@@ -593,6 +612,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "related_lessons": item.get("related_lessons") or [],
         "lesson_count": lesson_count,
         "lesson_applications": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
+        "intelligence": item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {},
         "omega": {
             "signals": {
                 "source": item.get("source_dataset"),
@@ -682,6 +702,7 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                 "applied": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
                 "suggested_actions": item.get("suggested_actions") if isinstance(item.get("suggested_actions"), list) else [],
             },
+            "intelligence": item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {},
         },
     }
 
@@ -775,6 +796,9 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
     )
     if lesson_applications:
         metadata["lesson_applications"] = lesson_applications[:20]
+    intelligence = item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
+    if intelligence:
+        metadata["intelligence"] = intelligence
     return metadata
 
 
@@ -1035,6 +1059,7 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
             "lessons": metadata.get("lessons"),
             "learned_rules": metadata.get("learned_rules"),
             "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
+            "intelligence": metadata.get("intelligence") if isinstance(metadata.get("intelligence"), dict) else item.get("intelligence"),
             "first_seen_at": state.get("first_seen_at"),
             "last_seen_at": state.get("last_seen_at"),
             "resolved_at": state.get("resolved_at"),
@@ -1117,6 +1142,7 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
         "lessons": metadata.get("lessons"),
         "learned_rules": metadata.get("learned_rules"),
         "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
+        "intelligence": metadata.get("intelligence") if isinstance(metadata.get("intelligence"), dict) else {},
         "first_seen_at": public_row.get("first_seen_at"),
         "last_seen_at": public_row.get("last_seen_at"),
         "resolved_at": public_row.get("resolved_at"),

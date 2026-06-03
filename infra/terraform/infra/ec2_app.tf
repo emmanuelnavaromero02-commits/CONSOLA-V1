@@ -1,6 +1,6 @@
 resource "aws_instance" "app" {
   ami                    = data.aws_ami.ubuntu_2204.id
-  instance_type          = "m6i.xlarge"
+  instance_type          = var.app_instance_type
   subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.app.id]
   key_name               = var.key_pair_name
@@ -25,13 +25,26 @@ resource "aws_instance" "app" {
     s3_bucket_name               = aws_s3_bucket.lakehouse.bucket
     deploy_ref                   = var.deploy_ref
     image_tag                    = var.image_tag
-    public_console_domain        = var.public_console_domain
-    public_workspace_domain      = var.public_workspace_domain
+    app_env                      = lower(var.app_env)
+    cookie_secure                = local.public_https_enabled ? "true" : "false"
+    public_console_url           = local.console_public_url
+    public_workspace_url         = local.workspace_public_url
+    email_provider               = var.email_provider
+    smtp_host                    = var.smtp_host
+    smtp_port                    = var.smtp_port
+    smtp_user                    = var.smtp_user
+    smtp_from                    = var.smtp_from
+    smtp_from_domain             = var.smtp_from_domain
+    smtp_use_tls                 = var.smtp_use_tls ? "true" : "false"
     secret_arns                  = { for key, secret in aws_secretsmanager_secret.app : key => secret.arn }
   })
 
-  # Repo clone needs outbound internet via NAT GW
-  depends_on = [aws_nat_gateway.main]
+  # Repo clone and runtime APIs need private-subnet egress.
+  depends_on = [
+    aws_nat_gateway.main,
+    aws_instance.nat,
+    aws_route_table.private,
+  ]
 
   tags = {
     Name = "modecissions-app"

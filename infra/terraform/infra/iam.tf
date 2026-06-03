@@ -90,9 +90,52 @@ resource "aws_iam_role_policy" "app_secretsmanager" {
   policy = data.aws_iam_policy_document.app_secretsmanager.json
 }
 
+data "aws_iam_policy_document" "app_ses" {
+  count = var.email_provider == "ses" ? 1 : 0
+
+  statement {
+    actions = [
+      "ses:SendEmail",
+      "ses:SendRawEmail",
+    ]
+    resources = local.ses_domain_enabled ? [aws_ses_domain_identity.sender[0].arn] : ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "app_ses" {
+  count = var.email_provider == "ses" ? 1 : 0
+
+  name   = "modecissions-app-ses"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.app_ses[0].json
+}
+
 resource "aws_iam_instance_profile" "app" {
   name = "modecissions-app-profile"
   role = aws_iam_role.app.name
+}
+
+# ---------- NAT instance role ----------
+
+resource "aws_iam_role" "nat" {
+  count = local.use_nat_instance ? 1 : 0
+
+  name               = "modecissions-nat-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "nat_ssm" {
+  count = local.use_nat_instance ? 1 : 0
+
+  role       = aws_iam_role.nat[0].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "nat" {
+  count = local.use_nat_instance ? 1 : 0
+
+  name = "modecissions-nat-profile"
+  role = aws_iam_role.nat[0].name
 }
 
 # ---------- VPN role ----------

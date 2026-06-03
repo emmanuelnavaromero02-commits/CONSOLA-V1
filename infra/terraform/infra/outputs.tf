@@ -5,12 +5,12 @@ output "vpc_id" {
 
 output "ec2_vpn_public_ip" {
   description = "Elastic IP attached to the VPN bastion"
-  value       = aws_eip.vpn.public_ip
+  value       = var.enable_vpn ? aws_eip.vpn[0].public_ip : null
 }
 
 output "ec2_vpn_instance_id" {
   description = "Instance id of the VPN bastion"
-  value       = aws_instance.vpn.id
+  value       = var.enable_vpn ? aws_instance.vpn[0].id : null
 }
 
 output "ec2_app_private_ip" {
@@ -30,7 +30,7 @@ output "s3_bucket_name" {
 
 output "ssh_vpn_command" {
   description = "Legacy SSH command to reach the VPN bastion, only usable when ssh_allowed_cidrs is configured"
-  value       = "ssh -i modecissions-key.pem ubuntu@${aws_eip.vpn.public_ip}"
+  value       = var.enable_vpn ? "ssh -i modecissions-key.pem ubuntu@${aws_eip.vpn[0].public_ip}" : null
 }
 
 output "ssh_app_command" {
@@ -40,22 +40,22 @@ output "ssh_app_command" {
 
 output "wg_easy_url" {
   description = "wg-easy admin UI URL, only reachable when vpn_admin_allowed_cidrs is configured"
-  value       = "http://${aws_eip.vpn.public_ip}:51821"
+  value       = var.enable_vpn ? "http://${aws_eip.vpn[0].public_ip}:51821" : null
 }
 
 output "ssm_wg_easy_port_forward_command" {
   description = "SSM port-forward command for wg-easy admin UI without opening TCP 51821 publicly"
-  value       = "aws ssm start-session --target ${aws_instance.vpn.id} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"51821\"],\"localPortNumber\":[\"51821\"]}' --region ${var.aws_region}"
+  value       = var.enable_vpn ? "aws ssm start-session --target ${aws_instance.vpn[0].id} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"51821\"],\"localPortNumber\":[\"51821\"]}' --region ${var.aws_region}" : null
 }
 
 output "public_console_url" {
-  description = "Public HTTPS URL for the console"
-  value       = "https://${var.public_console_domain}"
+  description = "Public console URL. Uses ALB HTTP in technical mode and HTTPS domain in production mode."
+  value       = local.console_public_url
 }
 
 output "public_workspace_url" {
-  description = "Public HTTPS URL for the workspace"
-  value       = "https://${var.public_workspace_domain}"
+  description = "Public workspace URL. Uses ALB HTTP :8081 in technical mode and HTTPS domain in production mode."
+  value       = local.workspace_public_url
 }
 
 output "alb_dns_name" {
@@ -80,7 +80,7 @@ output "ssm_app_command" {
 
 output "ssm_vpn_command" {
   description = "SSM command to reach the VPN EC2 without public SSH"
-  value       = "aws ssm start-session --target ${aws_instance.vpn.id} --region ${var.aws_region}"
+  value       = var.enable_vpn ? "aws ssm start-session --target ${aws_instance.vpn[0].id} --region ${var.aws_region}" : null
 }
 
 output "acm_validation_records" {
@@ -97,4 +97,55 @@ output "acm_validation_records" {
     ]
     : []
   )
+}
+
+output "egress_mode" {
+  description = "Private subnet outbound internet mode."
+  value       = var.egress_mode
+}
+
+output "nat_instance_id" {
+  description = "NAT instance id when egress_mode is nat_instance."
+  value       = local.use_nat_instance ? aws_instance.nat[0].id : null
+}
+
+output "monthly_budget_name" {
+  description = "AWS Budgets guardrail name."
+  value       = var.enable_monthly_budget ? aws_budgets_budget.monthly_guardrail[0].name : null
+}
+
+output "ses_domain_verification_record" {
+  description = "Manual Google DNS TXT record required to verify the SES sender domain."
+  value = local.ses_domain_enabled ? {
+    name  = "_amazonses.${var.ses_sender_domain}"
+    type  = "TXT"
+    value = aws_ses_domain_identity.sender[0].verification_token
+  } : null
+}
+
+output "ses_dkim_records" {
+  description = "Manual Google DNS CNAME records required for SES DKIM."
+  value = local.ses_domain_enabled ? [
+    for token in aws_ses_domain_dkim.sender[0].dkim_tokens : {
+      name  = "${token}._domainkey.${var.ses_sender_domain}"
+      type  = "CNAME"
+      value = "${token}.dkim.amazonses.com"
+    }
+  ] : []
+}
+
+output "ses_mail_from_records" {
+  description = "Manual Google DNS records required for SES custom MAIL FROM."
+  value = local.ses_domain_enabled ? [
+    {
+      name  = local.ses_mail_from_domain
+      type  = "MX"
+      value = "10 feedback-smtp.${var.aws_region}.amazonses.com"
+    },
+    {
+      name  = local.ses_mail_from_domain
+      type  = "TXT"
+      value = "v=spf1 include:amazonses.com ~all"
+    },
+  ] : []
 }

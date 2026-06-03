@@ -59,8 +59,8 @@ async def test_studio_assistant_reports_missing_llm_key_without_500(monkeypatch)
         [],
         step=1,
         manifest={"id": "hubspot", "name": "HubSpot"},
-        actor_role="analyst",
-        actor_user={"id": "u1", "email": "u@example.com", "workspace_role": "analyst"},
+        actor_role="admin",
+        actor_user={"id": "u1", "email": "u@example.com", "role": "admin", "workspace_role": "admin"},
     )
 
     assert "ANTHROPIC_API_KEY is required" in result["reply"]

@@ -16,6 +16,28 @@ _COST_PER_1M: dict[str, dict[str, float]] = {
 _pool: asyncpg.Pool | None = None
 
 
+def _is_platform_admin_context(user_context: dict | None) -> bool:
+    role = str((user_context or {}).get("role") or "").strip()
+    return role in {"owner", "super_admin", "admin"}
+
+
+def _scope_from_context(user_context: dict | None) -> tuple[int | None, str | None, str | None]:
+    if not user_context:
+        return None, None, None
+    raw_user_id = user_context.get("id")
+    try:
+        user_id = int(raw_user_id) if raw_user_id is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+    tenant_id = str(
+        user_context.get("active_tenant_id") or user_context.get("tenant_id") or ""
+    ).strip() or None
+    workspace_id = str(
+        user_context.get("active_workspace_id") or user_context.get("workspace_id") or ""
+    ).strip() or None
+    return user_id, tenant_id, workspace_id
+
+
 async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
@@ -40,25 +62,45 @@ async def record(
     output_tokens: int,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
+    user_context: dict | None = None,
 ) -> None:
     """Persist one LLM call's token usage. Never raises — non-critical path."""
     try:
         pool = await _get_pool()
+        user_id, tenant_id, workspace_id = _scope_from_context(user_context)
         await pool.execute(
             "INSERT INTO token_usage "
-            "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
+            "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
+            "user_id, tenant_id, workspace_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)",
             provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+            user_id, tenant_id, workspace_id,
         )
     except Exception:
         pass
 
 
-async def summary() -> dict:
+async def summary(user_context: dict | None = None) -> dict:
     """Return accumulated totals grouped by model, with cost estimate."""
     try:
         pool = await _get_pool()
-        rows = await pool.fetch("""
+        _user_id, tenant_id, workspace_id = _scope_from_context(user_context)
+        where_clause = ""
+        args: tuple = ()
+        if user_context and not _is_platform_admin_context(user_context):
+            if not tenant_id or not workspace_id:
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "calls": 0,
+                    "cost_usd": 0.0,
+                    "models": [],
+                }
+            where_clause = "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid"
+            args = (tenant_id, workspace_id)
+        rows = await pool.fetch(f"""
             SELECT model,
                    SUM(input_tokens)::int           AS input_tokens,
                    SUM(output_tokens)::int          AS output_tokens,
@@ -66,9 +108,10 @@ async def summary() -> dict:
                    SUM(cache_read_tokens)::int      AS cache_read_tokens,
                    COUNT(*)::int                    AS calls
             FROM token_usage
+            {where_clause}
             GROUP BY model
             ORDER BY model
-        """)
+        """, *args)
 
         total_in = total_out = total_calls = 0
         total_cache_create = total_cache_read = 0

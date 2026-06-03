@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from app.services import auth
 
@@ -39,6 +40,33 @@ _KNOWN_CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_succes
 # ── Severity rank for the final sort. Highest first in the briefing. ─────
 
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
+
+
+def _cartridge_href(cartridge_id: str) -> str:
+    """Return the canonical Next route for a cartridge configuration view."""
+    return f"/cartridges/viewer?id={quote(str(cartridge_id), safe='')}"
+
+
+def _visible_cartridges(user_context: dict | None) -> set[str] | None:
+    if not user_context or user_context.get("role") in {"owner", "super_admin", "admin"}:
+        return None
+    allowed = {
+        str(item)
+        for item in (user_context.get("allowed_cartridges") or [])
+        if str(item).strip()
+    }
+    return allowed
+
+
+def _filter_visible_highlights(highlights: list[Highlight], user_context: dict | None) -> list[Highlight]:
+    visible = _visible_cartridges(user_context)
+    if visible is None:
+        return highlights
+    return [
+        highlight
+        for highlight in highlights
+        if not highlight.get("cartridge") or str(highlight.get("cartridge")) in visible
+    ]
 
 
 def _make_highlight(
@@ -104,7 +132,7 @@ async def analyze_freshness() -> list[Highlight]:
                 title=f"{cart} sin extracciones",
                 body=f"Nunca se ejecutó una extracción exitosa para {cart}.",
                 action_label="Configurar",
-                action_href=f"/cartridges/{cart}",
+                action_href=_cartridge_href(cart),
                 cartridge=cart,
                 category="freshness",
             ))
@@ -125,7 +153,7 @@ async def analyze_freshness() -> list[Highlight]:
                 f"{round(age_hours)} horas."
             ),
             action_label="Investigar",
-            action_href=f"/cartridges/{cart}",
+            action_href=_cartridge_href(cart),
             cartridge=cart,
             category="freshness",
         ))
@@ -198,7 +226,7 @@ async def analyze_volume_anomaly() -> list[Highlight]:
                 f"mediana de {int(median):,} en la semana previa."
             ),
             action_label="Ver detalle",
-            action_href=f"/cartridges/{cart}",
+            action_href=_cartridge_href(cart),
             cartridge=cart,
             category="volume",
         ))
@@ -273,7 +301,7 @@ async def analyze_extraction_failures() -> list[Highlight]:
                 f"{cart} en las últimas 24 horas."
             ),
             action_label="Ver logs",
-            action_href=f"/cartridges/{cart}",
+            action_href=_cartridge_href(cart),
             cartridge=cart,
             category="failures",
         ))
@@ -283,7 +311,12 @@ async def analyze_extraction_failures() -> list[Highlight]:
 # ── Aggregator ───────────────────────────────────────────────────────────
 
 
-async def briefing_for_user(user_id: int, *, limit: int = 6) -> list[Highlight]:
+async def briefing_for_user(
+    user_id: int,
+    *,
+    limit: int = 6,
+    user_context: dict | None = None,
+) -> list[Highlight]:
     """Run every analyzer, drop dismissed entries for this user, sort
     by severity, return up to ``limit`` highlights.
 
@@ -305,6 +338,7 @@ async def briefing_for_user(user_id: int, *, limit: int = 6) -> list[Highlight]:
         return []
 
     all_highlights: list[Highlight] = [h for group in groups for h in group]
+    all_highlights = _filter_visible_highlights(all_highlights, user_context)
 
     # Subtract dismissed IDs for this user.
     if all_highlights:

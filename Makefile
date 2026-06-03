@@ -10,7 +10,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up up-core down nuke logs ps test smoke stress production-readiness dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public
+.PHONY: help up up-core down nuke logs ps test smoke stress production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -31,6 +31,8 @@ help:
 	@echo "  make stress       run Locust stress profile against the running stack"
 	@echo "  make production-readiness"
 	@echo "                    run the local production-readiness gate"
+	@echo "  make production-readiness-aws"
+	@echo "                    run the remote AWS/prod-like readiness gate"
 	@echo "  make dr-rehearsal"
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
@@ -130,6 +132,9 @@ stress:
 
 production-readiness:
 	@bash scripts/production_readiness.sh
+
+production-readiness-aws:
+	@OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh
 
 dr-rehearsal:
 	@bash scripts/run_dr_rehearsal.sh

@@ -22,11 +22,20 @@ async def _pg():
 # ── Serialization ──────────────────────────────────────────────────────────
 
 _FIELDS = [
-    "id", "cartridge_id", "slug", "name", "description",
+    "id", "tenant_id", "workspace_id", "cartridge_id", "slug", "name", "description",
     "instructions", "personality", "allowed_tools", "rag_filter", "extra",
     "model", "max_tokens", "temperature",
     "owner_user_id", "is_active", "created_at", "updated_at",
 ]
+
+
+def _row_value(row: asyncpg.Record | dict, key: str) -> Any:
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
 
 
 def _row_to_dict(row: asyncpg.Record | None) -> dict | None:
@@ -34,7 +43,7 @@ def _row_to_dict(row: asyncpg.Record | None) -> dict | None:
         return None
     d: dict[str, Any] = {}
     for k in _FIELDS:
-        v = row.get(k) if isinstance(row, dict) else row[k]
+        v = _row_value(row, k)
         if k in ("allowed_tools", "rag_filter", "extra"):
             if v is None:
                 d[k] = [] if k == "allowed_tools" else {}
@@ -47,17 +56,80 @@ def _row_to_dict(row: asyncpg.Record | None) -> dict | None:
                     d[k] = [] if k == "allowed_tools" else {}
         elif k in ("created_at", "updated_at"):
             d[k] = v.isoformat() if v else None
-        elif k == "id":
+        elif k in {"id", "tenant_id", "workspace_id"}:
             d[k] = str(v) if v else None
         else:
             d[k] = v
     return d
 
 
+async def _has_scope_columns(conn: asyncpg.Connection) -> bool:
+    return bool(await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='agents'
+               AND column_name='workspace_id'
+        )
+        """
+    ))
+
+
+def _is_platform_admin(user_context: dict | None) -> bool:
+    return (user_context or {}).get("role") in {"owner", "super_admin", "admin"}
+
+
+def _tenant_workspace(user_context: dict | None) -> tuple[str | None, str | None]:
+    user = user_context or {}
+    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip() or None
+    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip() or None
+    return tenant_id, workspace_id
+
+
+def _allowed_cartridges(user_context: dict | None) -> set[str] | None:
+    if not user_context or _is_platform_admin(user_context):
+        return None
+    return {str(item) for item in (user_context.get("allowed_cartridges") or []) if str(item).strip()}
+
+
+def _can_view(agent: dict | None, user_context: dict | None) -> bool:
+    if not agent:
+        return False
+    if not user_context or _is_platform_admin(user_context):
+        return True
+    allowed = _allowed_cartridges(user_context) or set()
+    if str(agent.get("cartridge_id") or "") not in allowed:
+        return False
+    _, workspace_id = _tenant_workspace(user_context)
+    agent_workspace = agent.get("workspace_id")
+    return agent_workspace is None or str(agent_workspace) == str(workspace_id)
+
+
+def _can_manage(agent: dict | None, user_context: dict | None) -> bool:
+    if not agent:
+        return False
+    if _is_platform_admin(user_context):
+        return True
+    _, workspace_id = _tenant_workspace(user_context)
+    return bool(workspace_id and agent.get("workspace_id") and str(agent.get("workspace_id")) == str(workspace_id))
+
+
+def _require_allowed_cartridge(payload: dict, user_context: dict | None) -> None:
+    allowed = _allowed_cartridges(user_context)
+    if allowed is None:
+        return
+    cartridge_id = str(payload.get("cartridge_id") or "")
+    if cartridge_id not in allowed:
+        raise PermissionError("cartridge is not visible in this workspace")
+
+
 # ── Public CRUD ────────────────────────────────────────────────────────────
 
 async def list_agents(cartridge_id: str | None = None,
-                      include_inactive: bool = False) -> list[dict]:
+                      include_inactive: bool = False,
+                      user_context: dict | None = None) -> list[dict]:
     where  = []
     params: list = []
     if cartridge_id:
@@ -65,26 +137,39 @@ async def list_agents(cartridge_id: str | None = None,
         where.append(f"cartridge_id = ${len(params)}")
     if not include_inactive:
         where.append("is_active = TRUE")
-    sql = "SELECT * FROM agents"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY cartridge_id, slug"
 
     conn = await _pg()
     try:
+        if user_context and not _is_platform_admin(user_context):
+            allowed = sorted(_allowed_cartridges(user_context) or set())
+            if not allowed:
+                return []
+            params.append(allowed)
+            where.append(f"cartridge_id = ANY(${len(params)}::text[])")
+            if await _has_scope_columns(conn):
+                _, workspace_id = _tenant_workspace(user_context)
+                if not workspace_id:
+                    return []
+                params.append(workspace_id)
+                where.append(f"(workspace_id IS NULL OR workspace_id = ${len(params)}::uuid)")
+        sql = "SELECT * FROM agents"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY cartridge_id, slug"
         rows = await conn.fetch(sql, *params)
     finally:
         await conn.close()
     return [_row_to_dict(r) for r in rows]
 
 
-async def get_agent(agent_id: str) -> dict | None:
+async def get_agent(agent_id: str, user_context: dict | None = None) -> dict | None:
     conn = await _pg()
     try:
         row = await conn.fetchrow("SELECT * FROM agents WHERE id=$1::uuid", agent_id)
     finally:
         await conn.close()
-    return _row_to_dict(row)
+    agent = _row_to_dict(row)
+    return agent if _can_view(agent, user_context) else None
 
 
 async def get_agent_by_slug(cartridge_id: str, slug: str) -> dict | None:
@@ -99,31 +184,24 @@ async def get_agent_by_slug(cartridge_id: str, slug: str) -> dict | None:
     return _row_to_dict(row)
 
 
-async def create_agent(payload: dict, owner_user_id: int | None = None) -> dict:
+async def create_agent(payload: dict, owner_user_id: int | None = None, user_context: dict | None = None) -> dict:
     required = ("cartridge_id", "slug", "name", "instructions")
     for f in required:
         if not (payload.get(f) or "").strip():
             raise ValueError(f"missing required field: {f}")
     _validate_payload(payload, partial=False)
+    _require_allowed_cartridge(payload, user_context)
 
     new_id = uuid.uuid4()
     conn = await _pg()
     try:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO agents (
-                id, cartridge_id, slug, name, description,
-                instructions, personality, allowed_tools, rag_filter, extra,
-                model, max_tokens, temperature,
-                owner_user_id, is_active
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8::jsonb, $9::jsonb, $10::jsonb,
-                $11, $12, $13,
-                $14, $15
-            )
-            RETURNING *
-            """,
+        scoped = await _has_scope_columns(conn)
+        tenant_id, workspace_id = _tenant_workspace(user_context)
+        if user_context and not _is_platform_admin(user_context) and not (scoped and tenant_id and workspace_id):
+            raise PermissionError("workspace-scoped agents migration is required")
+        scope_cols = ", tenant_id, workspace_id" if scoped else ""
+        scope_vals = ", $16::uuid, $17::uuid" if scoped else ""
+        params = [
             new_id,
             payload["cartridge_id"],
             payload["slug"].strip(),
@@ -139,6 +217,28 @@ async def create_agent(payload: dict, owner_user_id: int | None = None) -> dict:
             float(payload.get("temperature") if payload.get("temperature") is not None else 0.4),
             owner_user_id,
             bool(payload.get("is_active", True)),
+        ]
+        if scoped:
+            params.extend([
+                payload.get("tenant_id") if _is_platform_admin(user_context) else tenant_id,
+                payload.get("workspace_id") if _is_platform_admin(user_context) else workspace_id,
+            ])
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO agents (
+                id, cartridge_id, slug, name, description,
+                instructions, personality, allowed_tools, rag_filter, extra,
+                model, max_tokens, temperature,
+                owner_user_id, is_active{scope_cols}
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8::jsonb, $9::jsonb, $10::jsonb,
+                $11, $12, $13,
+                $14, $15{scope_vals}
+            )
+            RETURNING *
+            """,
+            *params,
         )
     finally:
         await conn.close()
@@ -184,8 +284,15 @@ def _validate_payload(payload: dict, *, partial: bool = False) -> None:
         payload["temperature"] = temperature
 
 
-async def update_agent(agent_id: str, patch: dict) -> dict | None:
+async def update_agent(agent_id: str, patch: dict, user_context: dict | None = None) -> dict | None:
     _validate_payload(patch, partial=True)
+    current = await get_agent(agent_id, user_context=user_context)
+    if not current:
+        return None
+    if not _can_manage(current, user_context):
+        raise PermissionError("agent is read-only for this workspace")
+    if "cartridge_id" in patch:
+        _require_allowed_cartridge(patch, user_context)
     sets: list[str] = []
     params: list = []
     for k, v in patch.items():
@@ -205,10 +312,15 @@ async def update_agent(agent_id: str, patch: dict) -> dict | None:
         row = await conn.fetchrow(sql, *params)
     finally:
         await conn.close()
-    return _row_to_dict(row)
+    return _row_to_dict(row) if _can_view(_row_to_dict(row), user_context) else None
 
 
-async def delete_agent(agent_id: str) -> bool:
+async def delete_agent(agent_id: str, user_context: dict | None = None) -> bool:
+    current = await get_agent(agent_id, user_context=user_context)
+    if not current:
+        return False
+    if not _can_manage(current, user_context):
+        raise PermissionError("agent is read-only for this workspace")
     conn = await _pg()
     try:
         res = await conn.execute("DELETE FROM agents WHERE id=$1::uuid", agent_id)
@@ -219,7 +331,9 @@ async def delete_agent(agent_id: str) -> bool:
 
 # ── Runs ───────────────────────────────────────────────────────────────────
 
-async def list_runs(agent_id: str, limit: int = 20) -> list[dict]:
+async def list_runs(agent_id: str, limit: int = 20, user_context: dict | None = None) -> list[dict]:
+    if not await get_agent(agent_id, user_context=user_context):
+        return []
     conn = await _pg()
     try:
         rows = await conn.fetch(
@@ -246,7 +360,7 @@ async def list_runs(agent_id: str, limit: int = 20) -> list[dict]:
     ]
 
 
-async def get_run(run_id: int) -> dict | None:
+async def get_run(run_id: int, user_context: dict | None = None) -> dict | None:
     conn = await _pg()
     try:
         row = await conn.fetchrow(
@@ -258,6 +372,8 @@ async def get_run(run_id: int) -> dict | None:
     finally:
         await conn.close()
     if not row:
+        return None
+    if not await get_agent(str(row["agent_id"]), user_context=user_context):
         return None
     return {
         "id":             row["id"],

@@ -412,7 +412,7 @@ def _validate_planned_steps(plan: list[dict], tool_meta: dict[str, dict]) -> lis
     return validated
 
 
-async def _llm_plan(intent: str, available_tools: list[str]) -> list[dict]:
+async def _llm_plan(intent: str, available_tools: list[str], user_context: dict | None = None) -> list[dict]:
     """Call the LLM with the planning prompt + the intent.
 
     The available_tools list goes into the user message so the LLM
@@ -439,6 +439,7 @@ async def _llm_plan(intent: str, available_tools: list[str]) -> list[dict]:
         invoke_tool=_noop_invoke,
         tool_server_map={},
         on_event=None,
+        user_context=user_context,
     )
     return _parse_plan_json(reply or "")
 
@@ -496,7 +497,7 @@ async def plan_workflow(
         tool_meta = {}
 
     try:
-        plan = await _llm_plan(run["intent"], all_tools)
+        plan = await _llm_plan(run["intent"], all_tools, user_context=user)
     except Exception as exc:                       # noqa: BLE001
         import logging
         logging.getLogger(__name__).exception("workflow planner LLM call failed")

@@ -120,7 +120,7 @@ def test_two_cartridge_query_returns_two_citations(copilot_module):
         return {"error": "unknown"}
 
     async def fake_chat(*, system, messages, tools, invoke_tool,
-                        tool_server_map, on_event=None):
+                        tool_server_map, on_event=None, **_kw):
         await invoke_tool("replicon", "list_entries",  {})
         await invoke_tool("sap_hcm",  "list_employees", {})
         final = list(messages) + [

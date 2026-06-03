@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   ArrowRight,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { getMeAccess } from "@/lib/admin-surfaces";
 import { legacyConsoleUrl } from "@/lib/legacy-url";
 
 /**
@@ -35,6 +37,8 @@ interface ModuleCard {
   title:       string;
   description: string;
   icon:        LucideIcon;
+  permission?: string;
+  capability?: string;
 }
 
 const READY_MODULES: ModuleCard[] = [
@@ -43,30 +47,36 @@ const READY_MODULES: ModuleCard[] = [
     title:       "Usuarios",
     description: "Crear, editar, desactivar y mandar reset de contraseña.",
     icon:        Users,
+    permission:  "iam.users.read",
+    capability:  "can_manage_workspace_users",
   },
   {
     href:        "/operations/audit",
     title:       "Auditoría",
     description: "Últimas 100 acciones registradas en el sistema.",
     icon:        FileSearch,
+    permission:  "security.audit.read",
   },
   {
     href:        "/operations/vault",
     title:       "Vault",
     description: "Inspecciona las conexiones guardadas por cartucho.",
     icon:        KeySquare,
+    permission:  "vault.connections.read",
   },
   {
     href:        "/operations/workflows",
     title:       "Workflows",
     description: "Visualiza flujos, ejecútalos y cancela corridas activas.",
     icon:        Workflow,
+    permission:  "copilot.execute",
   },
   {
     href:        "/operations/metrics",
     title:       "Métricas",
     description: "Salud de servicios, extracciones, errores y carga reciente.",
     icon:        Activity,
+    permission:  "operations.read",
   },
 ];
 
@@ -86,6 +96,16 @@ const PENDING_MODULES = [
 
 
 export default function OperationsOverviewPage() {
+  const access = useQuery({ queryKey: ["me", "access"], queryFn: getMeAccess, staleTime: 60_000 });
+  const permissions = new Set(access.data?.permissions ?? []);
+  const capabilities = access.data?.ui_capabilities ?? {};
+  const readyModules = READY_MODULES.filter((item) => {
+    if (item.permission && !permissions.has(item.permission)) return false;
+    if (item.capability && capabilities[item.capability] !== true) return false;
+    return true;
+  });
+  const showPending = access.data?.role?.is_platform_admin === true;
+
   return (
     <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
       <header className="space-y-2">
@@ -99,7 +119,7 @@ export default function OperationsOverviewPage() {
         aria-label="Módulos disponibles"
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
-        {READY_MODULES.map(({ href, title, description, icon: Icon }) => (
+        {readyModules.map(({ href, title, description, icon: Icon }) => (
           <Link
             key={href}
             href={href}
@@ -124,38 +144,40 @@ export default function OperationsOverviewPage() {
         ))}
       </section>
 
-      <section
-        aria-label="Próximamente"
-        className="space-y-3 rounded-lg border bg-muted/30 p-5"
-      >
-        <header className="space-y-1">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Próximamente
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            Estos módulos siguen disponibles en la consola clásica mientras
-            terminamos de migrarlos a la nueva interfaz.
-          </p>
-        </header>
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {PENDING_MODULES.map((m) => (
-            <li
-              key={m.title}
-              className="flex flex-col gap-2 rounded-md border bg-background p-4"
-            >
-              <h3 className="text-sm font-semibold tracking-tight">{m.title}</h3>
-              <p className="text-xs text-muted-foreground">{m.description}</p>
-              <a
-                href={m.legacyHref}
-                rel="noopener"
-                className="mt-auto inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      {showPending ? (
+        <section
+          aria-label="Próximamente"
+          className="space-y-3 rounded-lg border bg-muted/30 p-5"
+        >
+          <header className="space-y-1">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              Próximamente
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Estos módulos siguen disponibles en la consola clásica mientras
+              terminamos de migrarlos a la nueva interfaz.
+            </p>
+          </header>
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {PENDING_MODULES.map((m) => (
+              <li
+                key={m.title}
+                className="flex flex-col gap-2 rounded-md border bg-background p-4"
               >
-                Abrir en la consola clásica →
-              </a>
-            </li>
-          ))}
-        </ul>
-      </section>
+                <h3 className="text-sm font-semibold tracking-tight">{m.title}</h3>
+                <p className="text-xs text-muted-foreground">{m.description}</p>
+                <a
+                  href={m.legacyHref}
+                  rel="noopener"
+                  className="mt-auto inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Abrir en la consola clásica →
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </main>
   );
 }

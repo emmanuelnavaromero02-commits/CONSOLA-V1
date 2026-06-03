@@ -131,7 +131,9 @@ services:
       WORKSPACE_URL:       ${WORKSPACE_PUBLIC_URL:?WORKSPACE_PUBLIC_URL is required}
       RAG_URL:             http://mcp-infra:8010   # RAG migrado a mcp-infra
       REDIS_URL:           ${REDIS_URL:-redis://redis:6379/0}
-      # SMTP: MailHog en VPC interno hasta que se enchufe SES
+      # Email: MailHog/SMTP in staging, SES API in production after domain verification.
+      EMAIL_PROVIDER:      ${EMAIL_PROVIDER:-smtp}
+      AWS_REGION:          ${AWS_REGION:?AWS_REGION is required}
       SMTP_HOST:           ${SMTP_HOST:-mailhog}
       SMTP_PORT:           ${SMTP_PORT:-1025}
       SMTP_USER:           ${SMTP_USER:-}

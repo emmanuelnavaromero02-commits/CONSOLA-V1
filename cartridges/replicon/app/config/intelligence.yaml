@@ -1,0 +1,108 @@
+version: 1
+cartridge: replicon
+domain: Rentabilidad
+external_sources:
+  - id: delivery_calendar
+    type: company_calendar
+    ttl_seconds: 86400
+    enabled: true
+  - id: market_notes
+    type: market_notes
+    ttl_seconds: 86400
+    enabled: true
+metrics:
+  - id: project_margin
+    name: Margen bruto mensual por proyecto
+    dataset: pnl_mensual
+    entity:
+      kind: project
+      id_field: proyecto
+      label_field: project_name
+    time_field: mes
+    value_field: margen_bruto_usd
+    expected_behavior: higher_is_good
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 1
+    hypotheses:
+      - id: delivery_scope_or_rate_shift
+        title: Cambio de alcance, tarifa o mix de entrega
+        rationale: El margen puede desviarse por horas no facturables, tarifa efectiva o cambios de alcance.
+    signal_rules:
+      warning_pct: 0.18
+      critical_pct: 0.35
+    action_templates:
+      - id: review_project_margin
+        label: Revisar margen con Revenue Manager
+        action_kind: owner_review
+        impact_multiplier: 0.25
+        cost: 250
+        risk: 120
+        time_cost: 90
+      - id: prepare_margin_recovery
+        label: Preparar plan de recuperacion de margen
+        action_kind: remediation_plan
+        impact_multiplier: 0.45
+        cost: 900
+        risk: 350
+        time_cost: 220
+      - id: monitor_margin
+        label: Mantener monitoreo de margen
+        action_kind: monitor
+        impact_multiplier: 0.00
+        cost: 0
+        risk: 50
+        time_cost: 0
+  - id: billable_hours
+    name: Horas facturables semanales por consultor
+    dataset: consultor_timesheet_semanal
+    entity:
+      kind: consultant
+      id_field: consultor
+      label_field: consultor
+    time_field: semana
+    value_field: horas_facturables
+    expected_behavior: higher_is_good
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 8
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 120
+    hypotheses:
+      - id: capacity_or_assignment_shift
+        title: Cambio de capacidad o asignacion
+        rationale: Las horas facturables pueden variar por asignacion, ausencia, demanda o bloqueo del proyecto.
+    signal_rules:
+      warning_pct: 0.20
+      critical_pct: 0.40
+    action_templates:
+      - id: rebalance_assignment
+        label: Rebalancear asignacion del consultor
+        action_kind: capacity_rebalance
+        impact_multiplier: 0.30
+        cost: 200
+        risk: 140
+        time_cost: 120
+      - id: manager_followup
+        label: Pedir seguimiento al manager
+        action_kind: owner_review
+        impact_multiplier: 0.18
+        cost: 80
+        risk: 60
+        time_cost: 70

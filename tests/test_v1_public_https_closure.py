@@ -42,7 +42,9 @@ def test_public_https_variables_outputs_and_alb_exist():
 
     assert 'resource "aws_lb" "public"' in alb
     assert 'resource "aws_acm_certificate" "public"' in alb
-    assert 'resource "aws_lb_listener" "http"' in alb
+    assert 'resource "aws_lb_listener" "http_redirect"' in alb
+    assert 'resource "aws_lb_listener" "http_console_technical"' in alb
+    assert 'resource "aws_lb_listener" "http_workspace_technical"' in alb
     assert 'resource "aws_lb_listener" "https"' in alb
     assert "manual_acm_validation_complete" in alb
     assert 'path                = "/readyz"' in alb
@@ -82,12 +84,12 @@ def test_no_public_ssh_or_internal_app_ports():
 
 def test_userdata_sets_browser_urls_to_https_public_domains():
     userdata = _read(TF / "user_data/app.sh.tpl")
-    assert "APP_ENV=production" in userdata
-    assert "COOKIE_SECURE=true" in userdata
-    assert "CONSOLE_URL=https://${public_console_domain}" in userdata
-    assert "WORKSPACE_PUBLIC_URL=https://${public_workspace_domain}" in userdata
-    assert "APP_BASE_URL=https://${public_console_domain}" in userdata
-    assert "ALLOWED_ORIGINS=https://${public_console_domain},https://${public_workspace_domain}" in userdata
+    assert "APP_ENV=${app_env}" in userdata
+    assert "COOKIE_SECURE=${cookie_secure}" in userdata
+    assert "CONSOLE_URL=${public_console_url}" in userdata
+    assert "WORKSPACE_PUBLIC_URL=${public_workspace_url}" in userdata
+    assert "APP_BASE_URL=${public_console_url}" in userdata
+    assert "ALLOWED_ORIGINS=${public_console_url},${public_workspace_url}" in userdata
     assert "CONSOLE_URL=http://$APP_PRIVATE_IP:8000" not in userdata
     assert "WORKSPACE_PUBLIC_URL=http://$APP_PRIVATE_IP:8001" not in userdata
 
@@ -147,6 +149,18 @@ def test_aws_deploy_env_documents_https_public_urls():
     assert "COOKIE_SECURE:       ${COOKIE_SECURE:-true}" in compose
     assert "COOKIE_SECURE:        ${COOKIE_SECURE:-true}" in compose
     assert "$url_var must use https in production" in entrypoint
+
+
+def test_aws_entrypoint_derives_cookie_security_from_public_scheme():
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+
+    assert 'PUBLIC_HTTPS_DEFAULT="false"' in entrypoint
+    assert 'if [[ "$CONSOLE_URL" == https://* && "$WORKSPACE_PUBLIC_URL" == https://* ]]; then' in entrypoint
+    assert 'PUBLIC_HTTPS_DEFAULT="true"' in entrypoint
+    assert 'COOKIE_SECURE="${COOKIE_SECURE:-$PUBLIC_HTTPS_DEFAULT}"' in entrypoint
+    assert 'SUPERSET_SESSION_COOKIE_SECURE="${SUPERSET_SESSION_COOKIE_SECURE:-$PUBLIC_HTTPS_DEFAULT}"' in entrypoint
+    assert 'SUPERSET_FORCE_HTTPS="${SUPERSET_FORCE_HTTPS:-$PUBLIC_HTTPS_DEFAULT}"' in entrypoint
+    assert "SUPERSET_SESSION_COOKIE_SECURE SUPERSET_FORCE_HTTPS SUPERSET_SESSION_COOKIE_SAMESITE" in entrypoint
 
 
 def test_partial_dataset_badges_are_visible_in_catalog_ui():

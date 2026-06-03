@@ -202,7 +202,7 @@ async def dashboard_page(request: Request):
     return _console_next_response(request, "dashboard/index.html")
 
 
-@router.get("/security", dependencies=[Depends(require_permission("security.audit.read"))])
+@router.get("/security", dependencies=[Depends(require_permission("security.audit.read")), Depends(require_admin)])
 async def security_page(request: Request):
     return _console_next_response(request, "security/index.html")
 
@@ -264,7 +264,7 @@ async def operations_page(request: Request):
 
 @router.get(
     "/operations/users",
-    dependencies=[Depends(require_permission("iam.users.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("iam.users.read"))],
 )
 async def operations_users_page(request: Request):
     return _console_next_response(request, "operations/users/index.html")
@@ -272,7 +272,7 @@ async def operations_users_page(request: Request):
 
 @router.get(
     "/operations/audit",
-    dependencies=[Depends(require_permission("security.audit.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("security.audit.read"))],
 )
 async def operations_audit_page(request: Request):
     return _console_next_response(request, "operations/audit/index.html")
@@ -280,7 +280,7 @@ async def operations_audit_page(request: Request):
 
 @router.get(
     "/operations/vault",
-    dependencies=[Depends(require_permission("vault.connections.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("vault.connections.read"))],
 )
 async def operations_vault_page(request: Request):
     return _console_next_response(request, "operations/vault/index.html")
@@ -300,11 +300,11 @@ async def operations_workflows_page(request: Request):
 
 @router.get(
     "/operations/metrics",
-    dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("operations.read"))],
 )
 @router.get(
     "/operations/metrics/",
-    dependencies=[Depends(require_permission("operations.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("operations.read"))],
 )
 async def operations_metrics_page(request: Request):
     return _console_next_response(request, "operations/metrics/index.html")
@@ -359,8 +359,8 @@ async def data_lineage_page(request: Request):
     return _console_next_response(request, "data/lineage/index.html")
 
 
-@router.get("/data/bronze", dependencies=[Depends(require_permission("datasets.write"))])
-@router.get("/data/bronze/", dependencies=[Depends(require_permission("datasets.write"))])
+@router.get("/data/bronze", dependencies=[Depends(require_permission("datasets.write")), Depends(require_admin)])
+@router.get("/data/bronze/", dependencies=[Depends(require_permission("datasets.write")), Depends(require_admin)])
 async def data_bronze_page(request: Request):
     return _console_next_response(request, "data/bronze/index.html")
 
@@ -388,7 +388,7 @@ async def apps_gallery(request: Request):
 # Sprint v1.41.0 — auditor P1 operativa: cartridge wizard page.
 @router.get(
     "/cartridges",
-    dependencies=[Depends(require_permission("cartridges.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("cartridges.read"))],
 )
 async def cartridges_page(request: Request):
     return _console_next_response(request, "cartridges/index.html")
@@ -396,7 +396,7 @@ async def cartridges_page(request: Request):
 
 @router.get(
     "/cartridges/viewer",
-    dependencies=[Depends(require_permission("cartridges.read")), Depends(require_admin)],
+    dependencies=[Depends(require_permission("cartridges.read"))],
 )
 async def cartridges_viewer_page(request: Request):
     return _console_next_response(request, "cartridges/viewer/index.html")
@@ -497,11 +497,11 @@ async def copilot_actions_page(request: Request):
 
 @router.get(
     "/copilot/knowledge",
-    dependencies=[Depends(require_permission("copilot.use"))],
+    dependencies=[Depends(require_permission("mcp.registry.read")), Depends(require_admin)],
 )
 @router.get(
     "/copilot/knowledge/",
-    dependencies=[Depends(require_permission("copilot.use"))],
+    dependencies=[Depends(require_permission("mcp.registry.read")), Depends(require_admin)],
 )
 async def copilot_knowledge_page(request: Request):
     return _console_next_response(request, "copilot/knowledge/index.html")
@@ -509,11 +509,11 @@ async def copilot_knowledge_page(request: Request):
 
 @router.get(
     "/copilot/tokens",
-    dependencies=[Depends(require_permission("copilot.write"))],
+    dependencies=[Depends(require_permission("copilot.use"))],
 )
 @router.get(
     "/copilot/tokens/",
-    dependencies=[Depends(require_permission("copilot.write"))],
+    dependencies=[Depends(require_permission("copilot.use"))],
 )
 async def copilot_tokens_page(request: Request):
     return _console_next_response(request, "copilot/tokens/index.html")

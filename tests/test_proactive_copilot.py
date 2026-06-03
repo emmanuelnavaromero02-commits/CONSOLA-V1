@@ -130,6 +130,13 @@ def test_briefing_for_user_dedupes_dismissed():
     assert "WHERE user_id = $1" in body
 
 
+def test_briefing_filters_cartridges_by_user_context():
+    src = _read(SERVICE)
+    assert "allowed_cartridges" in src
+    assert "_filter_visible_highlights" in src
+    assert "user_context: dict | None = None" in src
+
+
 def test_briefing_for_user_caps_results():
     """Brief documents up to 6 highlights. Lock the default."""
     src = _read(SERVICE)
@@ -172,6 +179,13 @@ def test_highlight_shape_includes_all_documented_keys():
     for key in ('"id"', '"severity"', '"title"', '"body"', '"category"',
                 '"cartridge"', '"action_label"', '"action_href"'):
         assert key in src, f"_make_highlight must include {key}"
+
+
+def test_cartridge_actions_use_next_viewer_route():
+    src = _read(SERVICE)
+    assert "def _cartridge_href" in src
+    assert '"/cartridges/viewer?id=' in src
+    assert 'action_href=f"/cartridges/{cart}"' not in src
 
 
 # ── Router ──────────────────────────────────────────────────────────────

@@ -42,16 +42,53 @@ describe("AppSidebar", () => {
       permissions: [
         "security.audit.read",
         "iam.users.read",
+        "mcp.registry.read",
         "settings.read",
         "vault.connections.read",
         "cartridges.read",
       ],
+      ui_capabilities: { can_manage_workspace_users: true },
     }, "/operations/users");
 
     expect(markup).toContain("Usuarios");
+    expect(markup).toContain("Conocimiento");
     expect(markup).toContain("Vault");
     expect(markup).toContain("Ajustes");
     expect(markup).toContain("Cartuchos");
     expect(markup).toContain('aria-current="page"');
+  });
+
+  it("shows tenant user administration without internal data-builder surfaces", () => {
+    const markup = render({
+      role: { global: "user", is_platform_admin: false },
+      workspace: { workspace_role: "tenant_admin" },
+      permissions: [
+        "iam.users.read",
+        "iam.users.write",
+        "datasets.read",
+        "workspace.access",
+        "copilot.use",
+        "security.audit.read",
+        "vault.connections.read",
+        "operations.read",
+        "apps.read",
+        "marketplace.read",
+        "monitor.read",
+      ],
+      ui_capabilities: { can_manage_workspace_users: true },
+    }, "/operations/users");
+
+    expect(markup).toContain("Usuarios");
+    expect(markup).toContain("Control Room");
+    expect(markup).toContain("Copiloto");
+    expect(markup).toContain("Tokens");
+    expect(markup).toContain("Auditoría");
+    expect(markup).toContain("Vault");
+    expect(markup).toContain("Métricas");
+    expect(markup).not.toContain("Conocimiento");
+    expect(markup).not.toContain("Consulta Bronce");
+    expect(markup).not.toContain("Studio");
+    expect(markup).not.toContain("Seguridad");
+    expect(markup).not.toContain("Ajustes");
   });
 });

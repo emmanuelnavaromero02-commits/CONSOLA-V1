@@ -201,10 +201,18 @@ CREATE TABLE IF NOT EXISTS token_usage (
     output_tokens INTEGER NOT NULL DEFAULT 0,
     cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    user_id       BIGINT,
+    tenant_id     UUID,
+    workspace_id  UUID,
     ts            TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS cache_creation_tokens INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS user_id BIGINT;
+ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS workspace_id UUID;
+CREATE INDEX IF NOT EXISTS idx_token_usage_workspace_ts ON token_usage(workspace_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_token_usage_tenant_ts ON token_usage(tenant_id, ts DESC);
 
 -- Silver lineage — trazabilidad de cada materialización silver
 CREATE TABLE IF NOT EXISTS silver_lineage (

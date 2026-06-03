@@ -94,4 +94,34 @@ def test_token_store_sql_matches_token_usage_cache_schema(token_store_module):
 
     assert "cache_creation_tokens" in source
     assert "cache_read_tokens" in source
-    assert "VALUES ($1, $2, $3, $4, $5, $6)" in source
+    assert "user_id, tenant_id, workspace_id" in source
+    assert "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)" in source
+
+
+@pytest.mark.anyio
+async def test_token_store_summary_scopes_non_platform_users(token_store_module, monkeypatch):
+    captured = {}
+
+    class CapturePool:
+        async def fetch(self, query, *args):
+            captured["query"] = query
+            captured["args"] = args
+            return []
+
+    async def fake_pool():
+        return CapturePool()
+
+    monkeypatch.setattr(token_store_module, "_get_pool", fake_pool)
+
+    await token_store_module.summary(user_context={
+        "id": 42,
+        "role": "user",
+        "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+    })
+
+    assert "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid" in captured["query"]
+    assert captured["args"] == (
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "11111111-1111-1111-1111-111111111111",
+    )

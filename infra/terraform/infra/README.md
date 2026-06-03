@@ -37,6 +37,54 @@ Public v1 HTTPS is served by an ALB. Provide `public_console_domain`,
 SSH is disabled by default (`ssh_allowed_cidrs = []`). Use the SSM outputs
 for instance access unless an explicit operator CIDR is approved.
 
+## Low-Cost Staging Mode
+
+For AWS validation without a public domain, keep `app_env = "staging"` and
+leave `public_console_domain` / `public_workspace_domain` empty. The stack then
+serves technical HTTP URLs from the ALB.
+
+To reduce always-on networking cost in staging, set:
+
+```hcl
+egress_mode = "nat_instance"
+enable_vpn  = false
+```
+
+`nat_instance` replaces the managed NAT Gateway with a single EC2 NAT instance.
+It is cheaper but not highly available. It is intended for staging/demo
+validation, not enterprise production. `enable_vpn = false` keeps operator
+access through SSM and public app access through the ALB.
+
+Keep `enable_monthly_budget = true` and set `monthly_budget_limit_usd` to the
+amount where you want AWS Budgets emails to start warning the operator.
+
+## Transactional Email
+
+The application already sends invitations, password reset links and draft
+delivery through SMTP. Keep MailHog for local/staging tests until a real sender
+domain exists.
+
+For Amazon SES API after domain verification and sandbox removal:
+
+```hcl
+email_provider    = "ses"
+ses_sender_domain = "example.com"
+smtp_from        = "no-reply@example.com"
+smtp_from_domain = "example.com"
+```
+
+If DNS is managed in Route53, Terraform can create SES verification, DKIM and
+MAIL FROM records. If DNS is managed outside AWS, use the
+`ses_domain_verification_record`, `ses_dkim_records` and
+`ses_mail_from_records` outputs and copy them into the external DNS provider.
+
+SES still requires production access approval before it can send to arbitrary
+recipient addresses. Until then it only sends to verified recipients/domains.
+
+For MailHog or an external SMTP provider, keep `email_provider = "smtp"` and
+store the SMTP password in `modecissions/smtp_password`; do not put passwords
+in `terraform.tfvars`.
+
 If you already have local state, `terraform init` will ask whether to
 migrate it into S3. Answer yes only after confirming the S3 bucket has
 versioning and encryption enabled.

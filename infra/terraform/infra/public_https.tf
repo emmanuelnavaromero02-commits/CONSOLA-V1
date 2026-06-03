@@ -1,21 +1,37 @@
 locals {
+  public_domains_configured = var.public_console_domain != "" && var.public_workspace_domain != ""
+
   public_domains = distinct([
-    var.public_console_domain,
-    var.public_workspace_domain,
+    for domain in [
+      var.public_console_domain,
+      var.public_workspace_domain,
+    ] : domain if domain != ""
   ])
 
-  manage_public_certificate = var.public_acm_certificate_arn == ""
+  manage_public_certificate = local.public_domains_configured && var.public_acm_certificate_arn == ""
   manage_public_dns         = var.route53_zone_id != ""
-  public_https_enabled      = var.public_acm_certificate_arn != "" || var.route53_zone_id != "" || var.manual_acm_validation_complete
+  public_https_enabled      = local.public_domains_configured && (var.public_acm_certificate_arn != "" || var.route53_zone_id != "" || var.manual_acm_validation_complete)
 
   public_certificate_arn = (
     var.public_acm_certificate_arn != ""
     ? var.public_acm_certificate_arn
     : (
       var.route53_zone_id != ""
-      ? aws_acm_certificate_validation.public[0].certificate_arn
-      : aws_acm_certificate.public[0].arn
+      ? try(aws_acm_certificate_validation.public[0].certificate_arn, "")
+      : try(aws_acm_certificate.public[0].arn, "")
     )
+  )
+
+  console_public_url = (
+    local.public_https_enabled
+    ? "https://${var.public_console_domain}"
+    : "http://${aws_lb.public.dns_name}"
+  )
+
+  workspace_public_url = (
+    local.public_https_enabled
+    ? "https://${var.public_workspace_domain}"
+    : "http://${aws_lb.public.dns_name}:8081"
   )
 }
 
@@ -133,7 +149,9 @@ resource "aws_lb_target_group_attachment" "workspace" {
   port             = 8001
 }
 
-resource "aws_lb_listener" "http" {
+resource "aws_lb_listener" "http_redirect" {
+  count = local.public_https_enabled ? 1 : 0
+
   load_balancer_arn = aws_lb.public.arn
   port              = "80"
   protocol          = "HTTP"
@@ -146,6 +164,32 @@ resource "aws_lb_listener" "http" {
       protocol    = "HTTPS"
       status_code = "HTTP_301"
     }
+  }
+}
+
+resource "aws_lb_listener" "http_console_technical" {
+  count = local.public_https_enabled ? 0 : 1
+
+  load_balancer_arn = aws_lb.public.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.console.arn
+  }
+}
+
+resource "aws_lb_listener" "http_workspace_technical" {
+  count = local.public_https_enabled ? 0 : 1
+
+  load_balancer_arn = aws_lb.public.arn
+  port              = "8081"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.workspace.arn
   }
 }
 
@@ -318,6 +362,8 @@ resource "aws_cloudwatch_metric_alarm" "app_ec2_status_check" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "vpn_ec2_status_check" {
+  count = var.enable_vpn ? 1 : 0
+
   alarm_name          = "modecissions-vpn-ec2-status-check"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -332,6 +378,6 @@ resource "aws_cloudwatch_metric_alarm" "vpn_ec2_status_check" {
   ok_actions          = [aws_sns_topic.public_alarms.arn]
 
   dimensions = {
-    InstanceId = aws_instance.vpn.id
+    InstanceId = aws_instance.vpn[0].id
   }
 }

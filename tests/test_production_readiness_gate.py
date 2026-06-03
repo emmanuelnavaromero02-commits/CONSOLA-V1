@@ -14,6 +14,8 @@ def test_makefile_exposes_production_readiness_and_dr_rehearsal_targets():
     makefile = _read("Makefile")
     assert "production-readiness:" in makefile
     assert "bash scripts/production_readiness.sh" in makefile
+    assert "production-readiness-aws:" in makefile
+    assert "OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh" in makefile
     assert "dr-rehearsal:" in makefile
     assert "bash scripts/run_dr_rehearsal.sh" in makefile
 
@@ -36,6 +38,25 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
     assert "OMEGA_REQUIRE_LIVE_LLM=1" in script
     assert "ANTHROPIC_API_KEY is required" in script
     assert "gemini" not in script.lower()
+
+
+def test_production_readiness_gate_has_remote_aws_mode():
+    script = _read("scripts/production_readiness.sh")
+    for needle in (
+        "OMEGA_PRODUCTION_READINESS_REMOTE",
+        "check_public_runtime",
+        "${CONSOLE_URL}/healthz",
+        "${CONSOLE_URL}/readyz",
+        "/readyz?require_data=1",
+        "OMEGA_REQUIRE_SUPERSET_LOGIN",
+        "OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E",
+        'BASE_URL="${CONSOLE_URL}"',
+        "run_remote_gate",
+    ):
+        assert needle in script
+    remote_index = script.index('if [[ "${REMOTE_MODE}" == "1" ]]')
+    docker_index = script.index("require_command docker")
+    assert remote_index < docker_index, "remote AWS readiness must not require local Docker"
 
 
 def test_stress_runner_has_beta_and_production_profiles_with_isolation_probe():

@@ -30,32 +30,30 @@ def _bind_to_main(fn):
     return rebound
 
 # /agents
-@router.get("/agents", dependencies=[Depends(require_admin)])
+@router.get("/agents", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def viewer_agents(request: Request):
-    require_admin(request)
     from app.routers.pages import _console_next_response
 
     return _console_next_response(request, "agents/index.html")
 
 # /api/agents
-@router.get("/api/agents", dependencies=[Depends(require_admin)])
+@router.get("/api/agents", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agents_list(
     request: Request,
     cartridge_id: str | None = None,
     include_inactive: bool = False,
+    user: dict = Depends(require_permission("agents.read")),
 ):
-    require_admin(request)
-    return {"agents": await _agents.list_agents(cartridge_id, include_inactive)}
+    return {"agents": await _agents.list_agents(cartridge_id, include_inactive, user_context=user)}
 
 # /api/agents/_tool-catalog
-@router.get("/api/agents/_tool-catalog", dependencies=[Depends(require_admin)])
+@router.get("/api/agents/_tool-catalog", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
 async def api_agents_tool_catalog(request: Request):
     """Aggregate of tools exposed by every MCP server — used by the agent
     editor UI to populate the 'allowed_tools' multi-select."""
-    require_admin(request)
     out: dict[str, list] = {}
     async with httpx.AsyncClient(timeout=10) as c:
         for srv_id, base in _agent_runtime.SERVER_URLS.items():
@@ -76,32 +74,33 @@ async def api_agents_tool_catalog(request: Request):
     return {"servers": out}
 
 # /api/agents/{agent_id}
-@router.get("/api/agents/{agent_id}", dependencies=[Depends(require_admin)])
+@router.get("/api/agents/{agent_id}", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
-async def api_agents_get(request: Request, agent_id: str):
-    require_admin(request)
-    a = await _agents.get_agent(agent_id)
+async def api_agents_get(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.read"))):
+    a = await _agents.get_agent(agent_id, user_context=user)
     if not a:
         raise HTTPException(404, "agent not found")
     return a
 
 # /api/agents
-@router.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
+@router.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
-async def api_agents_create(request: Request, body: dict):
-    user = require_admin(request)
+async def api_agents_create(request: Request, body: dict, user: dict = Depends(require_permission("agents.write"))):
     try:
-        return await _agents.create_agent(body, owner_user_id=user.get("id"))
+        return await _agents.create_agent(body, owner_user_id=user.get("id"), user_context=user)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, "invalid agent payload") from exc
 
 # /api/agents/{agent_id}
-@router.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
+@router.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
-async def api_agents_update(request: Request, agent_id: str, body: dict):
-    require_admin(request)
+async def api_agents_update(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.write"))):
     try:
-        a = await _agents.update_agent(agent_id, body)
+        a = await _agents.update_agent(agent_id, body, user_context=user)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, "invalid agent update") from exc
     if not a:
@@ -109,20 +108,24 @@ async def api_agents_update(request: Request, agent_id: str, body: dict):
     return a
 
 # /api/agents/{agent_id}
-@router.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
+@router.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
 @_bind_to_main
-async def api_agents_delete(request: Request, agent_id: str):
-    require_admin(request)
-    ok = await _agents.delete_agent(agent_id)
+async def api_agents_delete(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.write"))):
+    try:
+        ok = await _agents.delete_agent(agent_id, user_context=user)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     if not ok:
         raise HTTPException(404, "agent not found")
     return {"deleted": True}
 
 # /api/agents/{agent_id}/invoke
-@router.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_admin)])
+@router.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])
 @_bind_to_main
-async def api_agents_invoke(request: Request, agent_id: str, body: dict):
-    user  = require_admin(request)
+async def api_agents_invoke(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.execute"))):
+    visible = await _agents.get_agent(agent_id, user_context=user)
+    if not visible:
+        raise HTTPException(404, "agent not found")
     agent = await _agent_runtime.load_agent(agent_id)
     if not agent:
         raise HTTPException(404, "agent not found")
@@ -159,11 +162,13 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     return result
 
 # /api/agents/{agent_id}/invoke/stream
-@router.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_admin)])
+@router.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])
 @_bind_to_main
-async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
+async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.execute"))):
     """Server-Sent Events stream of tool_use / tool_result / text events."""
-    user  = require_admin(request)
+    visible = await _agents.get_agent(agent_id, user_context=user)
+    if not visible:
+        raise HTTPException(404, "agent not found")
     agent = await _agent_runtime.load_agent(agent_id)
     if not agent:
         raise HTTPException(404, "agent not found")
@@ -205,18 +210,16 @@ async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 # /api/agents/{agent_id}/runs
-@router.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_admin)])
+@router.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
-async def api_agents_runs(request: Request, agent_id: str, limit: int = 20):
-    require_admin(request)
-    return {"runs": await _agents.list_runs(agent_id, limit=limit)}
+async def api_agents_runs(request: Request, agent_id: str, limit: int = 20, user: dict = Depends(require_permission("agents.read"))):
+    return {"runs": await _agents.list_runs(agent_id, limit=limit, user_context=user)}
 
 # /api/agent-runs/{run_id}
-@router.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_admin)])
+@router.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_permission("agents.read"))])
 @_bind_to_main
-async def api_agent_run_detail(request: Request, run_id: int):
-    require_admin(request)
-    run = await _agents.get_run(run_id)
+async def api_agent_run_detail(request: Request, run_id: int, user: dict = Depends(require_permission("agents.read"))):
+    run = await _agents.get_run(run_id, user_context=user)
     if not run:
         raise HTTPException(404, "run not found")
     return run

@@ -181,6 +181,7 @@ async def chat(message: str, history: list[dict], user: dict | None = None) -> d
         tools=tools,
         invoke_tool=lambda srv, tool, a: mcp_registry.invoke(srv, tool, a, user=user),
         tool_server_map=tool_server_map,
+        user_context=user,
     )
 
     return {"reply": reply, "viewer_urls": viewer_urls, "messages": full_msgs}

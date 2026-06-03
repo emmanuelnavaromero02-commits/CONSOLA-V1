@@ -9,17 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CONSOLE_MAIN = ROOT / "console/app/main.py"
 
 
-def test_agent_crud_and_manual_invoke_are_admin_only_until_acl_exists():
+def test_agent_crud_and_manual_invoke_use_workspace_agent_permissions():
     src = console_route_source()
     agents_section = (ROOT / "console/app/routers/v1/agents.py").read_text(
         encoding="utf-8"
     ).replace("@router.", "@app.")
-    assert "workspace-admin surfaces" not in agents_section
-    assert "require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN)" not in agents_section
-    assert '@app.get("/api/agents", dependencies=[Depends(require_admin)])' in agents_section
-    assert '@app.get("/api/agents/{agent_id}", dependencies=[Depends(require_admin)])' in agents_section
-    assert '@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_admin)])' in src
-    assert '@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_admin)])' in src
+    assert 'require_permission("agents.read")' in agents_section
+    assert 'require_permission("agents.write")' in agents_section
+    assert 'require_permission("agents.execute")' in agents_section
+    assert "await _agents.get_agent(agent_id, user_context=user)" in src
+    assert '@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])' in src
+    assert '@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])' in src
 
 
 def test_scheduled_agent_invoke_requires_enabled_cron_and_constant_time_token():

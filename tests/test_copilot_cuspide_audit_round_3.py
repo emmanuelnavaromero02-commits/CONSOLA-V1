@@ -120,7 +120,7 @@ def test_briefing_v2_endpoint_does_not_leak_upstream_500(cuspide_modules, monkey
 def test_diagnose_goal_504_on_llm_timeout(cuspide_modules, monkeypatch):
     api = _mount(cuspide_modules["router"], user=_admin_user())
 
-    async def timeout_llm(system, messages):
+    async def timeout_llm(system, messages, **_kw):
         raise RuntimeError("llm_call_timeout")
 
     async def diag_calls(goal_id, user_id, llm_call):
@@ -167,7 +167,7 @@ def test_diagnose_goal_502_on_llm_generic_failure(cuspide_modules, monkeypatch):
 def test_ask_with_context_504_on_timeout(cuspide_modules, monkeypatch):
     api = _mount(cuspide_modules["router"], user=_admin_user())
 
-    async def timeout_llm(system, messages):
+    async def timeout_llm(system, messages, **_kw):
         raise RuntimeError("llm_call_timeout")
 
     monkeypatch.setattr(

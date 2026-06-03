@@ -233,7 +233,7 @@ def _build_draft_prompt(*, kind: str, tone: str,
     return "\n".join(parts)
 
 
-async def _llm_single_shot(system: str, user_message: str) -> str:
+async def _llm_single_shot(system: str, user_message: str, user_context: dict | None = None) -> str:
     """Adapt llm_client.chat (which is built for tool-using turns)
     into a single-shot completion. We pass an empty tools list, a
     no-op invoke_tool callable, and an empty server_map. The
@@ -256,6 +256,7 @@ async def _llm_single_shot(system: str, user_message: str) -> str:
         invoke_tool=_noop_invoke,
         tool_server_map={},
         on_event=None,
+        user_context=user_context,
     )
     return reply or ""
 
@@ -313,7 +314,7 @@ async def generate_draft(
     )
 
     try:
-        generated = await _llm_single_shot(system_prompt, user_message)
+        generated = await _llm_single_shot(system_prompt, user_message, user_context=user)
     except Exception as exc:                       # noqa: BLE001
         # The LLM provider can return a wide range of errors. We
         # surface a generic 502 to the client so SDK error strings

@@ -870,6 +870,85 @@ def _lessons_for_item(item: dict[str, Any]) -> list[str]:
 
 
 @_bind_to_core
+async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any]]:
+    try:
+        _, workspace_id = _workspace_scope(user)
+        pool = await auth.pool()
+        rows = await pool.fetch(
+            """
+            SELECT item_id, cartridge_id, domain, source_dataset, item_kind, title,
+                   severity, status, decision_id, entity_kind, entity_id,
+                   entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
+                   resolved_at, dismissed_at, impact_estimate, impact_currency,
+                   confidence, priority_score, selected_option_id, execution_status
+              FROM control_room_items
+             WHERE workspace_id = $1
+               AND item_kind = 'intelligence_signal'
+             ORDER BY priority_score DESC, last_seen_at DESC
+             LIMIT 200
+            """,
+            workspace_id,
+        )
+    except Exception:
+        return []
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        public_row = _row_to_public(row)
+        metadata = _details(public_row.get("metadata"))
+        severity = _severity(public_row.get("severity"))
+        status = str(public_row.get("status") or "open")
+        if status not in ITEM_STATUSES:
+            status = "open"
+        item_id = str(public_row.get("item_id") or "")
+        escaped_item_id = item_id.replace("'", "''")
+        items.append(
+            {
+                "id": item_id,
+                "kind": public_row.get("item_kind") or "intelligence_signal",
+                "domain": public_row.get("domain") or "Operacion",
+                "module": metadata.get("module") or "Intelligence Engine",
+                "cartridge": public_row.get("cartridge_id") or "platform",
+                "source_dataset": public_row.get("source_dataset") or "intelligence_signals",
+                "entity_kind": public_row.get("entity_kind") or "Entidad",
+                "entity_id": public_row.get("entity_id") or "",
+                "entity_label": public_row.get("entity_label") or public_row.get("entity_id") or "Entidad",
+                "anomaly_type": public_row.get("anomaly_type") or "intelligence_signal",
+                "severity": severity,
+                "severity_weight": SEVERITY_WEIGHT[severity],
+                "detected_at": public_row.get("last_seen_at") or public_row.get("first_seen_at") or "",
+                "details": metadata.get("details") if isinstance(metadata.get("details"), dict) else {},
+                "title": public_row.get("title") or "Senal de inteligencia operativa",
+                "description": metadata.get("description") or public_row.get("title") or "Senal de inteligencia operativa",
+                "recommendation": metadata.get("recommendation") or "Revisar evidencia y seleccionar una opcion supervisada.",
+                "root_cause": metadata.get("root_cause") or "Desviacion contra baseline.",
+                "impact": metadata.get("impact") or "Impacto operativo pendiente de validar.",
+                "sql": metadata.get("sql") or f"SELECT * FROM intelligence_signals WHERE signal_id = '{escaped_item_id}'",
+                "status": status,
+                "decision_id": public_row.get("decision_id"),
+                "impact_estimate": public_row.get("impact_estimate"),
+                "impact_currency": public_row.get("impact_currency"),
+                "confidence": public_row.get("confidence"),
+                "priority_score": public_row.get("priority_score"),
+                "thresholds_applied": metadata.get("thresholds_applied") or [],
+                "threshold_state": metadata.get("threshold_state") or "default",
+                "selected_option_id": public_row.get("selected_option_id") or metadata.get("selected_option_id"),
+                "execution_status": public_row.get("execution_status") or metadata.get("execution_status"),
+                "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else {},
+                "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else {},
+                "lessons": metadata.get("lessons"),
+                "learned_rules": metadata.get("learned_rules"),
+                "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
+                "intelligence": metadata.get("intelligence") if isinstance(metadata.get("intelligence"), dict) else {},
+                "first_seen_at": public_row.get("first_seen_at"),
+                "last_seen_at": public_row.get("last_seen_at"),
+                "resolved_at": public_row.get("resolved_at"),
+                "dismissed_at": public_row.get("dismissed_at"),
+            }
+        )
+    return [_with_omega(item) for item in items]
+
+
+@_bind_to_core
 async def _collect_items(
     user: dict | None,
     *,
@@ -1096,6 +1175,12 @@ async def dashboard(
     lesson_rows = await _load_lesson_rows(user, limit=200)
     lesson_summary = _lesson_insights(lesson_rows)
     items = _attach_lessons_to_items(items, lesson_rows)
+    if persist:
+        known_ids = {str(item.get("id")) for item in items}
+        for item in await _persisted_intelligence_items(user):
+            if str(item.get("id")) not in known_ids:
+                items.append(item)
+                known_ids.add(str(item.get("id")))
     alerts_payload = _alert_payload(items)
     alerts = alerts_payload["alerts"]
     alert_summary = alerts_payload["summary"]

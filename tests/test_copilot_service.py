@@ -211,7 +211,7 @@ def test_copilot_read_tool_executes_immediately(
         invoked.append((server_id, tool, args))
         return {"dags": ["sap_hcm_full", "replicon_users"]}
 
-    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
         # Simulate the LLM calling one read tool then replying.
         result = await invoke_tool("infra", "airflow_list_dags", {})
         assert "dags" in result
@@ -249,7 +249,7 @@ def test_copilot_destructive_tool_blocks_without_approval(
 
     captured = []
 
-    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
         r = await invoke_tool("infra", "airflow_delete_dag", {"dag_id": "x"})
         captured.append(r)
         return ("Necesito tu aprobación.", [], [])
@@ -288,7 +288,7 @@ def test_copilot_write_tool_blocks_without_approval(
 
     captured = []
 
-    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None):
+    async def fake_chat(*, system, messages, tools, invoke_tool, tool_server_map, on_event=None, **_kw):
         r = await invoke_tool("infra", "foo_write_bar", {"value": 1})
         captured.append(r)
         return ("Necesito aprobación.", [], [])
@@ -1155,6 +1155,33 @@ def test_copilot_rejects_invalid_uuid_with_400(copilot_module, db, admin_user):
             user=admin_user,
         ))
     assert "400" in str(exc_info.value)
+
+
+def test_copilot_surfaces_sanitised_llm_provider_reason(copilot_module, db, admin_user):
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    async def fake_chat(**_kwargs):
+        raise copilot_module.llm_client.LLMProviderError(
+            "Anthropic billing or credit limit reached; add credits before using the live copilot"
+        )
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.run_turn(
+            conversation_id=conv["id"],
+            user_message="hola",
+            user=admin_user,
+        ))
+
+    assert "Anthropic billing or credit limit reached" in str(exc_info.value)
+    assistant_messages = [m for m in db.messages if m["role"] == "assistant"]
+    assert assistant_messages
+    assert "Anthropic billing or credit limit reached" in assistant_messages[-1]["content"]
+    assert "sk-" not in assistant_messages[-1]["content"]
 
 
 def test_copilot_approval_key_is_args_specific(copilot_module):

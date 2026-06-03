@@ -60,7 +60,7 @@ const EMPTY_SECRET_FORM: SecretForm = { key: "", value: "" };
 export function VaultConnectionsTable() {
   const [tab, setTab] = useState<VaultTab>("connections");
   const [cartridge, setCartridge] = useState("replicon");
-  const [scope, setScope] = useState("platform");
+  const [scope, setScope] = useState("llm");
   const [connForm, setConnForm] = useState<ConnForm>(EMPTY_CONN_FORM);
   const [secretForm, setSecretForm] = useState<SecretForm>(EMPTY_SECRET_FORM);
   const [editingConnId, setEditingConnId] = useState<string | null>(null);
@@ -124,8 +124,16 @@ export function VaultConnectionsTable() {
         token: String(data.token ?? ""),
         extraJson: Object.keys(extra).length ? JSON.stringify(extra, null, 2) : "",
       });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo abrir la conexión.");
+    } catch {
+      setEditingConnId(id);
+      setConnForm({
+        connId: id,
+        baseUrl: String(conn.base_url ?? ""),
+        authMethod: String(conn.auth_method ?? conn.kind ?? "bearer_token"),
+        token: "",
+        extraJson: "",
+      });
+      toast.info("Sin revelado de secreto; puedes reemplazar la conexión guardando un nuevo token.");
     }
   }
 
@@ -205,8 +213,10 @@ export function VaultConnectionsTable() {
       const data = await revealSecret.mutateAsync({ scope: activeScope, key });
       setEditingSecretKey(key);
       setSecretForm({ key, value: String(data.value ?? "") });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo abrir el secret.");
+    } catch {
+      setEditingSecretKey(key);
+      setSecretForm({ key, value: "" });
+      toast.info("Sin revelado de secreto; puedes reemplazarlo guardando un nuevo valor.");
     }
   }
 

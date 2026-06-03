@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 import types
@@ -147,8 +148,11 @@ def console_main(monkeypatch):
     async def assistant_chat(message, history):
         return {"reply": f"echo:{message}", "history": history}
 
-    async def token_summary():
-        return {"total_tokens": 123}
+    async def token_summary(user_context=None):
+        return {
+            "total_tokens": 123,
+            "workspace_id": (user_context or {}).get("active_workspace_id"),
+        }
 
     async def list_recent_jobs(limit=20):
         return [{"id": "job-1", "status": "ok"}]
@@ -566,6 +570,28 @@ def test_assistant_chat_with_valid_jwt_returns_200(console_main):
     assert response.json()["reply"] == "echo:hello"
 
 
+def test_assistant_chat_missing_workspace_llm_key_is_actionable(console_main, monkeypatch):
+    async def raise_missing_key(message, history, user=None):
+        raise console_main.llm_client.LLMConfigurationError(
+            "Anthropic API key is required for this workspace"
+        )
+
+    monkeypatch.setattr(console_main.assistant, "chat", raise_missing_key)
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.post(
+        "/assistant/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"message": "hello", "history": []},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "clave Anthropic" in body["reply"]
+    assert body["viewer_urls"] == []
+
+
 def test_jobs_without_auth_returns_401(console_main):
     client = TestClient(console_main.app)
 
@@ -584,7 +610,7 @@ def test_jobs_with_valid_jwt_returns_200(console_main):
     assert response.json()["jobs"][0]["id"] == "job-1"
 
 
-def test_tokens_summary_rejects_viewer(console_main):
+def test_tokens_summary_allows_scoped_copilot_viewer(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
     console_main._auth.workspace_rows[0]["workspace_role"] = "viewer"
@@ -592,7 +618,8 @@ def test_tokens_summary_rejects_viewer(console_main):
 
     response = client.get("/tokens/summary", headers={"Authorization": f"Bearer {token}"})
 
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["workspace_id"] == "11111111-1111-1111-1111-111111111111"
 
 
 def test_tokens_summary_allows_admin(console_main):
@@ -656,6 +683,31 @@ def test_api_admin_users_routes_reject_non_admin(console_main, method, path, jso
     assert response.status_code == 403
 
 
+def test_visible_user_ids_for_workspace_admin_hides_platform_admin(console_main, monkeypatch):
+    workspace_id = "11111111-1111-1111-1111-111111111111"
+    other_workspace_id = "22222222-2222-2222-2222-222222222222"
+    admin = {
+        "id": 42,
+        "role": "user",
+        "workspaces": [{"workspace_id": workspace_id}],
+    }
+    users = [
+        {"id": 1, "role": "admin", "workspaces": [{"workspace_id": workspace_id}]},
+        {"id": 42, "role": "user", "workspaces": [{"workspace_id": workspace_id}]},
+        {"id": 43, "role": "user", "workspaces": [{"workspace_id": workspace_id}]},
+        {"id": 44, "role": "user", "workspaces": [{"workspace_id": other_workspace_id}]},
+    ]
+
+    async def unavailable_pool():
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    monkeypatch.setattr(console_main, "_get_db_pool", unavailable_pool)
+
+    visible_ids = asyncio.run(console_main._visible_user_ids_for_admin(admin, users))
+
+    assert visible_ids == {42, 43}
+
+
 def test_api_admin_users_create_with_admin_still_works(console_main):
     client = TestClient(console_main.app)
     console_main._auth.user["role"] = "user"
@@ -670,6 +722,66 @@ def test_api_admin_users_create_with_admin_still_works(console_main):
 
     assert response.status_code == 200
     assert response.json()["email"] == "new@example.com"
+
+
+def test_set_workspace_role_replaces_existing_role_without_invalid_conflict(console_main, monkeypatch):
+    class FakeTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def __init__(self):
+            self.statements = []
+
+        def transaction(self):
+            return FakeTransaction()
+
+        async def execute(self, query, *args):
+            self.statements.append((query, args))
+            return "OK"
+
+    class FakeAcquire:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakePool:
+        def __init__(self):
+            self.conn = FakeConnection()
+
+        async def fetchval(self, query, role):
+            assert "SELECT id FROM roles" in query
+            assert role == "tenant_admin"
+            return 7
+
+        def acquire(self):
+            return FakeAcquire(self.conn)
+
+    fake_pool = FakePool()
+
+    async def fake_get_db_pool():
+        return fake_pool
+
+    monkeypatch.setattr(console_main, "_get_db_pool", fake_get_db_pool)
+
+    asyncio.run(console_main._set_workspace_role_for_user(
+        43,
+        "11111111-1111-1111-1111-111111111111",
+        "tenant_admin",
+    ))
+
+    statements = [query for query, _args in fake_pool.conn.statements]
+    assert any("DELETE FROM user_workspace_roles" in query for query in statements)
+    assert any("INSERT INTO user_workspace_roles" in query for query in statements)
+    assert not any("ON CONFLICT (user_id, workspace_id)" in query for query in statements)
 
 
 def test_api_admin_users_create_rejects_short_password(console_main):

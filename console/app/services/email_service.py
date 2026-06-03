@@ -12,22 +12,25 @@ import os
 import smtplib
 from email.message import EmailMessage
 
+import boto3
 
-SMTP_HOST    = os.environ.get("SMTP_HOST", "mailhog")
-SMTP_PORT    = int(os.environ.get("SMTP_PORT", "1025"))
-SMTP_USER    = os.environ.get("SMTP_USER", "")
-SMTP_PASS    = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM    = os.environ.get("SMTP_FROM", "noreply@modecissions.local")
-SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "false").lower() == "true"
+EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "smtp").strip().lower()
+AWS_REGION     = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+SMTP_HOST      = os.environ.get("SMTP_HOST", "mailhog")
+SMTP_PORT      = int(os.environ.get("SMTP_PORT", "1025"))
+SMTP_USER      = os.environ.get("SMTP_USER", "")
+SMTP_PASS      = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM      = os.environ.get("SMTP_FROM", "noreply@modecissions.local")
+SMTP_USE_TLS   = os.environ.get("SMTP_USE_TLS", "false").lower() == "true"
 
 WORKSPACE_URL = os.environ.get("WORKSPACE_URL", "")
 CONSOLE_URL   = os.environ.get("CONSOLE_URL", "")
 
 
-def _send_sync(
+def _build_message(
     to: str, subject: str, html: str, text: str | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
-) -> None:
+) -> EmailMessage:
     msg = EmailMessage()
     msg["From"]    = SMTP_FROM
     msg["To"]      = to
@@ -43,6 +46,14 @@ def _send_sync(
         msg.add_attachment(data, maintype=maintype or "application",
                            subtype=subtype or "octet-stream",
                            filename=filename)
+    return msg
+
+
+def _send_smtp_sync(
+    to: str, subject: str, html: str, text: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
+    msg = _build_message(to, subject, html, text, attachments)
 
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
         if SMTP_USE_TLS:
@@ -50,6 +61,32 @@ def _send_sync(
         if SMTP_USER:
             smtp.login(SMTP_USER, SMTP_PASS)
         smtp.send_message(msg)
+
+
+def _send_ses_sync(
+    to: str, subject: str, html: str, text: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
+    msg = _build_message(to, subject, html, text, attachments)
+    client = boto3.client("ses", region_name=AWS_REGION)
+    client.send_raw_email(
+        Source=SMTP_FROM,
+        Destinations=[to],
+        RawMessage={"Data": msg.as_bytes()},
+    )
+
+
+def _send_sync(
+    to: str, subject: str, html: str, text: str | None = None,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> None:
+    if EMAIL_PROVIDER == "smtp":
+        _send_smtp_sync(to, subject, html, text, attachments)
+        return
+    if EMAIL_PROVIDER == "ses":
+        _send_ses_sync(to, subject, html, text, attachments)
+        return
+    raise RuntimeError(f"Unsupported EMAIL_PROVIDER={EMAIL_PROVIDER!r}")
 
 
 async def send_email(

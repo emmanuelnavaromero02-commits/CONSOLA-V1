@@ -12,12 +12,52 @@ from app.services.jwt_auth import DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES
 from app.services.permissions import (
     PERMISSIONS,
     access_check,
+    canonical_role,
     matrix_payload,
     require_permission,
     roles_payload,
 )
 
 router = APIRouter(prefix="/security", tags=["Security Center"])
+
+
+_PLATFORM_ROLES = {"owner", "super_admin", "admin"}
+_TENANT_ASSIGNABLE_ROLES = {"tenant_admin", "analyst", "viewer", "workspace_user", "user"}
+
+
+def _is_platform_admin(user: dict | None) -> bool:
+    return canonical_role((user or {}).get("role")) in _PLATFORM_ROLES
+
+
+def _workspace_ids(user: dict | None) -> list[str]:
+    if not user:
+        return []
+    values = {
+        str(item.get("workspace_id") or "").strip()
+        for item in (user.get("workspaces") or [])
+        if isinstance(item, dict)
+    }
+    active = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip()
+    if active:
+        values.add(active)
+    return sorted(value for value in values if value)
+
+
+async def _visible_workspace_user_ids(conn, workspace_ids: list[str]) -> list[int]:
+    if not workspace_ids or not await _table_exists(conn, "user_workspace_roles"):
+        return []
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT uwr.user_id
+          FROM user_workspace_roles uwr
+          JOIN users u ON u.id = uwr.user_id
+         WHERE uwr.workspace_id = ANY($1::uuid[])
+           AND COALESCE(u.role, 'user') <> ALL($2::text[])
+        """,
+        workspace_ids,
+        sorted(_PLATFORM_ROLES),
+    )
+    return [int(row["user_id"]) for row in rows if row["user_id"] is not None]
 
 
 def _session_id(token: str) -> str:
@@ -71,7 +111,7 @@ def _policy_summary() -> dict:
         "refresh_token_ttl": f"{_auth.REFRESH_TOKEN_LIFETIME.days} days",
         "internal_api": "Required for internal service endpoints",
         "security_headers": "Enabled by Console middleware",
-        "secrets": "Masked; reveal requires admin/workspace_admin where supported",
+        "secrets": "Masked; reveal requires an explicit vault.secrets.reveal grant.",
     }
 
 
@@ -169,12 +209,39 @@ async def get_audit_events(user: dict = Depends(require_permission("security.aud
         _select_column(audit_columns, "created_at", "NULL::timestamptz", table_alias="a"),
     ]
     order_expr = "a.created_at DESC" if "created_at" in audit_columns else "a.id DESC"
+    args: list = []
+    where_clause = ""
+    if not _is_platform_admin(user):
+        workspace_ids = _workspace_ids(user)
+        tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip()
+        visible_user_ids = await _visible_workspace_user_ids(p, workspace_ids)
+        scope_parts: list[str] = []
+        if "user_id" in audit_columns and visible_user_ids:
+            args.append(visible_user_ids)
+            scope_parts.append(f"a.user_id = ANY(${len(args)}::bigint[])")
+        if "metadata" in audit_columns and workspace_ids:
+            args.append(workspace_ids)
+            scope_parts.append(f"a.metadata->>'workspace_id' = ANY(${len(args)}::text[])")
+        if "metadata" in audit_columns and tenant_id:
+            args.append(tenant_id)
+            scope_parts.append(f"a.metadata->>'tenant_id' = ${len(args)}")
+        if not scope_parts:
+            return []
+        where_clause = "WHERE (" + " OR ".join(scope_parts) + ")"
+        if "user_id" in audit_columns:
+            args.append(int(user["id"]))
+            where_clause += (
+                f" AND (a.user_id IS NULL OR COALESCE(u.role, 'user') <> ALL(ARRAY{sorted(_PLATFORM_ROLES)!r}::text[]) "
+                f"OR a.user_id = ${len(args)}::bigint)"
+            )
     rows = await p.fetch(
         f"""SELECT {", ".join(select_parts)}
            FROM audit_events a
            LEFT JOIN users u ON u.id = a.user_id
+           {where_clause}
            ORDER BY {order_expr}
-           LIMIT 100"""
+           LIMIT 100""",
+        *args,
     )
     res = []
     for r in rows:
@@ -195,15 +262,53 @@ async def get_permissions(user: dict = Depends(require_permission("iam.roles.rea
     p = await _auth.pool()
     db_roles = await _db_roles(p)
     lifetimes = _policy_summary()
+    platform = _is_platform_admin(user)
+    role_rows = roles_payload()
+    matrix = matrix_payload()
+    permissions = PERMISSIONS
+    notes = [
+        "User management API accepts built-in canonical roles through users.role; admin/user remain backward compatible.",
+        "High-value IAM, Security, Vault, Dataset and Pipeline endpoints are enforced by the central permission registry.",
+        "Workspace membership is applied for tenant-created users and all tenant admin views are workspace-scoped.",
+    ]
+    if not platform:
+        role_rows = [role for role in role_rows if role["name"] in _TENANT_ASSIGNABLE_ROLES]
+        visible_role_names = {role["name"] for role in role_rows}
+        visible_permission_keys = {
+            permission
+            for role in role_rows
+            for permission in role.get("permissions", [])
+        }
+        matrix = {
+            role: {
+                permission: allowed
+                for permission, allowed in permissions_by_role.items()
+                if permission in visible_permission_keys
+            }
+            for role, permissions_by_role in matrix.items()
+            if role in visible_role_names
+        }
+        permissions = [
+            permission
+            for permission in PERMISSIONS
+            if permission["key"] in visible_permission_keys
+        ]
+        db_roles = [role for role in db_roles if role.get("name") in visible_role_names]
+        notes = [
+            "Tenant role and audit views are limited to the active workspace.",
+            "Vault secrets are stored in workspace-scoped Vault paths; tenants can replace keys but cannot reveal existing secret values.",
+            "Studio, Bronze query, global settings and platform security roles are hidden from tenant accounts.",
+        ]
+    assignable_roles = [role["name"] for role in role_rows if role.get("assignable")]
     return {
-        "roles": roles_payload(),
+        "roles": role_rows,
         "db_roles": db_roles,
-        "assignable_now": [role["name"] for role in roles_payload() if role.get("assignable")],
-        "backend_defined_roles": [role["name"] for role in roles_payload()],
+        "assignable_now": assignable_roles,
+        "backend_defined_roles": [role["name"] for role in role_rows],
         "legacy_user_admin_roles": ["admin", "user"],
-        "workspace_roles": ["admin", "workspace_admin", "analyst", "viewer"],
-        "permissions": PERMISSIONS,
-        "matrix": matrix_payload(),
+        "workspace_roles": assignable_roles,
+        "permissions": permissions,
+        "matrix": matrix,
         "policies": {
             "deny_by_default": True,
             "secrets_never_exposed": True,
@@ -229,14 +334,10 @@ async def get_permissions(user: dict = Depends(require_permission("iam.roles.rea
             "edit_role_state": True,
             "reset_password_email": True,
             "reinvite": True,
-            "assignable_roles": [role["name"] for role in roles_payload() if role.get("assignable")],
-            "workspace_role_assignment": "legacy users.role only; workspace membership assignment is not implemented",
+            "assignable_roles": assignable_roles,
+            "workspace_role_assignment": "tenant-created users are assigned to the active workspace with a scoped workspace role",
         },
-        "notes": [
-            "User management API accepts built-in canonical roles through users.role; admin/user remain backward compatible.",
-            "High-value IAM, Security, Vault, Dataset and Pipeline endpoints are enforced by the central permission registry.",
-            "Workspace membership assignment is not implemented in this phase; workspace-scoped roles are stored as user roles only.",
-        ],
+        "notes": notes,
     }
 
 
