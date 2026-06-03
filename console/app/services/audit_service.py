@@ -8,6 +8,18 @@ from app.services import auth
 logger = logging.getLogger(__name__)
 
 
+def _audit_user_id(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
+
+
 async def _audit_events_has_request_id(pool) -> bool:
     return bool(
         await pool.fetchval(
@@ -72,6 +84,7 @@ async def record_event(
             return
         meta_json = json.dumps(metadata) if metadata is not None else None
         tool_args_json = json.dumps(tool_args) if tool_args is not None else None
+        event_user_id = _audit_user_id(user_id)
         event_request_id = request_id or request_id_var.get()
         has_request_id = await _audit_events_has_request_id(pool)
 
@@ -94,7 +107,7 @@ async def record_event(
                 ON CONFLICT (user_id, action, resource_id, created_at)
                   DO NOTHING
                 """,
-                user_id,
+                event_user_id,
                 email,
                 action,
                 resource_type,
@@ -123,7 +136,7 @@ async def record_event(
                 ON CONFLICT (user_id, action, resource_id, created_at)
                   DO NOTHING
                 """,
-                user_id,
+                event_user_id,
                 email,
                 action,
                 resource_type,
