@@ -4,6 +4,7 @@ import pytest
 
 from app.services import intelligence_engine
 from app.services.intelligence import engine as intelligence_engine_module
+from app.services.intelligence import persistence as intelligence_persistence
 from app.services.intelligence import readiness as intelligence_readiness_module
 
 
@@ -93,6 +94,13 @@ def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     assert option["score"] == pytest.approx(
         option["impact_expected"] * option["confidence"] - option["cost"] - option["risk"] - option["time_cost"]
     )
+
+
+def test_control_room_event_actor_id_accepts_numeric_strings_only():
+    assert intelligence_persistence._actor_id(7) == 7
+    assert intelligence_persistence._actor_id("7") == 7
+    assert intelligence_persistence._actor_id("not-a-bigint") is None
+    assert intelligence_persistence._actor_id("11111111-1111-1111-1111-111111111111") is None
 
 
 def test_build_metric_artifacts_generates_predictive_signals_when_requested():

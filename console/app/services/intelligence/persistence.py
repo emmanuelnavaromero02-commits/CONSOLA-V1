@@ -17,6 +17,17 @@ from app.services.intelligence.utils import (
 )
 
 
+def _actor_id(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    return None
+
+
 @asynccontextmanager
 async def scoped_db(pool: Any, tenant_id: str | None, workspace_id: str):
     async with pool.acquire() as conn:
@@ -401,7 +412,7 @@ async def publish_control_room_item(
         tenant_id,
         workspace_id,
         signal["signal_id"],
-        user.get("id"),
+        _actor_id(user.get("id")),
         user.get("email"),
         json_dumps({"metric": signal["metric"], "severity": signal["severity"]}),
     )
