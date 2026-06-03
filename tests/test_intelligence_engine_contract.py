@@ -44,9 +44,13 @@ def test_intelligence_external_predictive_migration_is_workspace_scoped():
 def test_priority_cartridges_have_valid_intelligence_contracts():
     for cartridge_id in ("hubspot", "replicon", "salesforce", "sap_hcm"):
         path = ROOT / "cartridges" / cartridge_id / "app/config/intelligence.yaml"
+        packaged = ROOT / "console/app/config/intelligence_contracts" / f"{cartridge_id}.yaml"
         assert path.exists(), f"missing intelligence contract for {cartridge_id}"
+        assert packaged.exists(), f"missing packaged console intelligence contract for {cartridge_id}"
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        packaged_data = yaml.safe_load(packaged.read_text(encoding="utf-8"))
         assert data["cartridge"] == cartridge_id
+        assert packaged_data == data
         assert data.get("external_sources"), f"no external sources in {path}"
         assert data["metrics"], f"no metrics in {path}"
         for metric in data["metrics"]:
@@ -61,6 +65,14 @@ def test_priority_cartridges_have_valid_intelligence_contracts():
             assert metric["impact"]["currency"]
             assert metric["hypotheses"]
             assert metric["action_templates"]
+
+
+def test_intelligence_contract_loader_reads_packaged_contracts():
+    from console.app.services.intelligence.contracts import load_contracts
+
+    contracts = load_contracts({"hubspot", "replicon", "salesforce", "sap_hcm"})
+    loaded = {contract["cartridge"] for contract in contracts}
+    assert {"hubspot", "replicon", "salesforce", "sap_hcm"} <= loaded
 
 
 def test_intelligence_router_is_registered_and_mutations_are_guarded():

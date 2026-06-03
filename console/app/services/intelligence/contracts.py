@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -8,11 +11,44 @@ from fastapi import HTTPException
 from app.services.intelligence.utils import CONTRACT_PATH, repo_root
 
 
+def _packaged_contract_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "config" / "intelligence_contracts"
+
+
+def _contract_candidates() -> Iterable[tuple[str, Path]]:
+    seen: set[Path] = set()
+    configured_dir = os.environ.get("INTELLIGENCE_CONTRACTS_DIR", "").strip()
+    packaged_dirs = [
+        Path(configured_dir) if configured_dir else None,
+        _packaged_contract_dir(),
+    ]
+    for directory in packaged_dirs:
+        if not directory:
+            continue
+        for path in sorted(directory.glob("*.yaml")):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            yield path.stem, path
+
+    repo_paths = [
+        repo_root() / "cartridges",
+        Path("/app/cartridges"),
+        Path("/cartridges"),
+    ]
+    for cartridges_dir in repo_paths:
+        for path in sorted(cartridges_dir.glob(f"*/{CONTRACT_PATH}")):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            yield path.parts[-4], path
+
+
 def load_contracts(cartridge_ids: set[str] | None = None) -> list[dict[str, Any]]:
     contracts: list[dict[str, Any]] = []
-    cartridges_dir = repo_root() / "cartridges"
-    for path in sorted(cartridges_dir.glob(f"*/{CONTRACT_PATH}")):
-        cartridge_id = path.parts[-4]
+    for cartridge_id, path in _contract_candidates():
         if cartridge_ids and cartridge_id not in cartridge_ids:
             continue
         try:
