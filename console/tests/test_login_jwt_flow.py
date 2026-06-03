@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 import types
@@ -670,6 +671,66 @@ def test_api_admin_users_create_with_admin_still_works(console_main):
 
     assert response.status_code == 200
     assert response.json()["email"] == "new@example.com"
+
+
+def test_set_workspace_role_replaces_existing_role_without_invalid_conflict(console_main, monkeypatch):
+    class FakeTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConnection:
+        def __init__(self):
+            self.statements = []
+
+        def transaction(self):
+            return FakeTransaction()
+
+        async def execute(self, query, *args):
+            self.statements.append((query, args))
+            return "OK"
+
+    class FakeAcquire:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakePool:
+        def __init__(self):
+            self.conn = FakeConnection()
+
+        async def fetchval(self, query, role):
+            assert "SELECT id FROM roles" in query
+            assert role == "tenant_admin"
+            return 7
+
+        def acquire(self):
+            return FakeAcquire(self.conn)
+
+    fake_pool = FakePool()
+
+    async def fake_get_db_pool():
+        return fake_pool
+
+    monkeypatch.setattr(console_main, "_get_db_pool", fake_get_db_pool)
+
+    asyncio.run(console_main._set_workspace_role_for_user(
+        43,
+        "11111111-1111-1111-1111-111111111111",
+        "tenant_admin",
+    ))
+
+    statements = [query for query, _args in fake_pool.conn.statements]
+    assert any("DELETE FROM user_workspace_roles" in query for query in statements)
+    assert any("INSERT INTO user_workspace_roles" in query for query in statements)
+    assert not any("ON CONFLICT (user_id, workspace_id)" in query for query in statements)
 
 
 def test_api_admin_users_create_rejects_short_password(console_main):

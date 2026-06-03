@@ -5387,17 +5387,26 @@ async def _set_workspace_role_for_user(user_id: int, workspace_id: str, role: st
     role_id = await pool.fetchval("SELECT id FROM roles WHERE name = $1", role)
     if not role_id:
         raise HTTPException(400, "invalid workspace role")
-    await pool.execute(
-        """
-        INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
-        VALUES ($1, $2::uuid, $3)
-        ON CONFLICT (user_id, workspace_id)
-        DO UPDATE SET role_id = EXCLUDED.role_id
-        """,
-        user_id,
-        workspace_id,
-        role_id,
-    )
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                DELETE FROM user_workspace_roles
+                 WHERE user_id = $1
+                   AND workspace_id = $2::uuid
+                """,
+                user_id,
+                workspace_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO user_workspace_roles (user_id, workspace_id, role_id)
+                VALUES ($1, $2::uuid, $3)
+                """,
+                user_id,
+                workspace_id,
+                role_id,
+            )
 
 
 async def _assert_can_use_workspace(admin_user: dict, workspace_id: str | None) -> None:
