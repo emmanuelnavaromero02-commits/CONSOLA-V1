@@ -293,7 +293,6 @@ aws secretsmanager put-secret-value --secret-id modecissions/superset_admin_pass
 aws secretsmanager put-secret-value --secret-id modecissions/superset_service_password --secret-string '<password-seguro>'
 aws secretsmanager put-secret-value --secret-id modecissions/github_deploy_key --secret-string "$(cat ../modecissions-deploy-key)"
 aws secretsmanager put-secret-value --secret-id modecissions/anthropic_api_key --secret-string '<requerido-si-CHAT_LLM_PROVIDER=anthropic>'
-aws secretsmanager put-secret-value --secret-id modecissions/gemini_api_key --secret-string ''
 aws secretsmanager put-secret-value --secret-id modecissions/smtp_password --secret-string ''
 ```
 
@@ -310,7 +309,6 @@ cualquiera de esas llaves obligatorias falta.
 | `S3_BUCKET_NAME`        | `modecissions-lakehouse-xxx`                             | `terraform output s3_bucket_name`      |
 | `AWS_REGION`            | `us-east-1`                                              | tu región del apply                    |
 | `ANTHROPIC_API_KEY`     | `modecissions/anthropic_api_key`                         | AWS Secrets Manager                    |
-| `GEMINI_API_KEY`        | `modecissions/gemini_api_key`                            | AWS Secrets Manager, opcional puede ser vacío |
 | `CHAT_LLM_PROVIDER`     | `anthropic`                                              | fijo                                   |
 | `CHAT_LLM_MODEL`        | `claude-haiku-4-5-20251001`                              | fijo (ajustable)                       |
 | `SQL_LLM_MODEL`         | `claude-sonnet-4-6`                                      | fijo                                   |

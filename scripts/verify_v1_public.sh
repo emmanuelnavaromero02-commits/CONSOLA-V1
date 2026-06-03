@@ -148,7 +148,7 @@ echo "[verify-v1-public] OK internal ports are not directly reachable on public 
 
 if [[ "${REQUIRE_LIVE}" == "1" ]]; then
   [[ "${E2E_LIVE_LLM:-}" == "1" ]] || fail "E2E_LIVE_LLM=1 is required for v1 public verification"
-  [[ -n "${ANTHROPIC_API_KEY:-}${GEMINI_API_KEY:-}" ]] || fail "ANTHROPIC_API_KEY or GEMINI_API_KEY is required for live LLM probes"
+  [[ -n "${ANTHROPIC_API_KEY:-}" ]] || fail "ANTHROPIC_API_KEY is required for live LLM probes"
   [[ -n "${TEST_PASSWORD}" ]] || fail "TEST_PASSWORD or E2E_ADMIN_PASSWORD is required for public login verification"
 fi
 

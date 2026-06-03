@@ -31,8 +31,8 @@ def metrics_module():
 
 
 def _make_app(mod, fetchval_seq, fetch_rows):
-    """fetchval_seq drives the 4 fetchval() calls in order; fetch_rows
-    is returned by the single fetch() (slowest_entities_7d)."""
+    """fetchval_seq drives the fetchval() calls in order; fetch_rows
+    is returned by fetch() (slowest_entities_7d)."""
     seq = list(fetchval_seq)
 
     class _FakeConn:
@@ -66,9 +66,9 @@ def test_metrics_shape_and_types(metrics_module):
         {"cartridge_id": "replicon", "entity_name": "users",      "avg_sec": 12.5},
         {"cartridge_id": "sap_hcm",  "entity_name": "pa0001",     "avg_sec": 60.0},
     ]
-    # fetchval order in metrics.py: extractions_24h, errors_24h,
-    # avg_duration_sec, audit_count_24h. fetch() returns the slowest list.
-    app = _make_app(metrics_module, [42, 3, 17.4, 250], rows)
+    # fetchval order in metrics.py: extraction counters, audit counter,
+    # control-room writeback counters, jobs, LLM usage.
+    app = _make_app(metrics_module, [42, 3, 17.4, 250, 8, 2, 1, 14, 2, 9000, 1], rows)
     r = TestClient(app).get("/api/metrics/operational")
     assert r.status_code == 200, r.text
     body = r.json()
@@ -76,6 +76,15 @@ def test_metrics_shape_and_types(metrics_module):
     assert body["errors_24h"]           == 3
     assert body["avg_duration_seconds"] == pytest.approx(17.4)
     assert body["audit_events_24h"]     == 250
+    assert body["control_room"]["action_executions_24h"] == 8
+    assert body["control_room"]["external_writebacks_24h"] == 2
+    assert body["control_room"]["writeback_failures_24h"] == 1
+    assert body["jobs"]["total_24h"] == 14
+    assert body["jobs"]["failed_24h"] == 2
+    assert body["llm"]["provider"]
+    assert body["llm"]["tokens_24h"] == 9000
+    assert body["llm"]["errors_24h"] == 1
+    assert body["backup"]["status"] == "not_configured"
     assert isinstance(body["slowest_entities_7d"], list)
     assert len(body["slowest_entities_7d"]) == 2
     assert body["slowest_entities_7d"][0]["cartridge_id"] == "replicon"
@@ -92,6 +101,9 @@ def test_metrics_returns_zeros_when_empty(metrics_module):
     assert body["avg_duration_seconds"] == 0.0
     assert body["audit_events_24h"]     == 0
     assert body["slowest_entities_7d"]  == []
+    assert body["control_room"]["action_executions_24h"] == 0
+    assert body["jobs"]["failed_24h"] == 0
+    assert body["llm"]["tokens_24h"] == 0
 
 
 def test_metrics_requires_auth(metrics_module):

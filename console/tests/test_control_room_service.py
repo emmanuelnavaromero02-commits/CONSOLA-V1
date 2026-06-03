@@ -1392,6 +1392,29 @@ def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
     assert adapter.__class__.__name__ == "SapHcmAdapter"
 
 
+def test_writeback_factory_resolves_builtin_replicon_adapters(monkeypatch):
+    monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
+    for template_type in ("prepare_billing_review", "prepare_replicon_adjustment"):
+        adapter = control_room_service.WriteBackAdapterFactory.get_adapter(template_type)
+        capability = control_room_service._writeback_capability(  # noqa: SLF001 - registry wiring test
+            control_room_service.ACTION_TEMPLATES[template_type]
+        )
+
+        assert isinstance(adapter, control_room_service.BaseAdapter)
+        assert adapter.__class__.__name__ == "RepliconAdapter"
+        assert capability["mode"] == "external_writeback"
+        assert capability["adapter_available"] is True
+        assert capability["supported"] is False
+        assert capability["status"] == "external_writeback_disabled"
+
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    capability = control_room_service._writeback_capability(  # noqa: SLF001 - registry wiring test
+        control_room_service.ACTION_TEMPLATES["prepare_billing_review"]
+    )
+    assert capability["supported"] is True
+    assert capability["adapter"] == "prepare_billing_review"
+
+
 def test_hcm_access_template_is_wired_to_builtin_it0008_adapter(monkeypatch):
     monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     template = control_room_service.ACTION_TEMPLATES["prepare_hcm_access_review"]
@@ -1581,7 +1604,12 @@ async def test_execute_live_supported_followup_is_idempotent(monkeypatch):
         persist=False,
         use_catalog=False,
     ))["items"][0]
-    item = _executed_item(base_item)
+    item = _executed_item({
+        **base_item,
+        "cartridge": "sap_s4hana",
+        "module_id": "sap_s4hana",
+        "anomaly_type": "missing_address",
+    })
     mock_pool = AsyncMock()
     mock_pool.fetchrow = AsyncMock(return_value=_execution_row(item))
     mock_pool.fetch.return_value = []
@@ -1651,13 +1679,18 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
         persist=False,
         use_catalog=False,
     ))["items"][0]
-    item = _executed_item(base_item)
+    item = _executed_item({
+        **base_item,
+        "cartridge": "sap_s4hana",
+        "module_id": "sap_s4hana",
+        "anomaly_type": "missing_address",
+    })
     mock_pool = AsyncMock()
     mock_pool.fetchrow = AsyncMock(side_effect=[
         _execution_row(
             item,
             status="blocked",
-            template_id="prepare_billing_review",
+            template_id="prepare_sap_review",
             result={"ok": False, "blocked": True, "reason": "adapter_missing"},
         ),
     ])
@@ -1674,7 +1707,7 @@ async def test_execute_live_external_template_without_adapter_blocks_before_pref
             await control_room_service.execute_item(
                 item["id"],
                 USER,
-                template_id="prepare_billing_review",
+                template_id="prepare_sap_review",
                 confirm_execute=True,
                 fetcher=finance_fetcher,
             )
@@ -1912,6 +1945,65 @@ def test_sap_hcm_adapter_live_fetches_csrf_before_post(monkeypatch):
     assert SapClient.instance.get_calls[0]["headers"]["x-csrf-token"] == "Fetch"
     assert SapClient.instance.post_calls[0]["headers"]["x-csrf-token"] == "csrf-123"
     assert "DRY_RUN" not in SapClient.instance.post_calls[0]["json"]
+
+
+def test_replicon_adapter_posts_realistic_writeback_payload(monkeypatch):
+    from app.services.adapters import replicon_adapter
+
+    class RepliconResponse:
+        status_code = 202
+        text = "ok"
+
+        def json(self):
+            return {"remote_id": "replicon-writeback-1", "status": "accepted"}
+
+    class RepliconClient:
+        instance = None
+
+        def __init__(self, **_kwargs):
+            self.post_calls = []
+            RepliconClient.instance = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, *, headers, json):
+            self.post_calls.append({"url": url, "headers": headers, "json": json})
+            return RepliconResponse()
+
+    monkeypatch.setattr(replicon_adapter.httpx, "Client", RepliconClient)
+
+    result = replicon_adapter.RepliconAdapter().execute(
+        {
+            "template_id": "prepare_billing_review",
+            "template_type": "prepare_billing_review",
+            "item_id": "item-rep",
+            "entity_id": "project-1",
+            "action_kind": "billing_review",
+            "action_payload": {"replicon": {"project": "Omega Norte"}},
+            "idempotency_key": "idem-rep",
+        },
+        {
+            "base_url": "https://replicon.example",
+            "writeback_path": "/api/omega/writeback",
+            "token": "replicon-token",
+        },
+        dry_run=False,
+    )
+
+    assert result.ok is True
+    assert result.status == "executed"
+    assert result.data["external_id"] == "replicon-writeback-1"
+    call = RepliconClient.instance.post_calls[0]
+    assert call["url"] == "https://replicon.example/api/omega/writeback"
+    assert call["headers"]["Authorization"] == "Bearer replicon-token"
+    assert call["headers"]["Idempotency-Key"] == "idem-rep"
+    assert call["headers"]["X-Omega-Dry-Run"] == "false"
+    assert call["json"]["replicon"]["project"] == "Omega Norte"
+    assert call["json"]["dry_run"] is False
 
 
 def test_sap_hcm_adapter_aborts_when_csrf_fetch_fails(monkeypatch):

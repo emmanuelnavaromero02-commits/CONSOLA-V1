@@ -1729,6 +1729,9 @@ async def _dependency_health(name: str, url: str, server: str | None = None) -> 
 
 
 async def _control_room_data_check(*, require_data: bool = False) -> dict:
+    operational_items = 0
+    gold_tables = 0
+    gold_rows = 0
     try:
         pool = await _get_db_pool()
         async with pool.acquire() as conn:
@@ -1747,11 +1750,51 @@ async def _control_room_data_check(*, require_data: bool = False) -> dict:
             "operational_items": 0,
             "error": type(exc).__name__,
         }
+
+    gold_dsn = (
+        os.environ.get("GOLD_DATABASE_URL")
+        or os.environ.get("DATABASE_URL", "")
+    ).replace("postgresql+psycopg2://", "postgresql://")
+    gold_error = ""
+    if gold_dsn:
+        try:
+            import asyncpg as _asyncpg
+
+            gold_pool = await _asyncpg.create_pool(gold_dsn, min_size=1, max_size=1, command_timeout=5)
+            try:
+                async with gold_pool.acquire() as gold_conn:
+                    rows = await gold_conn.fetch(
+                        """
+                        SELECT tablename
+                          FROM pg_tables
+                         WHERE schemaname = 'public'
+                           AND tablename LIKE 'gold\\_%' ESCAPE '\\'
+                         ORDER BY tablename
+                        """
+                    )
+                    gold_tables = len(rows)
+                    for row in rows:
+                        table_name = str(row["tablename"])
+                        if not re.fullmatch(r"gold_[A-Za-z0-9_]+", table_name):
+                            continue
+                        gold_rows += int(await gold_conn.fetchval(
+                            f'SELECT COUNT(*) FROM public."{table_name}"'
+                        ) or 0)
+            finally:
+                await gold_pool.close()
+        except Exception as exc:
+            logger.warning("readiness probe failed for gold_data", exc_info=True)
+            gold_error = type(exc).__name__
+
+    has_data = operational_items > 0 or gold_rows > 0
     return {
-        "status": "up" if operational_items > 0 else "degraded",
+        "status": "up" if has_data else "degraded",
         "required": require_data,
         "operational_items": operational_items,
-        "reason": "" if operational_items > 0 else "no_operational_control_room_items",
+        "gold_tables": gold_tables,
+        "gold_rows": gold_rows,
+        "reason": "" if has_data else "no_control_room_or_gold_data",
+        **({"gold_error": gold_error} if gold_error else {}),
     }
 
 
@@ -4128,7 +4171,6 @@ async def api_rag_ingest(body: dict, user: dict = Depends(require_authenticated)
 async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
-    from google.genai import types as _gtypes
 
     query = (body.get("query") or "").strip()
     if not query:
@@ -4169,21 +4211,14 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
     user_msg = f"Contexto:\n\n{context}\n\nPregunta: {query}"
 
     try:
-        if _llm.CHAT_PROVIDER == "gemini":
-            resp = await _llm._gemini_generate_with_retry(
-                model=_llm.CHAT_MODEL,
-                contents=[_gtypes.Content(role="user", parts=[_gtypes.Part.from_text(text=user_msg)])],
-                config=_gtypes.GenerateContentConfig(system_instruction=system),
-            )
-            answer = (resp.text or "").strip() or "(sin respuesta)"
-        else:
-            resp = await _llm._ant.messages.create(
-                model=_llm.CHAT_MODEL,
-                max_tokens=1024,
-                system=system,
-                messages=[{"role": "user", "content": user_msg}],
-            )
-            answer = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "").strip() or "(sin respuesta)"
+        _llm._ensure_provider_configured("anthropic")
+        resp = await _llm._anthropic_client().messages.create(
+            model=_llm._resolve_chat_model(None),
+            max_tokens=1024,
+            system=system,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        answer = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "").strip() or "(sin respuesta)"
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("LLM synthesis failed error_id=%s", _eid)

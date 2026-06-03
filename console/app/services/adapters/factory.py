@@ -4,6 +4,7 @@ import inspect
 from typing import Any
 
 from .base import BaseAdapter
+from .replicon_adapter import RepliconAdapter
 from .sap_hcm_adapter import SapHcmAdapter
 
 
@@ -21,10 +22,22 @@ class SapHcmIt0008Adapter(BaseAdapter):
         return result
 
 
+class RepliconWriteBackAdapter(BaseAdapter):
+    cartridge_id = "replicon"
+
+    async def execute(self, action_data: dict[str, Any], credentials: dict[str, Any]):
+        result = RepliconAdapter().execute(action_data, credentials, dry_run=False)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+
 class WriteBackAdapterFactory:
     _MAPPING: dict[str, type[BaseAdapter]] = {
         "prepare_hcm_access_review": SapHcmIt0008Adapter,
         "sap_hcm_it0008": SapHcmIt0008Adapter,
+        "prepare_billing_review": RepliconWriteBackAdapter,
+        "prepare_replicon_adjustment": RepliconWriteBackAdapter,
     }
 
     @classmethod

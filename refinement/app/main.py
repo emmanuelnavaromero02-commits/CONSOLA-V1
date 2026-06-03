@@ -626,8 +626,6 @@ def _storage_path_matches_declared_source(sec: dict, key: str, sources: list[str
 
 
 def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[str] | None = None) -> bool:
-    if _has_invalid_scoped_storage_path(sec, key):
-        return False
     parts = key.split("/")
     if len(parts) < 3 or parts[0] not in {"silver", "gold"}:
         return False
@@ -642,7 +640,19 @@ def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[
         return False
     if str(ds.get("cartridge") or "").strip() != cartridge:
         return False
-    return _dataset_allowed(sec, ds)
+    if not _dataset_allowed(sec, ds):
+        return False
+    if _has_invalid_scoped_storage_path(sec, key):
+        tenant, workspace = _storage_scope_markers(key)
+        legacy_registered_snapshot = (
+            bool(declared)
+            and tenant is None
+            and workspace is None
+            and len(parts) == 4
+            and parts[3] == "data.parquet"
+        )
+        return legacy_registered_snapshot
+    return True
 
 
 def _require_sql_path_scope(

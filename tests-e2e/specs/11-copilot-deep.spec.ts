@@ -7,7 +7,7 @@
  * storage state.
  *
  * Real LLM calls happen only when the developer opts in with
- * E2E_LIVE_LLM=1 and has ANTHROPIC_API_KEY (or GEMINI_API_KEY)
+ * E2E_LIVE_LLM=1 and has ANTHROPIC_API_KEY
  * exported. Without explicit opt-in the LLM-dependent tests skip
  * cleanly; CSRF + RBAC + boundary checks always run.
  */
@@ -19,7 +19,7 @@ const BACKEND = process.env.LEGACY_URL || "http://localhost:8000";
 const EMAIL = process.env.TEST_EMAIL || "emmanuel@local.ai";
 const PASSWORD = process.env.TEST_PASSWORD || "";
 const HAS_LIVE_LLM = process.env.E2E_LIVE_LLM === "1" && Boolean(
-  process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY,
+  process.env.ANTHROPIC_API_KEY,
 );
 
 async function authedCtxAndCsrf() {
@@ -184,7 +184,7 @@ test.describe("Copilot drafts CRUD", () => {
 
   test("POST /drafts/generate calls the LLM end-to-end", async () => {
     test.skip(!HAS_LIVE_LLM,
-      "E2E_LIVE_LLM=1 plus ANTHROPIC_API_KEY/GEMINI_API_KEY required for live LLM probe",
+      "E2E_LIVE_LLM=1 plus ANTHROPIC_API_KEY required for live LLM probe",
     );
     const { ctx, csrf } = await authedCtxAndCsrf();
     const r = await ctx.post(`${BACKEND}/api/copilot/drafts/generate`, {
@@ -309,7 +309,7 @@ test.describe("Copilot streaming + chat UI", () => {
 
   test("/copilot streaming renders tokens incrementally", async ({ page }) => {
     test.skip(!HAS_LIVE_LLM,
-      "E2E_LIVE_LLM=1 plus ANTHROPIC_API_KEY/GEMINI_API_KEY required for live streaming probe",
+      "E2E_LIVE_LLM=1 plus ANTHROPIC_API_KEY required for live streaming probe",
     );
     await page.goto("/copilot");
     const input = page.getByRole("textbox", { name: /mensaje|message/i });

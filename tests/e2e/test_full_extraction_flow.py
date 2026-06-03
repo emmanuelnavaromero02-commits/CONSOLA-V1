@@ -119,7 +119,7 @@ def test_full_flow_04_copilot_conversation_round_trip(admin_session):
     if r.status_code in (502, 503):
         _bail_or_skip(
             f"LLM provider returned {r.status_code} — check "
-            f"ANTHROPIC_API_KEY / GEMINI_API_KEY in the worker env"
+            f"ANTHROPIC_API_KEY in the worker env"
         )
     assert r.status_code == 200, r.text
     body = r.json()

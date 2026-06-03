@@ -108,7 +108,6 @@ async def api_rag_ingest(body: dict, user: dict = Depends(require_authenticated)
 async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
     """Retrieval-augmented answer: search top-K chunks, synthesize with the chat LLM."""
     from app.services import llm_client as _llm
-    from google.genai import types as _gtypes
 
     query = (body.get("query") or "").strip()
     if not query:
@@ -149,21 +148,14 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
     user_msg = f"Contexto:\n\n{context}\n\nPregunta: {query}"
 
     try:
-        if _llm.CHAT_PROVIDER == "gemini":
-            resp = await _llm._gemini_generate_with_retry(
-                model=_llm.CHAT_MODEL,
-                contents=[_gtypes.Content(role="user", parts=[_gtypes.Part.from_text(text=user_msg)])],
-                config=_gtypes.GenerateContentConfig(system_instruction=system),
-            )
-            answer = (resp.text or "").strip() or "(sin respuesta)"
-        else:
-            resp = await _llm._ant.messages.create(
-                model=_llm.CHAT_MODEL,
-                max_tokens=1024,
-                system=system,
-                messages=[{"role": "user", "content": user_msg}],
-            )
-            answer = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "").strip() or "(sin respuesta)"
+        _llm._ensure_provider_configured("anthropic")
+        resp = await _llm._anthropic_client().messages.create(
+            model=_llm._resolve_chat_model(None),
+            max_tokens=1024,
+            system=system,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        answer = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "").strip() or "(sin respuesta)"
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("LLM synthesis failed error_id=%s", _eid)

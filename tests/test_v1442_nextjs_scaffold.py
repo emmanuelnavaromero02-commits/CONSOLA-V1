@@ -271,7 +271,6 @@ def test_no_secrets_in_next_public_envs():
         "OMEGA_",                # role passwords
         "FIELD_ENCRYPTION_KEY",
         "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
         "MINIO_SECRET_KEY",
         "SUPERSET_SECRET_KEY",
     )

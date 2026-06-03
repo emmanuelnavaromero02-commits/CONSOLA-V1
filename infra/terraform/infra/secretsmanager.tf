@@ -1,8 +1,7 @@
 locals {
-  modecissions_app_secret_names = toset([
-    "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY",
-    "JWT_SECRET_KEY",
+	  modecissions_app_secret_names = toset([
+	    "ANTHROPIC_API_KEY",
+	    "JWT_SECRET_KEY",
     "INTERNAL_API_KEY",
     "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE",
     "INTERNAL_API_KEY_CONSOLE_TO_REFINEMENT",

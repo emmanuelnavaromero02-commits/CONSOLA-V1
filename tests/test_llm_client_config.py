@@ -44,12 +44,13 @@ async def test_chat_preflights_missing_anthropic_key(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_preflights_missing_gemini_key(monkeypatch):
+async def test_stale_gemini_provider_is_coerced_to_anthropic(monkeypatch):
     monkeypatch.setenv("CHAT_LLM_PROVIDER", "gemini")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     llm_client = _load_llm_client()
 
-    with pytest.raises(llm_client.LLMConfigurationError, match="GEMINI_API_KEY"):
+    assert llm_client._current_provider() == "anthropic"
+    with pytest.raises(llm_client.LLMConfigurationError, match="ANTHROPIC_API_KEY"):
         await llm_client.chat(
             system="sys",
             messages=[],

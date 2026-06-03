@@ -153,6 +153,7 @@ def test_declared_source_physical_glob_rejects_foreign_scope_for_scoped_query():
 def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeypatch):
     sec = _scoped_sec(cartridges=("sap_hcm",))
     path = "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/**/*.parquet"
+    legacy_snapshot_path = "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/data.parquet"
     scoped_path = (
         "s3://lakehouse/silver/sap_hcm/sap_hcm_employee_master_full/"
         "tenant_id=tenant-1/workspace_id=ws-1/**/*.parquet"
@@ -175,6 +176,19 @@ def test_registered_dataset_physical_glob_allowed_only_for_dataset_query(monkeyp
     with pytest.raises(HTTPException):
         refinement_main._require_sql_path_scope(sec, path, allow_registered_dataset_paths=True)
 
+    with pytest.raises(HTTPException):
+        refinement_main._require_sql_path_scope(
+            sec,
+            legacy_snapshot_path,
+            allow_registered_dataset_paths=True,
+        )
+
+    refinement_main._require_sql_path_scope(
+        sec,
+        legacy_snapshot_path,
+        sources=["silver/sap_hcm/sap_hcm_employee_master_full"],
+        allow_registered_dataset_paths=True,
+    )
     refinement_main._require_sql_path_scope(sec, scoped_path, allow_registered_dataset_paths=True)
 
 

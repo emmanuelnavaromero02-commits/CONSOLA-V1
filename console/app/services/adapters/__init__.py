@@ -10,6 +10,7 @@ from .base import (
     ExecutionResult,
 )
 from .factory import SapHcmIt0008Adapter, WriteBackAdapterFactory
+from .replicon_adapter import RepliconAdapter
 
 __all__ = [
     "AdapterCircuitOpenError",
@@ -17,6 +18,7 @@ __all__ = [
     "AdapterExecutionError",
     "BaseAdapter",
     "ExecutionResult",
+    "RepliconAdapter",
     "SapHcmIt0008Adapter",
     "WriteBackAdapterFactory",
 ]

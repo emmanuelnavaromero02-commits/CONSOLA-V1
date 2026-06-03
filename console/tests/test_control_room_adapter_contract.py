@@ -29,15 +29,18 @@ def test_adapter_package_exports_runtime_contract():
     assert WriteBackAdapterFactory.has_adapter("prepare_hcm_access_review") is True
 
 
-def test_adapter_factory_does_not_advertise_unproven_erp_writebacks():
+def test_adapter_factory_advertises_only_proven_hcm_and_replicon_writebacks():
     from app.services.adapters import WriteBackAdapterFactory
 
-    assert WriteBackAdapterFactory.supports("prepare_hcm_access_review") is True
-    assert WriteBackAdapterFactory.supports("sap_hcm_it0008") is True
-
     for template_id in (
+        "prepare_hcm_access_review",
+        "sap_hcm_it0008",
         "prepare_billing_review",
         "prepare_replicon_adjustment",
+    ):
+        assert WriteBackAdapterFactory.supports(template_id) is True
+
+    for template_id in (
         "prepare_s4_revenue_review",
         "prepare_s4_business_partner_review",
         "prepare_s4_procurement_review",
@@ -49,20 +52,27 @@ def test_adapter_factory_does_not_advertise_unproven_erp_writebacks():
             WriteBackAdapterFactory.create(template_id)
 
 
-def test_active_control_room_does_not_claim_billing_review_writeback_support(
+def test_active_control_room_claims_billing_review_only_when_external_flag_enabled(
     monkeypatch,
 ):
     from app.services import control_room_service
 
-    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    monkeypatch.delenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", raising=False)
     template = control_room_service.ACTION_TEMPLATES["prepare_billing_review"]
     capability = control_room_service._writeback_capability(template)  # noqa: SLF001 - registry wiring test
 
     assert capability["mode"] == "external_writeback"
-    assert capability["adapter_available"] is False
+    assert capability["adapter_available"] is True
     assert capability["supported"] is False
-    assert capability["status"] == "adapter_missing"
-    assert capability["reason"] == "No hay adapter ERP aprobado para este template."
+    assert capability["status"] == "external_writeback_disabled"
+    assert capability["reason"] == "Write-back ERP externo no habilitado en Control Room V1; usa ejecucion supervisada."
+
+    monkeypatch.setenv("CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK", "true")
+    capability = control_room_service._writeback_capability(template)  # noqa: SLF001 - registry wiring test
+    assert capability["adapter_available"] is True
+    assert capability["supported"] is True
+    assert capability["status"] == "supported"
+    assert capability["reason"] is None
 
 
 def test_modular_control_room_matches_monolith_writeback_capability(monkeypatch):
