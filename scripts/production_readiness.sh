@@ -9,8 +9,11 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-CONSOLE_URL="${CONSOLE_URL:-http://127.0.0.1:8000}"
-SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-http://127.0.0.1:8088}"
+EXPLICIT_CONSOLE_URL="${CONSOLE_URL:-}"
+EXPLICIT_SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-}"
+CONSOLE_URL="${EXPLICIT_CONSOLE_URL:-http://127.0.0.1:8000}"
+SUPERSET_PUBLIC_URL="${EXPLICIT_SUPERSET_PUBLIC_URL:-http://127.0.0.1:8088}"
+REMOTE_MODE="${OMEGA_PRODUCTION_READINESS_REMOTE:-0}"
 PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="python3"
@@ -45,6 +48,16 @@ source_env() {
     source infra/.env
     set +a
   fi
+  if [[ -n "${EXPLICIT_CONSOLE_URL}" ]]; then
+    CONSOLE_URL="${EXPLICIT_CONSOLE_URL}"
+  else
+    CONSOLE_URL="${CONSOLE_URL:-http://127.0.0.1:8000}"
+  fi
+  if [[ -n "${EXPLICIT_SUPERSET_PUBLIC_URL}" ]]; then
+    SUPERSET_PUBLIC_URL="${EXPLICIT_SUPERSET_PUBLIC_URL}"
+  else
+    SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-http://127.0.0.1:8088}"
+  fi
 }
 
 check_readyz_data() {
@@ -55,6 +68,13 @@ check_readyz_data() {
     printf '%s\n' "${body}"
     exit 1
   fi
+}
+
+check_public_runtime() {
+  log "checking public runtime health"
+  curl -fsS --max-time 10 "${CONSOLE_URL}/healthz" >/dev/null
+  curl -fsS --max-time 10 "${CONSOLE_URL}/readyz" >/dev/null
+  check_readyz_data
 }
 
 check_superset_login() {
@@ -114,10 +134,56 @@ asyncio.run(main())
 PY
 }
 
+run_remote_e2e_if_required() {
+  if [[ "${OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E:-0}" != "1" ]]; then
+    log "remote Playwright E2E skipped; set OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E=1 to require it"
+    return
+  fi
+  if [[ -z "${TEST_PASSWORD:-${E2E_ADMIN_PASSWORD:-}}" ]]; then
+    log "TEST_PASSWORD or E2E_ADMIN_PASSWORD is required for remote Playwright E2E"
+    exit 2
+  fi
+  log "running remote browser E2E against ${CONSOLE_URL}"
+  (
+    cd tests-e2e
+    if [[ ! -d node_modules ]]; then
+      npm ci
+    fi
+    BASE_URL="${CONSOLE_URL}" \
+    BACKEND_URL="${CONSOLE_URL}" \
+    LEGACY_URL="${CONSOLE_URL}" \
+    CONTROL_ROOM_URL="${CONSOLE_URL}/control-room" \
+    OPEN_REPORT=0 \
+      npx playwright test
+  )
+}
+
+run_remote_gate() {
+  require_command curl
+  source_env
+
+  check_public_runtime
+  if [[ "${OMEGA_REQUIRE_SUPERSET_LOGIN:-1}" == "1" ]]; then
+    check_superset_login
+  else
+    log "Superset login skipped by OMEGA_REQUIRE_SUPERSET_LOGIN=0"
+  fi
+  check_live_llm_if_required
+  run_remote_e2e_if_required
+
+  log "PASS"
+}
+
 run_gate() {
   require_command curl
-  require_command docker
   source_env
+
+  if [[ "${REMOTE_MODE}" == "1" ]]; then
+    run_remote_gate
+    return
+  fi
+
+  require_command docker
 
   log "validating docker compose config"
   docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap config -q
