@@ -151,6 +151,18 @@ def test_aws_deploy_env_documents_https_public_urls():
     assert "$url_var must use https in production" in entrypoint
 
 
+def test_aws_entrypoint_derives_cookie_security_from_public_scheme():
+    entrypoint = _read(REPO / "scripts/aws-entrypoint.sh")
+
+    assert 'PUBLIC_HTTPS_DEFAULT="false"' in entrypoint
+    assert 'if [[ "$CONSOLE_URL" == https://* && "$WORKSPACE_PUBLIC_URL" == https://* ]]; then' in entrypoint
+    assert 'PUBLIC_HTTPS_DEFAULT="true"' in entrypoint
+    assert 'COOKIE_SECURE="${COOKIE_SECURE:-$PUBLIC_HTTPS_DEFAULT}"' in entrypoint
+    assert 'SUPERSET_SESSION_COOKIE_SECURE="${SUPERSET_SESSION_COOKIE_SECURE:-$PUBLIC_HTTPS_DEFAULT}"' in entrypoint
+    assert 'SUPERSET_FORCE_HTTPS="${SUPERSET_FORCE_HTTPS:-$PUBLIC_HTTPS_DEFAULT}"' in entrypoint
+    assert "SUPERSET_SESSION_COOKIE_SECURE SUPERSET_FORCE_HTTPS SUPERSET_SESSION_COOKIE_SAMESITE" in entrypoint
+
+
 def test_partial_dataset_badges_are_visible_in_catalog_ui():
     page = _read(REPO / "console-next/src/app/(shell)/data/catalog/page.tsx")
     assert "datasetReadiness" in page

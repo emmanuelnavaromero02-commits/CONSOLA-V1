@@ -76,6 +76,10 @@ def _provider_error_message(provider: str, exc: Exception) -> str:
         return f"{provider} authentication failed; verify provider credentials"
     if any(token in msg for token in ("429", "rate limit", "rate_limit", "resource_exhausted")):
         return f"{provider} rate limit reached; retry later or use another key"
+    if any(token in msg for token in ("credit balance", "billing", "purchase credits", "insufficient_quota")):
+        if provider == "anthropic":
+            return "Anthropic billing or credit limit reached; add credits before using the live copilot"
+        return f"{provider} billing or credit limit reached"
     if any(token in msg for token in ("timeout", "timed out")):
         return f"{provider} request timed out"
     return f"{provider} provider returned an error; check server logs"

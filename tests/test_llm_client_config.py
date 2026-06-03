@@ -83,3 +83,28 @@ async def test_chat_sanitizes_anthropic_auth_error(monkeypatch):
     message = str(exc_info.value)
     assert "Anthropic authentication failed" in message
     assert "fake-anthropic-key-for-test" not in message
+
+
+@pytest.mark.asyncio
+async def test_chat_reports_anthropic_credit_limit_clearly(monkeypatch):
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key-for-test")
+    llm_client = _load_llm_client()
+
+    async def billing_blocked(*_args, **_kwargs):
+        raise RuntimeError("Your credit balance is too low to access the Anthropic API. Please purchase credits.")
+
+    monkeypatch.setattr(llm_client, "_anthropic_chat", billing_blocked)
+
+    with pytest.raises(llm_client.LLMProviderError) as exc_info:
+        await llm_client.chat(
+            system="sys",
+            messages=[],
+            tools=[],
+            invoke_tool=None,
+            tool_server_map={},
+        )
+
+    message = str(exc_info.value)
+    assert "Anthropic billing or credit limit reached" in message
+    assert "fake-anthropic-key-for-test" not in message
