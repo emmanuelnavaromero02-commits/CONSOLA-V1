@@ -570,6 +570,28 @@ def test_assistant_chat_with_valid_jwt_returns_200(console_main):
     assert response.json()["reply"] == "echo:hello"
 
 
+def test_assistant_chat_missing_workspace_llm_key_is_actionable(console_main, monkeypatch):
+    async def raise_missing_key(message, history, user=None):
+        raise console_main.llm_client.LLMConfigurationError(
+            "Anthropic API key is required for this workspace"
+        )
+
+    monkeypatch.setattr(console_main.assistant, "chat", raise_missing_key)
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.post(
+        "/assistant/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"message": "hello", "history": []},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "clave Anthropic" in body["reply"]
+    assert body["viewer_urls"] == []
+
+
 def test_jobs_without_auth_returns_401(console_main):
     client = TestClient(console_main.app)
 

@@ -80,7 +80,7 @@ def _vault_url() -> str:
     return _service_url("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300")
 
 
-from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest
+from app.services import mcp_registry, assistant, studio_assistant, token_store, job_service, tool_manifest, llm_client
 from app.services import cartridge_service
 from app.services import agent_service as _agents
 from app.services import agent_runtime as _agent_runtime
@@ -2085,12 +2085,29 @@ async def tokens_summary(user: dict = Depends(require_permission("copilot.use"))
 
 @app.post("/assistant/chat", dependencies=[Depends(require_csrf)])
 async def chat(body: dict, user: dict = Depends(require_authenticated)):
-    return await _call_with_optional_user(
-        assistant.chat,
-        body.get("message", ""),
-        body.get("history", []),
-        user=user,
-    )
+    try:
+        return await _call_with_optional_user(
+            assistant.chat,
+            body.get("message", ""),
+            body.get("history", []),
+            user=user,
+        )
+    except llm_client.LLMConfigurationError as exc:
+        message = (
+            "⚠️ El copiloto necesita una clave Anthropic para este workspace. "
+            "Ábrela en Tokens y guarda la clave API del tenant antes de usar el chat."
+        )
+        logger.info(
+            "assistant chat blocked by LLM configuration",
+            extra={"user_id": user.get("id"), "reason": str(exc)},
+        )
+        return {"reply": message, "viewer_urls": [], "messages": [{"role": "assistant", "content": message}]}
+    except llm_client.LLMProviderError as exc:
+        logger.warning(
+            "assistant chat provider error",
+            extra={"user_id": user.get("id"), "reason": str(exc)},
+        )
+        raise HTTPException(status_code=502, detail=f"El proveedor LLM respondió con error. {exc}") from exc
 
 
 # ── Datasets proxy → refinement ───────────────────────────────────────────────
