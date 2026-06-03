@@ -1,0 +1,68 @@
+version: 1
+cartridge: salesforce
+domain: Ventas
+metrics:
+  - id: pipeline_forecast
+    name: Forecast ponderado Salesforce
+    dataset: salesforce_pipeline_forecast
+    entity:
+      kind: seller
+      id_field: owner_id
+      label_field: vendedor
+    time_field: mes
+    value_field: forecast_ponderado_usd
+    expected_behavior: higher_is_good
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 6
+    signal_rules:
+      warning_pct: 0.20
+      critical_pct: 0.45
+    action_templates:
+      - id: inspect_forecast
+        label: Revisar oportunidades que explican el forecast
+        action_kind: owner_review
+        impact_multiplier: 0.20
+        cost: 180
+        risk: 100
+        time_cost: 80
+      - id: activate_pipeline_push
+        label: Activar empuje comercial focalizado
+        action_kind: growth_campaign
+        impact_multiplier: 0.35
+        cost: 850
+        risk: 280
+        time_cost: 180
+  - id: capacity_gap
+    name: Holgura forecast contra capacidad
+    dataset: salesforce_forecast_vs_capacidad
+    entity:
+      kind: pipeline
+      id_field: __all__
+      label_field: Forecast vs capacidad
+    time_field: mes
+    value_field: holgura_horas
+    expected_behavior: higher_is_good
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 6
+    signal_rules:
+      warning_pct: 0.15
+      critical_pct: 0.30
+    action_templates:
+      - id: capacity_preflight
+        label: Validar capacidad operativa antes de vender mas
+        action_kind: capacity_preflight
+        impact_multiplier: 0.25
+        cost: 300
+        risk: 160
+        time_cost: 140
+      - id: hire_or_rebalance
+        label: Preparar rebalanceo o refuerzo temporal
+        action_kind: capacity_rebalance
+        impact_multiplier: 0.40
+        cost: 1200
+        risk: 450
+        time_cost: 260

@@ -6039,6 +6039,7 @@ from app.routers import copilot_memory as copilot_memory_router       # v1.44.2 
 from app.routers import copilot_workflows as copilot_workflows_router # v1.44.2 Tarea I
 from app.routers import dashboard as dashboard_router      # v1.44.1 Tarea E
 from app.routers import freshness as freshness_router
+from app.routers import intelligence as intelligence_router
 from app.routers import marketplace as marketplace_router
 from app.routers import metrics as metrics_router
 from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
@@ -6055,6 +6056,7 @@ app.include_router(control_room.router)
 app.include_router(security.router)
 app.include_router(cartridges_router.router)
 app.include_router(freshness_router.router)
+app.include_router(intelligence_router.router)
 app.include_router(marketplace_router.router)
 app.include_router(metrics_router.router)
 app.include_router(copilot_router.router)

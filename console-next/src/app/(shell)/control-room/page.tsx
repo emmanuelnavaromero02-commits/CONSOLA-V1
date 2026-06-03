@@ -275,11 +275,37 @@ interface Omega {
     rules: string[];
     applied?: LessonApplication[];
   };
+  intelligence?: IntelligencePack;
+}
+
+interface IntelligencePack {
+  baseline?: {
+    method?: string;
+    actual_value?: number;
+    expected_value?: number;
+    sample_count?: number;
+    confidence?: number;
+  };
+  signal?: {
+    signal_id?: string;
+    metric_name?: string;
+    deviation_pct?: number;
+    signal_type?: string;
+    confidence?: number;
+    summary?: string;
+  };
+  evidence_pack?: {
+    summary?: string;
+    items?: Array<{ source_ref?: string; strength?: number }>;
+  };
+  hypotheses?: Array<{ title?: string; rationale?: string; confidence?: number }>;
+  options?: Array<{ label?: string; score?: number; impact_expected?: number; score_explanation?: string }>;
+  outcome?: { outcome_summary?: string; prediction_error?: number } | null;
 }
 
 interface ControlItem {
   id: string;
-  kind: "anomaly" | "control_item" | "source_state";
+  kind: "anomaly" | "control_item" | "source_state" | "intelligence_signal";
   domain: string;
   module: string;
   module_id?: string;
@@ -319,6 +345,7 @@ interface ControlItem {
   lesson_count?: number;
   lesson_applications?: LessonApplication[];
   action_templates?: ActionTemplate[];
+  intelligence?: IntelligencePack;
   omega: Omega;
 }
 
@@ -626,7 +653,7 @@ export default function ControlRoomPage() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [clockTick, setClockTick] = useState(0);
   const [urlHydrated, setUrlHydrated] = useState(false);
@@ -2370,17 +2397,48 @@ function ManualStep({
 }
 
 function InvestigationStep({ item, busyAction, onRecordStep }: { item: ControlItem; busyAction: string; onRecordStep: (item: ControlItem, stepId: string, note?: string) => void }) {
+  const intelligence = item.intelligence || item.omega.intelligence;
   return (
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
         <InfoBlock label="Causa probable" value={item.root_cause || item.omega.investigation.root_cause || "Pendiente"} />
         <InfoBlock label="Impacto" value={item.impact || item.omega.investigation.impact || item.recommendation} />
       </div>
+      {intelligence ? <IntelligencePanel intelligence={intelligence} /> : null}
       <button type="button" onClick={() => onRecordStep(item, "investigation", "Investigacion revisada")} disabled={busyAction !== ""} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
         {busyAction.startsWith(`step:${item.id}:investigation`) ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
         Registrar investigacion revisada
       </button>
     </div>
+  );
+}
+
+function IntelligencePanel({ intelligence }: { intelligence: IntelligencePack }) {
+  const baseline = intelligence.baseline || {};
+  const signal = intelligence.signal || {};
+  const evidence = intelligence.evidence_pack || {};
+  const hypothesis = intelligence.hypotheses?.[0];
+  const option = intelligence.options?.[0];
+  return (
+    <section className="rounded-lg border bg-card p-4" aria-label="Inteligencia operativa">
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-semibold uppercase text-muted-foreground">Inteligencia operativa</p>
+        <h4 className="text-base font-semibold">{signal.metric_name || signal.summary || "Senal con baseline"}</h4>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-4">
+        <InfoBlock label="Real" value={formatIntelligenceNumber(baseline.actual_value)} />
+        <InfoBlock label="Esperado" value={formatIntelligenceNumber(baseline.expected_value)} />
+        <InfoBlock label="Desviacion" value={formatIntelligencePercent(signal.deviation_pct)} />
+        <InfoBlock label="Confianza" value={formatIntelligencePercent(signal.confidence)} />
+      </div>
+      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+        <InfoBlock label="Evidencia" value={evidence.summary || `${evidence.items?.length || 0} fuentes`} />
+        <InfoBlock label="Hipotesis" value={hypothesis?.title || "Pendiente"} />
+        <InfoBlock label="Opcion top" value={option ? `${option.label || "Opcion"} · score ${option.score ?? "N/D"}` : "Pendiente"} />
+      </div>
+      {hypothesis?.rationale ? <p className="mt-3 text-sm text-muted-foreground">{hypothesis.rationale}</p> : null}
+      {option?.score_explanation ? <p className="mt-2 text-xs text-muted-foreground">{option.score_explanation}</p> : null}
+    </section>
   );
 }
 
@@ -2544,6 +2602,16 @@ function InfoBlock({ label, value }: { label: string; value: string | number }) 
       <p className="mt-1 text-sm">{value}</p>
     </div>
   );
+}
+
+function formatIntelligenceNumber(value?: number) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "N/D";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+}
+
+function formatIntelligencePercent(value?: number) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "N/D";
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function StatePanel({ icon: Icon, text, spinning = false }: { icon: LucideIcon; text: string; spinning?: boolean }) {
