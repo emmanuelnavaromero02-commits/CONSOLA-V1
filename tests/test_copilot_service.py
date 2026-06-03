@@ -1157,6 +1157,33 @@ def test_copilot_rejects_invalid_uuid_with_400(copilot_module, db, admin_user):
     assert "400" in str(exc_info.value)
 
 
+def test_copilot_surfaces_sanitised_llm_provider_reason(copilot_module, db, admin_user):
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    async def fake_chat(**_kwargs):
+        raise copilot_module.llm_client.LLMProviderError(
+            "Anthropic billing or credit limit reached; add credits before using the live copilot"
+        )
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.run_turn(
+            conversation_id=conv["id"],
+            user_message="hola",
+            user=admin_user,
+        ))
+
+    assert "Anthropic billing or credit limit reached" in str(exc_info.value)
+    assistant_messages = [m for m in db.messages if m["role"] == "assistant"]
+    assert assistant_messages
+    assert "Anthropic billing or credit limit reached" in assistant_messages[-1]["content"]
+    assert "sk-" not in assistant_messages[-1]["content"]
+
+
 def test_copilot_approval_key_is_args_specific(copilot_module):
     """The approval key must include args so approving 'delete X' does
     NOT also approve 'delete Y' that happened to share the bare name."""

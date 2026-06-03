@@ -1303,13 +1303,24 @@ async def _run_loop(
             # (set by RequestIDMiddleware), but the conversation row is
             # standalone and might be re-read later. Keep the warning
             # short and actionable.
+            if isinstance(exc, llm_client.LLMConfigurationError):
+                safe_message = (
+                    "⚠️ El copiloto no tiene proveedor LLM configurado. "
+                    f"{exc}."
+                )
+            elif isinstance(exc, llm_client.LLMProviderError):
+                safe_message = f"⚠️ El proveedor LLM respondió con error. {exc}."
+            else:
+                safe_message = (
+                    "⚠️ El proveedor de LLM devolvió un error. "
+                    "Reintenta en unos segundos o contacta al operador."
+                )
             await _persist_message(
                 conn, conversation_id=conversation_id,
                 role="assistant",
-                content="⚠️ El proveedor de LLM devolvió un error. "
-                        "Reintenta en unos segundos o contacta al operador.",
+                content=safe_message,
             )
-        raise HTTPException(502, "llm provider error")
+        raise HTTPException(502, safe_message)
 
     # Walk the new chunk and persist messages preserving the Anthropic
     # tool_use.id / tool_result.tool_use_id pairing so the next turn's
