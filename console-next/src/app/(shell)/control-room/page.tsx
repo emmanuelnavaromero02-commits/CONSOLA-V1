@@ -283,6 +283,9 @@ interface IntelligencePack {
     method?: string;
     actual_value?: number;
     expected_value?: number;
+    predicted_value?: number | null;
+    prediction_horizon_days?: number | null;
+    prediction_method?: string | null;
     sample_count?: number;
     confidence?: number;
   };
@@ -291,16 +294,29 @@ interface IntelligencePack {
     metric_name?: string;
     deviation_pct?: number;
     signal_type?: string;
+    signal_subtype?: string;
+    prediction_horizon_days?: number | null;
+    predicted_value?: number | null;
+    prediction_method?: string | null;
     confidence?: number;
     summary?: string;
   };
   evidence_pack?: {
     summary?: string;
-    items?: Array<{ source_ref?: string; strength?: number }>;
+    items?: Array<{ source_type?: string; source_ref?: string; supports_hypothesis?: string; strength?: number }>;
   };
   hypotheses?: Array<{ title?: string; rationale?: string; confidence?: number }>;
-  options?: Array<{ label?: string; score?: number; impact_expected?: number; score_explanation?: string }>;
-  outcome?: { outcome_summary?: string; prediction_error?: number } | null;
+  options?: Array<{ option_id?: string; label?: string; score?: number; impact_expected?: number; score_explanation?: string }>;
+  outcome?: { outcome_summary?: string; prediction_error?: number; actual_value?: number; predicted_value?: number } | null;
+}
+
+interface IntelligenceOutcomeDraft {
+  option_id?: string;
+  action_taken: string;
+  actual_value?: number;
+  predicted_value?: number;
+  outcome_summary?: string;
+  learned_rule?: string;
 }
 
 interface ControlItem {
@@ -1253,6 +1269,27 @@ export default function ControlRoomPage() {
     );
   }
 
+  async function recordIntelligenceOutcome(item: ControlItem, draft: IntelligenceOutcomeDraft) {
+    await mutateItem(
+      `intelOutcome:${item.id}`,
+      "No se pudo registrar el outcome",
+      async () => {
+        const response = await api.post<{ outcome: NonNullable<IntelligencePack["outcome"]> }>(
+          `/api/intelligence/signals/${encodeURIComponent(item.id)}/outcome`,
+          draft,
+        );
+        const intelligence = item.intelligence || item.omega.intelligence || {};
+        const nextIntelligence = { ...intelligence, outcome: response.data.outcome };
+        return {
+          ...item,
+          intelligence: nextIntelligence,
+          omega: { ...item.omega, intelligence: nextIntelligence },
+        };
+      },
+      "Outcome registrado",
+    );
+  }
+
   async function applyLesson(item: ControlItem, lesson: Lesson) {
     if (!lesson.id) return;
     await mutateItem(
@@ -1412,6 +1449,7 @@ export default function ControlRoomPage() {
             onApprove={approve}
             onDismiss={dismiss}
             onCreateLesson={createLesson}
+            onRecordIntelligenceOutcome={recordIntelligenceOutcome}
             onApplyLesson={applyLesson}
           />
         ) : (
@@ -2236,6 +2274,7 @@ function DetailPage({
   onApprove,
   onDismiss,
   onCreateLesson,
+  onRecordIntelligenceOutcome,
   onApplyLesson,
 }: {
   item: ControlItem;
@@ -2262,6 +2301,7 @@ function DetailPage({
   onApprove: (item: ControlItem) => void;
   onDismiss: (item: ControlItem) => void;
   onCreateLesson: (item: ControlItem, rule: string) => void;
+  onRecordIntelligenceOutcome: (item: ControlItem, draft: IntelligenceOutcomeDraft) => void;
   onApplyLesson: (item: ControlItem, lesson: Lesson) => void;
 }) {
   return (
@@ -2324,6 +2364,7 @@ function DetailPage({
             onDryRun={onDryRun}
             onExecute={onExecute}
             onCreateLesson={onCreateLesson}
+            onRecordIntelligenceOutcome={onRecordIntelligenceOutcome}
             onApplyLesson={onApplyLesson}
           />
           <div className="flex flex-wrap gap-2 border-t pt-4">
@@ -2364,6 +2405,7 @@ function ManualStep({
   onDryRun,
   onExecute,
   onCreateLesson,
+  onRecordIntelligenceOutcome,
   onApplyLesson,
 }: {
   item: ControlItem;
@@ -2378,6 +2420,7 @@ function ManualStep({
   onDryRun: (item: ControlItem) => void;
   onExecute: (item: ControlItem) => void;
   onCreateLesson: (item: ControlItem, rule: string) => void;
+  onRecordIntelligenceOutcome: (item: ControlItem, draft: IntelligenceOutcomeDraft) => void;
   onApplyLesson: (item: ControlItem, lesson: Lesson) => void;
 }) {
   const stepId = manualStepIds[manualTab];
@@ -2386,7 +2429,7 @@ function ManualStep({
     <section role="tabpanel" aria-label={stepLabel} className="rounded-lg border bg-background p-4">
       <p className="text-xs font-semibold uppercase text-muted-foreground">Paso {manualTab + 1} de 6</p>
       <h3 className="mt-1 text-lg font-semibold">{stepLabel}</h3>
-      {manualTab === 0 ? <InvestigationStep item={item} busyAction={busyAction} onRecordStep={onRecordStep} /> : null}
+      {manualTab === 0 ? <InvestigationStep item={item} busyAction={busyAction} onRecordStep={onRecordStep} onRecordIntelligenceOutcome={onRecordIntelligenceOutcome} /> : null}
       {manualTab === 1 ? <OptionsStep item={item} busyAction={busyAction} onSelectOption={onSelectOption} /> : null}
       {manualTab === 2 ? <DecisionStep item={item} busyAction={busyAction} onCreateDecision={onCreateDecision} /> : null}
       {manualTab === 3 ? <ExecutionStep item={item} busyAction={busyAction} onPreview={onPreview} onDryRun={onDryRun} onExecute={onExecute} /> : null}
@@ -2396,7 +2439,17 @@ function ManualStep({
   );
 }
 
-function InvestigationStep({ item, busyAction, onRecordStep }: { item: ControlItem; busyAction: string; onRecordStep: (item: ControlItem, stepId: string, note?: string) => void }) {
+function InvestigationStep({
+  item,
+  busyAction,
+  onRecordStep,
+  onRecordIntelligenceOutcome,
+}: {
+  item: ControlItem;
+  busyAction: string;
+  onRecordStep: (item: ControlItem, stepId: string, note?: string) => void;
+  onRecordIntelligenceOutcome: (item: ControlItem, draft: IntelligenceOutcomeDraft) => void;
+}) {
   const intelligence = item.intelligence || item.omega.intelligence;
   return (
     <div className="mt-4 space-y-4">
@@ -2404,7 +2457,7 @@ function InvestigationStep({ item, busyAction, onRecordStep }: { item: ControlIt
         <InfoBlock label="Causa probable" value={item.root_cause || item.omega.investigation.root_cause || "Pendiente"} />
         <InfoBlock label="Impacto" value={item.impact || item.omega.investigation.impact || item.recommendation} />
       </div>
-      {intelligence ? <IntelligencePanel intelligence={intelligence} /> : null}
+      {intelligence ? <IntelligencePanel item={item} intelligence={intelligence} busyAction={busyAction} onRecordOutcome={onRecordIntelligenceOutcome} /> : null}
       <button type="button" onClick={() => onRecordStep(item, "investigation", "Investigacion revisada")} disabled={busyAction !== ""} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
         {busyAction.startsWith(`step:${item.id}:investigation`) ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
         Registrar investigacion revisada
@@ -2413,12 +2466,40 @@ function InvestigationStep({ item, busyAction, onRecordStep }: { item: ControlIt
   );
 }
 
-function IntelligencePanel({ intelligence }: { intelligence: IntelligencePack }) {
+function IntelligencePanel({
+  item,
+  intelligence,
+  busyAction,
+  onRecordOutcome,
+}: {
+  item: ControlItem;
+  intelligence: IntelligencePack;
+  busyAction: string;
+  onRecordOutcome: (item: ControlItem, draft: IntelligenceOutcomeDraft) => void;
+}) {
   const baseline = intelligence.baseline || {};
   const signal = intelligence.signal || {};
   const evidence = intelligence.evidence_pack || {};
   const hypothesis = intelligence.hypotheses?.[0];
   const option = intelligence.options?.[0];
+  const [actionTaken, setActionTaken] = useState(option?.label || "");
+  const [actualValue, setActualValue] = useState("");
+  const [outcomeSummary, setOutcomeSummary] = useState("");
+  const externalEvidenceCount = (evidence.items || []).filter((evidenceItem) => evidenceItem.source_type === "external").length;
+  const topOptions = (intelligence.options || []).slice(0, 3);
+  const predictionHorizon = signal.prediction_horizon_days || baseline.prediction_horizon_days;
+  const predictedValue = signal.predicted_value ?? baseline.predicted_value;
+  const canSubmitOutcome = actionTaken.trim().length > 0 && busyAction === "";
+  function submitOutcome() {
+    if (!canSubmitOutcome) return;
+    onRecordOutcome(item, {
+      option_id: option?.option_id,
+      action_taken: actionTaken.trim(),
+      actual_value: actualValue.trim() ? Number(actualValue) : undefined,
+      predicted_value: typeof predictedValue === "number" ? predictedValue : undefined,
+      outcome_summary: outcomeSummary.trim() || undefined,
+    });
+  }
   return (
     <section className="rounded-lg border bg-card p-4" aria-label="Inteligencia operativa">
       <div className="flex flex-col gap-1">
@@ -2431,13 +2512,58 @@ function IntelligencePanel({ intelligence }: { intelligence: IntelligencePack })
         <InfoBlock label="Desviacion" value={formatIntelligencePercent(signal.deviation_pct)} />
         <InfoBlock label="Confianza" value={formatIntelligencePercent(signal.confidence)} />
       </div>
+      {predictionHorizon || typeof predictedValue === "number" ? (
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <InfoBlock label="Tipo" value={signal.signal_subtype === "observed" ? "Observada" : "Predictiva"} />
+          <InfoBlock label="Horizonte" value={predictionHorizon ? `${predictionHorizon} dias` : "N/D"} />
+          <InfoBlock label="Prediccion" value={formatIntelligenceNumber(predictedValue ?? undefined)} />
+        </div>
+      ) : null}
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         <InfoBlock label="Evidencia" value={evidence.summary || `${evidence.items?.length || 0} fuentes`} />
         <InfoBlock label="Hipotesis" value={hypothesis?.title || "Pendiente"} />
         <InfoBlock label="Opcion top" value={option ? `${option.label || "Opcion"} · score ${option.score ?? "N/D"}` : "Pendiente"} />
       </div>
+      <div className="mt-3 rounded-md border bg-background p-3">
+        <p className="text-xs font-semibold uppercase text-muted-foreground">Evidence Pack</p>
+        <div className="mt-2 grid gap-2 md:grid-cols-2">
+          {(evidence.items || []).slice(0, 4).map((evidenceItem, index) => (
+            <div key={`${evidenceItem.source_ref || "source"}:${index}`} className="rounded-md border p-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{evidenceItem.source_ref || "fuente"}</span>
+              <span> · {evidenceItem.supports_hypothesis || "baseline"}</span>
+              <span> · fuerza {formatIntelligencePercent(evidenceItem.strength)}</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">{externalEvidenceCount ? `${externalEvidenceCount} fuente(s) externas consideradas.` : "Sin contexto externo configurado para esta senal."}</p>
+      </div>
+      {topOptions.length ? (
+        <div className="mt-3 grid gap-2 lg:grid-cols-3">
+          {topOptions.map((candidate) => (
+            <div key={candidate.option_id || candidate.label} className="rounded-md border bg-background p-3">
+              <p className="text-sm font-semibold">{candidate.label || "Opcion"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Impacto {formatIntelligenceNumber(candidate.impact_expected)} · score {candidate.score ?? "N/D"}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {hypothesis?.rationale ? <p className="mt-3 text-sm text-muted-foreground">{hypothesis.rationale}</p> : null}
       {option?.score_explanation ? <p className="mt-2 text-xs text-muted-foreground">{option.score_explanation}</p> : null}
+      <div className="mt-4 rounded-md border bg-background p-3">
+        <p className="text-sm font-semibold">Registrar outcome</p>
+        <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1.2fr)_160px_minmax(0,1fr)_auto]">
+          <input value={actionTaken} onChange={(event) => setActionTaken(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" placeholder="Accion tomada" />
+          <input value={actualValue} onChange={(event) => setActualValue(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" inputMode="decimal" placeholder="Valor real" />
+          <input value={outcomeSummary} onChange={(event) => setOutcomeSummary(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" placeholder="Resumen del resultado" />
+          <button type="button" onClick={submitOutcome} disabled={!canSubmitOutcome} className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+            {busyAction === `intelOutcome:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
+            Guardar
+          </button>
+        </div>
+        {intelligence.outcome ? (
+          <p className="mt-2 text-xs text-muted-foreground">Ultimo outcome: {intelligence.outcome.outcome_summary || "registrado"} · error {formatIntelligenceNumber(intelligence.outcome.prediction_error)}</p>
+        ) : null}
+      </div>
     </section>
   );
 }

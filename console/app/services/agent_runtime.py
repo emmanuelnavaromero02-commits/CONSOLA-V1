@@ -595,13 +595,49 @@ def _build_system_prompt(agent: Agent, cartridge_hints: str) -> str:
 
 # ── Run logging ─────────────────────────────────────────────────────────────
 
-async def _start_run(agent_id: str, user_id: int | None, input_messages: list[dict]) -> int:
+async def _agent_runs_have_scope_columns() -> bool:
     pool = await _get_pool()
-    row = await pool.fetchrow(
-        "INSERT INTO agent_runs (agent_id, user_id, input_messages) "
-        "VALUES ($1, $2, $3::jsonb) RETURNING id",
-        agent_id, user_id, json.dumps(input_messages),
-    )
+    return bool(await pool.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1
+              FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='agent_runs'
+               AND column_name='workspace_id'
+        )
+        """
+    ))
+
+
+def _scope_parts(user: dict | None) -> tuple[str | None, str | None]:
+    if not user:
+        return None, None
+    tenant_id = str(user.get("active_tenant_id") or user.get("tenant_id") or "").strip() or None
+    workspace_id = str(user.get("active_workspace_id") or user.get("workspace_id") or "").strip() or None
+    return tenant_id, workspace_id
+
+
+async def _start_run(
+    agent_id: str,
+    user_id: int | None,
+    input_messages: list[dict],
+    user: dict | None = None,
+) -> int:
+    pool = await _get_pool()
+    tenant_id, workspace_id = _scope_parts(user)
+    if await _agent_runs_have_scope_columns():
+        row = await pool.fetchrow(
+            "INSERT INTO agent_runs (agent_id, user_id, input_messages, tenant_id, workspace_id) "
+            "VALUES ($1, $2, $3::jsonb, $4::uuid, $5::uuid) RETURNING id",
+            agent_id, user_id, json.dumps(input_messages), tenant_id, workspace_id,
+        )
+    else:
+        row = await pool.fetchrow(
+            "INSERT INTO agent_runs (agent_id, user_id, input_messages) "
+            "VALUES ($1, $2, $3::jsonb) RETURNING id",
+            agent_id, user_id, json.dumps(input_messages),
+        )
     return int(row["id"])
 
 
@@ -641,7 +677,7 @@ async def run(
     tools, server_map = await _discover_agent_tools(agent)
 
     user_id = user.get("id") if user else None
-    run_id  = await _start_run(agent.id, user_id, input_messages)
+    run_id  = await _start_run(agent.id, user_id, input_messages, user=user)
     await audit_service.record_event(
         user_id=user_id,
         email=user.get("email") if user else "agent-runner@omega.local",

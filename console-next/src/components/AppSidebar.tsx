@@ -89,7 +89,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/monitor", label: "Monitor", icon: Activity, section: "Operaciones", permission: "monitor.read", keywords: "jobs pipeline salud" },
       { href: "/operations/workflows", label: "Flujos de trabajo", icon: Workflow, section: "Operaciones", permission: "operations.read", adminOnly: true, keywords: "workflows flujos ejecutar cancelar" },
       { href: "/operations/metrics", label: "Métricas", icon: Gauge, section: "Operaciones", permission: "operations.read", keywords: "metricas salud carga" },
-      { href: "/agents", label: "Agentes", icon: Sparkles, section: "Operaciones", adminOnly: true, keywords: "automatizacion agentes tools" },
+      { href: "/agents", label: "Agentes", icon: Sparkles, section: "Operaciones", permission: "agents.read", keywords: "automatizacion agentes tools" },
       { href: "/operations/vault", label: "Vault", icon: ShieldCheck, section: "Operaciones", permission: "vault.connections.read", keywords: "secretos conexiones vault" },
       { href: "/cartridges", label: "Cartuchos", icon: Boxes, section: "Operaciones", permission: "cartridges.read", keywords: "plugins integraciones cartuchos" },
     ],

@@ -30,9 +30,10 @@ interface TokenSummary {
   models: TokenModelSummary[];
 }
 
-interface VaultSecretKeys {
-  keys?: string[];
-  secrets?: Array<{ key?: string }>;
+interface LlmKeyStatus {
+  provider: "anthropic";
+  configured: boolean;
+  scope: "llm";
 }
 
 export default function CopilotTokensPage() {
@@ -50,22 +51,22 @@ export default function CopilotTokensPage() {
     queryFn: getMeAccess,
     staleTime: 60_000,
   });
-  const llmSecrets = useQuery({
-    queryKey: ["copilot", "llm", "secrets"],
+  const llmKey = useQuery({
+    queryKey: ["copilot", "llm", "key"],
     queryFn: async () => {
-      const { data } = await api.get<VaultSecretKeys>("/api/vault/secrets/llm");
+      const { data } = await api.get<LlmKeyStatus>("/api/copilot/llm-key");
       return data;
     },
-    enabled: Boolean(access.data?.permissions?.includes("vault.secrets.read_masked")),
+    enabled: Boolean(access.data?.permissions?.includes("llm.keys.read")),
     staleTime: 30_000,
   });
   const saveAnthropicKey = useMutation({
     mutationFn: async (value: string) => {
-      await api.put("/api/vault/secrets/llm/anthropic_api_key", { value });
+      await api.put("/api/copilot/llm-key", { value });
     },
     onSuccess: async () => {
       setAnthropicKey("");
-      await queryClient.invalidateQueries({ queryKey: ["copilot", "llm", "secrets"] });
+      await queryClient.invalidateQueries({ queryKey: ["copilot", "llm", "key"] });
       toast.success("Clave Anthropic guardada para este workspace.");
     },
     onError: (error) => {
@@ -74,12 +75,8 @@ export default function CopilotTokensPage() {
   });
 
   const permissions = new Set(access.data?.permissions ?? []);
-  const canManageLlmKey = permissions.has("vault.connections.write");
-  const secretKeys = new Set([
-    ...(llmSecrets.data?.keys ?? []),
-    ...((llmSecrets.data?.secrets ?? []).map((item) => item.key).filter(Boolean) as string[]),
-  ]);
-  const anthropicConfigured = secretKeys.has("anthropic_api_key");
+  const canManageLlmKey = permissions.has("llm.keys.write");
+  const anthropicConfigured = llmKey.data?.configured === true;
 
   function submitAnthropicKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -152,7 +149,7 @@ export default function CopilotTokensPage() {
                   : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
               )}>
                 <ShieldCheck aria-hidden className="h-3.5 w-3.5" />
-                {llmSecrets.isLoading ? "Revisando..." : anthropicConfigured ? "Configurada" : "Sin configurar"}
+                {llmKey.isLoading ? "Revisando..." : anthropicConfigured ? "Configurada" : "Sin configurar"}
               </span>
             </div>
             <form onSubmit={submitAnthropicKey} className="flex flex-col gap-2 sm:flex-row">

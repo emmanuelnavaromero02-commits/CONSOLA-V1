@@ -38,6 +38,36 @@ async def intelligence_run(
     return await intelligence_engine.run_intelligence(user, body if isinstance(body, dict) else {})
 
 
+@router.get("/external/sources", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_external_sources(
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_engine.list_sources(user)
+
+
+@router.patch(
+    "/external/sources/{source_id}",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def intelligence_update_external_source(
+    source_id: str,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_engine.patch_source(user, source_id, body if isinstance(body, dict) else {})
+
+
+@router.post(
+    "/external/run",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def intelligence_external_run(
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_engine.run_sources(user, body if isinstance(body, dict) else {})
+
+
 @router.post(
     "/signals/{signal_id}/options/{option_id}/select",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],

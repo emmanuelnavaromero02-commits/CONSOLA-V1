@@ -46,7 +46,7 @@ async def serve_app(name: str, request: Request, user: dict = Depends(require_pe
     return await _proxy_workspace_app(request, name)
 
 # /studio
-@router.get("/studio", dependencies=[Depends(require_permission("studio.read"))])
+@router.get("/studio", dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)])
 @_bind_to_main
 async def studio_page():
     return FileResponse(STATIC / "studio.html")

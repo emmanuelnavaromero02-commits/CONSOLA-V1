@@ -1993,6 +1993,12 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         # we must not mask repeated failures from the team.
         logger.warning("api_me_access: marketplace pool unavailable", exc_info=True)
 
+    def _can(permission: str) -> bool:
+        return permission in effective
+
+    is_platform_admin = role_canonical in {"owner", "super_admin", "admin"}
+    can_manage_workspace = workspace_role_resolved in {"workspace_admin", "tenant_admin"}
+
     return {
         "user": {
             "id": user.get("id"),
@@ -2001,7 +2007,7 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         },
         "role": {
             "global": role_canonical,
-            "is_platform_admin": role_canonical in {"owner", "super_admin", "admin"},
+            "is_platform_admin": is_platform_admin,
         },
         "workspace": {
             "tenant_id": user.get("tenant_id") or user.get("active_tenant_id"),
@@ -2025,24 +2031,49 @@ async def api_me_access(user: dict = Depends(require_authenticated)):
         # link and get a 403 on click. The backend still rejects, but the
         # UI must not lie.
         "ui_capabilities": {
-            "can_view_iam":            "iam.users.read" in effective and role_canonical in {"owner", "super_admin", "admin"},
+            "can_view_iam":            _can("iam.users.read") and is_platform_admin,
             "can_manage_workspace_users": (
-                "iam.users.read" in effective
+                _can("iam.users.read")
                 and (
-                    role_canonical in {"owner", "super_admin", "admin"}
-                    or workspace_role_resolved in {"workspace_admin", "tenant_admin"}
+                    is_platform_admin
+                    or can_manage_workspace
                 )
             ),
-            "can_admin_marketplace":   "marketplace.admin" in effective,
+            "can_admin_marketplace":   _can("marketplace.admin"),
             # `workspace_role()` already normalizes the legacy database
             # workspace_role values (admin/owner/super_admin/security_admin)
             # to "workspace_admin" before returning. Comparing only to
             # "workspace_admin" keeps the intent explicit and prevents a
             # future copy-paste from re-introducing a global-admin check on
             # a workspace-scoped flag.
-            "can_admin_workspace":     workspace_role_resolved in {"workspace_admin", "tenant_admin"},
-            "can_view_audit":          "security.audit.read" in effective,
-            "can_view_sessions":       "security.sessions.read" in effective,
+            "can_admin_workspace":     can_manage_workspace,
+            "can_view_audit":          _can("security.audit.read"),
+            "can_view_sessions":       _can("security.sessions.read"),
+            "can_view_dashboard":      True,
+            "can_view_workspace":      _can("workspace.access"),
+            "can_view_copilot":        _can("copilot.use"),
+            "can_view_knowledge":      _can("mcp.registry.read") and is_platform_admin,
+            "can_view_tokens":         _can("copilot.use"),
+            "can_manage_llm_key":      _can("llm.keys.write"),
+            "can_view_marketplace":    _can("marketplace.read"),
+            "can_view_apps":           _can("apps.read"),
+            "can_view_catalog":        _can("datasets.read"),
+            "can_view_lineage":        _can("datasets.read"),
+            "can_view_bronze":         _can("datasets.write") and is_platform_admin,
+            "can_view_explorer":       _can("pipelines.read"),
+            "can_view_studio":         _can("studio.read") and is_platform_admin,
+            "can_view_control_room":   _can("workspace.access"),
+            "can_view_monitor":        _can("monitor.read"),
+            "can_view_workflows":      _can("operations.read") and is_platform_admin,
+            "can_view_metrics":        _can("operations.read"),
+            "can_view_agents":         _can("agents.read"),
+            "can_manage_agents":       _can("agents.write"),
+            "can_execute_agents":      _can("agents.execute"),
+            "can_view_vault":          _can("vault.connections.read"),
+            "can_view_cartridges":     _can("cartridges.read"),
+            "can_view_settings":       _can("settings.read") and is_platform_admin,
+            "can_view_security":       _can("security.audit.read") and is_platform_admin,
+            "can_view_decisions":      is_platform_admin,
         },
     }
 
@@ -2079,6 +2110,69 @@ async def get_job(job_id: str, user: dict = Depends(require_authenticated)):
 @app.get("/tokens/summary")
 async def tokens_summary(user: dict = Depends(require_permission("copilot.use"))):
     return await token_store.summary(user_context=user)
+
+
+def _llm_secret_keys(data: dict) -> set[str]:
+    keys: set[str] = set()
+    for key in data.get("keys") or []:
+        if key:
+            keys.add(str(key))
+    for item in data.get("secrets") or []:
+        if isinstance(item, dict) and item.get("key"):
+            keys.add(str(item["key"]))
+    return keys
+
+
+@app.get("/api/copilot/llm-key", dependencies=[Depends(require_permission("llm.keys.read"))])
+async def api_copilot_llm_key_status(user: dict = Depends(require_permission("llm.keys.read"))):
+    vault_scope = _tenant_vault_scope(user, "llm")
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
+            r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}")
+        if r.status_code in {404, 204}:
+            return {"provider": "anthropic", "configured": False, "scope": "llm"}
+        r.raise_for_status()
+        data = r.json() if r.content else {}
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, "Vault request failed") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "Vault request failed") from exc
+    return {
+        "provider": "anthropic",
+        "configured": "anthropic_api_key" in _llm_secret_keys(data if isinstance(data, dict) else {}),
+        "scope": "llm",
+    }
+
+
+@app.put("/api/copilot/llm-key", dependencies=[Depends(require_csrf), Depends(require_permission("llm.keys.write"))])
+async def api_copilot_llm_key_set(body: dict, user: dict = Depends(require_permission("llm.keys.write"))):
+    value = str(body.get("value") or "").strip()
+    if not value:
+        raise HTTPException(400, "value is required")
+    vault_scope = _tenant_vault_scope(user, "llm")
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
+            r = await c.put(
+                f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/anthropic_api_key",
+                json={"value": value},
+            )
+        r.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, "Vault request failed") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Vault request failed") from exc
+    await _audit.record_event(
+        user.get("id"), user.get("email"), "copilot.llm_key.upsert", "vault_secret", "llm/anthropic_api_key",
+        status="success",
+        metadata={
+            "provider": "anthropic",
+            "scope": "llm",
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
+        critical=True,
+    )
+    return {"provider": "anthropic", "configured": True, "scope": "llm"}
 
 
 # ── Assistant ─────────────────────────────────────────────────────────────────
@@ -3766,7 +3860,7 @@ async def studio_chat_stream(body: dict, user: dict = Depends(require_authentica
     )
 
 
-@app.get("/studio", dependencies=[Depends(require_permission("studio.read"))])
+@app.get("/studio", dependencies=[Depends(require_permission("studio.read")), Depends(require_admin)])
 async def studio_page():
     return FileResponse(STATIC / "studio.html")
 
@@ -3805,32 +3899,31 @@ async def rag_page():
 
 
 # ── Agents — CRUD + invoke ────────────────────────────────────────────────────
-# Agent definitions include prompts, tool allowlists and execution traces. Keep
-# the detailed API on admin-only surfaces until per-agent workspace ACLs land.
+# Agent definitions include prompts, tool allowlists and execution traces.
+# Platform admins can manage global seed agents; tenant/workspace admins manage
+# only agents scoped to their active workspace.
 
-@app.get("/agents", dependencies=[Depends(require_admin)])
+@app.get("/agents", dependencies=[Depends(require_permission("agents.read"))])
 async def viewer_agents(request: Request):
-    require_admin(request)
     from app.routers.pages import _console_next_response
 
     return _console_next_response(request, "agents/index.html")
 
 
-@app.get("/api/agents", dependencies=[Depends(require_admin)])
+@app.get("/api/agents", dependencies=[Depends(require_permission("agents.read"))])
 async def api_agents_list(
     request: Request,
     cartridge_id: str | None = None,
     include_inactive: bool = False,
+    user: dict = Depends(require_permission("agents.read")),
 ):
-    require_admin(request)
-    return {"agents": await _agents.list_agents(cartridge_id, include_inactive)}
+    return {"agents": await _agents.list_agents(cartridge_id, include_inactive, user_context=user)}
 
 
-@app.get("/api/agents/_tool-catalog", dependencies=[Depends(require_admin)])
+@app.get("/api/agents/_tool-catalog", dependencies=[Depends(require_permission("agents.read"))])
 async def api_agents_tool_catalog(request: Request):
     """Aggregate of tools exposed by every MCP server — used by the agent
     editor UI to populate the 'allowed_tools' multi-select."""
-    require_admin(request)
     out: dict[str, list] = {}
     async with httpx.AsyncClient(timeout=10) as c:
         for srv_id, base in _agent_runtime.SERVER_URLS.items():
@@ -3851,29 +3944,30 @@ async def api_agents_tool_catalog(request: Request):
     return {"servers": out}
 
 
-@app.get("/api/agents/{agent_id}", dependencies=[Depends(require_admin)])
-async def api_agents_get(request: Request, agent_id: str):
-    require_admin(request)
-    a = await _agents.get_agent(agent_id)
+@app.get("/api/agents/{agent_id}", dependencies=[Depends(require_permission("agents.read"))])
+async def api_agents_get(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.read"))):
+    a = await _agents.get_agent(agent_id, user_context=user)
     if not a:
         raise HTTPException(404, "agent not found")
     return a
 
 
-@app.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
-async def api_agents_create(request: Request, body: dict):
-    user = require_admin(request)
+@app.post("/api/agents", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
+async def api_agents_create(request: Request, body: dict, user: dict = Depends(require_permission("agents.write"))):
     try:
-        return await _agents.create_agent(body, owner_user_id=user.get("id"))
+        return await _agents.create_agent(body, owner_user_id=user.get("id"), user_context=user)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
 
-@app.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
-async def api_agents_update(request: Request, agent_id: str, body: dict):
-    require_admin(request)
+@app.patch("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
+async def api_agents_update(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.write"))):
     try:
-        a = await _agents.update_agent(agent_id, body)
+        a = await _agents.update_agent(agent_id, body, user_context=user)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     if not a:
@@ -3881,18 +3975,22 @@ async def api_agents_update(request: Request, agent_id: str, body: dict):
     return a
 
 
-@app.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_role(ROLE_ADMIN))])
-async def api_agents_delete(request: Request, agent_id: str):
-    require_admin(request)
-    ok = await _agents.delete_agent(agent_id)
+@app.delete("/api/agents/{agent_id}", dependencies=[Depends(require_csrf), Depends(require_permission("agents.write"))])
+async def api_agents_delete(request: Request, agent_id: str, user: dict = Depends(require_permission("agents.write"))):
+    try:
+        ok = await _agents.delete_agent(agent_id, user_context=user)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
     if not ok:
         raise HTTPException(404, "agent not found")
     return {"deleted": True}
 
 
-@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_admin)])
-async def api_agents_invoke(request: Request, agent_id: str, body: dict):
-    user  = require_admin(request)
+@app.post("/api/agents/{agent_id}/invoke", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])
+async def api_agents_invoke(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.execute"))):
+    visible = await _agents.get_agent(agent_id, user_context=user)
+    if not visible:
+        raise HTTPException(404, "agent not found")
     agent = await _agent_runtime.load_agent(agent_id)
     if not agent:
         raise HTTPException(404, "agent not found")
@@ -3958,10 +4056,12 @@ async def api_agents_invoke_scheduled(request: Request, agent_id: str, body: dic
     return result
 
 
-@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_admin)])
-async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
+@app.post("/api/agents/{agent_id}/invoke/stream", dependencies=[Depends(require_csrf), Depends(require_permission("agents.execute"))])
+async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict, user: dict = Depends(require_permission("agents.execute"))):
     """Server-Sent Events stream of tool_use / tool_result / text events."""
-    user  = require_admin(request)
+    visible = await _agents.get_agent(agent_id, user_context=user)
+    if not visible:
+        raise HTTPException(404, "agent not found")
     agent = await _agent_runtime.load_agent(agent_id)
     if not agent:
         raise HTTPException(404, "agent not found")
@@ -4001,16 +4101,14 @@ async def api_agents_invoke_stream(request: Request, agent_id: str, body: dict):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_admin)])
-async def api_agents_runs(request: Request, agent_id: str, limit: int = 20):
-    require_admin(request)
-    return {"runs": await _agents.list_runs(agent_id, limit=limit)}
+@app.get("/api/agents/{agent_id}/runs", dependencies=[Depends(require_permission("agents.read"))])
+async def api_agents_runs(request: Request, agent_id: str, limit: int = 20, user: dict = Depends(require_permission("agents.read"))):
+    return {"runs": await _agents.list_runs(agent_id, limit=limit, user_context=user)}
 
 
-@app.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_admin)])
-async def api_agent_run_detail(request: Request, run_id: int):
-    require_admin(request)
-    run = await _agents.get_run(run_id)
+@app.get("/api/agent-runs/{run_id}", dependencies=[Depends(require_permission("agents.read"))])
+async def api_agent_run_detail(request: Request, run_id: int, user: dict = Depends(require_permission("agents.read"))):
+    run = await _agents.get_run(run_id, user_context=user)
     if not run:
         raise HTTPException(404, "run not found")
     return run

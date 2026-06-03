@@ -32,6 +32,7 @@ from app.services import settings_service as _svc  # noqa: E402
 
 
 _ADMIN = {"id": 1, "role": "admin", "email": "admin@example.com"}
+_OWNER = {"id": 3, "role": "owner", "email": "owner@example.com"}
 _USER = {"id": 2, "role": "user", "email": "user@example.com"}
 _CSRF = "unit-test-csrf"
 
@@ -84,6 +85,13 @@ def test_get_settings_admin_returns_masked_list():
     data = response.json()
     assert data["settings"][0]["value"] == "ok"
     assert data["settings"][1]["value"] == "***"
+
+
+def test_get_settings_owner_returns_masked_list():
+    client = TestClient(_make_app(user=_OWNER))
+    with patch.object(_svc, "list_settings", new=AsyncMock(return_value=[])):
+        response = client.get("/api/settings")
+    assert response.status_code == 200, response.text
 
 
 def test_get_settings_passes_category_filter():

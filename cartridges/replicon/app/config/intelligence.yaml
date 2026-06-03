@@ -1,6 +1,15 @@
 version: 1
 cartridge: replicon
 domain: Rentabilidad
+external_sources:
+  - id: delivery_calendar
+    type: company_calendar
+    ttl_seconds: 86400
+    enabled: true
+  - id: market_notes
+    type: market_notes
+    ttl_seconds: 86400
+    enabled: true
 metrics:
   - id: project_margin
     name: Margen bruto mensual por proyecto
@@ -16,6 +25,18 @@ metrics:
       method: moving_average
       minimum_history: 2
       window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 1
+    hypotheses:
+      - id: delivery_scope_or_rate_shift
+        title: Cambio de alcance, tarifa o mix de entrega
+        rationale: El margen puede desviarse por horas no facturables, tarifa efectiva o cambios de alcance.
     signal_rules:
       warning_pct: 0.18
       critical_pct: 0.35
@@ -55,6 +76,18 @@ metrics:
       method: moving_average
       minimum_history: 2
       window: 8
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 120
+    hypotheses:
+      - id: capacity_or_assignment_shift
+        title: Cambio de capacidad o asignacion
+        rationale: Las horas facturables pueden variar por asignacion, ausencia, demanda o bloqueo del proyecto.
     signal_rules:
       warning_pct: 0.20
       critical_pct: 0.40

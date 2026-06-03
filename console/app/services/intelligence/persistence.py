@@ -1,0 +1,668 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import HTTPException
+
+from app.services import audit_service, auth
+from app.services.intelligence.utils import (
+    TERMINAL_SIGNAL_STATUSES,
+    SIGNAL_KIND,
+    coerce_json_metadata,
+    json_dumps,
+    num,
+    public_json,
+    workspace_scope,
+)
+
+
+async def persist_artifacts(
+    tenant_id: str | None,
+    workspace_id: str,
+    user: dict,
+    artifacts: list[dict[str, Any]],
+) -> None:
+    pool = await auth.pool()
+    for artifact in artifacts:
+        signal = artifact["signal"]
+        baseline = artifact["baseline"]
+        evidence_pack = artifact["evidence_pack"]
+        hypotheses = artifact["hypotheses"]
+        options = artifact["options"]
+        baseline_id = await persist_baseline(pool, tenant_id, workspace_id, signal, baseline)
+        signal["baseline_id"] = baseline_id
+        pack_id = await persist_evidence(pool, tenant_id, workspace_id, signal, evidence_pack)
+        evidence_pack["id"] = pack_id
+        for hypothesis in hypotheses:
+            hypothesis["evidence_pack_id"] = pack_id
+        await persist_signal(pool, tenant_id, workspace_id, signal)
+        await persist_hypotheses(pool, tenant_id, workspace_id, signal, hypotheses)
+        await persist_options(pool, tenant_id, workspace_id, signal, options)
+        await publish_control_room_item(
+            pool,
+            tenant_id,
+            workspace_id,
+            user,
+            {
+                **artifact,
+                "signal": signal,
+                "evidence_pack": evidence_pack,
+                "hypotheses": hypotheses,
+                "options": options,
+            },
+        )
+
+
+async def persist_baseline(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], baseline: dict[str, Any]) -> int:
+    row = await pool.fetchrow(
+        """
+        INSERT INTO metric_baselines (
+            tenant_id, workspace_id, cartridge_id, dataset, metric, entity_kind,
+            entity_id, entity_label, period_key, method, actual_value,
+            expected_value, sample_count, window_days, confidence, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+        ON CONFLICT (workspace_id, cartridge_id, dataset, metric, entity_id, period_key, method)
+        DO UPDATE SET
+            actual_value = EXCLUDED.actual_value,
+            expected_value = EXCLUDED.expected_value,
+            sample_count = EXCLUDED.sample_count,
+            window_days = EXCLUDED.window_days,
+            confidence = EXCLUDED.confidence,
+            metadata = EXCLUDED.metadata,
+            updated_at = NOW()
+        RETURNING id
+        """,
+        tenant_id,
+        workspace_id,
+        signal["cartridge_id"],
+        signal["dataset"],
+        signal["metric"],
+        signal["entity_kind"],
+        signal["entity_id"],
+        signal["entity_label"],
+        signal["period_key"],
+        baseline["method"],
+        signal["actual_value"],
+        signal["expected_value"],
+        baseline["sample_count"],
+        baseline["window"],
+        baseline["confidence"],
+        json_dumps(baseline),
+    )
+    return int(row["id"])
+
+
+async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any]) -> None:
+    await pool.execute(
+        """
+        INSERT INTO intelligence_signals (
+            signal_id, tenant_id, workspace_id, cartridge_id, dataset, domain,
+            entity_kind, entity_id, entity_label, metric, period_key,
+            actual_value, expected_value, deviation_value, deviation_pct,
+            severity, signal_type, status, baseline_id, confidence, summary,
+            prediction_horizon_days, predicted_value, prediction_method, signal_subtype,
+            metadata
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10, $11,
+            $12, $13, $14, $15,
+            $16, $17, 'open', $18, $19, $20,
+            $21, $22, $23, $24,
+            $25::jsonb
+        )
+        ON CONFLICT (workspace_id, signal_id) DO UPDATE
+        SET actual_value = EXCLUDED.actual_value,
+            expected_value = EXCLUDED.expected_value,
+            deviation_value = EXCLUDED.deviation_value,
+            deviation_pct = EXCLUDED.deviation_pct,
+            severity = EXCLUDED.severity,
+            signal_type = EXCLUDED.signal_type,
+            baseline_id = EXCLUDED.baseline_id,
+            confidence = EXCLUDED.confidence,
+            summary = EXCLUDED.summary,
+            prediction_horizon_days = EXCLUDED.prediction_horizon_days,
+            predicted_value = EXCLUDED.predicted_value,
+            prediction_method = EXCLUDED.prediction_method,
+            signal_subtype = EXCLUDED.signal_subtype,
+            metadata = EXCLUDED.metadata,
+            updated_at = NOW(),
+            status = CASE
+                WHEN intelligence_signals.status = ANY($26::text[])
+                THEN intelligence_signals.status
+                ELSE 'open'
+            END
+        """,
+        signal["signal_id"],
+        tenant_id,
+        workspace_id,
+        signal["cartridge_id"],
+        signal["dataset"],
+        signal["domain"],
+        signal["entity_kind"],
+        signal["entity_id"],
+        signal["entity_label"],
+        signal["metric"],
+        signal["period_key"],
+        signal["actual_value"],
+        signal["expected_value"],
+        signal["deviation_value"],
+        signal["deviation_pct"],
+        signal["severity"],
+        signal["signal_type"],
+        signal.get("baseline_id"),
+        signal["confidence"],
+        signal["summary"],
+        signal.get("prediction_horizon_days"),
+        signal.get("predicted_value"),
+        signal.get("prediction_method"),
+        signal.get("signal_subtype") or "observed",
+        json_dumps(
+            {
+                "metric_name": signal.get("metric_name"),
+                "expected_behavior": signal.get("expected_behavior"),
+                "signal_subtype": signal.get("signal_subtype") or "observed",
+            }
+        ),
+        sorted(TERMINAL_SIGNAL_STATUSES),
+    )
+
+
+async def persist_evidence(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], pack: dict[str, Any]) -> int:
+    row = await pool.fetchrow(
+        """
+        INSERT INTO evidence_packs (tenant_id, workspace_id, signal_id, summary, confidence, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        RETURNING id
+        """,
+        tenant_id,
+        workspace_id,
+        signal["signal_id"],
+        pack["summary"],
+        pack["confidence"],
+        json_dumps(
+            {
+                "metric": signal["metric"],
+                "dataset": signal["dataset"],
+                "signal_subtype": signal.get("signal_subtype") or "observed",
+            }
+        ),
+    )
+    pack_id = int(row["id"])
+    for item in pack.get("items", []):
+        await pool.execute(
+            """
+            INSERT INTO evidence_items (
+                tenant_id, workspace_id, evidence_pack_id, source_type,
+                source_ref, query_text, data, supports_hypothesis, strength,
+                metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            pack_id,
+            item.get("source_type") or "dataset",
+            item.get("source_ref") or signal["dataset"],
+            item.get("query_text"),
+            json_dumps(item.get("data") or {}),
+            item.get("supports_hypothesis"),
+            item.get("strength") or pack["confidence"],
+            json_dumps(item.get("metadata") or {}),
+        )
+    return pack_id
+
+
+async def persist_hypotheses(
+    pool: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    signal: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
+) -> None:
+    for hypothesis in hypotheses:
+        await pool.execute(
+            """
+            INSERT INTO hypotheses (
+                tenant_id, workspace_id, signal_id, hypothesis_key, title,
+                rationale, confidence, evidence_pack_id, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            ON CONFLICT (workspace_id, signal_id, hypothesis_key) DO UPDATE
+            SET title = EXCLUDED.title,
+                rationale = EXCLUDED.rationale,
+                confidence = EXCLUDED.confidence,
+                evidence_pack_id = EXCLUDED.evidence_pack_id,
+                metadata = EXCLUDED.metadata
+            """,
+            tenant_id,
+            workspace_id,
+            signal["signal_id"],
+            hypothesis["hypothesis_key"],
+            hypothesis["title"],
+            hypothesis["rationale"],
+            hypothesis["confidence"],
+            hypothesis.get("evidence_pack_id"),
+            json_dumps(hypothesis.get("metadata") or {}),
+        )
+
+
+async def persist_options(
+    pool: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    signal: dict[str, Any],
+    options: list[dict[str, Any]],
+) -> None:
+    for option in options:
+        await pool.execute(
+            """
+            INSERT INTO decision_options (
+                tenant_id, workspace_id, signal_id, option_id, label, action_kind,
+                impact_expected, confidence, cost, risk, time_cost, score, selected, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, $13::jsonb)
+            ON CONFLICT (workspace_id, signal_id, option_id) DO UPDATE
+            SET label = EXCLUDED.label,
+                action_kind = EXCLUDED.action_kind,
+                impact_expected = EXCLUDED.impact_expected,
+                confidence = EXCLUDED.confidence,
+                cost = EXCLUDED.cost,
+                risk = EXCLUDED.risk,
+                time_cost = EXCLUDED.time_cost,
+                score = EXCLUDED.score,
+                metadata = EXCLUDED.metadata,
+                updated_at = NOW()
+            """,
+            tenant_id,
+            workspace_id,
+            signal["signal_id"],
+            option["option_id"],
+            option["label"],
+            option["action_kind"],
+            option["impact_expected"],
+            option["confidence"],
+            option["cost"],
+            option["risk"],
+            option["time_cost"],
+            option["score"],
+            json_dumps({"score_explanation": option.get("score_explanation")}),
+        )
+
+
+async def publish_control_room_item(
+    pool: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    user: dict,
+    artifact: dict[str, Any],
+) -> None:
+    signal = artifact["signal"]
+    top_hypothesis = (artifact.get("hypotheses") or [{}])[0]
+    top_option = (artifact.get("options") or [{}])[0]
+    metadata = {
+        "module": "Intelligence Engine",
+        "description": signal["summary"],
+        "recommendation": top_option.get("label") or "Revisar evidencia y decidir siguiente paso.",
+        "root_cause": top_hypothesis.get("title") or "Desviacion contra baseline.",
+        "impact": f"Desviacion {signal['deviation_value']:.2f} en {signal['metric_name']}.",
+        "details": {
+            "actual_value": signal["actual_value"],
+            "expected_value": signal["expected_value"],
+            "predicted_value": signal.get("predicted_value"),
+            "prediction_horizon_days": signal.get("prediction_horizon_days"),
+            "deviation_pct": signal["deviation_pct"],
+            "evidence_pack_id": artifact.get("evidence_pack", {}).get("id"),
+            "source": "intelligence_engine",
+        },
+        "sql": (artifact.get("evidence_pack", {}).get("items") or [{}])[0].get("query_text"),
+        "intelligence": public_json(artifact),
+    }
+    priority_score = int(max(0, min(100, round(float(signal["confidence"]) * 45 + abs(float(signal["deviation_pct"])) * 55))))
+    await pool.execute(
+        """
+        INSERT INTO control_room_items (
+            tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset,
+            item_kind, title, severity, status, entity_kind, entity_id,
+            entity_label, anomaly_type, metadata, impact_estimate,
+            impact_currency, confidence, priority_score, selected_option_id,
+            execution_status, first_seen_at, last_seen_at
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, 'open', $10, $11,
+            $12, $13, $14::jsonb, $15,
+            'USD', $16, $17, NULL,
+            'not_started', NOW(), NOW()
+        )
+        ON CONFLICT (workspace_id, item_id) DO UPDATE
+        SET cartridge_id = EXCLUDED.cartridge_id,
+            domain = EXCLUDED.domain,
+            source_dataset = EXCLUDED.source_dataset,
+            item_kind = EXCLUDED.item_kind,
+            title = EXCLUDED.title,
+            severity = EXCLUDED.severity,
+            entity_kind = EXCLUDED.entity_kind,
+            entity_id = EXCLUDED.entity_id,
+            entity_label = EXCLUDED.entity_label,
+            anomaly_type = EXCLUDED.anomaly_type,
+            metadata = control_room_items.metadata || EXCLUDED.metadata,
+            impact_estimate = EXCLUDED.impact_estimate,
+            confidence = EXCLUDED.confidence,
+            priority_score = EXCLUDED.priority_score,
+            last_seen_at = NOW(),
+            status = CASE
+                WHEN control_room_items.status = ANY($18::text[])
+                THEN control_room_items.status
+                ELSE 'open'
+            END
+        """,
+        tenant_id,
+        workspace_id,
+        signal["signal_id"],
+        signal["cartridge_id"],
+        signal["domain"],
+        signal["dataset"],
+        SIGNAL_KIND,
+        signal["summary"],
+        signal["severity"],
+        signal["entity_kind"],
+        signal["entity_id"],
+        signal["entity_label"],
+        signal["metric"],
+        json_dumps(metadata),
+        abs(float(signal["deviation_value"])),
+        signal["confidence"],
+        priority_score,
+        sorted(TERMINAL_SIGNAL_STATUSES),
+    )
+    await pool.execute(
+        """
+        INSERT INTO control_room_item_events (
+            tenant_id, workspace_id, item_id, event_type, actor_id, actor_email, metadata
+        )
+        VALUES ($1, $2, $3, 'intelligence_signal_created', $4, $5, $6::jsonb)
+        """,
+        tenant_id,
+        workspace_id,
+        signal["signal_id"],
+        user.get("id"),
+        user.get("email"),
+        json_dumps({"metric": signal["metric"], "severity": signal["severity"]}),
+    )
+
+
+async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
+    _, workspace_id = workspace_scope(user)
+    pool = await auth.pool()
+    rows = await pool.fetch(
+        """
+        SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
+               entity_label, metric, period_key, actual_value, expected_value,
+               deviation_value, deviation_pct, severity, signal_type, status,
+               confidence, summary, prediction_horizon_days, predicted_value,
+               prediction_method, signal_subtype, metadata, created_at, updated_at
+          FROM intelligence_signals
+         WHERE workspace_id = $1
+         ORDER BY updated_at DESC, severity DESC
+         LIMIT $2
+        """,
+        workspace_id,
+        max(1, min(int(limit or 100), 500)),
+    )
+    return {"signals": [row_to_signal(row) for row in rows]}
+
+
+async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
+    _, workspace_id = workspace_scope(user)
+    pool = await auth.pool()
+    row = await pool.fetchrow(
+        """
+        SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
+               entity_label, metric, period_key, actual_value, expected_value,
+               deviation_value, deviation_pct, severity, signal_type, status,
+               confidence, summary, prediction_horizon_days, predicted_value,
+               prediction_method, signal_subtype, metadata, created_at, updated_at
+          FROM intelligence_signals
+         WHERE workspace_id = $1
+           AND signal_id = $2
+        """,
+        workspace_id,
+        signal_id,
+    )
+    if not row:
+        raise HTTPException(404, "intelligence signal not found")
+    evidence_pack = await _latest_evidence_pack(pool, workspace_id, signal_id)
+    hypotheses = await pool.fetch(
+        """
+        SELECT hypothesis_key, title, rationale, confidence, evidence_pack_id, metadata, created_at
+          FROM hypotheses
+         WHERE workspace_id = $1
+           AND signal_id = $2
+         ORDER BY confidence DESC
+        """,
+        workspace_id,
+        signal_id,
+    )
+    options = await pool.fetch(
+        """
+        SELECT option_id, label, action_kind, impact_expected, confidence, cost,
+               risk, time_cost, score, selected, metadata, created_at, updated_at
+          FROM decision_options
+         WHERE workspace_id = $1
+           AND signal_id = $2
+         ORDER BY score DESC
+        """,
+        workspace_id,
+        signal_id,
+    )
+    outcomes = await pool.fetch(
+        """
+        SELECT id, option_id, action_taken, predicted_value, actual_value,
+               prediction_error, outcome_summary, learned_rule, metadata, created_at
+          FROM prediction_outcomes
+         WHERE workspace_id = $1
+           AND signal_id = $2
+         ORDER BY created_at DESC
+         LIMIT 5
+        """,
+        workspace_id,
+        signal_id,
+    )
+    return {
+        "signal": row_to_signal(row),
+        "evidence_pack": evidence_pack,
+        "hypotheses": [public_json(dict(item)) for item in hypotheses],
+        "options": [public_json(dict(item)) for item in options],
+        "outcomes": [public_json(dict(item)) for item in outcomes],
+    }
+
+
+async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str, Any]:
+    tenant_id, workspace_id = workspace_scope(user)
+    pool = await auth.pool()
+    option = await pool.fetchrow(
+        """
+        SELECT option_id, label, score
+          FROM decision_options
+         WHERE workspace_id = $1
+           AND signal_id = $2
+           AND option_id = $3
+        """,
+        workspace_id,
+        signal_id,
+        option_id,
+    )
+    if not option:
+        raise HTTPException(404, "decision option not found")
+    await pool.execute(
+        "UPDATE decision_options SET selected = FALSE WHERE workspace_id = $1 AND signal_id = $2",
+        workspace_id,
+        signal_id,
+    )
+    await pool.execute(
+        """
+        UPDATE decision_options
+           SET selected = TRUE, updated_at = NOW()
+         WHERE workspace_id = $1
+           AND signal_id = $2
+           AND option_id = $3
+        """,
+        workspace_id,
+        signal_id,
+        option_id,
+    )
+    await pool.execute(
+        """
+        UPDATE control_room_items
+           SET selected_option_id = $3,
+               status = CASE WHEN status = 'open' THEN 'in_review' ELSE status END,
+               metadata = metadata || $4::jsonb,
+               last_seen_at = NOW()
+         WHERE workspace_id = $1
+           AND item_id = $2
+        """,
+        workspace_id,
+        signal_id,
+        option_id,
+        json_dumps({"selected_option_id": option_id}),
+    )
+    await audit_service.record_event(
+        user.get("id"),
+        user.get("email"),
+        "intelligence.option.select",
+        "intelligence_signal",
+        signal_id,
+        metadata={"tenant_id": tenant_id, "workspace_id": workspace_id, "option_id": option_id},
+    )
+    return {"selected": public_json(dict(option))}
+
+
+async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    tenant_id, workspace_id = workspace_scope(user)
+    pool = await auth.pool()
+    signal = await pool.fetchrow(
+        """
+        SELECT actual_value, expected_value, predicted_value, metric, cartridge_id
+          FROM intelligence_signals
+         WHERE workspace_id = $1
+           AND signal_id = $2
+        """,
+        workspace_id,
+        signal_id,
+    )
+    if not signal:
+        raise HTTPException(404, "intelligence signal not found")
+    signal_data = dict(signal)
+    option_id = str(body.get("option_id") or "").strip() or None
+    action_taken = str(body.get("action_taken") or body.get("action") or "").strip()
+    if not action_taken:
+        raise HTTPException(400, "action_taken is required")
+    actual_value = num(body.get("actual_value"))
+    predicted_value = num(body.get("predicted_value"))
+    if predicted_value is None:
+        predicted_value = num(signal_data.get("predicted_value")) or num(signal_data.get("actual_value"))
+    prediction_error = None
+    if actual_value is not None and predicted_value is not None:
+        prediction_error = round(actual_value - predicted_value, 4)
+    learned_rule = str(body.get("learned_rule") or "").strip() or None
+    if not learned_rule and prediction_error is not None:
+        learned_rule = f"Resultado medido con error {prediction_error:.2f} para {signal_data['metric']}."
+    outcome_summary = str(body.get("outcome_summary") or body.get("summary") or learned_rule or "Outcome registrado.").strip()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO prediction_outcomes (
+            tenant_id, workspace_id, signal_id, option_id, action_taken,
+            predicted_value, actual_value, prediction_error, outcome_summary,
+            learned_rule, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+        RETURNING *
+        """,
+        tenant_id,
+        workspace_id,
+        signal_id,
+        option_id,
+        action_taken,
+        predicted_value,
+        actual_value,
+        prediction_error,
+        outcome_summary,
+        learned_rule,
+        json_dumps({"reported_by": user.get("email")}),
+    )
+    if learned_rule:
+        await pool.execute(
+            """
+            INSERT INTO control_room_lessons (
+                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type, rule, confidence, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 0.70, $7::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            signal_id,
+            signal_data["cartridge_id"],
+            signal_data["metric"],
+            learned_rule,
+            json_dumps({"source": "prediction_outcome"}),
+        )
+    await pool.execute(
+        """
+        UPDATE control_room_items
+           SET metadata = metadata || $3::jsonb,
+               last_seen_at = NOW()
+         WHERE workspace_id = $1
+           AND item_id = $2
+        """,
+        workspace_id,
+        signal_id,
+        json_dumps({"intelligence_outcome": public_json(dict(row)), "lessons": [learned_rule] if learned_rule else []}),
+    )
+    await audit_service.record_event(
+        user.get("id"),
+        user.get("email"),
+        "intelligence.outcome.record",
+        "intelligence_signal",
+        signal_id,
+        metadata={"tenant_id": tenant_id, "workspace_id": workspace_id, "option_id": option_id},
+    )
+    return {"outcome": public_json(dict(row))}
+
+
+async def _latest_evidence_pack(pool: Any, workspace_id: str, signal_id: str) -> dict[str, Any] | None:
+    packs = await pool.fetch(
+        """
+        SELECT id, summary, confidence, metadata, created_at
+          FROM evidence_packs
+         WHERE workspace_id = $1
+           AND signal_id = $2
+         ORDER BY created_at DESC
+         LIMIT 1
+        """,
+        workspace_id,
+        signal_id,
+    )
+    if not packs:
+        return None
+    pack = dict(packs[0])
+    items = await pool.fetch(
+        """
+        SELECT id, source_type, source_ref, query_text, data, supports_hypothesis,
+               strength, metadata, created_at
+          FROM evidence_items
+         WHERE workspace_id = $1
+           AND evidence_pack_id = $2
+         ORDER BY strength DESC, id
+        """,
+        workspace_id,
+        pack["id"],
+    )
+    return {**public_json(pack), "items": [public_json(dict(item)) for item in items]}
+
+
+def row_to_signal(row: Any) -> dict[str, Any]:
+    data = dict(row)
+    data["metadata"] = coerce_json_metadata(data.get("metadata"))
+    return public_json(data)

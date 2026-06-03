@@ -1,6 +1,15 @@
 version: 1
 cartridge: hubspot
 domain: Ventas
+external_sources:
+  - id: commercial_calendar
+    type: company_calendar
+    ttl_seconds: 86400
+    enabled: true
+  - id: market_notes
+    type: market_notes
+    ttl_seconds: 86400
+    enabled: true
 metrics:
   - id: forecast_weighted
     name: Forecast ponderado mensual
@@ -16,6 +25,18 @@ metrics:
       method: moving_average
       minimum_history: 2
       window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 1
+    hypotheses:
+      - id: campaign_or_market_event
+        title: Campana, evento o condicion comercial externa
+        rationale: El forecast puede moverse por campanas, eventos del mercado o cambios en demanda.
     signal_rules:
       warning_pct: 0.20
       critical_pct: 0.45
@@ -55,6 +76,18 @@ metrics:
       method: moving_average
       minimum_history: 2
       window: 8
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 1
+    hypotheses:
+      - id: owner_execution_or_customer_delay
+        title: Ejecucion del owner o atraso del cliente
+        rationale: Deals estancados suelen explicarse por seguimiento interno, aprobaciones del cliente o timing comercial.
     signal_rules:
       warning_pct: 0.20
       critical_pct: 0.40

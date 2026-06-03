@@ -31,7 +31,7 @@ PSQL_GOLD=(docker compose -f docker-compose.aws.yml exec -T -e "PGOPTIONS=${GOLD
 
 "${PSQL[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
 
-for sql in "${ROOT_DIR}"/infra/init/[0-9][0-9]_*.sql; do
+for sql in "${ROOT_DIR}"/infra/init/[0-9][0-9]*_*.sql; do
   filename="$(basename "${sql}")"
   if [[ "$("${PSQL[@]}" -At -c "SELECT 1 FROM schema_migrations WHERE filename = '${filename}' LIMIT 1;")" == "1" ]]; then
     echo "[migrate] skip ${filename}"
@@ -50,7 +50,7 @@ done
 
 "${PSQL_GOLD[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
 
-for sql in "${ROOT_DIR}"/infra/init_gold/[0-9][0-9]_*.sql; do
+for sql in "${ROOT_DIR}"/infra/init_gold/[0-9][0-9]*_*.sql; do
   filename="gold/$(basename "${sql}")"
   if [[ "$("${PSQL_GOLD[@]}" -At -c "SELECT 1 FROM schema_migrations WHERE filename = '${filename}' LIMIT 1;")" == "1" ]]; then
     echo "[migrate:gold] skip ${filename}"

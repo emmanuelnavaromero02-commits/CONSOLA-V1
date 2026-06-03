@@ -1,0 +1,152 @@
+version: 1
+cartridge: sap_hcm
+domain: Personas
+external_sources:
+  - id: people_calendar
+    type: company_calendar
+    ttl_seconds: 86400
+    enabled: true
+  - id: labor_market_notes
+    type: market_notes
+    ttl_seconds: 86400
+    enabled: true
+metrics:
+  - id: absence_days_by_type
+    name: Dias de ausencia por tipo
+    dataset: absence_by_type_and_month
+    entity:
+      kind: absence_type
+      id_field: absence_type
+      label_field: absence_type
+    time_field: absence_month
+    value_field: total_days_workable
+    expected_behavior: lower_is_good
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 350
+    hypotheses:
+      - id: absence_policy_or_calendar_event
+        title: Calendario, politica o patron de ausencias
+        rationale: Las ausencias pueden subir por temporada, politica interna, eventos laborales o capacidad de managers.
+    signal_rules:
+      warning_pct: 0.20
+      critical_pct: 0.45
+    action_templates:
+      - id: manager_absence_review
+        label: Revisar ausencia con People Ops y managers
+        action_kind: owner_review
+        impact_multiplier: 0.25
+        cost: 300
+        risk: 140
+        time_cost: 120
+      - id: staffing_contingency
+        label: Preparar cobertura temporal
+        action_kind: capacity_rebalance
+        impact_multiplier: 0.45
+        cost: 1200
+        risk: 360
+        time_cost: 240
+      - id: monitor_absence_trend
+        label: Mantener monitoreo de ausencias
+        action_kind: monitor
+        impact_multiplier: 0.00
+        cost: 0
+        risk: 50
+        time_cost: 0
+  - id: headcount_by_department
+    name: Plantilla activa por departamento
+    dataset: headcount_by_department
+    entity:
+      kind: department
+      id_field: org_id
+      label_field: org_name
+    time_field: snapshot_month
+    value_field: headcount
+    expected_behavior: watch
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 2500
+    hypotheses:
+      - id: workforce_shape_change
+        title: Cambio en composicion de plantilla
+        rationale: Un cambio de headcount debe validarse contra movimientos de alta/baja, transferencia o reestructura.
+    signal_rules:
+      warning_pct: 0.15
+      critical_pct: 0.30
+    action_templates:
+      - id: validate_org_movements
+        label: Validar altas, bajas y transferencias
+        action_kind: owner_review
+        impact_multiplier: 0.20
+        cost: 250
+        risk: 120
+        time_cost: 100
+      - id: update_capacity_plan
+        label: Actualizar plan de capacidad
+        action_kind: planning_update
+        impact_multiplier: 0.35
+        cost: 700
+        risk: 220
+        time_cost: 180
+  - id: active_headcount_by_cost_center
+    name: Plantilla activa por centro de costo
+    dataset: workforce_cost_monthly
+    entity:
+      kind: cost_center
+      id_field: cost_center
+      label_field: cost_center
+    time_field: cost_month
+    value_field: active_headcount
+    expected_behavior: watch
+    baseline:
+      method: moving_average
+      minimum_history: 2
+      window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 2500
+    hypotheses:
+      - id: cost_center_staffing_shift
+        title: Cambio de staffing por centro de costo
+        rationale: La variacion puede venir de transferencia, baja, alta pendiente o mapeo incorrecto de centro de costo.
+    signal_rules:
+      warning_pct: 0.15
+      critical_pct: 0.30
+    action_templates:
+      - id: review_cost_center_mapping
+        label: Revisar mapeo de centro de costo
+        action_kind: data_quality_review
+        impact_multiplier: 0.18
+        cost: 180
+        risk: 90
+        time_cost: 80
+      - id: people_finance_reconcile
+        label: Conciliar plantilla con Finanzas
+        action_kind: remediation_plan
+        impact_multiplier: 0.35
+        cost: 650
+        risk: 240
+        time_cost: 180

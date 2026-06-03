@@ -35,12 +35,17 @@ PERMISSIONS = [
     {"key": "control_room.execute", "label": "Execute control room write-back", "category": "Workspace", "description": "Run explicitly approved Control Room write-back adapters."},
     {"key": "mcp.registry.read", "label": "Read MCP registry", "category": "MCP", "description": "View registered MCP services."},
     {"key": "mcp.invoke", "label": "Invoke MCP", "category": "MCP", "description": "Invoke MCP tools."},
+    {"key": "agents.read", "label": "Read agents", "category": "Agents", "description": "View workspace-visible agents and their runs."},
+    {"key": "agents.write", "label": "Write agents", "category": "Agents", "description": "Create and edit workspace-scoped agents."},
+    {"key": "agents.execute", "label": "Execute agents", "category": "Agents", "description": "Invoke workspace-visible agents."},
     {"key": "apps.read", "label": "Read apps", "category": "Apps", "description": "View analytic apps."},
     {"key": "apps.write", "label": "Write apps", "category": "Apps", "description": "Modify analytic apps."},
     {"key": "settings.read", "label": "Read settings", "category": "Settings", "description": "View system settings (masked secrets)."},
     {"key": "settings.write", "label": "Write settings", "category": "Settings", "description": "Edit/reveal/rotate system settings."},
     {"key": "operations.read", "label": "Read operations", "category": "Operations", "description": "View system migrations and service health."},
     {"key": "operations.write", "label": "Write operations", "category": "Operations", "description": "Trigger operational actions."},
+    {"key": "llm.keys.read", "label": "Read workspace LLM key status", "category": "Copilot", "description": "Check whether the workspace has its own LLM provider key configured."},
+    {"key": "llm.keys.write", "label": "Write workspace LLM key", "category": "Copilot", "description": "Set or rotate the workspace-scoped LLM provider key."},
     # Sprint v1.41.0 — auditor P1 operativa: admins configure cartridge
     # connections + trigger extractions from the console. Modelled after
     # the pipelines.{run,write} split.
@@ -168,10 +173,12 @@ ROLE_PERMISSIONS = {
         "control_room.write", "control_room.execute",
         "vault.connections.read", "vault.connections.write",
         "vault.secrets.read_masked", "apps.read", "apps.write",
+        "agents.read", "agents.write", "agents.execute",
         "cartridges.read", "cartridges.write", "cartridges.execute",
         "marketplace.read", "marketplace.request",
         # v1.42: workspace admins drive the copilot end-to-end.
         "copilot.use", "copilot.write", "copilot.execute",
+        "llm.keys.read", "llm.keys.write",
     },
     "tenant_admin": {
         # Customer tenant admins can manage users in their own workspace and
@@ -186,12 +193,15 @@ ROLE_PERMISSIONS = {
         "vault.secrets.read_masked",
         "datasets.read", "pipelines.read", "monitor.read", "operations.read",
         "workspace.access", "control_room.write", "control_room.execute",
-        "apps.read", "cartridges.read", "marketplace.read", "marketplace.request",
-        "copilot.use",
+        "apps.read", "cartridges.read", "cartridges.write", "cartridges.execute",
+        "marketplace.read", "marketplace.request",
+        "agents.read", "agents.write", "agents.execute",
+        "copilot.use", "llm.keys.read", "llm.keys.write",
     },
     "analyst": {
         "datasets.read", "pipelines.read", "monitor.read",
         "workspace.access", "apps.read", "cartridges.read", "marketplace.read", "marketplace.request",
+        "agents.read", "agents.execute",
         # v1.42: analysts query data via the copilot — read-only.
         "copilot.use",
     },
@@ -234,6 +244,13 @@ RESOURCE_ACTION_PERMISSIONS = {
     ("/studio", "write"): "studio.write",
     ("/monitor", "read"): "monitor.read",
     ("/workspace", "access"): "workspace.access",
+    ("/agents", "read"): "agents.read",
+    ("/api/agents", "read"): "agents.read",
+    ("/api/agents", "write"): "agents.write",
+    ("/api/agents", "execute"): "agents.execute",
+    ("/copilot/tokens", "read"): "copilot.use",
+    ("/api/copilot/llm-key", "read"): "llm.keys.read",
+    ("/api/copilot/llm-key", "write"): "llm.keys.write",
     ("/marketplace", "read"): "marketplace.read",
     ("/marketplace", "request"): "marketplace.request",
     ("/admin/installations", "read"): "marketplace.admin",

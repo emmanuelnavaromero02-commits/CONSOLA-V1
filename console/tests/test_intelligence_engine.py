@@ -43,6 +43,28 @@ def _metric() -> dict:
     }
 
 
+def _metric_with_prediction_and_external() -> dict:
+    metric = _metric()
+    metric["prediction"] = {"enabled": True, "method": "trend_delta", "horizon_days": [7, 21], "minimum_history": 2}
+    metric["external_sources"] = [
+        {
+            "id": "commercial_calendar",
+            "type": "company_calendar",
+            "events": [
+                {
+                    "entity_id": "u1",
+                    "entity_kind": "seller",
+                    "date": "2026-03-01",
+                    "title": "Campana regional activa",
+                    "strength": 0.72,
+                }
+            ],
+        }
+    ]
+    metric["hypotheses"] = [{"id": "campaign_lift", "title": "Campana comercial activa"}]
+    return metric
+
+
 def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     rows = [
         {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
@@ -69,6 +91,49 @@ def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     assert option["score"] == pytest.approx(
         option["impact_expected"] * option["confidence"] - option["cost"] - option["risk"] - option["time_cost"]
     )
+
+
+def test_build_metric_artifacts_generates_predictive_signals_when_requested():
+    rows = [
+        {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
+        {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
+        {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+    ]
+
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(),
+        _metric_with_prediction_and_external(),
+        rows,
+        horizon_days=[7, 21],
+    )
+
+    assert skipped == []
+    predictive = [artifact for artifact in artifacts if artifact["signal"]["signal_subtype"].startswith("future_")]
+    assert {artifact["signal"]["prediction_horizon_days"] for artifact in predictive} == {7, 21}
+    assert all(artifact["signal"]["predicted_value"] is not None for artifact in predictive)
+    assert all(artifact["signal"]["confidence"] < artifacts[0]["signal"]["confidence"] for artifact in predictive)
+
+
+def test_external_context_enriches_evidence_and_hypotheses_without_inventing_numbers():
+    rows = [
+        {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
+        {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
+        {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+    ]
+
+    artifacts, _ = intelligence_engine.build_metric_artifacts(
+        _contract(),
+        _metric_with_prediction_and_external(),
+        rows,
+        include_external=True,
+        horizon_days=[],
+    )
+
+    evidence_items = artifacts[0]["evidence_pack"]["items"]
+    assert evidence_items[0]["data"]["row_count"] == 3
+    assert evidence_items[0]["data"]["sample_hash"]
+    assert any(item["source_type"] == "external" for item in evidence_items)
+    assert any(hypothesis["hypothesis_key"] == "external_event_correlation" for hypothesis in artifacts[0]["hypotheses"])
 
 
 def test_build_metric_artifacts_does_not_invent_when_history_is_insufficient():

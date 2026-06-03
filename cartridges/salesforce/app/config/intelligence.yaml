@@ -1,6 +1,15 @@
 version: 1
 cartridge: salesforce
 domain: Ventas
+external_sources:
+  - id: commercial_calendar
+    type: company_calendar
+    ttl_seconds: 86400
+    enabled: true
+  - id: market_notes
+    type: market_notes
+    ttl_seconds: 86400
+    enabled: true
 metrics:
   - id: pipeline_forecast
     name: Forecast ponderado Salesforce
@@ -16,6 +25,18 @@ metrics:
       method: moving_average
       minimum_history: 2
       window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 1
+    hypotheses:
+      - id: pipeline_mix_or_market_event
+        title: Cambio de mix de pipeline o contexto comercial
+        rationale: El forecast puede variar por mezcla de oportunidades, eventos comerciales o demanda externa.
     signal_rules:
       warning_pct: 0.20
       critical_pct: 0.45
@@ -48,6 +69,18 @@ metrics:
       method: moving_average
       minimum_history: 2
       window: 6
+    prediction:
+      enabled: true
+      method: trend_delta
+      horizon_days: [7, 21]
+      minimum_history: 2
+    impact:
+      currency: USD
+      unit_value: 120
+    hypotheses:
+      - id: sales_delivery_capacity_gap
+        title: Brecha entre venta futura y capacidad operativa
+        rationale: La holgura puede caer si el forecast crece mas rapido que la capacidad disponible.
     signal_rules:
       warning_pct: 0.15
       critical_pct: 0.30

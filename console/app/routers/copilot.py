@@ -297,7 +297,7 @@ async def get_briefing(
     6 (the brief's documented cap). Frontend renders one card per
     highlight on the dashboard.
     """
-    highlights = await proactive_service.briefing_for_user(user["id"])
+    highlights = await proactive_service.briefing_for_user(user["id"], user_context=user)
     return {"highlights": highlights}
 
 
