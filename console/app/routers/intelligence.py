@@ -4,6 +4,7 @@ from fastapi import APIRouter, Body, Depends, Query
 
 from app.dependencies import require_authenticated
 from app.services import intelligence_engine
+from app.services.intelligence.readiness import intelligence_readiness
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
 
@@ -25,6 +26,14 @@ async def intelligence_signal_detail(
     user: dict = Depends(require_authenticated),
 ):
     return await intelligence_engine.get_signal(user, signal_id)
+
+
+@router.get("/readiness", dependencies=[Depends(require_permission("datasets.read"))])
+async def intelligence_readiness_endpoint(
+    require_data: bool = Query(default=True),
+    user: dict = Depends(require_authenticated),
+):
+    return await intelligence_readiness(user, require_data=require_data)
 
 
 @router.post(

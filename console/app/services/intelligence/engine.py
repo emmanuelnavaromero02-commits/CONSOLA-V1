@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services import audit_service, control_room_service
+from app.services import audit_service
 from app.services.intelligence.baseline import build_metric_artifacts
 from app.services.intelligence.contracts import load_contracts
 from app.services.intelligence.external import list_sources, patch_source, run_sources
+from app.services.intelligence.gold_fetcher import query_intelligence_dataset_rows
 from app.services.intelligence.persistence import (
     get_signal,
     list_signals,
@@ -52,7 +53,7 @@ async def run_intelligence(
     include_external = bool((body or {}).get("include_external"))
     dry_run = bool((body or {}).get("dry_run"))
     horizons = _requested_horizons(body)
-    fetch = fetcher or control_room_service.query_dataset_rows
+    fetch = fetcher or query_intelligence_dataset_rows
     artifacts: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     for contract in contracts:

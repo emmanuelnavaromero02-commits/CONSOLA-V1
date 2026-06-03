@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from app.services import intelligence_engine
+from app.services.intelligence import engine as intelligence_engine_module
+from app.services.intelligence import readiness as intelligence_readiness_module
 
 
 USER = {
@@ -191,3 +193,67 @@ async def test_run_intelligence_can_run_without_persisting_or_llm(monkeypatch):
     assert result["workspace_id"] == USER["active_workspace_id"]
     assert len(result["signals"]) == 1
     assert result["signals"][0]["signal_id"].startswith("intel:")
+
+
+@pytest.mark.asyncio
+async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch):
+    async def fake_gold_fetcher(dataset: str, user: dict | None, limit: int):
+        assert dataset == "forecast_mensual"
+        assert user == USER
+        assert limit >= 3
+        return [
+            {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
+            {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
+            {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+        ]
+
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
+    )
+    monkeypatch.setattr(intelligence_engine_module, "query_intelligence_dataset_rows", fake_gold_fetcher)
+
+    result = await intelligence_engine.run_intelligence(USER, {}, persist=False)
+
+    assert len(result["signals"]) == 1
+    assert result["skipped"] == []
+
+
+@pytest.mark.asyncio
+async def test_intelligence_readiness_sets_rls_context_before_signal_stats(monkeypatch):
+    class FakeConnection:
+        def __init__(self):
+            self.executed: list[tuple[str, tuple]] = []
+
+        async def execute(self, query: str, *args):
+            self.executed.append((query, args))
+
+        async def fetchrow(self, query: str, *args):
+            assert any("app.workspace_id" in item[0] for item in self.executed)
+            assert any("app.tenant_id" in item[0] for item in self.executed)
+            return {"count": 3, "last_signal_at": None}
+
+        def transaction(self):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def close(self):
+            return None
+
+    fake = FakeConnection()
+
+    async def fake_connect(*args, **kwargs):
+        return fake
+
+    monkeypatch.setattr(intelligence_readiness_module, "_operational_dsn", lambda: "postgresql://db")
+    monkeypatch.setattr(intelligence_readiness_module.asyncpg, "connect", fake_connect)
+
+    stats = await intelligence_readiness_module._signal_stats(USER)
+
+    assert stats["signal_count"] == 3

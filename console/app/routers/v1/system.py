@@ -83,13 +83,33 @@ async def readyz(request: Request):
         or str(request.query_params.get("require_data") or "").strip().lower() in {"1", "true", "yes", "on"}
     )
     checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
+    try:
+        from app.services.intelligence.readiness import intelligence_readiness
+
+        checks["intelligence_data"] = await intelligence_readiness(
+            getattr(request.state, "user", None),
+            require_data=require_data,
+        )
+    except Exception as exc:
+        logger.warning("readiness probe failed for intelligence_data", exc_info=True)
+        checks["intelligence_data"] = {
+            "status": "degraded",
+            "required": require_data,
+            "error": type(exc).__name__,
+        }
 
     dependency_ok = all(
         check.get("status") == "up"
         for name, check in checks.items()
-        if name != "control_room_data"
+        if name not in {"control_room_data", "intelligence_data"}
     )
-    data_ok = checks["control_room_data"].get("status") == "up" or not require_data
+    data_ok = (
+        (
+            checks["control_room_data"].get("status") == "up"
+            and checks["intelligence_data"].get("status") == "up"
+        )
+        or not require_data
+    )
     ok = dependency_ok and data_ok
     body = {"ok": ok, "service": "console"}
     if getattr(request.state, "user", None):

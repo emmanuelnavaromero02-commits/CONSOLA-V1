@@ -10,7 +10,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up up-core down nuke logs ps test smoke stress production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public
+.PHONY: help up up-core down nuke logs ps test smoke stress production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -33,6 +33,8 @@ help:
 	@echo "                    run the local production-readiness gate"
 	@echo "  make production-readiness-aws"
 	@echo "                    run the remote AWS/prod-like readiness gate"
+	@echo "  make seed-intelligence-gold"
+	@echo "                    seed scoped prod-like Gold rows for intelligence demos"
 	@echo "  make dr-rehearsal"
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
@@ -86,6 +88,16 @@ logs:
 
 ps:
 	$(COMPOSE_FULL) ps
+
+seed-intelligence-gold:
+	@set -a; \
+	if [ -f infra/.env ]; then . infra/.env; fi; \
+	set +a; \
+	PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres 5432 | awk -F: 'END {print $$NF}')"; \
+	GOLD_PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres_gold 5433 | awk -F: 'END {print $$NF}')"; \
+	DATABASE_URL="postgresql://omega_console:$${OMEGA_CONSOLE_PASSWORD}@127.0.0.1:$${PG_PORT}/modecissions" \
+	GOLD_DATABASE_URL="postgresql://omega_refinement_gold:$${OMEGA_REFINEMENT_GOLD_PASSWORD}@127.0.0.1:$${GOLD_PG_PORT}/modecissions_gold" \
+	PYTHONPATH=console $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/seed_intelligence_gold_prod_like.py
 
 test:
 	$(PYTEST) -ra tests/

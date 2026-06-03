@@ -41,6 +41,26 @@ def test_intelligence_external_predictive_migration_is_workspace_scoped():
     assert "99_intelligence_external_predictive.sql" in migration
 
 
+def test_intelligence_native_rls_migration_is_fail_closed():
+    migration = read("infra/init/99d_intelligence_native_rls.sql")
+    for table in (
+        "metric_baselines",
+        "intelligence_signals",
+        "evidence_packs",
+        "evidence_items",
+        "hypotheses",
+        "decision_options",
+        "prediction_outcomes",
+        "external_intelligence_sources",
+        "external_evidence_cache",
+    ):
+        assert f"'{table}'" in migration
+    assert "ENABLE ROW LEVEL SECURITY" in migration
+    assert "FORCE ROW LEVEL SECURITY" in migration
+    assert "current_setting(''app.workspace_id'', true)" in migration
+    assert "WITH CHECK" in migration
+
+
 def test_priority_cartridges_have_valid_intelligence_contracts():
     for cartridge_id in ("hubspot", "replicon", "salesforce", "sap_hcm"):
         path = ROOT / "cartridges" / cartridge_id / "app/config/intelligence.yaml"
@@ -81,6 +101,7 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert "intelligence_router" in main
     assert "app.include_router(intelligence_router.router)" in main
     assert '@router.get("/signals"' in router
+    assert '@router.get("/readiness"' in router
     assert '@router.get("/external/sources"' in router
     assert '"/external/sources/{source_id}"' in router
     assert '"/external/run"' in router
