@@ -2409,6 +2409,14 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       // Cargar apps analíticas publicadas
       loadAppsInStep5();
       document.getElementById('btn-analytics-sql')?.addEventListener('click', showAnalyticsSql);
+      const supersetLink = document.getElementById('analytics-superset-link');
+      supersetLink?.addEventListener('click', (event) => {
+        const url = supersetUrl();
+        supersetLink.setAttribute('href', url);
+        if (!url || url === '#') return;
+        event.preventDefault();
+        window.location.assign(url);
+      });
     }
 
     export function showAnalyticsSql() {
