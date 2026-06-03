@@ -4,6 +4,8 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from refinement.app.duckdb_engine import DuckDBEngine
 
 
@@ -159,6 +161,46 @@ def test_scope_storage_sql_rewrites_registered_silver_to_latest_snapshot(monkeyp
 
     assert latest in rewritten
     assert "hubspot_deals_latest/data.parquet" not in rewritten
+
+
+@pytest.mark.parametrize("glob", ["*.parquet", "**/*.parquet"])
+def test_scope_storage_sql_rewrites_registered_silver_globs_to_latest_snapshot(monkeypatch, glob):
+    engine = DuckDBEngine()
+    latest = (
+        "s3://lakehouse/silver/hubspot/hubspot_deals_latest/"
+        "tenant_id=tenant-1/workspace_id=workspace-1/_snapshots/20260531.parquet"
+    )
+    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *args, **kwargs: latest)
+    sql = f"SELECT * FROM read_parquet('s3://lakehouse/silver/hubspot/hubspot_deals_latest/{glob}')"
+
+    rewritten = engine._scope_storage_sql(
+        sql,
+        ["silver/hubspot/hubspot_deals_latest"],
+        {"tenant_id": "tenant-1", "workspace_id": "workspace-1"},
+    )
+
+    assert latest in rewritten
+    assert f"hubspot_deals_latest/{glob}" not in rewritten
+
+
+def test_validate_scoped_storage_sql_rejects_cross_tenant_paths():
+    engine = DuckDBEngine()
+
+    with pytest.raises(ValueError, match="outside the caller tenant/workspace scope"):
+        engine._validate_scoped_storage_sql(
+            "SELECT * FROM read_parquet('s3://lakehouse/silver/hubspot/x/tenant_id=tenant-b/workspace_id=workspace-b/data.parquet')",
+            {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+        )
+
+
+def test_validate_scoped_storage_sql_rejects_unapproved_bucket():
+    engine = DuckDBEngine()
+
+    with pytest.raises(ValueError, match="unapproved bucket"):
+        engine._validate_scoped_storage_sql(
+            "SELECT * FROM read_parquet('s3://other-bucket/silver/hubspot/x/tenant_id=tenant-a/workspace_id=workspace-a/data.parquet')",
+            {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+        )
 
 
 def test_latest_materialized_uri_uses_parameterized_s3_like(monkeypatch):

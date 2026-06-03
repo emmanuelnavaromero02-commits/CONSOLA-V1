@@ -18,6 +18,7 @@ fi
 
 INTERNAL_API_KEY="$(openssl rand -hex 32)"
 JWT_SECRET_KEY="$(openssl rand -hex 32)"
+SECURITY_CONTEXT_SIGNING_KEY="$(openssl rand -hex 32)"
 SUPERSET_SECRET_KEY="$(openssl rand -hex 32)"
 AIRFLOW_SECRET_KEY="$(openssl rand -hex 32)"
 POSTGRES_PASSWORD="$(openssl rand -hex 16)"
@@ -93,6 +94,7 @@ cat > "${ENV_FILE}" <<EOF
 # === Required secrets (auto-generated) ===
 INTERNAL_API_KEY=${INTERNAL_API_KEY}
 JWT_SECRET_KEY=${JWT_SECRET_KEY}
+SECURITY_CONTEXT_SIGNING_KEY=${SECURITY_CONTEXT_SIGNING_KEY}
 SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
 # Optional: set to the previous Superset SECRET_KEY before rotating
 # SUPERSET_SECRET_KEY against an existing Superset metastore, then run

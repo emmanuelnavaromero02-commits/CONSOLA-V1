@@ -6,10 +6,13 @@ transforma a Silver/Gold con términos de negocio y trazabilidad de lineage.
 from __future__ import annotations
 
 import logging
+import hmac
+import hashlib
 import json
 import os
 import re
 import secrets
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +40,8 @@ DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
 store  = DatasetStore(DATASETS_DIR)
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
+_SECURITY_CONTEXT_SIGNATURE_VERSION = "hmac-sha256-v1"
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -45,6 +50,40 @@ def _normalize_postgres_dsn(raw: str) -> str:
 
 def _postgres_dsn() -> str:
     return _normalize_postgres_dsn(os.environ.get("DATABASE_URL", ""))
+
+
+def _security_context_signing_key() -> str:
+    return (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or "").strip()
+
+
+def _canonical_security_context(ctx: dict) -> bytes:
+    payload = {key: value for key, value in ctx.items() if key not in _SECURITY_CONTEXT_SIGNATURE_FIELDS}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _sign_security_context(ctx: dict) -> dict:
+    signed = dict(ctx)
+    signed["_signed_at"] = int(time.time())
+    signed["_signature_version"] = _SECURITY_CONTEXT_SIGNATURE_VERSION
+    key = _security_context_signing_key()
+    if key:
+        signed["_signature"] = hmac.new(
+            key.encode("utf-8"),
+            _canonical_security_context(signed),
+            hashlib.sha256,
+        ).hexdigest()
+    return signed
+
+
+def _security_context_signature_valid(ctx: dict) -> bool:
+    if not ctx.get("trusted"):
+        return True
+    key = _security_context_signing_key()
+    signature = str(ctx.get("_signature") or "")
+    if not key or not signature:
+        return not _is_production()
+    expected = hmac.new(key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
 
 
 def _validate_dataset_name(name: str) -> None:
@@ -210,6 +249,8 @@ def _trusted_user_context(body: dict, args: dict) -> dict:
 def _security_context(body: dict) -> dict:
     sec = body.get("security_context") or {}
     if not isinstance(sec, dict):
+        return {}
+    if not _security_context_signature_valid(sec):
         return {}
     if sec.get("trusted"):
         service = body.get("_verified_internal_service")
@@ -2096,7 +2137,10 @@ def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> No
         headers = {"x-internal-service": "refinement", "x-api-key": key} if key else {}
         payload: dict = {"kind": "dataset", "name": name}
         if auth_body and isinstance(auth_body.get("security_context"), dict):
-            payload["security_context"] = {**auth_body["security_context"], "source": "refinement"}
+            payload["security_context"] = _sign_security_context({
+                **auth_body["security_context"],
+                "source": "refinement",
+            })
         with _httpx.Client(timeout=15, headers=headers) as client:
             client.post(f"{mcp}/rag/reindex", json=payload)
     except Exception:

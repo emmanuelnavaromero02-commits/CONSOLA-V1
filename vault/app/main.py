@@ -24,6 +24,8 @@ API:
 from __future__ import annotations
 
 import json
+import hmac
+import hashlib
 import logging
 import os
 import secrets
@@ -55,6 +57,8 @@ _DATABASE_URL = os.getenv(
 )
 
 _SENSITIVE = {"token", "password", "secret", "api_key", "api_secret"}
+_ADMIN_ROLES = {"admin", "owner", "super_admin"}
+_SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
 
 
 # ── PostgreSQL helpers ────────────────────────────────────────────────────────
@@ -69,6 +73,66 @@ def _normalize_postgres_dsn(raw: str) -> str:
 
 def _pg():
     return psycopg2.connect(_normalize_postgres_dsn(_DATABASE_URL))
+
+
+def _security_context_signing_key() -> str:
+    return (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or "").strip()
+
+
+def _canonical_security_context(ctx: dict) -> bytes:
+    payload = {key: value for key, value in ctx.items() if key not in _SECURITY_CONTEXT_SIGNATURE_FIELDS}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _security_context_signature_valid(ctx: dict) -> bool:
+    if not ctx.get("trusted"):
+        return True
+    key = _security_context_signing_key()
+    signature = str(ctx.get("_signature") or "")
+    if not key or not signature:
+        return not _is_production()
+    expected = hmac.new(key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
+def _security_context_from_header(header_value: str | None) -> dict:
+    if not header_value:
+        return {}
+    try:
+        ctx = json.loads(header_value)
+    except Exception:
+        return {}
+    if not isinstance(ctx, dict) or not _security_context_signature_valid(ctx):
+        return {}
+    return ctx
+
+
+def _is_unscoped_admin_context(ctx: dict) -> bool:
+    if not ctx.get("trusted"):
+        return False
+    if str(ctx.get("role") or "").lower() not in _ADMIN_ROLES:
+        return False
+    if ctx.get("tenant_id") or ctx.get("workspace_id"):
+        return False
+    return "*" in {str(item).strip() for item in (ctx.get("allowed_cartridges") or [])}
+
+
+def _require_cartridge_scope(ctx: dict, cartridge: str) -> None:
+    if not ctx.get("trusted") or _is_unscoped_admin_context(ctx):
+        return
+    allowed = {str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()}
+    if "*" not in allowed and cartridge not in allowed:
+        raise HTTPException(403, "vault cartridge outside caller scope")
+
+
+def _vault_scope(ctx: dict) -> tuple[str | None, str | None]:
+    if not ctx.get("trusted") or _is_unscoped_admin_context(ctx):
+        return None, None
+    tenant = str(ctx.get("tenant_id") or "").strip() or None
+    workspace = str(ctx.get("workspace_id") or "").strip() or None
+    if not tenant or not workspace:
+        raise HTTPException(403, "vault access requires tenant/workspace scope")
+    return tenant, workspace
 
 
 # Sprint v1.15: secrets are encrypted at rest in vault_entries.value_encrypted
@@ -92,23 +156,42 @@ def _row_value(row_encrypted: bytes | memoryview | None, row_value_json) -> dict
     return json.loads(row_value_json)
 
 
-def _db_upsert(scope: str, cartridge: str, key: str, value: dict) -> None:
+def _db_upsert(scope: str, cartridge: str, key: str, value: dict, ctx: dict | None = None) -> None:
     encrypted = encrypt_value(value)
+    tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
         # Write only to value_encrypted; clear the legacy value so a future
         # rollback can't read stale plaintext that no longer matches.
-        cur.execute(
-            """
-            INSERT INTO vault_entries (scope, cartridge, key, value, value_encrypted, created_at, updated_at)
-            VALUES (%s, %s, %s, NULL, %s, NOW(), NOW())
-            ON CONFLICT (scope, cartridge, key) DO UPDATE
-            SET value_encrypted = EXCLUDED.value_encrypted,
-                value = NULL,
-                updated_at = NOW()
-            """,
-            (scope, cartridge, key, psycopg2.Binary(encrypted)),
-        )
+        if tenant_id and workspace_id:
+            cur.execute(
+                """
+                INSERT INTO vault_entries (
+                    tenant_id, workspace_id, scope, cartridge, key, value,
+                    value_encrypted, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, NULL, %s, NOW(), NOW())
+                ON CONFLICT (tenant_id, workspace_id, scope, cartridge, key)
+                WHERE tenant_id IS NOT NULL AND workspace_id IS NOT NULL
+                DO UPDATE SET value_encrypted = EXCLUDED.value_encrypted,
+                    value = NULL,
+                    updated_at = NOW()
+                """,
+                (tenant_id, workspace_id, scope, cartridge, key, psycopg2.Binary(encrypted)),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO vault_entries (scope, cartridge, key, value, value_encrypted, created_at, updated_at)
+                VALUES (%s, %s, %s, NULL, %s, NOW(), NOW())
+                ON CONFLICT (scope, cartridge, key)
+                WHERE tenant_id IS NULL AND workspace_id IS NULL
+                DO UPDATE SET value_encrypted = EXCLUDED.value_encrypted,
+                    value = NULL,
+                    updated_at = NOW()
+                """,
+                (scope, cartridge, key, psycopg2.Binary(encrypted)),
+            )
     conn.commit()
     conn.close()
 
@@ -121,7 +204,9 @@ def _db_upsert_if_absent(scope: str, cartridge: str, key: str, value: dict) -> N
             """
             INSERT INTO vault_entries (scope, cartridge, key, value, value_encrypted, created_at, updated_at)
             VALUES (%s, %s, %s, NULL, %s, NOW(), NOW())
-            ON CONFLICT (scope, cartridge, key) DO NOTHING
+            ON CONFLICT (scope, cartridge, key)
+            WHERE tenant_id IS NULL AND workspace_id IS NULL
+            DO NOTHING
             """,
             (scope, cartridge, key, psycopg2.Binary(encrypted)),
         )
@@ -129,14 +214,22 @@ def _db_upsert_if_absent(scope: str, cartridge: str, key: str, value: dict) -> N
     conn.close()
 
 
-def _db_get(scope: str, cartridge: str, key: str) -> dict | None:
+def _db_get(scope: str, cartridge: str, key: str, ctx: dict | None = None) -> dict | None:
+    tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT value_encrypted, value FROM vault_entries "
-            "WHERE scope=%s AND cartridge=%s AND key=%s",
-            (scope, cartridge, key),
-        )
+        if tenant_id and workspace_id:
+            cur.execute(
+                "SELECT value_encrypted, value FROM vault_entries "
+                "WHERE tenant_id=%s AND workspace_id=%s AND scope=%s AND cartridge=%s AND key=%s",
+                (tenant_id, workspace_id, scope, cartridge, key),
+            )
+        else:
+            cur.execute(
+                "SELECT value_encrypted, value FROM vault_entries "
+                "WHERE tenant_id IS NULL AND workspace_id IS NULL AND scope=%s AND cartridge=%s AND key=%s",
+                (scope, cartridge, key),
+            )
         row = cur.fetchone()
     conn.close()
     if not row:
@@ -144,41 +237,57 @@ def _db_get(scope: str, cartridge: str, key: str) -> dict | None:
     return _row_value(row[0], row[1])
 
 
-def _db_delete(scope: str, cartridge: str, key: str) -> bool:
+def _db_delete(scope: str, cartridge: str, key: str, ctx: dict | None = None) -> bool:
+    tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM vault_entries WHERE scope=%s AND cartridge=%s AND key=%s",
-            (scope, cartridge, key),
-        )
+        if tenant_id and workspace_id:
+            cur.execute(
+                "DELETE FROM vault_entries WHERE tenant_id=%s AND workspace_id=%s AND scope=%s AND cartridge=%s AND key=%s",
+                (tenant_id, workspace_id, scope, cartridge, key),
+            )
+        else:
+            cur.execute(
+                "DELETE FROM vault_entries WHERE tenant_id IS NULL AND workspace_id IS NULL AND scope=%s AND cartridge=%s AND key=%s",
+                (scope, cartridge, key),
+            )
         deleted = cur.rowcount
     conn.commit()
     conn.close()
     return deleted > 0
 
 
-def _db_audit_access(caller_service: str | None, scope: str, key: str, op: str) -> None:
+def _db_audit_access(caller_service: str | None, scope: str, key: str, op: str, ctx: dict | None = None) -> None:
+    tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO vault_access_log (caller_service, scope, key, op, timestamp)
-            VALUES (%s, %s, %s, %s, NOW())
+            INSERT INTO vault_access_log (caller_service, scope, key, op, tenant_id, workspace_id, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
             """,
-            (caller_service or "unknown", scope, key, op),
+            (caller_service or "unknown", scope, key, op, tenant_id, workspace_id),
         )
     conn.commit()
     conn.close()
 
 
-def _db_list(scope: str, cartridge: str) -> list[dict]:
+def _db_list(scope: str, cartridge: str, ctx: dict | None = None) -> list[dict]:
+    tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT key, value_encrypted, value FROM vault_entries "
-            "WHERE scope=%s AND cartridge=%s ORDER BY key",
-            (scope, cartridge),
-        )
+        if tenant_id and workspace_id:
+            cur.execute(
+                "SELECT key, value_encrypted, value FROM vault_entries "
+                "WHERE tenant_id=%s AND workspace_id=%s AND scope=%s AND cartridge=%s ORDER BY key",
+                (tenant_id, workspace_id, scope, cartridge),
+            )
+        else:
+            cur.execute(
+                "SELECT key, value_encrypted, value FROM vault_entries "
+                "WHERE tenant_id IS NULL AND workspace_id IS NULL AND scope=%s AND cartridge=%s ORDER BY key",
+                (scope, cartridge),
+            )
         rows = cur.fetchall()
     conn.close()
     out: list[dict] = []
@@ -424,8 +533,10 @@ def reload():
 # ── Connections ───────────────────────────────────────────────────────────────
 
 @app.get("/connections/{cartridge}")
-def list_connections(cartridge: str):
-    rows = _db_list("connections", cartridge)
+def list_connections(cartridge: str, x_security_context: str | None = Header(None, alias="x-security-context")):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, cartridge)
+    rows = _db_list("connections", cartridge, ctx)
     return {
         "connections": [
             {"conn_id": r["key"], **_mask(r["value"])} for r in rows
@@ -438,24 +549,31 @@ def get_connection(
     cartridge: str,
     conn_id: str,
     x_internal_service: str | None = Header(None),
+    x_security_context: str | None = Header(None, alias="x-security-context"),
 ):
     """Returns full credentials — called by DAGs internally, not exposed to users."""
-    value = _db_get("connections", cartridge, conn_id)
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, cartridge)
+    value = _db_get("connections", cartridge, conn_id, ctx)
     if value is None:
         raise HTTPException(404, f"Connection '{cartridge}/{conn_id}' not found")
-    _db_audit_access(x_internal_service, "connections", f"{cartridge}/{conn_id}", "read")
+    _db_audit_access(x_internal_service, "connections", f"{cartridge}/{conn_id}", "read", ctx)
     return {"conn_id": conn_id, **value}
 
 
 @app.put("/connections/{cartridge}/{conn_id}")
-def put_connection(cartridge: str, conn_id: str, body: dict):
-    _db_upsert("connections", cartridge, conn_id, body)
+def put_connection(cartridge: str, conn_id: str, body: dict, x_security_context: str | None = Header(None, alias="x-security-context")):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, cartridge)
+    _db_upsert("connections", cartridge, conn_id, body, ctx)
     return {"saved": True, "conn_id": conn_id}
 
 
 @app.delete("/connections/{cartridge}/{conn_id}")
-def delete_connection(cartridge: str, conn_id: str):
-    if not _db_delete("connections", cartridge, conn_id):
+def delete_connection(cartridge: str, conn_id: str, x_security_context: str | None = Header(None, alias="x-security-context")):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, cartridge)
+    if not _db_delete("connections", cartridge, conn_id, ctx):
         raise HTTPException(404, f"Connection '{cartridge}/{conn_id}' not found")
     return {"deleted": True}
 
@@ -463,29 +581,42 @@ def delete_connection(cartridge: str, conn_id: str):
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
 @app.get("/secrets/{scope}")
-def list_secret_keys(scope: str):
-    rows = _db_list("secrets", scope)
+def list_secret_keys(scope: str, x_security_context: str | None = Header(None, alias="x-security-context")):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, scope)
+    rows = _db_list("secrets", scope, ctx)
     return {"keys": [r["key"] for r in rows]}
 
 
 @app.get("/secrets/{scope}/{key}")
-def get_secret(scope: str, key: str, x_internal_service: str | None = Header(None)):
-    row = _db_get("secrets", scope, key)
+def get_secret(
+    scope: str,
+    key: str,
+    x_internal_service: str | None = Header(None),
+    x_security_context: str | None = Header(None, alias="x-security-context"),
+):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, scope)
+    row = _db_get("secrets", scope, key, ctx)
     if row is None:
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
-    _db_audit_access(x_internal_service, scope, key, "read")
+    _db_audit_access(x_internal_service, scope, key, "read", ctx)
     return {"value": row.get("value", row)}
 
 
 @app.put("/secrets/{scope}/{key}")
-def put_secret(scope: str, key: str, body: dict):
-    _db_upsert("secrets", scope, key, {"value": body.get("value", body)})
+def put_secret(scope: str, key: str, body: dict, x_security_context: str | None = Header(None, alias="x-security-context")):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, scope)
+    _db_upsert("secrets", scope, key, {"value": body.get("value", body)}, ctx)
     return {"saved": True}
 
 
 @app.delete("/secrets/{scope}/{key}")
-def delete_secret(scope: str, key: str):
-    if not _db_delete("secrets", scope, key):
+def delete_secret(scope: str, key: str, x_security_context: str | None = Header(None, alias="x-security-context")):
+    ctx = _security_context_from_header(x_security_context)
+    _require_cartridge_scope(ctx, scope)
+    if not _db_delete("secrets", scope, key, ctx):
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
     return {"deleted": True}
 

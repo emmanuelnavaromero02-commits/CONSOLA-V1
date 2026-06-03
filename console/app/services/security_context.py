@@ -1,11 +1,55 @@
 from __future__ import annotations
 
+import hmac
+import hashlib
+import json
+import os
+import time
 from typing import Any
 
 from app.services import permissions
 
 
 ADMIN_ROLES = {"admin", "owner", "super_admin"}
+_SIGNATURE_FIELD = "_signature"
+_SIGNED_AT_FIELD = "_signed_at"
+_SIGNATURE_VERSION_FIELD = "_signature_version"
+_SIGNATURE_VERSION = "hmac-sha256-v1"
+
+
+def _runtime_env() -> str:
+    return (os.environ.get("APP_ENV") or os.environ.get("ENV") or "production").strip().lower()
+
+
+def _signing_key() -> str:
+    key = os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or ""
+    key = key.strip()
+    if _runtime_env() in {"production", "prod", "staging"} and len(key) < 32:
+        raise RuntimeError("SECURITY_CONTEXT_SIGNING_KEY or INTERNAL_API_KEY is required to sign security_context")
+    return key
+
+
+def _canonical_context(ctx: dict[str, Any]) -> bytes:
+    payload = {
+        key: value
+        for key, value in ctx.items()
+        if key not in {_SIGNATURE_FIELD, _SIGNED_AT_FIELD, _SIGNATURE_VERSION_FIELD}
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
+    signed = dict(ctx)
+    signed[_SIGNED_AT_FIELD] = int(time.time())
+    signed[_SIGNATURE_VERSION_FIELD] = _SIGNATURE_VERSION
+    key = _signing_key()
+    if key:
+        signed[_SIGNATURE_FIELD] = hmac.new(
+            key.encode("utf-8"),
+            _canonical_context(signed),
+            hashlib.sha256,
+        ).hexdigest()
+    return signed
 
 
 def build_security_context(user: dict | None) -> dict[str, Any]:
@@ -39,7 +83,7 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
     else:
         allowed_cartridges = []
 
-    return {
+    return sign_security_context({
         "trusted": True,
         "source": "console",
         "user_id": user.get("id"),
@@ -58,7 +102,7 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
             tenant_id=user.get("active_tenant_id") or user.get("tenant_id"),
             workspace_id=user.get("active_workspace_id") or user.get("workspace_id"),
         ),
-    }
+    })
 
 
 def rls_user_context(user: dict | None) -> dict[str, Any]:

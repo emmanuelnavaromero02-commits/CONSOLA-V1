@@ -54,14 +54,14 @@ def _headers() -> dict[str, str]:
 def test_get_secret_writes_audit_log(monkeypatch):
     main = _load_vault_main(monkeypatch)
     audit_calls: list[tuple] = []
-    monkeypatch.setattr(main, "_db_get", lambda scope, cartridge, key: {"value": "plain-secret"})
+    monkeypatch.setattr(main, "_db_get", lambda scope, cartridge, key, ctx=None: {"value": "plain-secret"})
     monkeypatch.setattr(main, "_db_audit_access", lambda *args: audit_calls.append(args))
 
     resp = TestClient(main.app).get("/secrets/platform/API_TOKEN", headers=_headers())
 
     assert resp.status_code == 200
     assert resp.json() == {"value": "plain-secret"}
-    assert audit_calls == [("console", "platform", "API_TOKEN", "read")]
+    assert audit_calls[0][:4] == ("console", "platform", "API_TOKEN", "read")
 
 
 def test_get_connection_writes_audit_log(monkeypatch):
@@ -70,7 +70,7 @@ def test_get_connection_writes_audit_log(monkeypatch):
     monkeypatch.setattr(
         main,
         "_db_get",
-        lambda scope, cartridge, key: {"base_url": "https://api.example", "token": "plain-token"},
+        lambda scope, cartridge, key, ctx=None: {"base_url": "https://api.example", "token": "plain-token"},
     )
     monkeypatch.setattr(main, "_db_audit_access", lambda *args: audit_calls.append(args))
 
@@ -78,7 +78,7 @@ def test_get_connection_writes_audit_log(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["token"] == "plain-token"
-    assert audit_calls == [("console", "connections", "replicon/default", "read")]
+    assert audit_calls[0][:4] == ("console", "connections", "replicon/default", "read")
 
 
 def test_vault_access_log_migration_exists():

@@ -10,6 +10,8 @@ via the standard MCP contract:
 """
 from __future__ import annotations
 import json
+import hmac
+import hashlib
 import logging
 import os
 import re
@@ -59,10 +61,31 @@ INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
 _RAG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DAG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,250}$")
 _SHARED_PLATFORM_DAGS = {"file_ingest", "entity_scheduler", "dataset_refresh_chain", "agent_runner"}
+_SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
 
 
 def _is_production() -> bool:
     return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _security_context_signing_key() -> str:
+    return (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or "").strip()
+
+
+def _canonical_security_context(ctx: dict[str, Any]) -> bytes:
+    payload = {key: value for key, value in ctx.items() if key not in _SECURITY_CONTEXT_SIGNATURE_FIELDS}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _security_context_signature_valid(ctx: dict[str, Any]) -> bool:
+    if not ctx.get("trusted"):
+        return True
+    key = _security_context_signing_key()
+    signature = str(ctx.get("_signature") or "")
+    if not key or not signature:
+        return not _is_production()
+    expected = hmac.new(key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
 
 # Sprint v1.12: mcp-infra is called by console, workspace and airflow. Each
 # pair has its own INTERNAL_API_KEY_*_TO_MCP_INFRA secret. The legacy shared
@@ -318,6 +341,8 @@ _POSTGRES_TABLE_REF_RE = re.compile(
 def _ctx(req: InvokeRequest, internal_service: str | None = None) -> dict[str, Any]:
     ctx = req.security_context or {}
     if not isinstance(ctx, dict):
+        return {}
+    if not _security_context_signature_valid(ctx):
         return {}
     if ctx.get("trusted") and internal_service:
         allowed_sources = _SECURITY_SOURCE_BY_SERVICE.get(internal_service, {internal_service})
@@ -1048,6 +1073,7 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
         vault_scope = str(args.get("cartridge_id") or args.get("scope") or "").strip()
         if not _is_unscoped_admin_context(ctx):
             _require_cartridge_scope(ctx, vault_scope)
+        args["security_context"] = ctx
 
     if tool.startswith("postgres_"):
         mentioned_tables = _postgres_mentioned_tables(

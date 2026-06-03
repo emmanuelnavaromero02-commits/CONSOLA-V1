@@ -35,7 +35,7 @@ def test_normalize_postgres_dsn_accepts_sqlalchemy_psycopg2_urls(monkeypatch):
 def test_list_connections_empty_state_returns_connections_array(monkeypatch):
     main = _load_vault_main(monkeypatch)
     monkeypatch.setattr(main, "_seed", lambda: None)
-    monkeypatch.setattr(main, "_db_list", lambda scope, cartridge: [])
+    monkeypatch.setattr(main, "_db_list", lambda scope, cartridge, ctx=None: [])
 
     client = TestClient(main.app)
     response = client.get(
@@ -56,7 +56,7 @@ def test_list_connections_masks_secret_fields(monkeypatch):
     monkeypatch.setattr(
         main,
         "_db_list",
-        lambda scope, cartridge: [
+        lambda scope, cartridge, ctx=None: [
             {
                 "key": "analytics",
                 "value": {

@@ -5,6 +5,7 @@ from typing import Any
 
 from app.services import audit_service, auth
 from app.services.intelligence.contracts import contract_sources, load_contracts
+from app.services.intelligence.persistence import scoped_db
 from app.services.intelligence.utils import json_dumps, public_json, workspace_scope
 
 
@@ -127,17 +128,18 @@ def build_external_evidence(
 async def list_sources(user: dict) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT id, source_id, source_type, cartridge_id, metric, enabled,
-               config, ttl_seconds, last_run_at, last_status, metadata,
-               created_at, updated_at
-          FROM external_intelligence_sources
-         WHERE workspace_id = $1
-         ORDER BY cartridge_id NULLS LAST, metric NULLS LAST, source_id
-        """,
-        workspace_id,
-    )
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, source_id, source_type, cartridge_id, metric, enabled,
+                   config, ttl_seconds, last_run_at, last_status, metadata,
+                   created_at, updated_at
+              FROM external_intelligence_sources
+             WHERE workspace_id = $1
+             ORDER BY cartridge_id NULLS LAST, metric NULLS LAST, source_id
+            """,
+            workspace_id,
+        )
     configured = []
     for contract in load_contracts():
         for metric in contract.get("metrics", []) if isinstance(contract.get("metrics"), list) else []:
@@ -174,33 +176,34 @@ async def patch_source(user: dict, source_id: str, body: dict[str, Any]) -> dict
     cartridge_id = str(body.get("cartridge_id") or "").strip() or None
     metric = str(body.get("metric") or "").strip() or None
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO external_intelligence_sources (
-            tenant_id, workspace_id, source_id, source_type, cartridge_id,
-            metric, enabled, config, ttl_seconds, metadata
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO external_intelligence_sources (
+                tenant_id, workspace_id, source_id, source_type, cartridge_id,
+                metric, enabled, config, ttl_seconds, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb)
+            ON CONFLICT (workspace_id, source_id, cartridge_id, metric) DO UPDATE
+            SET source_type = EXCLUDED.source_type,
+                enabled = EXCLUDED.enabled,
+                config = EXCLUDED.config,
+                ttl_seconds = EXCLUDED.ttl_seconds,
+                metadata = EXCLUDED.metadata,
+                updated_at = NOW()
+            RETURNING *
+            """,
+            tenant_id,
+            workspace_id,
+            source_id,
+            source_type,
+            cartridge_id,
+            metric,
+            enabled,
+            json_dumps(config),
+            ttl_seconds,
+            json_dumps({"updated_by": user.get("email")}),
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb)
-        ON CONFLICT (workspace_id, source_id, cartridge_id, metric) DO UPDATE
-        SET source_type = EXCLUDED.source_type,
-            enabled = EXCLUDED.enabled,
-            config = EXCLUDED.config,
-            ttl_seconds = EXCLUDED.ttl_seconds,
-            metadata = EXCLUDED.metadata,
-            updated_at = NOW()
-        RETURNING *
-        """,
-        tenant_id,
-        workspace_id,
-        source_id,
-        source_type,
-        cartridge_id,
-        metric,
-        enabled,
-        json_dumps(config),
-        ttl_seconds,
-        json_dumps({"updated_by": user.get("email")}),
-    )
     await audit_service.record_event(
         user.get("id"),
         user.get("email"),
@@ -213,7 +216,7 @@ async def patch_source(user: dict, source_id: str, body: dict[str, Any]) -> dict
 
 
 async def run_sources(user: dict, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    _, workspace_id = workspace_scope(user)
+    tenant_id, workspace_id = workspace_scope(user)
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=int((body or {}).get("ttl_seconds") or 86400))
     source_id = str((body or {}).get("source_id") or "manual_context")
@@ -221,36 +224,37 @@ async def run_sources(user: dict, body: dict[str, Any] | None = None) -> dict[st
     findings = (body or {}).get("findings") if isinstance((body or {}).get("findings"), list) else []
     pool = await auth.pool()
     cached = 0
-    for finding in findings:
-        if not isinstance(finding, dict):
-            continue
-        await pool.execute(
-            """
-            INSERT INTO external_evidence_cache (
-                tenant_id, workspace_id, source_id, source_type, entity_kind,
-                entity_id, period_key, data, strength, expires_at, metadata
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            await conn.execute(
+                """
+                INSERT INTO external_evidence_cache (
+                    tenant_id, workspace_id, source_id, source_type, entity_kind,
+                    entity_id, period_key, data, strength, expires_at, metadata
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb)
+                ON CONFLICT (workspace_id, source_id, entity_kind, entity_id, period_key) DO UPDATE
+                SET data = EXCLUDED.data,
+                    strength = EXCLUDED.strength,
+                    expires_at = EXCLUDED.expires_at,
+                    metadata = EXCLUDED.metadata,
+                    created_at = NOW()
+                """,
+                tenant_id,
+                workspace_id,
+                source_id,
+                source_type,
+                str(finding.get("entity_kind") or "*"),
+                str(finding.get("entity_id") or "*"),
+                str(finding.get("period_key") or finding.get("date") or finding.get("month") or "*"),
+                json_dumps(finding),
+                float(finding.get("strength") or 0.50),
+                expires_at,
+                json_dumps({"loaded_by": user.get("email")}),
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb)
-            ON CONFLICT (workspace_id, source_id, entity_kind, entity_id, period_key) DO UPDATE
-            SET data = EXCLUDED.data,
-                strength = EXCLUDED.strength,
-                expires_at = EXCLUDED.expires_at,
-                metadata = EXCLUDED.metadata,
-                created_at = NOW()
-            """,
-            user.get("active_tenant_id") or user.get("tenant_id"),
-            workspace_id,
-            source_id,
-            source_type,
-            str(finding.get("entity_kind") or "*"),
-            str(finding.get("entity_id") or "*"),
-            str(finding.get("period_key") or finding.get("date") or finding.get("month") or "*"),
-            json_dumps(finding),
-            float(finding.get("strength") or 0.50),
-            expires_at,
-            json_dumps({"loaded_by": user.get("email")}),
-        )
-        cached += 1
+            cached += 1
     await audit_service.record_event(
         user.get("id"),
         user.get("email"),

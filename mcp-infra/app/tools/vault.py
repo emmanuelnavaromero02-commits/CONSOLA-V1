@@ -14,6 +14,7 @@ Tools exposed:
 """
 from __future__ import annotations
 
+import json
 import os
 
 import httpx
@@ -30,7 +31,7 @@ def _is_development() -> bool:
     return os.environ.get("APP_ENV", "production").lower() in {"development", "dev", "local", "test"}
 
 
-def _auth_headers() -> dict:
+def _auth_headers(security_context: dict | None = None) -> dict:
     """Headers required by the Vault internal API (Fase 1 dual-auth).
 
     Sprint v1.12: prefer the dedicated pair key INTERNAL_API_KEY_MCP_INFRA_TO_VAULT.
@@ -46,23 +47,25 @@ def _auth_headers() -> dict:
     rid = request_id_var.get()
     if rid:
         headers["X-Request-ID"] = rid
+    if isinstance(security_context, dict) and security_context:
+        headers["x-security-context"] = json.dumps(security_context, sort_keys=True, separators=(",", ":"))
     return headers
 
 
-def _vault_get(path: str) -> dict:
-    r = httpx.get(f"{_VAULT}{path}", headers=_auth_headers(), timeout=10)
+def _vault_get(path: str, security_context: dict | None = None) -> dict:
+    r = httpx.get(f"{_VAULT}{path}", headers=_auth_headers(security_context), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
-def _vault_put(path: str, body: dict) -> dict:
-    r = httpx.put(f"{_VAULT}{path}", json=body, headers=_auth_headers(), timeout=10)
+def _vault_put(path: str, body: dict, security_context: dict | None = None) -> dict:
+    r = httpx.put(f"{_VAULT}{path}", json=body, headers=_auth_headers(security_context), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
-def _vault_delete(path: str) -> dict:
-    r = httpx.delete(f"{_VAULT}{path}", headers=_auth_headers(), timeout=10)
+def _vault_delete(path: str, security_context: dict | None = None) -> dict:
+    r = httpx.delete(f"{_VAULT}{path}", headers=_auth_headers(security_context), timeout=10)
     r.raise_for_status()
     return r.json()
 
@@ -87,8 +90,8 @@ def _vault_delete(path: str) -> dict:
         "required": ["cartridge_id"],
     },
 )
-async def vault_list_connections(cartridge_id: str) -> dict:
-    return _vault_get(f"/connections/{cartridge_id}")
+async def vault_list_connections(cartridge_id: str, security_context: dict | None = None) -> dict:
+    return _vault_get(f"/connections/{cartridge_id}", security_context)
 
 
 @tool(
@@ -154,6 +157,7 @@ async def vault_set_connection(
     password: str = "",
     api_key: str = "",
     api_key_header: str = "",
+    security_context: dict | None = None,
 ) -> dict:
     if not _is_development():
         raise PermissionError("vault_set_connection is disabled outside development.")
@@ -168,7 +172,7 @@ async def vault_set_connection(
         body["api_key"] = api_key
     if api_key_header:
         body["api_key_header"] = api_key_header
-    return _vault_put(f"/connections/{cartridge_id}/{conn_id}", body)
+    return _vault_put(f"/connections/{cartridge_id}/{conn_id}", body, security_context)
 
 
 @tool(
@@ -187,8 +191,8 @@ async def vault_set_connection(
         "required": ["cartridge_id", "conn_id"],
     },
 )
-async def vault_get_connection(cartridge_id: str, conn_id: str) -> dict:
-    data = _vault_get(f"/connections/{cartridge_id}/{conn_id}")
+async def vault_get_connection(cartridge_id: str, conn_id: str, security_context: dict | None = None) -> dict:
+    data = _vault_get(f"/connections/{cartridge_id}/{conn_id}", security_context)
     # mask sensitive fields before returning to AI
     masked = {}
     sensitive = {"token", "password", "secret", "api_key", "api_secret"}
@@ -209,10 +213,10 @@ async def vault_get_connection(cartridge_id: str, conn_id: str) -> dict:
         "required": ["cartridge_id", "conn_id"],
     },
 )
-async def vault_delete_connection(cartridge_id: str, conn_id: str) -> dict:
+async def vault_delete_connection(cartridge_id: str, conn_id: str, security_context: dict | None = None) -> dict:
     if not _is_development():
         raise PermissionError("vault_delete_connection is disabled outside development.")
-    return _vault_delete(f"/connections/{cartridge_id}/{conn_id}")
+    return _vault_delete(f"/connections/{cartridge_id}/{conn_id}", security_context)
 
 
 # ── Secret tools ──────────────────────────────────────────────────────────────
@@ -234,8 +238,8 @@ async def vault_delete_connection(cartridge_id: str, conn_id: str) -> dict:
         "required": ["scope"],
     },
 )
-async def vault_list_secrets(scope: str) -> dict:
-    return _vault_get(f"/secrets/{scope}")
+async def vault_list_secrets(scope: str, security_context: dict | None = None) -> dict:
+    return _vault_get(f"/secrets/{scope}", security_context)
 
 
 @tool(
@@ -251,7 +255,7 @@ async def vault_list_secrets(scope: str) -> dict:
         "required": ["scope", "key", "value"],
     },
 )
-async def vault_set_secret(scope: str, key: str, value: str) -> dict:
+async def vault_set_secret(scope: str, key: str, value: str, security_context: dict | None = None) -> dict:
     if not _is_development():
         raise PermissionError("vault_set_secret is disabled outside development.")
-    return _vault_put(f"/secrets/{scope}/{key}", {"value": value})
+    return _vault_put(f"/secrets/{scope}/{key}", {"value": value}, security_context)

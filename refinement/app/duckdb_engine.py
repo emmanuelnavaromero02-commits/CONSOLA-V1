@@ -34,6 +34,7 @@ from sqlglot import exp as _sqlglot_exp
 
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
+S3_LITERAL_RE = re.compile(r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -366,6 +367,17 @@ class DuckDBEngine:
         tenant, workspace = self._scope_values(user_context)
 
         out = sql
+
+        def _replace_dataset_refs(layer: str, cartridge: str, name: str, replacement: str) -> None:
+            nonlocal out
+            base = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}"
+            for pattern in (
+                f"{base}/data.parquet",
+                f"{base}/*.parquet",
+                f"{base}/**/*.parquet",
+            ):
+                out = out.replace(pattern, replacement)
+
         for source in sources or []:
             src = str(source or "").strip()
             if src.startswith("raw/"):
@@ -380,23 +392,35 @@ class DuckDBEngine:
                 parts = src.split("/")
                 if len(parts) >= 3:
                     layer, cartridge, name = parts[0], parts[1], parts[2]
-                    legacy = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}/data.parquet"
                     latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
                     scoped = latest or (
                         self._silver_path(cartridge, name, user_context)
                         if layer == "silver"
                         else self._gold_path(cartridge, name, user_context)
                     )
-                    out = out.replace(legacy, scoped)
+                    _replace_dataset_refs(layer, cartridge, name, scoped)
             elif src.startswith(("silver/", "gold/")):
                 parts = src.split("/")
                 if len(parts) >= 3:
                     layer, cartridge, name = parts[0], parts[1], parts[2]
-                    legacy = f"s3://{self.minio_bucket}/{layer}/{cartridge}/{name}/data.parquet"
                     latest = self._latest_materialized_uri(layer, cartridge, name, user_context)
                     if latest:
-                        out = out.replace(legacy, latest)
+                        _replace_dataset_refs(layer, cartridge, name, latest)
         return out
+
+    def _validate_scoped_storage_sql(self, sql: str, user_context: dict | None) -> None:
+        tenant, workspace = self._scope_values(user_context)
+        if not tenant or not workspace:
+            return
+        scope_fragment = f"tenant_id={tenant}/workspace_id={workspace}/"
+        bucket_prefix = f"s3://{self.minio_bucket}/"
+        for match in S3_LITERAL_RE.finditer(sql or ""):
+            uri = match.group(2)
+            if not uri.startswith(bucket_prefix):
+                raise ValueError("S3 path uses an unapproved bucket")
+            key = uri[len(bucket_prefix):]
+            if key.startswith(("raw/", "silver/", "gold/")) and scope_fragment not in key:
+                raise ValueError("S3 path is outside the caller tenant/workspace scope")
 
     def _s3_object_key(self, uri: str) -> str | None:
         prefix = f"s3://{self.minio_bucket}/"
@@ -712,6 +736,7 @@ class DuckDBEngine:
                 effective_sql = self._inject_bucket(rls_sql)
                 effective_sql = self._scope_storage_sql(effective_sql, sources or [], user_context)
                 effective_sql = self._inject_latest_date(effective_sql, sources or [], user_context)
+                self._validate_scoped_storage_sql(effective_sql, user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
                 # Watchdog: fires con.interrupt() if the query runs past
@@ -1043,6 +1068,7 @@ class DuckDBEngine:
 
             sql = self._inject_bucket(sql)
             sql = self._scope_storage_sql(sql, sources, user_context)
+            self._validate_scoped_storage_sql(sql, user_context)
 
             if layer == "gold":
                 # ── Gold → tabla en postgres_gold ────────────────────────────────
@@ -1050,6 +1076,7 @@ class DuckDBEngine:
                 table = f"gold_{name}"
                 validate_safe_identifier(table, "table")
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
+                self._validate_scoped_storage_sql(effective_sql, user_context)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 tenant, workspace = self._scope_values(user_context)
                 if tenant and workspace:
@@ -1087,6 +1114,7 @@ class DuckDBEngine:
             else:
                 # ── Silver → Parquet snapshot inmutable (última extracción vía lineage) ──
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
+                self._validate_scoped_storage_sql(effective_sql, user_context)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 parquet_path  = self._snapshot_path("silver", cartridge, name, user_context)
                 storage_uri = self._copy_to_parquet(con, effective_sql, parquet_path)

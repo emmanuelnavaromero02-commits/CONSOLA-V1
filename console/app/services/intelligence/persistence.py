@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import HTTPException
@@ -16,6 +17,18 @@ from app.services.intelligence.utils import (
 )
 
 
+@asynccontextmanager
+async def scoped_db(pool: Any, tenant_id: str | None, workspace_id: str):
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id or "",
+                workspace_id,
+            )
+            yield conn
+
+
 async def persist_artifacts(
     tenant_id: str | None,
     workspace_id: str,
@@ -23,34 +36,35 @@ async def persist_artifacts(
     artifacts: list[dict[str, Any]],
 ) -> None:
     pool = await auth.pool()
-    for artifact in artifacts:
-        signal = artifact["signal"]
-        baseline = artifact["baseline"]
-        evidence_pack = artifact["evidence_pack"]
-        hypotheses = artifact["hypotheses"]
-        options = artifact["options"]
-        baseline_id = await persist_baseline(pool, tenant_id, workspace_id, signal, baseline)
-        signal["baseline_id"] = baseline_id
-        pack_id = await persist_evidence(pool, tenant_id, workspace_id, signal, evidence_pack)
-        evidence_pack["id"] = pack_id
-        for hypothesis in hypotheses:
-            hypothesis["evidence_pack_id"] = pack_id
-        await persist_signal(pool, tenant_id, workspace_id, signal)
-        await persist_hypotheses(pool, tenant_id, workspace_id, signal, hypotheses)
-        await persist_options(pool, tenant_id, workspace_id, signal, options)
-        await publish_control_room_item(
-            pool,
-            tenant_id,
-            workspace_id,
-            user,
-            {
-                **artifact,
-                "signal": signal,
-                "evidence_pack": evidence_pack,
-                "hypotheses": hypotheses,
-                "options": options,
-            },
-        )
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        for artifact in artifacts:
+            signal = artifact["signal"]
+            baseline = artifact["baseline"]
+            evidence_pack = artifact["evidence_pack"]
+            hypotheses = artifact["hypotheses"]
+            options = artifact["options"]
+            baseline_id = await persist_baseline(conn, tenant_id, workspace_id, signal, baseline)
+            signal["baseline_id"] = baseline_id
+            pack_id = await persist_evidence(conn, tenant_id, workspace_id, signal, evidence_pack)
+            evidence_pack["id"] = pack_id
+            for hypothesis in hypotheses:
+                hypothesis["evidence_pack_id"] = pack_id
+            await persist_signal(conn, tenant_id, workspace_id, signal)
+            await persist_hypotheses(conn, tenant_id, workspace_id, signal, hypotheses)
+            await persist_options(conn, tenant_id, workspace_id, signal, options)
+            await publish_control_room_item(
+                conn,
+                tenant_id,
+                workspace_id,
+                user,
+                {
+                    **artifact,
+                    "signal": signal,
+                    "evidence_pack": evidence_pack,
+                    "hypotheses": hypotheses,
+                    "options": options,
+                },
+            )
 
 
 async def persist_baseline(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], baseline: dict[str, Any]) -> int:
@@ -394,82 +408,84 @@ async def publish_control_room_item(
 
 
 async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
-    _, workspace_id = workspace_scope(user)
+    tenant_id, workspace_id = workspace_scope(user)
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
-               entity_label, metric, period_key, actual_value, expected_value,
-               deviation_value, deviation_pct, severity, signal_type, status,
-               confidence, summary, prediction_horizon_days, predicted_value,
-               prediction_method, signal_subtype, metadata, created_at, updated_at
-          FROM intelligence_signals
-         WHERE workspace_id = $1
-         ORDER BY updated_at DESC, severity DESC
-         LIMIT $2
-        """,
-        workspace_id,
-        max(1, min(int(limit or 100), 500)),
-    )
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        rows = await conn.fetch(
+            """
+            SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
+                   entity_label, metric, period_key, actual_value, expected_value,
+                   deviation_value, deviation_pct, severity, signal_type, status,
+                   confidence, summary, prediction_horizon_days, predicted_value,
+                   prediction_method, signal_subtype, metadata, created_at, updated_at
+              FROM intelligence_signals
+             WHERE workspace_id = $1
+             ORDER BY updated_at DESC, severity DESC
+             LIMIT $2
+            """,
+            workspace_id,
+            max(1, min(int(limit or 100), 500)),
+        )
     return {"signals": [row_to_signal(row) for row in rows]}
 
 
 async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
-    _, workspace_id = workspace_scope(user)
+    tenant_id, workspace_id = workspace_scope(user)
     pool = await auth.pool()
-    row = await pool.fetchrow(
-        """
-        SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
-               entity_label, metric, period_key, actual_value, expected_value,
-               deviation_value, deviation_pct, severity, signal_type, status,
-               confidence, summary, prediction_horizon_days, predicted_value,
-               prediction_method, signal_subtype, metadata, created_at, updated_at
-          FROM intelligence_signals
-         WHERE workspace_id = $1
-           AND signal_id = $2
-        """,
-        workspace_id,
-        signal_id,
-    )
-    if not row:
-        raise HTTPException(404, "intelligence signal not found")
-    evidence_pack = await _latest_evidence_pack(pool, workspace_id, signal_id)
-    hypotheses = await pool.fetch(
-        """
-        SELECT hypothesis_key, title, rationale, confidence, evidence_pack_id, metadata, created_at
-          FROM hypotheses
-         WHERE workspace_id = $1
-           AND signal_id = $2
-         ORDER BY confidence DESC
-        """,
-        workspace_id,
-        signal_id,
-    )
-    options = await pool.fetch(
-        """
-        SELECT option_id, label, action_kind, impact_expected, confidence, cost,
-               risk, time_cost, score, selected, metadata, created_at, updated_at
-          FROM decision_options
-         WHERE workspace_id = $1
-           AND signal_id = $2
-         ORDER BY score DESC
-        """,
-        workspace_id,
-        signal_id,
-    )
-    outcomes = await pool.fetch(
-        """
-        SELECT id, option_id, action_taken, predicted_value, actual_value,
-               prediction_error, outcome_summary, learned_rule, metadata, created_at
-          FROM prediction_outcomes
-         WHERE workspace_id = $1
-           AND signal_id = $2
-         ORDER BY created_at DESC
-         LIMIT 5
-        """,
-        workspace_id,
-        signal_id,
-    )
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
+                   entity_label, metric, period_key, actual_value, expected_value,
+                   deviation_value, deviation_pct, severity, signal_type, status,
+                   confidence, summary, prediction_horizon_days, predicted_value,
+                   prediction_method, signal_subtype, metadata, created_at, updated_at
+              FROM intelligence_signals
+             WHERE workspace_id = $1
+               AND signal_id = $2
+            """,
+            workspace_id,
+            signal_id,
+        )
+        if not row:
+            raise HTTPException(404, "intelligence signal not found")
+        evidence_pack = await _latest_evidence_pack(conn, workspace_id, signal_id)
+        hypotheses = await conn.fetch(
+            """
+            SELECT hypothesis_key, title, rationale, confidence, evidence_pack_id, metadata, created_at
+              FROM hypotheses
+             WHERE workspace_id = $1
+               AND signal_id = $2
+             ORDER BY confidence DESC
+            """,
+            workspace_id,
+            signal_id,
+        )
+        options = await conn.fetch(
+            """
+            SELECT option_id, label, action_kind, impact_expected, confidence, cost,
+                   risk, time_cost, score, selected, metadata, created_at, updated_at
+              FROM decision_options
+             WHERE workspace_id = $1
+               AND signal_id = $2
+             ORDER BY score DESC
+            """,
+            workspace_id,
+            signal_id,
+        )
+        outcomes = await conn.fetch(
+            """
+            SELECT id, option_id, action_taken, predicted_value, actual_value,
+                   prediction_error, outcome_summary, learned_rule, metadata, created_at
+              FROM prediction_outcomes
+             WHERE workspace_id = $1
+               AND signal_id = $2
+             ORDER BY created_at DESC
+             LIMIT 5
+            """,
+            workspace_id,
+            signal_id,
+        )
     return {
         "signal": row_to_signal(row),
         "evidence_pack": evidence_pack,
@@ -482,52 +498,53 @@ async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
 async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
     pool = await auth.pool()
-    option = await pool.fetchrow(
-        """
-        SELECT option_id, label, score
-          FROM decision_options
-         WHERE workspace_id = $1
-           AND signal_id = $2
-           AND option_id = $3
-        """,
-        workspace_id,
-        signal_id,
-        option_id,
-    )
-    if not option:
-        raise HTTPException(404, "decision option not found")
-    await pool.execute(
-        "UPDATE decision_options SET selected = FALSE WHERE workspace_id = $1 AND signal_id = $2",
-        workspace_id,
-        signal_id,
-    )
-    await pool.execute(
-        """
-        UPDATE decision_options
-           SET selected = TRUE, updated_at = NOW()
-         WHERE workspace_id = $1
-           AND signal_id = $2
-           AND option_id = $3
-        """,
-        workspace_id,
-        signal_id,
-        option_id,
-    )
-    await pool.execute(
-        """
-        UPDATE control_room_items
-           SET selected_option_id = $3,
-               status = CASE WHEN status = 'open' THEN 'in_review' ELSE status END,
-               metadata = metadata || $4::jsonb,
-               last_seen_at = NOW()
-         WHERE workspace_id = $1
-           AND item_id = $2
-        """,
-        workspace_id,
-        signal_id,
-        option_id,
-        json_dumps({"selected_option_id": option_id}),
-    )
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        option = await conn.fetchrow(
+            """
+            SELECT option_id, label, score
+              FROM decision_options
+             WHERE workspace_id = $1
+               AND signal_id = $2
+               AND option_id = $3
+            """,
+            workspace_id,
+            signal_id,
+            option_id,
+        )
+        if not option:
+            raise HTTPException(404, "decision option not found")
+        await conn.execute(
+            "UPDATE decision_options SET selected = FALSE WHERE workspace_id = $1 AND signal_id = $2",
+            workspace_id,
+            signal_id,
+        )
+        await conn.execute(
+            """
+            UPDATE decision_options
+               SET selected = TRUE, updated_at = NOW()
+             WHERE workspace_id = $1
+               AND signal_id = $2
+               AND option_id = $3
+            """,
+            workspace_id,
+            signal_id,
+            option_id,
+        )
+        await conn.execute(
+            """
+            UPDATE control_room_items
+               SET selected_option_id = $3,
+                   status = CASE WHEN status = 'open' THEN 'in_review' ELSE status END,
+                   metadata = metadata || $4::jsonb,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $1
+               AND item_id = $2
+            """,
+            workspace_id,
+            signal_id,
+            option_id,
+            json_dumps({"selected_option_id": option_id}),
+        )
     await audit_service.record_event(
         user.get("id"),
         user.get("email"),
@@ -542,84 +559,85 @@ async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str,
 async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
     pool = await auth.pool()
-    signal = await pool.fetchrow(
-        """
-        SELECT actual_value, expected_value, predicted_value, metric, cartridge_id
-          FROM intelligence_signals
-         WHERE workspace_id = $1
-           AND signal_id = $2
-        """,
-        workspace_id,
-        signal_id,
-    )
-    if not signal:
-        raise HTTPException(404, "intelligence signal not found")
-    signal_data = dict(signal)
-    option_id = str(body.get("option_id") or "").strip() or None
-    action_taken = str(body.get("action_taken") or body.get("action") or "").strip()
-    if not action_taken:
-        raise HTTPException(400, "action_taken is required")
-    actual_value = num(body.get("actual_value"))
-    predicted_value = num(body.get("predicted_value"))
-    if predicted_value is None:
-        predicted_value = num(signal_data.get("predicted_value")) or num(signal_data.get("actual_value"))
-    prediction_error = None
-    if actual_value is not None and predicted_value is not None:
-        prediction_error = round(actual_value - predicted_value, 4)
-    learned_rule = str(body.get("learned_rule") or "").strip() or None
-    if not learned_rule and prediction_error is not None:
-        learned_rule = f"Resultado medido con error {prediction_error:.2f} para {signal_data['metric']}."
-    outcome_summary = str(body.get("outcome_summary") or body.get("summary") or learned_rule or "Outcome registrado.").strip()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO prediction_outcomes (
-            tenant_id, workspace_id, signal_id, option_id, action_taken,
-            predicted_value, actual_value, prediction_error, outcome_summary,
-            learned_rule, metadata
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
-        RETURNING *
-        """,
-        tenant_id,
-        workspace_id,
-        signal_id,
-        option_id,
-        action_taken,
-        predicted_value,
-        actual_value,
-        prediction_error,
-        outcome_summary,
-        learned_rule,
-        json_dumps({"reported_by": user.get("email")}),
-    )
-    if learned_rule:
-        await pool.execute(
+    async with scoped_db(pool, tenant_id, workspace_id) as conn:
+        signal = await conn.fetchrow(
             """
-            INSERT INTO control_room_lessons (
-                tenant_id, workspace_id, item_id, cartridge_id, anomaly_type, rule, confidence, metadata
+            SELECT actual_value, expected_value, predicted_value, metric, cartridge_id
+              FROM intelligence_signals
+             WHERE workspace_id = $1
+               AND signal_id = $2
+            """,
+            workspace_id,
+            signal_id,
+        )
+        if not signal:
+            raise HTTPException(404, "intelligence signal not found")
+        signal_data = dict(signal)
+        option_id = str(body.get("option_id") or "").strip() or None
+        action_taken = str(body.get("action_taken") or body.get("action") or "").strip()
+        if not action_taken:
+            raise HTTPException(400, "action_taken is required")
+        actual_value = num(body.get("actual_value"))
+        predicted_value = num(body.get("predicted_value"))
+        if predicted_value is None:
+            predicted_value = num(signal_data.get("predicted_value")) or num(signal_data.get("actual_value"))
+        prediction_error = None
+        if actual_value is not None and predicted_value is not None:
+            prediction_error = round(actual_value - predicted_value, 4)
+        learned_rule = str(body.get("learned_rule") or "").strip() or None
+        if not learned_rule and prediction_error is not None:
+            learned_rule = f"Resultado medido con error {prediction_error:.2f} para {signal_data['metric']}."
+        outcome_summary = str(body.get("outcome_summary") or body.get("summary") or learned_rule or "Outcome registrado.").strip()
+        row = await conn.fetchrow(
+            """
+            INSERT INTO prediction_outcomes (
+                tenant_id, workspace_id, signal_id, option_id, action_taken,
+                predicted_value, actual_value, prediction_error, outcome_summary,
+                learned_rule, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, 0.70, $7::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+            RETURNING *
             """,
             tenant_id,
             workspace_id,
             signal_id,
-            signal_data["cartridge_id"],
-            signal_data["metric"],
+            option_id,
+            action_taken,
+            predicted_value,
+            actual_value,
+            prediction_error,
+            outcome_summary,
             learned_rule,
-            json_dumps({"source": "prediction_outcome"}),
+            json_dumps({"reported_by": user.get("email")}),
         )
-    await pool.execute(
-        """
-        UPDATE control_room_items
-           SET metadata = metadata || $3::jsonb,
-               last_seen_at = NOW()
-         WHERE workspace_id = $1
-           AND item_id = $2
-        """,
-        workspace_id,
-        signal_id,
-        json_dumps({"intelligence_outcome": public_json(dict(row)), "lessons": [learned_rule] if learned_rule else []}),
-    )
+        if learned_rule:
+            await conn.execute(
+                """
+                INSERT INTO control_room_lessons (
+                    tenant_id, workspace_id, item_id, cartridge_id, anomaly_type, rule, confidence, metadata
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, 0.70, $7::jsonb)
+                """,
+                tenant_id,
+                workspace_id,
+                signal_id,
+                signal_data["cartridge_id"],
+                signal_data["metric"],
+                learned_rule,
+                json_dumps({"source": "prediction_outcome"}),
+            )
+        await conn.execute(
+            """
+            UPDATE control_room_items
+               SET metadata = metadata || $3::jsonb,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $1
+               AND item_id = $2
+            """,
+            workspace_id,
+            signal_id,
+            json_dumps({"intelligence_outcome": public_json(dict(row)), "lessons": [learned_rule] if learned_rule else []}),
+        )
     await audit_service.record_event(
         user.get("id"),
         user.get("email"),
