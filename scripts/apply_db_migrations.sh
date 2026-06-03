@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Apply pending infra/init/*.sql migrations to an existing local Postgres volume.
+# Apply pending infra/init/*.sql and infra/init_gold/*.sql migrations to existing
+# local Postgres volumes.
 #
 # Docker entrypoint init scripts only run on a fresh data directory. This target
 # covers the upgrade path for already-created local stacks by replaying
@@ -44,7 +45,7 @@ done
 
 "${PSQL_GOLD[@]}" -c "CREATE TABLE IF NOT EXISTS schema_migrations (id BIGSERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT);"
 
-for sql in "${ROOT_DIR}"/infra/init_gold/[0-9][0-9]*_*.sql; do
+for sql in "${ROOT_DIR}"/infra/init_gold/[0-9][0-9]_*.sql; do
   filename="gold/$(basename "${sql}")"
   if [[ "$("${PSQL_GOLD[@]}" -At -c "SELECT 1 FROM schema_migrations WHERE filename = '${filename}' LIMIT 1;")" == "1" ]]; then
     echo "[migrate:gold] skip ${filename}"
