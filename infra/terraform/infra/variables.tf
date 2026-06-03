@@ -177,6 +177,34 @@ variable "budget_forecast_thresholds" {
   }
 }
 
+variable "enable_public_alb_waf" {
+  description = "Attach a low-cost AWS WAF web ACL to the public ALB."
+  type        = bool
+  default     = true
+}
+
+variable "public_alb_waf_rate_limit" {
+  description = "Maximum requests per source IP in a 5-minute WAF rate window before blocking."
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.public_alb_waf_rate_limit >= 100
+    error_message = "public_alb_waf_rate_limit must be at least 100."
+  }
+}
+
+variable "public_alb_waf_common_rule_action" {
+  description = "Action for AWSManagedRulesCommonRuleSet. Use count during rollout, then block after observing false positives."
+  type        = string
+  default     = "count"
+
+  validation {
+    condition     = contains(["count", "block"], lower(var.public_alb_waf_common_rule_action))
+    error_message = "public_alb_waf_common_rule_action must be count or block."
+  }
+}
+
 variable "smtp_host" {
   description = "SMTP host for transactional email. Use email-smtp.<region>.amazonaws.com for SES SMTP after domain approval."
   type        = string

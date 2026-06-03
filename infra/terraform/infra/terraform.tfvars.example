@@ -40,6 +40,12 @@ monthly_budget_limit_usd = 50
 budget_actual_thresholds = [50, 80, 100]
 budget_forecast_thresholds = [100]
 
+# Low-cost public ALB WAF. Managed Bot/Fraud controls are intentionally not
+# enabled here because they can be materially more expensive.
+enable_public_alb_waf             = true
+public_alb_waf_rate_limit         = 2000
+public_alb_waf_common_rule_action = "count"
+
 # Transactional email. Keep MailHog until a real sender domain exists.
 # For Amazon SES API after domain verification/sandbox approval:
 # email_provider   = "ses"

@@ -114,6 +114,16 @@ output "monthly_budget_name" {
   value       = var.enable_monthly_budget ? aws_budgets_budget.monthly_guardrail[0].name : null
 }
 
+output "public_alb_waf_arn" {
+  description = "AWS WAF web ACL attached to the public ALB."
+  value       = var.enable_public_alb_waf ? aws_wafv2_web_acl.public_alb[0].arn : null
+}
+
+output "access_analyzer_arn" {
+  description = "IAM Access Analyzer external-access analyzer ARN."
+  value       = aws_accessanalyzer_analyzer.external_access.arn
+}
+
 output "ses_domain_verification_record" {
   description = "Manual Google DNS TXT record required to verify the SES sender domain."
   value = local.ses_domain_enabled ? {
