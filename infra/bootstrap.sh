@@ -211,10 +211,9 @@ INVITE_TOKEN_TTL_HOURS=72
 RESET_TOKEN_TTL_HOURS=1
 
 # === LLM defaults (chat/sql model picker) ===
-CHAT_LLM_PROVIDER=gemini
-CHAT_LLM_MODEL=gemini-1.5-flash
+CHAT_LLM_PROVIDER=anthropic
+CHAT_LLM_MODEL=claude-haiku-4-5-20251001
 SQL_LLM_MODEL=claude-sonnet-4-6
-GEMINI_CACHE_ENABLED=true
 
 # === Replicon ===
 REPLICON_API_TOKEN=
@@ -235,7 +234,6 @@ EMBED_MODEL=
 AWS_REGION=us-east-1
 
 # === LLM keys — fill via UI Settings (Fase 2) ===
-GEMINI_API_KEY=
 ANTHROPIC_API_KEY=
 GOOGLE_API_KEY=
 OPENAI_API_KEY=

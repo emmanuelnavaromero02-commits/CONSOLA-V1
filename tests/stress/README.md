@@ -31,6 +31,38 @@ Defaults:
 
 Reports are written to `artifacts/stress/<timestamp>/`.
 
+## Readiness Profiles
+
+The runner supports explicit profiles so beta/production claims are not based
+on the tiny local defaults:
+
+```bash
+OMEGA_STRESS_PROFILE=beta make stress
+```
+
+Beta defaults:
+
+- `OMEGA_STRESS_USERS=100`
+- `OMEGA_STRESS_SPAWN_RATE=10`
+- `OMEGA_STRESS_RUN_TIME=10m`
+- internal service probes enabled
+- fake HubSpot write load enabled
+
+Production defaults:
+
+```bash
+OMEGA_STRESS_PROFILE=production make stress
+```
+
+- `OMEGA_STRESS_USERS=500`
+- `OMEGA_STRESS_SPAWN_RATE=25`
+- `OMEGA_STRESS_RUN_TIME=30m`
+- internal service probes enabled
+- fake HubSpot write load enabled
+
+Every profile still runs the forged workspace isolation probe; a response with
+rows for the forged workspace fails the run.
+
 ## More Pressure
 
 ```bash

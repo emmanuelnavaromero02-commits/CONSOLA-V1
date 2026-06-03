@@ -293,7 +293,7 @@ def test_no_api_mcp_routes_outside_mcp_public_router():
     router-level ``require_admin``.
 
     Implemented as a static AST scan of console/app/main.py so it runs
-    without importing the full console (which pulls in anthropic/gemini
+    without importing the full console (which pulls in Anthropic
     SDKs that the test environment may not have). Any FastAPI decorator
     whose first positional argument string starts with ``/api/mcp`` and
     isn't already inside the mcp_public router is an offender."""

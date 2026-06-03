@@ -11,7 +11,6 @@ DEPLOY = REPO / "infra/terraform/deploy"
 
 REQUIRED_SECRET_NAMES = {
     "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY",
     "JWT_SECRET_KEY",
     "INTERNAL_API_KEY",
     "INTERNAL_API_KEY_CONSOLE_TO_CONSOLE",
@@ -149,7 +148,7 @@ def test_aws_entrypoint_script_fail_fast_on_missing_secret():
 def test_compose_aws_does_not_contain_secret_literals():
     src = _read(DEPLOY / "docker-compose.aws.yml")
     leaked_assignments = re.findall(
-        r"(?m)^\s+(JWT_SECRET_KEY|INTERNAL_API_KEY|POSTGRES_PASSWORD|ANTHROPIC_API_KEY|GEMINI_API_KEY|SMTP_PASSWORD):\s+[A-Za-z0-9_./+=-]{8,}\s*$",
+        r"(?m)^\s+(JWT_SECRET_KEY|INTERNAL_API_KEY|POSTGRES_PASSWORD|ANTHROPIC_API_KEY|SMTP_PASSWORD):\s+[A-Za-z0-9_./+=-]{8,}\s*$",
         src,
     )
     assert leaked_assignments == []

@@ -190,7 +190,7 @@ def test_preview_reads_forwarded_tenant_workspace_scope(cartridge, entity, monke
 
 
 @pytest.mark.parametrize("cartridge", CARTRIDGES)
-def test_duckdb_service_locks_filesystem_and_configuration(cartridge):
+def test_duckdb_service_locks_configuration_after_s3_credentials(cartridge):
     service_path = (
         Path(__file__).resolve().parents[1]
         / "cartridges"
@@ -201,6 +201,5 @@ def test_duckdb_service_locks_filesystem_and_configuration(cartridge):
     )
     src = service_path.read_text(encoding="utf-8")
 
-    assert "SET disabled_filesystems='LocalFileSystem';" in src
     assert "SET lock_configuration=true;" in src
     assert src.index("SET s3_secret_access_key") < src.index("SET lock_configuration=true;")

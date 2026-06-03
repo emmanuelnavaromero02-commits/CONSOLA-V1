@@ -117,8 +117,11 @@ class WriteBackAdapterFactory:
 
     @classmethod
     def _ensure_builtin_adapters(cls) -> None:
+        from app.services.adapters.replicon_adapter import RepliconAdapter
         from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
 
+        cls._registry.setdefault("prepare_billing_review", RepliconAdapter)
+        cls._registry.setdefault("prepare_replicon_adjustment", RepliconAdapter)
         cls._registry.setdefault("sap_hcm_it0008", SapHcmAdapter)
 
     @classmethod

@@ -101,6 +101,7 @@ services:
       APP_ENV:             ${APP_ENV:-production}
       COOKIE_SECURE:       ${COOKIE_SECURE:-true}
       DATABASE_URL:        "postgresql+psycopg2://omega_console:${OMEGA_CONSOLE_PASSWORD:?OMEGA_CONSOLE_PASSWORD is required}@postgres:5432/modecissions"
+      GOLD_DATABASE_URL:   "postgresql+psycopg2://omega_refinement_gold:${OMEGA_REFINEMENT_GOLD_PASSWORD:?OMEGA_REFINEMENT_GOLD_PASSWORD is required}@postgres_gold:5433/modecissions_gold"
       MINIO_BUCKET:        ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       MINIO_ENDPOINT:      "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
       MINIO_ACCESS_KEY:    ${AWS_ACCESS_KEY_ID:-}
@@ -109,10 +110,8 @@ services:
       AWS_DEFAULT_REGION:  ${AWS_REGION:?AWS_REGION is required}
       S3_BUCKET_NAME:      ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
       ANTHROPIC_API_KEY:   ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY:      ${GEMINI_API_KEY:-}
       CHAT_LLM_PROVIDER:   ${CHAT_LLM_PROVIDER:-anthropic}
       CHAT_LLM_MODEL:      ${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}
-      GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REFINEMENT_URL:      http://refinement:8500
       MCP_INFRA_URL:       http://mcp-infra:8010
       CONSOLE_INTERNAL_URL: http://console:8000
@@ -198,10 +197,8 @@ services:
       CONSOLE_URL:          ${CONSOLE_URL:?CONSOLE_URL is required}
       WORKSPACE_PUBLIC_URL: ${WORKSPACE_PUBLIC_URL:?WORKSPACE_PUBLIC_URL is required}
       ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY:       ${GEMINI_API_KEY:-}
       CHAT_LLM_PROVIDER:    ${CHAT_LLM_PROVIDER:-anthropic}
       CHAT_LLM_MODEL:       ${CHAT_LLM_MODEL:-claude-haiku-4-5-20251001}
-      GEMINI_CACHE_ENABLED: ${GEMINI_CACHE_ENABLED:-true}
       REDIS_URL:            ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8001:8001"
@@ -407,6 +404,8 @@ services:
       SUPERSET_FORCE_HTTPS: ${SUPERSET_FORCE_HTTPS:-true}
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:?SUPERSET_ADMIN_USER is required}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?SUPERSET_ADMIN_PASSWORD is required}
+      SUPERSET_SERVICE_USER: ${SUPERSET_SERVICE_USER:?SUPERSET_SERVICE_USER is required}
+      SUPERSET_SERVICE_PASSWORD: ${SUPERSET_SERVICE_PASSWORD:?SUPERSET_SERVICE_PASSWORD is required}
     volumes:
       - /opt/modecissions/infra/terraform/deploy/superset_config/superset_config.py:/app/pythonpath/superset_config.py:ro
     entrypoint: /bin/bash
@@ -415,7 +414,48 @@ services:
       - |
         set -e
         superset db upgrade
-        superset fab create-admin --username "$SUPERSET_ADMIN_USER" --firstname Admin --lastname User --email admin@modecissions.local --password "$SUPERSET_ADMIN_PASSWORD" || true
+        python3 - <<'PY'
+        import os
+
+        from superset.app import create_app
+        from superset.extensions import db
+
+        def upsert_admin(username: str, password: str, first_name: str, last_name: str, email: str) -> None:
+            from superset import security_manager
+
+            role = security_manager.find_role("Admin")
+            user = security_manager.find_user(username=username)
+            if user is None:
+                security_manager.add_user(username, first_name, last_name, email, role, password)
+                print(f"superset user created: {username}")
+                return
+            user.first_name = first_name
+            user.last_name = last_name
+            user.email = email
+            user.active = True
+            user.roles = [role]
+            db.session.add(user)
+            db.session.commit()
+            security_manager.reset_password(user.id, password)
+            print(f"superset user reset: {username}")
+
+        app = create_app()
+        with app.app_context():
+            upsert_admin(
+                os.environ["SUPERSET_ADMIN_USER"],
+                os.environ["SUPERSET_ADMIN_PASSWORD"],
+                "Admin",
+                "User",
+                "admin@modecissions.local",
+            )
+            upsert_admin(
+                os.environ["SUPERSET_SERVICE_USER"],
+                os.environ["SUPERSET_SERVICE_PASSWORD"],
+                "Omega",
+                "Service",
+                "service@modecissions.local",
+            )
+        PY
         if [ -n "${SUPERSET_PREVIOUS_SECRET_KEY:-}" ]; then
           superset re-encrypt-secrets
         fi
