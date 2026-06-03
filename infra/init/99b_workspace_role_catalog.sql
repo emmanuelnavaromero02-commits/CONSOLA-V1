@@ -3,6 +3,10 @@
 -- Fresh databases get these from 13_rbac_models.sql. Older upgraded volumes can
 -- have schema_migrations marking 13 as applied while missing newer workspace
 -- roles, which makes tenant IAM silently degrade to viewer/workspace_admin.
+--
+-- Keep this after 13_rbac_models.sql in lexicographic Docker init order. A
+-- plain "101_" prefix sorts before "10_", so this file intentionally uses
+-- "99b_".
 
 INSERT INTO roles (name, description)
 VALUES
@@ -16,5 +20,5 @@ ON CONFLICT (name) DO UPDATE
 SET description = EXCLUDED.description;
 
 INSERT INTO schema_migrations(filename, applied_at)
-VALUES ('101_workspace_role_catalog.sql', NOW())
+VALUES ('99b_workspace_role_catalog.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

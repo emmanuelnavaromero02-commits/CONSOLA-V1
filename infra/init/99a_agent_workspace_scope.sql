@@ -3,6 +3,9 @@
 -- Existing seed agents remain global templates (workspace_id IS NULL).
 -- Tenant/workspace users may create and manage only agents scoped to their
 -- workspace; global seed agents stay read-only outside platform admins.
+--
+-- Keep this after 17_agents.sql in lexicographic Docker init order. A plain
+-- "100_" prefix sorts before "10_", so this file intentionally uses "99a_".
 
 ALTER TABLE agents
   ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
@@ -49,5 +52,5 @@ CREATE INDEX IF NOT EXISTS agent_runs_tenant_idx
   ON agent_runs (tenant_id, workspace_id);
 
 INSERT INTO schema_migrations(filename, applied_at)
-VALUES ('100_agent_workspace_scope.sql', NOW())
+VALUES ('99a_agent_workspace_scope.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;
