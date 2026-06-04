@@ -36,6 +36,9 @@ _REDACTION_PATTERNS = [
     # Authorization: Bearer <token>
     (re.compile(r"(?i)(authorization\s*[:=]\s*)Bearer\s+[A-Za-z0-9._\-]+"),
      lambda m: f"{m.group(1)}Bearer ***REDACTED***"),
+    # Authorization: Basic <token> and other non-Bearer auth schemes
+    (re.compile(r"(?i)(authorization\s*[:=]\s*)(?!Bearer\b)[^\s,;]+(?:\s+[A-Za-z0-9._~+/=-]+)?"),
+     lambda m: f"{m.group(1)}***REDACTED***"),
     # JWT-shaped tokens (header.payload.signature)
     (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
      "***REDACTED_JWT***"),

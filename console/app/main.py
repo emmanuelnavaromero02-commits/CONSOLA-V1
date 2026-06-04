@@ -6245,6 +6245,7 @@ from app.routers import marketplace as marketplace_router
 from app.routers import metrics as metrics_router
 from app.routers import onboarding as onboarding_router    # v1.44.1 Tarea F
 from app.routers import studio as studio_router             # v1.44.3.3 Task B
+from app.routers import v1 as v1_routers
 from app.routers import control_room, mcp, mcp_public, operations, pages, security, settings, settings_internal
 
 app.include_router(pages.router)
@@ -6270,6 +6271,8 @@ app.include_router(copilot_workflows_router.router)       # v1.44.2 Tarea I
 app.include_router(copilot_workflows_router.plural_router) # v1.44.6 Task 1 executor aliases
 app.include_router(copilot_advanced_router.router)        # v1.45 advanced copilot (goals, lessons, watchdogs, briefing-v2, ask-with-context)
 app.include_router(studio_router.router)                  # v1.44.3.3 Task B (stub)
+for router in v1_routers.ROUTERS:
+    app.include_router(router)
 
 
 # v1.42.1 auditor finding: RequestIDMiddleware must be the OUTERMOST

@@ -77,6 +77,12 @@ def test_redact_bearer_token(logging_config):
     assert "Bearer ***REDACTED***" in out
 
 
+def test_redact_basic_authorization_header(logging_config):
+    out = logging_config._redact("Authorization: Basic dXNlcjpwYXNz")
+    assert "dXNlcjpwYXNz" not in out
+    assert "Authorization: ***REDACTED***" in out
+
+
 def test_redact_password_kv(logging_config):
     out = logging_config._redact("user=alice password=hunter2 ok")
     assert "hunter2" not in out
