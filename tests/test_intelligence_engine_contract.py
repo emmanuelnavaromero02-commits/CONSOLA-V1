@@ -135,6 +135,22 @@ def test_scope_owner_hotfix_migration_covers_vault_and_intelligence_owner():
     assert "regexp_match(key" in migration
 
 
+def test_intelligence_employee_owner_filters_are_enforced():
+    persistence = read("console/app/services/intelligence/persistence.py")
+    for function_name in (
+        "list_signals",
+        "get_signal",
+        "select_option",
+        "record_outcome",
+        "_latest_evidence_pack",
+    ):
+        block = persistence.split(f"async def {function_name}", 1)[1].split("\nasync def ", 1)[0]
+        assert "_can_read_workspace_wide(user)" in block
+        assert "_owner_user_id(user)" in block
+        assert "owner_user_id" in block
+        assert "not can_read_all" in block
+
+
 def test_pipeline_run_save_rejects_missing_scope_before_db_insert():
     source = read("mcp-infra/app/tools/pipeline.py")
     assert "pipeline_run_save requires tenant_id and workspace_id" in source
@@ -144,14 +160,57 @@ def test_pipeline_run_save_rejects_missing_scope_before_db_insert():
     assert guard_pos < insert_pos
 
 
+def test_mcp_pipeline_scope_guard_has_no_unscoped_admin_bypass():
+    source = read("mcp-infra/app/main.py")
+    guard = source.split("def _validate_pipeline_run_save_scope", 1)[1].split("\ndef _require_dag_registered", 1)[0]
+    assert 'if cartridge_id == "platform":' in guard
+    assert "_is_unscoped_admin_context" not in guard
+    assert "pipeline run tenant/workspace scope is required" in guard
+
+
+def test_scope_hardening_migration_only_allows_platform_global_pipeline_runs():
+    migration = read("infra/init/99h_scope_hardening.sql")
+    assert "pipeline_runs_platform_global_rls" in migration
+    assert "cartridge_id = ''platform''" in migration
+    assert "tenant_id IS NULL" in migration
+    assert "workspace_id IS NULL" in migration
+
+
+def test_vault_legacy_scope_classification_blocks_global_connections():
+    migration = read("infra/init/99i_vault_legacy_scope_classification.sql")
+    assert "vault_legacy_unscoped_entries" in migration
+    assert "legacy_global_connection_requires_workspace_migration" in migration
+    assert "DROP POLICY IF EXISTS vault_entries_global_legacy_rls" in migration
+    assert "CREATE POLICY vault_entries_platform_global_rls" in migration
+    policy = migration.split("CREATE POLICY vault_entries_platform_global_rls", 1)[1]
+    assert "scope = 'destinations' AND cartridge = 'platform'" in policy
+    assert "scope = 'secrets'" in policy
+    assert "scope = 'connections'" not in policy
+
+
 def test_console_vault_proxy_forwards_signed_security_context():
     source = read("console/app/main.py")
+    v1_source = read("console/app/routers/v1/vault.py")
     assert "def _vault_headers_for_user" in source
     assert '"x-security-context": json.dumps(build_security_context(user)' in source
     vault_section = source.split("# ── Vault proxy", 1)[1].split("# ── RAG proxy", 1)[0]
     assert "_tenant_vault_conn_id" in vault_section
     assert 'f"{prefix}{clean}"' not in vault_section
     assert "headers=_vault_headers_for_user(user)" in vault_section
+    assert "headers=_hdr_for(\"VAULT\")" not in v1_source
+    assert "headers=_vault_headers_for_user(user)" in v1_source
+
+
+def test_console_user_vault_calls_do_not_bypass_security_context():
+    for path in (
+        "console/app/main.py",
+        "console/app/routers/studio.py",
+        "console/app/routers/v1/vault.py",
+        "console/app/routers/v1/pipeline_studio.py",
+    ):
+        source = read(path)
+        assert 'headers=_hdr_for("VAULT")' not in source
+        assert "x-security-context" in source or "_vault_headers_for_user" in source
 
 
 def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():

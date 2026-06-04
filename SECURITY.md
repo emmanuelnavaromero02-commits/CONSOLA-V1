@@ -74,6 +74,21 @@ The Vault service (`vault/app/main.py`) is the only system component
 that holds long-lived integration secrets at rest; the rest of the
 stack pulls them through it on demand.
 
+Vault rows for tenant/workspace credentials must carry non-null
+`tenant_id` and `workspace_id`. Runtime writes to `/connections/*` and
+workspace `/secrets/*` require a signed `x-security-context`; production
+does not seed unscoped cartridge connections from `secrets.yaml`.
+Remaining unscoped rows are only allowed for explicit platform records
+such as `destinations/platform` and global platform secret scopes. Any
+other unscoped legacy row is classified in
+`vault_legacy_unscoped_entries` and must be migrated into a tenant
+workspace before it can be used by customer flows.
+
+Intelligence records are scoped twice: by tenant/workspace and, for
+non-admin users, by `owner_user_id`. `workspace_admin` and `tenant_admin`
+can see their workspace; ordinary employees can see only their own
+signals, evidence, options, outcomes, datasets, and decisions.
+
 ## Reporting a vulnerability
 
 Email `security@<your-domain>` with details. Include reproduction steps

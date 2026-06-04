@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
+import hmac
+import json
 import sys
 from pathlib import Path
 
@@ -11,6 +14,7 @@ import pytest
 
 LEGACY = "legacy_internal_key_with_more_than_thirty_two_characters"
 CONSOLE_KEY = "console_to_vault_key_with_more_than_thirty_two_characters"
+SIGNING_KEY = "s" * 64
 SERVICE_PATH_MARKERS = (
     "/cartridges/",
     "/console",
@@ -43,12 +47,25 @@ def _load_vault_main(monkeypatch):
     sys.path.insert(0, str(root / "vault"))
     monkeypatch.setenv("INTERNAL_API_KEY", LEGACY)
     monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", CONSOLE_KEY)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
     monkeypatch.setenv("VAULT_ENCRYPTION_KEY", "8sXi-0kBYU5DJ5dY7CCRkW7XHJsXxLPmO6r9OYx-3a4=")
     return importlib.import_module("app.main")
 
 
-def _headers() -> dict[str, str]:
-    return {"x-api-key": CONSOLE_KEY, "x-internal-service": "console"}
+def _signed(ctx: dict) -> str:
+    signed = {**ctx, "_signed_at": 1, "_signature_version": "hmac-sha256-v1"}
+    payload = {key: value for key, value in signed.items() if key not in {"_signature", "_signed_at", "_signature_version"}}
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    signed["_signature"] = hmac.new(SIGNING_KEY.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    return json.dumps(signed)
+
+
+def _headers(ctx: dict) -> dict[str, str]:
+    return {
+        "x-api-key": CONSOLE_KEY,
+        "x-internal-service": "console",
+        "x-security-context": _signed(ctx),
+    }
 
 
 def test_get_secret_writes_audit_log(monkeypatch):
@@ -57,7 +74,17 @@ def test_get_secret_writes_audit_log(monkeypatch):
     monkeypatch.setattr(main, "_db_get", lambda scope, cartridge, key, ctx=None: {"value": "plain-secret"})
     monkeypatch.setattr(main, "_db_audit_access", lambda *args: audit_calls.append(args))
 
-    resp = TestClient(main.app).get("/secrets/platform/API_TOKEN", headers=_headers())
+    resp = TestClient(main.app).get(
+        "/secrets/platform/API_TOKEN",
+        headers=_headers(
+            {
+                "trusted": True,
+                "source": "console",
+                "role": "admin",
+                "allowed_cartridges": ["*"],
+            }
+        ),
+    )
 
     assert resp.status_code == 200
     assert resp.json() == {"value": "plain-secret"}
@@ -74,7 +101,19 @@ def test_get_connection_writes_audit_log(monkeypatch):
     )
     monkeypatch.setattr(main, "_db_audit_access", lambda *args: audit_calls.append(args))
 
-    resp = TestClient(main.app).get("/connections/replicon/default", headers=_headers())
+    resp = TestClient(main.app).get(
+        "/connections/replicon/default",
+        headers=_headers(
+            {
+                "trusted": True,
+                "source": "console",
+                "role": "admin",
+                "tenant_id": "11111111-1111-1111-1111-111111111111",
+                "workspace_id": "22222222-2222-2222-2222-222222222222",
+                "allowed_cartridges": ["replicon"],
+            }
+        ),
+    )
 
     assert resp.status_code == 200
     assert resp.json()["token"] == "plain-token"

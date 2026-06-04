@@ -1,4 +1,7 @@
 import importlib
+import hashlib
+import hmac
+import json
 import sys
 from pathlib import Path
 
@@ -7,12 +10,31 @@ from fastapi.testclient import TestClient
 
 def _load_vault_main(monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
+    sys.path[:] = [p for p in sys.path if p != str(root)]
+    sys.path.insert(0, str(root))
     monkeypatch.setenv("INTERNAL_API_KEY", "test_internal_key_with_more_than_32_chars")
-    sys.modules.pop("app.main", None)
-    sys.modules.pop("app.security", None)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "s" * 64)
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
     return importlib.import_module("app.main")
+
+
+def _security_context_header() -> str:
+    ctx = {
+        "trusted": True,
+        "source": "console",
+        "role": "admin",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": "22222222-2222-2222-2222-222222222222",
+        "allowed_cartridges": ["replicon"],
+        "_signed_at": 1,
+        "_signature_version": "hmac-sha256-v1",
+    }
+    payload = {key: value for key, value in ctx.items() if key not in {"_signature", "_signed_at", "_signature_version"}}
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ctx["_signature"] = hmac.new(("s" * 64).encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    return json.dumps(ctx)
 
 
 def test_normalize_postgres_dsn_accepts_sqlalchemy_psycopg2_urls(monkeypatch):
@@ -43,6 +65,7 @@ def test_list_connections_empty_state_returns_connections_array(monkeypatch):
         headers={
             "x-api-key": "test_internal_key_with_more_than_32_chars",
             "x-internal-service": "console",
+            "x-security-context": _security_context_header(),
         },
     )
 
@@ -75,6 +98,7 @@ def test_list_connections_masks_secret_fields(monkeypatch):
         headers={
             "x-api-key": "test_internal_key_with_more_than_32_chars",
             "x-internal-service": "console",
+            "x-security-context": _security_context_header(),
         },
     )
 

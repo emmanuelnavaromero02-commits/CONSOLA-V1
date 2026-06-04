@@ -699,11 +699,16 @@ async def _record_dag_pipeline_trigger(
         return
 
     pool = await _get_db_pool()
+    scope_columns_present = (
+        await _table_has_column("pipeline_runs", "tenant_id")
+        and await _table_has_column("pipeline_runs", "workspace_id")
+    )
+    if scope_columns_present and cartridge != "platform" and not (tenant_id and workspace_id):
+        raise HTTPException(403, "pipeline run tenant/workspace scope is required")
     has_scope = (
         tenant_id
         and workspace_id
-        and await _table_has_column("pipeline_runs", "tenant_id")
-        and await _table_has_column("pipeline_runs", "workspace_id")
+        and scope_columns_present
     )
     extra = json.dumps({"raw_conf": conf, "triggered_by": "console"})
     if has_scope:
@@ -2147,7 +2152,7 @@ def _llm_secret_keys(data: dict) -> set[str]:
 async def api_copilot_llm_key_status(user: dict = Depends(require_permission("llm.keys.read"))):
     vault_scope = _tenant_vault_scope(user, "llm")
     try:
-        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
             r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}")
         if r.status_code in {404, 204}:
             return {"provider": "anthropic", "configured": False, "scope": "llm"}
@@ -2171,7 +2176,7 @@ async def api_copilot_llm_key_set(body: dict, user: dict = Depends(require_permi
         raise HTTPException(400, "value is required")
     vault_scope = _tenant_vault_scope(user, "llm")
     try:
-        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
             r = await c.put(
                 f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/anthropic_api_key",
                 json={"value": value},
@@ -2942,9 +2947,9 @@ async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(r
     """Proxy to Vault — returns masked connection config for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
     vault_url = _vault_url()
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
         try:
-            r = await c.get(f"{vault_url}/connections/{cartridge_id}")
+            r = await c.get(f"{vault_url}/connections/{quote(cartridge_id, safe='')}")
             if r.status_code in (404, 204):
                 return {"connections": []}
             if r.status_code >= 500:

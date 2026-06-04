@@ -524,7 +524,7 @@ def _validate_pipeline_run_save_scope(ctx: dict[str, Any], args: dict[str, Any])
     cartridge_id = str(args.get("cartridge_id") or "").strip()
     if not cartridge_id:
         raise HTTPException(403, detail="pipeline run cartridge_id is required")
-    if cartridge_id == "platform" or _is_unscoped_admin_context(ctx):
+    if cartridge_id == "platform":
         return
     tenant_id = str(args.get("tenant_id") or "").strip()
     workspace_id = str(args.get("workspace_id") or "").strip()

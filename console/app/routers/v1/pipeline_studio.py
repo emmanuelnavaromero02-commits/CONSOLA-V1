@@ -36,9 +36,9 @@ async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(r
     """Proxy to Vault — returns masked connection config for the cartridge."""
     _require_cartridge_visible(user, cartridge_id)
     vault_url = _vault_url()
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
         try:
-            r = await c.get(f"{vault_url}/connections/{cartridge_id}")
+            r = await c.get(f"{vault_url}/connections/{quote(cartridge_id, safe='')}")
             if r.status_code in (404, 204):
                 return {"connections": []}
             if r.status_code >= 500:

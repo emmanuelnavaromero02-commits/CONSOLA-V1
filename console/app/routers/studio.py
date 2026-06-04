@@ -19,7 +19,7 @@ import socket
 import ssl
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
 
 import httpx
 import yaml
@@ -96,6 +96,13 @@ def _hdr_for(server: str) -> dict[str, str]:
     if rid:
         headers["x-request-id"] = rid
     return headers
+
+
+def _vault_headers_for_user(user: dict | None) -> dict[str, str]:
+    return {
+        **_hdr_for("VAULT"),
+        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
+    }
 
 
 def _rls_user_context(user: dict | None) -> dict[str, Any]:
@@ -240,10 +247,12 @@ def _static_introspection_payload(cartridge_id: str, connector_schema: dict[str,
     }
 
 
-async def _vault_connection(cartridge_id: str, conn_id: str = "default") -> tuple[dict[str, Any], str]:
+async def _vault_connection(cartridge_id: str, conn_id: str = "default", user: dict | None = None) -> tuple[dict[str, Any], str]:
     try:
-        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=8.0) as client:
-            response = await client.get(f"{VAULT_URL.rstrip('/')}/connections/{cartridge_id}/{conn_id}")
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=8.0) as client:
+            response = await client.get(
+                f"{VAULT_URL.rstrip('/')}/connections/{quote(cartridge_id, safe='')}/{quote(conn_id, safe='')}"
+            )
     except Exception as exc:
         return {}, f"vault unavailable: {type(exc).__name__}"
     if response.status_code == 404:
@@ -752,9 +761,10 @@ async def _live_introspection(
     cartridge_id: str,
     connector_schema: dict[str, Any],
     args: dict[str, Any],
+    user: dict | None,
 ) -> tuple[list[dict[str, Any]], str]:
     connector = _connector_payload(connector_schema)
-    connection, reason = await _vault_connection(cartridge_id, str(args.get("conn_id") or "default"))
+    connection, reason = await _vault_connection(cartridge_id, str(args.get("conn_id") or "default"), user)
     kind = str(args.get("source_kind") or args.get("kind") or "").lower()
     has_spec = _openapi_spec_from_args(args) is not None
     has_base_url = bool(_base_url_for_source(connector, connection))
@@ -780,7 +790,7 @@ async def _studio_introspect_source(args: dict[str, Any], user: dict | None) -> 
     live_entities: list[dict[str, Any]] = []
     reason = "live introspection requires studio.write or cartridges.write"
     if can_live:
-        live_entities, reason = await _live_introspection(cartridge_id, schema, args)
+        live_entities, reason = await _live_introspection(cartridge_id, schema, args, user)
     if live_entities:
         return {
             "cartridge_id": cartridge_id,
@@ -934,7 +944,7 @@ async def _autopilot_live_descriptor(
     can_live = has_permission(user, "studio.write") or has_permission(user, "cartridges.write")
     reason = "live introspection requires studio.write or cartridges.write"
     if can_live:
-        live_entities, reason = await _live_introspection(cartridge_id, schema, args)
+        live_entities, reason = await _live_introspection(cartridge_id, schema, args, user)
         if live_entities:
             kind = _autopilot_source_kind(cartridge_id, connector, args, "live_introspection")
             return {
@@ -1430,7 +1440,7 @@ async def _studio_cartridge_self_check_impl(cartridge_id: str, user: dict | None
     except Exception as exc:
         blockers.append(_diag_item("connector_schema no disponible", evidence=type(exc).__name__, severity="critical"))
 
-    vault_connection, vault_reason = await _vault_connection(cartridge_id, "default")
+    vault_connection, vault_reason = await _vault_connection(cartridge_id, "default", user)
     evidence["vault"] = "present" if vault_connection else vault_reason
     if not vault_connection:
         warnings.append(_diag_item("Credenciales default no encontradas en Vault", evidence=vault_reason or "no saved credentials"))
@@ -1567,7 +1577,7 @@ async def _execute_studio_goal_step(
             "keys": sorted(schema.keys())[:20] if isinstance(schema, dict) else [],
         }
     if step_key == "vault_credentials":
-        connection, reason = await _vault_connection(cartridge_id, "default")
+        connection, reason = await _vault_connection(cartridge_id, "default", user)
         return {
             "ok": bool(connection),
             "source": "vault.connections",

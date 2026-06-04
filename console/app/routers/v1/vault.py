@@ -35,8 +35,8 @@ def _bind_to_main(fn):
 async def api_vault_list_connections(cartridge: str, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
     try:
-        async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-            r = await c.get(f"{_VAULT_URL}/connections/{cartridge}")
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+            r = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
         if r.status_code in (404, 204):
             return {"connections": []}
         if r.status_code >= 500:
@@ -49,16 +49,29 @@ async def api_vault_list_connections(cartridge: str, user: dict = Depends(requir
         raise HTTPException(502, "Vault request failed") from exc
     if not data:
         return {"connections": []}
-    return data
+    connections = data.get("connections") if isinstance(data, dict) else []
+    if not isinstance(connections, list):
+        return {"connections": []}
+    visible: list[dict] = []
+    for conn in connections:
+        if not isinstance(conn, dict):
+            continue
+        display = _tenant_vault_display_conn(user, conn)
+        if display is not None:
+            visible.append(display)
+    return {"connections": visible}
 
 # /api/vault/connections/{cartridge}/{conn_id}/reveal
 @router.get("/api/vault/connections/{cartridge}/{conn_id}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 @_bind_to_main
-async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
+async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict = Depends(_internal_or_authenticated)):
     """Returns full credentials including token (not masked)."""
     _require_cartridge_visible(user, cartridge)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
+    vault_conn_id = _tenant_vault_conn_id(user, conn_id)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.get(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
+        )
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
@@ -70,72 +83,108 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
         resource_type="vault_connection",
         resource_id=f"{cartridge}/{conn_id}",
         status="success",
-        metadata={"cartridge": cartridge, "connection_id": conn_id},
+        metadata={
+            "cartridge": cartridge,
+            "connection_id": conn_id,
+            "tenant_id": user.get("active_tenant_id") or user.get("tenant_id"),
+            "workspace_id": user.get("active_workspace_id") or user.get("workspace_id"),
+        },
         critical=True,
     )
+    if isinstance(data, dict) and vault_conn_id != conn_id:
+        data["conn_id"] = conn_id
+        if "id" in data:
+            data["id"] = conn_id
     return data
 
 # /api/vault/connections/{cartridge}/{conn_id}
-@router.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.put("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.put(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}", json=body)
+    vault_conn_id = _tenant_vault_conn_id(user, conn_id)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.put(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}",
+            json=body,
+        )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_conn_id != conn_id:
+        data["conn_id"] = conn_id
+        if "id" in data:
+            data["id"] = conn_id
+    return data
 
 # /api/vault/connections/{cartridge}/{conn_id}
-@router.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.delete("/api/vault/connections/{cartridge}/{conn_id}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_delete_connection(cartridge: str, conn_id: str, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.delete(f"{_VAULT_URL}/connections/{cartridge}/{conn_id}")
+    vault_conn_id = _tenant_vault_conn_id(user, conn_id)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.delete(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
+        )
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_conn_id != conn_id:
+        data["conn_id"] = conn_id
+        if "id" in data:
+            data["id"] = conn_id
+    return data
 
 # /api/vault/secrets/{scope}
 @router.get("/api/vault/secrets/{scope}", dependencies=[Depends(require_permission("vault.secrets.read_masked"))])
 @_bind_to_main
 async def api_vault_list_secrets(scope: str, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/secrets/{scope}")
+    vault_scope = _tenant_vault_scope(user, scope)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_scope != scope:
+        data["scope"] = scope
+    return data
 
 # /api/vault/secrets/{scope}/{key}/reveal
 @router.get("/api/vault/secrets/{scope}/{key}/reveal", dependencies=[Depends(require_permission("vault.secrets.reveal"))])
 @_bind_to_main
 async def api_vault_reveal_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.get(f"{_VAULT_URL}/secrets/{scope}/{key}")
+    vault_scope = _tenant_vault_scope(user, scope)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.get(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/{quote(key, safe='')}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()
         return r.json()
 
 # /api/vault/secrets/{scope}/{key}
-@router.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.put("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_upsert_secret(scope: str, key: str, body: dict, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.put(f"{_VAULT_URL}/secrets/{scope}/{key}", json=body)
+    vault_scope = _tenant_vault_scope(user, scope)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.put(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/{quote(key, safe='')}", json=body)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    if isinstance(data, dict) and vault_scope != scope:
+        data["scope"] = scope
+    return data
 
 # /api/vault/secrets/{scope}/{key}
-@router.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write")), Depends(require_global_any_role("owner", "super_admin", ROLE_ADMIN))])
+@router.delete("/api/vault/secrets/{scope}/{key}", dependencies=[Depends(require_csrf), Depends(require_permission("vault.connections.write"))])
 @_bind_to_main
 async def api_vault_delete_secret(scope: str, key: str, user: dict = Depends(require_authenticated)):
     _require_vault_scope_visible(user, scope)
-    async with httpx.AsyncClient(headers=_hdr_for("VAULT"), timeout=5) as c:
-        r = await c.delete(f"{_VAULT_URL}/secrets/{scope}/{key}")
+    vault_scope = _tenant_vault_scope(user, scope)
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        r = await c.delete(f"{_VAULT_URL}/secrets/{quote(vault_scope, safe='')}/{quote(key, safe='')}")
         if r.status_code == 404:
             raise HTTPException(404, "Not found")
         r.raise_for_status()

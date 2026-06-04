@@ -120,6 +120,8 @@ Freeze release changes when any of these happen:
 - `run_errors_24h` or `external_source_errors_24h` keeps rising after rollback.
 - Tenant/workspace isolation tests fail locally or in AWS simulation.
 - A migration changes tenant-scoped tables and has not passed direct RLS tests.
+- Vault or pipeline scope hardening changes have not passed the checks in
+  [12_scope_hardening.md](12_scope_hardening.md).
 
 During freeze, only ship a new tag after:
 

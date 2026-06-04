@@ -59,6 +59,7 @@ _DATABASE_URL = os.getenv(
 _SENSITIVE = {"token", "password", "secret", "api_key", "api_secret"}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _GLOBAL_SECRET_SCOPES = {"global", "platform", "studio", "system", "_system"}
+_ALLOW_UNSCOPED_VAULT_CONNECTIONS_ENV = "ALLOW_UNSCOPED_VAULT_CONNECTIONS"
 _SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
 
 
@@ -118,9 +119,14 @@ def _is_unscoped_admin_context(ctx: dict) -> bool:
     return "*" in {str(item).strip() for item in (ctx.get("allowed_cartridges") or [])}
 
 
-def _require_cartridge_scope(ctx: dict, cartridge: str) -> None:
-    if not ctx.get("trusted") or _is_unscoped_admin_context(ctx):
-        return
+def _require_cartridge_scope(ctx: dict, cartridge: str, *, allow_platform_global: bool = True) -> None:
+    if not ctx.get("trusted"):
+        raise HTTPException(403, "vault access requires signed tenant/workspace context")
+    if _is_unscoped_admin_context(ctx):
+        if allow_platform_global:
+            return
+        raise HTTPException(403, "vault connection writes require tenant/workspace scope")
+    _vault_scope(ctx)
     allowed = {str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()}
     if "*" not in allowed and cartridge not in allowed:
         raise HTTPException(403, "vault cartridge outside caller scope")
@@ -130,16 +136,24 @@ def _require_secret_scope(ctx: dict, scope: str) -> None:
     clean = str(scope or "").strip()
     if not clean:
         raise HTTPException(400, "vault scope is required")
-    if not ctx.get("trusted") or _is_unscoped_admin_context(ctx):
-        return
     if clean in _GLOBAL_SECRET_SCOPES:
-        raise HTTPException(403, "global vault scope requires platform admin")
+        if not _is_unscoped_admin_context(ctx):
+            raise HTTPException(403, "global vault scope requires platform admin")
+        return
+    if _is_unscoped_admin_context(ctx):
+        raise HTTPException(403, "workspace vault scope requires tenant/workspace context")
+    if not ctx.get("trusted"):
+        raise HTTPException(403, "vault access requires signed tenant/workspace context")
     _vault_scope(ctx)
 
 
-def _vault_scope(ctx: dict) -> tuple[str | None, str | None]:
-    if not ctx.get("trusted") or _is_unscoped_admin_context(ctx):
+def _vault_scope(ctx: dict, *, allow_unscoped: bool = False) -> tuple[str | None, str | None]:
+    if _is_unscoped_admin_context(ctx):
         return None, None
+    if allow_unscoped and not ctx.get("trusted"):
+        return None, None
+    if not ctx.get("trusted"):
+        raise HTTPException(403, "vault access requires signed tenant/workspace context")
     tenant = str(ctx.get("tenant_id") or "").strip() or None
     workspace = str(ctx.get("workspace_id") or "").strip() or None
     if not tenant or not workspace:
@@ -176,9 +190,9 @@ def _row_value(row_encrypted: bytes | memoryview | None, row_value_json) -> dict
     return json.loads(row_value_json)
 
 
-def _db_upsert(scope: str, cartridge: str, key: str, value: dict, ctx: dict | None = None) -> None:
+def _db_upsert(scope: str, cartridge: str, key: str, value: dict, ctx: dict | None = None, *, allow_unscoped: bool = False) -> None:
     encrypted = encrypt_value(value)
-    tenant_id, workspace_id = _vault_scope(ctx or {})
+    tenant_id, workspace_id = _vault_scope(ctx or {}, allow_unscoped=allow_unscoped)
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
@@ -235,8 +249,8 @@ def _db_upsert_if_absent(scope: str, cartridge: str, key: str, value: dict) -> N
     conn.close()
 
 
-def _db_get(scope: str, cartridge: str, key: str, ctx: dict | None = None) -> dict | None:
-    tenant_id, workspace_id = _vault_scope(ctx or {})
+def _db_get(scope: str, cartridge: str, key: str, ctx: dict | None = None, *, allow_unscoped: bool = False) -> dict | None:
+    tenant_id, workspace_id = _vault_scope(ctx or {}, allow_unscoped=allow_unscoped)
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
@@ -259,8 +273,8 @@ def _db_get(scope: str, cartridge: str, key: str, ctx: dict | None = None) -> di
     return _row_value(row[0], row[1])
 
 
-def _db_delete(scope: str, cartridge: str, key: str, ctx: dict | None = None) -> bool:
-    tenant_id, workspace_id = _vault_scope(ctx or {})
+def _db_delete(scope: str, cartridge: str, key: str, ctx: dict | None = None, *, allow_unscoped: bool = False) -> bool:
+    tenant_id, workspace_id = _vault_scope(ctx or {}, allow_unscoped=allow_unscoped)
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
@@ -296,8 +310,8 @@ def _db_audit_access(caller_service: str | None, scope: str, key: str, op: str, 
     conn.close()
 
 
-def _db_list(scope: str, cartridge: str, ctx: dict | None = None) -> list[dict]:
-    tenant_id, workspace_id = _vault_scope(ctx or {})
+def _db_list(scope: str, cartridge: str, ctx: dict | None = None, *, allow_unscoped: bool = False) -> list[dict]:
+    tenant_id, workspace_id = _vault_scope(ctx or {}, allow_unscoped=allow_unscoped)
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
@@ -392,6 +406,12 @@ def _seed() -> None:
 
     # secrets: { scope: { key: value } }
     for scope, keys in (data.get("secrets") or {}).items():
+        if _is_production() and str(scope or "").strip() not in _GLOBAL_SECRET_SCOPES:
+            logger.warning(
+                "Skipping unscoped Vault secret seed for %s; use workspace-scoped Vault writes instead",
+                scope,
+            )
+            continue
         for key, val in (keys or {}).items():
             _db_upsert_if_absent("secrets", scope, key, {"value": val})
 
@@ -400,7 +420,18 @@ def _seed() -> None:
         _db_upsert_if_absent("destinations", "platform", name, config or {})
 
     # connections: { cartridge_id: { conn_id: { base_url, auth_method, ... } } }
+    allow_unscoped_connections = (
+        os.environ.get(_ALLOW_UNSCOPED_VAULT_CONNECTIONS_ENV, "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and not _is_production()
+    )
     for cartridge_id, conns in (data.get("connections") or {}).items():
+        if not allow_unscoped_connections:
+            logger.warning(
+                "Skipping unscoped Vault connection seed for %s; use workspace-scoped Vault writes instead",
+                cartridge_id,
+            )
+            continue
         for conn_id, config in (conns or {}).items():
             _db_upsert_if_absent("connections", cartridge_id, conn_id, config or {})
 
@@ -589,7 +620,7 @@ def get_connection(
 @app.put("/connections/{cartridge}/{conn_id}")
 def put_connection(cartridge: str, conn_id: str, body: dict, x_security_context: str | None = Header(None, alias="x-security-context")):
     ctx = _security_context_from_header(x_security_context)
-    _require_cartridge_scope(ctx, cartridge)
+    _require_cartridge_scope(ctx, cartridge, allow_platform_global=False)
     _db_upsert("connections", cartridge, conn_id, body, ctx)
     return {"saved": True, "conn_id": conn_id}
 
@@ -597,7 +628,7 @@ def put_connection(cartridge: str, conn_id: str, body: dict, x_security_context:
 @app.delete("/connections/{cartridge}/{conn_id}")
 def delete_connection(cartridge: str, conn_id: str, x_security_context: str | None = Header(None, alias="x-security-context")):
     ctx = _security_context_from_header(x_security_context)
-    _require_cartridge_scope(ctx, cartridge)
+    _require_cartridge_scope(ctx, cartridge, allow_platform_global=False)
     if not _db_delete("connections", cartridge, conn_id, ctx):
         raise HTTPException(404, f"Connection '{cartridge}/{conn_id}' not found")
     return {"deleted": True}
@@ -650,13 +681,13 @@ def delete_secret(scope: str, key: str, x_security_context: str | None = Header(
 
 @app.get("/destinations")
 def list_destinations():
-    rows = _db_list("destinations", "platform")
+    rows = _db_list("destinations", "platform", allow_unscoped=True)
     return {"destinations": [r["key"] for r in rows]}
 
 
 @app.get("/destinations/{name}")
 def get_destination(name: str):
-    config = _db_get("destinations", "platform", name)
+    config = _db_get("destinations", "platform", name, allow_unscoped=True)
     if config is None:
         raise HTTPException(404, f"Destination '{name}' not found")
     return {"config": config}
