@@ -1,5 +1,16 @@
 import os
 
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+
+
 # Compose DSN from mcp-infra's PG_* envs, falling back to DATABASE_URL if present
 _pg_dsn_env = os.environ.get("DATABASE_URL", "").replace("postgresql+psycopg2://", "postgresql://")
 if _pg_dsn_env:
@@ -17,11 +28,11 @@ else:
     )
 
 EMBED_MODEL    = os.environ.get("EMBED_MODEL",     "amazon.titan-embed-text-v2:0")
-EMBED_DIM      = int(os.environ.get("EMBED_DIM",   "1024"))
+EMBED_DIM      = _env_int("EMBED_DIM", 1024)
 BEDROCK_REGION = os.environ.get("BEDROCK_REGION") or os.environ.get("AWS_REGION") or "us-east-1"
 
-PARENT_CHUNK_SIZE = int(os.environ.get("PARENT_CHUNK_SIZE", "3000"))
-CHILD_CHUNK_SIZE  = int(os.environ.get("CHILD_CHUNK_SIZE",  "600"))
-PARENT_OVERLAP    = int(os.environ.get("PARENT_OVERLAP",    "200"))
-CHILD_OVERLAP     = int(os.environ.get("CHILD_OVERLAP",     "100"))
-TOP_K             = int(os.environ.get("RAG_TOP_K",         "5"))
+PARENT_CHUNK_SIZE = _env_int("PARENT_CHUNK_SIZE", 3000)
+CHILD_CHUNK_SIZE  = _env_int("CHILD_CHUNK_SIZE", 600)
+PARENT_OVERLAP    = _env_int("PARENT_OVERLAP", 200)
+CHILD_OVERLAP     = _env_int("CHILD_OVERLAP", 100)
+TOP_K             = _env_int("RAG_TOP_K", 5)
