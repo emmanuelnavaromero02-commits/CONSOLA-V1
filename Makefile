@@ -13,7 +13,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation monitor-check production-readiness v1-live-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -38,6 +38,8 @@ help:
 	@echo "  make stress       run Locust stress profile against the running stack"
 	@echo "  make multiuser-simulation"
 	@echo "                    run prod-like tenant/workspace/employee isolation simulation"
+	@echo "  make live-cartridge-tests"
+	@echo "                    run gated live cartridge test_connection + extraction probes"
 	@echo "  make monitor-check"
 	@echo "                    run one public AWS health/readiness monitor check"
 	@echo "  make production-readiness"
@@ -173,6 +175,9 @@ stress:
 
 multiuser-simulation:
 	@bash scripts/run_multiuser_isolation_simulation.sh
+
+live-cartridge-tests:
+	@bash scripts/run_live_cartridge_checks.sh
 
 monitor-check:
 	@bash scripts/monitor_health_once.sh
