@@ -19,6 +19,11 @@ ENABLE_COPILOT_WRITES = os.environ.get("OMEGA_STRESS_ENABLE_COPILOT_WRITES", "")
     "true",
     "yes",
 }
+REQUIRE_LIVE_LLM = os.environ.get("OMEGA_STRESS_REQUIRE_LIVE_LLM", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 REQUIRE_HUBSPOT_OK = os.environ.get("OMEGA_STRESS_REQUIRE_HUBSPOT_OK", "1").strip().lower() in {
     "1",
     "true",
@@ -55,6 +60,8 @@ EXTRACT_IN_FLIGHT = False
 GOLD_REFRESH_IN_FLIGHT = False
 WRITE_WARMUP_COMPLETE = False
 WRITE_WARMUP_ERROR: str | None = None
+LIVE_LLM_PROBE_COMPLETE = False
+LIVE_LLM_PROBE_ERROR: str | None = None
 
 
 OPENAPI_SPEC = {
@@ -109,6 +116,8 @@ class OmegaStressUser(HttpUser):
         if not ADMIN_PASSWORD:
             raise RuntimeError("E2E_ADMIN_PASSWORD is required for stress login")
         self._login()
+        if REQUIRE_LIVE_LLM:
+            self._ensure_live_llm_ready()
         self._probe_console_pages()
         if ENABLE_INTERNAL_PROBES:
             self._probe_internal_services()
@@ -243,6 +252,44 @@ class OmegaStressUser(HttpUser):
                 WRITE_WARMUP_COMPLETE = True
                 raise
             WRITE_WARMUP_COMPLETE = True
+
+    def _ensure_live_llm_ready(self) -> None:
+        """Run one required LLM-backed HTTP probe per stress process.
+
+        The stress profile should prove the deployed Copilot path can reach the
+        configured provider without turning load testing into an expensive LLM
+        burn. A single failing probe fails the run for every user.
+        """
+        global LIVE_LLM_PROBE_COMPLETE, LIVE_LLM_PROBE_ERROR
+        if LIVE_LLM_PROBE_COMPLETE:
+            if LIVE_LLM_PROBE_ERROR:
+                raise RuntimeError(LIVE_LLM_PROBE_ERROR)
+            return
+
+        with WRITE_LOCK:
+            if LIVE_LLM_PROBE_COMPLETE:
+                if LIVE_LLM_PROBE_ERROR:
+                    raise RuntimeError(LIVE_LLM_PROBE_ERROR)
+                return
+            try:
+                payload = self._post_json(
+                    "/api/copilot/drafts/generate",
+                    name="copilot:live-llm-probe",
+                    body={
+                        "kind": "note",
+                        "about": "responde una nota corta para validar el proveedor LLM vivo",
+                        "tone": "neutral",
+                    },
+                    expected_status={200},
+                )
+                body = (((payload or {}).get("draft") or {}).get("body") or "").strip()
+                if len(body) < 5:
+                    raise RuntimeError(f"live LLM probe returned an empty draft: {payload}")
+            except Exception as exc:
+                LIVE_LLM_PROBE_ERROR = f"live LLM probe failed: {exc}"
+                LIVE_LLM_PROBE_COMPLETE = True
+                raise
+            LIVE_LLM_PROBE_COMPLETE = True
 
     def _maybe_extract_hubspot_bundle(self, *, force: bool = False) -> None:
         now = time.monotonic()

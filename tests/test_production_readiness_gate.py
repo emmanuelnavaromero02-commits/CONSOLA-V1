@@ -66,6 +66,11 @@ def test_stress_runner_has_beta_and_production_profiles_with_isolation_probe():
     assert "DEFAULT_USERS=100" in script
     assert "DEFAULT_USERS=500" in script
     assert "DEFAULT_INTERNAL_PROBES" in script
+    assert "OMEGA_STRESS_REQUIRE_LIVE_LLM" in script
+    assert "OMEGA_STRESS_REQUIRE_LIVE_LLM" in locust
+    assert "/api/copilot/drafts/generate" in locust
+    assert "copilot:live-llm-probe" in locust
+    assert "LIVE_LLM_PROBE_COMPLETE" in locust
     assert "forged_workspace_isolation_probe" in locust
     assert "forged workspace returned rows" in locust
 
@@ -78,3 +83,7 @@ def test_dr_rehearsal_is_guarded_and_post_restore_checked():
     assert "manifest.json" in script
     assert "make smoke" in script
     assert "/readyz?require_data=1" in script
+    assert "OMEGA_REQUIRE_LIVE_LLM" in script
+    assert "ANTHROPIC_API_KEY is required" in script
+    assert "checking live Anthropic chat path after restore" in script
+    assert "gemini" not in script.lower()

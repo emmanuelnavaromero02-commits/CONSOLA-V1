@@ -9,8 +9,47 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="python3"
+fi
+
 log() {
   printf '[dr-rehearsal] %s\n' "$*"
+}
+
+check_live_llm_if_required() {
+  if [[ "${OMEGA_REQUIRE_LIVE_LLM:-0}" != "1" ]]; then
+    log "live LLM probe skipped; set OMEGA_REQUIRE_LIVE_LLM=1 to require Anthropic"
+    return
+  fi
+  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    log "ANTHROPIC_API_KEY is required when OMEGA_REQUIRE_LIVE_LLM=1"
+    exit 2
+  fi
+  log "checking live Anthropic chat path after restore"
+  PYTHONPATH=console "${PYTHON_BIN}" - <<'PY'
+import asyncio
+
+from app.services import llm_client
+
+
+async def main() -> None:
+    reply, _urls, _messages = await llm_client.chat(
+        system="Responde solo OK.",
+        messages=[{"role": "user", "content": "OK"}],
+        tools=[],
+        invoke_tool=None,
+        tool_server_map={},
+        max_tokens=16,
+        temperature=0,
+    )
+    if not str(reply or "").strip():
+        raise SystemExit("Anthropic returned an empty reply")
+
+
+asyncio.run(main())
+PY
 }
 
 require_in_file() {
@@ -64,5 +103,7 @@ make smoke
 
 log "checking post-restore strict readiness"
 curl -fsS --max-time 10 "${CONSOLE_URL:-http://127.0.0.1:8000}/readyz?require_data=1" >/dev/null
+
+check_live_llm_if_required
 
 log "PASS"
