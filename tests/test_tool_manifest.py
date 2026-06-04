@@ -63,6 +63,30 @@ def test_classify_postgres_execute_is_destructive(manifest_module):
     assert res["risk_level"] == "destructive"
 
 
+def test_airflow_mutating_tools_are_destructive(manifest_module):
+    for name in (
+        "airflow_create_dag",
+        "airflow_delete_dag",
+        "airflow_set_variable",
+        "postgres_execute_query",
+        "postgres_execute_ddl",
+    ):
+        res = manifest_module.classify_tool(name)
+        assert res["risk_level"] == "destructive", name
+        assert res["requires_approval"] is True, name
+
+
+def test_studio_goal_run_mutating_tools_are_not_read_only(manifest_module):
+    for name in ("create_goal_run", "plan_goal_run", "execute_goal_run"):
+        res = manifest_module.classify_tool(name)
+        assert res["risk_level"] in {"write", "destructive"}, name
+        assert res["requires_approval"] is True, name
+
+    status = manifest_module.classify_tool("get_goal_run_status")
+    assert status["risk_level"] == "read"
+    assert status["requires_approval"] is False
+
+
 def test_build_manifest_aggregates_servers(manifest_module, monkeypatch):
     """build_manifest should iterate every registered server and classify
     each tool returned by list_tools(server_id)."""

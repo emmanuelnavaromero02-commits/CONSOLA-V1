@@ -66,7 +66,6 @@ READ_ONLY_TOOLS = {
     "generate_dag_code",
     "autopilot_build_cartridge",
     "cartridge_self_check",
-    "create_goal_run", "plan_goal_run", "execute_goal_run",
     "get_goal_run_status",
     "introspect_source",
     "validate_dag_code",

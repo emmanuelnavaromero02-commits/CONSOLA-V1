@@ -77,6 +77,42 @@ async def test_airflow_set_variable_disabled_in_production(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_airflow_set_variable_blocked_when_only_app_env_set(monkeypatch):
+    airflow = _load_airflow_tools(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("ALLOW_RCE_TOOLS", raising=False)
+    monkeypatch.setattr(
+        airflow,
+        "_client",
+        lambda: (_ for _ in ()).throw(AssertionError("_client must not be reached")),
+    )
+
+    with pytest.raises(PermissionError, match="ALLOW_RCE_TOOLS"):
+        await airflow.airflow_set_variable(key="danger", value="blocked")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env_value", ["", "false", "no", "0", "off", "random"])
+async def test_airflow_set_variable_blocked_when_allow_rce_false_values(monkeypatch, env_value):
+    airflow = _load_airflow_tools(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("ALLOW_RCE_TOOLS", env_value)
+
+    with pytest.raises(PermissionError, match="ALLOW_RCE_TOOLS"):
+        await airflow.airflow_set_variable(key="danger", value="blocked")
+
+
+@pytest.mark.asyncio
+async def test_airflow_set_variable_still_requires_development_when_allow_rce_true(monkeypatch):
+    airflow = _load_airflow_tools(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_RCE_TOOLS", "true")
+
+    with pytest.raises(PermissionError, match="disabled outside development"):
+        await airflow.airflow_set_variable(key="danger", value="blocked")
+
+
+@pytest.mark.asyncio
 async def test_airflow_create_dag_still_available_in_development(monkeypatch, tmp_path):
     airflow = _load_airflow_tools(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")

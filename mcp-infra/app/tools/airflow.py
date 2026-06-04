@@ -503,6 +503,12 @@ async def airflow_set_variable(key: str, value: str) -> dict:
             "airflow_set_variable is disabled outside development because "
             "Airflow Variables are persistent runtime configuration."
         )
+    if not _rce_tools_explicitly_enabled():
+        raise PermissionError(
+            "airflow_set_variable refuses to run without explicit "
+            "ALLOW_RCE_TOOLS=true. APP_ENV=development is not enough; the "
+            "second gate must be set by the local/E2E harness."
+        )
     async with _client() as c:
         r = await _request_with_transport_retry(
             c,
