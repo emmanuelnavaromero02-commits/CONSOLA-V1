@@ -805,10 +805,9 @@ async def _refresh_dag_run_status(row: dict, user: dict | None = None) -> dict:
     return row
 
 
-# NOTE: 'unsafe-inline' for script-src/style-src is required because the
-# static HTML pages use inline scripts and styles. To remove it, all inline
-# JS must be moved to external .js files and inline styles to external .css
-# files, then CSP can use strict nonces or SHA-256 hashes instead.
+# NOTE: script-src is intentionally strict on shell/auth/control-room paths.
+# style-src still has a documented inline-style exception for legacy static
+# <style> blocks until those styles move to external assets or hashes.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -899,16 +898,6 @@ _STRICT_CSP_PATHS = frozenset({
     "/activate",
 })
 
-APP_EMBED_CSP = (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob:; "
-    "connect-src 'self'; "
-    "frame-ancestors 'self'; "
-    "base-uri 'self'; "
-    "form-action 'self'"
-)
 APP_THEME_SHIM = """
 <style id="omega-app-theme-shim">
 :root,

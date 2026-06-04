@@ -89,6 +89,22 @@ non-admin users, by `owner_user_id`. `workspace_admin` and `tenant_admin`
 can see their workspace; ordinary employees can see only their own
 signals, evidence, options, outcomes, datasets, and decisions.
 
+## CSP inline-style exception
+
+The console and workspace shell CSPs must not allow inline scripts. The
+current approved exception is limited to `style-src 'unsafe-inline'` for
+legacy HTML pages that still carry static inline `<style>` blocks. This
+exception does not permit inline event handlers or inline `<script>` blocks.
+
+Controls while the style migration remains open:
+
+- `script-src` stays free of `'unsafe-inline'` on shell/auth/control-room paths.
+- Dynamic HTML must use escaping helpers before insertion.
+- The exception is tracked as styling technical debt, not as a script
+  execution allowance.
+- Future work should replace inline styles with static assets, nonce-backed
+  style tags, or hashed style blocks before v1 public security review.
+
 ## Reporting a vulnerability
 
 Email `security@<your-domain>` with details. Include reproduction steps
