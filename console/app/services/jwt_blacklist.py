@@ -5,12 +5,11 @@ Hooked into:
   - verify_access_token_async in jwt_auth.py (reads the blacklist on every
     JWT-authenticated request).
 
-Fail-open: if Redis is unreachable or the key fetch raises, both revoke()
-and is_revoked() return False. That keeps the system available — the
-worst case is a window of up-to-exp seconds where a revoked token still
-works, which matches the pre-blacklist behaviour. Denying every
-JWT-authenticated request because Redis is down would be a much worse
-failure mode.
+Failure policy is environment-aware. Production defaults to fail-closed for
+is_revoked(): if Redis is unreachable, JWT-authenticated requests are denied
+rather than allowing a revoked token. Development/test defaults to fail-open
+so local work without Redis remains ergonomic. Override with
+JWT_BLACKLIST_FAIL_CLOSED={true,false}.
 """
 from __future__ import annotations
 
@@ -26,6 +25,23 @@ _BLACKLIST_KEY_PREFIX = "jwt_blacklist:"
 # clock-skew between the auth issuer and Redis, and gives us a small grace
 # window for in-flight requests already past the auth check.
 _MIN_TTL_SECONDS = 60
+_FALSEY = {"0", "false", "no", "off"}
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _is_production() -> bool:
+    return os.environ.get("APP_ENV", "production").strip().lower() in {"production", "prod"}
+
+
+def _fail_closed_enabled() -> bool:
+    raw = os.environ.get("JWT_BLACKLIST_FAIL_CLOSED")
+    if raw is not None:
+        value = raw.strip().lower()
+        if value in _FALSEY:
+            return False
+        if value in _TRUTHY:
+            return True
+    return _is_production()
 
 
 class _BlacklistBackend:
@@ -76,12 +92,19 @@ class _BlacklistBackend:
             return False
 
     async def is_revoked(self, jti: str) -> bool:
-        """Return True iff the jti is in the blacklist. Fail-open on errors."""
+        """Return True iff the jti is in the blacklist.
+
+        In production, Redis outages fail closed by default so a known-revoked
+        token cannot slip through while the blacklist backend is unavailable.
+        """
         if not jti:
             return False
         client = self._get_client()
         if client is None:
-            return False  # fail-open: no Redis configured
+            if _fail_closed_enabled():
+                logger.error("jwt_blacklist unavailable; denying JWT request")
+                return True
+            return False
         try:
             value = await client.get(f"{_BLACKLIST_KEY_PREFIX}{jti}")
             return value is not None
@@ -89,7 +112,10 @@ class _BlacklistBackend:
             logger.warning(
                 "jwt_blacklist.is_revoked failed for jti=%s", jti, exc_info=True
             )
-            return False  # fail-open: Redis crash must not 401 everything
+            if _fail_closed_enabled():
+                logger.error("jwt_blacklist Redis check failed; denying JWT request")
+                return True
+            return False
 
 
 _BACKEND: Optional[_BlacklistBackend] = None

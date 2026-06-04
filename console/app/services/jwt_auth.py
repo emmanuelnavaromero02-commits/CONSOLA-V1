@@ -79,8 +79,9 @@ async def verify_access_token_async(token: str) -> dict:
     Use this from async request handlers / dependencies. The sync
     decode_access_token stays for legacy callers and unit tests that
     don't care about revocation (they construct their own tokens).
-    The blacklist check fails open if Redis is unavailable — see
-    jwt_blacklist.is_revoked for the rationale.
+    The blacklist check fails closed by default in production when Redis is
+    unavailable; development/test can opt into fail-open. See
+    jwt_blacklist.is_revoked for the policy.
     """
     claims = decode_access_token(token)
     jti = claims.get("jti")

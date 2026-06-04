@@ -2,7 +2,7 @@
 
 Covers:
   * Backend behaviour: with and without Redis (fakeredis vs. no client).
-  * revoke / is_revoked happy path, error paths, fail-open semantics.
+  * revoke / is_revoked happy path, error paths, production fail-closed policy.
   * TTL floor of 60s even when exp is already in the past.
   * verify_access_token_async raises "access token revoked" for blacklisted jti.
   * Logout endpoint calls the blacklist when a Bearer header is supplied.
@@ -63,6 +63,12 @@ def offline_backend():
     jwt_blacklist.reset_blacklist()
 
 
+@pytest.fixture(autouse=True)
+def jwt_blacklist_env(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("JWT_BLACKLIST_FAIL_CLOSED", raising=False)
+
+
 # ── revoke / is_revoked happy path ────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -111,7 +117,7 @@ async def test_empty_jti_is_a_noop(fake_backend):
     assert await backend.is_revoked("") is False
 
 
-# ── Fail-open: Redis offline ──────────────────────────────────────────
+# ── Failure policy: Redis offline ─────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_revoke_returns_false_when_redis_missing(offline_backend):
@@ -123,7 +129,20 @@ async def test_is_revoked_returns_false_when_redis_missing(offline_backend):
     assert await offline_backend.is_revoked("jti-x") is False
 
 
-# ── Fail-open: Redis raises mid-call ──────────────────────────────────
+@pytest.mark.asyncio
+async def test_is_revoked_fails_closed_in_production_when_redis_missing(monkeypatch, offline_backend):
+    monkeypatch.setenv("APP_ENV", "production")
+    assert await offline_backend.is_revoked("jti-x") is True
+
+
+@pytest.mark.asyncio
+async def test_is_revoked_fail_closed_can_be_disabled_in_production(monkeypatch, offline_backend):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("JWT_BLACKLIST_FAIL_CLOSED", "false")
+    assert await offline_backend.is_revoked("jti-x") is False
+
+
+# ── Failure policy: Redis raises mid-call ─────────────────────────────
 
 @pytest.mark.asyncio
 async def test_revoke_fails_open_on_exception():
@@ -148,8 +167,22 @@ async def test_is_revoked_fails_open_on_exception():
     backend._client = crashing
     backend._init_attempted = True
     try:
-        # Fail-open: a Redis crash must NOT 401 every JWT request.
         assert await backend.is_revoked("jti") is False
+    finally:
+        jwt_blacklist.reset_blacklist()
+
+
+@pytest.mark.asyncio
+async def test_is_revoked_fails_closed_on_exception_in_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    jwt_blacklist.reset_blacklist()
+    backend = jwt_blacklist.get_blacklist()
+    crashing = MagicMock()
+    crashing.get = AsyncMock(side_effect=RuntimeError("Redis exploded"))
+    backend._client = crashing
+    backend._init_attempted = True
+    try:
+        assert await backend.is_revoked("jti") is True
     finally:
         jwt_blacklist.reset_blacklist()
 
