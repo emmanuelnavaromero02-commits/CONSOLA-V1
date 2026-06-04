@@ -1,13 +1,14 @@
 # CSP `'unsafe-inline'` Migration Plan
 
-**Status:** Proposed. Not started. Tracked as known debt in `README.md`.
+**Status:** Proposed. Tracked as known debt in `SECURITY.md`.
 
 ## Goal
 
-Remove `'unsafe-inline'` from both `script-src` and `style-src` in every
-response served by `console/app/main.py` and `workspace/app/main.py`. The
-final state should serve a CSP whose `script-src` and `style-src` use either
-nonces (`'nonce-{random}'`) or hashes (`'sha256-...'`) — never `'unsafe-inline'`.
+Remove the remaining `'unsafe-inline'` style exception from responses served
+by `console/app/main.py` and `workspace/app/main.py`. The final state should
+serve a CSP whose `script-src` has no inline allowance and whose `style-src`
+uses either nonces (`'nonce-{random}'`) or hashes (`'sha256-...'`) — never
+`'unsafe-inline'`.
 
 A passing CI check should fail any PR that re-introduces `'unsafe-inline'`
 or any new inline `<script>`/`<style>` block in `*.html` under

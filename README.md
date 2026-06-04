@@ -1,122 +1,187 @@
-# Security Phase 1 Residuals + Phase 2 Quick Wins
+# CONSOLA-BETA / OMEGA
 
-### Phase 1 - Residual Closures
-1. **RLS en duckdb_engine.py**: The regular expression now intercepts ANY query hitting the `pggold` schema regardless of its casing or name (e.g., `pggold.anything`), enforcing default-deny logic accurately without bypasses. `read_only=True` is now used for DuckDB connection queries via the `_read_conn()` abstraction.
-2. **vault/secrets.yaml**: Bash-style variable interpolation (`${VAR:-""}`) was replaced with standard `${VAR}` referencing, to ensure proper environment resolution during python parsing and backend startup.
-3. **Credenciales Hardcodeadas**: Visually confirmed and successfully replaced remaining fallback defaults with their respective secure environment mapping.
-4. **Workspace API**: The `/api/data/{dataset}` route actively passes user context, ensuring `apply_rls` intercept logic properly filters multi-tenant access dynamically.
-5. **Airflow Connections**: Confirmed connections are dynamically injected into tasks via vault extraction logic, not exposed raw in templates.
+OMEGA es una consola enterprise en beta privada para operar integraciones,
+datasets, Vault, MCP/Copilot, Airflow, Superset y experiencias de consola
+servidas por FastAPI + Next static export.
 
-### Phase 2 - Quick Wins
-1. **Security Headers**: Standard HTTP headers (`X-Frame-Options`, `Strict-Transport-Security`, `Content-Security-Policy`, `X-Content-Type-Options`) injected globally into `console` and `workspace` middleware.
-2. **Rate Limiting**: Lightweight, dependency-free in-memory rate-limiter applied to critical endpoints (`/login`, `/api/data/*`, `/mcp/*`) to mitigate basic brute force/DDoS risks.
-3. **Higiene Docker**: All core `Dockerfiles` (`console`, `mcp-infra`, `refinement`, `vault`, `workspace`) now execute using a non-root `appuser`. Furthermore, basic DB connection `HEALTHCHECK` was added to postgres within `docker-compose.yml`.
+Estado de release actual:
 
-### Modified Files:
-* `refinement/app/duckdb_engine.py` (RLS Regex + Read Only Conn)
-* `vault/secrets.yaml` (Variables Formatting)
-* `console/app/main.py` (FastAPI Middlewares)
-* `workspace/app/main.py` (FastAPI Middlewares)
-* `console/Dockerfile`, `mcp-infra/Dockerfile`, `refinement/Dockerfile`, `vault/Dockerfile`, `workspace/Dockerfile` (App User Setup)
-* `infra/docker-compose.yml` (Healthcheck)
-* `.github/workflows/docker-image.yml` (CI Fixes)
+- Beta privada/controlada: SI, con stack local validable.
+- v1.0 publica enterprise: NO todavia.
+- Version actual: ver `VERSION`.
 
-### Phase 1 Overview
-| Component | Before | After |
-| --------- | ------ | ----- |
-| **Gold Datasets** | Vulnerable to cross-tenant data access | Strict RLS (default-deny) via parameterized queries |
-| **DAG Templates** | Internal HTTP endpoints open | Enforced `X-Internal-Api-Key` for all webhook calls |
-| **Secrets** | Hardcoded defaults | Sourced safely from ENV or Vault |
-| **Internal MCP APIs** | Mixed authentication | `verify_internal_api_key` enforced universally |
-| **Frontend UI** | Bare `innerHTML` injection risks | Standardized `esc()` sanitization wrapper |
+No promociones este repo como v1.0 publica hasta que el checklist de
+`docs/release-checklist-v1.md` y los gates P2 esten verdes sin skips.
 
----
+## Requisitos
 
-## Known Security Debt
+| Herramienta | Minimo |
+|---|---|
+| Docker Engine | 24+ con daemon corriendo |
+| Docker Compose | v2.20+ |
+| GNU make | 4+ |
+| Python 3 | stdlib funcional para generar Fernet keys |
+| Node.js / npm | version compatible con `console-next/package.json` |
+| Recursos locales | 16 GB RAM libres / 30 GB disco libre |
 
-### CSP `'unsafe-inline'` (script-src and style-src)
+## Primer Arranque Local
 
-**Status:** OPEN. Not resolved in any hardening round to date.
-
-Both `console/app/main.py` and `workspace/app/main.py` ship a CSP that still
-includes `script-src 'self' 'unsafe-inline'` and `style-src 'self' 'unsafe-inline'`.
-This neutralises CSP's primary protection against XSS: any reflected or stored
-script injection becomes immediately exploitable in the browser even though
-the response headers advertise a CSP.
-
-The defence-in-depth fix (escaping in templates, output sanitisation in the
-`esc()` wrapper, the `editUser(...)` attribute-quoting fix, etc.) is in place
-and verified, so a known XSS is not currently exploitable. But the surface
-remains one missed `escHtml()` away from compromise.
-
-**Why it's still open:** the console HTML files contain on the order of 6,000
-lines of inline `<script>` blocks across ~15 pages. Removing `'unsafe-inline'`
-requires either:
-
-1. Extracting every inline script into a separate `.js` asset; or
-2. Serving the HTMLs through Jinja templates so the middleware can inject a
-   per-request `nonce-{...}` token into every `<script>` and `<style>` tag.
-
-Either path is a multi-day refactor. See `docs/security/csp-migration-plan.md`
-for the proposed approach.
-
-**Workarounds in effect today:**
-- Strict `esc()` / `escHtml()` discipline in every dynamic `innerHTML`
-- `X-Frame-Options: DENY` on non-viewer routes
-- `frame-ancestors 'none'` (or `'self'` for `/viewer`)
-- Strict `Referrer-Policy: same-origin`
-- HSTS + `Permissions-Policy` block sensor APIs
-
-Do not consider this resolved until both services serve responses with no
-`'unsafe-inline'` directive and the inline-script discipline is enforced
-by a lint rule in CI.
-
-## Operación
-
-### Local non-production bootstrap
-
-For a fresh local/demo stack:
+Desde la raiz del repo:
 
 ```bash
 make preflight
 make up
+bash scripts/wait_for_health.sh
 ```
 
-For a destructive local reset only:
+`make up` ejecuta `make bootstrap-env`, genera `infra/.env` si no existe,
+aplica las pair keys con `infra/bootstrap-keys.sh`, crea `data/lakehouse`
+y levanta el stack completo con perfil SAP usando:
+
+```bash
+docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml --profile sap up --build -d
+```
+
+El compose base mantiene `RATE_LIMIT_ENABLED` activo. El override
+`infra/docker-compose.dev.yml` solo lo apaga para desarrollo/E2E local.
+
+## Validacion Rapida
+
+Con el stack arriba:
+
+```bash
+make smoke
+make e2e
+make acceptance
+OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1 make production-readiness
+```
+
+Smoke esperado en la beta actual: `47/47 checks passed`.
+
+E2E esperado en la beta actual: alrededor de `357 passed, 3 skipped`
+segun el estado de tests del commit.
+
+Acceptance cubre superficies de Console, Studio/Copilot/Semantic/Knowledge
+y extraccion HubSpot fake upstream hasta Bronze/Silver/Gold.
+
+## Tests de Desarrollo
+
+```bash
+make test
+npm --prefix console-next run typecheck
+npm --prefix console-next run lint
+npm --prefix console-next run test
+npm --prefix console-next run test:coverage
+npm --prefix console-next run build
+```
+
+Auditorias de dependencias y seguridad:
+
+```bash
+bandit -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
+pip-audit
+npm --prefix console-next audit --audit-level=high
+npm --prefix tests-e2e audit --audit-level=high
+```
+
+## URLs Locales
+
+| Servicio | URL |
+|---|---|
+| Console / Next static export | http://localhost:8000 |
+| Workspace | http://localhost:8001 |
+| MCP Infra | http://localhost:8010 |
+| Airflow | http://localhost:8082 |
+| Superset | http://localhost:8088 |
+| Vault | http://localhost:8300 |
+| Refinement | http://localhost:8500 |
+| Replicon | http://localhost:8201 |
+| HubSpot | http://localhost:8210 |
+| SAP HCM | http://localhost:8202 |
+| SAP SuccessFactors | http://localhost:8203 |
+| SAP S/4HANA | http://localhost:8204 |
+
+Health/readiness basicos:
+
+```bash
+curl -fsS http://localhost:8000/healthz
+curl -fsS 'http://localhost:8000/readyz?require_data=1'
+curl -fsS http://localhost:8010/readyz
+curl -fsS http://localhost:8500/readyz
+```
+
+## Reset y Reparacion Local
+
+Para un reset destructivo solo de desarrollo local:
 
 ```bash
 make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev
-make preflight
 make up
 ```
 
-`make nuke` deletes local Docker volumes. Never use it for AWS,
+`make nuke` borra volumenes Docker locales. Never use it for AWS,
 staging, production, or any host containing customer data.
 
-If local Docker volumes were created with older secrets, use:
+Si hay volumenes locales viejos con passwords desincronizados o roles de
+Postgres desfasados:
 
 ```bash
 make repair-local-stack
 ```
 
-For a local Superset metastore encrypted with a previous
-`SUPERSET_SECRET_KEY`, the repair is intentionally explicit:
+Si Superset local tiene metastore cifrado con una `SUPERSET_SECRET_KEY`
+anterior, la reparacion es explicitamente opt-in:
 
 ```bash
 CONFIRM_SUPERSET_METASTORE_REPAIR=LOCAL_SUPERSET_REPAIR make repair-local-stack
 ```
 
-Para administrar OMEGA en producción consulta `docs/runbook/`:
+En produccion no ejecutes limpieza destructiva ni resets de volumenes. El
+flujo correcto es backup/restore, rotacion controlada de secretos y rollback
+por tag inmutable.
 
-- [01 Arrancar desde cero](docs/runbook/01_arrancar_desde_cero.md) — pre-requisitos, `.env`, smoke 30/30, sanity HTTP.
-- [02 Primer tenant](docs/runbook/02_primer_tenant.md) — login bootstrap admin, crear workspace, invitar primer usuario.
-- [03 Configurar Replicon](docs/runbook/03_configurar_replicon.md) — credenciales en Vault, test_connection, primera carga.
-- [04 Configurar SAP (HCM / S/4 / SuccessFactors)](docs/runbook/04_configurar_sap.md) — mismo flujo, variables por sistema.
-- [05 Rotar secretos](docs/runbook/05_rotar_secretos.md) — `FIELD_ENCRYPTION_KEY` (Fernet), `INTERNAL_API_KEY`, passwords admin, roles `omega_*` de DB.
-- [06 Backup / restore](docs/runbook/06_backup_restore.md) — `pg_dumpall`, `mc mirror` para MinIO, recuperación end-to-end.
-- [07 Debug de fallos](docs/runbook/07_debug_fallos.md) — uso de `X-Request-ID` + `audit_events` (ip + user_agent) + `extraction_runs` para reconstruir incidentes.
-- [08 Usar el copiloto](docs/runbook/08_usar_copiloto.md) — chat IA con approval gate, RBAC por `risk_level`, auditoría forense de cada tool call.
-- [09 Demo / beta controlada](docs/runbook/09_demo_beta.md) — preflight, bootstrap, smoke, tests y checklist de demo.
-- [10 v1 pública HTTPS](docs/runbook/10_v1_public_https.md) — ALB/ACM, SSM, smoke público, live LLM, backup/restore/rollback.
-- [11 Estabilización y rollback](docs/runbook/11_release_stabilization.md) — métricas de Intelligence Engine, freeze de releases y rollback por tag inmutable.
-- [12 Scope hardening](docs/runbook/12_scope_hardening.md) — reglas de tenant/workspace, Vault y pipeline scope.
+## Seguridad y Fronteras Importantes
+
+- Gold/pggold se consulta por Refinement para aplicar el guard RLS por AST
+  con `sqlglot` y default-deny.
+- MCP/Copilot es read-only por defecto; mutaciones requieren contexto admin,
+  approval y auditoria.
+- `ALLOW_RCE_TOOLS=false` bloquea herramientas RCE-like en produccion.
+- JWT, CSRF, Vault scope, pair keys y secrets fail-closed ya son parte del
+  contrato de seguridad.
+- `style-src 'unsafe-inline'` sigue como excepcion formal acotada para
+  estilos legacy; `script-src` no debe usar inline.
+
+Ver detalles en `SECURITY.md` y `docs/security/`.
+
+## Lo Que Esta Beta No Promete
+
+- No hay v1.0 publica enterprise.
+- No hay stress/load completo sin skip validado como gate definitivo.
+- No hay live LLM probe obligatorio sin keys.
+- No hay integraciones reales con credenciales SAP/Salesforce/HubSpot/
+  Replicon ejecutadas para todos los cartuchos en este repo local.
+- No hay despliegue AWS/HTTPS demostrado por este README.
+- No hay write-back externo universal a SAP/Replicon/Salesforce.
+
+Si falta Docker, AWS, LLM keys o credenciales externas, deja el script/test
+gated listo y marca `BLOCKED`; no simules `DONE`.
+
+## Runbooks
+
+- `docs/runbook/01_arrancar_desde_cero.md`: arranque limpio, dos fases,
+  Postgres primero, healthchecks y fixes locales.
+- `docs/runbook/02_primer_tenant.md`: bootstrap admin y primer workspace.
+- `docs/runbook/03_configurar_replicon.md`: credenciales Replicon en Vault.
+- `docs/runbook/04_configurar_sap.md`: SAP HCM, S/4HANA y SuccessFactors.
+- `docs/runbook/05_rotar_secretos.md`: rotacion de claves y roles.
+- `docs/runbook/06_backup_restore.md`: backup/restore.
+- `docs/runbook/07_debug_fallos.md`: debugging operativo.
+- `docs/runbook/08_usar_copiloto.md`: Copilot y approval gate.
+- `docs/runbook/09_demo_beta.md`: checklist de demo/beta controlada.
+- `docs/runbook/10_v1_public_https.md`: HTTPS publico.
+- `docs/runbook/11_release_stabilization.md`: estabilizacion y rollback.
+- `docs/runbook/12_scope_hardening.md`: tenant/workspace scope.
+
+El changelog de hardening que antes estaba en el README se archivo en
+`docs/audits/security-phase-hardening-changelog.md`.
