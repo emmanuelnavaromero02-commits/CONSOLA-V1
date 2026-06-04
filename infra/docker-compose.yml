@@ -312,6 +312,8 @@ services:
       context: ../refinement
       dockerfile: Dockerfile
     container_name: mode_refinement
+    mem_limit: ${REFINEMENT_MEM_LIMIT:-1g}
+    cpus: ${REFINEMENT_CPUS:-1.0}
     environment:
       # v1.43.2 (Codex P1-2): see console block above.
       APP_ENV: ${APP_ENV:-production}
@@ -336,6 +338,8 @@ services:
       MINIO_SECRET_KEY:  ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
       MINIO_BUCKET:      lakehouse
       MINIO_SECURE:      "false"
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-512MB}
+      DUCKDB_THREADS:    ${DUCKDB_THREADS:-2}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SQL_LLM_MODEL:     ${SQL_LLM_MODEL:-claude-sonnet-4-6}
       MCP_INFRA_URL:     http://mcp-infra:8010

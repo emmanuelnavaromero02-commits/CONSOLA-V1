@@ -35,6 +35,7 @@ from sqlglot import exp as _sqlglot_exp
 SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 SAFE_S3_BRONZE_TAIL_RE = re.compile(r"^[a-zA-Z0-9_./=*-]+$")
 S3_LITERAL_RE = re.compile(r"(['\"])(s3://.*?)(?<!\\)\1", re.IGNORECASE | re.DOTALL)
+DUCKDB_MEMORY_LIMIT_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$", re.IGNORECASE)
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -56,6 +57,28 @@ def _escape_sql_literal_inner(value: str) -> str:
     and we just need to neutralise any quote characters embedded in the
     value so an attacker can't break out of the literal."""
     return (value or "").replace("'", "''")
+
+
+def _duckdb_memory_limit_from_env(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if not DUCKDB_MEMORY_LIMIT_RE.fullmatch(value):
+        raise ValueError("DUCKDB_MEMORY_LIMIT must look like 512MB, 1GB or 1024MiB")
+    return value
+
+
+def _duckdb_threads_from_env(raw: str | None) -> int | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError("DUCKDB_THREADS must be an integer") from exc
+    if parsed < 1 or parsed > 64:
+        raise ValueError("DUCKDB_THREADS must be between 1 and 64")
+    return parsed
 
 
 def _strip_sql_comments(sql: str) -> str:
@@ -121,6 +144,8 @@ class DuckDBEngine:
         # Analytical (gold) DB. Falls back to service DB if unset, so
         # local/dev environments without postgres_gold keep working.
         self.pg_gold_url    = os.environ.get("GOLD_DATABASE_URL", "") or self.pg_url
+        self.duckdb_memory_limit = _duckdb_memory_limit_from_env(os.environ.get("DUCKDB_MEMORY_LIMIT"))
+        self.duckdb_threads = _duckdb_threads_from_env(os.environ.get("DUCKDB_THREADS"))
         self._con: duckdb.DuckDBPyConnection | None = None
         self._duckdb_lock = threading.RLock()
 
@@ -144,6 +169,10 @@ class DuckDBEngine:
     def _conn(self) -> duckdb.DuckDBPyConnection:
         if self._con is None:
             self._con = duckdb.connect()
+            if self.duckdb_memory_limit:
+                self._con.execute(f"SET memory_limit={_sql_quote(self.duckdb_memory_limit)};")
+            if self.duckdb_threads is not None:
+                self._con.execute(f"SET threads={self.duckdb_threads};")
             self._con.execute("INSTALL httpfs; LOAD httpfs;")
             self._con.execute("INSTALL postgres; LOAD postgres;")
             # SET ... requires the literal inline, so we escape single
