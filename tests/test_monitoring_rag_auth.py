@@ -32,6 +32,7 @@ def _load_console_main():
     ]
     sys.path.insert(0, str(REPO_ROOT / "console"))
     os.environ["INTERNAL_API_KEY"] = "test-internal-key-aaaaaaaaaaaaaaaaaaaaaaaa"
+    os.environ["INTERNAL_API_KEY_CONSOLE_TO_CONSOLE"] = os.environ["INTERNAL_API_KEY"]
     os.environ["JWT_SECRET_KEY"] = "test-jwt-key-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     return importlib.import_module("app.main")
 
