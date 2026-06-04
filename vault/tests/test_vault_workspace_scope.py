@@ -128,6 +128,57 @@ def test_vault_blocks_unscoped_admin_connection_writes(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_vault_db_upsert_blocks_unscoped_runtime_connection_before_db(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    ctx = vault_main._security_context_from_header(
+        _signed(
+            {
+                "trusted": True,
+                "source": "console",
+                "role": "admin",
+                "allowed_cartridges": ["*"],
+            }
+        )
+    )
+    monkeypatch.setattr(vault_main, "_pg", lambda: pytest.fail("DB must not be touched"))
+
+    with pytest.raises(HTTPException) as exc:
+        vault_main._db_upsert("connections", "hubspot", "default", {"token": "x"}, ctx)
+
+    assert exc.value.status_code == 403
+    assert "tenant/workspace scope" in exc.value.detail
+
+
+def test_vault_db_upsert_blocks_unscoped_runtime_destinations_before_db(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    ctx = vault_main._security_context_from_header(
+        _signed(
+            {
+                "trusted": True,
+                "source": "console",
+                "role": "admin",
+                "allowed_cartridges": ["*"],
+            }
+        )
+    )
+    monkeypatch.setattr(vault_main, "_pg", lambda: pytest.fail("DB must not be touched"))
+
+    with pytest.raises(HTTPException) as exc:
+        vault_main._db_upsert("destinations", "platform", "warehouse", {"host": "db"}, ctx)
+
+    assert exc.value.status_code == 403
+    assert "read-only" in exc.value.detail
+
+
+def test_vault_runtime_global_secret_write_allowlist_is_explicit():
+    assert vault_main._runtime_unscoped_write_allowed("secrets", "global") is True
+    assert vault_main._runtime_unscoped_write_allowed("secrets", "platform") is True
+    assert vault_main._runtime_unscoped_write_allowed("destinations", "platform") is False
+    assert vault_main._runtime_unscoped_write_allowed("connections", "hubspot") is False
+
+
 def test_vault_allows_workspace_secret_scopes_with_signed_context(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)

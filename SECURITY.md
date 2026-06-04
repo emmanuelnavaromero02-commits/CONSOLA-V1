@@ -79,8 +79,11 @@ Vault rows for tenant/workspace credentials must carry non-null
 workspace `/secrets/*` require a signed `x-security-context`; production
 does not seed unscoped cartridge connections from `secrets.yaml`.
 Remaining unscoped rows are only allowed for explicit platform records
-such as `destinations/platform` and global platform secret scopes. Any
-other unscoped legacy row is classified in
+such as `destinations/platform` and global platform secret scopes.
+`destinations/platform` is a read-only compatibility surface at runtime:
+new destination writes use controlled seed/migration paths only, never a
+customer request without tenant/workspace scope. Any other unscoped
+legacy row is classified in
 `vault_legacy_unscoped_entries` and must be migrated into a tenant
 workspace before it can be used by customer flows.
 

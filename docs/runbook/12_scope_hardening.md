@@ -11,6 +11,9 @@ employee ownership, Vault, and pipeline run isolation.
 - The only allowed unscoped Vault rows are explicit platform rows:
   `destinations/platform` and global platform secret scopes
   `global`, `platform`, `studio`, `system`, `_system`.
+- `destinations/platform` remains read-only for runtime compatibility.
+  New destination rows may be introduced only by reviewed seed/migration
+  paths; customer/runtime writes without tenant/workspace scope must fail.
 - Unscoped Vault rows outside that allowlist are recorded in
   `vault_legacy_unscoped_entries` and must be migrated into a workspace
   or deleted after operator review.

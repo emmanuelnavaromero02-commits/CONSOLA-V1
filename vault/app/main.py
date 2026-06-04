@@ -169,6 +169,32 @@ def _set_db_scope(cur, tenant_id: str | None, workspace_id: str | None) -> None:
         )
 
 
+def _runtime_unscoped_write_allowed(scope: str, cartridge: str) -> bool:
+    return scope == "secrets" and cartridge in _GLOBAL_SECRET_SCOPES
+
+
+def _require_runtime_write_scope(
+    scope: str,
+    cartridge: str,
+    tenant_id: str | None,
+    workspace_id: str | None,
+    *,
+    operation: str,
+) -> None:
+    if tenant_id and workspace_id:
+        return
+    if _runtime_unscoped_write_allowed(scope, cartridge):
+        return
+    raise HTTPException(
+        403,
+        (
+            f"vault {operation} requires tenant/workspace scope; "
+            "legacy unscoped destinations/platform rows are read-only and "
+            "must be migrated explicitly"
+        ),
+    )
+
+
 # Sprint v1.15: secrets are encrypted at rest in vault_entries.value_encrypted
 # (BYTEA). The legacy `value` JSONB column is kept as nullable so reads can
 # fall back to it for rows that haven't been re-encrypted yet by the runtime
@@ -191,8 +217,9 @@ def _row_value(row_encrypted: bytes | memoryview | None, row_value_json) -> dict
 
 
 def _db_upsert(scope: str, cartridge: str, key: str, value: dict, ctx: dict | None = None, *, allow_unscoped: bool = False) -> None:
-    encrypted = encrypt_value(value)
     tenant_id, workspace_id = _vault_scope(ctx or {}, allow_unscoped=allow_unscoped)
+    _require_runtime_write_scope(scope, cartridge, tenant_id, workspace_id, operation="write")
+    encrypted = encrypt_value(value)
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
@@ -275,6 +302,7 @@ def _db_get(scope: str, cartridge: str, key: str, ctx: dict | None = None, *, al
 
 def _db_delete(scope: str, cartridge: str, key: str, ctx: dict | None = None, *, allow_unscoped: bool = False) -> bool:
     tenant_id, workspace_id = _vault_scope(ctx or {}, allow_unscoped=allow_unscoped)
+    _require_runtime_write_scope(scope, cartridge, tenant_id, workspace_id, operation="delete")
     conn = _pg()
     with conn.cursor() as cur:
         _set_db_scope(cur, tenant_id, workspace_id)
