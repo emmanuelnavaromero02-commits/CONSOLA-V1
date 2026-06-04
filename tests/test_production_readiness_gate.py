@@ -48,6 +48,8 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
     assert "OMEGA_REQUIRE_LIVE_LLM=1" in script
     assert "ANTHROPIC_API_KEY is required" in script
     assert "gemini" not in script.lower()
+    local_gate = script[script.index('if [[ "${REMOTE_MODE}" == "1" ]]'):]
+    assert local_gate.index("make acceptance") < local_gate.index("check_readyz_data")
 
 
 def test_v1_live_readiness_requires_no_skips_multiuser_stress_and_llm():

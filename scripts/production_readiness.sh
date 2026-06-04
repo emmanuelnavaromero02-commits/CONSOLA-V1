@@ -254,6 +254,9 @@ run_gate() {
   log "waiting for healthy stack"
   bash scripts/wait_for_health.sh
 
+  log "running full-stack acceptance to warm Bronze/Silver/Gold data"
+  make acceptance
+
   check_readyz_data
   check_superset_login
   check_live_llm_if_required
@@ -268,9 +271,6 @@ run_gate() {
 
   log "running browser E2E"
   OPEN_REPORT=0 make e2e
-
-  log "running full-stack acceptance"
-  make acceptance
 
   if [[ "${OMEGA_PRODUCTION_READINESS_SKIP_STRESS:-0}" == "1" ]]; then
     log "stress skipped by OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1"
