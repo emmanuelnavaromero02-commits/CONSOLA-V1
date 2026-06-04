@@ -129,6 +129,101 @@ def test_upload_local_parquet_uses_retry_key_without_overwriting(monkeypatch):
     assert result == f"s3://lakehouse/{key}"
 
 
+def test_aws_s3_without_static_keys_uses_credential_chain(monkeypatch):
+    statements: list[str] = []
+
+    class FakeConn:
+        def execute(self, sql):
+            statements.append(sql)
+            return self
+
+    monkeypatch.setenv("MINIO_ENDPOINT", "s3.us-east-1.amazonaws.com")
+    monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-test")
+    monkeypatch.delenv("MINIO_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setattr("refinement.app.duckdb_engine.duckdb.connect", lambda: FakeConn())
+
+    engine = DuckDBEngine()
+    engine._conn()
+
+    combined = "\n".join(statements)
+    assert "PROVIDER credential_chain" in combined
+    assert "s3_access_key_id=''" not in combined
+    assert "s3_secret_access_key=''" not in combined
+
+
+def test_aws_s3_upload_uses_boto3_credential_chain(monkeypatch):
+    uploads: list[tuple[str, str, str, dict]] = []
+
+    class FakeS3:
+        def upload_file(self, local_path, bucket, key, ExtraArgs):
+            uploads.append((local_path, bucket, key, ExtraArgs))
+
+    monkeypatch.setenv("MINIO_ENDPOINT", "s3.us-east-1.amazonaws.com")
+    monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-test")
+    monkeypatch.delenv("MINIO_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
+
+    engine = DuckDBEngine()
+    monkeypatch.setattr(engine, "_boto3_s3_client", lambda: FakeS3())
+
+    result = engine._upload_local_parquet(
+        "/tmp/materialized.parquet",
+        "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet",
+    )
+
+    assert uploads == [
+        (
+            "/tmp/materialized.parquet",
+            "modecissions-lakehouse-test",
+            "silver/hubspot/hubspot_deals_latest/data.parquet",
+            {"ContentType": "application/octet-stream"},
+        )
+    ]
+    assert result == "s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet"
+
+
+def test_aws_s3_delete_prefix_uses_boto3_credential_chain(monkeypatch):
+    deleted_batches: list[list[dict[str, str]]] = []
+    deleted_single: list[str] = []
+
+    class FakePaginator:
+        def paginate(self, Bucket, Prefix):
+            assert Bucket == "modecissions-lakehouse-test"
+            assert Prefix == "silver/hubspot/hubspot_deals_latest/data.parquet"
+            return [{"Contents": [{"Key": f"{Prefix}/part.1"}, {"Key": f"{Prefix}/part.2"}]}]
+
+    class FakeS3:
+        def get_paginator(self, name):
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+        def delete_objects(self, Bucket, Delete):
+            assert Bucket == "modecissions-lakehouse-test"
+            deleted_batches.append(Delete["Objects"])
+
+        def delete_object(self, Bucket, Key):
+            assert Bucket == "modecissions-lakehouse-test"
+            deleted_single.append(Key)
+
+    monkeypatch.setenv("MINIO_ENDPOINT", "s3.us-east-1.amazonaws.com")
+    monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-test")
+    monkeypatch.delenv("MINIO_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
+
+    engine = DuckDBEngine()
+    monkeypatch.setattr(engine, "_boto3_s3_client", lambda: FakeS3())
+
+    engine._delete_s3_prefix("s3://modecissions-lakehouse-test/silver/hubspot/hubspot_deals_latest/data.parquet")
+
+    assert deleted_batches == [[
+        {"Key": "silver/hubspot/hubspot_deals_latest/data.parquet/part.1"},
+        {"Key": "silver/hubspot/hubspot_deals_latest/data.parquet/part.2"},
+    ]]
+    assert deleted_single == ["silver/hubspot/hubspot_deals_latest/data.parquet"]
+
+
 def test_snapshot_path_is_scoped_and_unique():
     engine = DuckDBEngine()
     ctx = {"tenant_id": "tenant-1", "workspace_id": "workspace-1"}

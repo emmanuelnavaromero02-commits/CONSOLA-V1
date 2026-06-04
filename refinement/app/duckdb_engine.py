@@ -112,7 +112,8 @@ def validate_safe_identifier(value: str, label: str = "identifier") -> None:
 class DuckDBEngine:
     def __init__(self):
         self.minio_endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
-        self.minio_access   = os.environ.get("MINIO_ACCESS_KEY", "minio")
+        _aws_endpoint = "amazonaws.com" in (self.minio_endpoint or "").lower()
+        self.minio_access   = os.environ.get("MINIO_ACCESS_KEY") or ("" if _aws_endpoint else "minio")
         self.minio_secret   = os.environ.get("MINIO_SECRET_KEY")
         self.minio_bucket   = os.environ.get("MINIO_BUCKET", "lakehouse")
         self.minio_secure   = os.environ.get("MINIO_SECURE", "false").lower() == "true"
@@ -122,6 +123,21 @@ class DuckDBEngine:
         self.pg_gold_url    = os.environ.get("GOLD_DATABASE_URL", "") or self.pg_url
         self._con: duckdb.DuckDBPyConnection | None = None
         self._duckdb_lock = threading.RLock()
+
+    def _uses_aws_s3_credential_chain(self) -> bool:
+        """True when running against AWS S3 with instance/profile creds.
+
+        Local MinIO uses explicit MINIO_ACCESS_KEY / MINIO_SECRET_KEY. The AWS
+        deployment intentionally uses the EC2 instance role, so configuring
+        DuckDB with empty access/secret strings makes httpfs attempt anonymous
+        S3 reads and every materialization fails with HTTP 403.
+        """
+        endpoint = (self.minio_endpoint or "").lower()
+        return (
+            "amazonaws.com" in endpoint
+            and not (self.minio_access or "").strip()
+            and not (self.minio_secret or "").strip()
+        )
 
     # ── DuckDB connection ─────────────────────────────────────────────────────
 
@@ -136,11 +152,22 @@ class DuckDBEngine:
             # the credential would be parsed as SQL.
             self._con.execute(
                 f"SET s3_endpoint={_sql_quote(self.minio_endpoint or '')};"
-                f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
-                f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
                 "SET s3_url_style='path';"
                 f"SET s3_use_ssl={'true' if self.minio_secure else 'false'};"
             )
+            if self._uses_aws_s3_credential_chain():
+                region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+                self._con.execute(
+                    "CREATE OR REPLACE SECRET omega_s3_role ("
+                    "TYPE S3, PROVIDER credential_chain, "
+                    f"REGION {_sql_quote(region)}"
+                    ");"
+                )
+            else:
+                self._con.execute(
+                    f"SET s3_access_key_id={_sql_quote(self.minio_access or '')};"
+                    f"SET s3_secret_access_key={_sql_quote(self.minio_secret or '')};"
+                )
         return self._con
 
     def setup(self):
@@ -440,6 +467,18 @@ class DuckDBEngine:
         key = self._s3_object_key(uri)
         if not key:
             return
+        if self._uses_aws_s3_credential_chain():
+            client = self._boto3_s3_client()
+            paginator = client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.minio_bucket, Prefix=key):
+                objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                if objects:
+                    client.delete_objects(Bucket=self.minio_bucket, Delete={"Objects": objects})
+            try:
+                client.delete_object(Bucket=self.minio_bucket, Key=key)
+            except Exception:
+                pass
+            return
         from minio import Minio
 
         client = Minio(
@@ -463,6 +502,32 @@ class DuckDBEngine:
     def _upload_local_parquet(self, local_path: str, parquet_path: str) -> str:
         key = self._s3_object_key(parquet_path)
         if not key:
+            return parquet_path
+        if self._uses_aws_s3_credential_chain():
+            client = self._boto3_s3_client()
+            last_error: Exception | None = None
+            for attempt in range(1, 9):
+                attempt_key = key
+                if attempt > 1:
+                    if key.endswith(".parquet"):
+                        attempt_key = f"{key[:-8]}.retry{attempt}-{uuid.uuid4().hex[:8]}.parquet"
+                    else:
+                        attempt_key = f"{key}.retry{attempt}-{uuid.uuid4().hex[:8]}"
+                try:
+                    client.upload_file(
+                        local_path,
+                        self.minio_bucket,
+                        attempt_key,
+                        ExtraArgs={"ContentType": "application/octet-stream"},
+                    )
+                    return f"s3://{self.minio_bucket}/{attempt_key}"
+                except Exception as exc:
+                    last_error = exc
+                    if attempt == 8:
+                        break
+                    time.sleep(min(0.5 * attempt, 3.0))
+            if last_error:
+                raise last_error
             return parquet_path
         from minio import Minio
 
@@ -496,6 +561,14 @@ class DuckDBEngine:
         if last_error:
             raise last_error
         return parquet_path
+
+    def _boto3_s3_client(self):
+        import boto3
+
+        return boto3.client(
+            "s3",
+            region_name=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1",
+        )
 
     def _copy_to_parquet(self, con: duckdb.DuckDBPyConnection, sql: str, parquet_path: str) -> str:
         key = self._s3_object_key(parquet_path)
