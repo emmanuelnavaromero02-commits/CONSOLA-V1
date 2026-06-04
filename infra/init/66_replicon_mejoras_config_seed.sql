@@ -1,7 +1,8 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- MODecissions Cartridge: Replicon PSA — seed configuration
 -- Run once to register this cartridge in a new installation.
--- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
+-- Safe to re-run: owned Replicon rows are refreshed, and remaining inserts use
+-- ON CONFLICT DO NOTHING / DO UPDATE.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Existing beta installs may contain the previous Replicon cartridge metadata.
@@ -10,6 +11,7 @@
 DELETE FROM cartridge_dags WHERE cartridge_id = 'replicon';
 DELETE FROM entity_config WHERE cartridge_id = 'replicon';
 DELETE FROM semantic_terms WHERE cartridge_id = 'replicon';
+DELETE FROM agents WHERE cartridge_id = 'replicon';
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
@@ -240,16 +242,4 @@ encajan considerando rating, disponibilidad y costo.
     '{"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 8192, 0.4,
     '{"variables":{"rating_minimo":"3"}}'::jsonb
-)
-ON CONFLICT (cartridge_id, slug) DO UPDATE
-    SET name          = EXCLUDED.name,
-        description   = EXCLUDED.description,
-        instructions  = EXCLUDED.instructions,
-        personality   = EXCLUDED.personality,
-        allowed_tools = EXCLUDED.allowed_tools,
-        rag_filter    = EXCLUDED.rag_filter,
-        model         = EXCLUDED.model,
-        max_tokens    = EXCLUDED.max_tokens,
-        temperature   = EXCLUDED.temperature,
-        extra         = EXCLUDED.extra,
-        updated_at    = NOW();
+);

@@ -5,8 +5,11 @@
 -- consumed by the runtime cartridge-upload path; the cartridges row, entity_config,
 -- semantic_terms and agents must be seeded here for a fresh `docker compose up`.
 -- Datasets / apps / hints self-seed from source via the console startup seeders.
--- Idempotent: every insert uses ON CONFLICT DO NOTHING / DO UPDATE.
+-- Idempotent: owned Salesforce agents are refreshed, and remaining inserts use
+-- ON CONFLICT DO NOTHING / DO UPDATE.
 -- ─────────────────────────────────────────────────────────────────────────────
+
+DELETE FROM agents WHERE cartridge_id = 'salesforce';
 
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
@@ -208,16 +211,4 @@ contra la capacidad de Replicon. Eres el unico agente que cruza dos cartuchos.
     '{"cartridges":["salesforce","replicon"],"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 2000, 0.3,
     '{"variables":{"holgura_capacidad":"10%"},"triggers":["capacidad","forecast vs capacidad","podemos entregar","sobrecarga","operacion","staffing"]}'::jsonb
-)
-ON CONFLICT (cartridge_id, slug) DO UPDATE
-    SET name          = EXCLUDED.name,
-        description   = EXCLUDED.description,
-        instructions  = EXCLUDED.instructions,
-        personality   = EXCLUDED.personality,
-        allowed_tools = EXCLUDED.allowed_tools,
-        rag_filter    = EXCLUDED.rag_filter,
-        model         = EXCLUDED.model,
-        max_tokens    = EXCLUDED.max_tokens,
-        temperature   = EXCLUDED.temperature,
-        extra         = EXCLUDED.extra,
-        updated_at    = NOW();
+);

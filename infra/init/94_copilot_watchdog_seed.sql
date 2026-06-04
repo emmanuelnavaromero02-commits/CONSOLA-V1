@@ -21,9 +21,19 @@
 --   * ``user_lifecycle_watchdog`` (SAP SuccessFactors) — joiners,
 --                              leavers, role changes.
 --
--- Idempotent: ``ON CONFLICT (cartridge_id, slug) DO UPDATE`` keeps
--- the row's intent_keywords + tools in sync with the seed if an
--- operator re-runs this migration after a code update.
+-- Idempotent: owned watchdog rows are refreshed before insert so old beta
+-- installs without the unique constraint still accept this seed.
+
+DELETE FROM copilot_watchdogs
+ WHERE (cartridge_id, slug) IN (
+    ('replicon', 'margin_watchdog'),
+    ('replicon', 'capacity_watchdog'),
+    ('sap_hcm', 'headcount_watchdog'),
+    ('sap_hcm', 'payroll_watchdog'),
+    ('sap_s4hana', 'ar_watchdog'),
+    ('sap_s4hana', 'ap_watchdog'),
+    ('sap_successfactors', 'user_lifecycle_watchdog')
+ );
 
 INSERT INTO copilot_watchdogs
     (cartridge_id, slug, name, description, intent_keywords, tools, risk_level)
@@ -98,13 +108,7 @@ VALUES
            'manager', 'org_change', 'movement', 'movimiento']::TEXT[],
      ARRAY['sap_successfactors.query_kb:lifecycle_30d',
            'sap_successfactors.list_recent_terminations']::TEXT[],
-     'read')
-ON CONFLICT (cartridge_id, slug) DO UPDATE
-    SET name            = EXCLUDED.name,
-        description     = EXCLUDED.description,
-        intent_keywords = EXCLUDED.intent_keywords,
-        tools           = EXCLUDED.tools,
-        risk_level      = EXCLUDED.risk_level;
+     'read');
 
 
 -- Self-register so the migration tracker knows this file applied.
