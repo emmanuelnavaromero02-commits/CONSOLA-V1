@@ -1,12 +1,12 @@
-"""Sprint v1.32 — refinement /healthz must check real dependencies."""
+"""Refinement liveness/readiness split."""
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 
 
 SERVICE_PATH_MARKERS = (
@@ -80,29 +80,36 @@ class FakeDuck:
 
 
 @pytest.mark.asyncio
-async def test_refinement_healthz_checks_postgres_and_duckdb(monkeypatch):
+async def test_refinement_healthz_is_liveness_only(monkeypatch):
+    main = _load_refinement_main(monkeypatch)
+    import psycopg2
+
+    monkeypatch.setattr(psycopg2, "connect", lambda dsn: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(main.engine, "_conn", lambda: (_ for _ in ()).throw(RuntimeError("duck down")))
+
+    assert await main.healthz() == {"ok": True, "service": "refinement"}
+
+
+@pytest.mark.asyncio
+async def test_refinement_readyz_checks_postgres_and_duckdb(monkeypatch):
     main = _load_refinement_main(monkeypatch)
     import psycopg2
 
     monkeypatch.setattr(psycopg2, "connect", lambda dsn: FakeConn())
     monkeypatch.setattr(main.engine, "_conn", lambda: FakeDuck())
 
-    assert await main.healthz() == {
-        "ok": True,
-        "service": "refinement",
-        "postgres": "ok",
-        "duckdb": "ok",
-    }
+    resp = await main.readyz()
+    assert resp.status_code == 200
+    assert json.loads(resp.body) == {"ok": True, "service": "refinement"}
 
 
 @pytest.mark.asyncio
-async def test_refinement_healthz_returns_503_on_dependency_failure(monkeypatch):
+async def test_refinement_readyz_returns_503_on_dependency_failure(monkeypatch):
     main = _load_refinement_main(monkeypatch)
     import psycopg2
 
     monkeypatch.setattr(psycopg2, "connect", lambda dsn: (_ for _ in ()).throw(RuntimeError("db down")))
 
-    with pytest.raises(HTTPException) as exc:
-        await main.healthz()
-
-    assert exc.value.status_code == 503
+    resp = await main.readyz()
+    assert resp.status_code == 503
+    assert json.loads(resp.body) == {"ok": False, "service": "refinement"}

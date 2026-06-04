@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app import registry
 from app.rag.embeddings import EmbeddingProviderError
 from app.security import get_internal_api_key
+from app.config import settings
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
 
@@ -1176,6 +1177,76 @@ def healthz():
     auth — but uses the /healthz path the rest of the platform pins
     its healthchecks on."""
     return {"ok": True, "service": "mcp-infra"}
+
+
+def _postgres_ready(host: str, port: int, db: str, user: str, password: str) -> bool:
+    import psycopg2
+
+    with psycopg2.connect(
+        host=host,
+        port=port,
+        dbname=db,
+        user=user,
+        password=password,
+        connect_timeout=2,
+    ) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+    return True
+
+
+def _readiness_checks() -> dict[str, str]:
+    checks: dict[str, str] = {}
+
+    try:
+        checks["registry"] = "up" if registry.list_tools() else "down"
+    except Exception:
+        logger.exception("mcp-infra readyz registry check failed")
+        checks["registry"] = "down"
+
+    try:
+        _postgres_ready(
+            settings.pg_host,
+            settings.pg_port,
+            settings.pg_db,
+            settings.pg_user,
+            settings.pg_password,
+        )
+        checks["postgres"] = "up"
+    except Exception:
+        logger.exception("mcp-infra readyz postgres check failed")
+        checks["postgres"] = "down"
+
+    if settings.pg_gold_user and settings.pg_gold_password:
+        try:
+            _postgres_ready(
+                settings.pg_gold_host,
+                settings.pg_gold_port,
+                settings.pg_gold_db,
+                settings.pg_gold_user,
+                settings.pg_gold_password,
+            )
+            checks["postgres_gold"] = "up"
+        except Exception:
+            logger.exception("mcp-infra readyz postgres_gold check failed")
+            checks["postgres_gold"] = "down"
+    else:
+        checks["postgres_gold"] = "degraded"
+
+    return checks
+
+
+@app.get("/readyz")
+def readyz():
+    """Dependency readiness with sanitized public response."""
+    checks = _readiness_checks()
+    blocking = {name: status for name, status in checks.items() if status == "down"}
+    ok = not blocking
+    return JSONResponse(
+        {"ok": ok, "service": "mcp-infra"},
+        status_code=200 if ok else 503,
+    )
 
 
 @app.get("/health")

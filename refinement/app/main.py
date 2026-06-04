@@ -882,7 +882,12 @@ app.add_middleware(RequestIDMiddleware)
 
 @app.get("/healthz")
 async def healthz():
-    """Liveness/readiness probe: verify both Postgres and DuckDB respond."""
+    """Cheap liveness probe for Docker/Kubernetes health checks."""
+    return {"ok": True, "service": "refinement"}
+
+
+async def _readiness_checks() -> dict[str, str]:
+    checks: dict[str, str] = {}
     try:
         import psycopg2
 
@@ -890,12 +895,30 @@ async def healthz():
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
+        checks["postgres"] = "up"
+    except Exception:
+        logger.exception("refinement readyz postgres check failed")
+        checks["postgres"] = "down"
+
+    try:
         with engine._duckdb_lock:
             engine._conn().execute("SELECT 1").fetchone()
-    except Exception as exc:
-        logger.exception("refinement healthz dependency check failed")
-        raise HTTPException(status_code=503, detail="refinement dependencies unavailable") from exc
-    return {"ok": True, "service": "refinement", "postgres": "ok", "duckdb": "ok"}
+        checks["duckdb"] = "up"
+    except Exception:
+        logger.exception("refinement readyz duckdb check failed")
+        checks["duckdb"] = "down"
+    return checks
+
+
+@app.get("/readyz")
+async def readyz():
+    """Dependency readiness with sanitized public response."""
+    checks = await _readiness_checks()
+    ok = all(status == "up" for status in checks.values())
+    return JSONResponse(
+        {"ok": ok, "service": "refinement"},
+        status_code=200 if ok else 503,
+    )
 
 
 # ── MCP tools (consumidas por la consola y el LLM) ────────────────────────────
