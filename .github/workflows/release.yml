@@ -116,7 +116,8 @@ jobs:
             -r refinement/requirements.txt \
             -r vault/requirements.txt \
             -r workspace/requirements.txt \
-            -r mcp-infra/requirements.txt
+            -r mcp-infra/requirements.txt \
+            -r tests/stress/requirements.txt
           for req in cartridges/*/requirements.txt; do
             python -m pip install -r "$req"
           done

@@ -189,6 +189,7 @@ def test_release_workflow_validates_before_publishing_images():
         "console/requirements.txt",
         "vault/requirements.txt",
         "mcp-infra/requirements.txt",
+        "tests/stress/requirements.txt",
     ):
         assert f"-r {requirements}" in src
     assert "python -m pytest -q" in src
