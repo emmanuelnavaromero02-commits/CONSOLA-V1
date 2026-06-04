@@ -67,9 +67,10 @@ async def test_tenant_anthropic_key_is_loaded_from_workspace_vault(monkeypatch):
     llm_client = _load_llm_client()
     captured = {}
 
-    async def fake_vault_secret(scope, key):
+    async def fake_vault_secret(scope, key, user_context=None):
         captured["scope"] = scope
         captured["key"] = key
+        captured["vault_user_context"] = user_context
         return "tenant-anthropic-key"
 
     async def fake_anthropic(*_args, **kwargs):
@@ -96,13 +97,32 @@ async def test_tenant_anthropic_key_is_loaded_from_workspace_vault(monkeypatch):
     )
 
     assert reply == "ok"
-    assert captured["scope"] == (
-        "tenant_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa__"
-        "workspace_11111111-1111-1111-1111-111111111111__llm"
-    )
+    assert captured["scope"] == "llm"
     assert captured["key"] == "anthropic_api_key"
+    assert captured["vault_user_context"] == user_context
     assert captured["api_key"] == "tenant-anthropic-key"
     assert captured["user_context"] == user_context
+
+
+def test_workspace_vault_headers_include_signed_security_context(monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_VAULT", "console_to_vault_key_with_more_than_32_chars")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "s" * 64)
+    llm_client = _load_llm_client()
+
+    headers = llm_client._vault_headers(
+        {
+            "id": 42,
+            "role": "user",
+            "workspace_role": "tenant_admin",
+            "active_tenant_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "active_workspace_id": "11111111-1111-1111-1111-111111111111",
+        }
+    )
+
+    assert headers["x-internal-service"] == "console"
+    assert headers["x-api-key"] == "console_to_vault_key_with_more_than_32_chars"
+    assert "x-security-context" in headers
+    assert "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in headers["x-security-context"]
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,12 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
         allowed_cartridges = list(explicit_cartridges or [])
     elif role in ADMIN_ROLES and not has_workspace_scope and ("datasets.read" in effective or "cartridges.read" in effective):
         allowed_cartridges = ["*"]
+    elif has_workspace_scope and (
+        "vault.connections.read" in effective
+        or "vault.connections.write" in effective
+        or "cartridges.read" in effective
+    ):
+        allowed_cartridges = ["*"]
     else:
         allowed_cartridges = []
 

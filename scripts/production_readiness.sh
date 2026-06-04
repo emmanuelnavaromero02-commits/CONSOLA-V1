@@ -134,6 +134,36 @@ asyncio.run(main())
 PY
 }
 
+run_scope_regression_tests() {
+  log "running scoped Vault, pipeline, RLS, ownership, and API-v1 regression tests"
+  PYTHONPATH=console "${PYTHON_BIN}" -m pytest -q \
+    console/tests/test_security_context_scope.py \
+    tests/test_llm_client_config.py \
+    tests/test_intelligence_engine_contract.py \
+    tests/test_operational_native_rls.py \
+    tests/test_decisions_workspace_isolation.py \
+    tests/test_workspace_decisions_workspace_filter.py \
+    console/tests/test_vault_reveal_pair_keys.py
+
+  PYTHONPATH=vault "${PYTHON_BIN}" -m pytest -q \
+    vault/tests/test_vault_workspace_scope.py \
+    vault/tests/test_vault_connections.py \
+    vault/tests/test_internal_key_per_pair_vault.py
+}
+
+run_multiuser_simulation_if_required() {
+  if [[ "${OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM:-0}" != "1" ]]; then
+    log "multi-user isolation simulation skipped; set OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM=1 to require it"
+    return
+  fi
+  if [[ ! -x "scripts/run_multiuser_isolation_simulation.sh" ]]; then
+    log "scripts/run_multiuser_isolation_simulation.sh is required when OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM=1"
+    exit 2
+  fi
+  log "running multi-user tenant/workspace/employee isolation simulation"
+  bash scripts/run_multiuser_isolation_simulation.sh
+}
+
 run_remote_e2e_if_required() {
   if [[ "${OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E:-0}" != "1" ]]; then
     log "remote Playwright E2E skipped; set OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E=1 to require it"
@@ -194,6 +224,8 @@ run_gate() {
   check_readyz_data
   check_superset_login
   check_live_llm_if_required
+  run_scope_regression_tests
+  run_multiuser_simulation_if_required
 
   log "running backend, cartridge, RLS, and security tests"
   make test

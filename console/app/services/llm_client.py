@@ -20,6 +20,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from app.security import get_internal_api_key
+from app.services.security_context import build_security_context
 from app.services import token_store
 
 CHAT_PROVIDER       = os.environ.get("CHAT_LLM_PROVIDER", "anthropic")
@@ -93,17 +94,20 @@ def _tenant_llm_vault_scope(user_context: dict) -> str:
     tenant_id, workspace_id = _tenant_scope_parts(user_context)
     if not tenant_id or not workspace_id:
         raise LLMConfigurationError("active tenant/workspace is required for workspace LLM credentials")
-    return f"tenant_{tenant_id}__workspace_{workspace_id}__llm"
+    return "llm"
 
 
-def _vault_headers() -> dict[str, str]:
+def _vault_headers(user_context: dict | None = None) -> dict[str, str]:
     pair_key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_VAULT") or get_internal_api_key()
-    return {"x-api-key": pair_key, "x-internal-service": "console"}
+    headers = {"x-api-key": pair_key, "x-internal-service": "console"}
+    if user_context:
+        headers["x-security-context"] = json.dumps(build_security_context(user_context), ensure_ascii=False)
+    return headers
 
 
-async def _vault_secret(scope: str, key: str) -> str | None:
+async def _vault_secret(scope: str, key: str, user_context: dict | None = None) -> str | None:
     try:
-        async with httpx.AsyncClient(headers=_vault_headers(), timeout=5) as client:
+        async with httpx.AsyncClient(headers=_vault_headers(user_context), timeout=5) as client:
             response = await client.get(
                 f"{VAULT_URL}/secrets/{quote(scope, safe='')}/{quote(key, safe='')}"
             )
@@ -120,7 +124,7 @@ async def _vault_secret(scope: str, key: str) -> str | None:
 async def _resolve_anthropic_api_key(user_context: dict | None = None) -> str:
     if user_context and not _is_platform_admin_context(user_context):
         scope = _tenant_llm_vault_scope(user_context)
-        value = await _vault_secret(scope, "anthropic_api_key")
+        value = await _vault_secret(scope, "anthropic_api_key", user_context)
         if value:
             return value
         raise LLMConfigurationError(

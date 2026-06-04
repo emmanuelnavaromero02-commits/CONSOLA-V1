@@ -18,6 +18,8 @@ def test_makefile_exposes_production_readiness_and_dr_rehearsal_targets():
     assert "OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh" in makefile
     assert "dr-rehearsal:" in makefile
     assert "bash scripts/run_dr_rehearsal.sh" in makefile
+    assert "multiuser-simulation:" in makefile
+    assert "bash scripts/run_multiuser_isolation_simulation.sh" in makefile
 
 
 def test_production_readiness_gate_checks_real_runtime_surfaces():
@@ -31,6 +33,12 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
         "make smoke",
         "OPEN_REPORT=0 make e2e",
         "make acceptance",
+        "run_scope_regression_tests",
+        "vault/tests/test_vault_workspace_scope.py",
+        "tests/test_intelligence_engine_contract.py",
+        "tests/test_operational_native_rls.py",
+        "OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM",
+        "scripts/run_multiuser_isolation_simulation.sh",
         "OMEGA_STRESS_PROFILE",
         "make stress",
     ):
@@ -73,6 +81,36 @@ def test_stress_runner_has_beta_and_production_profiles_with_isolation_probe():
     assert "LIVE_LLM_PROBE_COMPLETE" in locust
     assert "forged_workspace_isolation_probe" in locust
     assert "forged workspace returned rows" in locust
+
+
+def test_multiuser_isolation_simulation_exercises_api_and_direct_rls():
+    shell = _read("scripts/run_multiuser_isolation_simulation.sh")
+    script = _read("scripts/run_multiuser_isolation_simulation.py")
+    for needle in (
+        "OMEGA_MULTIUSER_SIM_ADMINS",
+        "OMEGA_MULTIUSER_SIM_CONCURRENT_OPS",
+        "CONSOLE_URL",
+        "DATABASE_URL",
+    ):
+        assert needle in shell
+    for needle in (
+        "INSERT INTO tenants",
+        "INSERT INTO workspaces",
+        "INSERT INTO users",
+        "INSERT INTO intelligence_signals",
+        "INSERT INTO evidence_packs",
+        "INSERT INTO vault_entries",
+        "INSERT INTO pipeline_runs",
+        "/api/intelligence/signals",
+        "/api/v1/intelligence/run",
+        "/api/decisions",
+        "omega_workspace",
+        "omega_mcp_infra",
+        "omega_vault",
+        "set_config('app.tenant_id'",
+        "SimulationFailure",
+    ):
+        assert needle in script
 
 
 def test_dr_rehearsal_is_guarded_and_post_restore_checked():

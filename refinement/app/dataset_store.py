@@ -37,7 +37,7 @@ class DatasetStore:
         with _conn() as conn, conn.cursor() as cur:
             cur.execute("""
                 SELECT name, description, layer, cartridge,
-                       sources, schedule, last_refresh, row_count, workspace_id
+                       sources, schedule, last_refresh, row_count, workspace_id, created_by_id
                 FROM datasets
                 ORDER BY layer, name
             """)
@@ -53,6 +53,7 @@ class DatasetStore:
                 "last_refresh": r["last_refresh"].isoformat() if r["last_refresh"] else None,
                 "row_count":    r["row_count"],
                 "workspace_id":  str(r["workspace_id"]) if r.get("workspace_id") else None,
+                "created_by_id": r["created_by_id"],
             }
             for r in rows
         ]
@@ -61,7 +62,7 @@ class DatasetStore:
         with _conn() as conn, conn.cursor() as cur:
             cur.execute("""
                 SELECT name, layer, cartridge, sources, sql_def,
-                       column_mapping, schedule, description, workspace_id
+                       column_mapping, schedule, description, workspace_id, created_by_id
                 FROM datasets WHERE name = %s
             """, (name,))
             r = cur.fetchone()
@@ -77,6 +78,7 @@ class DatasetStore:
             "schedule":       r["schedule"],
             "description":    r["description"] or "",
             "workspace_id":    str(r["workspace_id"]) if r.get("workspace_id") else None,
+            "created_by_id":   r["created_by_id"],
         }
 
     def save_dataset(self, ds: dict):

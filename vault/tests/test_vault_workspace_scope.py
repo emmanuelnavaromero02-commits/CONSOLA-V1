@@ -87,3 +87,47 @@ def test_vault_blocks_cartridge_outside_signed_scope(monkeypatch):
         vault_main._require_cartridge_scope(ctx, "replicon")
 
     assert exc.value.status_code == 403
+
+
+def test_vault_allows_workspace_secret_scopes_with_signed_context(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    ctx = vault_main._security_context_from_header(
+        _signed(
+            {
+                "trusted": True,
+                "source": "console",
+                "role": "user",
+                "workspace_role": "tenant_admin",
+                "tenant_id": "11111111-1111-1111-1111-111111111111",
+                "workspace_id": "22222222-2222-2222-2222-222222222222",
+                "allowed_cartridges": ["*"],
+            }
+        )
+    )
+
+    vault_main._require_secret_scope(ctx, "llm")
+    vault_main._require_secret_scope(ctx, "anthropic")
+
+
+def test_vault_blocks_global_secret_scopes_for_workspace_context(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    ctx = vault_main._security_context_from_header(
+        _signed(
+            {
+                "trusted": True,
+                "source": "console",
+                "role": "user",
+                "workspace_role": "tenant_admin",
+                "tenant_id": "11111111-1111-1111-1111-111111111111",
+                "workspace_id": "22222222-2222-2222-2222-222222222222",
+                "allowed_cartridges": ["*"],
+            }
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        vault_main._require_secret_scope(ctx, "global")
+
+    assert exc.value.status_code == 403

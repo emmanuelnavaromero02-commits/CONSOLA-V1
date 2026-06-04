@@ -100,7 +100,12 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     router = read("console/app/routers/intelligence.py")
     assert "intelligence_router" in main
     assert "app.include_router(intelligence_router.router)" in main
+    assert "app.include_router(intelligence_router.v1_router)" in main
+    assert 'APIRouter(prefix="/api/v1/intelligence"' in router
+    assert "BaseModel" in router
+    assert 'extra="forbid"' in router
     assert '@router.get("/signals"' in router
+    assert '@v1_router.get("/signals"' in router
     assert '@router.get("/readiness"' in router
     assert '@router.get("/external/sources"' in router
     assert '"/external/sources/{source_id}"' in router
@@ -109,6 +114,44 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert 'Depends(require_permission("datasets.read"))' in router
     assert 'Depends(require_permission("control_room.write"))' in router
     assert "Depends(require_csrf)" in router
+
+
+def test_scope_owner_hotfix_migration_covers_vault_and_intelligence_owner():
+    migration = read("infra/init/99g_scope_owner_hotfix.sql")
+    for table in (
+        "intelligence_signals",
+        "evidence_packs",
+        "evidence_items",
+        "hypotheses",
+        "decision_options",
+        "prediction_outcomes",
+        "control_room_items",
+    ):
+        assert f"'{table}'" in migration
+    assert "owner_user_id" in migration
+    assert "vault_entries_tenant_workspace_rls" in migration
+    assert "vault_access_log_tenant_workspace_rls" in migration
+    assert "regexp_match(cartridge" in migration
+    assert "regexp_match(key" in migration
+
+
+def test_pipeline_run_save_rejects_missing_scope_before_db_insert():
+    source = read("mcp-infra/app/tools/pipeline.py")
+    assert "pipeline_run_save requires tenant_id and workspace_id" in source
+    assert "raise HTTPException(403" in source
+    insert_pos = source.index("INSERT INTO pipeline_runs")
+    guard_pos = source.index("pipeline_run_save requires tenant_id and workspace_id")
+    assert guard_pos < insert_pos
+
+
+def test_console_vault_proxy_forwards_signed_security_context():
+    source = read("console/app/main.py")
+    assert "def _vault_headers_for_user" in source
+    assert '"x-security-context": json.dumps(build_security_context(user)' in source
+    vault_section = source.split("# ── Vault proxy", 1)[1].split("# ── RAG proxy", 1)[0]
+    assert "_tenant_vault_conn_id" in vault_section
+    assert 'f"{prefix}{clean}"' not in vault_section
+    assert "headers=_vault_headers_for_user(user)" in vault_section
 
 
 def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():

@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.services import audit_service, auth
+from app.services import audit_service, auth, permissions
 from app.services.intelligence.utils import (
     TERMINAL_SIGNAL_STATUSES,
     SIGNAL_KIND,
@@ -28,6 +28,16 @@ def _actor_id(value: Any) -> int | None:
     return None
 
 
+def _can_read_workspace_wide(user: dict) -> bool:
+    role = permissions.user_role(user)
+    scoped = permissions.workspace_role(user)
+    return role in {"admin", "owner", "super_admin"} or scoped in {"workspace_admin", "tenant_admin"}
+
+
+def _owner_user_id(user: dict) -> int | None:
+    return _actor_id(user.get("id"))
+
+
 @asynccontextmanager
 async def scoped_db(pool: Any, tenant_id: str | None, workspace_id: str):
     async with pool.acquire() as conn:
@@ -46,6 +56,7 @@ async def persist_artifacts(
     user: dict,
     artifacts: list[dict[str, Any]],
 ) -> None:
+    owner_user_id = _owner_user_id(user)
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         for artifact in artifacts:
@@ -56,13 +67,13 @@ async def persist_artifacts(
             options = artifact["options"]
             baseline_id = await persist_baseline(conn, tenant_id, workspace_id, signal, baseline)
             signal["baseline_id"] = baseline_id
-            pack_id = await persist_evidence(conn, tenant_id, workspace_id, signal, evidence_pack)
+            pack_id = await persist_evidence(conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id)
             evidence_pack["id"] = pack_id
             for hypothesis in hypotheses:
                 hypothesis["evidence_pack_id"] = pack_id
-            await persist_signal(conn, tenant_id, workspace_id, signal)
-            await persist_hypotheses(conn, tenant_id, workspace_id, signal, hypotheses)
-            await persist_options(conn, tenant_id, workspace_id, signal, options)
+            await persist_signal(conn, tenant_id, workspace_id, signal, owner_user_id)
+            await persist_hypotheses(conn, tenant_id, workspace_id, signal, hypotheses, owner_user_id)
+            await persist_options(conn, tenant_id, workspace_id, signal, options, owner_user_id)
             await publish_control_room_item(
                 conn,
                 tenant_id,
@@ -118,7 +129,7 @@ async def persist_baseline(pool: Any, tenant_id: str | None, workspace_id: str, 
     return int(row["id"])
 
 
-async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any]) -> None:
+async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], owner_user_id: int | None) -> None:
     await pool.execute(
         """
         INSERT INTO intelligence_signals (
@@ -127,7 +138,7 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
             actual_value, expected_value, deviation_value, deviation_pct,
             severity, signal_type, status, baseline_id, confidence, summary,
             prediction_horizon_days, predicted_value, prediction_method, signal_subtype,
-            metadata
+            owner_user_id, metadata
         )
         VALUES (
             $1, $2, $3, $4, $5, $6,
@@ -135,7 +146,7 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
             $12, $13, $14, $15,
             $16, $17, 'open', $18, $19, $20,
             $21, $22, $23, $24,
-            $25::jsonb
+            $25, $26::jsonb
         )
         ON CONFLICT (workspace_id, signal_id) DO UPDATE
         SET actual_value = EXCLUDED.actual_value,
@@ -151,10 +162,11 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
             predicted_value = EXCLUDED.predicted_value,
             prediction_method = EXCLUDED.prediction_method,
             signal_subtype = EXCLUDED.signal_subtype,
+            owner_user_id = COALESCE(intelligence_signals.owner_user_id, EXCLUDED.owner_user_id),
             metadata = EXCLUDED.metadata,
             updated_at = NOW(),
             status = CASE
-                WHEN intelligence_signals.status = ANY($26::text[])
+                WHEN intelligence_signals.status = ANY($27::text[])
                 THEN intelligence_signals.status
                 ELSE 'open'
             END
@@ -183,6 +195,7 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
         signal.get("predicted_value"),
         signal.get("prediction_method"),
         signal.get("signal_subtype") or "observed",
+        owner_user_id,
         json_dumps(
             {
                 "metric_name": signal.get("metric_name"),
@@ -194,11 +207,18 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
     )
 
 
-async def persist_evidence(pool: Any, tenant_id: str | None, workspace_id: str, signal: dict[str, Any], pack: dict[str, Any]) -> int:
+async def persist_evidence(
+    pool: Any,
+    tenant_id: str | None,
+    workspace_id: str,
+    signal: dict[str, Any],
+    pack: dict[str, Any],
+    owner_user_id: int | None,
+) -> int:
     row = await pool.fetchrow(
         """
-        INSERT INTO evidence_packs (tenant_id, workspace_id, signal_id, summary, confidence, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        INSERT INTO evidence_packs (tenant_id, workspace_id, signal_id, summary, confidence, owner_user_id, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         RETURNING id
         """,
         tenant_id,
@@ -206,6 +226,7 @@ async def persist_evidence(pool: Any, tenant_id: str | None, workspace_id: str, 
         signal["signal_id"],
         pack["summary"],
         pack["confidence"],
+        owner_user_id,
         json_dumps(
             {
                 "metric": signal["metric"],
@@ -221,9 +242,9 @@ async def persist_evidence(pool: Any, tenant_id: str | None, workspace_id: str, 
             INSERT INTO evidence_items (
                 tenant_id, workspace_id, evidence_pack_id, source_type,
                 source_ref, query_text, data, supports_hypothesis, strength,
-                metadata
+                owner_user_id, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb)
             """,
             tenant_id,
             workspace_id,
@@ -234,6 +255,7 @@ async def persist_evidence(pool: Any, tenant_id: str | None, workspace_id: str, 
             json_dumps(item.get("data") or {}),
             item.get("supports_hypothesis"),
             item.get("strength") or pack["confidence"],
+            owner_user_id,
             json_dumps(item.get("metadata") or {}),
         )
     return pack_id
@@ -245,20 +267,22 @@ async def persist_hypotheses(
     workspace_id: str,
     signal: dict[str, Any],
     hypotheses: list[dict[str, Any]],
+    owner_user_id: int | None,
 ) -> None:
     for hypothesis in hypotheses:
         await pool.execute(
             """
             INSERT INTO hypotheses (
                 tenant_id, workspace_id, signal_id, hypothesis_key, title,
-                rationale, confidence, evidence_pack_id, metadata
+                rationale, confidence, evidence_pack_id, owner_user_id, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
             ON CONFLICT (workspace_id, signal_id, hypothesis_key) DO UPDATE
             SET title = EXCLUDED.title,
                 rationale = EXCLUDED.rationale,
                 confidence = EXCLUDED.confidence,
                 evidence_pack_id = EXCLUDED.evidence_pack_id,
+                owner_user_id = COALESCE(hypotheses.owner_user_id, EXCLUDED.owner_user_id),
                 metadata = EXCLUDED.metadata
             """,
             tenant_id,
@@ -269,6 +293,7 @@ async def persist_hypotheses(
             hypothesis["rationale"],
             hypothesis["confidence"],
             hypothesis.get("evidence_pack_id"),
+            owner_user_id,
             json_dumps(hypothesis.get("metadata") or {}),
         )
 
@@ -279,15 +304,16 @@ async def persist_options(
     workspace_id: str,
     signal: dict[str, Any],
     options: list[dict[str, Any]],
+    owner_user_id: int | None,
 ) -> None:
     for option in options:
         await pool.execute(
             """
             INSERT INTO decision_options (
                 tenant_id, workspace_id, signal_id, option_id, label, action_kind,
-                impact_expected, confidence, cost, risk, time_cost, score, selected, metadata
+                impact_expected, confidence, cost, risk, time_cost, score, selected, owner_user_id, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, $13::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, $13, $14::jsonb)
             ON CONFLICT (workspace_id, signal_id, option_id) DO UPDATE
             SET label = EXCLUDED.label,
                 action_kind = EXCLUDED.action_kind,
@@ -297,6 +323,7 @@ async def persist_options(
                 risk = EXCLUDED.risk,
                 time_cost = EXCLUDED.time_cost,
                 score = EXCLUDED.score,
+                owner_user_id = COALESCE(decision_options.owner_user_id, EXCLUDED.owner_user_id),
                 metadata = EXCLUDED.metadata,
                 updated_at = NOW()
             """,
@@ -312,6 +339,7 @@ async def persist_options(
             option["risk"],
             option["time_cost"],
             option["score"],
+            owner_user_id,
             json_dumps({"score_explanation": option.get("score_explanation")}),
         )
 
@@ -323,6 +351,7 @@ async def publish_control_room_item(
     user: dict,
     artifact: dict[str, Any],
 ) -> None:
+    owner_user_id = _owner_user_id(user)
     signal = artifact["signal"]
     top_hypothesis = (artifact.get("hypotheses") or [{}])[0]
     top_option = (artifact.get("options") or [{}])[0]
@@ -348,17 +377,17 @@ async def publish_control_room_item(
     await pool.execute(
         """
         INSERT INTO control_room_items (
-            tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset,
+            tenant_id, workspace_id, owner_user_id, item_id, cartridge_id, domain, source_dataset,
             item_kind, title, severity, status, entity_kind, entity_id,
             entity_label, anomaly_type, metadata, impact_estimate,
             impact_currency, confidence, priority_score, selected_option_id,
             execution_status, first_seen_at, last_seen_at
         )
         VALUES (
-            $1, $2, $3, $4, $5, $6,
-            $7, $8, $9, 'open', $10, $11,
-            $12, $13, $14::jsonb, $15,
-            'USD', $16, $17, NULL,
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, 'open', $11, $12,
+            $13, $14, $15::jsonb, $16,
+            'USD', $17, $18, NULL,
             'not_started', NOW(), NOW()
         )
         ON CONFLICT (workspace_id, item_id) DO UPDATE
@@ -376,15 +405,17 @@ async def publish_control_room_item(
             impact_estimate = EXCLUDED.impact_estimate,
             confidence = EXCLUDED.confidence,
             priority_score = EXCLUDED.priority_score,
+            owner_user_id = COALESCE(control_room_items.owner_user_id, EXCLUDED.owner_user_id),
             last_seen_at = NOW(),
             status = CASE
-                WHEN control_room_items.status = ANY($18::text[])
+                WHEN control_room_items.status = ANY($19::text[])
                 THEN control_room_items.status
                 ELSE 'open'
             END
         """,
         tenant_id,
         workspace_id,
+        owner_user_id,
         signal["signal_id"],
         signal["cartridge_id"],
         signal["domain"],
@@ -420,10 +451,20 @@ async def publish_control_room_item(
 
 async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
+    can_read_all = _can_read_workspace_wide(user)
+    owner_id = _owner_user_id(user)
+    params: list[Any] = [workspace_id]
+    owner_clause = ""
+    if not can_read_all:
+        if owner_id is None:
+            return {"signals": []}
+        params.append(owner_id)
+        owner_clause = f" AND owner_user_id = ${len(params)}"
+    params.append(max(1, min(int(limit or 100), 500)))
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
                    entity_label, metric, period_key, actual_value, expected_value,
                    deviation_value, deviation_pct, severity, signal_type, status,
@@ -431,21 +472,30 @@ async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
                    prediction_method, signal_subtype, metadata, created_at, updated_at
               FROM intelligence_signals
              WHERE workspace_id = $1
+             {owner_clause}
              ORDER BY updated_at DESC, severity DESC
-             LIMIT $2
+             LIMIT ${len(params)}
             """,
-            workspace_id,
-            max(1, min(int(limit or 100), 500)),
+            *params,
         )
     return {"signals": [row_to_signal(row) for row in rows]}
 
 
 async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
+    can_read_all = _can_read_workspace_wide(user)
+    owner_id = _owner_user_id(user)
+    signal_params: list[Any] = [workspace_id, signal_id]
+    owner_clause = ""
+    if not can_read_all:
+        if owner_id is None:
+            raise HTTPException(404, "intelligence signal not found")
+        signal_params.append(owner_id)
+        owner_clause = f" AND owner_user_id = ${len(signal_params)}"
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT signal_id, cartridge_id, dataset, domain, entity_kind, entity_id,
                    entity_label, metric, period_key, actual_value, expected_value,
                    deviation_value, deviation_pct, severity, signal_type, status,
@@ -454,48 +504,53 @@ async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
               FROM intelligence_signals
              WHERE workspace_id = $1
                AND signal_id = $2
+               {owner_clause}
             """,
-            workspace_id,
-            signal_id,
+            *signal_params,
         )
         if not row:
             raise HTTPException(404, "intelligence signal not found")
-        evidence_pack = await _latest_evidence_pack(conn, workspace_id, signal_id)
+        evidence_pack = await _latest_evidence_pack(conn, workspace_id, signal_id, user)
+        child_params: list[Any] = [workspace_id, signal_id]
+        child_owner_clause = ""
+        if not can_read_all:
+            child_params.append(owner_id)
+            child_owner_clause = f" AND owner_user_id = ${len(child_params)}"
         hypotheses = await conn.fetch(
-            """
+            f"""
             SELECT hypothesis_key, title, rationale, confidence, evidence_pack_id, metadata, created_at
               FROM hypotheses
              WHERE workspace_id = $1
                AND signal_id = $2
+               {child_owner_clause}
              ORDER BY confidence DESC
             """,
-            workspace_id,
-            signal_id,
+            *child_params,
         )
         options = await conn.fetch(
-            """
+            f"""
             SELECT option_id, label, action_kind, impact_expected, confidence, cost,
                    risk, time_cost, score, selected, metadata, created_at, updated_at
               FROM decision_options
              WHERE workspace_id = $1
                AND signal_id = $2
+               {child_owner_clause}
              ORDER BY score DESC
             """,
-            workspace_id,
-            signal_id,
+            *child_params,
         )
         outcomes = await conn.fetch(
-            """
+            f"""
             SELECT id, option_id, action_taken, predicted_value, actual_value,
                    prediction_error, outcome_summary, learned_rule, metadata, created_at
               FROM prediction_outcomes
              WHERE workspace_id = $1
                AND signal_id = $2
+               {child_owner_clause}
              ORDER BY created_at DESC
              LIMIT 5
             """,
-            workspace_id,
-            signal_id,
+            *child_params,
         )
     return {
         "signal": row_to_signal(row),
@@ -508,41 +563,57 @@ async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
 
 async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
+    can_read_all = _can_read_workspace_wide(user)
+    owner_id = _owner_user_id(user)
+    params: list[Any] = [workspace_id, signal_id, option_id]
+    owner_clause = ""
+    if not can_read_all:
+        if owner_id is None:
+            raise HTTPException(404, "decision option not found")
+        params.append(owner_id)
+        owner_clause = f" AND owner_user_id = ${len(params)}"
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         option = await conn.fetchrow(
-            """
+            f"""
             SELECT option_id, label, score
               FROM decision_options
              WHERE workspace_id = $1
                AND signal_id = $2
                AND option_id = $3
+               {owner_clause}
             """,
-            workspace_id,
-            signal_id,
-            option_id,
+            *params,
         )
         if not option:
             raise HTTPException(404, "decision option not found")
+        update_params: list[Any] = [workspace_id, signal_id]
+        update_owner_clause = ""
+        if not can_read_all:
+            update_params.append(owner_id)
+            update_owner_clause = f" AND owner_user_id = ${len(update_params)}"
         await conn.execute(
-            "UPDATE decision_options SET selected = FALSE WHERE workspace_id = $1 AND signal_id = $2",
-            workspace_id,
-            signal_id,
+            f"UPDATE decision_options SET selected = FALSE WHERE workspace_id = $1 AND signal_id = $2{update_owner_clause}",
+            *update_params,
         )
         await conn.execute(
-            """
+            f"""
             UPDATE decision_options
                SET selected = TRUE, updated_at = NOW()
              WHERE workspace_id = $1
                AND signal_id = $2
                AND option_id = $3
+               {owner_clause}
             """,
-            workspace_id,
-            signal_id,
-            option_id,
+            *params,
         )
+        item_params: list[Any] = [workspace_id, signal_id, option_id, json_dumps({"selected_option_id": option_id})]
+        item_owner_clause = ""
+        if not can_read_all:
+            item_params.append(owner_id)
+            item_owner_clause = f" AND owner_user_id = ${len(item_params)}"
         await conn.execute(
-            """
+            f"""
             UPDATE control_room_items
                SET selected_option_id = $3,
                    status = CASE WHEN status = 'open' THEN 'in_review' ELSE status END,
@@ -550,11 +621,9 @@ async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str,
                    last_seen_at = NOW()
              WHERE workspace_id = $1
                AND item_id = $2
+               {item_owner_clause}
             """,
-            workspace_id,
-            signal_id,
-            option_id,
-            json_dumps({"selected_option_id": option_id}),
+            *item_params,
         )
     await audit_service.record_event(
         user.get("id"),
@@ -569,17 +638,26 @@ async def select_option(user: dict, signal_id: str, option_id: str) -> dict[str,
 
 async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> dict[str, Any]:
     tenant_id, workspace_id = workspace_scope(user)
+    can_read_all = _can_read_workspace_wide(user)
+    owner_id = _owner_user_id(user)
+    signal_params: list[Any] = [workspace_id, signal_id]
+    owner_clause = ""
+    if not can_read_all:
+        if owner_id is None:
+            raise HTTPException(404, "intelligence signal not found")
+        signal_params.append(owner_id)
+        owner_clause = f" AND owner_user_id = ${len(signal_params)}"
     pool = await auth.pool()
     async with scoped_db(pool, tenant_id, workspace_id) as conn:
         signal = await conn.fetchrow(
-            """
+            f"""
             SELECT actual_value, expected_value, predicted_value, metric, cartridge_id
               FROM intelligence_signals
              WHERE workspace_id = $1
                AND signal_id = $2
+               {owner_clause}
             """,
-            workspace_id,
-            signal_id,
+            *signal_params,
         )
         if not signal:
             raise HTTPException(404, "intelligence signal not found")
@@ -604,9 +682,9 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
             INSERT INTO prediction_outcomes (
                 tenant_id, workspace_id, signal_id, option_id, action_taken,
                 predicted_value, actual_value, prediction_error, outcome_summary,
-                learned_rule, metadata
+                learned_rule, owner_user_id, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
             RETURNING *
             """,
             tenant_id,
@@ -619,6 +697,7 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
             prediction_error,
             outcome_summary,
             learned_rule,
+            owner_id,
             json_dumps({"reported_by": user.get("email")}),
         )
         if learned_rule:
@@ -637,17 +716,25 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
                 learned_rule,
                 json_dumps({"source": "prediction_outcome"}),
             )
+        item_params: list[Any] = [
+            workspace_id,
+            signal_id,
+            json_dumps({"intelligence_outcome": public_json(dict(row)), "lessons": [learned_rule] if learned_rule else []}),
+        ]
+        item_owner_clause = ""
+        if not can_read_all:
+            item_params.append(owner_id)
+            item_owner_clause = f" AND owner_user_id = ${len(item_params)}"
         await conn.execute(
-            """
+            f"""
             UPDATE control_room_items
                SET metadata = metadata || $3::jsonb,
                    last_seen_at = NOW()
              WHERE workspace_id = $1
                AND item_id = $2
+               {item_owner_clause}
             """,
-            workspace_id,
-            signal_id,
-            json_dumps({"intelligence_outcome": public_json(dict(row)), "lessons": [learned_rule] if learned_rule else []}),
+            *item_params,
         )
     await audit_service.record_event(
         user.get("id"),
@@ -660,33 +747,47 @@ async def record_outcome(user: dict, signal_id: str, body: dict[str, Any]) -> di
     return {"outcome": public_json(dict(row))}
 
 
-async def _latest_evidence_pack(pool: Any, workspace_id: str, signal_id: str) -> dict[str, Any] | None:
+async def _latest_evidence_pack(pool: Any, workspace_id: str, signal_id: str, user: dict) -> dict[str, Any] | None:
+    can_read_all = _can_read_workspace_wide(user)
+    owner_id = _owner_user_id(user)
+    params: list[Any] = [workspace_id, signal_id]
+    owner_clause = ""
+    if not can_read_all:
+        if owner_id is None:
+            return None
+        params.append(owner_id)
+        owner_clause = f" AND owner_user_id = ${len(params)}"
     packs = await pool.fetch(
-        """
+        f"""
         SELECT id, summary, confidence, metadata, created_at
           FROM evidence_packs
          WHERE workspace_id = $1
            AND signal_id = $2
+           {owner_clause}
          ORDER BY created_at DESC
          LIMIT 1
         """,
-        workspace_id,
-        signal_id,
+        *params,
     )
     if not packs:
         return None
     pack = dict(packs[0])
+    item_params: list[Any] = [workspace_id, pack["id"]]
+    item_owner_clause = ""
+    if not can_read_all:
+        item_params.append(owner_id)
+        item_owner_clause = f" AND owner_user_id = ${len(item_params)}"
     items = await pool.fetch(
-        """
+        f"""
         SELECT id, source_type, source_ref, query_text, data, supports_hypothesis,
                strength, metadata, created_at
           FROM evidence_items
          WHERE workspace_id = $1
            AND evidence_pack_id = $2
+           {item_owner_clause}
          ORDER BY strength DESC, id
         """,
-        workspace_id,
-        pack["id"],
+        *item_params,
     )
     return {**public_json(pack), "items": [public_json(dict(item)) for item in items]}
 

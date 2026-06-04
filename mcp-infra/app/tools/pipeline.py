@@ -8,6 +8,8 @@ dag_save_source : persists DAG Python source to cartridge_dags.source_code
 """
 from __future__ import annotations
 
+from fastapi import HTTPException
+
 from app.tools.postgres import _conn
 from app.registry import tool
 
@@ -149,6 +151,13 @@ def pipeline_run_save(
             """
         )
         available = {str(row[0]) for row in cur.fetchall()}
+        if (
+            "tenant_id" in available
+            and "workspace_id" in available
+            and str(cartridge_id or "").strip() != "platform"
+            and (not str(tenant_id or "").strip() or not str(workspace_id or "").strip())
+        ):
+            raise HTTPException(403, "pipeline_run_save requires tenant_id and workspace_id")
         columns = [
             "run_id",
             "dag_id",

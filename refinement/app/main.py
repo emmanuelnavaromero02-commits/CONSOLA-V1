@@ -283,6 +283,13 @@ def _is_admin_security_context(sec: dict) -> bool:
     return bool(sec.get("trusted")) and str(sec.get("role") or "").lower() in _ADMIN_ROLES
 
 
+def _can_read_workspace_wide(sec: dict) -> bool:
+    if _is_admin_security_context(sec):
+        return True
+    workspace_role = str(sec.get("workspace_role") or "").lower()
+    return workspace_role in {"workspace_admin", "tenant_admin"}
+
+
 def _is_unscoped_admin_security_context(sec: dict) -> bool:
     if not _is_admin_security_context(sec):
         return False
@@ -329,7 +336,7 @@ def _prefix_allowed(sec: dict, value: str) -> bool:
     if len(parts) < 2:
         return False
     layer, cartridge = parts[0], parts[1]
-    if cartridge not in allowed_cartridges:
+    if "*" not in allowed_cartridges and cartridge not in allowed_cartridges:
         return False
     tenant = str(sec.get("tenant_id") or "").strip()
     workspace = str(sec.get("workspace_id") or "").strip()
@@ -449,6 +456,11 @@ def _dataset_allowed(sec: dict, ds: dict) -> bool:
     )
     if workspace_id and workspace_id != sec_workspace and not service_materializer:
         return False
+    created_by_id = ds.get("created_by_id")
+    if created_by_id is not None and not service_materializer and not _can_read_workspace_wide(sec):
+        user_id = str(sec.get("user_id") or "")
+        if str(created_by_id) != user_id:
+            return False
     cartridge = str(ds.get("cartridge") or "").strip()
     layer = str(ds.get("layer") or "").strip().lower()
     name = str(ds.get("name") or "").strip()

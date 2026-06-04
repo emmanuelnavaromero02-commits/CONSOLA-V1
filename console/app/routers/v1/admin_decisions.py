@@ -43,7 +43,7 @@ async def viewer_decisions(request: Request):
 async def api_decisions_list(status: str = "", overdue: str = "", user: dict = Depends(require_authenticated)):
     where, params = [], []
     workspace_id = _current_workspace_id(user)
-    where.append(_dec_visible_clause(user["id"], user.get("role") == "admin", params, workspace_id))
+    where.append(_dec_visible_clause(user["id"], _dec_is_workspace_admin(user), params, workspace_id))
     if status in ("open", "closed"):
         params.append(status)
         where.append(f"status = ${len(params)}")

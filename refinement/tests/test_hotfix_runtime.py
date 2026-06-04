@@ -64,6 +64,36 @@ def test_postgres_dsn_keeps_native_postgres_url(refinement_main, monkeypatch):
     assert refinement_main._postgres_dsn() == "postgresql://user:pass@host/db"
 
 
+def test_dataset_allowed_filters_owned_datasets_for_workspace_employees(refinement_main):
+    base_sec = {
+        "trusted": True,
+        "source": "console",
+        "role": "user",
+        "workspace_role": "viewer",
+        "user_id": 10,
+        "tenant_id": "tenant-a",
+        "workspace_id": "workspace-a",
+        "allowed_cartridges": ["hubspot"],
+    }
+    own_dataset = {
+        "name": "forecast_mensual",
+        "layer": "gold",
+        "cartridge": "hubspot",
+        "workspace_id": "workspace-a",
+        "created_by_id": 10,
+    }
+    other_employee_dataset = {**own_dataset, "name": "deals_estancados", "created_by_id": 11}
+    legacy_workspace_dataset = {**own_dataset, "name": "legacy_shared", "created_by_id": None}
+    workspace_admin_sec = {**base_sec, "workspace_role": "tenant_admin", "user_id": 99}
+    wildcard_admin_sec = {**workspace_admin_sec, "allowed_cartridges": ["*"]}
+
+    assert refinement_main._dataset_allowed(base_sec, own_dataset)
+    assert not refinement_main._dataset_allowed(base_sec, other_employee_dataset)
+    assert refinement_main._dataset_allowed(base_sec, legacy_workspace_dataset)
+    assert refinement_main._dataset_allowed(workspace_admin_sec, other_employee_dataset)
+    assert refinement_main._dataset_allowed(wildcard_admin_sec, other_employee_dataset)
+
+
 @pytest.mark.anyio
 async def test_delete_dataset_rejects_invalid_name(refinement_main):
     with pytest.raises(HTTPException) as exc:

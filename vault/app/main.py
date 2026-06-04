@@ -58,6 +58,7 @@ _DATABASE_URL = os.getenv(
 
 _SENSITIVE = {"token", "password", "secret", "api_key", "api_secret"}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
+_GLOBAL_SECRET_SCOPES = {"global", "platform", "studio", "system", "_system"}
 _SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
 
 
@@ -123,6 +124,17 @@ def _require_cartridge_scope(ctx: dict, cartridge: str) -> None:
     allowed = {str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()}
     if "*" not in allowed and cartridge not in allowed:
         raise HTTPException(403, "vault cartridge outside caller scope")
+
+
+def _require_secret_scope(ctx: dict, scope: str) -> None:
+    clean = str(scope or "").strip()
+    if not clean:
+        raise HTTPException(400, "vault scope is required")
+    if not ctx.get("trusted") or _is_unscoped_admin_context(ctx):
+        return
+    if clean in _GLOBAL_SECRET_SCOPES:
+        raise HTTPException(403, "global vault scope requires platform admin")
+    _vault_scope(ctx)
 
 
 def _vault_scope(ctx: dict) -> tuple[str | None, str | None]:
@@ -596,7 +608,7 @@ def delete_connection(cartridge: str, conn_id: str, x_security_context: str | No
 @app.get("/secrets/{scope}")
 def list_secret_keys(scope: str, x_security_context: str | None = Header(None, alias="x-security-context")):
     ctx = _security_context_from_header(x_security_context)
-    _require_cartridge_scope(ctx, scope)
+    _require_secret_scope(ctx, scope)
     rows = _db_list("secrets", scope, ctx)
     return {"keys": [r["key"] for r in rows]}
 
@@ -609,7 +621,7 @@ def get_secret(
     x_security_context: str | None = Header(None, alias="x-security-context"),
 ):
     ctx = _security_context_from_header(x_security_context)
-    _require_cartridge_scope(ctx, scope)
+    _require_secret_scope(ctx, scope)
     row = _db_get("secrets", scope, key, ctx)
     if row is None:
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
@@ -620,7 +632,7 @@ def get_secret(
 @app.put("/secrets/{scope}/{key}")
 def put_secret(scope: str, key: str, body: dict, x_security_context: str | None = Header(None, alias="x-security-context")):
     ctx = _security_context_from_header(x_security_context)
-    _require_cartridge_scope(ctx, scope)
+    _require_secret_scope(ctx, scope)
     _db_upsert("secrets", scope, key, {"value": body.get("value", body)}, ctx)
     return {"saved": True}
 
@@ -628,7 +640,7 @@ def put_secret(scope: str, key: str, body: dict, x_security_context: str | None 
 @app.delete("/secrets/{scope}/{key}")
 def delete_secret(scope: str, key: str, x_security_context: str | None = Header(None, alias="x-security-context")):
     ctx = _security_context_from_header(x_security_context)
-    _require_cartridge_scope(ctx, scope)
+    _require_secret_scope(ctx, scope)
     if not _db_delete("secrets", scope, key, ctx):
         raise HTTPException(404, f"Secret '{scope}/{key}' not found")
     return {"deleted": True}

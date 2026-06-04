@@ -35,6 +35,24 @@ def test_security_context_admin_can_traverse_platform_prefixes():
     assert "cartridges/" in ctx["allowed_prefixes"]
 
 
+def test_workspace_scoped_admin_can_manage_cartridges_inside_workspace_only():
+    ctx = build_security_context(
+        {
+            "id": 9,
+            "email": "tenant-admin@example.com",
+            "role": "user",
+            "workspace_role": "tenant_admin",
+            "tenant_id": "tenant_1",
+            "workspace_id": "ws_1",
+        }
+    )
+
+    assert ctx["allowed_cartridges"] == ["*"]
+    assert "raw/*/tenant_id=tenant_1/workspace_id=ws_1/" in ctx["allowed_prefixes"]
+    assert "raw/" not in ctx["allowed_prefixes"]
+    assert "inbound/" not in ctx["allowed_prefixes"]
+
+
 def test_non_admin_without_explicit_cartridges_gets_no_dataset_prefixes():
     ctx = build_security_context({"id": 7, "email": "viewer@example.com", "role": "analyst"})
 
