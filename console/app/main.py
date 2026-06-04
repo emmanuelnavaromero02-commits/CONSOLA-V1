@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # applied to every record. Imported and called here (rather than at the
 # bottom of imports) so the logger configured below is the JSON one
 # from the very first record.
-from app.logging_config import setup_logging  # noqa: E402
+from app.logging_config import _redact, setup_logging  # noqa: E402
 
 setup_logging(service_name="console")
 
@@ -151,46 +151,101 @@ async def _close_main_pool() -> None:
         _MAIN_POOL = None
 
 
+def _reset_startup_readiness_state(app: FastAPI) -> None:
+    app.state.startup_ok = True
+    app.state.startup_errors = []
+
+
+def _record_startup_failure(
+    app: FastAPI,
+    component: str,
+    exc: Exception,
+    *,
+    critical: bool = True,
+) -> None:
+    raw_error = _redact(f"{type(exc).__name__}: {exc}") or type(exc).__name__
+    entry = {
+        "component": component,
+        "critical": critical,
+        "error": str(raw_error)[:300],
+    }
+    errors = list(getattr(app.state, "startup_errors", []) or [])
+    errors.append(entry)
+    app.state.startup_errors = errors
+    if critical:
+        app.state.startup_ok = False
+
+
+async def _run_startup_seed(
+    app: FastAPI,
+    component: str,
+    runner,
+    *,
+    critical: bool = True,
+) -> None:
+    try:
+        await runner()
+    except Exception as exc:
+        _record_startup_failure(app, component, exc, critical=critical)
+        level = logger.error if critical else logger.warning
+        label = "critical" if critical else "non-fatal"
+        level("[startup] %s failed (%s): %s", component, label, exc, exc_info=True)
+
+
+def _startup_readiness_status(app: FastAPI) -> dict:
+    errors = list(getattr(app.state, "startup_errors", []) or [])
+    critical_errors: list[dict] = []
+    for error in errors:
+        if isinstance(error, dict):
+            if error.get("critical", True):
+                critical_errors.append(error)
+        else:
+            critical_errors.append({"component": "startup", "critical": True})
+    if not bool(getattr(app.state, "startup_ok", True)) or critical_errors:
+        return {
+            "status": "down",
+            "critical_failures": len(critical_errors) or 1,
+            "components": [
+                str(error.get("component", "startup")) for error in critical_errors
+            ],
+        }
+    return {"status": "up", "critical_failures": 0}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _reset_startup_readiness_state(app)
     get_rate_limiter()
     await mcp_registry.startup()
-    # Sprint v1.20: idempotent backfill of cartridge_dags.source_code from
-    # on-disk .py files. Non-fatal — a seeding failure logs a warning but
-    # never blocks startup (Studio just keeps showing "Fuente no encontrada"
-    # for the affected cartridge until the next boot).
-    try:
+
+    async def _seed_dag_sources() -> None:
         from app.services.seed_dag_sources import seed_missing_dag_sources
         pool = await _get_db_pool()
         await seed_missing_dag_sources(pool)
-    except Exception as e:
-        logger.warning(
-            "[startup] dag source seeding failed (non-fatal): %s", e, exc_info=True,
-        )
-    try:
+
+    async def _seed_packaged_datasets() -> None:
         from app.services.seed_packaged_datasets import seed_packaged_datasets
         pool = await _get_db_pool()
         await seed_packaged_datasets(pool)
-    except Exception as e:
-        logger.warning(
-            "[startup] packaged dataset seeding failed (non-fatal): %s", e, exc_info=True,
-        )
-    try:
+
+    async def _seed_packaged_hints() -> None:
         from app.services.seed_packaged_hints import seed_packaged_hints
         pool = await _get_db_pool()
         await seed_packaged_hints(pool)
-    except Exception as e:
-        logger.warning(
-            "[startup] packaged hint seeding failed (non-fatal): %s", e, exc_info=True,
-        )
-    try:
+
+    async def _seed_packaged_apps() -> None:
         from app.services.seed_packaged_apps import seed_packaged_apps
         pool = await _get_db_pool()
         await seed_packaged_apps(pool)
-    except Exception as e:
-        logger.warning(
-            "[startup] packaged app seeding failed (non-fatal): %s", e, exc_info=True,
-        )
+
+    # Startup seeds reconcile packaged catalogs used by Studio, Control Room,
+    # and cartridge surfaces. A failure no longer leaves Console apparently
+    # ready: the process stays live, but /readyz returns 503 until the next
+    # successful boot.
+    await _run_startup_seed(app, "seed_missing_dag_sources", _seed_dag_sources)
+    await _run_startup_seed(app, "seed_packaged_datasets", _seed_packaged_datasets)
+    await _run_startup_seed(app, "seed_packaged_hints", _seed_packaged_hints)
+    await _run_startup_seed(app, "seed_packaged_apps", _seed_packaged_apps)
     task = asyncio.create_task(_periodic_health_check())
     try:
         yield
@@ -1801,6 +1856,16 @@ async def readyz(request: Request):
     keep traffic away from a half-started console.
     """
     checks: dict[str, dict] = {}
+    checks["startup"] = _startup_readiness_status(request.app)
+    if checks["startup"].get("status") != "up":
+        body = {"ok": False, "service": "console"}
+        if getattr(request.state, "user", None):
+            body["checks"] = checks
+        return JSONResponse(
+            body,
+            status_code=503,
+        )
+
     try:
         pool = await _get_db_pool()
         async with pool.acquire() as conn:

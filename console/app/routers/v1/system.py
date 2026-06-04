@@ -61,6 +61,16 @@ async def readyz(request: Request):
     keep traffic away from a half-started console.
     """
     checks: dict[str, dict] = {}
+    checks["startup"] = _startup_readiness_status(request.app)
+    if checks["startup"].get("status") != "up":
+        body = {"ok": False, "service": "console"}
+        if getattr(request.state, "user", None):
+            body["checks"] = checks
+        return JSONResponse(
+            body,
+            status_code=503,
+        )
+
     try:
         pool = await _get_db_pool()
         async with pool.acquire() as conn:
