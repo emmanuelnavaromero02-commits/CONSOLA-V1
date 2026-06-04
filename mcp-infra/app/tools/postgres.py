@@ -1,6 +1,9 @@
 """
 PostgreSQL MCP tools — schema discovery, read queries, DDL execution.
-Works against both main DB (modecissions) and gold DB (modecissions_gold).
+
+These tools are intentionally limited to the operational main database.
+Analytical Gold data must go through Refinement, where the sqlglot AST RLS
+guard rewrites pggold queries with tenant/workspace scope.
 """
 from __future__ import annotations
 
@@ -52,13 +55,7 @@ _SELECT_RE = re.compile(r"\bSELECT\b", re.IGNORECASE)
 
 def _conn(gold: bool = False):
     if gold:
-        return psycopg2.connect(
-            host=settings.pg_gold_host,
-            port=settings.pg_gold_port,
-            dbname=settings.pg_gold_db,
-            user=settings.pg_gold_user or settings.pg_user,
-            password=settings.pg_gold_password or settings.pg_password,
-        )
+        raise ValueError("Gold database access must go through Refinement")
     return psycopg2.connect(
         host=settings.pg_host,
         port=settings.pg_port,
@@ -141,7 +138,7 @@ def postgres_list_schemas(gold: bool = False) -> dict:
         "type": "object",
         "properties": {
             "schema": {"type": "string", "description": "Schema name (default: public)"},
-            "gold":   {"type": "boolean"},
+            "gold":   {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
         },
         "required": [],
     },
@@ -168,7 +165,7 @@ def postgres_list_tables(schema: str = "public", gold: bool = False) -> dict:
         "properties": {
             "table":  {"type": "string"},
             "schema": {"type": "string", "description": "Schema (default: public)"},
-            "gold":   {"type": "boolean"},
+            "gold":   {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
         },
         "required": ["table"],
     },
@@ -204,7 +201,7 @@ def postgres_get_table_schema(table: str, schema: str = "public", gold: bool = F
         "properties": {
             "sql":   {"type": "string", "description": "SELECT statement"},
             "limit": {"type": "integer", "description": "Max rows (default 50)"},
-            "gold":  {"type": "boolean"},
+            "gold":  {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
         },
         "required": ["sql"],
     },
@@ -270,7 +267,7 @@ def postgres_execute_query(sql: str, limit: int = 50, gold: bool = False) -> dic
         "type": "object",
         "properties": {
             "sql":  {"type": "string", "description": "Single allowlisted DDL statement to execute"},
-            "gold": {"type": "boolean", "description": "Run against gold DB"},
+            "gold": {"type": "boolean", "description": "Deprecated; Gold must be managed through Refinement migrations"},
         },
         "required": ["sql"],
     },
@@ -294,7 +291,7 @@ def postgres_execute_ddl(sql: str, gold: bool = False) -> dict:
             "table":  {"type": "string"},
             "schema": {"type": "string", "description": "Schema (default: public)"},
             "n":      {"type": "integer", "description": "Rows (default 10)"},
-            "gold":   {"type": "boolean"},
+            "gold":   {"type": "boolean", "description": "Deprecated; Gold must be queried through Refinement"},
         },
         "required": ["table"],
     },

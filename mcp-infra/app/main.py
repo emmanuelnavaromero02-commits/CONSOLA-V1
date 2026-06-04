@@ -1539,15 +1539,6 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
 
     con = duckdb.connect()
     _duckdb_s3_settings(con, endpoint, region)
-    pggold_dsn = (
-        f"host={s.pg_gold_host} port={s.pg_gold_port} dbname={s.pg_gold_db} "
-        f"user={s.pg_gold_user or s.pg_user} password={s.pg_gold_password or s.pg_password}"
-    )
-    try:
-        con.execute(f"INSTALL postgres; LOAD postgres; ATTACH '{pggold_dsn}' AS pggold (TYPE postgres);")
-    except Exception:
-        pass
-
     out: list[str] = [
         f"# Modelo Semántico — Cartucho `{cartridge}`\n",
         "_Generado automáticamente desde `data_catalog` + schemas reales._\n",
@@ -1560,6 +1551,13 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
         tags = d.get("tags") or []
         tail = f" [tags: {', '.join(tags)}]" if tags else ""
         return f"- `{col}` ({ty}){': ' + text if text else ''}{tail}\n"
+
+    def catalog_fields(dataset: str) -> list[tuple[str, str]]:
+        return [
+            (column, "catalog")
+            for (catalog_dataset, column), _meta in sorted(desc_by.items())
+            if catalog_dataset == dataset
+        ]
 
     # IMPORTANT: when the caller is scoped, the glob() pattern must already
     # restrict file discovery to their tenant/workspace partition. Otherwise
@@ -1610,7 +1608,9 @@ async def _rebuild_semantic_doc(cartridge: str, ctx: dict[str, Any] | None = Non
             out.append(f"### {name}\n")
             try:
                 if layer == "gold":
-                    fields = con.execute(f'DESCRIBE pggold."gold_{name}"').fetchall()
+                    fields = catalog_fields(name)
+                    if not fields:
+                        out.append("_(schema unavailable; Gold schema must be queried through Refinement)_\n")
                 else:
                     if scoped_raw_read:
                         parquet = (
