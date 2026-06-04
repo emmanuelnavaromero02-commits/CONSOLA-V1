@@ -139,17 +139,9 @@ services:
       # so an unset/empty value fails CLOSED.
       APP_ENV: ${APP_ENV:-production}
       ALLOW_RCE_TOOLS: ${ALLOW_RCE_TOOLS:-false}
-      # v1.44.3.3 Task A + R-Mac Mini-fix: hardcoded "false" so
-      # the limiter is OFF on the dev stack. The earlier
-      # ``${RATE_LIMIT_ENABLED:-}`` form produced an EMPTY string
-      # when the host env wasn't set, and the helper
-      # ``_rate_limit_disabled()`` only treats {false / 0 / no /
-      # off} as falsy — empty string fell through and the limiter
-      # stayed on, exhausting the 8/300s /auth/login quota during
-      # E2E. Production (AWS compose) does NOT set this var; the
-      # helper's default is ``enabled`` so prod behaviour is
-      # unchanged.
-      RATE_LIMIT_ENABLED: "false"
+      # Keep the base compose prod-like: the rate limiter defaults to enabled
+      # when this variable is omitted. Local E2E/dev harnesses that need to
+      # bypass the shared per-IP login bucket must use docker-compose.dev.yml.
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:-}
       INTERNAL_API_KEY_CONSOLE_TO_CONSOLE: ${INTERNAL_API_KEY_CONSOLE_TO_CONSOLE:-}

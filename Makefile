@@ -1,7 +1,10 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
 RUFF ?= $(shell if [ -x .venv/bin/ruff ]; then echo .venv/bin/ruff; else echo ruff; fi)
 PIP_AUDIT ?= $(shell if [ -x .venv/bin/pip-audit ]; then echo .venv/bin/pip-audit; else echo pip-audit; fi)
-COMPOSE_FULL ?= docker compose -f infra/docker-compose.yml --profile sap
+COMPOSE_BASE ?= docker compose -f infra/docker-compose.yml
+COMPOSE_DEV ?= $(COMPOSE_BASE) -f infra/docker-compose.dev.yml
+COMPOSE_FULL ?= $(COMPOSE_DEV) --profile sap
+E2E_STACK_ENV ?= APP_ENV=development ALLOW_RCE_TOOLS=true
 TEST_COMPOSE ?= infra/docker-compose.test.yml
 TEST_COMPOSE_PROJECT ?= omega-hermetic-test
 MOCK_MCP_PORT ?= 18010
@@ -75,7 +78,7 @@ up:
 	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && $(COMPOSE_FULL) up --build -d
 
 up-core:
-	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && docker compose -f infra/docker-compose.yml up --build -d
+	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && $(COMPOSE_DEV) up --build -d
 
 down:
 	$(COMPOSE_FULL) down
@@ -193,8 +196,9 @@ verify-release:
 		echo "=== Auditing $$req ==="; \
 		$(PIP_AUDIT) -r "$$req" --vulnerability-service=pypi --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2025-185; \
 	done
-	docker compose -f infra/docker-compose.yml --profile sap config -q
-	docker compose -f infra/docker-compose.yml --profile sap up -d --build --force-recreate
+	$(COMPOSE_BASE) --profile sap config -q
+	$(E2E_STACK_ENV) $(COMPOSE_FULL) config -q
+	$(E2E_STACK_ENV) $(COMPOSE_FULL) up -d --build --force-recreate
 	bash scripts/wait_for_health.sh
 	$(MAKE) test
 	$(MAKE) smoke

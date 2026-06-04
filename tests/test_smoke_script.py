@@ -260,7 +260,9 @@ def test_makefile_up_starts_full_sap_profile():
 
 def test_makefile_lifecycle_targets_manage_full_sap_stack():
     body = MAKEFILE.read_text(encoding="utf-8")
-    assert "COMPOSE_FULL ?= docker compose -f infra/docker-compose.yml --profile sap" in body
+    assert "COMPOSE_BASE ?= docker compose -f infra/docker-compose.yml" in body
+    assert "COMPOSE_DEV ?= $(COMPOSE_BASE) -f infra/docker-compose.dev.yml" in body
+    assert "COMPOSE_FULL ?= $(COMPOSE_DEV) --profile sap" in body
     for target in ("up", "down", "nuke", "logs", "ps"):
         m = re.search(rf"^{target}:\s*$([\s\S]+?)(?=^\S|\Z)", body, re.MULTILINE)
         assert m, f"{target} target not found in Makefile"

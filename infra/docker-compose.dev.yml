@@ -1,0 +1,6 @@
+services:
+  console:
+    environment:
+      # Local/E2E-only bypass. The base compose intentionally omits this so
+      # prod-like gates keep /auth/login brute-force protection enabled.
+      RATE_LIMIT_ENABLED: "false"

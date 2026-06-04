@@ -191,8 +191,8 @@ def test_rate_limit_function_short_circuits_when_disabled(_import_main, _restore
     assert sentinel_called["hit"] is False
 
 
-def test_dev_compose_hardcodes_rate_limit_disabled():
-    """v1.44.3.3 R-Mac Mini-fix regression guard.
+def test_base_compose_does_not_disable_rate_limit():
+    """Base compose must stay prod-like.
 
     The earlier ``RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-}``
     pattern produced an EMPTY string when the host env wasn't
@@ -200,10 +200,9 @@ def test_dev_compose_hardcodes_rate_limit_disabled():
     off} as falsy — empty string fell through and the limiter
     stayed on, exhausting /auth/login quota during E2E.
 
-    Pin the dev compose to the explicit literal so a future
-    refactor can't silently re-introduce the bug. The production
-    AWS compose does NOT set this var (helper defaults to
-    enabled), so this guard only constrains the dev side."""
+    The local-dev override may still pin the explicit literal, but
+    the base compose must not. That keeps full-stack release gates
+    prod-like while preserving a dev/E2E escape hatch."""
     compose = (REPO / "infra/docker-compose.yml").read_text(encoding="utf-8")
     # Locate the console service block.
     import re
@@ -212,11 +211,18 @@ def test_dev_compose_hardcodes_rate_limit_disabled():
     )
     assert console_block, "console service block not found in dev compose"
     body = console_block.group(0)
-    assert 'RATE_LIMIT_ENABLED: "false"' in body, (
-        "infra/docker-compose.yml console service must hardcode "
-        '``RATE_LIMIT_ENABLED: "false"`` — without the explicit '
-        "literal, a host-env-fallback yields empty string which "
-        "the bypass helper does NOT treat as falsy."
+    assert 'RATE_LIMIT_ENABLED: "false"' not in body
+    assert "RATE_LIMIT_ENABLED: false" not in body
+
+
+def test_dev_override_hardcodes_rate_limit_disabled():
+    """The dev/E2E override owns the explicit bypass now."""
+    dev_compose = REPO / "infra/docker-compose.dev.yml"
+    assert dev_compose.exists(), "infra/docker-compose.dev.yml must exist for local E2E"
+    src = dev_compose.read_text(encoding="utf-8")
+    assert 'RATE_LIMIT_ENABLED: "false"' in src, (
+        "infra/docker-compose.dev.yml must carry the explicit local/E2E "
+        '``RATE_LIMIT_ENABLED: "false"`` bypass.'
     )
 
 
