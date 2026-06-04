@@ -131,6 +131,29 @@ def _row_to_dict(row: dict | None) -> dict | None:
     return d
 
 
+def _scope_from_context(security_context: dict | None) -> tuple[str | None, str | None, int | None]:
+    if not isinstance(security_context, dict):
+        return None, None, None
+    tenant_id = str(security_context.get("tenant_id") or "").strip() or None
+    workspace_id = str(security_context.get("workspace_id") or "").strip() or None
+    raw_user_id = security_context.get("user_id") or security_context.get("id")
+    try:
+        user_id = int(raw_user_id) if raw_user_id is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+    return tenant_id, workspace_id, user_id
+
+
+def _set_db_scope(cur, security_context: dict | None) -> tuple[str | None, str | None, int | None]:
+    tenant_id, workspace_id, user_id = _scope_from_context(security_context)
+    if tenant_id and workspace_id:
+        cur.execute(
+            "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+            (tenant_id, workspace_id),
+        )
+    return tenant_id, workspace_id, user_id
+
+
 def _fetch_one(cur, sql: str, params: tuple) -> dict | None:
     cur.execute(sql, params)
     row = cur.fetchone()
@@ -155,7 +178,8 @@ def _fetch_one(cur, sql: str, params: tuple) -> dict | None:
     },
 )
 async def agent_list(cartridge_id: str | None = None,
-                     include_inactive: bool = False) -> dict:
+                     include_inactive: bool = False,
+                     security_context: dict | None = None) -> dict:
     where, params = [], []
     if cartridge_id:
         params.append(cartridge_id)
@@ -169,6 +193,7 @@ async def agent_list(cartridge_id: str | None = None,
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            _set_db_scope(cur, security_context)
             cur.execute(sql, tuple(params))
             rows = [dict(r) for r in cur.fetchall()]
     finally:
@@ -192,10 +217,12 @@ async def agent_list(cartridge_id: str | None = None,
 )
 async def agent_get(agent_id: str | None = None,
                     cartridge_id: str | None = None,
-                    slug: str | None = None) -> dict:
+                    slug: str | None = None,
+                    security_context: dict | None = None) -> dict:
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            _set_db_scope(cur, security_context)
             if agent_id:
                 row = _fetch_one(cur, "SELECT * FROM agents WHERE id=%s::uuid", (agent_id,))
             elif cartridge_id and slug:
@@ -252,6 +279,7 @@ async def agent_create(
     model: str = "claude-sonnet-4-6",
     max_tokens: int = 8192, temperature: float = 0.4,
     extra: dict | None = None, is_active: bool = True,
+    security_context: dict | None = None,
 ) -> dict:
     try:
         payload = _validate_agent_payload(
@@ -277,29 +305,43 @@ async def agent_create(
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            tenant_id, workspace_id, user_id = _set_db_scope(cur, security_context)
+            columns = [
+                "id", "cartridge_id", "slug", "name", "description",
+                "instructions", "personality", "allowed_tools", "rag_filter", "extra",
+                "model", "max_tokens", "temperature", "is_active",
+            ]
+            placeholders = [
+                "%s::uuid", "%s", "%s", "%s", "%s",
+                "%s", "%s", "%s::jsonb", "%s::jsonb", "%s::jsonb",
+                "%s", "%s", "%s", "%s",
+            ]
+            values: list = [
+                new_id, payload["cartridge_id"], payload["slug"], payload["name"], payload.get("description", ""),
+                payload["instructions"], payload.get("personality", ""),
+                json.dumps(payload.get("allowed_tools") or []),
+                json.dumps(payload.get("rag_filter") or {}),
+                json.dumps(payload.get("extra") or {}),
+                payload.get("model", "claude-sonnet-4-6"),
+                payload.get("max_tokens", 8192),
+                payload.get("temperature", 0.4),
+                payload.get("is_active", True),
+            ]
+            if tenant_id and workspace_id:
+                columns.extend(["tenant_id", "workspace_id"])
+                placeholders.extend(["%s::uuid", "%s::uuid"])
+                values.extend([tenant_id, workspace_id])
+            if user_id is not None:
+                columns.append("owner_user_id")
+                placeholders.append("%s")
+                values.append(user_id)
             cur.execute(
-                """
-                INSERT INTO agents (
-                    id, cartridge_id, slug, name, description,
-                    instructions, personality, allowed_tools, rag_filter, extra,
-                    model, max_tokens, temperature, is_active
-                ) VALUES (
-                    %s::uuid, %s, %s, %s, %s,
-                    %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
-                    %s, %s, %s, %s
-                ) RETURNING *
+                f"""
+                INSERT INTO agents ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                RETURNING *
                 """,
-                (
-                    new_id, payload["cartridge_id"], payload["slug"], payload["name"], payload.get("description", ""),
-                    payload["instructions"], payload.get("personality", ""),
-                    json.dumps(payload.get("allowed_tools") or []),
-                    json.dumps(payload.get("rag_filter") or {}),
-                    json.dumps(payload.get("extra") or {}),
-                    payload.get("model", "claude-sonnet-4-6"),
-                    payload.get("max_tokens", 8192),
-                    payload.get("temperature", 0.4),
-                    payload.get("is_active", True),
-                ),
+                tuple(values),
             )
             row = cur.fetchone()
         conn.commit()
@@ -351,7 +393,7 @@ _JSON_FIELDS = {"allowed_tools", "rag_filter", "extra"}
         "required": ["agent_id"],
     },
 )
-async def agent_update(agent_id: str, **patch) -> dict:
+async def agent_update(agent_id: str, security_context: dict | None = None, **patch) -> dict:
     try:
         uuid.UUID(str(agent_id))
         patch = _validate_agent_payload(patch, partial=True)
@@ -372,6 +414,7 @@ async def agent_update(agent_id: str, **patch) -> dict:
     conn = _conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            _set_db_scope(cur, security_context)
             cur.execute(sql, tuple(params))
             row = cur.fetchone()
         conn.commit()
@@ -396,10 +439,11 @@ async def agent_update(agent_id: str, **patch) -> dict:
         "required": ["agent_id"],
     },
 )
-async def agent_delete(agent_id: str) -> dict:
+async def agent_delete(agent_id: str, security_context: dict | None = None) -> dict:
     conn = _conn()
     try:
         with conn.cursor() as cur:
+            _set_db_scope(cur, security_context)
             cur.execute("DELETE FROM agents WHERE id=%s::uuid", (agent_id,))
             n = cur.rowcount
         conn.commit()

@@ -487,6 +487,7 @@ async def chat(message: str, history: list[dict], user: dict | None = None,
         invoke_tool=invoke,
         tool_server_map=server_map,
         on_event=on_event,
+        user_context=user,
     )
     return {"reply": reply, "viewer_urls": viewer_urls, "messages": full_msgs}
 

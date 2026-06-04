@@ -102,11 +102,32 @@ def test_token_store_sql_matches_token_usage_cache_schema(token_store_module):
 async def test_token_store_summary_scopes_non_platform_users(token_store_module, monkeypatch):
     captured = {}
 
-    class CapturePool:
+    class AsyncContext:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class CaptureConn:
+        def transaction(self):
+            return AsyncContext(self)
+
+        async def execute(self, query, *args):
+            captured["scope_query"] = query
+            captured["scope_args"] = args
+
         async def fetch(self, query, *args):
             captured["query"] = query
             captured["args"] = args
             return []
+
+    class CapturePool:
+        def acquire(self):
+            return AsyncContext(CaptureConn())
 
     async def fake_pool():
         return CapturePool()
@@ -120,6 +141,11 @@ async def test_token_store_summary_scopes_non_platform_users(token_store_module,
         "active_workspace_id": "11111111-1111-1111-1111-111111111111",
     })
 
+    assert "set_config('app.tenant_id'" in captured["scope_query"]
+    assert captured["scope_args"] == (
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "11111111-1111-1111-1111-111111111111",
+    )
     assert "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid" in captured["query"]
     assert captured["args"] == (
         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",

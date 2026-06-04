@@ -135,6 +135,14 @@ def _vault_scope(ctx: dict) -> tuple[str | None, str | None]:
     return tenant, workspace
 
 
+def _set_db_scope(cur, tenant_id: str | None, workspace_id: str | None) -> None:
+    if tenant_id and workspace_id:
+        cur.execute(
+            "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+            (tenant_id, workspace_id),
+        )
+
+
 # Sprint v1.15: secrets are encrypted at rest in vault_entries.value_encrypted
 # (BYTEA). The legacy `value` JSONB column is kept as nullable so reads can
 # fall back to it for rows that haven't been re-encrypted yet by the runtime
@@ -161,6 +169,7 @@ def _db_upsert(scope: str, cartridge: str, key: str, value: dict, ctx: dict | No
     tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         # Write only to value_encrypted; clear the legacy value so a future
         # rollback can't read stale plaintext that no longer matches.
         if tenant_id and workspace_id:
@@ -218,6 +227,7 @@ def _db_get(scope: str, cartridge: str, key: str, ctx: dict | None = None) -> di
     tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         if tenant_id and workspace_id:
             cur.execute(
                 "SELECT value_encrypted, value FROM vault_entries "
@@ -241,6 +251,7 @@ def _db_delete(scope: str, cartridge: str, key: str, ctx: dict | None = None) ->
     tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         if tenant_id and workspace_id:
             cur.execute(
                 "DELETE FROM vault_entries WHERE tenant_id=%s AND workspace_id=%s AND scope=%s AND cartridge=%s AND key=%s",
@@ -261,6 +272,7 @@ def _db_audit_access(caller_service: str | None, scope: str, key: str, op: str, 
     tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         cur.execute(
             """
             INSERT INTO vault_access_log (caller_service, scope, key, op, tenant_id, workspace_id, timestamp)
@@ -276,6 +288,7 @@ def _db_list(scope: str, cartridge: str, ctx: dict | None = None) -> list[dict]:
     tenant_id, workspace_id = _vault_scope(ctx or {})
     conn = _pg()
     with conn.cursor() as cur:
+        _set_db_scope(cur, tenant_id, workspace_id)
         if tenant_id and workspace_id:
             cur.execute(
                 "SELECT key, value_encrypted, value FROM vault_entries "

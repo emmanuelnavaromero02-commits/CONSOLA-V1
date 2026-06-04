@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -181,11 +182,12 @@ async def _assert_dataset_visible(user: dict, dataset: str) -> None:
     ws_id = user.get("active_workspace_id") or user.get("workspace_id")
     if not ws_id:
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    p = await pg()
-    row = await p.fetchrow(
-        "SELECT name, cartridge FROM datasets WHERE name = $1 AND workspace_id = $2",
-        dataset, ws_id,
-    )
+    async with scoped_pg(user) as conn:
+        row = await conn.fetchrow(
+            "SELECT name, cartridge FROM datasets WHERE name = $1 AND workspace_id = $2",
+            dataset,
+            ws_id,
+        )
     if not row:
         raise HTTPException(404, f"Dataset '{dataset}' not found")
     cartridge = str(dict(row).get("cartridge") or "").strip()
@@ -374,6 +376,34 @@ async def pg() -> asyncpg.Pool:
         dsn = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
         _PG_POOL = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
     return _PG_POOL
+
+
+async def _set_db_scope(conn: asyncpg.Connection, user: dict | None) -> None:
+    tenant_id = str((user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+    workspace_id = str((user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip()
+    if tenant_id and workspace_id and hasattr(conn, "execute"):
+        await conn.execute(
+            "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+            tenant_id,
+            workspace_id,
+        )
+
+
+@asynccontextmanager
+async def scoped_pg(user: dict | None):
+    pool = await pg()
+    if not hasattr(pool, "acquire"):
+        await _set_db_scope(pool, user)
+        yield pool
+        return
+    async with pool.acquire() as conn:
+        if not hasattr(conn, "transaction"):
+            await _set_db_scope(conn, user)
+            yield conn
+            return
+        async with conn.transaction():
+            await _set_db_scope(conn, user)
+            yield conn
 
 
 # ── Auth middleware ────────────────────────────────────────────────────────
@@ -1026,8 +1056,8 @@ async def _dec_load(decision_id: int, user: dict) -> dict | None:
         params.append(user["id"])
         sql += (f" AND (visibility = 'shared' OR created_by_id = ${len(params)} "
                 f"OR assignee_id = ${len(params)})")
-    p = await pg()
-    row = await p.fetchrow(sql, *params)
+    async with scoped_pg(user) as conn:
+        row = await conn.fetchrow(sql, *params)
     return dict(row) if row else None
 
 
@@ -1067,8 +1097,8 @@ async def api_decisions_list(request: Request, status: str = "", overdue: str = 
                      "AND commitment_date < CURRENT_DATE")
     sql = "SELECT * FROM decisions WHERE " + " AND ".join(where)
     sql += " ORDER BY created_at DESC LIMIT 500"
-    p = await pg()
-    rows = await p.fetch(sql, *params)
+    async with scoped_pg(user) as conn:
+        rows = await conn.fetch(sql, *params)
     return {"decisions": [_dec_row_to_dict(r) for r in rows]}
 
 
@@ -1081,21 +1111,21 @@ async def api_decisions_create(request: Request, body: dict):
     ws_id = _current_workspace_id(user)
     if not ws_id:
         raise HTTPException(400, "workspace_id is required")
-    p = await pg()
-    row = await p.fetchrow(
-        """INSERT INTO decisions
-              (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
-           RETURNING *""",
-        title,
-        body.get("description") or "",
-        _coerce_date(body.get("commitment_date")),
-        json.dumps(body.get("kpis") or []),
-        user["id"],
-        body.get("assignee_id"),
-        body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
-        ws_id,
-    )
+    async with scoped_pg(user) as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO decisions
+                  (title, description, commitment_date, kpis, created_by_id, assignee_id, visibility, workspace_id)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
+               RETURNING *""",
+            title,
+            body.get("description") or "",
+            _coerce_date(body.get("commitment_date")),
+            json.dumps(body.get("kpis") or []),
+            user["id"],
+            body.get("assignee_id"),
+            body.get("visibility") if body.get("visibility") in ("private", "shared") else "private",
+            ws_id,
+        )
     return _dec_row_to_dict(row)
 
 
@@ -1105,11 +1135,11 @@ async def api_decisions_get(request: Request, decision_id: int):
     row = await _dec_load(decision_id, user)
     if not row:
         raise HTTPException(404, f"Decision {decision_id} not found")
-    p = await pg()
-    actions = await p.fetch(
-        "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
-        decision_id,
-    )
+    async with scoped_pg(user) as conn:
+        actions = await conn.fetch(
+            "SELECT * FROM decision_actions WHERE decision_id = $1 ORDER BY ts DESC",
+            decision_id,
+        )
     out = _dec_row_to_dict(row)
     out["actions"] = [
         {**dict(a), "ts": a["ts"].isoformat() if a["ts"] else None} for a in actions
@@ -1158,8 +1188,8 @@ async def api_decisions_update(request: Request, decision_id: int, body: dict):
         f"UPDATE decisions SET {', '.join(sets)} "
         f"WHERE id = {decision_ref} AND workspace_id = {workspace_ref} RETURNING *"
     )
-    p = await pg()
-    row = await p.fetchrow(sql, *params)
+    async with scoped_pg(user) as conn:
+        row = await conn.fetchrow(sql, *params)
     return _dec_row_to_dict(row)
 
 
@@ -1171,12 +1201,12 @@ async def api_decisions_delete(request: Request, decision_id: int):
         raise HTTPException(404, f"Decision {decision_id} not found")
     if not _dec_can_delete(existing, user):
         raise HTTPException(403, "only the creator or an admin can delete a decision")
-    p = await pg()
-    await p.execute(
-        "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
-        decision_id,
-        existing["workspace_id"],
-    )
+    async with scoped_pg(user) as conn:
+        await conn.execute(
+            "DELETE FROM decisions WHERE id = $1 AND workspace_id = $2",
+            decision_id,
+            existing["workspace_id"],
+        )
     return {"deleted": True, "id": decision_id}
 
 
@@ -1191,13 +1221,16 @@ async def api_decisions_add_action(request: Request, decision_id: int, body: dic
     action_text = (body.get("action_text") or "").strip()
     if not action_text:
         raise HTTPException(400, "action_text is required")
-    p = await pg()
-    row = await p.fetchrow(
-        """INSERT INTO decision_actions (decision_id, action_text, note, actor)
-           VALUES ($1, $2, $3, $4)
-           RETURNING *""",
-        decision_id, action_text, body.get("note"), user.get("email") or "user",
-    )
+    async with scoped_pg(user) as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO decision_actions (decision_id, action_text, note, actor)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *""",
+            decision_id,
+            action_text,
+            body.get("note"),
+            user.get("email") or "user",
+        )
     return {**dict(row), "ts": row["ts"].isoformat() if row["ts"] else None}
 
 

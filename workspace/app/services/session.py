@@ -56,12 +56,39 @@ async def _workspace_memberships(p: asyncpg.Pool, user_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-async def _workspace_cartridges(p: asyncpg.Pool, workspace_id: str | None, user_id: int | None = None) -> list[str]:
+async def _set_db_scope(conn: asyncpg.Connection, tenant_id: str | None, workspace_id: str | None) -> None:
+    if tenant_id and workspace_id and hasattr(conn, "execute"):
+        await conn.execute(
+            "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+            tenant_id,
+            workspace_id,
+        )
+
+
+async def _workspace_cartridges(
+    p: asyncpg.Pool,
+    workspace_id: str | None,
+    user_id: int | None = None,
+    tenant_id: str | None = None,
+) -> list[str]:
     if not workspace_id:
         return []
-    has_entitlements = await p.fetchval("SELECT to_regclass('public.tenant_entitlements')")
+    if not hasattr(p, "acquire"):
+        await _set_db_scope(p, tenant_id, workspace_id)
+        return await _workspace_cartridges_for_conn(p, workspace_id, user_id)
+    async with p.acquire() as conn:
+        if not hasattr(conn, "transaction"):
+            await _set_db_scope(conn, tenant_id, workspace_id)
+            return await _workspace_cartridges_for_conn(conn, workspace_id, user_id)
+        async with conn.transaction():
+            await _set_db_scope(conn, tenant_id, workspace_id)
+            return await _workspace_cartridges_for_conn(conn, workspace_id, user_id)
+
+
+async def _workspace_cartridges_for_conn(conn, workspace_id: str, user_id: int | None) -> list[str]:
+    has_entitlements = await conn.fetchval("SELECT to_regclass('public.tenant_entitlements')")
     if has_entitlements:
-        has_user_overrides = await p.fetchval("SELECT to_regclass('public.user_cartridge_overrides')")
+        has_user_overrides = await conn.fetchval("SELECT to_regclass('public.user_cartridge_overrides')")
         deny_filter = ""
         args: tuple = (workspace_id,)
         if has_user_overrides and user_id is not None:
@@ -77,7 +104,7 @@ async def _workspace_cartridges(p: asyncpg.Pool, workspace_id: str | None, user_
                   )
             """
             args = (workspace_id, user_id)
-        rows = await p.fetch(
+        rows = await conn.fetch(
             f"""SELECT cartridge_id AS cartridge
                  FROM tenant_entitlements te
                 WHERE te.workspace_id = $1
@@ -98,7 +125,7 @@ async def _workspace_cartridges(p: asyncpg.Pool, workspace_id: str | None, user_
     else:
         if _is_production_env():
             return []
-        rows = await p.fetch(
+        rows = await conn.fetch(
             """SELECT DISTINCT cartridge
                  FROM datasets
                 WHERE workspace_id = $1
@@ -153,7 +180,12 @@ async def get_session_user(token: str, requested_workspace_id: str | None = None
             "active_tenant_id": active["tenant_id"],
             "workspace_role": active["workspace_role"],
             "workspaces": workspaces,
-            "allowed_cartridges": await _workspace_cartridges(p, active["workspace_id"], user_id=row["id"]),
+            "allowed_cartridges": await _workspace_cartridges(
+                p,
+                active["workspace_id"],
+                user_id=row["id"],
+                tenant_id=active["tenant_id"],
+            ),
         })
     return user
 

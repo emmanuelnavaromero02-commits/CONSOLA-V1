@@ -1,0 +1,191 @@
+name: Deploy AWS via SSM
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: "Immutable git ref to deploy. Defaults to the workflow commit SHA."
+        required: false
+        type: string
+      image_tag:
+        description: "Immutable image tag to write into deploy .env. Defaults to deploy_ref."
+        required: false
+        type: string
+      service:
+        description: "Optional single docker compose service to redeploy."
+        required: false
+        type: string
+      require_data:
+        description: "Fail deployment unless /readyz?require_data=1 is green."
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Production deploy through SSM
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
+      AWS_APP_INSTANCE_ID: ${{ vars.AWS_APP_INSTANCE_ID || secrets.AWS_APP_INSTANCE_ID }}
+      PUBLIC_CONSOLE_URL: ${{ vars.PUBLIC_CONSOLE_URL || 'http://modecissions-public-255609366.us-east-1.elb.amazonaws.com' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve deployment inputs
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy_ref="${{ inputs.deploy_ref }}"
+          image_tag="${{ inputs.image_tag }}"
+          service="${{ inputs.service }}"
+          if [[ -z "$deploy_ref" ]]; then
+            deploy_ref="${GITHUB_SHA}"
+          fi
+          if [[ -z "$image_tag" ]]; then
+            image_tag="$deploy_ref"
+          fi
+          if [[ "$image_tag" == "latest" ]]; then
+            echo "::error::image_tag must be immutable, not latest"
+            exit 1
+          fi
+          echo "deploy_ref=$deploy_ref" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+          echo "service=$service" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve app EC2 instance
+        id: instance
+        shell: bash
+        run: |
+          set -euo pipefail
+          instance_id="${AWS_APP_INSTANCE_ID}"
+          if [[ -z "$instance_id" ]]; then
+            instance_id="$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=modecissions-app" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].InstanceId' \
+              --output text)"
+          fi
+          if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
+            echo "::error::Could not resolve modecissions app instance id"
+            exit 1
+          fi
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
+
+      - name: Send deploy command over SSM
+        id: ssm
+        shell: bash
+        env:
+          DEPLOY_REF: ${{ steps.deploy.outputs.deploy_ref }}
+          IMAGE_TAG: ${{ steps.deploy.outputs.image_tag }}
+          SERVICE: ${{ steps.deploy.outputs.service }}
+          REQUIRE_DATA: ${{ inputs.require_data }}
+          INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > ssm-params.json
+          import json
+          import os
+          import shlex
+
+          deploy_ref = os.environ["DEPLOY_REF"]
+          image_tag = os.environ["IMAGE_TAG"]
+          service = os.environ.get("SERVICE", "").strip()
+          require_data = os.environ.get("REQUIRE_DATA", "true").lower() == "true"
+
+          def set_env_line(key: str, value: str) -> str:
+              quoted = shlex.quote(f"{key}={value}")
+              return (
+                  f"if sudo grep -q '^{key}=' infra/terraform/deploy/.env; then "
+                  f"sudo sed -i -E 's|^{key}=.*|{key}={value}|' infra/terraform/deploy/.env; "
+                  f"else echo {quoted} | sudo tee -a infra/terraform/deploy/.env >/dev/null; fi"
+              )
+
+          commands = [
+              "set -euo pipefail",
+              "cd /opt/modecissions",
+              "test -f infra/terraform/deploy/.env",
+              set_env_line("DEPLOY_REF", deploy_ref),
+              set_env_line("IMAGE_TAG", image_tag),
+              "git fetch --tags origin",
+          ]
+          update_cmd = "sudo bash infra/terraform/deploy/update.sh"
+          if service:
+              update_cmd += " " + shlex.quote(service)
+          commands.extend([
+              update_cmd,
+              "curl -fsS http://127.0.0.1:8000/healthz",
+              "curl -fsS http://127.0.0.1:8000/readyz",
+          ])
+          if require_data:
+              commands.append("curl -fsS 'http://127.0.0.1:8000/readyz?require_data=1'")
+          print(json.dumps({"commands": commands}))
+          PY
+
+          command_id="$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "OMEGA deploy ${DEPLOY_REF}" \
+            --parameters file://ssm-params.json \
+            --query 'Command.CommandId' \
+            --output text)"
+          echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for SSM deploy completion
+        shell: bash
+        env:
+          COMMAND_ID: ${{ steps.ssm.outputs.command_id }}
+          INSTANCE_ID: ${{ steps.instance.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            status="$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || true)"
+            case "$status" in
+              Success)
+                aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+                  --query '{stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+                  --query '{status:Status,stdout:StandardOutputContent,stderr:StandardErrorContent}' --output json
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "::error::SSM command did not finish before timeout"
+          exit 1
+
+      - name: Public readiness check
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "${PUBLIC_CONSOLE_URL}/healthz"
+          curl -fsS "${PUBLIC_CONSOLE_URL}/readyz"
+          if [[ "${{ inputs.require_data }}" == "true" ]]; then
+            curl -fsS "${PUBLIC_CONSOLE_URL}/readyz?require_data=1"
+          fi

@@ -6,14 +6,13 @@ untested: a real database session for workspace A must not be able to read
 workspace B rows.
 
 This suite starts PostgreSQL with the production `infra/init/` schema, seeds two
-workspaces, enables a test-scoped RLS policy on the real `datasets` table, and
-queries as the application reader role with `request.jwt.claims` set per
-workspace.
+workspaces, and queries as the real `omega_workspace` service role with
+`app.tenant_id`/`app.workspace_id` set per workspace. It must use production
+policies from `infra/init/99e_operational_native_rls.sql`, not test-created RLS.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import subprocess
 import time
@@ -31,8 +30,8 @@ POSTGRES_IMAGE = os.getenv("RLS_TEST_POSTGRES_IMAGE", "pgvector/pgvector:pg15")
 POSTGRES_DB = "modecissions"
 POSTGRES_SUPERUSER = "postgres"
 POSTGRES_PASSWORD = "test_postgres_password"
-RLS_READER_ROLE = "rls_cross_tenant_reader"
-RLS_READER_PASSWORD = "test_rls_reader_password"
+OMEGA_WORKSPACE_ROLE = "omega_workspace"
+OMEGA_WORKSPACE_PASSWORD = "test_omega_workspace_password"
 
 
 USER_B_WORKSPACE_ADMIN = {
@@ -205,6 +204,8 @@ async def _seed_rls_probe(conn: asyncpg.Connection) -> dict[str, str]:
         )
 
     return {
+        "tenant_a": str(tenant_a),
+        "tenant_b": str(tenant_b),
         "workspace_a": str(workspace_a),
         "workspace_b": str(workspace_b),
         "dataset_a": dataset_a,
@@ -212,54 +213,24 @@ async def _seed_rls_probe(conn: asyncpg.Connection) -> dict[str, str]:
     }
 
 
-async def _install_dataset_rls_policy(conn: asyncpg.Connection) -> None:
-    await conn.execute(
-        f"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_roles WHERE rolname = '{RLS_READER_ROLE}'
-            ) THEN
-                CREATE ROLE {RLS_READER_ROLE} LOGIN PASSWORD '{RLS_READER_PASSWORD}';
-            END IF;
-        END $$;
-        GRANT CONNECT ON DATABASE {POSTGRES_DB} TO {RLS_READER_ROLE};
-        GRANT USAGE ON SCHEMA public TO {RLS_READER_ROLE};
-        GRANT SELECT ON datasets TO {RLS_READER_ROLE};
-        ALTER TABLE datasets ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE datasets FORCE ROW LEVEL SECURITY;
-        DROP POLICY IF EXISTS cross_tenant_dataset_select ON datasets;
-        CREATE POLICY cross_tenant_dataset_select
-            ON datasets
-            FOR SELECT
-            TO {RLS_READER_ROLE}
-            USING (
-                workspace_id::text = COALESCE(
-                    NULLIF(current_setting('request.jwt.claims', true), '')::jsonb
-                        ->> 'workspace_id',
-                    ''
-                )
-            );
-        """
-    )
-
-
 async def _visible_probe_datasets(
     dsn: str,
     *,
+    tenant_id: str,
     workspace_id: str,
     dataset_names: tuple[str, str],
 ) -> list[str]:
     reader_dsn = dsn.replace(
         f"{POSTGRES_SUPERUSER}:{POSTGRES_PASSWORD}",
-        f"{RLS_READER_ROLE}:{RLS_READER_PASSWORD}",
+        f"{OMEGA_WORKSPACE_ROLE}:{OMEGA_WORKSPACE_PASSWORD}",
     )
     conn = await asyncpg.connect(reader_dsn)
     try:
         async with conn.transaction():
-            await conn.fetchval(
-                "SELECT set_config('request.jwt.claims', $1, true)",
-                json.dumps({"workspace_id": workspace_id}),
+            await conn.execute(
+                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                tenant_id,
+                workspace_id,
             )
             rows = await conn.fetch(
                 """
@@ -279,18 +250,31 @@ async def _cross_tenant_probe(dsn: str) -> dict[str, list[str] | dict[str, str]]
     conn = await asyncpg.connect(dsn)
     try:
         probe = await _seed_rls_probe(conn)
-        await _install_dataset_rls_policy(conn)
+        policies = await conn.fetch(
+            """
+            SELECT policyname
+              FROM pg_policies
+             WHERE schemaname = 'public'
+               AND tablename = 'datasets'
+             ORDER BY policyname
+            """
+        )
+        policy_names = {row["policyname"] for row in policies}
     finally:
         await conn.close()
+
+    assert "datasets_tenant_workspace_rls" in policy_names
 
     dataset_names = (probe["dataset_a"], probe["dataset_b"])
     visible_to_a = await _visible_probe_datasets(
         dsn,
+        tenant_id=probe["tenant_a"],
         workspace_id=probe["workspace_a"],
         dataset_names=dataset_names,
     )
     visible_to_b = await _visible_probe_datasets(
         dsn,
+        tenant_id=probe["tenant_b"],
         workspace_id=probe["workspace_b"],
         dataset_names=dataset_names,
     )

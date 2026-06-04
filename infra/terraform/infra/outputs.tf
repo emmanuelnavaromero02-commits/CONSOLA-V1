@@ -124,6 +124,11 @@ output "access_analyzer_arn" {
   value       = aws_accessanalyzer_analyzer.external_access.arn
 }
 
+output "github_actions_deploy_role_arn" {
+  description = "OIDC role ARN for the GitHub Actions production deploy workflow."
+  value       = var.enable_github_actions_deploy_role ? aws_iam_role.github_actions_deploy[0].arn : null
+}
+
 output "ses_domain_verification_record" {
   description = "Manual Google DNS TXT record required to verify the SES sender domain."
   value = local.ses_domain_enabled ? {

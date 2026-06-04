@@ -16,6 +16,28 @@ _COST_PER_1M: dict[str, dict[str, float]] = {
 _pool: asyncpg.Pool | None = None
 
 
+def _scope_from_context(user_context: dict | None) -> tuple[int | None, str | None, str | None]:
+    if not user_context:
+        return None, None, None
+    raw_user_id = user_context.get("id")
+    try:
+        user_id = int(raw_user_id) if raw_user_id is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+    tenant_id = str(user_context.get("active_tenant_id") or user_context.get("tenant_id") or "").strip() or None
+    workspace_id = str(user_context.get("active_workspace_id") or user_context.get("workspace_id") or "").strip() or None
+    return user_id, tenant_id, workspace_id
+
+
+async def _set_db_scope(conn: asyncpg.Connection, tenant_id: str | None, workspace_id: str | None) -> None:
+    if tenant_id and workspace_id:
+        await conn.execute(
+            "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+            tenant_id,
+            workspace_id,
+        )
+
+
 async def _get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
@@ -31,35 +53,46 @@ async def record(
     output_tokens: int,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
+    user_context: dict | None = None,
 ) -> None:
     """Persist one LLM call's token usage. Never raises — non-critical path."""
     try:
         pool = await _get_pool()
-        await pool.execute(
-            "INSERT INTO token_usage "
-            "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
-            provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        )
+        user_id, tenant_id, workspace_id = _scope_from_context(user_context)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await _set_db_scope(conn, tenant_id, workspace_id)
+                await conn.execute(
+                    "INSERT INTO token_usage "
+                    "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
+                    "user_id, tenant_id, workspace_id) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)",
+                    provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+                    user_id, tenant_id, workspace_id,
+                )
     except Exception:
         pass
 
 
-async def summary() -> dict:
+async def summary(user_context: dict | None = None) -> dict:
     """Return accumulated totals grouped by model, with cost estimate."""
     try:
         pool = await _get_pool()
-        rows = await pool.fetch("""
-            SELECT model,
-                   SUM(input_tokens)::int           AS input_tokens,
-                   SUM(output_tokens)::int          AS output_tokens,
-                   SUM(cache_creation_tokens)::int  AS cache_creation_tokens,
-                   SUM(cache_read_tokens)::int      AS cache_read_tokens,
-                   COUNT(*)::int                    AS calls
-            FROM token_usage
-            GROUP BY model
-            ORDER BY model
-        """)
+        _user_id, tenant_id, workspace_id = _scope_from_context(user_context)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await _set_db_scope(conn, tenant_id, workspace_id)
+                rows = await conn.fetch("""
+                    SELECT model,
+                           SUM(input_tokens)::int           AS input_tokens,
+                           SUM(output_tokens)::int          AS output_tokens,
+                           SUM(cache_creation_tokens)::int  AS cache_creation_tokens,
+                           SUM(cache_read_tokens)::int      AS cache_read_tokens,
+                           COUNT(*)::int                    AS calls
+                    FROM token_usage
+                    GROUP BY model
+                    ORDER BY model
+                """)
 
         total_in = total_out = total_calls = 0
         total_cache_create = total_cache_read = 0

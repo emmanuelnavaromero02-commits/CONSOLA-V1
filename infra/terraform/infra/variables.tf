@@ -328,3 +328,31 @@ variable "vpn_admin_password_hash" {
     error_message = "vpn_admin_password_hash must be a bcrypt hash such as $2b$12$..."
   }
 }
+
+variable "enable_github_actions_deploy_role" {
+  description = "Create a GitHub Actions OIDC role that can deploy to the App EC2 through SSM."
+  type        = bool
+  default     = false
+}
+
+variable "github_actions_deploy_repo" {
+  description = "GitHub repo allowed to assume the deploy role, formatted as owner/repo."
+  type        = string
+  default     = "emmanuelnavaromero02-commits/CONSOLA-BETA"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_actions_deploy_repo))
+    error_message = "github_actions_deploy_repo must be formatted as owner/repo."
+  }
+}
+
+variable "github_actions_deploy_environment" {
+  description = "GitHub Environment name required by the deploy workflow and trusted by the OIDC role."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.github_actions_deploy_environment))
+    error_message = "github_actions_deploy_environment must be a simple GitHub environment name."
+  }
+}

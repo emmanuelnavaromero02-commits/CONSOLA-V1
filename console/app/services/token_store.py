@@ -48,6 +48,15 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def _set_db_scope(conn: asyncpg.Connection, tenant_id: str | None, workspace_id: str | None) -> None:
+    if tenant_id and workspace_id:
+        await conn.execute(
+            "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+            tenant_id,
+            workspace_id,
+        )
+
+
 async def close_pool() -> None:
     global _pool
     if _pool is not None:
@@ -68,14 +77,17 @@ async def record(
     try:
         pool = await _get_pool()
         user_id, tenant_id, workspace_id = _scope_from_context(user_context)
-        await pool.execute(
-            "INSERT INTO token_usage "
-            "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
-            "user_id, tenant_id, workspace_id) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)",
-            provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-            user_id, tenant_id, workspace_id,
-        )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await _set_db_scope(conn, tenant_id, workspace_id)
+                await conn.execute(
+                    "INSERT INTO token_usage "
+                    "(provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
+                    "user_id, tenant_id, workspace_id) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)",
+                    provider, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+                    user_id, tenant_id, workspace_id,
+                )
     except Exception:
         pass
 
@@ -100,18 +112,21 @@ async def summary(user_context: dict | None = None) -> dict:
                 }
             where_clause = "WHERE tenant_id = $1::uuid AND workspace_id = $2::uuid"
             args = (tenant_id, workspace_id)
-        rows = await pool.fetch(f"""
-            SELECT model,
-                   SUM(input_tokens)::int           AS input_tokens,
-                   SUM(output_tokens)::int          AS output_tokens,
-                   SUM(cache_creation_tokens)::int  AS cache_creation_tokens,
-                   SUM(cache_read_tokens)::int      AS cache_read_tokens,
-                   COUNT(*)::int                    AS calls
-            FROM token_usage
-            {where_clause}
-            GROUP BY model
-            ORDER BY model
-        """, *args)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await _set_db_scope(conn, tenant_id, workspace_id)
+                rows = await conn.fetch(f"""
+                    SELECT model,
+                           SUM(input_tokens)::int           AS input_tokens,
+                           SUM(output_tokens)::int          AS output_tokens,
+                           SUM(cache_creation_tokens)::int  AS cache_creation_tokens,
+                           SUM(cache_read_tokens)::int      AS cache_read_tokens,
+                           COUNT(*)::int                    AS calls
+                    FROM token_usage
+                    {where_clause}
+                    GROUP BY model
+                    ORDER BY model
+                """, *args)
 
         total_in = total_out = total_calls = 0
         total_cache_create = total_cache_read = 0

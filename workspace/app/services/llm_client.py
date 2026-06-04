@@ -63,14 +63,17 @@ async def chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     on_event: Callable | None = None,
+    user_context: dict | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     """If `on_event` is provided, it is awaited with dicts describing every
     tool invocation and its result, plus a final {'type':'text', 'text': reply}.
     The function still returns the same (reply, viewer_urls, messages) tuple
     so callers that ignore on_event keep working unchanged."""
     if CHAT_PROVIDER == "ollama":
-        return await _openai_compat_chat(system, messages, tools, invoke_tool, tool_server_map, _ollama_client())
-    return await _anthropic_chat(system, messages, tools, invoke_tool, tool_server_map, on_event)
+        return await _openai_compat_chat(
+            system, messages, tools, invoke_tool, tool_server_map, _ollama_client(), user_context
+        )
+    return await _anthropic_chat(system, messages, tools, invoke_tool, tool_server_map, on_event, user_context)
 
 
 # ── Result summarizer (for tool_result events) ────────────────────────────────
@@ -209,6 +212,7 @@ async def _anthropic_chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     on_event: Callable | None = None,
+    user_context: dict | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     ant_tools = [
         {
@@ -249,6 +253,7 @@ async def _anthropic_chat(
             "anthropic", CHAT_MODEL,
             usage.input_tokens, usage.output_tokens,
             cache_create, cache_read,
+            user_context,
         )
         content_dicts = _content_to_dicts(response.content)
         tool_use_blocks = [b for b in content_dicts if b.get("type") == "tool_use"]
@@ -319,6 +324,7 @@ async def _openai_compat_chat(
     invoke_tool: Callable,
     tool_server_map: dict[str, str],
     client: AsyncOpenAI,
+    user_context: dict | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     oai_tools = _to_oai_tools(tools) if tools else []
     msgs: list[dict] = [{"role": "system", "content": system}]
@@ -344,6 +350,7 @@ async def _openai_compat_chat(
                 CHAT_PROVIDER, CHAT_MODEL,
                 response.usage.prompt_tokens,
                 response.usage.completion_tokens,
+                user_context=user_context,
             )
 
         if finish != "tool_calls" or not msg.tool_calls:

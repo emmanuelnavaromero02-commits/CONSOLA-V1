@@ -1066,6 +1066,7 @@ def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None)
             if not cartridge_id:
                 raise HTTPException(403, detail="agent reads require cartridge_id outside admin context")
             _require_cartridge_scope(ctx, cartridge_id)
+        args["security_context"] = ctx
 
     if tool in _VAULT_READ_TOOLS | _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS:
         if tool in _VAULT_WRITE_TOOLS | _VAULT_DESTRUCTIVE_TOOLS and not _is_admin_context(ctx):
