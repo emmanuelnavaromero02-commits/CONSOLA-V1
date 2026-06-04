@@ -445,25 +445,21 @@ _REBEL_KEYWORDS = (
 
 
 _INVISIBLE_CHARS = (
-    "​", "‌", "‍",   # zero-width space / NJ / J
-    "‎", "‏",             # LRM / RLM
-    "‪", "‫", "‬",   # LRE / RLE / PDF
-    "‭", "‮",             # LRO / RLO  ← the attack
-    "⁦", "⁧", "⁨",   # LRI / RLI / FSI
-    "⁩",                       # PDI
-    "﻿",                       # BOM
-    " ",                       # NBSP — explicit escape; the
-                                    # literal-character form was
-                                    # corrupted to U+0020 by an
-                                    # editor pass, which silently
-                                    # stripped every normal space.
+    "\u200b", "\u200c", "\u200d",  # zero-width space / NJ / J
+    "\u200e", "\u200f",            # LRM / RLM
+    "\u202a", "\u202b", "\u202c",  # LRE / RLE / PDF
+    "\u202d", "\u202e",            # LRO / RLO  <- the attack
+    "\u2066", "\u2067", "\u2068",  # LRI / RLI / FSI
+    "\u2069",                      # PDI
+    "\ufeff",                      # BOM
+    "\u00a0",                      # NBSP
 )
 
 
 def _strip_accents(text: str) -> str:
     """Lowercase + drop common Spanish accents + neutralise Unicode
     format characters so the rebel matcher catches ``"olvida"``,
-    ``"ólvida"`` AND ``"olv‮ida"`` (RLO marker injection).
+    ``"ólvida"`` AND ``"olv\\u202eida"`` (RLO marker injection).
 
     Audit-round-7 P1 fix: previously the invisible-character filter
     *removed* the chars, which broke the rebel match for attacks
@@ -502,7 +498,7 @@ def _strip_dangerous_unicode(text: str) -> str:
     Unlike ``_strip_accents`` we *remove* the invisibles entirely here
     (not replace with space) because this output is what gets stored
     in the DB and rendered back to the user. An attacker that planted
-    ``"a‮b"`` shouldn't leave a tell-tale extra space in the
+    ``"a\\u202eb"`` shouldn't leave a tell-tale extra space in the
     operator's UI — we'd rather close the seam invisibly. The
     rebel-keyword matcher always re-runs ``_strip_accents`` over the
     stored value at render time, so the space-vs-empty asymmetry
