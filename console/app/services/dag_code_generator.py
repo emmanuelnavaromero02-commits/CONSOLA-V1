@@ -24,6 +24,30 @@ _AIRFLOW_RUNTIME_IMPORTS = {
     "requests",
     "urllib3",
 }
+_ALLOWED_STDLIB_IMPORTS = {
+    "__future__",
+    "csv",
+    "datetime",
+    "io",
+    "json",
+    "os",
+    "pathlib",
+    "time",
+    "urllib",
+    "uuid",
+    "yaml",
+}
+_FORBIDDEN_CALLS = {
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "os.system",
+    "os.popen",
+    "pickle.load",
+    "pickle.loads",
+    "yaml.load",
+}
 
 
 def _safe_identifier(value: str, label: str) -> str:
@@ -189,9 +213,8 @@ def validate_dag_code(code: str) -> dict[str, Any]:
     missing = [
         module
         for module in sorted(imports)
-        if module not in _AIRFLOW_RUNTIME_IMPORTS
+        if not _import_allowed(module)
         and module not in sys.builtin_module_names
-        and importlib.util.find_spec(module) is None
     ]
     if missing:
         return {
@@ -201,12 +224,62 @@ def validate_dag_code(code: str) -> dict[str, Any]:
             "imports": sorted(imports),
         }
     checks.append("imports")
+
+    forbidden = _find_forbidden_dag_calls(tree)
+    if forbidden:
+        return {
+            "valid": False,
+            "stderr": f"Forbidden call(s): {', '.join(forbidden)}",
+            "checks": checks,
+            "imports": sorted(imports),
+        }
+    checks.append("ast_guard")
     return {
         "valid": True,
         "stderr": "",
         "checks": checks,
         "imports": sorted(imports),
     }
+
+
+def _import_allowed(module: str) -> bool:
+    root = module.split(".", 1)[0]
+    return root in _AIRFLOW_RUNTIME_IMPORTS or root in _ALLOWED_STDLIB_IMPORTS
+
+
+def _call_name(func: ast.AST) -> str:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        parent = _call_name(func.value)
+        return f"{parent}.{func.attr}" if parent else func.attr
+    return ""
+
+
+def _open_call_writes(node: ast.Call) -> bool:
+    mode: str | None = None
+    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+        mode = str(node.args[1].value)
+    for keyword in node.keywords:
+        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
+            mode = str(keyword.value.value)
+    return mode is not None and any(flag in mode for flag in ("w", "a", "x", "+"))
+
+
+def _find_forbidden_dag_calls(tree: ast.AST) -> list[str]:
+    forbidden: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node.func)
+        if name in _FORBIDDEN_CALLS or name.startswith("subprocess."):
+            forbidden.append(name)
+            continue
+        if name in {"open", "builtins.open"} and _open_call_writes(node):
+            forbidden.append(name)
+        elif name.endswith(".open") and _open_call_writes(node):
+            forbidden.append(name)
+    return sorted(set(forbidden))
 
 
 def generate_validated_dag_code(
