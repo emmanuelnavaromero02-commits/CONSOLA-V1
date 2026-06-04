@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       deploy_ref:
-        description: "Immutable git ref to deploy. Defaults to the workflow commit SHA."
-        required: false
+        description: "Immutable release tag to deploy, for example v1.45.5-beta."
+        required: true
         type: string
       image_tag:
-        description: "Immutable image tag to write into deploy .env. Defaults to deploy_ref."
+        description: "Immutable GHCR image tag. Defaults to deploy_ref and must be a v* release tag."
         required: false
         type: string
       service:
@@ -53,14 +53,19 @@ jobs:
           deploy_ref="${{ inputs.deploy_ref }}"
           image_tag="${{ inputs.image_tag }}"
           service="${{ inputs.service }}"
-          if [[ -z "$deploy_ref" ]]; then
-            deploy_ref="${GITHUB_SHA}"
-          fi
           if [[ -z "$image_tag" ]]; then
             image_tag="$deploy_ref"
           fi
-          if [[ "$image_tag" == "latest" ]]; then
-            echo "::error::image_tag must be immutable, not latest"
+          if [[ ! "$deploy_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::deploy_ref must be a published release tag such as v1.45.5-beta"
+            exit 1
+          fi
+          if [[ ! "$image_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::image_tag must be a published GHCR release tag such as v1.45.5-beta"
+            exit 1
+          fi
+          if [[ "$deploy_ref" != "$image_tag" ]]; then
+            echo "::error::deploy_ref and image_tag must match for production deploys"
             exit 1
           fi
           echo "deploy_ref=$deploy_ref" >> "$GITHUB_OUTPUT"
@@ -124,6 +129,7 @@ jobs:
               "set -euo pipefail",
               "cd /opt/modecissions",
               "test -f infra/terraform/deploy/.env",
+              set_env_line("APP_ENV", "production"),
               set_env_line("DEPLOY_REF", deploy_ref),
               set_env_line("IMAGE_TAG", image_tag),
               "git fetch --tags origin",

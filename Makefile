@@ -10,7 +10,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up up-core down nuke logs ps test smoke stress production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help up up-core down nuke logs ps test smoke stress monitor-check production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -29,6 +29,8 @@ help:
 	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
 	@echo "  make stress       run Locust stress profile against the running stack"
+	@echo "  make monitor-check"
+	@echo "                    run one public AWS health/readiness monitor check"
 	@echo "  make production-readiness"
 	@echo "                    run the local production-readiness gate"
 	@echo "  make production-readiness-aws"
@@ -141,6 +143,9 @@ smoke:
 
 stress:
 	@bash scripts/run_stress.sh
+
+monitor-check:
+	@bash scripts/monitor_health_once.sh
 
 production-readiness:
 	@bash scripts/production_readiness.sh

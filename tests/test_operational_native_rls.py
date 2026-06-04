@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATION = REPO / "infra" / "init" / "99e_operational_native_rls.sql"
+COMPLETION = REPO / "infra" / "init" / "99f_native_rls_completion.sql"
 
 
 def _read(path: Path) -> str:
@@ -20,7 +21,7 @@ def test_operational_native_rls_migration_exists_and_forces_rls():
 
 
 def test_operational_native_rls_covers_workspace_scoped_surfaces():
-    sql = _read(MIGRATION)
+    sql = _read(MIGRATION) + "\n" + _read(COMPLETION)
     for table in (
         "datasets",
         "decisions",
@@ -35,16 +36,41 @@ def test_operational_native_rls_covers_workspace_scoped_surfaces():
         "tenant_entitlements",
         "cartridge_installations",
         "conversation_messages",
+        "pipeline_runs",
+        "copilot_goals",
+        "copilot_lessons",
+        "users",
+        "workspaces",
+        "user_workspace_roles",
     ):
         assert table in sql
 
 
 def test_operational_native_rls_targets_real_service_roles_not_test_roles():
-    sql = _read(MIGRATION)
+    sql = _read(MIGRATION) + "\n" + _read(COMPLETION)
     for role in ("omega_workspace", "omega_mcp_infra", "omega_vault", "omega_airflow_dag"):
         assert role in sql
     assert "rls_cross_tenant_reader" not in sql
     assert "request.jwt.claims" not in sql
+
+
+def test_native_rls_completion_forces_remaining_scoped_tables():
+    sql = _read(COMPLETION)
+    assert "omega_rls_tenant_matches" in sql
+    assert "Auth bootstrap exception" in sql
+    assert "ENABLE ROW LEVEL SECURITY" in sql
+    assert "FORCE ROW LEVEL SECURITY" in sql
+    assert "NOBYPASSRLS" in sql
+    for table in (
+        "pipeline_runs",
+        "copilot_goals",
+        "copilot_lessons",
+        "users",
+        "workspaces",
+        "user_workspace_roles",
+    ):
+        assert table in sql
+    assert "99f_native_rls_completion.sql" in sql
 
 
 def test_tenant_services_set_db_scope_before_rls_tables():

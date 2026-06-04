@@ -25,7 +25,10 @@ def test_deploy_workflow_uses_manual_approval_oidc_and_ssm():
 
 def test_deploy_workflow_requires_immutable_ref_and_readiness():
     workflow = _read(".github/workflows/deploy-aws.yml")
-    assert "image_tag must be immutable, not latest" in workflow
+    assert "deploy_ref must be a published release tag" in workflow
+    assert "image_tag must be a published GHCR release tag" in workflow
+    assert "deploy_ref and image_tag must match" in workflow
+    assert 'set_env_line("APP_ENV", "production")' in workflow
     assert "DEPLOY_REF" in workflow
     assert "IMAGE_TAG" in workflow
     assert "/healthz" in workflow
@@ -48,3 +51,16 @@ def test_terraform_defines_optional_github_actions_deploy_role():
     assert "AWS-RunShellScript" in oidc
     assert "ec2:DescribeInstances" in oidc
     assert 'output "github_actions_deploy_role_arn"' in outputs
+
+
+def test_scheduled_aws_health_monitor_exists():
+    workflow = _read(".github/workflows/monitor-aws-health.yml")
+    script = _read("scripts/monitor_health_once.sh")
+    makefile = _read("Makefile")
+
+    assert "cron:" in workflow
+    assert "scripts/monitor_health_once.sh" in workflow
+    assert "OMEGA_MONITOR_REQUIRE_DATA" in workflow
+    assert "/healthz" in script
+    assert "/readyz?require_data=1" in script
+    assert "monitor-check:" in makefile

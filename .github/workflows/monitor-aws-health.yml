@@ -1,0 +1,26 @@
+name: AWS Health Monitor
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-health-monitor
+  cancel-in-progress: true
+
+jobs:
+  public-health:
+    name: Public readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CONSOLE_URL: ${{ vars.PUBLIC_CONSOLE_URL || 'http://modecissions-public-255609366.us-east-1.elb.amazonaws.com' }}
+      OMEGA_MONITOR_REQUIRE_DATA: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check public health and data readiness
+        run: bash scripts/monitor_health_once.sh
