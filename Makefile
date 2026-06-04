@@ -13,7 +13,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation monitor-check production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation monitor-check production-readiness v1-live-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -42,6 +42,8 @@ help:
 	@echo "                    run one public AWS health/readiness monitor check"
 	@echo "  make production-readiness"
 	@echo "                    run the local production-readiness gate"
+	@echo "  make v1-live-readiness"
+	@echo "                    run production-readiness with v1 live gates required"
 	@echo "  make production-readiness-aws"
 	@echo "                    run the remote AWS/prod-like readiness gate"
 	@echo "  make seed-intelligence-gold"
@@ -177,6 +179,9 @@ monitor-check:
 
 production-readiness:
 	@bash scripts/production_readiness.sh
+
+v1-live-readiness:
+	@OMEGA_PRODUCTION_READINESS_V1=1 bash scripts/production_readiness.sh
 
 production-readiness-aws:
 	@OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh

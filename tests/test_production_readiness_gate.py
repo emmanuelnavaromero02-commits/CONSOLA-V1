@@ -14,6 +14,8 @@ def test_makefile_exposes_production_readiness_and_dr_rehearsal_targets():
     makefile = _read("Makefile")
     assert "production-readiness:" in makefile
     assert "bash scripts/production_readiness.sh" in makefile
+    assert "v1-live-readiness:" in makefile
+    assert "OMEGA_PRODUCTION_READINESS_V1=1 bash scripts/production_readiness.sh" in makefile
     assert "production-readiness-aws:" in makefile
     assert "OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh" in makefile
     assert "dr-rehearsal:" in makefile
@@ -46,6 +48,20 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
     assert "OMEGA_REQUIRE_LIVE_LLM=1" in script
     assert "ANTHROPIC_API_KEY is required" in script
     assert "gemini" not in script.lower()
+
+
+def test_v1_live_readiness_requires_no_skips_multiuser_stress_and_llm():
+    script = _read("scripts/production_readiness.sh")
+    for needle in (
+        "OMEGA_PRODUCTION_READINESS_V1",
+        "v1 live readiness refuses OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1",
+        'export OMEGA_REQUIRE_LIVE_LLM="${OMEGA_REQUIRE_LIVE_LLM:-1}"',
+        'export OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM="${OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM:-1}"',
+        'export OMEGA_STRESS_REQUIRE_LIVE_LLM="${OMEGA_STRESS_REQUIRE_LIVE_LLM:-1}"',
+        "BLOCKED: ANTHROPIC_API_KEY is required for OMEGA_PRODUCTION_READINESS_V1=1",
+        "BLOCKED: E2E_ADMIN_PASSWORD or TEST_PASSWORD is required for OMEGA_PRODUCTION_READINESS_V1=1",
+    ):
+        assert needle in script
 
 
 def test_production_readiness_gate_has_remote_aws_mode():

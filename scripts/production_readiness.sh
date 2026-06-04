@@ -14,6 +14,7 @@ EXPLICIT_SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-}"
 CONSOLE_URL="${EXPLICIT_CONSOLE_URL:-http://127.0.0.1:8000}"
 SUPERSET_PUBLIC_URL="${EXPLICIT_SUPERSET_PUBLIC_URL:-http://127.0.0.1:8088}"
 REMOTE_MODE="${OMEGA_PRODUCTION_READINESS_REMOTE:-0}"
+STRICT_V1_MODE="${OMEGA_PRODUCTION_READINESS_V1:-0}"
 PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="python3"
@@ -57,6 +58,34 @@ source_env() {
     SUPERSET_PUBLIC_URL="${EXPLICIT_SUPERSET_PUBLIC_URL}"
   else
     SUPERSET_PUBLIC_URL="${SUPERSET_PUBLIC_URL:-http://127.0.0.1:8088}"
+  fi
+}
+
+apply_v1_live_defaults() {
+  if [[ "${STRICT_V1_MODE}" != "1" ]]; then
+    return
+  fi
+  if [[ "${OMEGA_PRODUCTION_READINESS_SKIP_STRESS:-0}" == "1" ]]; then
+    log "v1 live readiness refuses OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1"
+    exit 2
+  fi
+  export OMEGA_REQUIRE_LIVE_LLM="${OMEGA_REQUIRE_LIVE_LLM:-1}"
+  export OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM="${OMEGA_PRODUCTION_READINESS_RUN_MULTIUSER_SIM:-1}"
+  export OMEGA_STRESS_REQUIRE_LIVE_LLM="${OMEGA_STRESS_REQUIRE_LIVE_LLM:-1}"
+  log "v1 live readiness enabled: stress, multi-user simulation, and live LLM probes are required"
+}
+
+require_v1_live_inputs() {
+  if [[ "${STRICT_V1_MODE}" != "1" ]]; then
+    return
+  fi
+  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    log "BLOCKED: ANTHROPIC_API_KEY is required for OMEGA_PRODUCTION_READINESS_V1=1"
+    exit 2
+  fi
+  if [[ -z "${E2E_ADMIN_PASSWORD:-${TEST_PASSWORD:-}}" ]]; then
+    log "BLOCKED: E2E_ADMIN_PASSWORD or TEST_PASSWORD is required for OMEGA_PRODUCTION_READINESS_V1=1"
+    exit 2
   fi
 }
 
@@ -191,6 +220,8 @@ run_remote_e2e_if_required() {
 run_remote_gate() {
   require_command curl
   source_env
+  apply_v1_live_defaults
+  require_v1_live_inputs
 
   check_public_runtime
   if [[ "${OMEGA_REQUIRE_SUPERSET_LOGIN:-1}" == "1" ]]; then
@@ -207,6 +238,8 @@ run_remote_gate() {
 run_gate() {
   require_command curl
   source_env
+  apply_v1_live_defaults
+  require_v1_live_inputs
 
   if [[ "${REMOTE_MODE}" == "1" ]]; then
     run_remote_gate
