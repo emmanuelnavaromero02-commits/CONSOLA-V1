@@ -445,6 +445,45 @@ def test_api_data_with_valid_jwt_returns_200(console_main, monkeypatch):
     assert response.json() == [{"customer_id": "cust-1"}]
 
 
+def test_api_data_prefers_scoped_gold_table(console_main, monkeypatch):
+    captured = {}
+
+    async def query_gold_dataset_rows(dataset, user, limit):
+        captured["dataset"] = dataset
+        captured["workspace_id"] = user["active_workspace_id"]
+        captured["limit"] = limit
+        return [{"deal_id": "deal-401", "workspace_id": user["active_workspace_id"]}]
+
+    gold_fetcher = _module(query_gold_dataset_rows=query_gold_dataset_rows)
+    monkeypatch.setitem(sys.modules, "app.services.intelligence.gold_fetcher", gold_fetcher)
+
+    class RefinementShouldNotBeCalled:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            raise AssertionError("Refinement should not be called when scoped Gold is available")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", RefinementShouldNotBeCalled)
+    client = TestClient(console_main.app)
+    token = create_access_token({"sub": "42", "email": "analyst@example.com", "role": "analyst"})
+
+    response = client.get("/api/data/pipeline_salud?limit=3", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"deal_id": "deal-401", "workspace_id": "11111111-1111-1111-1111-111111111111"}
+    ]
+    assert captured == {
+        "dataset": "pipeline_salud",
+        "workspace_id": "11111111-1111-1111-1111-111111111111",
+        "limit": 3,
+    }
+
+
 def test_api_data_forwards_user_context_to_refinement(console_main, monkeypatch):
     """Regression: /api/data/{dataset} previously called refinement with no
     user_context, which caused tenant-keyed datasets to silently filter to

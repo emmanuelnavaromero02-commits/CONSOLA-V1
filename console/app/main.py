@@ -2768,6 +2768,21 @@ async def api_data(dataset: str, request: Request, limit: int = 5000):
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
     user = getattr(request.state, "user", None) or {}
+
+    # Prefer already-materialized, workspace-scoped Gold tables. This keeps
+    # production reads on the same path as the intelligence readiness gate and
+    # avoids failing analytic views when the legacy S3 parquet dependency is
+    # unavailable but the scoped Gold table is present.
+    try:
+        from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+
+        return await query_gold_dataset_rows(dataset, user, limit)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
+    except Exception:
+        pass
+
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload(
