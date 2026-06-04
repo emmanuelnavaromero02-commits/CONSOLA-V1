@@ -91,7 +91,11 @@ require_v1_live_inputs() {
 
 check_readyz_data() {
   log "checking strict data readiness"
-  body="$(curl -fsS --max-time 10 "${CONSOLE_URL}/readyz?require_data=1")"
+  local readiness_url="${CONSOLE_URL}/readyz?require_data=1"
+  if [[ "${STRICT_V1_MODE}" == "1" ]]; then
+    readiness_url="${readiness_url}&require_intelligence=1"
+  fi
+  body="$(curl -fsS --max-time 10 "${readiness_url}")"
   if ! json_ok_field "${body}"; then
     log "/readyz?require_data=1 did not report ok=true"
     printf '%s\n' "${body}"

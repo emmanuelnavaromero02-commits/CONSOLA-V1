@@ -92,6 +92,10 @@ async def readyz(request: Request):
         os.environ.get("CONTROL_ROOM_REQUIRE_DATA_READY", "").strip().lower() in {"1", "true", "yes", "on"}
         or str(request.query_params.get("require_data") or "").strip().lower() in {"1", "true", "yes", "on"}
     )
+    require_intelligence_data = (
+        os.environ.get("CONTROL_ROOM_REQUIRE_INTELLIGENCE_READY", "").strip().lower() in {"1", "true", "yes", "on"}
+        or str(request.query_params.get("require_intelligence") or "").strip().lower() in {"1", "true", "yes", "on"}
+    )
     checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
     try:
         from app.services.intelligence.readiness import intelligence_readiness
@@ -116,7 +120,10 @@ async def readyz(request: Request):
     data_ok = (
         (
             checks["control_room_data"].get("status") == "up"
-            and checks["intelligence_data"].get("status") == "up"
+            and (
+                checks["intelligence_data"].get("status") == "up"
+                or not require_intelligence_data
+            )
         )
         or not require_data
     )

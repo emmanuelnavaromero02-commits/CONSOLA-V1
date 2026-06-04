@@ -62,6 +62,7 @@ def test_v1_live_readiness_requires_no_skips_multiuser_stress_and_llm():
         'export OMEGA_STRESS_REQUIRE_LIVE_LLM="${OMEGA_STRESS_REQUIRE_LIVE_LLM:-1}"',
         "BLOCKED: ANTHROPIC_API_KEY is required for OMEGA_PRODUCTION_READINESS_V1=1",
         "BLOCKED: E2E_ADMIN_PASSWORD or TEST_PASSWORD is required for OMEGA_PRODUCTION_READINESS_V1=1",
+        "require_intelligence=1",
     ):
         assert needle in script
 

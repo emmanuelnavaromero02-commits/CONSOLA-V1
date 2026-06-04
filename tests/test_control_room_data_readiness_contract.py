@@ -82,5 +82,6 @@ def test_readyz_supports_strict_control_room_data_mode():
         assert "control_room_data" in src
         assert "CONTROL_ROOM_REQUIRE_DATA_READY" in src
         assert "require_data" in src
+        assert "require_intelligence" in src
         assert re.search(r"status_code=200 if ok else 503", src)
     assert "readyz?require_data=1" in makefile
