@@ -30,6 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("INTERNAL_API_KEY", "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ")
 os.environ.setdefault("MINIO_SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
+for module_name in list(sys.modules):
+    if module_name == "app" or module_name.startswith("app."):
+        sys.modules.pop(module_name, None)
 sys.path.insert(0, str(REPO_ROOT / "refinement"))
 
 from app import main as refinement_main  # noqa: E402
