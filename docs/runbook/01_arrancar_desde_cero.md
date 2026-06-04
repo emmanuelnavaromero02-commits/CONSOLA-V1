@@ -57,7 +57,12 @@ OMEGA_SUPERSET_META_PASSWORD=...
 
 ```bash
 cd /opt/omega                 # raíz del repo
-docker compose -f infra/docker-compose.yml down -v     # estado limpio
+
+# Opcional, SOLO local/desarrollo y destruye volúmenes Docker locales:
+make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev
+
+make preflight
+make bootstrap-env
 docker compose -f infra/docker-compose.yml up -d postgres postgres_gold
 
 # Polling hasta que Postgres reporte healthy (≈30-90 s en máquina lenta).
@@ -76,9 +81,9 @@ docker inspect --format='{{.State.Health.Status}}' mode_postgres_gold
 ### Paso 2 — Resto del stack
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile sap up -d --build
+make up
 sleep 180   # margen para arranque de cartridges + airflow + superset
-docker compose -f infra/docker-compose.yml ps
+make ps
 ```
 
 Verificación:
@@ -129,9 +134,10 @@ Todos deben responder 200.
 | Síntoma | Causa probable | Fix |
 |---|---|---|
 | `console` en restart loop | `INTERNAL_API_KEY` o `FIELD_ENCRYPTION_KEY` ausente | revisa `.env` y `docker compose logs console` |
-| `vault` (unhealthy) | `OMEGA_VAULT_PASSWORD` no coincide con el role en Postgres | `make smoke` muestra qué role / DSN espera |
+| `vault` (unhealthy) | `OMEGA_VAULT_PASSWORD` no coincide con el role en Postgres | `make repair-local-stack` sincroniza roles locales con `infra/.env` |
 | `airflow` (unhealthy) | DAG con import error bloquea el scheduler | `docker compose logs airflow-scheduler` |
 | `superset` 502 | `superset-init` aún corriendo | espera 30s, reintenta |
+| Superset no descifra conexiones tras rotar `SUPERSET_SECRET_KEY` local | metastore local cifrado con la key anterior | `CONFIRM_SUPERSET_METASTORE_REPAIR=LOCAL_SUPERSET_REPAIR make repair-local-stack` |
 
 Si tras 3 minutos hay servicios unhealthy, ver
 [07 Debug fallos](07_debug_fallos.md).

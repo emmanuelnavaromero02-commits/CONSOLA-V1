@@ -73,6 +73,39 @@ by a lint rule in CI.
 
 ## Operación
 
+### Local non-production bootstrap
+
+For a fresh local/demo stack:
+
+```bash
+make preflight
+make up
+```
+
+For a destructive local reset only:
+
+```bash
+make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev
+make preflight
+make up
+```
+
+`make nuke` deletes local Docker volumes. Never use it for AWS,
+staging, production, or any host containing customer data.
+
+If local Docker volumes were created with older secrets, use:
+
+```bash
+make repair-local-stack
+```
+
+For a local Superset metastore encrypted with a previous
+`SUPERSET_SECRET_KEY`, the repair is intentionally explicit:
+
+```bash
+CONFIRM_SUPERSET_METASTORE_REPAIR=LOCAL_SUPERSET_REPAIR make repair-local-stack
+```
+
 Para administrar OMEGA en producción consulta `docs/runbook/`:
 
 - [01 Arrancar desde cero](docs/runbook/01_arrancar_desde_cero.md) — pre-requisitos, `.env`, smoke 30/30, sanity HTTP.
@@ -83,5 +116,7 @@ Para administrar OMEGA en producción consulta `docs/runbook/`:
 - [06 Backup / restore](docs/runbook/06_backup_restore.md) — `pg_dumpall`, `mc mirror` para MinIO, recuperación end-to-end.
 - [07 Debug de fallos](docs/runbook/07_debug_fallos.md) — uso de `X-Request-ID` + `audit_events` (ip + user_agent) + `extraction_runs` para reconstruir incidentes.
 - [08 Usar el copiloto](docs/runbook/08_usar_copiloto.md) — chat IA con approval gate, RBAC por `risk_level`, auditoría forense de cada tool call.
+- [09 Demo / beta controlada](docs/runbook/09_demo_beta.md) — preflight, bootstrap, smoke, tests y checklist de demo.
 - [10 v1 pública HTTPS](docs/runbook/10_v1_public_https.md) — ALB/ACM, SSM, smoke público, live LLM, backup/restore/rollback.
 - [11 Estabilización y rollback](docs/runbook/11_release_stabilization.md) — métricas de Intelligence Engine, freeze de releases y rollback por tag inmutable.
+- [12 Scope hardening](docs/runbook/12_scope_hardening.md) — reglas de tenant/workspace, Vault y pipeline scope.

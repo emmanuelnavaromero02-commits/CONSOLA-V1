@@ -67,12 +67,16 @@ cargar datos sensibles.
 
 ```bash
 bash scripts/preflight.sh
+bash infra/bootstrap.sh
+bash infra/bootstrap-keys.sh infra/.env
+docker compose -f infra/docker-compose.yml config -q
+make up
 ```
 
 Chequea daemon de Docker, `docker compose`, validez del compose, `infra/.env`,
 generación de Fernet keys con Python stdlib, puertos ocupados, e imprime las
 URLs finales. Sale `0` solo si podés correr `make up`; sale `!=0` si hay un
-bloqueador. Encadenable: `bash scripts/preflight.sh && make up`.
+bloqueador. Encadenable: `make preflight && make up`.
 
 ### 1. Compose config
 

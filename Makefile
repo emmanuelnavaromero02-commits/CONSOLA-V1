@@ -13,18 +13,22 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help up up-core down nuke logs ps test smoke stress multiuser-simulation monitor-check production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation monitor-check production-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
 	@echo "MODecissionsPaaS — targets:"
 	@echo "  make preflight    check Docker/compose/.env/ports BEFORE 'make up'"
+	@echo "  make bootstrap-env"
+	@echo "                    generate/ensure infra/.env and pair keys"
 	@echo "  make demo-check   preflight + the demo validation order (runbook 09)"
 	@echo "  make up           bootstrap secrets and start the full v1.0 stack (SAP profile)"
 	@echo "  make up-core      bootstrap secrets and start the core stack without SAP"
 	@echo "  make down         stop the stack"
-	@echo "  make nuke CONFIRM=NUKE"
-	@echo "                    wipe this stack and volumes only"
+	@echo "  make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev"
+	@echo "                    wipe this local stack and volumes only"
+	@echo "  make repair-local-stack"
+	@echo "                    reconcile stale local DB roles / optional Superset metastore"
 	@echo "  make logs         follow service logs"
 	@echo "  make ps           list running services"
 	@echo "  make test         run the python test suites"
@@ -74,21 +78,37 @@ demo-check:
 	@echo "  6) make test"
 	@echo "  7) cd tests-e2e && npx playwright test specs/12-control-room.spec.ts"
 
+bootstrap-env:
+	bash infra/bootstrap.sh
+	bash infra/bootstrap-keys.sh infra/.env
+
 up:
-	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && $(COMPOSE_FULL) up --build -d
+	$(MAKE) bootstrap-env
+	mkdir -p data/lakehouse
+	$(COMPOSE_FULL) up --build -d
 
 up-core:
-	bash infra/bootstrap.sh && bash infra/bootstrap-keys.sh infra/.env && mkdir -p data/lakehouse && $(COMPOSE_DEV) up --build -d
+	$(MAKE) bootstrap-env
+	mkdir -p data/lakehouse
+	$(COMPOSE_DEV) up --build -d
 
 down:
 	$(COMPOSE_FULL) down
 
 nuke:
-	@if [ "$(CONFIRM)" != "NUKE" ]; then \
-		echo "Refusing to remove volumes. Re-run: make nuke CONFIRM=NUKE"; \
+	@if [ "$(CONFIRM)" != "NUKE" ] || [ "$(NUKE_SCOPE)" != "local-dev" ]; then \
+		echo "Refusing to remove volumes. Local non-production only."; \
+		echo "Re-run: make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev"; \
+		exit 2; \
+	fi
+	@if printf '%s\n' "$(COMPOSE_FULL)" | grep -Eq 'docker-compose\.aws|terraform/deploy'; then \
+		echo "Refusing: nuke is only for infra/docker-compose.yml local compose."; \
 		exit 2; \
 	fi
 	$(COMPOSE_FULL) down -v --remove-orphans
+
+repair-local-stack:
+	@LOCAL_REPAIR_SCOPE=local-dev bash scripts/local_stack_repair.sh
 
 logs:
 	$(COMPOSE_FULL) logs -f --tail=50
@@ -180,8 +200,7 @@ verify-v1-public:
 	@bash scripts/verify_v1_public.sh
 
 verify-release:
-	@test -f infra/.env || bash infra/bootstrap.sh
-	bash infra/bootstrap-keys.sh infra/.env
+	$(MAKE) bootstrap-env
 	$(RUFF) check .
 	npm --prefix console-next ci
 	npm --prefix console-next run lint

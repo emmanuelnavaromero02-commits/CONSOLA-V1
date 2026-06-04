@@ -122,10 +122,11 @@ la semántica documentada de MinIO al hacer downgrade.
 
 ### Solución (recomendada para entornos de desarrollo locales)
 
-1. Apaga el stack y borra los volúmenes:
+1. Apaga el stack y borra los volúmenes locales. No uses esto en AWS,
+   staging, producción ni en hosts con datos de cliente:
 
    ```bash
-   docker compose -f infra/docker-compose.yml down -v
+   make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev
    ```
 
 2. Mueve la data vieja a un backup (NO la borres por si necesitas
@@ -138,7 +139,7 @@ la semántica documentada de MinIO al hacer downgrade.
 3. Levanta el stack normalmente:
 
    ```bash
-   docker compose -f infra/docker-compose.yml --profile sap up -d --build
+   make up
    ```
 
 4. Re-extrae los datos que necesites desde los cartridges. La data
@@ -169,9 +170,9 @@ mc mirror --overwrite src/lakehouse /tmp/lakehouse-export
 Después de exportar, vuelve al pin oficial y restaura:
 
 ```bash
-docker compose -f infra/docker-compose.yml down -v
+make nuke CONFIRM=NUKE NUKE_SCOPE=local-dev
 git checkout infra/docker-compose.yml    # vuelve al pin oficial
-docker compose -f infra/docker-compose.yml --profile sap up -d --build
+make up
 mc alias set tgt http://localhost:9000 minio "$MINIO_SECRET_KEY"
 mc mirror --overwrite /tmp/lakehouse-export tgt/lakehouse
 ```
