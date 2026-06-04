@@ -18,8 +18,8 @@ import pytest
 # Stub asyncpg before importing app so module-level imports don't fail.
 sys.modules.setdefault("asyncpg", types.ModuleType("asyncpg"))
 
-os.environ.setdefault("INTERNAL_API_KEY", "smoke-test-key-do-not-use-aaaaaaaaaaaaaaaaaaa")
-os.environ.setdefault("JWT_SECRET_KEY", "smoke-test-jwt-key-do-not-use-bbbbbbbbbbbbbbb")
+os.environ.setdefault("INTERNAL_API_KEY", "smokev1internalkeyaaaaaaaaaaaaaaaaaaaaaaaa")
+os.environ.setdefault("JWT_SECRET_KEY", "smokev1jwtsecretbbbbbbbbbbbbbbbbbbbbbbbb")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

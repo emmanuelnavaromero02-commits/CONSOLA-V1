@@ -202,6 +202,9 @@ MAX_DISTINCT_SOURCES_PER_TURN = 3
 # or password=… / api_key=… pair.
 _SECRET_ERROR_PATTERNS = [
     (r"(?i)\bbearer\s+[A-Za-z0-9._\-]+", "Bearer ***"),
+    (r"(?i)\bauthorization\s*[:=]\s*(?!Bearer\s+\*\*\*)"
+     r"(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,;}\"']+",
+     "authorization=***"),
     (r"(?i)(password|token|api[_-]?key|secret|client[_-]?secret)\s*[=:]\s*[^\s,;}\"']+",
      r"\1=***"),
     (r"\b[a-f0-9]{32,}\b", "***hex***"),
@@ -1304,13 +1307,14 @@ async def _run_loop(
             # (set by RequestIDMiddleware), but the conversation row is
             # standalone and might be re-read later. Keep the warning
             # short and actionable.
+            provider_detail = _sanitise_error(str(exc)) or "detalle no disponible"
             if isinstance(exc, llm_client.LLMConfigurationError):
                 safe_message = (
                     "⚠️ El copiloto no tiene proveedor LLM configurado. "
-                    f"{exc}."
+                    f"{provider_detail}."
                 )
             elif isinstance(exc, llm_client.LLMProviderError):
-                safe_message = f"⚠️ El proveedor LLM respondió con error. {exc}."
+                safe_message = f"⚠️ El proveedor LLM respondió con error. {provider_detail}."
             else:
                 safe_message = (
                     "⚠️ El proveedor de LLM devolvió un error. "

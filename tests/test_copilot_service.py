@@ -1090,6 +1090,15 @@ def test_copilot_sanitises_error_string_for_audit(copilot_module):
     assert "password=***" in out
 
 
+def test_copilot_sanitises_basic_and_apikey_authorization_errors(copilot_module):
+    out = copilot_module._sanitise_error(
+        "GET failed Authorization: Basic dXNlcjpwYXNz authorization=ApiKey live-secret"
+    )
+    assert "dXNlcjpwYXNz" not in out
+    assert "live-secret" not in out
+    assert out.count("authorization=***") == 2
+
+
 def test_copilot_clips_oversized_tool_args(copilot_module):
     """v1.42 R2 DBA: the LLM can synthesise multi-MB tool_use input.
     Cap at MAX_TOOL_ARGS_BYTES before durable persistence."""
@@ -1182,6 +1191,35 @@ def test_copilot_surfaces_sanitised_llm_provider_reason(copilot_module, db, admi
     assert assistant_messages
     assert "Anthropic billing or credit limit reached" in assistant_messages[-1]["content"]
     assert "sk-" not in assistant_messages[-1]["content"]
+
+
+def test_copilot_surfaces_sanitised_llm_provider_authorization_headers(copilot_module, db, admin_user):
+    _patch_pool(copilot_module, db)
+    _patch_manifest(copilot_module, [])
+    _patch_audit(copilot_module, db)
+
+    async def fake_chat(**_kwargs):
+        raise copilot_module.llm_client.LLMProviderError(
+            "upstream 401 Authorization: Basic dXNlcjpwYXNz authorization=ApiKey live-secret"
+        )
+
+    _patch_llm(copilot_module, fake_chat)
+    conv = _run(copilot_module.create_conversation(user_id=admin_user["id"]))
+
+    with pytest.raises(Exception) as exc_info:
+        _run(copilot_module.run_turn(
+            conversation_id=conv["id"],
+            user_message="hola",
+            user=admin_user,
+        ))
+
+    assert "dXNlcjpwYXNz" not in str(exc_info.value)
+    assert "live-secret" not in str(exc_info.value)
+    assistant_messages = [m for m in db.messages if m["role"] == "assistant"]
+    assert assistant_messages
+    assert "dXNlcjpwYXNz" not in assistant_messages[-1]["content"]
+    assert "live-secret" not in assistant_messages[-1]["content"]
+    assert "authorization=***" in assistant_messages[-1]["content"]
 
 
 def test_copilot_approval_key_is_args_specific(copilot_module):
