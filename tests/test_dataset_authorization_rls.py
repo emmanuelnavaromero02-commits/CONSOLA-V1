@@ -30,12 +30,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("INTERNAL_API_KEY", "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ")
 os.environ.setdefault("MINIO_SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
-for module_name in list(sys.modules):
-    if module_name == "app" or module_name.startswith("app."):
-        sys.modules.pop(module_name, None)
-sys.path.insert(0, str(REPO_ROOT / "refinement"))
+def _purge_app_namespace() -> None:
+    for module_name in list(sys.modules):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
 
-from app import main as refinement_main  # noqa: E402
+
+_REFINEMENT_PATH = str(REPO_ROOT / "refinement")
+_purge_app_namespace()
+sys.path.insert(0, _REFINEMENT_PATH)
+try:
+    from app import main as refinement_main  # noqa: E402
+finally:
+    if sys.path and sys.path[0] == _REFINEMENT_PATH:
+        sys.path.pop(0)
+    # ``refinement`` and ``console`` both expose their package as ``app``.
+    # Keep the imported module object for these regression tests, but do not
+    # leak refinement's ``app.*`` modules into collection of console tests.
+    _purge_app_namespace()
 
 _dataset_allowed = refinement_main._dataset_allowed
 _prefix_allowed = refinement_main._prefix_allowed
