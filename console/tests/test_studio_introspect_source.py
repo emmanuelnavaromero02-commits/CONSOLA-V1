@@ -65,7 +65,7 @@ async def test_studio_introspect_source_returns_live_openapi_fields(monkeypatch)
     async def connector_schema(cartridge, user):
         return {"connector": {"api": {}}}
 
-    async def no_vault(_cartridge_id, _conn_id="default"):
+    async def no_vault(_cartridge_id, _conn_id="default", _user=None):
         return {}, "no saved credentials in vault"
 
     monkeypatch.setattr(cartridges, "connector_schema", connector_schema)
@@ -165,7 +165,7 @@ async def test_studio_introspect_source_returns_live_odata_entity_sets(monkeypat
     async def connector_schema(cartridge, user):
         return {"connector": {"auth": {"type": "basic"}, "api": {"base_url_env": "SAP_HCM_BASE_URL"}}}
 
-    async def vault_connection(_cartridge_id, _conn_id="default"):
+    async def vault_connection(_cartridge_id, _conn_id="default", _user=None):
         return {"username": "user", "password": "pass"}, ""
 
     requests = []

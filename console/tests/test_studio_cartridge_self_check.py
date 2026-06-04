@@ -29,7 +29,7 @@ async def test_cartridge_self_check_reports_real_gaps(monkeypatch):
     async def connector_schema(cartridge_id, user):
         return {"connector": {"id": cartridge_id}}
 
-    async def vault_connection(_cartridge_id, _conn_id="default"):
+    async def vault_connection(_cartridge_id, _conn_id="default", _user=None):
         return {}, "no saved credentials in vault"
 
     async def list_entities(cartridge):
