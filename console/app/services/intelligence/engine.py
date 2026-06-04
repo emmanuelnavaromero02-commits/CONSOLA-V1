@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from app.services import audit_service
@@ -40,6 +41,7 @@ async def run_intelligence(
     fetcher: DatasetFetcher | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     tenant_id, workspace_id = workspace_scope(user)
     allowed = allowed_cartridges(user)
     requested_cartridge = str((body or {}).get("cartridge_id") or "").strip()
@@ -92,6 +94,7 @@ async def run_intelligence(
     if should_persist and artifacts:
         await persist_artifacts(tenant_id, workspace_id, user, artifacts)
     if should_persist:
+        duration_ms = int((time.perf_counter() - started) * 1000)
         await audit_service.record_event(
             user.get("id"),
             user.get("email"),
@@ -104,6 +107,7 @@ async def run_intelligence(
                 "cartridge_id": requested_cartridge or None,
                 "include_external": include_external,
                 "horizon_days": horizons,
+                "duration_ms": duration_ms,
             },
         )
     return {

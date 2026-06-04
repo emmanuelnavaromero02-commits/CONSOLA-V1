@@ -67,8 +67,11 @@ def test_metrics_shape_and_types(metrics_module):
         {"cartridge_id": "sap_hcm",  "entity_name": "pa0001",     "avg_sec": 60.0},
     ]
     # fetchval order in metrics.py: extraction counters, audit counter,
-    # control-room writeback counters, jobs, LLM usage.
-    app = _make_app(metrics_module, [42, 3, 17.4, 250, 8, 2, 1, 14, 2, 9000, 1], rows)
+    # control-room writeback counters, jobs, LLM usage, Intelligence metrics.
+    app = _make_app(metrics_module, [
+        42, 3, 17.4, 250, 8, 2, 1, 14, 2, 9000, 1,
+        12, 4, 3, 9, 5, 2, 1, 7, 6, 1, 842.5, 1.5, 10, 8,
+    ], rows)
     r = TestClient(app).get("/api/metrics/operational")
     assert r.status_code == 200, r.text
     body = r.json()
@@ -84,6 +87,21 @@ def test_metrics_shape_and_types(metrics_module):
     assert body["llm"]["provider"]
     assert body["llm"]["tokens_24h"] == 9000
     assert body["llm"]["errors_24h"] == 1
+    assert body["intelligence"]["open_signals"] == 12
+    assert body["intelligence"]["high_severity_open_signals"] == 4
+    assert body["intelligence"]["predictive_open_signals"] == 3
+    assert body["intelligence"]["signals_generated_24h"] == 9
+    assert body["intelligence"]["outcomes_recorded_24h"] == 5
+    assert body["intelligence"]["options_selected_24h"] == 2
+    assert body["intelligence"]["external_source_errors_24h"] == 1
+    assert body["intelligence"]["external_cache_active_items"] == 7
+    assert body["intelligence"]["run_count_24h"] == 6
+    assert body["intelligence"]["run_errors_24h"] == 1
+    assert body["intelligence"]["avg_run_duration_ms_24h"] == pytest.approx(842.5)
+    assert body["intelligence"]["avg_signals_per_run_24h"] == pytest.approx(1.5)
+    assert body["intelligence"]["measured_outcomes_30d"] == 10
+    assert body["intelligence"]["accurate_outcomes_30d"] == 8
+    assert body["intelligence"]["accuracy_rate_30d"] == pytest.approx(0.8)
     assert body["backup"]["status"] == "not_configured"
     assert isinstance(body["slowest_entities_7d"], list)
     assert len(body["slowest_entities_7d"]) == 2
@@ -104,6 +122,9 @@ def test_metrics_returns_zeros_when_empty(metrics_module):
     assert body["control_room"]["action_executions_24h"] == 0
     assert body["jobs"]["failed_24h"] == 0
     assert body["llm"]["tokens_24h"] == 0
+    assert body["intelligence"]["open_signals"] == 0
+    assert body["intelligence"]["run_count_24h"] == 0
+    assert body["intelligence"]["accuracy_rate_30d"] is None
 
 
 def test_metrics_requires_auth(metrics_module):

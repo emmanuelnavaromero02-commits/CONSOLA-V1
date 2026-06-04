@@ -84,3 +84,4 @@ Para administrar OMEGA en producción consulta `docs/runbook/`:
 - [07 Debug de fallos](docs/runbook/07_debug_fallos.md) — uso de `X-Request-ID` + `audit_events` (ip + user_agent) + `extraction_runs` para reconstruir incidentes.
 - [08 Usar el copiloto](docs/runbook/08_usar_copiloto.md) — chat IA con approval gate, RBAC por `risk_level`, auditoría forense de cada tool call.
 - [10 v1 pública HTTPS](docs/runbook/10_v1_public_https.md) — ALB/ACM, SSM, smoke público, live LLM, backup/restore/rollback.
+- [11 Estabilización y rollback](docs/runbook/11_release_stabilization.md) — métricas de Intelligence Engine, freeze de releases y rollback por tag inmutable.

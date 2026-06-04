@@ -55,6 +55,12 @@ bash /opt/modecissions/infra/terraform/deploy/rollback.sh v1.0.0-rc2
 
 A v1 release is not closed until backup, restore and rollback have been run on staging and followed by a green smoke.
 
+Production rollback is always tag-based. `DEPLOY_REF` and `IMAGE_TAG` must
+point to the same immutable release tag, and the target tag must exist for all
+GHCR images before `rollback.sh` is run. Use
+`docs/runbook/11_release_stabilization.md` for the detailed freeze and rollback
+procedure.
+
 `RESTORE_DELETE_STALE_S3=1` is blocked unless `RESTORE_DELETE_PREFIX` points to
 a specific non-backup prefix. Do not run destructive syncs against the bucket
 root.

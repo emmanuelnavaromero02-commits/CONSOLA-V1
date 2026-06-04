@@ -224,6 +224,144 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             """,
             *audit_args,
         )
+        intelligence_where, intelligence_args = _scoped_where(user)
+        intelligence_open = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM intelligence_signals
+            WHERE status = 'open'
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_high_open = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM intelligence_signals
+            WHERE status = 'open'
+              AND severity IN ('critical', 'high')
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_predictive_open = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM intelligence_signals
+            WHERE status = 'open'
+              AND (
+                COALESCE(signal_subtype, '') = 'predictive'
+                OR prediction_horizon_days IS NOT NULL
+              )
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_generated_24h = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM intelligence_signals
+            WHERE created_at >= now() - INTERVAL '24 hours'
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_outcomes_24h = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM prediction_outcomes
+            WHERE created_at >= now() - INTERVAL '24 hours'
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_options_selected_24h = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM decision_options
+            WHERE selected = TRUE
+              AND updated_at >= now() - INTERVAL '24 hours'
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_external_errors_24h = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM external_intelligence_sources
+            WHERE last_run_at >= now() - INTERVAL '24 hours'
+              AND COALESCE(last_status, '') IN ('error', 'failed', 'failure', 'unavailable')
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_external_cache_active = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM external_evidence_cache
+            WHERE expires_at > now()
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_run_count_24h = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM audit_events a
+            WHERE a.created_at >= now() - INTERVAL '24 hours'
+              AND a.action = 'intelligence.run'
+            {audit_where}
+            """,
+            *audit_args,
+        )
+        intelligence_run_errors_24h = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM audit_events a
+            WHERE a.created_at >= now() - INTERVAL '24 hours'
+              AND a.action LIKE 'intelligence.%'
+              AND COALESCE(a.status, '') IN ('error', 'failure', 'failed')
+            {audit_where}
+            """,
+            *audit_args,
+        )
+        intelligence_avg_run_ms = await _safe_fetchval(conn,
+            f"""
+            SELECT AVG((a.metadata->>'duration_ms')::numeric)
+            FROM audit_events a
+            WHERE a.created_at >= now() - INTERVAL '24 hours'
+              AND a.action = 'intelligence.run'
+              AND COALESCE(a.metadata->>'duration_ms', '') ~ '^[0-9]+$'
+            {audit_where}
+            """,
+            *audit_args,
+        )
+        intelligence_avg_signals_per_run = await _safe_fetchval(conn,
+            f"""
+            SELECT AVG((a.metadata->>'signals')::numeric)
+            FROM audit_events a
+            WHERE a.created_at >= now() - INTERVAL '24 hours'
+              AND a.action = 'intelligence.run'
+              AND COALESCE(a.metadata->>'signals', '') ~ '^[0-9]+$'
+            {audit_where}
+            """,
+            *audit_args,
+        )
+        intelligence_measured_outcomes_30d = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM prediction_outcomes
+            WHERE created_at >= now() - INTERVAL '30 days'
+              AND predicted_value IS NOT NULL
+              AND actual_value IS NOT NULL
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        intelligence_accurate_outcomes_30d = await _safe_fetchval(conn,
+            f"""
+            SELECT COUNT(*) FROM prediction_outcomes
+            WHERE created_at >= now() - INTERVAL '30 days'
+              AND predicted_value IS NOT NULL
+              AND actual_value IS NOT NULL
+              AND ABS(COALESCE(prediction_error, actual_value - predicted_value))
+                    <= GREATEST(ABS(predicted_value) * 0.20, 1)
+            {intelligence_where}
+            """,
+            *intelligence_args,
+        )
+        measured = _int(intelligence_measured_outcomes_30d)
+        accurate = _int(intelligence_accurate_outcomes_30d)
+        intelligence_accuracy_rate_30d = round(accurate / measured, 4) if measured else None
         return {
             "extractions_24h": _int(extractions_24h),
             "errors_24h": _int(errors_24h),
@@ -246,6 +384,23 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
                 "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()) if platform else None,
                 "tokens_24h": _int(llm_tokens_24h),
                 "errors_24h": _int(llm_errors_24h),
+            },
+            "intelligence": {
+                "open_signals": _int(intelligence_open),
+                "high_severity_open_signals": _int(intelligence_high_open),
+                "predictive_open_signals": _int(intelligence_predictive_open),
+                "signals_generated_24h": _int(intelligence_generated_24h),
+                "run_count_24h": _int(intelligence_run_count_24h),
+                "run_errors_24h": _int(intelligence_run_errors_24h),
+                "avg_run_duration_ms_24h": _float(intelligence_avg_run_ms),
+                "avg_signals_per_run_24h": _float(intelligence_avg_signals_per_run),
+                "outcomes_recorded_24h": _int(intelligence_outcomes_24h),
+                "options_selected_24h": _int(intelligence_options_selected_24h),
+                "measured_outcomes_30d": measured,
+                "accurate_outcomes_30d": accurate,
+                "accuracy_rate_30d": intelligence_accuracy_rate_30d,
+                "external_source_errors_24h": _int(intelligence_external_errors_24h),
+                "external_cache_active_items": _int(intelligence_external_cache_active),
             },
             "backup": _backup_status(),
         }

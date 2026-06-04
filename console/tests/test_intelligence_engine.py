@@ -204,6 +204,51 @@ async def test_run_intelligence_can_run_without_persisting_or_llm(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
+    events: list[dict] = []
+
+    async def fake_fetcher(dataset: str, user: dict | None, limit: int):
+        assert dataset == "forecast_mensual"
+        return [
+            {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
+            {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
+            {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+        ]
+
+    async def fake_persist_artifacts(tenant_id, workspace_id, user, artifacts):
+        assert tenant_id == USER["active_tenant_id"]
+        assert workspace_id == USER["active_workspace_id"]
+        assert artifacts
+
+    async def fake_record_event(user_id, email, action, resource_type, resource_id, metadata=None):
+        events.append({
+            "user_id": user_id,
+            "email": email,
+            "action": action,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "metadata": metadata or {},
+        })
+
+    monkeypatch.setattr(
+        intelligence_engine,
+        "load_contracts",
+        lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
+    )
+    monkeypatch.setattr(intelligence_engine_module, "persist_artifacts", fake_persist_artifacts)
+    monkeypatch.setattr(intelligence_engine_module.audit_service, "record_event", fake_record_event)
+
+    result = await intelligence_engine.run_intelligence(USER, {}, fetcher=fake_fetcher, persist=True)
+
+    assert len(result["signals"]) == 1
+    assert events[0]["action"] == "intelligence.run"
+    assert events[0]["metadata"]["signals"] == 1
+    assert events[0]["metadata"]["skipped"] == 0
+    assert isinstance(events[0]["metadata"]["duration_ms"], int)
+    assert events[0]["metadata"]["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
 async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch):
     async def fake_gold_fetcher(dataset: str, user: dict | None, limit: int):
         assert dataset == "forecast_mensual"
