@@ -28,7 +28,7 @@ from app.rag.embeddings import EmbeddingProviderError
 from app.security import get_internal_api_key
 from app.config import settings
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
-from app.logging_config import setup_logging  # noqa: E402
+from app.logging_config import setup_logging, _redact_value  # noqa: E402
 
 setup_logging(service_name="mcp-infra")
 logger = logging.getLogger(__name__)
@@ -982,6 +982,17 @@ def _filter_airflow_payload(tool: str, payload: Any, ctx: dict[str, Any]) -> Any
     return out
 
 
+def _redact_tool_result(payload: Any) -> Any:
+    """Redact secrets from tool return payloads before MCP responds.
+
+    Tools sometimes return third-party error text instead of raising. That
+    text may contain Authorization headers, API keys, SAP passwords or Vault
+    values echoed by SDKs. Logging redaction does not protect JSON responses,
+    so the final invoke boundary sanitizes recursively.
+    """
+    return _redact_value(payload)
+
+
 def _enforce_data_scope(req: InvokeRequest, internal_service: str | None = None) -> dict[str, Any] | None:
     tool = req.tool
     args = req.args if isinstance(req.args, dict) else {}
@@ -1157,6 +1168,7 @@ async def invoke_tool(req: InvokeRequest, internal_service: str = Depends(verify
                 row for row in (result or [])
                 if isinstance(row, dict) and _pipeline_run_allowed(ctx, str(row.get("run_id") or ""))
             ]
+        result = _redact_tool_result(result)
         return {"result": result}
     except HTTPException:
         raise

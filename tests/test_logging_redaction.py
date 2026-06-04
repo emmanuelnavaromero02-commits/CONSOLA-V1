@@ -1,7 +1,7 @@
 """Sprint v1.18 — JSON logging + secret redaction.
 
 The ``logging_config`` module is shipped as a textual copy in console,
-refinement and vault (no shared library across services). These tests
+workspace, mcp-infra, refinement and vault (no shared library across services). These tests
 exercise:
 
   * The redaction patterns over a representative set of secret-bearing
@@ -14,7 +14,7 @@ exercise:
     plus ``exc_info`` when the record has an exception.
   * ``setup_logging`` is idempotent — repeated calls don't stack
     duplicate handlers on the root logger.
-  * The module is **textually identical** across the 3 services, via
+  * The module is **textually identical** across the 5 services, via
     md5 fingerprint. Drift would mean an operator who fixes the filter
     in one service has to remember to fix the other two.
 
@@ -39,6 +39,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 LOGGING_FILES = {
     "console":    REPO_ROOT / "console" / "app" / "logging_config.py",
+    "workspace":  REPO_ROOT / "workspace" / "app" / "logging_config.py",
+    "mcp-infra":  REPO_ROOT / "mcp-infra" / "app" / "logging_config.py",
     "refinement": REPO_ROOT / "refinement" / "app" / "logging_config.py",
     "vault":      REPO_ROOT / "vault"  / "app" / "logging_config.py",
 }
@@ -87,6 +89,32 @@ def test_redact_token_kv(logging_config):
     assert "token=***REDACTED***" in out
 
 
+def test_redact_enterprise_secret_shapes(logging_config):
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.VeryLongSignature12345"
+    sample = (
+        f"Authorization: Bearer live-token refresh_token=refresh-123 "
+        f"INTERNAL_API_KEY_CONSOLE_TO_MCP_INFRA=pair-key "
+        f"hubspot_token='hub-secret' salesforce_client_secret=sf-secret "
+        f"sap_password=sap-pwd vault_value=vault-secret jwt={jwt}"
+    )
+
+    out = logging_config._redact(sample)
+
+    for secret in (
+        "live-token",
+        "refresh-123",
+        "pair-key",
+        "hub-secret",
+        "sf-secret",
+        "sap-pwd",
+        "vault-secret",
+        jwt,
+    ):
+        assert secret not in out
+    assert "Bearer ***REDACTED***" in out
+    assert "***REDACTED***" in out
+
+
 def test_redact_api_key_kv(logging_config):
     out = logging_config._redact("api_key=foo and api-key=bar")
     assert "foo" not in out and "bar" not in out
@@ -94,9 +122,13 @@ def test_redact_api_key_kv(logging_config):
 
 
 def test_redact_json_password_field(logging_config):
-    out = logging_config._redact('{"password": "secret", "user": "alice"}')
+    out = logging_config._redact(
+        '{"password": "secret", "refresh_token": "refresh-secret", "user": "alice"}'
+    )
     assert "secret" not in out
+    assert "refresh-secret" not in out
     assert '"password": "***REDACTED***"' in out
+    assert '"refresh_token": "***REDACTED***"' in out
     assert '"user": "alice"' in out  # untouched
 
 
@@ -167,6 +199,15 @@ def test_filter_redacts_string_args_in_tuple(logging_config):
     assert len(record.args) == 2
 
 
+def test_filter_redacts_dict_args_by_sensitive_key(logging_config):
+    record = _make_record("payload=%(payload)s")
+    record.args = {"payload": {"hubspot_token": "short-but-secret", "workspace_id": "ws-1"}}
+    logging_config.SecretRedactionFilter().filter(record)
+
+    assert record.args["payload"]["hubspot_token"] == "***REDACTED***"
+    assert record.args["payload"]["workspace_id"] == "ws-1"
+
+
 def test_filter_returns_true_to_let_record_through(logging_config):
     """A Filter that returns False would suppress the log entirely. The
     redaction filter must always return True so we still ship the
@@ -192,7 +233,7 @@ def test_json_formatter_emits_parseable_json_with_expected_keys(logging_config):
 
 def test_json_formatter_includes_exc_info_when_present(logging_config):
     try:
-        raise ValueError("kaboom")
+        raise ValueError("kaboom token=secret-token")
     except ValueError:
         exc = sys.exc_info()
     record = logging.LogRecord(
@@ -204,6 +245,8 @@ def test_json_formatter_includes_exc_info_when_present(logging_config):
     assert "exc_info" in payload
     assert "ValueError" in payload["exc_info"]
     assert "kaboom" in payload["exc_info"]
+    assert "secret-token" not in payload["exc_info"]
+    assert "token=***REDACTED***" in payload["exc_info"]
 
 
 def test_json_formatter_includes_extra_context_when_set(logging_config):
@@ -247,13 +290,32 @@ def test_setup_logging_emits_json_end_to_end(logging_config, capsys):
     assert "token=***REDACTED***" in payload["message"]
 
 
+def test_setup_logging_redacts_secret_from_cartridge_exception(logging_config, capsys):
+    logging_config.setup_logging(service_name="cartridge")
+    try:
+        raise RuntimeError(
+            "HubSpot upstream failed Authorization: Bearer hubspot-live-token "
+            "sap_password=sap-secret salesforce_client_secret=sf-secret"
+        )
+    except RuntimeError:
+        logging.getLogger("cartridges.hubspot").exception("cartridge error")
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    combined = json.dumps(payload)
+    assert "hubspot-live-token" not in combined
+    assert "sap-secret" not in combined
+    assert "sf-secret" not in combined
+    assert "Bearer ***REDACTED***" in combined
+    assert "***REDACTED***" in combined
+
+
 # ── Textual-identity contract ───────────────────────────────────────
 
 
 def test_logging_config_is_textually_identical_across_services():
-    """The 3 services ship a verbatim copy. A drift here is exactly the
+    """The 5 services ship a verbatim copy. A drift here is exactly the
     bug pattern the audit flagged — a fix in one service that doesn't
-    propagate to the other two."""
+    propagate to the other services."""
     digests = {
         svc: hashlib.md5(path.read_bytes()).hexdigest()
         for svc, path in LOGGING_FILES.items()

@@ -24,14 +24,34 @@ from datetime import datetime, timezone
 
 
 # ── Patterns considered secret-bearing in log messages ─────────────────────
+_SECRET_KEY_PATTERN = (
+    r"(?:[A-Za-z0-9_-]*(?:password|passwd|pwd|token|jwt|api[_-]?key|apikey|secret)"
+    r"[A-Za-z0-9_-]*|vault[_-]?value)"
+)
+_SENSITIVE_KEY_RE = re.compile(rf"(?i)(authorization|{_SECRET_KEY_PATTERN})")
+
 _REDACTION_PATTERNS = [
     # Bearer <token>
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"), "Bearer ***REDACTED***"),
+    # Authorization: Bearer <token>
+    (re.compile(r"(?i)(authorization\s*[:=]\s*)Bearer\s+[A-Za-z0-9._\-]+"),
+     lambda m: f"{m.group(1)}Bearer ***REDACTED***"),
+    # JWT-shaped tokens (header.payload.signature)
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+     "***REDACTED_JWT***"),
+    # quoted key=value style
+    (re.compile(
+        rf"(?i)\b({_SECRET_KEY_PATTERN})\s*[=:]\s*(['\"])[^'\"]*\2"
+    ), lambda m: f"{m.group(1)}=***REDACTED***"),
     # key=value style
-    (re.compile(r"(?i)(password|token|api[_-]?key|secret|client[_-]?secret)\s*[=:]\s*[^\s,;}\"']+"),
+    (re.compile(
+        rf"(?i)\b({_SECRET_KEY_PATTERN})\s*[=:]\s*[^\s,;}}\"']+"
+    ),
      lambda m: f"{m.group(1)}=***REDACTED***"),
     # JSON-encoded same fields
-    (re.compile(r'(?i)"(password|token|api[_-]?key|secret|client[_-]?secret)"\s*:\s*"[^"]*"'),
+    (re.compile(
+        rf'(?i)"(authorization|{_SECRET_KEY_PATTERN})"\s*:\s*"[^"]*"'
+    ),
      lambda m: f'"{m.group(1)}": "***REDACTED***"'),
     # Long hex strings (>=32 chars) — likely a generated secret
     (re.compile(r"\b[a-f0-9]{32,}\b"), "***REDACTED_HEX***"),
@@ -48,6 +68,19 @@ def _redact(text):
     return text
 
 
+def _redact_value(value, key=None):
+    """Recursively redact values while preserving JSON-like structure."""
+    if key is not None and _SENSITIVE_KEY_RE.search(str(key)):
+        return "***REDACTED***"
+    if isinstance(value, str):
+        return _redact(value)
+    if isinstance(value, dict):
+        return {k: _redact_value(v, k) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_redact_value(v) for v in value)
+    return value
+
+
 class SecretRedactionFilter(logging.Filter):
     """Redacts secrets in log records before they reach the formatter."""
 
@@ -56,11 +89,9 @@ class SecretRedactionFilter(logging.Filter):
             record.msg = _redact(record.msg)
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {k: _redact(str(v)) for k, v in record.args.items()}
+                record.args = _redact_value(record.args)
             elif isinstance(record.args, tuple):
-                record.args = tuple(
-                    _redact(str(a)) if isinstance(a, str) else a for a in record.args
-                )
+                record.args = _redact_value(record.args)
         return True
 
 
@@ -80,11 +111,11 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = _redact(self.formatException(record.exc_info))
         # Optional structured context attached via logger.x("...", extra={...})
         for key in ("request_id", "user_id", "workspace_id", "endpoint"):
             if hasattr(record, key):
-                payload[key] = getattr(record, key)
+                payload[key] = _redact_value(getattr(record, key), key)
         # Sprint v1.41.1: fall back to the contextvar so any log emitted
         # inside an HTTP handler gets correlated.
         if "request_id" not in payload:
