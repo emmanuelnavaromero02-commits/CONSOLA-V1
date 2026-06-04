@@ -322,15 +322,21 @@ def test_bootstrap_keys_backfills_all_runtime_db_role_passwords():
 
 def test_verify_release_bootstraps_env_and_recreates_full_stack():
     body = MAKEFILE.read_text(encoding="utf-8")
+    bootstrap = re.search(r"^bootstrap-env:\s*$([\s\S]+?)(?=^\S|\Z)", body, re.MULTILINE)
+    assert bootstrap, "bootstrap-env target not found in Makefile"
+    bootstrap_body = bootstrap.group(1)
+    assert "infra/bootstrap.sh" in bootstrap_body
+    assert "infra/bootstrap-keys.sh infra/.env" in bootstrap_body
+
     m = re.search(r"^verify-release:\s*$([\s\S]+?)(?=^\S|\Z)", body, re.MULTILINE)
     assert m, "verify-release target not found in Makefile"
     target_body = m.group(1)
-    assert "infra/bootstrap-keys.sh infra/.env" in target_body
+    assert "$(MAKE) bootstrap-env" in target_body
     assert "--profile sap config -q" in target_body
     assert "up -d --build --force-recreate" in target_body
     assert "docker compose -f infra/docker-compose.yml --profile sap build" not in target_body
     assert "scripts/wait_for_health.sh" in target_body
-    assert target_body.index("bootstrap-keys.sh") < target_body.index("config -q")
+    assert target_body.index("bootstrap-env") < target_body.index("config -q")
     assert target_body.index("up -d --build --force-recreate") < target_body.index("scripts/wait_for_health.sh")
 
 
