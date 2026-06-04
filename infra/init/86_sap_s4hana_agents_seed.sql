@@ -5,9 +5,9 @@
 -- cartridge row already exists from 20_sap_cartridges_seed.sql, satisfying the FK.
 -- The platform has no trigger-based routing (agents are invoked by cartridge_id +
 -- slug); the "triggers" phrases live in extra as routing/intent metadata.
--- Safe to re-run: owned SAP S/4HANA agents are refreshed before insert.
-
-DELETE FROM agents WHERE cartridge_id = 'sap_s4hana';
+-- Safe to re-run: target-less ON CONFLICT DO NOTHING works before and after
+-- 99a_agent_workspace_scope.sql replaces the global uniqueness constraint with
+-- workspace-aware partial indexes.
 
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
@@ -68,7 +68,8 @@ contable, cartera de cobros y gasto en proveedores, con foco en cifras, riesgo y
     '{"cartridges":["sap_s4hana"],"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 2000, 0.3,
     '{"variables":{},"triggers":["cartera","vencidas","balance contable","saldo cuentas","gasto proveedores","cobranza"]}'::jsonb
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('86_sap_s4hana_agents_seed.sql', NOW())

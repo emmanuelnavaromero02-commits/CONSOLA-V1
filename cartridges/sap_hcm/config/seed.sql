@@ -1,7 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- MODecissions Cartridge: SAP HCM Core — seed configuration
 -- Run once to register this cartridge in a new installation.
--- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
+-- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
+-- work with both the original global agents constraint and the later
+-- workspace-aware partial indexes.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
@@ -131,15 +133,4 @@ laboral: cuantos empleados hay y como se distribuyen, y como evolucionan las aus
     'claude-sonnet-4-6', 8192, 0.3,
     '{"variables":{},"triggers":["como se compone mi plantilla","headcount por departamento","evolucion de ausencias","distribucion de empleados","tendencias de personal"]}'::jsonb
 )
-ON CONFLICT (cartridge_id, slug) DO UPDATE
-    SET name          = EXCLUDED.name,
-        description   = EXCLUDED.description,
-        instructions  = EXCLUDED.instructions,
-        personality   = EXCLUDED.personality,
-        allowed_tools = EXCLUDED.allowed_tools,
-        rag_filter    = EXCLUDED.rag_filter,
-        model         = EXCLUDED.model,
-        max_tokens    = EXCLUDED.max_tokens,
-        temperature   = EXCLUDED.temperature,
-        extra         = EXCLUDED.extra,
-        updated_at    = NOW();
+ON CONFLICT DO NOTHING;

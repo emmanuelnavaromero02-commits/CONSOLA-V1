@@ -1,7 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- MODecissions Cartridge: SAP S/4HANA Core — seed configuration
 -- Run once to register this cartridge in a new installation.
--- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
+-- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
+-- work with both the original global agents constraint and the later
+-- workspace-aware partial indexes.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
@@ -152,15 +154,4 @@ contable, cartera de cobros y gasto en proveedores, con foco en cifras, riesgo y
     'claude-sonnet-4-6', 2000, 0.3,
     '{"variables":{},"triggers":["cartera","vencidas","balance contable","saldo cuentas","gasto proveedores","cobranza"]}'::jsonb
 )
-ON CONFLICT (cartridge_id, slug) DO UPDATE
-    SET name          = EXCLUDED.name,
-        description   = EXCLUDED.description,
-        instructions  = EXCLUDED.instructions,
-        personality   = EXCLUDED.personality,
-        allowed_tools = EXCLUDED.allowed_tools,
-        rag_filter    = EXCLUDED.rag_filter,
-        model         = EXCLUDED.model,
-        max_tokens    = EXCLUDED.max_tokens,
-        temperature   = EXCLUDED.temperature,
-        extra         = EXCLUDED.extra,
-        updated_at    = NOW();
+ON CONFLICT DO NOTHING;

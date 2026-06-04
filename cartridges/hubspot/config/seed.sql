@@ -1,7 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- MODecissions Cartridge: HubSpot CRM — seed configuration
 -- Run once to register this cartridge in a new installation.
--- Safe to re-run: all inserts use ON CONFLICT DO NOTHING / DO UPDATE.
+-- Safe to re-run: agent inserts use target-less ON CONFLICT DO NOTHING so they
+-- work with both the original global agents constraint and the later
+-- workspace-aware partial indexes.
 --
 -- Construido siguiendo la lógica del cartucho Replicon (medallion, config-en-
 -- datos, espina plan-vs-real, agentes con guardarraíles) — NO es un clon:
@@ -141,15 +143,4 @@ que llevan demasiado tiempo sin actividad, para que el vendedor los retome o los
     'claude-haiku-4-5-20251001', 4096, 0.2,
     '{"variables":{"dias_umbral":"14"},"schedule":{"cron":"0 9 * * MON","tz":"America/Mexico_City"}}'::jsonb
 )
-ON CONFLICT (cartridge_id, slug) DO UPDATE
-    SET name          = EXCLUDED.name,
-        description   = EXCLUDED.description,
-        instructions  = EXCLUDED.instructions,
-        personality   = EXCLUDED.personality,
-        allowed_tools = EXCLUDED.allowed_tools,
-        rag_filter    = EXCLUDED.rag_filter,
-        model         = EXCLUDED.model,
-        max_tokens    = EXCLUDED.max_tokens,
-        temperature   = EXCLUDED.temperature,
-        extra         = EXCLUDED.extra,
-        updated_at    = NOW();
+ON CONFLICT DO NOTHING;

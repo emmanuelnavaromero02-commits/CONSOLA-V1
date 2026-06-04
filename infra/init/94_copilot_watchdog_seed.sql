@@ -21,19 +21,8 @@
 --   * ``user_lifecycle_watchdog`` (SAP SuccessFactors) — joiners,
 --                              leavers, role changes.
 --
--- Idempotent: owned watchdog rows are refreshed before insert so old beta
--- installs without the unique constraint still accept this seed.
-
-DELETE FROM copilot_watchdogs
- WHERE (cartridge_id, slug) IN (
-    ('replicon', 'margin_watchdog'),
-    ('replicon', 'capacity_watchdog'),
-    ('sap_hcm', 'headcount_watchdog'),
-    ('sap_hcm', 'payroll_watchdog'),
-    ('sap_s4hana', 'ar_watchdog'),
-    ('sap_s4hana', 'ap_watchdog'),
-    ('sap_successfactors', 'user_lifecycle_watchdog')
- );
+-- Idempotent: copilot_watchdogs keeps a concrete UNIQUE (cartridge_id, slug)
+-- constraint, so this seed can safely refresh rows on re-run.
 
 INSERT INTO copilot_watchdogs
     (cartridge_id, slug, name, description, intent_keywords, tools, risk_level)
@@ -108,7 +97,15 @@ VALUES
            'manager', 'org_change', 'movement', 'movimiento']::TEXT[],
      ARRAY['sap_successfactors.query_kb:lifecycle_30d',
            'sap_successfactors.list_recent_terminations']::TEXT[],
-     'read');
+     'read')
+ON CONFLICT (cartridge_id, slug) DO UPDATE
+    SET name            = EXCLUDED.name,
+        description     = EXCLUDED.description,
+        intent_keywords = EXCLUDED.intent_keywords,
+        tools           = EXCLUDED.tools,
+        risk_level      = EXCLUDED.risk_level,
+        enabled         = TRUE,
+        metadata        = EXCLUDED.metadata;
 
 
 -- Self-register so the migration tracker knows this file applied.

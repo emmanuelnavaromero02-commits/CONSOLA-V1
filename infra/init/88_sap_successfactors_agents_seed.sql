@@ -5,9 +5,9 @@
 -- sap_successfactors cartridge row already exists from 20_sap_cartridges_seed.sql,
 -- satisfying the FK. The platform has no trigger-based routing (agents are invoked by
 -- cartridge_id + slug); the "triggers" phrases live in extra as routing/intent metadata.
--- Safe to re-run: owned SAP SuccessFactors agents are refreshed before insert.
-
-DELETE FROM agents WHERE cartridge_id = 'sap_successfactors';
+-- Safe to re-run: target-less ON CONFLICT DO NOTHING works before and after
+-- 99a_agent_workspace_scope.sql replaces the global uniqueness constraint with
+-- workspace-aware partial indexes.
 
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
@@ -70,7 +70,8 @@ talento: pipeline de reclutamiento, rotacion, calidad de datos y span of control
     '{"cartridges":["sap_successfactors"],"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 2000, 0.3,
     '{"variables":{},"triggers":["rotacion","turnover","reclutamiento","candidatos","requisiciones","anomalias","manager","span","talento"]}'::jsonb
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('88_sap_successfactors_agents_seed.sql', NOW())

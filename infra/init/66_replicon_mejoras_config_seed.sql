@@ -1,8 +1,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- MODecissions Cartridge: Replicon PSA — seed configuration
 -- Run once to register this cartridge in a new installation.
--- Safe to re-run: owned Replicon rows are refreshed, and remaining inserts use
--- ON CONFLICT DO NOTHING / DO UPDATE.
+-- Safe to re-run: owned Replicon rows are refreshed, and agent inserts use
+-- target-less ON CONFLICT DO NOTHING so they work before and after
+-- 99a_agent_workspace_scope.sql replaces the global agents constraint with
+-- workspace-aware partial indexes.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Existing beta installs may contain the previous Replicon cartridge metadata.
@@ -11,7 +13,6 @@
 DELETE FROM cartridge_dags WHERE cartridge_id = 'replicon';
 DELETE FROM entity_config WHERE cartridge_id = 'replicon';
 DELETE FROM semantic_terms WHERE cartridge_id = 'replicon';
-DELETE FROM agents WHERE cartridge_id = 'replicon';
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
@@ -242,4 +243,5 @@ encajan considerando rating, disponibilidad y costo.
     '{"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 8192, 0.4,
     '{"variables":{"rating_minimo":"3"}}'::jsonb
-);
+)
+ON CONFLICT DO NOTHING;

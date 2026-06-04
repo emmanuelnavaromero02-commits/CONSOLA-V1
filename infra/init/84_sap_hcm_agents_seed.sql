@@ -5,9 +5,9 @@
 -- cartridge row already exists from 20_sap_cartridges_seed.sql, satisfying the FK.
 -- The platform has no trigger-based routing (agents are invoked by cartridge_id +
 -- slug); the "triggers" phrases live in extra as routing/intent metadata.
--- Safe to re-run: owned SAP HCM agents are refreshed before insert.
-
-DELETE FROM agents WHERE cartridge_id = 'sap_hcm';
+-- Safe to re-run: target-less ON CONFLICT DO NOTHING works before and after
+-- 99a_agent_workspace_scope.sql replaces the global uniqueness constraint with
+-- workspace-aware partial indexes.
 
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
@@ -74,7 +74,8 @@ laboral: cuantos empleados hay y como se distribuyen, y como evolucionan las aus
     '{"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 8192, 0.3,
     '{"variables":{},"triggers":["como se compone mi plantilla","headcount por departamento","evolucion de ausencias","distribucion de empleados","tendencias de personal"]}'::jsonb
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('84_sap_hcm_agents_seed.sql', NOW())

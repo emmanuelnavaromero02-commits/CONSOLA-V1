@@ -143,8 +143,6 @@ ON CONFLICT (cartridge_id, term) DO UPDATE
     SET definition = EXCLUDED.definition,
         maps_to = EXCLUDED.maps_to;
 
-DELETE FROM agents WHERE cartridge_id = 'hubspot';
-
 INSERT INTO agents (cartridge_id, slug, name, description, instructions, personality,
                     allowed_tools, rag_filter, model, max_tokens, temperature, extra)
 VALUES (
@@ -173,7 +171,8 @@ VALUES (
     4096,
     0.2,
     '{"variables":{"days_threshold":"14"},"schedule":{"cron":"0 9 * * MON","tz":"America/Mexico_City"}}'::jsonb
-);
+)
+ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('93_hubspot_role_and_seed.sql', NOW())

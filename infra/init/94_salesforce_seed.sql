@@ -5,12 +5,10 @@
 -- consumed by the runtime cartridge-upload path; the cartridges row, entity_config,
 -- semantic_terms and agents must be seeded here for a fresh `docker compose up`.
 -- Datasets / apps / hints self-seed from source via the console startup seeders.
--- Idempotent: owned Salesforce agents are refreshed, and remaining inserts use
--- ON CONFLICT DO NOTHING / DO UPDATE.
+-- Agent idempotency uses target-less ON CONFLICT DO NOTHING so this seed can be
+-- re-run after 99a_agent_workspace_scope.sql replaces the global agents
+-- constraint with workspace-aware partial indexes.
 -- ─────────────────────────────────────────────────────────────────────────────
-
-DELETE FROM agents WHERE cartridge_id = 'salesforce';
-
 
 -- ── Cartridge header ──────────────────────────────────────────────────────────
 INSERT INTO cartridges (id, name, version, description, pattern, category, bronze_path)
@@ -211,4 +209,5 @@ contra la capacidad de Replicon. Eres el unico agente que cruza dos cartuchos.
     '{"cartridges":["salesforce","replicon"],"kinds":["document","schema"]}'::jsonb,
     'claude-sonnet-4-6', 2000, 0.3,
     '{"variables":{"holgura_capacidad":"10%"},"triggers":["capacidad","forecast vs capacidad","podemos entregar","sobrecarga","operacion","staffing"]}'::jsonb
-);
+)
+ON CONFLICT DO NOTHING;
