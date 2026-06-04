@@ -10,7 +10,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap)
+COMPOSE=(docker compose --env-file infra/.env -f infra/docker-compose.yml)
+if [[ "${OMEGA_ACCEPTANCE_USE_DEV_OVERRIDE:-1}" == "1" && -f infra/docker-compose.dev.yml ]]; then
+  COMPOSE+=(-f infra/docker-compose.dev.yml)
+fi
+COMPOSE+=(--profile sap)
 PYTEST="${PYTEST:-.venv/bin/pytest}"
 if [[ ! -x "$PYTEST" ]]; then
   PYTEST="pytest"

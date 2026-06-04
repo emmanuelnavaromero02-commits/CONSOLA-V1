@@ -177,7 +177,13 @@ def test_update_script_uses_cartridge_overlay_for_service_updates():
 def test_release_workflow_validates_before_publishing_images():
     src = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     assert "validate-release:" in src
+    assert "full-stack-release-gate:" in src
     assert "needs: validate-release" in src
+    assert "needs: [validate-release, full-stack-release-gate]" in src
+    for gate in ("make smoke", "make e2e", "make acceptance", "make production-readiness"):
+        assert gate in src
+    assert "OMEGA_PRODUCTION_READINESS_SKIP_STRESS=1" in src
+    assert 'GITHUB_REF_NAME}" == *"beta"*' in src
     for requirements in (
         "tests/requirements.txt",
         "console/requirements.txt",
