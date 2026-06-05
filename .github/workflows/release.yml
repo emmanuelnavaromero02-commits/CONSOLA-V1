@@ -144,6 +144,15 @@ jobs:
             echo "LEGACY_URL=http://127.0.0.1:8000"
             echo "BACKEND_URL=http://127.0.0.1:8000"
             echo "CONTROL_ROOM_URL=http://127.0.0.1:8000/control-room"
+            echo "AIRFLOW_URL=http://127.0.0.1:8082"
+            echo "SUPERSET_URL=http://127.0.0.1:8088"
+            echo "MINIO_CONSOLE_URL=http://127.0.0.1:9001"
+            echo "MAILHOG_URL=http://127.0.0.1:8025"
+            echo "HUBSPOT_URL=http://127.0.0.1:8210"
+            echo "REPLICON_URL=http://127.0.0.1:8201"
+            echo "SAP_HCM_URL=http://127.0.0.1:8202"
+            echo "SAP_SF_URL=http://127.0.0.1:8203"
+            echo "SAP_S4_URL=http://127.0.0.1:8204"
             echo "OPEN_REPORT=0"
           } > tests-e2e/.env
 

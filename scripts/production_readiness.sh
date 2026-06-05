@@ -197,6 +197,23 @@ run_multiuser_simulation_if_required() {
   bash scripts/run_multiuser_isolation_simulation.sh
 }
 
+prepare_local_browser_e2e_env() {
+  # production_readiness sources infra/.env for service credentials. That file
+  # intentionally uses Docker-internal service names (hubspot, airflow, etc.)
+  # for container-to-container calls, but Playwright runs on the host runner.
+  # Pin browser probes to the host-published ports so CI does not inherit
+  # unresolvable container DNS names from infra/.env.
+  export AIRFLOW_URL="${OMEGA_E2E_AIRFLOW_URL:-http://127.0.0.1:8082}"
+  export SUPERSET_URL="${OMEGA_E2E_SUPERSET_URL:-http://127.0.0.1:8088}"
+  export MINIO_CONSOLE_URL="${OMEGA_E2E_MINIO_CONSOLE_URL:-http://127.0.0.1:9001}"
+  export MAILHOG_URL="${OMEGA_E2E_MAILHOG_URL:-http://127.0.0.1:8025}"
+  export HUBSPOT_URL="${OMEGA_E2E_HUBSPOT_URL:-http://127.0.0.1:8210}"
+  export REPLICON_URL="${OMEGA_E2E_REPLICON_URL:-http://127.0.0.1:8201}"
+  export SAP_HCM_URL="${OMEGA_E2E_SAP_HCM_URL:-http://127.0.0.1:8202}"
+  export SAP_SF_URL="${OMEGA_E2E_SAP_SF_URL:-http://127.0.0.1:8203}"
+  export SAP_S4_URL="${OMEGA_E2E_SAP_S4_URL:-http://127.0.0.1:8204}"
+}
+
 run_remote_e2e_if_required() {
   if [[ "${OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E:-0}" != "1" ]]; then
     log "remote Playwright E2E skipped; set OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E=1 to require it"
@@ -274,6 +291,7 @@ run_gate() {
   make smoke
 
   log "running browser E2E"
+  prepare_local_browser_e2e_env
   OPEN_REPORT=0 make e2e
 
   if [[ "${OMEGA_PRODUCTION_READINESS_SKIP_STRESS:-0}" == "1" ]]; then

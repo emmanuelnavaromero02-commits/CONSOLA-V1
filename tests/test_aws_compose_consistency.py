@@ -217,6 +217,32 @@ def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
     assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true" in release_stack
 
 
+def test_release_gate_writes_host_urls_for_playwright_e2e():
+    """Playwright runs on the GitHub host runner, not inside Docker DNS.
+
+    The release stack still needs container-internal URLs in infra/.env for
+    service-to-service calls, but tests-e2e/.env must point at published host
+    ports. Otherwise the production-readiness gate can inherit names such as
+    hubspot/airflow and fail with getaddrinfo on GitHub-hosted runners.
+    """
+    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    release_stack = workflow.split("Bootstrap local release stack", 1)[1].split(
+        "Build and start full stack", 1
+    )[0]
+    for env_line in (
+        "AIRFLOW_URL=http://127.0.0.1:8082",
+        "SUPERSET_URL=http://127.0.0.1:8088",
+        "MINIO_CONSOLE_URL=http://127.0.0.1:9001",
+        "MAILHOG_URL=http://127.0.0.1:8025",
+        "HUBSPOT_URL=http://127.0.0.1:8210",
+        "REPLICON_URL=http://127.0.0.1:8201",
+        "SAP_HCM_URL=http://127.0.0.1:8202",
+        "SAP_SF_URL=http://127.0.0.1:8203",
+        "SAP_S4_URL=http://127.0.0.1:8204",
+    ):
+        assert env_line in release_stack
+
+
 def test_scheduled_airflow_dags_honor_release_pause_flag():
     scheduled_dags = (
         REPO / "airflow/dags/agent_runner.py",

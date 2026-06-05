@@ -33,6 +33,7 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
         "/api/v1/security/login",
         "make test",
         "make smoke",
+        "prepare_local_browser_e2e_env",
         "OPEN_REPORT=0 make e2e",
         "make acceptance",
         "run_scope_regression_tests",
@@ -50,6 +51,23 @@ def test_production_readiness_gate_checks_real_runtime_surfaces():
     assert "gemini" not in script.lower()
     local_gate = script[script.index('if [[ "${REMOTE_MODE}" == "1" ]]'):]
     assert local_gate.index("make acceptance") < local_gate.index("check_readyz_data")
+    assert local_gate.index("prepare_local_browser_e2e_env") < local_gate.index("OPEN_REPORT=0 make e2e")
+
+
+def test_production_readiness_e2e_uses_host_published_service_urls():
+    script = _read("scripts/production_readiness.sh")
+    for needle in (
+        "AIRFLOW_URL=\"${OMEGA_E2E_AIRFLOW_URL:-http://127.0.0.1:8082}\"",
+        "SUPERSET_URL=\"${OMEGA_E2E_SUPERSET_URL:-http://127.0.0.1:8088}\"",
+        "MINIO_CONSOLE_URL=\"${OMEGA_E2E_MINIO_CONSOLE_URL:-http://127.0.0.1:9001}\"",
+        "MAILHOG_URL=\"${OMEGA_E2E_MAILHOG_URL:-http://127.0.0.1:8025}\"",
+        "HUBSPOT_URL=\"${OMEGA_E2E_HUBSPOT_URL:-http://127.0.0.1:8210}\"",
+        "REPLICON_URL=\"${OMEGA_E2E_REPLICON_URL:-http://127.0.0.1:8201}\"",
+        "SAP_HCM_URL=\"${OMEGA_E2E_SAP_HCM_URL:-http://127.0.0.1:8202}\"",
+        "SAP_SF_URL=\"${OMEGA_E2E_SAP_SF_URL:-http://127.0.0.1:8203}\"",
+        "SAP_S4_URL=\"${OMEGA_E2E_SAP_S4_URL:-http://127.0.0.1:8204}\"",
+    ):
+        assert needle in script
 
 
 def test_v1_live_readiness_requires_no_skips_multiuser_stress_and_llm():
