@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import os
 import re
+import time
 from contextvars import ContextVar, Token
 from typing import Any
 
@@ -8,6 +13,11 @@ from typing import Any
 CARTRIDGE_ID = "sap_hcm"
 SERVICE_SOURCE = "cartridge-sap_hcm"
 _SAFE_SCOPE_SEGMENT = re.compile(r"[A-Za-z0-9_.:-]+")
+_SIGNATURE_FIELD = "_signature"
+_SIGNED_AT_FIELD = "_signed_at"
+_SIGNATURE_VERSION_FIELD = "_signature_version"
+_SIGNATURE_VERSION = "hmac-sha256-v1"
+_MIN_SIGNING_KEY_LEN = 32
 _CURRENT_SECURITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "sap_hcm_security_context",
     default=None,
@@ -53,6 +63,43 @@ def scoped_prefix(ctx: dict[str, Any] | None = None) -> str:
     return f"tenant_id={tenant}/workspace_id={workspace}/"
 
 
+def _transport_keys() -> dict[str, str]:
+    return {
+        name: value.strip()
+        for name, value in os.environ.items()
+        if (name == "INTERNAL_API_KEY" or name.startswith("INTERNAL_API_KEY_"))
+        and isinstance(value, str)
+        and value.strip()
+    }
+
+
+def _signing_key() -> str:
+    key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
+    if len(key) < _MIN_SIGNING_KEY_LEN:
+        raise RuntimeError("SECURITY_CONTEXT_SIGNING_KEY is required to sign security_context")
+    for env_name, transport_key in _transport_keys().items():
+        if hmac.compare_digest(key, transport_key):
+            raise RuntimeError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {env_name}")
+    return key
+
+
+def _canonical_context(ctx: dict[str, Any]) -> bytes:
+    payload = {key: value for key, value in ctx.items() if key != _SIGNATURE_FIELD}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
+    signed = dict(ctx)
+    signed[_SIGNED_AT_FIELD] = int(time.time())
+    signed[_SIGNATURE_VERSION_FIELD] = _SIGNATURE_VERSION
+    signed[_SIGNATURE_FIELD] = hmac.new(
+        _signing_key().encode("utf-8"),
+        _canonical_context(signed),
+        hashlib.sha256,
+    ).hexdigest()
+    return signed
+
+
 def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     ctx = ctx if ctx is not None else get_security_context()
     tenant, workspace = scope_values(ctx)
@@ -83,4 +130,4 @@ def refinement_security_context(ctx: dict[str, Any] | None = None) -> dict[str, 
     if tenant and workspace:
         base["tenant_id"] = tenant
         base["workspace_id"] = workspace
-    return base
+    return _sign_security_context(base)

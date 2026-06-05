@@ -95,6 +95,7 @@ def test_hubspot_refresh_by_source_uses_trusted_security_context():
     assert 'permissions": ["datasets.read", "datasets.write"]' in request_context
     assert 'allowed_cartridges": ["hubspot"]' in request_context
     assert '"raw/hubspot/"' in request_context
+    assert "return _sign_security_context(base)" in request_context
 
 
 def test_hubspot_extraction_preserves_console_workspace_scope():

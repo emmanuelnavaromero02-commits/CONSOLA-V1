@@ -36,6 +36,8 @@ def test_gold_dsn_includes_tenant_workspace_options_for_scoped_context(monkeypat
 
     assert "sslmode=disable" in dsn
     assert "options=" in dsn
+    assert "+app.tenant_id" not in dsn
+    assert "-c%20app.tenant_id" in dsn
     assert "app.tenant_id" in dsn
     assert "11111111-1111-1111-1111-111111111111" in dsn
     assert "app.workspace_id" in dsn
@@ -75,3 +77,12 @@ def test_scoped_gold_table_creation_applies_native_rls(monkeypatch):
     assert applied == ["gold_orders"]
     executed_sql = "\n".join(str(call.args[0]) for call in con.execute.call_args_list if call.args)
     assert "CREATE TABLE pggold.gold_orders" in executed_sql
+
+
+def test_gold_write_path_avoids_duckdb_postgres_copy_with_rls():
+    src = (REPO_ROOT / "refinement" / "app" / "duckdb_engine.py").read_text(encoding="utf-8")
+
+    assert "def _replace_scoped_gold_rows" in src
+    assert "set_config('app.tenant_id'" in src
+    assert "execute_values(" in src
+    assert "INSERT INTO pggold." not in src

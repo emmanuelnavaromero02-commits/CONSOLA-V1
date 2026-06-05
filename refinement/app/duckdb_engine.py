@@ -26,10 +26,11 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import duckdb
 import psycopg2
+from psycopg2.extras import execute_values
 import sqlglot
 from sqlglot import exp as _sqlglot_exp
 
@@ -84,6 +85,10 @@ def _duckdb_threads_from_env(raw: str | None) -> int | None:
 
 def _libpq_quote(value: str) -> str:
     return "'" + (value or "").replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _pg_ident(value: str) -> str:
+    return '"' + str(value or "").replace('"', '""') + '"'
 
 
 def _strip_sql_comments(sql: str) -> str:
@@ -239,7 +244,7 @@ class DuckDBEngine:
             parts = urlsplit(dsn)
             query = dict(parse_qsl(parts.query, keep_blank_values=True))
             query["options"] = options
-            return urlunsplit(parts._replace(query=urlencode(query)))
+            return urlunsplit(parts._replace(query=urlencode(query, quote_via=quote)))
         return f"{dsn} options={_libpq_quote(options)}"
 
     def _pg_attach(self, con: duckdb.DuckDBPyConnection) -> str:
@@ -1181,6 +1186,58 @@ class DuckDBEngine:
         con.execute(f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0")
         self._apply_gold_rls(table)
 
+    def _replace_scoped_gold_rows(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        table: str,
+        sql: str,
+        tenant: str,
+        workspace: str,
+    ) -> int:
+        """Replace scoped rows without DuckDB's postgres COPY fast path.
+
+        DuckDB's postgres extension writes INSERT ... SELECT through COPY
+        under the hood. PostgreSQL rejects COPY FROM on tables with row-level
+        security enabled, so the RLS backstop requires a psycopg2 write path
+        with the same app.tenant_id/workspace_id settings that policies read.
+        """
+        validate_safe_identifier(table, "table")
+        result = con.execute(f"SELECT * FROM ({sql}) _q")
+        columns = [str(desc[0]) for desc in (result.description or [])]
+        if not columns:
+            raise ValueError("Gold query must return columns")
+        rows = result.fetchall()
+        table_ident = _pg_ident(table)
+        column_list = ", ".join(_pg_ident(col) for col in columns)
+        conn = self._pg_gold_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+                cur.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace,))
+                cur.execute(
+                    f"DELETE FROM public.{table_ident} WHERE tenant_id = %s AND workspace_id = %s",
+                    (tenant, workspace),
+                )
+                if rows:
+                    execute_values(
+                        cur,
+                        f"INSERT INTO public.{table_ident} ({column_list}) VALUES %s",
+                        rows,
+                        page_size=1000,
+                    )
+                cur.execute(
+                    f"SELECT COUNT(*) FROM public.{table_ident} WHERE tenant_id = %s AND workspace_id = %s",
+                    (tenant, workspace),
+                )
+                row_count = int(cur.fetchone()[0])
+            conn.commit()
+            return row_count
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
         """
         Materialize a dataset to silver or gold.
@@ -1226,18 +1283,14 @@ class DuckDBEngine:
                 if not (tenant and workspace):
                     raise ValueError("Gold materialization requires tenant_id and workspace_id")
                 self._ensure_scoped_gold_table(con, table, effective_sql)
-                con.execute(
-                    f"DELETE FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
-                    [tenant, workspace],
-                )
-                con.execute(
-                    f"INSERT INTO pggold.{table} SELECT * FROM ({effective_sql}) _q"
+                row_count = self._replace_scoped_gold_rows(
+                    con,
+                    table,
+                    effective_sql,
+                    tenant,
+                    workspace,
                 )
                 self._apply_gold_rls(table)
-                row_count = con.execute(
-                    f"SELECT COUNT(*) FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
-                    [tenant, workspace],
-                ).fetchone()[0]
                 gold_parquet_path = self._snapshot_path("gold", cartridge, name, user_context)
                 gold_storage_uri = self._copy_to_parquet(
                     con,

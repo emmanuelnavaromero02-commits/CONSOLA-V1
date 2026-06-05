@@ -87,4 +87,9 @@ def test_readyz_supports_strict_control_room_data_mode():
         assert "intelligence_opt_out_allowed" in src
         assert "require_data=require_intelligence_data" in src
         assert re.search(r"status_code=200 if ok else 503", src)
+    assert "silver_lineage" in main_src
+    assert "lineage_gold_rows" in main_src
+    intelligence = _read(REPO / "console/app/services/intelligence/readiness.py")
+    assert "def _lineage_gold_counts" in intelligence
+    assert '"source": "silver_lineage"' in intelligence
     assert "readyz?require_data=1" in makefile

@@ -11,11 +11,11 @@ Branch: `codex/audit-blockers-hardening`
 
 ## Current Result
 
-Bandit currently reports 165 `B608` findings:
+Bandit currently reports 166 `B608` findings:
 
 | Severity | Confidence | Count |
 |---|---:|---:|
-| MEDIUM | LOW | 126 |
+| MEDIUM | LOW | 127 |
 | MEDIUM | MEDIUM | 39 |
 | MEDIUM | HIGH | 0 |
 
@@ -29,7 +29,7 @@ The high-confidence security gate remains clean:
 
 | Count | File |
 |---:|---|
-| 26 | `refinement/app/duckdb_engine.py` |
+| 27 | `refinement/app/duckdb_engine.py` |
 | 20 | `console/app/routers/metrics.py` |
 | 13 | `console/app/main.py` |
 | 13 | `console/app/services/intelligence/persistence.py` |

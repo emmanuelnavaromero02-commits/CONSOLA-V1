@@ -83,11 +83,64 @@ async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
     return {str(row["column_name"]) for row in rows}
 
 
+async def _lineage_gold_counts(requirements: list[dict[str, Any]], user: dict | None) -> dict[str, int]:
+    dsn = _operational_dsn()
+    datasets = [str(req.get("dataset") or "") for req in requirements if req.get("dataset")]
+    if not dsn or not datasets:
+        return {}
+    tenant_id, workspace_id = _workspace_scope(user)
+    conn = await asyncpg.connect(dsn, command_timeout=5)
+    try:
+        if workspace_id:
+            scope_pattern = f"%tenant_id={tenant_id or ''}/workspace_id={workspace_id}/%"
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (silver_name)
+                       silver_name,
+                       COALESCE(row_count, 0)::bigint AS row_count
+                  FROM silver_lineage
+                 WHERE layer = 'gold'
+                   AND silver_name = ANY($1::text[])
+                   AND COALESCE(row_count, 0) > 0
+                   AND storage_uri LIKE $2
+                 ORDER BY silver_name, created_at DESC
+                """,
+                datasets,
+                scope_pattern,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (silver_name)
+                       silver_name,
+                       COALESCE(row_count, 0)::bigint AS row_count
+                  FROM silver_lineage
+                 WHERE layer = 'gold'
+                   AND silver_name = ANY($1::text[])
+                   AND COALESCE(row_count, 0) > 0
+                 ORDER BY silver_name, created_at DESC
+                """,
+                datasets,
+            )
+        return {str(row["silver_name"]): int(row["row_count"] or 0) for row in rows}
+    except Exception:
+        return {}
+    finally:
+        await conn.close()
+
+
 async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) -> list[dict[str, Any]]:
+    lineage_counts = await _lineage_gold_counts(requirements, user)
     dsn = _gold_dsn()
     if not dsn:
         return [
-            {**req, "status": "unavailable", "row_count": 0, "reason": "gold_database_url_missing"}
+            {
+                **req,
+                "status": "ready" if lineage_counts.get(str(req.get("dataset"))) else "unavailable",
+                "row_count": lineage_counts.get(str(req.get("dataset")), 0),
+                "reason": "" if lineage_counts.get(str(req.get("dataset"))) else "gold_database_url_missing",
+                "source": "silver_lineage" if lineage_counts.get(str(req.get("dataset"))) else "pggold",
+            }
             for req in requirements
         ]
     tenant_id, workspace_id = _workspace_scope(user)
@@ -122,11 +175,23 @@ async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) ->
                 else:
                     row_count = int(await conn.fetchval(f'SELECT COUNT(*) FROM public."{table}"') or 0)
                     scoped = False
+                lineage_row_count = lineage_counts.get(dataset, 0)
+                if row_count <= 0 and lineage_row_count > 0:
+                    results.append({
+                        **req,
+                        "status": "ready",
+                        "row_count": lineage_row_count,
+                        "scoped": scoped,
+                        "source": "silver_lineage",
+                        "reason": "",
+                    })
+                    continue
                 results.append({
                     **req,
                     "status": "ready" if row_count > 0 else "empty",
                     "row_count": row_count,
                     "scoped": scoped,
+                    "source": "pggold",
                     "reason": "" if row_count > 0 else "gold_table_empty",
                 })
         return results
