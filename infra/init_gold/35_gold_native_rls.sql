@@ -4,6 +4,8 @@
 -- This migration adds a database-level backstop so gold_* tables are also
 -- workspace-scoped if any direct Postgres access is introduced later.
 
+ALTER ROLE omega_refinement_gold NOBYPASSRLS;
+
 CREATE OR REPLACE FUNCTION public.omega_gold_workspace_matches(
     row_tenant text,
     row_workspace text

@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from app.middleware.request_id import request_id_var
+from app.services.security_context import sign_security_context
 from app.services import llm_client
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
@@ -114,7 +115,7 @@ def _security_context(user: dict | None) -> dict:
                     f"{layer}/{c}/"
                     for layer in ("raw", "silver", "gold", "uploads", "cartridges")
                 ])
-    return {
+    return sign_security_context({
         "trusted": True,
         "source": "workspace",
         "user_id": (user or {}).get("id"),
@@ -127,7 +128,7 @@ def _security_context(user: dict | None) -> dict:
         "allowed_cartridges": allowed_cartridges,
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": allowed_prefixes,
-    }
+    })
 
 
 def _payload(tool: str, args: dict, user: dict | None = None) -> dict:

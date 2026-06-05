@@ -1,19 +1,130 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import time
+import uuid
 from unittest.mock import MagicMock
 
+import psycopg2
 import pytest
 
 from refinement.app.duckdb_engine import DuckDBEngine
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+POSTGRES_IMAGE = os.getenv("GOLD_RLS_TEST_POSTGRES_IMAGE", "postgres:15")
+POSTGRES_PASSWORD = "test_gold_postgres_password"
+GOLD_ROLE_PASSWORD = "test_omega_refinement_gold_password"
+
+
+def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["docker", *args],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            "docker command failed: "
+            f"docker {' '.join(args)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    return result
+
+
+def _require_docker() -> None:
+    result = _docker("info", check=False)
+    if result.returncode != 0:
+        pytest.skip(f"Docker is required for live Gold RLS isolation test: {result.stderr.strip()}")
+
+
+def _mapped_postgres_port(container_id: str) -> int:
+    mapping = _docker("port", container_id, "5432/tcp").stdout
+    for line in mapping.splitlines():
+        _, _, raw_port = line.rpartition(":")
+        if raw_port.isdigit():
+            return int(raw_port)
+    raise RuntimeError(f"postgres_gold test container has no mapped 5432/tcp port:\n{mapping}")
+
+
+def _wait_for_gold_schema(dsn: str, container_id: str) -> None:
+    deadline = time.monotonic() + 120
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        state = _docker("inspect", "-f", "{{.State.Status}}", container_id, check=False)
+        if state.stdout.strip() in {"exited", "dead"}:
+            logs = _docker("logs", "--tail=200", container_id, check=False)
+            raise RuntimeError(f"postgres_gold init container exited early:\n{logs.stdout}\n{logs.stderr}")
+        try:
+            conn = psycopg2.connect(dsn)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM pg_roles WHERE rolname = 'omega_refinement_gold'
+                        ),
+                        EXISTS (
+                            SELECT 1 FROM pg_proc WHERE proname = 'omega_apply_gold_rls_for_table'
+                        )
+                        """
+                    )
+                    role_ready, function_ready = cur.fetchone()
+                    if role_ready and function_ready:
+                        return
+            finally:
+                conn.close()
+        except Exception as exc:
+            last_error = exc
+        time.sleep(1)
+    logs = _docker("logs", "--tail=200", container_id, check=False)
+    raise RuntimeError(
+        "postgres_gold schema did not become ready within 120s"
+        f"\nlast_error={last_error!r}\nlogs:\n{logs.stdout}\n{logs.stderr}"
+    )
+
+
+@pytest.fixture(scope="module")
+def postgres_gold_with_native_rls() -> str:
+    _require_docker()
+    container_name = f"consola-gold-rls-{uuid.uuid4().hex[:12]}"
+    init_dir = REPO_ROOT / "infra" / "init_gold"
+    result = _docker(
+        "run",
+        "-d",
+        "--rm",
+        "--name",
+        container_name,
+        "-e",
+        "POSTGRES_DB=modecissions_gold",
+        "-e",
+        "POSTGRES_USER=postgres",
+        "-e",
+        f"POSTGRES_PASSWORD={POSTGRES_PASSWORD}",
+        "-e",
+        f"PGOPTIONS=-c app.omega_refinement_gold_password={GOLD_ROLE_PASSWORD}",
+        "-v",
+        f"{init_dir}:/docker-entrypoint-initdb.d:ro",
+        "-P",
+        POSTGRES_IMAGE,
+    )
+    container_id = result.stdout.strip()
+    try:
+        port = _mapped_postgres_port(container_id)
+        dsn = f"postgresql://postgres:{POSTGRES_PASSWORD}@127.0.0.1:{port}/modecissions_gold"
+        _wait_for_gold_schema(dsn, container_id)
+        yield dsn
+    finally:
+        _docker("rm", "-f", container_id, check=False)
 
 
 def test_gold_native_rls_migration_default_denies_legacy_unscoped_tables():
     sql = (REPO_ROOT / "infra" / "init_gold" / "35_gold_native_rls.sql").read_text(encoding="utf-8")
 
+    assert "ALTER ROLE omega_refinement_gold NOBYPASSRLS" in sql
     assert "omega_gold_workspace_matches" in sql
     assert "omega_apply_gold_rls_for_table" in sql
     assert "ENABLE ROW LEVEL SECURITY" in sql
@@ -86,3 +197,73 @@ def test_gold_write_path_avoids_duckdb_postgres_copy_with_rls():
     assert "set_config('app.tenant_id'" in src
     assert "execute_values(" in src
     assert "INSERT INTO pggold." not in src
+
+
+def test_live_gold_rls_role_is_not_allowed_to_bypass_rls(postgres_gold_with_native_rls):
+    conn = psycopg2.connect(postgres_gold_with_native_rls)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'omega_refinement_gold'")
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row[0] is False
+
+
+def test_live_gold_read_reattach_isolates_workspace_a_then_b_in_same_engine(
+    monkeypatch,
+    postgres_gold_with_native_rls,
+):
+    tenant_a = "tenant-a"
+    workspace_a = "workspace-a"
+    tenant_b = "tenant-b"
+    workspace_b = "workspace-b"
+
+    conn = psycopg2.connect(postgres_gold_with_native_rls)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE public.gold_scope_probe (
+                    marker text PRIMARY KEY,
+                    tenant_id text NOT NULL,
+                    workspace_id text NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO public.gold_scope_probe (marker, tenant_id, workspace_id)
+                VALUES
+                    ('row-a', %s, %s),
+                    ('row-b', %s, %s)
+                """,
+                (tenant_a, workspace_a, tenant_b, workspace_b),
+            )
+            cur.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON public.gold_scope_probe TO omega_refinement_gold")
+            cur.execute("SELECT public.omega_apply_gold_rls_for_table('gold_scope_probe')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    role_dsn = postgres_gold_with_native_rls.replace(
+        f"postgres:{POSTGRES_PASSWORD}",
+        f"omega_refinement_gold:{GOLD_ROLE_PASSWORD}",
+    )
+    monkeypatch.setenv("GOLD_DATABASE_URL", role_dsn)
+    engine = DuckDBEngine()
+    try:
+        con = engine._conn()
+        engine._pg_gold_attach(con, {"tenant_id": tenant_a, "workspace_id": workspace_a})
+        rows_a = con.execute("SELECT marker FROM pggold.gold_scope_probe ORDER BY marker").fetchall()
+
+        engine._pg_gold_attach(con, {"tenant_id": tenant_b, "workspace_id": workspace_b})
+        rows_b = con.execute("SELECT marker FROM pggold.gold_scope_probe ORDER BY marker").fetchall()
+    finally:
+        if engine._con is not None:
+            engine._con.close()
+
+    assert rows_a == [("row-a",)]
+    assert rows_b == [("row-b",)]

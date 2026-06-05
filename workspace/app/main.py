@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from app.services import session as _session, consumer_assistant as _ca
 from app.services.csrf import require_csrf
 from app.services.rate_limiter import get_rate_limiter
+from app.services.security_context import sign_security_context
 from app.security import get_internal_api_key
 # Sprint v1.41.1 — structured JSON logs so request_id correlates here too.
 from app.logging_config import setup_logging  # noqa: E402
@@ -230,7 +231,7 @@ def _security_context(user: dict | None) -> dict:
                     f"{layer}/{c}/"
                     for layer in ("raw", "silver", "gold", "uploads", "cartridges")
                 ])
-    return {
+    return sign_security_context({
         "trusted": True,
         "source": "workspace",
         "user_id": ctx.get("id"),
@@ -243,7 +244,7 @@ def _security_context(user: dict | None) -> dict:
         "allowed_cartridges": allowed_cartridges,
         "allowed_buckets": ["lakehouse"],
         "allowed_prefixes": allowed_prefixes,
-    }
+    })
 
 
 def _is_admin_user(user: dict | None) -> bool:
