@@ -31,6 +31,8 @@ duckdb>=0.10
 # fastmcp metapackage / extras self-dependency.
 fastmcp-slim==3.3.1
 mcp>=1.24.0,<2.0
+# mcp depends on PyJWT; keep the resolved version above the 2026 advisory floor.
+PyJWT>=2.13.0
 authlib>=1.6.11
 exceptiongroup>=1.2.2
 opentelemetry-api>=1.20.0
