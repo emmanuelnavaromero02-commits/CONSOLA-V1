@@ -101,3 +101,79 @@ async def test_readyz_authenticated_operator_sees_only_failed_components():
     finally:
         main.app.state.startup_ok = original_ok
         main.app.state.startup_errors = original_errors
+
+
+class _ReadyzSuccessClient:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def get(self, url):
+        return SimpleNamespace(status_code=200)
+
+
+class _ReadyzTimeoutClient:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def get(self, url):
+        raise main.httpx.ReadTimeout("slow dependency")
+
+
+@pytest.mark.asyncio
+async def test_dependency_health_uses_recent_up_signal_for_transient_timeout(monkeypatch):
+    main._READYZ_DEPENDENCY_CACHE.clear()
+    now = {"value": 100.0}
+    monkeypatch.setattr(main.time, "monotonic", lambda: now["value"])
+    monkeypatch.setenv("READYZ_DEPENDENCY_CACHE_TTL_SECONDS", "0.5")
+    monkeypatch.setenv("READYZ_DEPENDENCY_STALE_TTL_SECONDS", "60")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", _ReadyzSuccessClient)
+    assert await main._dependency_health("refinement", "http://refinement/healthz") == {
+        "status": "up",
+        "code": 200,
+    }
+
+    now["value"] = 102.0
+    monkeypatch.setattr(main.httpx, "AsyncClient", _ReadyzTimeoutClient)
+
+    result = await main._dependency_health("refinement", "http://refinement/healthz")
+
+    assert result == {
+        "status": "up",
+        "code": 200,
+        "cached": True,
+        "stale": True,
+        "last_error": "ReadTimeout",
+    }
+
+
+@pytest.mark.asyncio
+async def test_dependency_health_does_not_mask_expired_timeout(monkeypatch):
+    main._READYZ_DEPENDENCY_CACHE.clear()
+    now = {"value": 100.0}
+    monkeypatch.setattr(main.time, "monotonic", lambda: now["value"])
+    monkeypatch.setenv("READYZ_DEPENDENCY_CACHE_TTL_SECONDS", "0.5")
+    monkeypatch.setenv("READYZ_DEPENDENCY_STALE_TTL_SECONDS", "10")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", _ReadyzSuccessClient)
+    await main._dependency_health("refinement", "http://refinement/healthz")
+
+    now["value"] = 120.0
+    monkeypatch.setattr(main.httpx, "AsyncClient", _ReadyzTimeoutClient)
+
+    assert await main._dependency_health("refinement", "http://refinement/healthz") == {
+        "status": "down",
+        "error": "ReadTimeout",
+    }

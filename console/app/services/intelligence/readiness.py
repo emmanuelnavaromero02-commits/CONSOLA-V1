@@ -33,6 +33,42 @@ def _workspace_scope(user: dict | None) -> tuple[str | None, str | None]:
     return (str(tenant_id) if tenant_id else None), (str(workspace_id) if workspace_id else None)
 
 
+async def _default_workspace_scope() -> tuple[str | None, str | None]:
+    """Return a deterministic service-readiness scope when no user exists.
+
+    Gold tables are protected with FORCE RLS, so service-level readiness probes
+    must still set a tenant/workspace context before counting rows. This keeps
+    readiness honest without granting the Gold role BYPASSRLS.
+    """
+    dsn = _operational_dsn()
+    if not dsn:
+        return None, None
+    conn = await asyncpg.connect(dsn, command_timeout=5)
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT tenant_id::text AS tenant_id, id::text AS workspace_id
+              FROM workspaces
+             ORDER BY created_at ASC NULLS LAST, id ASC
+             LIMIT 1
+            """
+        )
+        if not row:
+            return None, None
+        return str(row["tenant_id"]) if row["tenant_id"] else None, str(row["workspace_id"])
+    except Exception:
+        return None, None
+    finally:
+        await conn.close()
+
+
+async def _effective_readiness_scope(user: dict | None) -> tuple[str | None, str | None]:
+    tenant_id, workspace_id = _workspace_scope(user)
+    if workspace_id:
+        return tenant_id, workspace_id
+    return await _default_workspace_scope()
+
+
 def _contract_filter(user: dict | None) -> set[str] | None:
     if user:
         return allowed_cartridges(user)
@@ -83,12 +119,16 @@ async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
     return {str(row["column_name"]) for row in rows}
 
 
-async def _lineage_gold_counts(requirements: list[dict[str, Any]], user: dict | None) -> dict[str, int]:
+async def _lineage_gold_counts(
+    requirements: list[dict[str, Any]],
+    user: dict | None,
+    scope: tuple[str | None, str | None] | None = None,
+) -> dict[str, int]:
     dsn = _operational_dsn()
     datasets = [str(req.get("dataset") or "") for req in requirements if req.get("dataset")]
     if not dsn or not datasets:
         return {}
-    tenant_id, workspace_id = _workspace_scope(user)
+    tenant_id, workspace_id = scope or _workspace_scope(user)
     conn = await asyncpg.connect(dsn, command_timeout=5)
     try:
         if workspace_id:
@@ -130,7 +170,8 @@ async def _lineage_gold_counts(requirements: list[dict[str, Any]], user: dict | 
 
 
 async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) -> list[dict[str, Any]]:
-    lineage_counts = await _lineage_gold_counts(requirements, user)
+    tenant_id, workspace_id = await _effective_readiness_scope(user)
+    lineage_counts = await _lineage_gold_counts(requirements, user, (tenant_id, workspace_id))
     dsn = _gold_dsn()
     if not dsn:
         return [
@@ -143,7 +184,6 @@ async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) ->
             }
             for req in requirements
         ]
-    tenant_id, workspace_id = _workspace_scope(user)
     conn = await asyncpg.connect(dsn, command_timeout=5)
     try:
         results: list[dict[str, Any]] = []
@@ -167,7 +207,7 @@ async def _gold_counts(requirements: list[dict[str, Any]], user: dict | None) ->
                 columns = await _table_columns(conn, table)
                 if workspace_id and {"tenant_id", "workspace_id"}.issubset(columns):
                     row_count = int(await conn.fetchval(
-                        f'SELECT COUNT(*) FROM public."{table}" WHERE tenant_id = $1 AND workspace_id = $2',
+                        f'SELECT COUNT(*) FROM public."{table}" WHERE tenant_id::text = $1 AND workspace_id::text = $2',
                         tenant_id,
                         workspace_id,
                     ) or 0)

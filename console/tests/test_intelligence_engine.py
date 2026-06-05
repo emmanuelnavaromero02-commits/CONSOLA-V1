@@ -310,3 +310,81 @@ async def test_intelligence_readiness_sets_rls_context_before_signal_stats(monke
     stats = await intelligence_readiness_module._signal_stats(USER)
 
     assert stats["signal_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeypatch):
+    class FakeOperationalConnection:
+        async def fetchrow(self, query: str, *args):
+            assert "FROM workspaces" in query
+            return {
+                "tenant_id": USER["active_tenant_id"],
+                "workspace_id": USER["active_workspace_id"],
+            }
+
+        async def fetch(self, query: str, *args):
+            assert "silver_lineage" in query
+            return []
+
+        async def close(self):
+            return None
+
+    class FakeTransaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class FakeGoldConnection:
+        def __init__(self):
+            self.executed: list[tuple[str, tuple]] = []
+
+        def transaction(self):
+            return FakeTransaction()
+
+        async def execute(self, query: str, *args):
+            self.executed.append((query, args))
+
+        async def fetch(self, query: str, *args):
+            assert "information_schema.columns" in query
+            return [{"column_name": "tenant_id"}, {"column_name": "workspace_id"}]
+
+        async def fetchval(self, query: str, *args):
+            if "to_regclass" in query:
+                return "public.gold_forecast_mensual"
+            assert "tenant_id::text = $1" in query
+            assert "workspace_id::text = $2" in query
+            assert any("app.workspace_id" in item[0] for item in self.executed)
+            assert any("app.tenant_id" in item[0] for item in self.executed)
+            return 7
+
+        async def close(self):
+            return None
+
+    async def fake_connect(dsn: str, *args, **kwargs):
+        if dsn == "postgresql://operational":
+            return FakeOperationalConnection()
+        if dsn == "postgresql://gold":
+            return FakeGoldConnection()
+        raise AssertionError(f"unexpected dsn: {dsn}")
+
+    monkeypatch.setattr(intelligence_readiness_module, "_operational_dsn", lambda: "postgresql://operational")
+    monkeypatch.setattr(intelligence_readiness_module, "_gold_dsn", lambda: "postgresql://gold")
+    monkeypatch.setattr(intelligence_readiness_module.asyncpg, "connect", fake_connect)
+
+    rows = await intelligence_readiness_module._gold_counts(
+        [
+            {
+                "dataset": "forecast_mensual",
+                "table": "gold_forecast_mensual",
+                "cartridges": ["hubspot"],
+                "metrics": ["forecast_weighted"],
+            }
+        ],
+        None,
+    )
+
+    assert rows[0]["status"] == "ready"
+    assert rows[0]["row_count"] == 7
+    assert rows[0]["scoped"] is True

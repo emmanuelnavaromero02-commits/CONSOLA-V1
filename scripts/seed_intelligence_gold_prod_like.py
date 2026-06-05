@@ -352,7 +352,11 @@ def _seed_dataset(cur, dataset: str, payload: dict[str, Any], tenant: str | None
     columns = payload["columns"]
     _create_table(cur, table_name, columns)
     cur.execute(
-        sql.SQL("DELETE FROM public.{} WHERE workspace_id = %s AND (%s::uuid IS NULL OR tenant_id = %s::uuid)").format(
+        sql.SQL(
+            "DELETE FROM public.{} "
+            "WHERE workspace_id::text = %s "
+            "AND (%s IS NULL OR tenant_id::text = %s)"
+        ).format(
             sql.Identifier(table_name)
         ),
         (workspace, tenant, tenant),
@@ -366,6 +370,7 @@ def _seed_dataset(cur, dataset: str, payload: dict[str, Any], tenant: str | None
     )
     rows = [(tenant, workspace, *row) for row in payload["rows"]]
     cur.executemany(query, rows)
+    cur.execute("SELECT public.omega_apply_gold_rls_for_table(%s)", (table_name,))
     return len(rows)
 
 
@@ -374,6 +379,10 @@ def main() -> None:
     conn = _gold_conn()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                "SELECT set_config('app.tenant_id', %s, true), set_config('app.workspace_id', %s, true)",
+                (tenant or "", workspace),
+            )
             total = 0
             for dataset, payload in DATASETS.items():
                 total += _seed_dataset(cur, dataset, payload, tenant, workspace)
