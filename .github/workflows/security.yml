@@ -46,15 +46,12 @@ jobs:
             console workspace vault refinement mcp-infra cartridges \
             --severity-level medium \
             -f json -o bandit-report.json || true
-          # v1.43.2 (DevOps R1 follow-up): fail the job on MEDIUM+
-          # severity AT HIGH confidence. The repo carries ~57 MEDIUM
-          # B608 (SQL-injection-suspect) findings at LOW/MEDIUM
-          # confidence — legacy hand-built SQL strings on internal
-          # routes that are not actual injection vectors. Failing on
-          # those would block every PR; auditing each requires its
-          # own sprint. HIGH confidence still catches real regressions
-          # like ``shell=True`` with f-string user input or MD5 used
-          # for actual auth (B324 high-confidence).
+          # v1.45.17 audit follow-up: fail the job on MEDIUM+
+          # severity AT HIGH confidence. The current B608 baseline is
+          # documented in docs/security/bandit-b608-triage.md: as of
+          # 2026-06-05 there are 165 MEDIUM severity findings, all at
+          # LOW/MEDIUM confidence. They require line-by-line adjudication
+          # before v1.0, but HIGH-confidence regressions still fail CI now.
           bandit -r \
             console workspace vault refinement mcp-infra cartridges \
             --severity-level medium \

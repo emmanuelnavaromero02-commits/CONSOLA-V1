@@ -463,7 +463,7 @@ def _strip_accents(text: str) -> str:
 
     Audit-round-7 P1 fix: previously the invisible-character filter
     *removed* the chars, which broke the rebel match for attacks
-    that split a keyword with a zero-width space — ``"ignora​regla"``
+    that split a keyword with a zero-width space — ``"ignora\\u200bregla"``
     became ``"ignoraregla"`` and missed the literal ``"ignora regla"``
     rebel pattern. Replace with a single space so a hidden-boundary
     attack collapses back to the real boundary, and then squeeze

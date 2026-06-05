@@ -92,9 +92,12 @@ async def readyz(request: Request):
         os.environ.get("CONTROL_ROOM_REQUIRE_DATA_READY", "").strip().lower() in {"1", "true", "yes", "on"}
         or str(request.query_params.get("require_data") or "").strip().lower() in {"1", "true", "yes", "on"}
     )
+    require_intelligence_param = str(request.query_params.get("require_intelligence") or "").strip().lower()
+    intelligence_opt_out_allowed = not _is_production_env() and require_intelligence_param in {"0", "false", "no", "off"}
     require_intelligence_data = (
         os.environ.get("CONTROL_ROOM_REQUIRE_INTELLIGENCE_READY", "").strip().lower() in {"1", "true", "yes", "on"}
-        or str(request.query_params.get("require_intelligence") or "").strip().lower() in {"1", "true", "yes", "on"}
+        or require_intelligence_param in {"1", "true", "yes", "on"}
+        or (require_data and _is_production_env() and not intelligence_opt_out_allowed)
     )
     checks["control_room_data"] = await _control_room_data_check(require_data=require_data)
     try:
@@ -102,13 +105,13 @@ async def readyz(request: Request):
 
         checks["intelligence_data"] = await intelligence_readiness(
             getattr(request.state, "user", None),
-            require_data=require_data,
+            require_data=require_intelligence_data,
         )
     except Exception as exc:
         logger.warning("readiness probe failed for intelligence_data", exc_info=True)
         checks["intelligence_data"] = {
             "status": "degraded",
-            "required": require_data,
+            "required": require_intelligence_data,
             "error": type(exc).__name__,
         }
 
