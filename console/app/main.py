@@ -5332,6 +5332,9 @@ def _parse_dag_graph(source: str) -> dict:
                 tid = var_to_id.get(fname) or fn_to_id.get(fname)
                 if tid:
                     for arg in node.args:
+                        for src in resolve(arg):
+                            if src and src != tid:
+                                edges.append([src, tid])
                         if isinstance(arg, ast.Name):
                             src = output_vars.get(arg.id)
                             if src and src != tid:
@@ -5367,6 +5370,9 @@ def _parse_dag_graph(source: str) -> dict:
         if not tid:
             continue
         for arg in node.args:
+            for src in resolve(arg):
+                if src and src != tid:
+                    edges.append([src, tid])
             if isinstance(arg, ast.Name):
                 src = output_vars.get(arg.id)
                 if src and src != tid:

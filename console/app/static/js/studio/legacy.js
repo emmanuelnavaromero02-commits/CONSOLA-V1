@@ -4301,6 +4301,12 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             if (fromTask && fromTask !== callerId)
               edges.push([fromTask, callerId]);
           });
+          const nestedRe = /\b(\w+)\s*\(/g;
+          let nested;
+          while ((nested = nestedRe.exec(argsStr)) !== null) {
+            const fromTask = varToId[nested[1]];
+            if (fromTask && fromTask !== callerId) edges.push([fromTask, callerId]);
+          }
         }
       });
 
@@ -4391,17 +4397,35 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const code = document.getElementById('dag-code-textarea')?.value || '';
       panel.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:11px;text-align:center">Analizando…</div>';
       let tasks = [], edges = [];
+      let parseWarning = '';
       try {
         const r = await fetch('/api/dags/parse', {
           method: 'POST', headers: jsonHeaders(),
           body: JSON.stringify({ source: code }),
         });
         const d = await r.json();
-        if (d.error) { panel.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Syntax error: ${esc(d.error)}</div>`; return; }
-        tasks = d.tasks || [];
-        edges = d.edges || [];
+        if (d.error) {
+          const fallback = _parseDagGraph(code);
+          if (!fallback.tasks?.length) {
+            panel.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Syntax error: ${esc(d.error)}</div>`;
+            return;
+          }
+          tasks = fallback.tasks || [];
+          edges = fallback.edges || [];
+          parseWarning = `Parser Python no disponible: ${d.error}. Mostrando grafo aproximado.`;
+        } else {
+          tasks = d.tasks || [];
+          edges = d.edges || [];
+        }
       } catch(e) {
-        panel.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Error: ${esc(e.message)}</div>`; return;
+        const fallback = _parseDagGraph(code);
+        if (!fallback.tasks?.length) {
+          panel.innerHTML = `<div style="padding:16px;color:var(--red);font-size:11px">Error: ${esc(e.message)}</div>`;
+          return;
+        }
+        tasks = fallback.tasks || [];
+        edges = fallback.edges || [];
+        parseWarning = `Parser remoto no disponible: ${e.message}. Mostrando grafo aproximado.`;
       }
 
       if (!tasks.length) {
@@ -4480,7 +4504,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         </g>`;
       });
 
-      panel.innerHTML = `<svg width="${svgW}" height="${svgH}" style="display:block;min-width:${svgW}px">
+      panel.innerHTML = `${parseWarning ? `<div style="padding:8px 12px;color:var(--amber);font-size:10px;border-bottom:1px solid var(--border)">${esc(parseWarning)}</div>` : ''}<svg width="${svgW}" height="${svgH}" style="display:block;min-width:${svgW}px">
         <defs>
           <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
             <path d="M0,0 L7,3.5 L0,7 z" fill="#555"/>
