@@ -118,6 +118,7 @@ jobs:
           POSTGRES_PASSWORD: dummy_postgres_password_for_ci_only
           MINIO_SECRET_KEY: dummy_minio_secret_key_for_ci_only
           INTERNAL_API_KEY: dummy_internal_api_key_for_ci_only_minimum_64_chars_xxxxxxxxxxxx
+          SECURITY_CONTEXT_SIGNING_KEY: dummy_security_context_signing_key_for_ci_only_distinct_64_chars_xx
           JWT_SECRET_KEY: dummy_jwt_secret_key_for_ci_only_minimum_64_chars_xxxxxxxxxxxxxx
           SUPERSET_SECRET_KEY: dummy_superset_secret_key_for_ci_only
           SUPERSET_ADMIN_USER: ci_admin
