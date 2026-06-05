@@ -217,6 +217,19 @@ def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
     assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true" in release_stack
 
 
+def test_scheduled_airflow_dags_honor_release_pause_flag():
+    scheduled_dags = (
+        REPO / "airflow/dags/agent_runner.py",
+        REPO / "airflow/dags/entity_scheduler.py",
+        REPO / "airflow/dags/replicon_ses_inbox_import.py",
+    )
+
+    for path in scheduled_dags:
+        src = path.read_text(encoding="utf-8")
+        assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION" in src, path
+        assert "is_paused_upon_creation=_pause_scheduled_dag_on_creation()" in src, path
+
+
 def test_start_script_honors_cartridge_overlay_flag():
     src = AWS_START.read_text(encoding="utf-8")
     assert "COMPOSE_FILES=(-f docker-compose.aws.yml)" in src

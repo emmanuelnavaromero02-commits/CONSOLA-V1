@@ -56,6 +56,11 @@ def _internal_key(env_name: str) -> str:
     raise RuntimeError(f"{env_name} missing; legacy INTERNAL_API_KEY fallback is disabled in production")
 
 
+def _pause_scheduled_dag_on_creation() -> bool:
+    value = os.environ.get("AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Shared token so this DAG can call /invoke/scheduled without a user cookie.
 # Set in the App EC2's .env as AGENT_RUNNER_TOKEN, propagated to mode_airflow
 # and mode_console via docker-compose env.
@@ -87,7 +92,7 @@ dag = DAG(
     tags=["platform", "agents", "scheduled"],
     catchup=False,
     max_active_runs=1,
-    is_paused_upon_creation=False,
+    is_paused_upon_creation=_pause_scheduled_dag_on_creation(),
 )
 
 

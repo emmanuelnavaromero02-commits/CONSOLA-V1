@@ -57,6 +57,11 @@ default_args = {
 }
 
 
+def _pause_scheduled_dag_on_creation() -> bool:
+    value = os.environ.get("AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 dag = DAG(
     dag_id="entity_scheduler",
     default_args=default_args,
@@ -66,6 +71,7 @@ dag = DAG(
     tags=["platform", "scheduler"],
     catchup=False,
     max_active_runs=1,
+    is_paused_upon_creation=_pause_scheduled_dag_on_creation(),
 )
 
 
