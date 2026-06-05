@@ -101,6 +101,12 @@ default_args = {
     "retry_delay": timedelta(minutes=2),
 }
 
+
+def _pause_scheduled_dag_on_creation() -> bool:
+    value = os.environ.get("AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 dag = DAG(
     dag_id="replicon_ses_inbox_import",
     default_args=default_args,
@@ -110,6 +116,7 @@ dag = DAG(
     tags=["replicon", "ses", "ingest", "inbound"],
     catchup=False,
     max_active_runs=1,
+    is_paused_upon_creation=_pause_scheduled_dag_on_creation(),
 )
 
 

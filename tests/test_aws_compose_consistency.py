@@ -222,6 +222,7 @@ def test_scheduled_airflow_dags_honor_release_pause_flag():
         REPO / "airflow/dags/agent_runner.py",
         REPO / "airflow/dags/entity_scheduler.py",
         REPO / "airflow/dags/replicon_ses_inbox_import.py",
+        REPO / "cartridges/replicon/dags/replicon_ses_inbox_import.py",
     )
 
     for path in scheduled_dags:
