@@ -40,8 +40,13 @@ DATASETS_DIR = Path("/app/datasets")
 engine = DuckDBEngine()
 store  = DatasetStore(DATASETS_DIR)
 DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-_SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
+_SECURITY_CONTEXT_SIGNATURE_FIELD = "_signature"
+_SECURITY_CONTEXT_SIGNED_AT_FIELD = "_signed_at"
+_SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD = "_signature_version"
 _SECURITY_CONTEXT_SIGNATURE_VERSION = "hmac-sha256-v1"
+_SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS = 300
+_SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
+_SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 
 
 def _normalize_postgres_dsn(raw: str) -> str:
@@ -53,11 +58,20 @@ def _postgres_dsn() -> str:
 
 
 def _security_context_signing_key() -> str:
-    return (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or "").strip()
+    key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
+    if len(key) < _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN:
+        raise ValueError("SECURITY_CONTEXT_SIGNING_KEY is required")
+    for env_name, value in os.environ.items():
+        if not (env_name == "INTERNAL_API_KEY" or env_name.startswith("INTERNAL_API_KEY_")):
+            continue
+        transport_key = (value or "").strip()
+        if transport_key and hmac.compare_digest(key, transport_key):
+            raise ValueError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {env_name}")
+    return key
 
 
 def _canonical_security_context(ctx: dict) -> bytes:
-    payload = {key: value for key, value in ctx.items() if key not in _SECURITY_CONTEXT_SIGNATURE_FIELDS}
+    payload = {key: value for key, value in ctx.items() if key != _SECURITY_CONTEXT_SIGNATURE_FIELD}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
@@ -66,22 +80,35 @@ def _sign_security_context(ctx: dict) -> dict:
     signed["_signed_at"] = int(time.time())
     signed["_signature_version"] = _SECURITY_CONTEXT_SIGNATURE_VERSION
     key = _security_context_signing_key()
-    if key:
-        signed["_signature"] = hmac.new(
-            key.encode("utf-8"),
-            _canonical_security_context(signed),
-            hashlib.sha256,
-        ).hexdigest()
+    signed["_signature"] = hmac.new(
+        key.encode("utf-8"),
+        _canonical_security_context(signed),
+        hashlib.sha256,
+    ).hexdigest()
     return signed
 
 
 def _security_context_signature_valid(ctx: dict) -> bool:
     if not ctx.get("trusted"):
         return True
-    key = _security_context_signing_key()
-    signature = str(ctx.get("_signature") or "")
-    if not key or not signature:
-        return not _is_production()
+    try:
+        key = _security_context_signing_key()
+    except ValueError:
+        return False
+    signature = str(ctx.get(_SECURITY_CONTEXT_SIGNATURE_FIELD) or "")
+    if not signature:
+        return False
+    if ctx.get(_SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD) != _SECURITY_CONTEXT_SIGNATURE_VERSION:
+        return False
+    try:
+        signed_at = int(ctx.get(_SECURITY_CONTEXT_SIGNED_AT_FIELD))
+    except (TypeError, ValueError):
+        return False
+    now = int(time.time())
+    if signed_at > now + _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS:
+        return False
+    if now - signed_at > _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS:
+        return False
     expected = hmac.new(key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
 
@@ -251,6 +278,8 @@ def _security_context(body: dict) -> dict:
     if not isinstance(sec, dict):
         return {}
     if not _security_context_signature_valid(sec):
+        if sec.get("trusted"):
+            raise HTTPException(403, "Invalid signed security_context")
         return {}
     if sec.get("trusted"):
         service = body.get("_verified_internal_service")

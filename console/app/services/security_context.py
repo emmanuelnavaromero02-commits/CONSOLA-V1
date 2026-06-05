@@ -15,26 +15,35 @@ _SIGNATURE_FIELD = "_signature"
 _SIGNED_AT_FIELD = "_signed_at"
 _SIGNATURE_VERSION_FIELD = "_signature_version"
 _SIGNATURE_VERSION = "hmac-sha256-v1"
+_MIN_SIGNING_KEY_LEN = 32
 
 
 def _runtime_env() -> str:
     return (os.environ.get("APP_ENV") or os.environ.get("ENV") or "production").strip().lower()
 
 
+def _transport_keys() -> dict[str, str]:
+    return {
+        name: value.strip()
+        for name, value in os.environ.items()
+        if (name == "INTERNAL_API_KEY" or name.startswith("INTERNAL_API_KEY_"))
+        and isinstance(value, str)
+        and value.strip()
+    }
+
+
 def _signing_key() -> str:
-    key = os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or ""
-    key = key.strip()
-    if _runtime_env() in {"production", "prod", "staging"} and len(key) < 32:
-        raise RuntimeError("SECURITY_CONTEXT_SIGNING_KEY or INTERNAL_API_KEY is required to sign security_context")
+    key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
+    if len(key) < _MIN_SIGNING_KEY_LEN:
+        raise RuntimeError("SECURITY_CONTEXT_SIGNING_KEY is required to sign security_context")
+    for env_name, transport_key in _transport_keys().items():
+        if hmac.compare_digest(key, transport_key):
+            raise RuntimeError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {env_name}")
     return key
 
 
 def _canonical_context(ctx: dict[str, Any]) -> bytes:
-    payload = {
-        key: value
-        for key, value in ctx.items()
-        if key not in {_SIGNATURE_FIELD, _SIGNED_AT_FIELD, _SIGNATURE_VERSION_FIELD}
-    }
+    payload = {key: value for key, value in ctx.items() if key != _SIGNATURE_FIELD}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 

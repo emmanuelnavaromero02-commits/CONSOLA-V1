@@ -30,6 +30,7 @@ _BASE_SYS_PATH = list(sys.path)
 # importing console/app/services/auth.py + vault/app/main.py at
 # collection time doesn't trip the production pair-key check.
 os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test_security_context_signing_key_with_more_than_32_chars")
 
 
 PRIORITY_CARTRIDGES = ("sap_successfactors", "sap_hcm", "sap_s4hana")

@@ -14,6 +14,7 @@ if str(CONSOLE_ROOT) not in sys.path:
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("INTERNAL_API_KEY", "test_internal_api_key_with_more_than_32_chars")
+os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "test_security_context_signing_key_with_more_than_32_chars")
 
 
 def _looks_like_auth_stub(module: object) -> bool:

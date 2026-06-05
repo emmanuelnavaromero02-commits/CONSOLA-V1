@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import sys
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -28,10 +29,10 @@ def _security_context_header() -> str:
         "tenant_id": "11111111-1111-1111-1111-111111111111",
         "workspace_id": "22222222-2222-2222-2222-222222222222",
         "allowed_cartridges": ["replicon"],
-        "_signed_at": 1,
+        "_signed_at": int(time.time()),
         "_signature_version": "hmac-sha256-v1",
     }
-    payload = {key: value for key, value in ctx.items() if key not in {"_signature", "_signed_at", "_signature_version"}}
+    payload = {key: value for key, value in ctx.items() if key != "_signature"}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ctx["_signature"] = hmac.new(("s" * 64).encode("utf-8"), raw, hashlib.sha256).hexdigest()
     return json.dumps(ctx)

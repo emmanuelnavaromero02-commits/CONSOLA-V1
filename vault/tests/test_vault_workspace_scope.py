@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -29,8 +30,8 @@ SIGNING_KEY = "s" * 64
 
 
 def _signed(ctx: dict) -> str:
-    signed = {**ctx, "_signed_at": 1, "_signature_version": "hmac-sha256-v1"}
-    payload = {key: value for key, value in signed.items() if key not in {"_signature", "_signed_at", "_signature_version"}}
+    signed = {**ctx, "_signed_at": int(time.time()), "_signature_version": "hmac-sha256-v1"}
+    payload = {key: value for key, value in signed.items() if key != "_signature"}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     signed["_signature"] = hmac.new(SIGNING_KEY.encode("utf-8"), raw, hashlib.sha256).hexdigest()
     return json.dumps(signed)
@@ -75,7 +76,50 @@ def test_vault_rejects_tampered_signed_context(monkeypatch):
     payload = json.loads(header)
     payload["allowed_cartridges"] = ["*"]
 
-    assert vault_main._security_context_from_header(json.dumps(payload)) == {}
+    with pytest.raises(HTTPException) as exc:
+        vault_main._security_context_from_header(json.dumps(payload))
+    assert exc.value.status_code == 403
+
+
+def test_vault_rejects_expired_signed_context(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    signed = {
+        "trusted": True,
+        "source": "console",
+        "role": "admin",
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": "22222222-2222-2222-2222-222222222222",
+        "allowed_cartridges": ["hubspot"],
+        "_signed_at": int(time.time()) - 301,
+        "_signature_version": "hmac-sha256-v1",
+    }
+    raw = json.dumps(signed, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    signed["_signature"] = hmac.new(SIGNING_KEY.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+
+    with pytest.raises(HTTPException) as exc:
+        vault_main._security_context_from_header(json.dumps(signed))
+    assert exc.value.status_code == 403
+
+
+def test_vault_rejects_transport_key_as_signing_key_even_in_test(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("INTERNAL_API_KEY", SIGNING_KEY)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", SIGNING_KEY)
+    header = _signed(
+        {
+            "trusted": True,
+            "source": "console",
+            "role": "admin",
+            "tenant_id": "11111111-1111-1111-1111-111111111111",
+            "workspace_id": "22222222-2222-2222-2222-222222222222",
+            "allowed_cartridges": ["hubspot"],
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        vault_main._security_context_from_header(header)
+    assert exc.value.status_code == 403
 
 
 def test_vault_blocks_cartridge_outside_signed_scope(monkeypatch):

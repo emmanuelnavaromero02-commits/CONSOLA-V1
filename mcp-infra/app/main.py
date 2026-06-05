@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from typing import Any
 
@@ -62,7 +63,13 @@ INTERNAL_API_KEY = get_internal_api_key()  # legacy fallback, still accepted
 _RAG_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DAG_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,250}$")
 _SHARED_PLATFORM_DAGS = {"file_ingest", "entity_scheduler", "dataset_refresh_chain", "agent_runner"}
-_SECURITY_CONTEXT_SIGNATURE_FIELDS = {"_signature", "_signed_at", "_signature_version"}
+_SECURITY_CONTEXT_SIGNATURE_FIELD = "_signature"
+_SECURITY_CONTEXT_SIGNED_AT_FIELD = "_signed_at"
+_SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD = "_signature_version"
+_SECURITY_CONTEXT_SIGNATURE_VERSION = "hmac-sha256-v1"
+_SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS = 300
+_SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS = 30
+_SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN = 32
 
 
 def _is_production() -> bool:
@@ -70,21 +77,44 @@ def _is_production() -> bool:
 
 
 def _security_context_signing_key() -> str:
-    return (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or os.environ.get("INTERNAL_API_KEY") or "").strip()
+    key = (os.environ.get("SECURITY_CONTEXT_SIGNING_KEY") or "").strip()
+    if len(key) < _SECURITY_CONTEXT_MIN_SIGNING_KEY_LEN:
+        raise ValueError("SECURITY_CONTEXT_SIGNING_KEY is required")
+    for env_name, value in os.environ.items():
+        if not (env_name == "INTERNAL_API_KEY" or env_name.startswith("INTERNAL_API_KEY_")):
+            continue
+        transport_key = (value or "").strip()
+        if transport_key and hmac.compare_digest(key, transport_key):
+            raise ValueError(f"SECURITY_CONTEXT_SIGNING_KEY must be distinct from {env_name}")
+    return key
 
 
 def _canonical_security_context(ctx: dict[str, Any]) -> bytes:
-    payload = {key: value for key, value in ctx.items() if key not in _SECURITY_CONTEXT_SIGNATURE_FIELDS}
+    payload = {key: value for key, value in ctx.items() if key != _SECURITY_CONTEXT_SIGNATURE_FIELD}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def _security_context_signature_valid(ctx: dict[str, Any]) -> bool:
     if not ctx.get("trusted"):
         return True
-    key = _security_context_signing_key()
-    signature = str(ctx.get("_signature") or "")
-    if not key or not signature:
-        return not _is_production()
+    try:
+        key = _security_context_signing_key()
+    except ValueError:
+        return False
+    signature = str(ctx.get(_SECURITY_CONTEXT_SIGNATURE_FIELD) or "")
+    if not signature:
+        return False
+    if ctx.get(_SECURITY_CONTEXT_SIGNATURE_VERSION_FIELD) != _SECURITY_CONTEXT_SIGNATURE_VERSION:
+        return False
+    try:
+        signed_at = int(ctx.get(_SECURITY_CONTEXT_SIGNED_AT_FIELD))
+    except (TypeError, ValueError):
+        return False
+    now = int(time.time())
+    if signed_at > now + _SECURITY_CONTEXT_SIGNATURE_FUTURE_SKEW_SECONDS:
+        return False
+    if now - signed_at > _SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS:
+        return False
     expected = hmac.new(key.encode("utf-8"), _canonical_security_context(ctx), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
 
@@ -344,6 +374,8 @@ def _ctx(req: InvokeRequest, internal_service: str | None = None) -> dict[str, A
     if not isinstance(ctx, dict):
         return {}
     if not _security_context_signature_valid(ctx):
+        if ctx.get("trusted"):
+            raise HTTPException(403, detail="Invalid signed security_context")
         return {}
     if ctx.get("trusted") and internal_service:
         allowed_sources = _SECURITY_SOURCE_BY_SERVICE.get(internal_service, {internal_service})

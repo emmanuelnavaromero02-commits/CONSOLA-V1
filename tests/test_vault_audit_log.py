@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import sys
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -53,8 +54,8 @@ def _load_vault_main(monkeypatch):
 
 
 def _signed(ctx: dict) -> str:
-    signed = {**ctx, "_signed_at": 1, "_signature_version": "hmac-sha256-v1"}
-    payload = {key: value for key, value in signed.items() if key not in {"_signature", "_signed_at", "_signature_version"}}
+    signed = {**ctx, "_signed_at": int(time.time()), "_signature_version": "hmac-sha256-v1"}
+    payload = {key: value for key, value in signed.items() if key != "_signature"}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     signed["_signature"] = hmac.new(SIGNING_KEY.encode("utf-8"), raw, hashlib.sha256).hexdigest()
     return json.dumps(signed)
