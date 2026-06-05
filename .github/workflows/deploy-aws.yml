@@ -125,6 +125,16 @@ jobs:
                   f"else echo {quoted} | sudo tee -a infra/terraform/deploy/.env >/dev/null; fi"
               )
 
+          def retry_curl(url: str) -> str:
+              quoted = shlex.quote(url)
+              return (
+                  "for i in $(seq 1 60); do "
+                  f"curl -fsS {quoted} && break; "
+                  "if [ \"$i\" -eq 60 ]; then exit 1; fi; "
+                  "sleep 5; "
+                  "done"
+              )
+
           commands = [
               "set -eu",
               "cd /opt/modecissions",
@@ -143,11 +153,11 @@ jobs:
               update_cmd += " " + shlex.quote(service)
           commands.extend([
               update_cmd,
-              "curl -fsS http://127.0.0.1:8000/healthz",
-              "curl -fsS http://127.0.0.1:8000/readyz",
+              retry_curl("http://127.0.0.1:8000/healthz"),
+              retry_curl("http://127.0.0.1:8000/readyz"),
           ])
           if require_data:
-              commands.append("curl -fsS 'http://127.0.0.1:8000/readyz?require_data=1'")
+              commands.append(retry_curl("http://127.0.0.1:8000/readyz?require_data=1"))
           print(json.dumps({"commands": commands}))
           PY
 
@@ -194,8 +204,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS "${PUBLIC_CONSOLE_URL}/healthz"
-          curl -fsS "${PUBLIC_CONSOLE_URL}/readyz"
+          retry_curl() {
+            local url="$1"
+            for _ in $(seq 1 60); do
+              curl -fsS "$url" && return 0
+              sleep 5
+            done
+            curl -fsS "$url"
+          }
+          retry_curl "${PUBLIC_CONSOLE_URL}/healthz"
+          retry_curl "${PUBLIC_CONSOLE_URL}/readyz"
           if [[ "${{ inputs.require_data }}" == "true" ]]; then
-            curl -fsS "${PUBLIC_CONSOLE_URL}/readyz?require_data=1"
+            retry_curl "${PUBLIC_CONSOLE_URL}/readyz?require_data=1"
           fi
