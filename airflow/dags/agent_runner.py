@@ -57,7 +57,11 @@ def _internal_key(env_name: str) -> str:
 
 
 def _pause_scheduled_dag_on_creation() -> bool:
-    value = os.environ.get("AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION", "")
+    value = (
+        os.environ.get("AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION")
+        or os.environ.get("AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION")
+        or ""
+    )
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
