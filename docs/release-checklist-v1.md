@@ -33,6 +33,12 @@ v1.0 approval.
 | P2-21 AWS/HTTPS staging | BLOCKED | `docs/release-evidence/aws-staging-checklist.md` |
 | P2-22 threat model | DONE | `docs/security/copilot-mcp-threat-model.md` |
 
+## Beta Debt To Close Before v1.0
+
+| Item | Status | Evidence |
+|---|---|---|
+| P1-12 frontend component coverage | PARTIAL / DEUDA DE BETA | `docs/release-evidence/main-9a39a3026cd59b7030efc3e3d4c815f4362044e6.md#p1-12-frontend-coverage-status`; follow-up `FRONTEND-COV-001` |
+
 ## Final Tag Procedure
 
 1. Rerun P2-19, P2-20, and P2-21 with real credentials/staging until all are
