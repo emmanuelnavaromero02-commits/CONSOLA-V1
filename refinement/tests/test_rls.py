@@ -4,6 +4,7 @@ import sys
 
 sys.modules['duckdb'] = MagicMock()
 sys.modules['psycopg2'] = MagicMock()
+sys.modules['psycopg2.extras'] = MagicMock()
 
 import os
 os.environ['MINIO_SECRET_KEY'] = 'test'
@@ -11,6 +12,13 @@ os.environ['MINIO_ACCESS_KEY'] = 'test'
 os.environ['MINIO_ENDPOINT'] = 'test'
 
 from refinement.app.duckdb_engine import DuckDBEngine, _normalize_postgres_dsn, validate_safe_identifier
+
+def _preview_execute_side_effect(describe_cursor, execute_cursor):
+    """preview_sql touches pggold via DETACH/ATTACH before the final SELECT."""
+    detach_cursor = MagicMock()
+    attach_cursor = MagicMock()
+    return [describe_cursor, detach_cursor, attach_cursor, execute_cursor]
+
 
 @pytest.fixture
 def engine():
@@ -273,8 +281,7 @@ def test_preview_sql_applies_rls_even_when_caller_params_provided(engine):
     execute_cursor.description = [('col', 'VARCHAR')]
     execute_cursor.fetchall.return_value = [('val',)]
 
-    # First execute = DESCRIBE (inside get_rls_filters), second = SELECT
-    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+    mock_conn.execute.side_effect = _preview_execute_side_effect(describe_cursor, execute_cursor)
 
     sql = "SELECT col FROM pggold.gold_sales WHERE col = ?"
     e.preview_sql(
@@ -306,8 +313,7 @@ def test_preview_sql_rls_precedes_caller_params_positionally(engine):
     execute_cursor.description = [('revenue', 'DOUBLE')]
     execute_cursor.fetchall.return_value = [(99.0,)]
 
-    # first call = DESCRIBE, second call = actual SELECT
-    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+    mock_conn.execute.side_effect = _preview_execute_side_effect(describe_cursor, execute_cursor)
 
     sql = "SELECT revenue FROM pggold.gold_sales WHERE year = ? AND month = ?"
     e.preview_sql(sql, params=["2025", "3"], user_context={"workspace_id": "ws-42"})
@@ -352,7 +358,7 @@ def test_query_dataset_does_not_double_apply_rls(engine):
     execute_cursor.description = [('col', 'VARCHAR')]
     execute_cursor.fetchall.return_value = []
 
-    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+    mock_conn.execute.side_effect = _preview_execute_side_effect(describe_cursor, execute_cursor)
 
     ds = {"name": "gold_sales", "sql_def": "SELECT col FROM pggold.gold_sales"}
     e.query_dataset(
@@ -381,7 +387,7 @@ def test_preview_sql_no_user_context_with_caller_params_defaults_to_deny(engine)
     execute_cursor.description = [('col', 'VARCHAR')]
     execute_cursor.fetchall.return_value = []
 
-    mock_conn.execute.side_effect = [describe_cursor, execute_cursor]
+    mock_conn.execute.side_effect = _preview_execute_side_effect(describe_cursor, execute_cursor)
 
     sql = "SELECT col FROM pggold.gold_unknown WHERE col = ?"
     e.preview_sql(sql, params=["value"], user_context=None)

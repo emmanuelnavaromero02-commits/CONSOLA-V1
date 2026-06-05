@@ -18,6 +18,7 @@ import pytest
 
 sys.modules.setdefault("duckdb", MagicMock())
 sys.modules.setdefault("psycopg2", MagicMock())
+sys.modules.setdefault("psycopg2.extras", MagicMock())
 
 import os
 os.environ.setdefault("MINIO_SECRET_KEY", "test")
@@ -38,14 +39,25 @@ def engine():
     select_cursor = MagicMock()
     select_cursor.description = [("col", "VARCHAR")]
     select_cursor.fetchall.return_value = []
-    mock_conn.execute.side_effect = [describe_cursor, select_cursor]
+    detach_cursor = MagicMock()
+    attach_cursor = MagicMock()
+    mock_conn.execute.side_effect = [
+        describe_cursor,
+        detach_cursor,
+        attach_cursor,
+        select_cursor,
+    ]
     e._conn = MagicMock(return_value=mock_conn)
     yield e, mock_conn
 
 
 def _final_limit_from(mock_conn):
     """Return the LIMIT N value of the SQL that hit DuckDB.execute()."""
-    final_sql = mock_conn.execute.call_args_list[-1][0][0]
+    final_sql = next(
+        call[0][0]
+        for call in reversed(mock_conn.execute.call_args_list)
+        if isinstance(call[0][0], str) and re.search(r"\bLIMIT\s+\d+\b", call[0][0])
+    )
     m = re.search(r"LIMIT\s+(\d+)", final_sql)
     assert m, f"no LIMIT clause in final SQL: {final_sql!r}"
     return int(m.group(1))
