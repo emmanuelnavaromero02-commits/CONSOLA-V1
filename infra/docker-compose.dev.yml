@@ -4,3 +4,14 @@ services:
       # Local/E2E-only bypass. The base compose intentionally omits this so
       # prod-like gates keep /auth/login brute-force protection enabled.
       RATE_LIMIT_ENABLED: "false"
+
+  airflow:
+    environment:
+      # Release/E2E gates import and inspect DAGs, but must not let scheduled
+      # external-ingest DAGs run with dummy local credentials. Operators can
+      # still override this to false for an interactive dev scheduler.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "${AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION:-false}"
+
+  airflow-scheduler:
+    environment:
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "${AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION:-false}"

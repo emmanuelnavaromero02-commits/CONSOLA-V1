@@ -199,6 +199,24 @@ def test_release_workflow_validates_before_publishing_images():
     assert "npm --prefix console-next run export:copy" in src
 
 
+def test_release_gate_pauses_scheduled_airflow_dags_in_ci():
+    """The full-stack release gate uses dummy local credentials for external
+    connectors. It must import DAGs and allow manual tests, but it must not let
+    Airflow auto-schedule external-ingest DAGs such as Replicon SES while the
+    release gate is running.
+    """
+    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    dev_override = (REPO / "infra/docker-compose.dev.yml").read_text(encoding="utf-8")
+
+    assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true" in workflow
+    assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION" in dev_override
+    assert "AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION" in dev_override
+    release_stack = workflow.split("Bootstrap local release stack", 1)[1].split(
+        "Build and start full stack", 1
+    )[0]
+    assert "AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true" in release_stack
+
+
 def test_start_script_honors_cartridge_overlay_flag():
     src = AWS_START.read_text(encoding="utf-8")
     assert "COMPOSE_FILES=(-f docker-compose.aws.yml)" in src

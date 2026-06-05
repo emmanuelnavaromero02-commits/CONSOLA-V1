@@ -130,8 +130,10 @@ jobs:
           bash infra/bootstrap-keys.sh infra/.env
           sed -i 's/^APP_ENV=.*/APP_ENV=development/' infra/.env || true
           sed -i 's/^ALLOW_RCE_TOOLS=.*/ALLOW_RCE_TOOLS=true/' infra/.env || true
+          sed -i 's/^AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=.*/AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true/' infra/.env || true
           grep -q '^APP_ENV=' infra/.env || echo 'APP_ENV=development' >> infra/.env
           grep -q '^ALLOW_RCE_TOOLS=' infra/.env || echo 'ALLOW_RCE_TOOLS=true' >> infra/.env
+          grep -q '^AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=' infra/.env || echo 'AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION=true' >> infra/.env
           mkdir -p data/lakehouse
           mkdir -p airflow/logs/scheduler airflow/logs/dag_processor airflow/logs/webserver
           chmod -R 777 airflow/logs
