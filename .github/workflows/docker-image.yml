@@ -59,6 +59,8 @@ jobs:
       # cartridge passed CI silently. Install every live cartridge's deps then run.
       - name: Install cartridge requirements for root tests/
         run: |
+          pip install -r tests/requirements.txt
+          pip install -r mcp-infra/requirements.txt
           for cart in cartridges/*/requirements.txt; do
             pip install -r "$cart"
           done
