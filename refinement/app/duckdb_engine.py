@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import duckdb
 import psycopg2
@@ -79,6 +80,10 @@ def _duckdb_threads_from_env(raw: str | None) -> int | None:
     if parsed < 1 or parsed > 64:
         raise ValueError("DUCKDB_THREADS must be between 1 and 64")
     return parsed
+
+
+def _libpq_quote(value: str) -> str:
+    return "'" + (value or "").replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def _strip_sql_comments(sql: str) -> str:
@@ -222,6 +227,21 @@ class DuckDBEngine:
     def _pg_gold_conn(self):
         return psycopg2.connect(_normalize_postgres_dsn(self.pg_gold_url))
 
+    def _pg_gold_dsn(self, user_context: dict | None = None) -> str:
+        dsn = _normalize_postgres_dsn(self.pg_gold_url)
+        if not dsn:
+            return ""
+        tenant, workspace = self._scope_values(user_context)
+        if not (tenant and workspace):
+            return dsn
+        options = f"-c app.tenant_id={tenant} -c app.workspace_id={workspace}"
+        if "://" in dsn:
+            parts = urlsplit(dsn)
+            query = dict(parse_qsl(parts.query, keep_blank_values=True))
+            query["options"] = options
+            return urlunsplit(parts._replace(query=urlencode(query)))
+        return f"{dsn} options={_libpq_quote(options)}"
+
     def _pg_attach(self, con: duckdb.DuckDBPyConnection) -> str:
         """Attach service Postgres (pgdb) and return alias."""
         dsn = _normalize_postgres_dsn(self.pg_url)
@@ -231,13 +251,20 @@ class DuckDBEngine:
             pass  # already attached
         return "pgdb"
 
-    def _pg_gold_attach(self, con: duckdb.DuckDBPyConnection) -> str:
+    def _pg_gold_attach(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        user_context: dict | None = None,
+    ) -> str:
         """Attach analytical Postgres (pggold) and return alias."""
-        dsn = _normalize_postgres_dsn(self.pg_gold_url)
+        dsn = self._pg_gold_dsn(user_context)
+        if not dsn:
+            return "pggold"
         try:
-            con.execute(f"ATTACH {_sql_quote(dsn)} AS pggold (TYPE postgres);")
+            con.execute("DETACH pggold;")
         except Exception:
-            pass  # already attached
+            pass
+        con.execute(f"ATTACH {_sql_quote(dsn)} AS pggold (TYPE postgres);")
         return "pggold"
 
     # ── Path helpers ──────────────────────────────────────────────────────────
@@ -839,6 +866,8 @@ class DuckDBEngine:
                 effective_sql = self._scope_storage_sql(effective_sql, sources or [], user_context)
                 effective_sql = self._inject_latest_date(effective_sql, sources or [], user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
+                if re.search(r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE):
+                    self._pg_gold_attach(con, user_context)
                 limited = f"SELECT * FROM ({effective_sql}) _q LIMIT {limit}"
 
                 # Watchdog: fires con.interrupt() if the query runs past
@@ -1121,6 +1150,16 @@ class DuckDBEngine:
         except Exception:
             return None
 
+    def _apply_gold_rls(self, table: str) -> None:
+        validate_safe_identifier(table, "table")
+        conn = self._pg_gold_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT public.omega_apply_gold_rls_for_table(%s)", (table,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def _ensure_scoped_gold_table(
         self,
         con: duckdb.DuckDBPyConnection,
@@ -1130,14 +1169,17 @@ class DuckDBEngine:
         cols = self._gold_table_columns(con, table)
         if cols is None:
             con.execute(f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0")
+            self._apply_gold_rls(table)
             return
         if "tenant_id" in cols and "workspace_id" in cols:
+            self._apply_gold_rls(table)
             return
         # Legacy unscoped gold tables cannot safely coexist with SaaS-scoped
         # writes. Recreate the table as empty with scoped columns rather than
         # silently mixing tenants in pggold.gold_<dataset>.
         con.execute(f"DROP TABLE IF EXISTS pggold.{table}")
         con.execute(f"CREATE TABLE pggold.{table} AS SELECT * FROM ({sql}) _q WHERE 1=0")
+        self._apply_gold_rls(table)
 
     def materialize(self, ds: dict, user_context: dict | None = None) -> dict:
         """
@@ -1174,41 +1216,38 @@ class DuckDBEngine:
 
             if layer == "gold":
                 # ── Gold → tabla en postgres_gold ────────────────────────────────
-                self._pg_gold_attach(con)
+                self._pg_gold_attach(con, user_context)
                 table = f"gold_{name}"
                 validate_safe_identifier(table, "table")
                 effective_sql = self._inject_latest_date(sql, sources, user_context)
                 self._validate_scoped_storage_sql(effective_sql, user_context)
                 effective_sql = self._ensure_scope_columns(con, effective_sql, user_context)
                 tenant, workspace = self._scope_values(user_context)
-                if tenant and workspace:
-                    self._ensure_scoped_gold_table(con, table, effective_sql)
-                    con.execute(
-                        f"DELETE FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
-                        [tenant, workspace],
-                    )
-                    con.execute(
-                        f"INSERT INTO pggold.{table} SELECT * FROM ({effective_sql}) _q"
-                    )
-                    row_count = con.execute(
-                        f"SELECT COUNT(*) FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
-                        [tenant, workspace],
-                    ).fetchone()[0]
-                    gold_parquet_path = self._snapshot_path("gold", cartridge, name, user_context)
-                    gold_storage_uri = self._copy_to_parquet(
-                        con,
-                        (
-                            f"SELECT * FROM pggold.{table} "
-                            f"WHERE tenant_id = {_sql_quote(tenant)} "
-                            f"AND workspace_id = {_sql_quote(workspace)}"
-                        ),
-                        gold_parquet_path,
-                    )
-                else:
-                    con.execute(f"CREATE OR REPLACE TABLE pggold.{table} AS ({effective_sql})")
-                    row_count = con.execute(f"SELECT COUNT(*) FROM pggold.{table}").fetchone()[0]
-                    gold_parquet_path = self._snapshot_path("gold", cartridge, name)
-                    gold_storage_uri = self._copy_to_parquet(con, f"SELECT * FROM pggold.{table}", gold_parquet_path)
+                if not (tenant and workspace):
+                    raise ValueError("Gold materialization requires tenant_id and workspace_id")
+                self._ensure_scoped_gold_table(con, table, effective_sql)
+                con.execute(
+                    f"DELETE FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
+                    [tenant, workspace],
+                )
+                con.execute(
+                    f"INSERT INTO pggold.{table} SELECT * FROM ({effective_sql}) _q"
+                )
+                self._apply_gold_rls(table)
+                row_count = con.execute(
+                    f"SELECT COUNT(*) FROM pggold.{table} WHERE tenant_id = ? AND workspace_id = ?",
+                    [tenant, workspace],
+                ).fetchone()[0]
+                gold_parquet_path = self._snapshot_path("gold", cartridge, name, user_context)
+                gold_storage_uri = self._copy_to_parquet(
+                    con,
+                    (
+                        f"SELECT * FROM pggold.{table} "
+                        f"WHERE tenant_id = {_sql_quote(tenant)} "
+                        f"AND workspace_id = {_sql_quote(workspace)}"
+                    ),
+                    gold_parquet_path,
+                )
                 storage_uri = f"postgres_gold:{table}"
                 if gold_storage_uri:
                     storage_uri = gold_storage_uri
@@ -1231,7 +1270,7 @@ class DuckDBEngine:
                         f"DESCRIBE SELECT * FROM read_parquet('{storage_uri}') LIMIT 0"
                     ).fetchall()
                 else:
-                    self._pg_gold_attach(con)
+                    self._pg_gold_attach(con, user_context)
                     schema_rows = con.execute(
                         f"DESCRIBE SELECT * FROM pggold.gold_{name} LIMIT 0"
                     ).fetchall()
