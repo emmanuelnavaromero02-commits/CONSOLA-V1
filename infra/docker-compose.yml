@@ -45,12 +45,10 @@ services:
     volumes:
       - ./init_dev:/dev-seeds:ro
     command: >
-      bash -lc "psql -h postgres -U postgres -d modecissions
-      -v ON_ERROR_STOP=1
-      -f /dev-seeds/15_local_dev_bootstrap.sql;
-      if [ \"$$APP_ENV\" = production ] || [ \"$$APP_ENV\" = prod ]; then
-        echo '[demo-seed] APP_ENV is production — skipping Control Room demo seed';
+      bash -lc "if [ \"$$APP_ENV\" = production ] || [ \"$$APP_ENV\" = prod ]; then
+        echo '[dev-seed] APP_ENV is production — skipping all local dev seeds';
       else
+        psql -h postgres -U postgres -d modecissions -v ON_ERROR_STOP=1 -f /dev-seeds/15_local_dev_bootstrap.sql;
         psql -h postgres -U postgres -d modecissions -v ON_ERROR_STOP=1 -f /dev-seeds/16_demo_control_room_seed.sql;
       fi"
     restart: "no"

@@ -1,0 +1,4 @@
+[project]
+name = "consola-beta"
+dynamic = ["version"]
+requires-python = ">=3.12"

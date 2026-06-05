@@ -67,3 +67,18 @@ def test_compose_dev_seed_runs_the_seed_and_gates_production():
     assert re.search(r"APP_ENV.*=.*production", src), (
         "dev-seed step must skip the demo seed when APP_ENV is production"
     )
+
+
+def test_compose_local_bootstrap_seed_is_inside_non_production_branch():
+    src = COMPOSE.read_text(encoding="utf-8")
+    command_start = src.index("postgres_dev_seed:")
+    command_end = src.index("restart:", command_start)
+    command = src[command_start:command_end]
+
+    assert "15_local_dev_bootstrap.sql" in command
+    prod_gate = command.index("APP_ENV")
+    first_bootstrap_run = command.index("15_local_dev_bootstrap.sql")
+    else_branch = command.index("else")
+
+    assert else_branch < first_bootstrap_run
+    assert prod_gate < first_bootstrap_run

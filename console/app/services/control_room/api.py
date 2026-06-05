@@ -300,9 +300,10 @@ def _base_item(source: ControlRoomSource, row: dict[str, Any], item_type: str, e
     severity = _severity(row.get("severity"))
     details = _details(row.get("details"))
     detected_at = str(row.get("detected_at") or row.get("mes") or row.get("semana") or "")
+    escaped_entity = str(entity_id or label).replace("'", "''")
     technical_sql = (
         f"SELECT * FROM {source.dataset} "
-        f"WHERE {source.entity_id_field} = '{str(entity_id or label).replace("'", "''")}' "
+        f"WHERE {source.entity_id_field} = '{escaped_entity}' "
         f"LIMIT 50"
     )
     return {
