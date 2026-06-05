@@ -74,7 +74,8 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[acceptance] ensuring patched services are built"
-"${COMPOSE[@]}" up -d --build refinement hubspot console
+"${COMPOSE[@]}" build refinement hubspot console
+"${COMPOSE[@]}" up -d --no-deps refinement hubspot console
 
 echo "[acceptance] applying pending DB migrations"
 bash scripts/apply_db_migrations.sh
