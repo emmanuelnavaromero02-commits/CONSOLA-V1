@@ -78,9 +78,10 @@ npm --prefix console-next run build
 Auditorias de dependencias y seguridad:
 
 ```bash
-bandit -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
-pip-audit
-npm --prefix console-next audit --audit-level=high
+make security-scan
+.venv/bin/bandit -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
+.venv/bin/pip-audit
+npm --prefix console-next audit
 npm --prefix tests-e2e audit --audit-level=high
 ```
 

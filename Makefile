@@ -1,6 +1,7 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
 RUFF ?= $(shell if [ -x .venv/bin/ruff ]; then echo .venv/bin/ruff; else echo ruff; fi)
-PIP_AUDIT ?= $(shell if [ -x .venv/bin/pip-audit ]; then echo .venv/bin/pip-audit; else echo pip-audit; fi)
+BANDIT ?= .venv/bin/bandit
+PIP_AUDIT ?= .venv/bin/pip-audit
 COMPOSE_BASE ?= docker compose -f infra/docker-compose.yml
 COMPOSE_DEV ?= $(COMPOSE_BASE) -f infra/docker-compose.dev.yml
 COMPOSE_FULL ?= $(COMPOSE_DEV) --profile sap
@@ -13,7 +14,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -54,6 +55,8 @@ help:
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make acceptance   run heavy full-stack acceptance with fake live HubSpot"
+	@echo "  make security-scan"
+	@echo "                    run local Bandit, pip-audit, and console-next npm audit"
 	@echo "  make verify-release"
 	@echo "                    run the v1.0 release gate against a running full stack"
 	@echo "  make verify-v1-public"
@@ -206,6 +209,13 @@ e2e:
 acceptance:
 	@bash scripts/run_full_stack_acceptance.sh
 
+security-scan:
+	@test -x "$(BANDIT)" || { echo "$(BANDIT) not found. Install dev deps into .venv first."; exit 1; }
+	@test -x "$(PIP_AUDIT)" || { echo "$(PIP_AUDIT) not found. Install dev deps into .venv first."; exit 1; }
+	$(BANDIT) -r console workspace vault refinement mcp-infra cartridges --severity-level medium --confidence-level high
+	$(PIP_AUDIT)
+	npm --prefix console-next audit
+
 verify-v1-public:
 	@bash scripts/verify_v1_public.sh
 
@@ -217,10 +227,10 @@ verify-release:
 	npm --prefix console-next run typecheck
 	npm --prefix console-next run test
 	npm --prefix console-next run verify:static
-	npm --prefix console-next audit --audit-level=high
+	npm --prefix console-next audit
 	npm --prefix tests-e2e ci
 	npm --prefix tests-e2e audit --audit-level=high
-	@command -v $(PIP_AUDIT) >/dev/null 2>&1 || { echo "pip-audit not found. Install with: pip install pip-audit==2.7.3"; exit 1; }
+	$(MAKE) security-scan
 	@set -e; for req in $$(find . -name requirements.txt -not -path './.git/*' -not -path './*/vendor/*' -not -path './*/node_modules/*' | sort); do \
 		echo "=== Auditing $$req ==="; \
 		$(PIP_AUDIT) -r "$$req" --vulnerability-service=pypi --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2025-185; \
