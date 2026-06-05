@@ -15,8 +15,12 @@ These tests exercise the real functions (imported, not parsed).
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # DuckDBEngine (lazy — no connection). Provide safe defaults so the import
 # succeeds in CI without touching real infra. setdefault keeps any real values.
 os.environ.setdefault("INTERNAL_API_KEY", "x7Qp9zR2mK4vL8wN6tJ3sH1bD5fG0aYcE7uV2iO9kP4qZ")
+os.environ.setdefault("SECURITY_CONTEXT_SIGNING_KEY", "dataset_authorization_signing_key_64_chars_aaaaaaaaaaa")
 os.environ.setdefault("MINIO_SECRET_KEY", "test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
 def _purge_app_namespace() -> None:
@@ -54,7 +59,7 @@ _prefix_allowed = refinement_main._prefix_allowed
 
 
 def _scoped_sec(*, workspace="ws-1", cartridges=("replicon", "sap_hcm")):
-    return {
+    ctx = {
         "trusted": True,
         "source": "console",
         "role": "member",
@@ -63,6 +68,16 @@ def _scoped_sec(*, workspace="ws-1", cartridges=("replicon", "sap_hcm")):
         "allowed_cartridges": list(cartridges),
         "permissions": ["datasets.read"],
     }
+    ctx["_signed_at"] = int(time.time())
+    ctx["_signature_version"] = "hmac-sha256-v1"
+    payload = {key: value for key, value in ctx.items() if key != "_signature"}
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ctx["_signature"] = hmac.new(
+        os.environ["SECURITY_CONTEXT_SIGNING_KEY"].encode("utf-8"),
+        raw,
+        hashlib.sha256,
+    ).hexdigest()
+    return ctx
 
 
 def _dataset(*, cartridge="replicon", layer="silver", name="replicon_project_latest", workspace="ws-1"):
