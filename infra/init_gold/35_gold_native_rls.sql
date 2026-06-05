@@ -18,7 +18,7 @@ AS $$
         AND row_workspace = NULLIF(current_setting('app.workspace_id', true), '')
 $$;
 
-CREATE OR REPLACE FUNCTION public.omega_apply_gold_rls_for_table(table_name text)
+CREATE OR REPLACE FUNCTION public.omega_apply_gold_rls_for_table(p_table_name text)
 RETURNS void
 LANGUAGE plpgsql
 AS $$
@@ -27,35 +27,35 @@ DECLARE
     has_workspace boolean;
     policy_name text;
 BEGIN
-    IF table_name IS NULL OR table_name !~ '^gold_[A-Za-z0-9_]+$' THEN
-        RAISE EXCEPTION 'invalid gold table name: %', table_name;
+    IF p_table_name IS NULL OR p_table_name !~ '^gold_[A-Za-z0-9_]+$' THEN
+        RAISE EXCEPTION 'invalid gold table name: %', p_table_name;
     END IF;
 
-    IF to_regclass(format('public.%I', table_name)) IS NULL THEN
-        RAISE EXCEPTION 'gold table does not exist: %', table_name;
+    IF to_regclass(format('public.%I', p_table_name)) IS NULL THEN
+        RAISE EXCEPTION 'gold table does not exist: %', p_table_name;
     END IF;
 
     SELECT EXISTS (
         SELECT 1
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = omega_apply_gold_rls_for_table.table_name
-           AND column_name = 'tenant_id'
+          FROM information_schema.columns AS c
+         WHERE c.table_schema = 'public'
+           AND c.table_name = p_table_name
+           AND c.column_name = 'tenant_id'
     ) INTO has_tenant;
 
     SELECT EXISTS (
         SELECT 1
-          FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = omega_apply_gold_rls_for_table.table_name
-           AND column_name = 'workspace_id'
+          FROM information_schema.columns AS c
+         WHERE c.table_schema = 'public'
+           AND c.table_name = p_table_name
+           AND c.column_name = 'workspace_id'
     ) INTO has_workspace;
 
-    policy_name := table_name || '_tenant_workspace_rls';
+    policy_name := p_table_name || '_tenant_workspace_rls';
 
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', table_name);
-    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', table_name);
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', policy_name, table_name);
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', p_table_name);
+    EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', p_table_name);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', policy_name, p_table_name);
 
     IF has_tenant AND has_workspace THEN
         EXECUTE format(
@@ -63,7 +63,7 @@ BEGIN
                 USING (public.omega_gold_workspace_matches(tenant_id::text, workspace_id::text))
                 WITH CHECK (public.omega_gold_workspace_matches(tenant_id::text, workspace_id::text))',
             policy_name,
-            table_name
+            p_table_name
         );
     ELSE
         -- Legacy/unscoped Gold tables are default-deny until they are
@@ -71,7 +71,7 @@ BEGIN
         EXECUTE format(
             'CREATE POLICY %I ON public.%I USING (false) WITH CHECK (false)',
             policy_name,
-            table_name
+            p_table_name
         );
     END IF;
 END $$;
