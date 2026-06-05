@@ -126,7 +126,7 @@ jobs:
               )
 
           commands = [
-              "set -euo pipefail",
+              "set -eu",
               "cd /opt/modecissions",
               "test -f infra/terraform/deploy/.env",
               set_env_line("APP_ENV", "production"),
