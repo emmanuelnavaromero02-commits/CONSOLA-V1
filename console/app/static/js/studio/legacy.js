@@ -2326,8 +2326,20 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
     // ── Step 4: Analytics ──────────────────────────────────────────────────────
 
+    function analyticsSqlText(cartridge) {
+      const bucket = state.S3_BUCKET || 'lakehouse';
+      return (
+        `-- SQL base para datasets Gold (${cartridge})\n` +
+        `-- Ajusta el dataset según la entidad seleccionada en Studio.\n` +
+        `SELECT *\n` +
+        `FROM read_parquet('s3://${bucket}/gold/${cartridge}/*.parquet')\n` +
+        `LIMIT 100;`
+      );
+    }
+
     export function renderAnalytics() {
       const cartridge = _dagCartridge();
+      const initialSql = analyticsSqlText(cartridge);
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -2340,8 +2352,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
 
         <div class="card">
           <div class="card-title">DATASETS GOLD DISPONIBLES</div>
-          <button class="btn btn-sm" type="button" id="btn-analytics-sql">Ver SQL</button>
-          <pre id="analytics-sql-viewer" class="sql-viewer" style="display:none;margin-top:12px;white-space:pre-wrap;overflow:auto;max-height:260px"></pre>
+          <button class="btn btn-sm" type="button" id="btn-analytics-sql" aria-controls="analytics-sql-viewer">Ver SQL</button>
+          <pre id="analytics-sql-viewer" class="sql-viewer" style="display:block;margin-top:12px;white-space:pre-wrap;overflow:auto;max-height:260px">${esc(initialSql)}</pre>
           <div id="gold-list"><div class="loading">Cargando...</div></div>
         </div>
 
@@ -2423,12 +2435,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const viewer = document.getElementById('analytics-sql-viewer');
       if (!viewer) return;
       const cartridge = state._currentCartridge?.id || 'replicon';
-      viewer.textContent =
-        `-- SQL base para datasets Gold (${cartridge})\n` +
-        `-- Ajusta el dataset según la entidad seleccionada en Studio.\n` +
-        `SELECT *\n` +
-        `FROM read_parquet('s3://${state.S3_BUCKET}/gold/${cartridge}/*.parquet')\n` +
-        `LIMIT 100;`;
+      viewer.textContent = analyticsSqlText(cartridge);
       viewer.style.display = 'block';
     }
 
