@@ -57,7 +57,7 @@ _DATABASE_URL = os.getenv(
     "",
 )
 
-_SENSITIVE = {"token", "password", "secret", "api_key", "api_secret"}
+_SENSITIVE = {"token", "password", "secret", "api_key", "api_secret", "private_key"}
 _ADMIN_ROLES = {"admin", "owner", "super_admin"}
 _GLOBAL_SECRET_SCOPES = {"global", "platform", "studio", "system", "_system"}
 _ALLOW_UNSCOPED_VAULT_CONNECTIONS_ENV = "ALLOW_UNSCOPED_VAULT_CONNECTIONS"

@@ -88,6 +88,7 @@ def test_list_connections_masks_secret_fields(monkeypatch):
                     "token": "real-token",
                     "password": "real-password",
                     "api_key": "real-api-key",
+                    "private_key_pem": "real-private-key-pem",
                 },
             }
         ],
@@ -112,6 +113,7 @@ def test_list_connections_masks_secret_fields(monkeypatch):
                 "token": "***",
                 "password": "***",
                 "api_key": "***",
+                "private_key_pem": "***",
             }
         ]
     }

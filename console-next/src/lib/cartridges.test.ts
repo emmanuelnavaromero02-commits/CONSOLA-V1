@@ -63,7 +63,11 @@ describe("cartridge client", () => {
         connector: {
           name: "Replicon",
           api: { base_url_env: "REPLICON_BASE_URL" },
-          auth: { type: "bearer_token", env_var: "REPLICON_TOKEN" },
+          auth: {
+            type: "bearer_token",
+            env_var: "REPLICON_TOKEN",
+            auth_method_values: ["bearer_token", "oauth2_client_credentials"],
+          },
         },
       },
       status: 200,
@@ -77,6 +81,7 @@ describe("cartridge client", () => {
         { name: "base_url", type: "url", label: "Base URL", description: "REPLICON_BASE_URL", required: true },
         { name: "token", type: "password", label: "Bearer token", description: "REPLICON_TOKEN", required: true },
       ],
+      authMethodValues: ["bearer_token", "oauth2_client_credentials"],
     });
   });
 

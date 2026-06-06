@@ -22,6 +22,7 @@ import {
   useVaultConnections,
   useVaultSecrets,
 } from "@/lib/operations/hooks";
+import { useConnectorSchema } from "@/lib/hooks/useCartridges";
 import { cn } from "@/lib/utils";
 
 const CARTRIDGES = [
@@ -34,11 +35,18 @@ const CARTRIDGES = [
 
 type VaultTab = "connections" | "secrets";
 
-interface ConnForm {
+export interface ConnForm {
   connId: string;
   baseUrl: string;
   authMethod: VaultAuthMethod;
   token: string;
+  clientId: string;
+  clientSecret: string;
+  tokenUrl: string;
+  companyId: string;
+  adminUser: string;
+  privateKeyPem: string;
+  idpUrl: string;
   extraJson: string;
 }
 
@@ -52,10 +60,40 @@ const EMPTY_CONN_FORM: ConnForm = {
   baseUrl: "",
   authMethod: "bearer_token",
   token: "",
+  clientId: "",
+  clientSecret: "",
+  tokenUrl: "",
+  companyId: "",
+  adminUser: "",
+  privateKeyPem: "",
+  idpUrl: "",
   extraJson: "",
 };
 
 const EMPTY_SECRET_FORM: SecretForm = { key: "", value: "" };
+const FALLBACK_AUTH_METHODS: VaultAuthMethod[] = ["bearer_token", "api_key", "basic", "none"];
+
+// Mirrors connector.yaml auth.auth_method_values for cartridges that expose it.
+// Most current cartridges only declare auth.type, so they intentionally fall
+// back to the legacy four-method selector.
+const CONNECTOR_AUTH_METHOD_VALUES: Record<string, VaultAuthMethod[]> = {
+  sap_successfactors: ["oauth2_client_credentials", "saml_bearer_assertion"],
+};
+
+const EXPLICIT_CONNECTION_FIELDS = [
+  "id",
+  "conn_id",
+  "base_url",
+  "auth_method",
+  "token",
+  "client_id",
+  "client_secret",
+  "token_url",
+  "company_id",
+  "admin_user",
+  "private_key_pem",
+  "idp_url",
+];
 
 export function VaultConnectionsTable() {
   const [tab, setTab] = useState<VaultTab>("connections");
@@ -79,6 +117,7 @@ export function VaultConnectionsTable() {
   const revealSecret = useRevealVaultSecret();
   const saveSecret = useUpsertVaultSecret();
   const removeSecret = useDeleteVaultSecret();
+  const connectorSchema = useConnectorSchema(cartridge);
 
   const rows = connections.data?.connections ?? [];
   const secretRows = secrets.data?.secrets ?? [];
@@ -104,7 +143,7 @@ export function VaultConnectionsTable() {
     }
     try {
       const data = await revealConnection.mutateAsync({ cartridge, connId });
-      setRevealedTokens((current) => ({ ...current, [connId]: String(data.token ?? "") }));
+      setRevealedTokens((current) => ({ ...current, [connId]: revealedConnectionSecret(data) }));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Sin permisos para revelar.");
     }
@@ -115,13 +154,20 @@ export function VaultConnectionsTable() {
     if (!id) return;
     try {
       const data = await revealConnection.mutateAsync({ cartridge, connId: id });
-      const extra = omitKeys(data, ["id", "conn_id", "base_url", "auth_method", "token"]);
+      const extra = omitKeys(data, EXPLICIT_CONNECTION_FIELDS);
       setEditingConnId(id);
       setConnForm({
         connId: id,
         baseUrl: String(data.base_url ?? conn.base_url ?? ""),
         authMethod: String(data.auth_method ?? conn.auth_method ?? "bearer_token"),
         token: String(data.token ?? ""),
+        clientId: String(data.client_id ?? ""),
+        clientSecret: String(data.client_secret ?? ""),
+        tokenUrl: String(data.token_url ?? ""),
+        companyId: String(data.company_id ?? ""),
+        adminUser: String(data.admin_user ?? ""),
+        privateKeyPem: String(data.private_key_pem ?? ""),
+        idpUrl: String(data.idp_url ?? ""),
         extraJson: Object.keys(extra).length ? JSON.stringify(extra, null, 2) : "",
       });
     } catch {
@@ -131,6 +177,13 @@ export function VaultConnectionsTable() {
         baseUrl: String(conn.base_url ?? ""),
         authMethod: String(conn.auth_method ?? conn.kind ?? "bearer_token"),
         token: "",
+        clientId: String(conn.client_id ?? ""),
+        clientSecret: "",
+        tokenUrl: String(conn.token_url ?? ""),
+        companyId: String(conn.company_id ?? ""),
+        adminUser: String(conn.admin_user ?? ""),
+        privateKeyPem: "",
+        idpUrl: String(conn.idp_url ?? ""),
         extraJson: "",
       });
       toast.info("Sin revelado de secreto; puedes reemplazar la conexión guardando un nuevo token.");
@@ -143,14 +196,8 @@ export function VaultConnectionsTable() {
       toast.error("Conn ID es obligatorio.");
       return;
     }
-    const extra = parseExtra(connForm.extraJson);
-    if (extra === null) return;
-    const payload: VaultConnectionPayload = {
-      ...extra,
-      base_url: connForm.baseUrl.trim(),
-      auth_method: connForm.authMethod,
-    };
-    if (connForm.token.trim()) payload.token = connForm.token.trim();
+    const payload = buildVaultConnectionPayload(connForm);
+    if (payload === null) return;
     saveConnection.mutate(
       { cartridge, connId, payload },
       {
@@ -333,7 +380,7 @@ export function VaultConnectionsTable() {
                       <th className="px-3 py-2">Conn ID</th>
                       <th className="px-3 py-2">Base URL</th>
                       <th className="px-3 py-2">Auth</th>
-                      <th className="px-3 py-2">Token</th>
+                      <th className="px-3 py-2">Secreto</th>
                       <th className="px-3 py-2">Acciones</th>
                     </tr>
                   </thead>
@@ -346,10 +393,10 @@ export function VaultConnectionsTable() {
                           <td className="px-3 py-2 font-mono text-xs">{id}</td>
                           <td className="max-w-xs truncate px-3 py-2 font-mono text-xs text-muted-foreground">{String(conn.base_url ?? "—")}</td>
                           <td className="px-3 py-2">{String(conn.auth_method ?? conn.kind ?? "—")}</td>
-                          <td className="px-3 py-2 font-mono text-xs">{revealed ? revealed : "••••••••••"}</td>
+                          <td className="max-w-[220px] truncate px-3 py-2 font-mono text-xs">{revealed || maskedConnectionSecret(conn)}</td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap gap-1">
-                              <IconButton label={revealed ? "Ocultar token" : "Revelar token"} onClick={() => revealToken(id)} icon={revealed ? EyeOff : Eye} />
+                              <IconButton label={revealed ? "Ocultar secreto" : "Revelar secreto"} onClick={() => revealToken(id)} icon={revealed ? EyeOff : Eye} />
                               <button type="button" onClick={() => editConnection(conn)} className="min-h-[34px] rounded-md border px-2 text-xs">Editar</button>
                               {deleteConnId === id ? (
                                 <button type="button" onClick={() => confirmDeleteConnection(id)} className="min-h-[34px] rounded-md bg-destructive px-2 text-xs text-destructive-foreground">Confirmar</button>
@@ -369,6 +416,8 @@ export function VaultConnectionsTable() {
             )}
           </section>
           <ConnectionForm
+            cartridge={cartridge}
+            authMethodValues={connectorSchema.data?.authMethodValues}
             form={connForm}
             editingId={editingConnId}
             setForm={setConnForm}
@@ -445,7 +494,9 @@ export function VaultConnectionsTable() {
   );
 }
 
-function ConnectionForm({
+export function ConnectionForm({
+  cartridge,
+  authMethodValues,
   form,
   editingId,
   setForm,
@@ -453,6 +504,8 @@ function ConnectionForm({
   onCancel,
   saving,
 }: {
+  cartridge: string;
+  authMethodValues?: VaultAuthMethod[];
   form: ConnForm;
   editingId: string | null;
   setForm: (form: ConnForm) => void;
@@ -460,6 +513,11 @@ function ConnectionForm({
   onCancel: () => void;
   saving: boolean;
 }) {
+  const authOptions = authOptionsWithCurrent(getAuthMethodOptions(cartridge, authMethodValues), form.authMethod);
+  const isSamlBearer = form.authMethod === "saml_bearer_assertion";
+  const isClientCredentials = form.authMethod === "oauth2_client_credentials";
+  const usesGenericToken = !isSamlBearer && !isClientCredentials;
+
   return (
     <aside className="space-y-3 rounded-lg border bg-card p-4">
       <h2 className="text-base font-semibold">{editingId ? `Editar ${editingId}` : "Nueva conexión"}</h2>
@@ -471,15 +529,54 @@ function ConnectionForm({
       </Field>
       <Field label="Auth method">
         <select value={form.authMethod} onChange={(event) => setForm({ ...form, authMethod: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm">
-          <option value="bearer_token">bearer_token</option>
-          <option value="api_key">api_key</option>
-          <option value="basic">basic</option>
-          <option value="none">none</option>
+          {authOptions.map((method) => (
+            <option key={method} value={method}>{method}</option>
+          ))}
         </select>
       </Field>
-      <Field label="Token / password">
-        <input type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" />
-      </Field>
+      {(isSamlBearer || isClientCredentials) ? (
+        <>
+          <Field label="Client ID">
+            <input value={form.clientId} onChange={(event) => setForm({ ...form, clientId: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" placeholder="OAuth client_id" />
+          </Field>
+          {isClientCredentials ? (
+            <Field label="Client secret">
+              <input type="password" value={form.clientSecret} onChange={(event) => setForm({ ...form, clientSecret: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" autoComplete="off" />
+            </Field>
+          ) : null}
+          <Field label="Token URL">
+            <input value={form.tokenUrl} onChange={(event) => setForm({ ...form, tokenUrl: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" placeholder="https://api.successfactors.com/oauth/token" />
+          </Field>
+          <Field label="Company ID">
+            <input value={form.companyId} onChange={(event) => setForm({ ...form, companyId: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" />
+          </Field>
+        </>
+      ) : null}
+      {isSamlBearer ? (
+        <>
+          <Field label="Admin user">
+            <input value={form.adminUser} onChange={(event) => setForm({ ...form, adminUser: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" placeholder="sf-admin@empresa.com" />
+          </Field>
+          <Field label="Private key PEM">
+            <textarea
+              value={form.privateKeyPem}
+              onChange={(event) => setForm({ ...form, privateKeyPem: event.target.value })}
+              className="min-h-52 rounded-md border bg-background px-3 py-2 font-mono text-xs"
+              placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+          <Field label="IDP URL">
+            <input value={form.idpUrl} onChange={(event) => setForm({ ...form, idpUrl: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" placeholder="Vacío = derivado de token_url como /oauth/idp" />
+          </Field>
+        </>
+      ) : null}
+      {usesGenericToken ? (
+        <Field label="Token / password">
+          <input type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} className="min-h-[44px] rounded-md border bg-background px-3 text-sm" autoComplete="off" />
+        </Field>
+      ) : null}
       <Field label="Campos extra JSON">
         <textarea value={form.extraJson} onChange={(event) => setForm({ ...form, extraJson: event.target.value })} className="min-h-28 rounded-md border bg-background px-3 py-2 font-mono text-xs" placeholder='{"username":"user@company.com"}' />
       </Field>
@@ -607,6 +704,51 @@ function tabButton(active: boolean): string {
   );
 }
 
+export function getAuthMethodOptions(cartridge: string, authMethodValues?: VaultAuthMethod[]): VaultAuthMethod[] {
+  const declared = (authMethodValues ?? []).filter((method) => typeof method === "string" && method.trim());
+  if (declared.length) return declared;
+  return CONNECTOR_AUTH_METHOD_VALUES[cartridge] ?? FALLBACK_AUTH_METHODS;
+}
+
+function authOptionsWithCurrent(options: VaultAuthMethod[], current: VaultAuthMethod): VaultAuthMethod[] {
+  return options.includes(current) ? options : [current, ...options];
+}
+
+export function buildVaultConnectionPayload(form: ConnForm): VaultConnectionPayload | null {
+  const extra = parseExtra(form.extraJson);
+  if (extra === null) return null;
+  const payload: VaultConnectionPayload = {
+    ...extra,
+    base_url: form.baseUrl.trim(),
+    auth_method: form.authMethod,
+  };
+  const putIfPresent = (key: string, value: string) => {
+    const trimmed = value.trim();
+    if (trimmed) payload[key] = trimmed;
+  };
+
+  if (form.authMethod === "oauth2_client_credentials") {
+    putIfPresent("client_id", form.clientId);
+    putIfPresent("client_secret", form.clientSecret);
+    putIfPresent("token_url", form.tokenUrl);
+    putIfPresent("company_id", form.companyId);
+    return payload;
+  }
+
+  if (form.authMethod === "saml_bearer_assertion") {
+    putIfPresent("client_id", form.clientId);
+    putIfPresent("token_url", form.tokenUrl);
+    putIfPresent("company_id", form.companyId);
+    putIfPresent("admin_user", form.adminUser);
+    putIfPresent("private_key_pem", form.privateKeyPem);
+    putIfPresent("idp_url", form.idpUrl);
+    return payload;
+  }
+
+  putIfPresent("token", form.token);
+  return payload;
+}
+
 function connectionId(conn: VaultConnection): string {
   return String(conn.conn_id || conn.id || "");
 }
@@ -618,6 +760,21 @@ function secretKey(secret: VaultSecret): string {
 function omitKeys(source: Record<string, unknown>, keys: string[]): Record<string, unknown> {
   const blocked = new Set(keys);
   return Object.fromEntries(Object.entries(source).filter(([key]) => !blocked.has(key)));
+}
+
+function connectionAuthMethod(conn: VaultConnection): string {
+  return String(conn.auth_method ?? conn.kind ?? "");
+}
+
+function maskedConnectionSecret(conn: VaultConnection): string {
+  return connectionAuthMethod(conn) === "saml_bearer_assertion" ? "•••• PEM ••••" : "••••••••••";
+}
+
+function revealedConnectionSecret(conn: VaultConnection): string {
+  if (connectionAuthMethod(conn) === "saml_bearer_assertion") {
+    return String(conn.private_key_pem ?? conn.private_key_path ?? "•••• PEM ••••");
+  }
+  return String(conn.token ?? conn.access_token ?? conn.client_secret ?? "••••••••••");
 }
 
 function parseExtra(value: string): Record<string, unknown> | null {

@@ -34,6 +34,7 @@ export interface ConnectorSchema {
   // flat top-level dict. We type the canonical ``fields`` shape;
   // the page-level adapter handles both forms.
   fields: ConnectorField[];
+  authMethodValues?: string[];
   // Free-form metadata the schema author may emit; the page only
   // displays it when present.
   name?:        string;
@@ -73,6 +74,12 @@ function isFieldType(value: unknown): value is FieldType {
   return ["string", "url", "password", "select", "boolean", "number"].includes(String(value));
 }
 
+function stringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  return items.length ? items : undefined;
+}
+
 function fieldFromSpec(name: string, spec: unknown): ConnectorField {
   const source = isRecord(spec) ? spec : {};
   const field: ConnectorField = {
@@ -110,12 +117,14 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
   // Tolerate both shapes — ``{ fields: [...] }`` AND the older
   // ``{ field_a: {...}, field_b: {...} }`` dict form.
   if (isRecord(data) && Array.isArray(data.fields)) {
+    const auth = isRecord(data.auth) ? data.auth : {};
     return {
       fields: data.fields.map((field, index) => (
         isRecord(field) && typeof field.name === "string"
           ? fieldFromSpec(field.name, field)
           : fieldFromSpec(`field_${index + 1}`, field)
       )),
+      authMethodValues: stringList(auth.auth_method_values),
       name: text(data.name),
       description: text(data.description),
     };
@@ -146,6 +155,7 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
     }
     return {
       fields,
+      authMethodValues: stringList(authSpec.auth_method_values),
       name: text(connector.name),
       description: text(connector.description),
     };
@@ -154,7 +164,8 @@ export async function getConnectorSchema(id: string): Promise<ConnectorSchema> {
     const fields: ConnectorField[] = Object.entries(data)
       .filter(([k]) => !["name", "description"].includes(k))
       .map(([name, spec]) => fieldFromSpec(name, spec));
-    return { fields, name: text(data.name), description: text(data.description) };
+    const auth = isRecord(data.auth) ? data.auth : {};
+    return { fields, authMethodValues: stringList(auth.auth_method_values), name: text(data.name), description: text(data.description) };
   }
   return { fields: [] };
 }
