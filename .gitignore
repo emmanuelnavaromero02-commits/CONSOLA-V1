@@ -40,6 +40,9 @@ vault/secrets.yaml
 *.secret
 *.secrets
 secrets/
+secrets/*.pem
+*.pem
+*.key
 
 # Data
 data/

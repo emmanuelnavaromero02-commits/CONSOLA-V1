@@ -4,10 +4,16 @@ connector:
   version: "1.0"
   auth:
     type: oauth2_client_credentials
+    auth_method_env: SF_AUTH_METHOD
+    auth_method_values:
+      - oauth2_client_credentials
+      - saml_bearer_assertion
     token_url_env: SF_TOKEN_URL
     client_id_env: SF_CLIENT_ID
     client_secret_env: SF_CLIENT_SECRET
     company_id_env: SF_COMPANY_ID
+    private_key_path_env: SF_PRIVATE_KEY_PATH
+    admin_user_env: SF_ADMIN_USER
   api:
     base_url_env: SF_BASE_URL
     timeout_seconds: 120

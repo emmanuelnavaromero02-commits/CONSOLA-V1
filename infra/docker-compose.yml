@@ -630,7 +630,14 @@ services:
       SF_CLIENT_ID:     ${SF_CLIENT_ID:-}
       SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
       SF_TOKEN_URL:     ${SF_TOKEN_URL:-}
+      SF_AUTH_METHOD:   ${SF_AUTH_METHOD:-oauth2_client_credentials}
+      SF_ADMIN_USER:    ${SF_ADMIN_USER:-}
+      SF_PRIVATE_KEY_PATH: ${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
+    volumes:
+      # Optional X.509 key for SuccessFactors OAuth2 SAML Bearer Assertion.
+      # Leave SF_PRIVATE_KEY_HOST_PATH unset for client_credentials/dev smoke.
+      - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     ports:
       - "8203:8203"
     depends_on:

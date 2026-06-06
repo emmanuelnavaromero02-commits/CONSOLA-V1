@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     sf_client_id: str = ""
     sf_client_secret: str = ""
     sf_token_url: str = ""
+    sf_auth_method: str = "oauth2_client_credentials"
+    sf_private_key_path: str = "/run/secrets/sf_epiuse_iaappliance_connector.pem"
+    sf_admin_user: str = ""
 
     # Database
     database_url: str = Field(default_factory=lambda: os.environ["DATABASE_URL"])

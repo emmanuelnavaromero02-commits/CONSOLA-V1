@@ -116,8 +116,15 @@ services:
       SF_BASE_URL: ${SF_BASE_URL:?SF_BASE_URL is required}
       SF_COMPANY_ID: ${SF_COMPANY_ID:?SF_COMPANY_ID is required}
       SF_CLIENT_ID: ${SF_CLIENT_ID:?SF_CLIENT_ID is required}
-      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:?SF_CLIENT_SECRET is required}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
       SF_TOKEN_URL: ${SF_TOKEN_URL:?SF_TOKEN_URL is required}
+      SF_AUTH_METHOD: ${SF_AUTH_METHOD:-oauth2_client_credentials}
+      SF_ADMIN_USER: ${SF_ADMIN_USER:-}
+      SF_PRIVATE_KEY_PATH: ${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}
+    volumes:
+      # Optional X.509 key for SuccessFactors OAuth2 SAML Bearer Assertion.
+      # In AWS the host file is normally rendered from SSM SecureString at boot.
+      - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
     depends_on:
       postgres:
         condition: service_healthy
