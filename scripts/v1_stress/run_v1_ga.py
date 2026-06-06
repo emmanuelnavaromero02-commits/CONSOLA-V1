@@ -21,8 +21,6 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -177,6 +175,7 @@ def run_command(
     output_name = output_name or f"{phase}-{slug(name)}.log"
     output_path = ctx.evidence_dir / "commands" / output_name
     full_env = os.environ.copy()
+    full_env.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
     if env:
         full_env.update(env)
     if ctx.dry_run:
@@ -226,14 +225,39 @@ def most_severe(results: list[StepResult]) -> str:
     return max((result.status for result in results), key=lambda item: STATUS_ORDER[item])
 
 
-def http_probe(url: str, timeout: int = 15) -> tuple[int, str]:
-    request = Request(url, headers={"User-Agent": "omega-v1-ga-harness/1.0"})
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            body = response.read(4096).decode("utf-8", errors="replace")
-            return response.status, body
-    except URLError as exc:
-        return 0, str(exc)
+def curl_probe_with_retry(url: str, attempts: int = 5, timeout: int = 15) -> tuple[int, str]:
+    last_status = 0
+    evidence: list[str] = []
+    for attempt in range(1, attempts + 1):
+        proc = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--max-time",
+                str(timeout),
+                "-w",
+                "\n%{http_code}",
+                url,
+            ],
+            cwd=REPO,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        parts = proc.stdout.rsplit("\n", 1)
+        body = parts[0] if parts else proc.stdout
+        try:
+            status = int(parts[-1]) if len(parts) > 1 else 0
+        except ValueError:
+            status = 0
+        if proc.returncode != 0 and status == 0:
+            body = proc.stdout
+        last_status = status
+        evidence.append(f"attempt {attempt}: HTTP {status}: {sanitize_excerpt(body, 200)}")
+        if 200 <= status < 300:
+            return status, " | ".join(evidence)
+    return last_status, " | ".join(evidence)
 
 
 def is_public_aws_url(url: str) -> bool:
@@ -461,18 +485,37 @@ def phase_c_security_gauntlet(ctx: HarnessContext) -> StepResult:
             )
     csv_path = ctx.evidence_dir / "C-security-gauntlet.csv"
     write_csv(csv_path, ["phase", "category", "vector", "expected", "actual", "status", "excerpt"], rows)
-    command = (
-        "PYTHONPATH=console .venv/bin/pytest -q "
-        "tests/test_mcp_tool_policy.py "
-        "tests/test_dag_codegen_security.py "
-        "tests/test_security_context_verifiers.py "
-        "tests/test_security_context_compose_contract.py "
-        "tests/test_cartridge_security_context_signing.py "
-        "tests/test_logging_redaction.py "
-        "tests/test_mcp_response_redaction.py "
-        "console/tests/test_security_context_scope.py"
+    groups = (
+        (
+            "mcp policy and dag codegen",
+            "PYTHONFAULTHANDLER=1 PYTHONPATH=console .venv/bin/pytest -q "
+            "tests/test_mcp_tool_policy.py tests/test_dag_codegen_security.py",
+        ),
+        (
+            "security context verifiers",
+            "PYTHONFAULTHANDLER=1 PYTHONPATH=console .venv/bin/pytest -q "
+            "tests/test_security_context_verifiers.py tests/test_security_context_compose_contract.py "
+            "tests/test_cartridge_security_context_signing.py console/tests/test_security_context_scope.py",
+        ),
+        (
+            "secret redaction",
+            "PYTHONFAULTHANDLER=1 PYTHONPATH=console .venv/bin/pytest -q "
+            "tests/test_logging_redaction.py tests/test_mcp_response_redaction.py",
+        ),
     )
-    return run_command(ctx, "C", "offensive security focused tests", command)
+    group_results = [
+        run_command(ctx, "C", f"offensive security: {name}", command, output_name=f"C-{slug(name)}.log")
+        for name, command in groups
+    ]
+    status = most_severe(group_results)
+    return record(
+        ctx,
+        "C",
+        "offensive security focused tests aggregate",
+        status,
+        evidence_ref(csv_path),
+        note="grouped pytest execution",
+    )
 
 
 def phase_d_soak(ctx: HarnessContext) -> StepResult:
@@ -746,8 +789,8 @@ def run_health_prereqs(ctx: HarnessContext) -> bool:
     ok = True
     for path in ("/healthz", "/readyz", "/readyz?require_data=1"):
         url = ctx.public_console_url.rstrip("/") + path
-        status, body = http_probe(url)
-        evidence = f"{url} -> HTTP {status}: {sanitize_excerpt(body, 200)}"
+        status, body = curl_probe_with_retry(url)
+        evidence = f"{url} -> {body}"
         if status >= 200 and status < 300:
             record(ctx, "PRE", f"probe {path}", "PASS", evidence)
         else:
