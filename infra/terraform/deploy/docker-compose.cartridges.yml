@@ -118,6 +118,7 @@ services:
       SF_CLIENT_ID: ${SF_CLIENT_ID:?SF_CLIENT_ID is required}
       SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
       SF_TOKEN_URL: ${SF_TOKEN_URL:?SF_TOKEN_URL is required}
+      SF_IDP_URL: ${SF_IDP_URL:-}
       SF_AUTH_METHOD: ${SF_AUTH_METHOD:-oauth2_client_credentials}
       SF_ADMIN_USER: ${SF_ADMIN_USER:-}
       SF_PRIVATE_KEY_PATH: ${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}

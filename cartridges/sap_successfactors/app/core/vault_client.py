@@ -19,6 +19,11 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SF_CLIENT_ID": ("client_id", "sf_client_id"),
     "SF_CLIENT_SECRET": ("client_secret", "secret", "password", "sf_client_secret"),
     "SF_TOKEN_URL": ("token_url", "oauth_token_url", "sf_token_url"),
+    "SF_IDP_URL": ("idp_url", "oauth_idp_url", "sf_idp_url"),
+    "SF_AUTH_METHOD": ("auth_method", "sf_auth_method"),
+    "SF_ADMIN_USER": ("admin_user", "user_id", "sf_admin_user"),
+    "SF_PRIVATE_KEY_PATH": ("private_key_path", "sf_private_key_path"),
+    "SF_PRIVATE_KEY_PEM": ("private_key_pem", "private_key", "sf_private_key_pem"),
     "SF_ACCESS_TOKEN": ("access_token", "token", "api_token", "sf_access_token"),
     "SF_API_KEY": ("api_key", "token", "api_token", "sf_api_key"),
 }

@@ -9,19 +9,14 @@ structured "degraded" error - it never invents data.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import logging
 import os
 import time
-import uuid
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -39,15 +34,6 @@ CLIENT_CREDENTIALS_AUTH_METHODS = {"oauth2", "oauth2_client_credentials", "clien
 SAML_BEARER_AUTH_METHODS = {"saml_bearer_assertion", "saml2_bearer", "oauth2_saml_bearer"}
 SAML_BEARER_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:saml2-bearer"
 DEFAULT_SF_PRIVATE_KEY_PATH = "/run/secrets/sf_epiuse_iaappliance_connector.pem"
-SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion"
-DSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
-ET.register_namespace("saml", SAML_NS)
-ET.register_namespace("ds", DSIG_NS)
-
-
-def _canonicalize(element: ET.Element) -> bytes:
-    xml = ET.tostring(element, encoding="unicode")
-    return ET.canonicalize(xml, strip_text=False).encode("utf-8")
 
 
 
@@ -147,6 +133,12 @@ class SapSfClient:
             get_secret_for_worker("sap_successfactors", "SF_TOKEN_URL")
             or get_setting("sap_successfactors_token_url", default=settings.sf_token_url, env_fallback="SF_TOKEN_URL")
         )
+        self.idp_url = (
+            get_secret_for_worker("sap_successfactors", "SF_IDP_URL")
+            or self._vault_connection.get("idp_url")
+            or get_setting("sap_successfactors_idp_url", default=settings.sf_idp_url, env_fallback="SF_IDP_URL")
+            or self._derive_idp_url(self.token_url)
+        )
         self.client_id = (
             get_secret_for_worker("sap_successfactors", "SF_CLIENT_ID")
             or get_setting("sap_successfactors_client_id", default=settings.sf_client_id, env_fallback="SF_CLIENT_ID")
@@ -234,6 +226,7 @@ class SapSfClient:
             required.update({
                 "SF_CLIENT_ID": self.client_id,
                 "SF_TOKEN_URL": self.token_url,
+                "SF_IDP_URL": self.idp_url,
                 "SF_COMPANY_ID": self.company_id,
                 "SF_ADMIN_USER": self.admin_user,
                 "SF_PRIVATE_KEY_PATH_OR_PEM": key_available,
@@ -260,6 +253,21 @@ class SapSfClient:
     # ------------------------------------------------------------------
     # OAuth2
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _derive_idp_url(token_url: str) -> str:
+        token_url = (token_url or "").strip()
+        if not token_url:
+            return ""
+        parsed = urlsplit(token_url)
+        path = parsed.path.rstrip("/")
+        if path.endswith("/oauth/token"):
+            idp_path = path[: -len("/token")] + "/idp"
+        elif path.endswith("/token"):
+            idp_path = path[: -len("/token")] + "/idp"
+        else:
+            idp_path = f"{path}/oauth/idp" if path else "/oauth/idp"
+        return urlunsplit((parsed.scheme, parsed.netloc, idp_path, "", ""))
 
     def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at:
@@ -316,7 +324,7 @@ class SapSfClient:
         self._require_configured()
         try:
             CartridgeCircuitBreaker.before_request()
-            assertion = self._build_saml_bearer_assertion()
+            assertion = self._request_saml_assertion_from_successfactors()
             logger.warning("SAP SuccessFactors outbound POST %s", self.token_url)
             logger.warning("%s", auth_trace("oauth2_saml_bearer_assertion", ("assertion",)))
             resp = self._session.post(
@@ -354,91 +362,51 @@ class SapSfClient:
         self._token_expires_at = time.time() + expires_in - 60
         return token
 
-    def _load_saml_private_key(self):
-        pem = self._private_key_pem.encode("utf-8") if self._private_key_pem else None
-        if pem is None:
-            path = Path(self.private_key_path)
-            try:
-                pem = path.read_bytes()
-            except OSError as exc:
-                raise SAPClientError(f"SAML bearer private key is not readable at {path}") from exc
+    def _load_saml_private_key_text(self) -> str:
+        if self._private_key_pem:
+            return str(self._private_key_pem)
         try:
-            return serialization.load_pem_private_key(pem, password=None)
-        except ValueError as exc:
-            raise SAPClientError("SAML bearer private key is not a valid PEM private key") from exc
+            path = Path(self.private_key_path)
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SAPClientError(f"SAML bearer private key is not readable at {path}") from exc
 
-    def _build_saml_bearer_assertion(self) -> str:
-        now = int(time.time())
-        expires_at = now + 300
-        assertion_id = f"_{uuid.uuid4().hex}"
-
-        assertion = ET.Element(
-            f"{{{SAML_NS}}}Assertion",
-            {
-                "ID": assertion_id,
-                "Version": "2.0",
-                "IssueInstant": str(now),
+    def _request_saml_assertion_from_successfactors(self) -> str:
+        private_key = self._load_saml_private_key_text()
+        logger.warning("SAP SuccessFactors outbound POST %s", self.idp_url)
+        logger.warning("%s", auth_trace("successfactors_oauth_idp", ("private_key",)))
+        resp = self._session.post(
+            self.idp_url,
+            data={
+                "client_id": self.client_id,
+                "user_id": self.admin_user,
+                "token_url": self.token_url,
+                "private_key": private_key,
             },
+            headers={"Accept": "text/plain, application/json"},
+            timeout=30,
         )
-        issuer = ET.SubElement(assertion, f"{{{SAML_NS}}}Issuer")
-        issuer.text = self.client_id
+        if resp.status_code in {401, 403}:
+            CartridgeCircuitBreaker.record_success()
+            resp.raise_for_status()
+        if resp.status_code >= 500 or resp.status_code == 429:
+            CartridgeCircuitBreaker.record_failure()
+            resp.raise_for_status()
+        resp.raise_for_status()
+        assertion = self._extract_saml_assertion_response(resp)
+        if not assertion:
+            raise SAPClientError("SuccessFactors /oauth/idp response missing SAML assertion")
+        return assertion
 
-        subject = ET.SubElement(assertion, f"{{{SAML_NS}}}Subject")
-        name_id = ET.SubElement(subject, f"{{{SAML_NS}}}NameID")
-        name_id.text = self.admin_user
-        subject_confirmation = ET.SubElement(
-            subject,
-            f"{{{SAML_NS}}}SubjectConfirmation",
-            {"Method": "urn:oasis:names:tc:SAML:2.0:cm:bearer"},
-        )
-        ET.SubElement(
-            subject_confirmation,
-            f"{{{SAML_NS}}}SubjectConfirmationData",
-            {
-                "NotOnOrAfter": str(expires_at),
-                "Recipient": self.token_url,
-            },
-        )
-
-        conditions = ET.SubElement(assertion, f"{{{SAML_NS}}}Conditions", {"NotOnOrAfter": str(expires_at)})
-        audience_restriction = ET.SubElement(conditions, f"{{{SAML_NS}}}AudienceRestriction")
-        audience = ET.SubElement(audience_restriction, f"{{{SAML_NS}}}Audience")
-        audience.text = self.token_url
-
-        digest_value = base64.b64encode(hashlib.sha256(_canonicalize(assertion)).digest()).decode("ascii")
-        signature = ET.Element(f"{{{DSIG_NS}}}Signature")
-        signed_info = ET.SubElement(signature, f"{{{DSIG_NS}}}SignedInfo")
-        ET.SubElement(
-            signed_info,
-            f"{{{DSIG_NS}}}CanonicalizationMethod",
-            {"Algorithm": "http://www.w3.org/2006/12/xml-c14n11"},
-        )
-        ET.SubElement(
-            signed_info,
-            f"{{{DSIG_NS}}}SignatureMethod",
-            {"Algorithm": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"},
-        )
-        reference = ET.SubElement(signed_info, f"{{{DSIG_NS}}}Reference", {"URI": f"#{assertion_id}"})
-        transforms = ET.SubElement(reference, f"{{{DSIG_NS}}}Transforms")
-        ET.SubElement(transforms, f"{{{DSIG_NS}}}Transform", {"Algorithm": "http://www.w3.org/2000/09/xmldsig#enveloped-signature"})
-        ET.SubElement(
-            reference,
-            f"{{{DSIG_NS}}}DigestMethod",
-            {"Algorithm": "http://www.w3.org/2001/04/xmlenc#sha256"},
-        )
-        digest = ET.SubElement(reference, f"{{{DSIG_NS}}}DigestValue")
-        digest.text = digest_value
-
-        private_key = self._load_saml_private_key()
-        signature_bytes = private_key.sign(
-            _canonicalize(signed_info),
-            padding.PKCS1v15(),
-            hashes.SHA256(),
-        )
-        signature_value = ET.SubElement(signature, f"{{{DSIG_NS}}}SignatureValue")
-        signature_value.text = base64.b64encode(signature_bytes).decode("ascii")
-        assertion.insert(1, signature)
-        return base64.b64encode(ET.tostring(assertion, encoding="utf-8", xml_declaration=True)).decode("ascii")
+    @staticmethod
+    def _extract_saml_assertion_response(resp: requests.Response) -> str:
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+        if "json" in content_type:
+            payload = resp.json()
+            if isinstance(payload, dict):
+                assertion = payload.get("assertion") or payload.get("saml_assertion") or payload.get("SAMLAssertion")
+                return str(assertion or "").strip()
+        return resp.text.strip()
 
     def _headers(self) -> dict[str, str]:
         if self.auth_method in CLIENT_CREDENTIALS_AUTH_METHODS | SAML_BEARER_AUTH_METHODS:

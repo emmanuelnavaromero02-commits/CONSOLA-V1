@@ -9,6 +9,7 @@ connector:
       - oauth2_client_credentials
       - saml_bearer_assertion
     token_url_env: SF_TOKEN_URL
+    idp_url_env: SF_IDP_URL
     client_id_env: SF_CLIENT_ID
     client_secret_env: SF_CLIENT_SECRET
     company_id_env: SF_COMPANY_ID

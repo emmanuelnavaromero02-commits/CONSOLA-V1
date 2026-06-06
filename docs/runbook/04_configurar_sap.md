@@ -29,7 +29,7 @@
 |                     | `sap_s4_api_key`                  | si aplica   |
 | **sap_successfactors** | `sf_base_url` + `sf_company_id`   | tenant      |
 |                     | `sf_client_id` + `sf_client_secret` + `sf_token_url` | OAuth client credentials |
-|                     | `sf_auth_method=saml_bearer_assertion` + `sf_client_id` + `sf_admin_user` + `sf_private_key_path` + `sf_token_url` | OAuth SAML Bearer Assertion |
+|                     | `sf_auth_method=saml_bearer_assertion` + `sf_client_id` + `sf_admin_user` + `sf_private_key_path` + `sf_token_url` | OAuth SAML Bearer Assertion vía `/oauth/idp` |
 
 ## Pasos (idéntico para los 3)
 
@@ -114,11 +114,11 @@ Configura en Vault/Settings o variables de entorno:
 
 ### Variante B: OAuth2 SAML Bearer Assertion (X.509)
 
-Usa esta variante cuando SAP entrega un certificado X.509 para firmar
-assertions SAML. El cartucho firma un assertion SAML 2.0 con RS256,
-`subject=SF_ADMIN_USER`, `audience=SF_TOKEN_URL`,
-`issuer=SF_CLIENT_ID` y expiración de 5 minutos. El token se cachea
-hasta `expires_in`.
+Usa esta variante cuando SAP entrega un certificado X.509 para el flujo
+SAML Bearer. OMEGA no construye ni firma XML-DSig localmente: llama al
+endpoint oficial legacy de SuccessFactors `/oauth/idp` para generar el
+SAML assertion server-side y luego lo intercambia en `/oauth/token`.
+El token se cachea hasta `expires_in`.
 
 Configura en Vault/Settings o variables de entorno:
 
@@ -128,15 +128,41 @@ Configura en Vault/Settings o variables de entorno:
 | `sf_base_url` / `SF_BASE_URL` | URL OData v2 de SuccessFactors |
 | `sf_company_id` / `SF_COMPANY_ID` | Company ID del tenant |
 | `sf_client_id` / `SF_CLIENT_ID` | OAuth client ID, usado como issuer |
-| `sf_admin_user` / `SF_ADMIN_USER` | Subject/NameID del assertion |
-| `sf_token_url` / `SF_TOKEN_URL` | Token endpoint, usado como audience |
+| `sf_admin_user` / `SF_ADMIN_USER` | `user_id` enviado a `/oauth/idp` |
+| `sf_token_url` / `SF_TOKEN_URL` | Token endpoint, normalmente `https://<api-server>/oauth/token` |
+| `sf_idp_url` / `SF_IDP_URL` | Opcional; default derivado de `SF_TOKEN_URL` como `https://<api-server>/oauth/idp` |
 | `sf_private_key_path` / `SF_PRIVATE_KEY_PATH` | Ruta del PEM dentro del contenedor; default `/run/secrets/sf_epiuse_iaappliance_connector.pem` |
 
 Para despliegues con Vault, guarda `auth_method`, `admin_user` y
-`private_key_path` en la conexión scoped del cartucho. Si el operador
+`private_key_path` en la conexión scoped del cartucho. Si necesitas un
+endpoint IDP no estándar, guarda también `idp_url`. Si el operador
 necesita inyectar el contenido PEM desde un secreto gestionado, puede
 usar la clave `SF_PRIVATE_KEY_PEM` en Vault/worker secret; no debe
 aparecer en logs ni en git.
+
+El POST a `/oauth/idp` usa `application/x-www-form-urlencoded` con:
+
+```text
+client_id=<SF_CLIENT_ID>
+user_id=<SF_ADMIN_USER>
+token_url=<SF_TOKEN_URL>
+private_key=<contenido PEM>
+```
+
+El POST a `/oauth/token` usa:
+
+```text
+company_id=<SF_COMPANY_ID>
+client_id=<SF_CLIENT_ID>
+grant_type=urn:ietf:params:oauth:grant-type:saml2-bearer
+assertion=<respuesta de /oauth/idp>
+```
+
+SAP ha señalado que `/oauth/idp` expone la private key al endpoint y lo
+considera legacy/deprecado para algunos escenarios. Si el cliente tiene
+un IdP corporativo confiable, úsalo para generar el assertion fuera de
+OMEGA; este modo existe para compatibilidad con tenants que todavía
+dependen del endpoint oficial de SuccessFactors.
 
 ### Subir el PEM a AWS sin commitearlo
 
