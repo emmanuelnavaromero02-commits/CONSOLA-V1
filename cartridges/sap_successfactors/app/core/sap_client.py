@@ -36,6 +36,26 @@ SAML_BEARER_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:saml2-bearer"
 DEFAULT_SF_PRIVATE_KEY_PATH = "/run/secrets/sf_epiuse_iaappliance_connector.pem"
 
 
+def _normalize_config_value(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text in {'""', "''"}:
+        return ""
+    return text
+
+
+def _get_setting_or_env(key: str, *, default: str = "", env_fallback: str | None = None) -> str:
+    value = _normalize_config_value(get_setting(key, default="", env_fallback=None))
+    if value:
+        return value
+    if env_fallback:
+        value = _normalize_config_value(os.getenv(env_fallback))
+        if value:
+            return value
+    return _normalize_config_value(default)
+
+
 
 # Sprint v1.17: shared by the 3 SAP cartridges (no shared lib between
 # cartridges → copied textually into each). Exponential backoff for
@@ -126,26 +146,42 @@ class SapSfClient:
         self._vault_connection = get_connection_for_worker("sap_successfactors")
         self.base_url = (
             get_secret_for_worker("sap_successfactors", "SF_BASE_URL")
-            or get_setting("sap_successfactors_base_url", default=settings.sf_base_url, env_fallback="SF_BASE_URL")
+            or _get_setting_or_env(
+                "sap_successfactors_base_url",
+                default=settings.sf_base_url,
+                env_fallback="SF_BASE_URL",
+            )
             or ""
         ).rstrip("/")
         self.token_url = (
             get_secret_for_worker("sap_successfactors", "SF_TOKEN_URL")
-            or get_setting("sap_successfactors_token_url", default=settings.sf_token_url, env_fallback="SF_TOKEN_URL")
+            or _get_setting_or_env(
+                "sap_successfactors_token_url",
+                default=settings.sf_token_url,
+                env_fallback="SF_TOKEN_URL",
+            )
         )
         self.idp_url = (
             get_secret_for_worker("sap_successfactors", "SF_IDP_URL")
             or self._vault_connection.get("idp_url")
-            or get_setting("sap_successfactors_idp_url", default=settings.sf_idp_url, env_fallback="SF_IDP_URL")
+            or _get_setting_or_env(
+                "sap_successfactors_idp_url",
+                default=settings.sf_idp_url,
+                env_fallback="SF_IDP_URL",
+            )
             or self._derive_idp_url(self.token_url)
         )
         self.client_id = (
             get_secret_for_worker("sap_successfactors", "SF_CLIENT_ID")
-            or get_setting("sap_successfactors_client_id", default=settings.sf_client_id, env_fallback="SF_CLIENT_ID")
+            or _get_setting_or_env(
+                "sap_successfactors_client_id",
+                default=settings.sf_client_id,
+                env_fallback="SF_CLIENT_ID",
+            )
         )
         self.client_secret = (
             get_secret_for_worker("sap_successfactors", "SF_CLIENT_SECRET")
-            or get_setting(
+            or _get_setting_or_env(
                 "sap_successfactors_client_secret",
                 default=settings.sf_client_secret,
                 env_fallback="SF_CLIENT_SECRET",
@@ -153,12 +189,16 @@ class SapSfClient:
         )
         self.company_id = (
             get_secret_for_worker("sap_successfactors", "SF_COMPANY_ID")
-            or get_setting("sap_successfactors_company_id", default=settings.sf_company_id, env_fallback="SF_COMPANY_ID")
+            or _get_setting_or_env(
+                "sap_successfactors_company_id",
+                default=settings.sf_company_id,
+                env_fallback="SF_COMPANY_ID",
+            )
         )
         self.auth_method = str(
             get_secret_for_worker("sap_successfactors", "SF_AUTH_METHOD")
             or self._vault_connection.get("auth_method")
-            or get_setting(
+            or _get_setting_or_env(
                 "sap_successfactors_auth_method",
                 default=settings.sf_auth_method,
                 env_fallback="SF_AUTH_METHOD",
@@ -168,7 +208,7 @@ class SapSfClient:
         self.admin_user = (
             get_secret_for_worker("sap_successfactors", "SF_ADMIN_USER")
             or self._vault_connection.get("admin_user")
-            or get_setting(
+            or _get_setting_or_env(
                 "sap_successfactors_admin_user",
                 default=settings.sf_admin_user,
                 env_fallback="SF_ADMIN_USER",
@@ -178,7 +218,7 @@ class SapSfClient:
         self.private_key_path = (
             get_secret_for_worker("sap_successfactors", "SF_PRIVATE_KEY_PATH")
             or self._vault_connection.get("private_key_path")
-            or get_setting(
+            or _get_setting_or_env(
                 "sap_successfactors_private_key_path",
                 default=settings.sf_private_key_path or DEFAULT_SF_PRIVATE_KEY_PATH,
                 env_fallback="SF_PRIVATE_KEY_PATH",
