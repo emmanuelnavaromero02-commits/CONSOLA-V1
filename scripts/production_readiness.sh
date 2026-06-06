@@ -143,6 +143,32 @@ check_live_llm_if_required() {
     exit 2
   fi
   log "checking live Anthropic chat path"
+  if [[ "${REMOTE_MODE}" == "1" ]] && command -v docker >/dev/null 2>&1 \
+    && docker inspect mode_console >/dev/null 2>&1; then
+    docker exec mode_console python - <<'PY'
+import asyncio
+
+from app.services import llm_client
+
+
+async def main() -> None:
+    reply, _urls, _messages = await llm_client.chat(
+        system="Responde solo OK.",
+        messages=[{"role": "user", "content": "OK"}],
+        tools=[],
+        invoke_tool=None,
+        tool_server_map={},
+        max_tokens=16,
+        temperature=0,
+    )
+    if not str(reply or "").strip():
+        raise SystemExit("Anthropic returned an empty reply")
+
+
+asyncio.run(main())
+PY
+    return
+  fi
   PYTHONPATH=console "${PYTHON_BIN}" - <<'PY'
 import asyncio
 

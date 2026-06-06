@@ -81,6 +81,7 @@ def test_v1_live_readiness_requires_no_skips_multiuser_stress_and_llm():
         "BLOCKED: ANTHROPIC_API_KEY is required for OMEGA_PRODUCTION_READINESS_V1=1",
         "BLOCKED: E2E_ADMIN_PASSWORD or TEST_PASSWORD is required for OMEGA_PRODUCTION_READINESS_V1=1",
         "require_intelligence=1",
+        "docker exec mode_console python",
     ):
         assert needle in script
 
@@ -97,6 +98,7 @@ def test_production_readiness_gate_has_remote_aws_mode():
         "OMEGA_PRODUCTION_READINESS_REMOTE_RUN_E2E",
         'BASE_URL="${CONSOLE_URL}"',
         "run_remote_gate",
+        "docker exec mode_console python",
     ):
         assert needle in script
     remote_index = script.index('if [[ "${REMOTE_MODE}" == "1" ]]')
