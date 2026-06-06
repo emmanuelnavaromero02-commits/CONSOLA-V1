@@ -14,7 +14,7 @@ MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -49,6 +49,16 @@ help:
 	@echo "                    run production-readiness with v1 live gates required"
 	@echo "  make production-readiness-aws"
 	@echo "                    run the remote AWS/prod-like readiness gate"
+	@echo "  make v1-ga-lite-local"
+	@echo "                    run unified v1 GA lite harness locally (stress + offensive security)"
+	@echo "  make v1-ga-lite-aws"
+	@echo "                    run unified v1 GA lite harness against AWS staging/public URL"
+	@echo "  make v1-ga-max-aws"
+	@echo "                    run unified v1 GA max harness; requires dedicated staging + chaos confirmation"
+	@echo "  make v1-ga-cleanup"
+	@echo "                    clean STRESS_* data/prefixes for the current unified v1 GA run"
+	@echo "  make v1-ga-report"
+	@echo "                    regenerate the unified v1 GA report for the current run"
 	@echo "  make seed-intelligence-gold"
 	@echo "                    seed scoped prod-like Gold rows for intelligence demos"
 	@echo "  make dr-rehearsal"
@@ -193,6 +203,21 @@ v1-live-readiness:
 
 production-readiness-aws:
 	@OMEGA_PRODUCTION_READINESS_REMOTE=1 bash scripts/production_readiness.sh
+
+v1-ga-lite-local:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/v1_stress/run_v1_ga.py lite-local
+
+v1-ga-lite-aws:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/v1_stress/run_v1_ga.py lite-aws
+
+v1-ga-max-aws:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/v1_stress/run_v1_ga.py max-aws
+
+v1-ga-cleanup:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/v1_stress/run_v1_ga.py cleanup
+
+v1-ga-report:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/v1_stress/run_v1_ga.py report
 
 dr-rehearsal:
 	@bash scripts/run_dr_rehearsal.sh
