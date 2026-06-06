@@ -52,7 +52,7 @@ export function useSaveCredentials(cartridgeId: string) {
 
 export function useTestConnection(cartridgeId: string) {
   return useMutation({
-    mutationFn: () => testConnection(cartridgeId),
+    mutationFn: (connId?: string) => testConnection(cartridgeId, connId),
   });
 }
 

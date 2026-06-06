@@ -141,11 +141,16 @@ class SapSfClient:
     _RETRY_BACKOFF_FACTOR = 2.0
 
 
-    def __init__(self) -> None:
+    def __init__(self, conn_id: str | None = None) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
-        self._vault_connection = get_connection_for_worker("sap_successfactors")
+        self._conn_id = (conn_id or "").strip() or None
+        self._vault_connection = get_connection_for_worker("sap_successfactors", conn_id=self._conn_id)
+
+        def worker_secret(env_var_name: str) -> str:
+            return get_secret_for_worker("sap_successfactors", env_var_name, conn_id=self._conn_id)
+
         self.base_url = (
-            get_secret_for_worker("sap_successfactors", "SF_BASE_URL")
+            worker_secret("SF_BASE_URL")
             or _get_setting_or_env(
                 "sap_successfactors_base_url",
                 default=settings.sf_base_url,
@@ -154,7 +159,7 @@ class SapSfClient:
             or ""
         ).rstrip("/")
         self.token_url = (
-            get_secret_for_worker("sap_successfactors", "SF_TOKEN_URL")
+            worker_secret("SF_TOKEN_URL")
             or _get_setting_or_env(
                 "sap_successfactors_token_url",
                 default=settings.sf_token_url,
@@ -162,7 +167,7 @@ class SapSfClient:
             )
         )
         self.idp_url = (
-            get_secret_for_worker("sap_successfactors", "SF_IDP_URL")
+            worker_secret("SF_IDP_URL")
             or self._vault_connection.get("idp_url")
             or _get_setting_or_env(
                 "sap_successfactors_idp_url",
@@ -172,7 +177,7 @@ class SapSfClient:
             or self._derive_idp_url(self.token_url)
         )
         self.client_id = (
-            get_secret_for_worker("sap_successfactors", "SF_CLIENT_ID")
+            worker_secret("SF_CLIENT_ID")
             or _get_setting_or_env(
                 "sap_successfactors_client_id",
                 default=settings.sf_client_id,
@@ -180,7 +185,7 @@ class SapSfClient:
             )
         )
         self.client_secret = (
-            get_secret_for_worker("sap_successfactors", "SF_CLIENT_SECRET")
+            worker_secret("SF_CLIENT_SECRET")
             or _get_setting_or_env(
                 "sap_successfactors_client_secret",
                 default=settings.sf_client_secret,
@@ -188,7 +193,7 @@ class SapSfClient:
             )
         )
         self.company_id = (
-            get_secret_for_worker("sap_successfactors", "SF_COMPANY_ID")
+            worker_secret("SF_COMPANY_ID")
             or _get_setting_or_env(
                 "sap_successfactors_company_id",
                 default=settings.sf_company_id,
@@ -196,7 +201,7 @@ class SapSfClient:
             )
         )
         self.auth_method = str(
-            get_secret_for_worker("sap_successfactors", "SF_AUTH_METHOD")
+            worker_secret("SF_AUTH_METHOD")
             or self._vault_connection.get("auth_method")
             or _get_setting_or_env(
                 "sap_successfactors_auth_method",
@@ -206,7 +211,7 @@ class SapSfClient:
             or "oauth2_client_credentials",
         ).strip().lower().replace("-", "_")
         self.admin_user = (
-            get_secret_for_worker("sap_successfactors", "SF_ADMIN_USER")
+            worker_secret("SF_ADMIN_USER")
             or self._vault_connection.get("admin_user")
             or _get_setting_or_env(
                 "sap_successfactors_admin_user",
@@ -216,7 +221,7 @@ class SapSfClient:
             or ""
         )
         self.private_key_path = (
-            get_secret_for_worker("sap_successfactors", "SF_PRIVATE_KEY_PATH")
+            worker_secret("SF_PRIVATE_KEY_PATH")
             or self._vault_connection.get("private_key_path")
             or _get_setting_or_env(
                 "sap_successfactors_private_key_path",
@@ -226,13 +231,13 @@ class SapSfClient:
             or DEFAULT_SF_PRIVATE_KEY_PATH
         )
         self._private_key_pem = (
-            get_secret_for_worker("sap_successfactors", "SF_PRIVATE_KEY_PEM")
+            worker_secret("SF_PRIVATE_KEY_PEM")
             or self._vault_connection.get("private_key_pem")
             or os.getenv("SF_PRIVATE_KEY_PEM")
         )
         static_token = (
-            get_secret_for_worker("sap_successfactors", "SF_ACCESS_TOKEN")
-            or get_secret_for_worker("sap_successfactors", "SF_API_KEY")
+            worker_secret("SF_ACCESS_TOKEN")
+            or worker_secret("SF_API_KEY")
         )
         self._auth_payload = {
             **self._vault_connection,

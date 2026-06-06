@@ -12,11 +12,12 @@ encrypt-then-PUT-then-audit sequence.
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.security import get_internal_api_key
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
@@ -39,6 +40,7 @@ _CARTRIDGE_PORTS = {
     "sap_s4hana": 8204,
     "salesforce": 8205,
 }
+_CONN_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
 def _allowed_cartridges(user: dict | None) -> set[str] | None:
@@ -82,6 +84,15 @@ def _test_connection_succeeded(http_success: bool, payload: dict) -> bool:
     if not http_success:
         return False
     return str(payload.get("status") or "").strip().lower() == "ok"
+
+
+def _normalize_conn_id(conn_id: str | None) -> str | None:
+    requested = (conn_id or "").strip()
+    if not requested:
+        return None
+    if not _CONN_ID_RE.fullmatch(requested):
+        raise HTTPException(400, "invalid connection id")
+    return requested
 
 
 def _running_in_container() -> bool:
@@ -223,7 +234,11 @@ async def run_entity(cartridge: str, entity: str, request: Request, mode: str = 
     "/{cartridge}/test_connection",
     dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.write"))],
 )
-async def test_connection(cartridge: str, request: Request):
+async def test_connection(
+    cartridge: str,
+    request: Request,
+    conn_id: str | None = Query(default=None, max_length=128),
+):
     """Validate credentials by hitting the cartridge's /skills/test_connection.
 
     v1.44.1: the response shape is normalised to the v1.44.1 brief
@@ -234,6 +249,7 @@ async def test_connection(cartridge: str, request: Request):
     sensitive substrings into audit_events.
     """
     _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
+    selected_conn_id = _normalize_conn_id(conn_id)
 
     started = time.monotonic()
     ok = False
@@ -243,7 +259,8 @@ async def test_connection(cartridge: str, request: Request):
         async with httpx.AsyncClient(
             timeout=10.0, headers=_cartridge_internal_headers()
         ) as c:
-            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"))
+            params = {"conn_id": selected_conn_id} if selected_conn_id else None
+            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), params=params)
         latency_ms = int((time.monotonic() - started) * 1000)
         payload = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         ok = _test_connection_succeeded(r.is_success, payload)
@@ -269,7 +286,11 @@ async def test_connection(cartridge: str, request: Request):
         resource_type="cartridge",
         resource_id=cartridge,
         status="success" if ok else "failure",
-        metadata={"latency_ms": latency_ms, "outcome_message": message[:160]},
+        metadata={
+            "latency_ms": latency_ms,
+            "outcome_message": message[:160],
+            **({"conn_id": selected_conn_id} if selected_conn_id else {}),
+        },
     )
 
     result = {"ok": ok, "message": message, "latency_ms": latency_ms}

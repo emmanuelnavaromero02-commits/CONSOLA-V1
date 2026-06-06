@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import requests
@@ -11,7 +12,9 @@ from app.core.settings_proxy import get_setting
 
 logger = logging.getLogger(__name__)
 
-_CONNECTION_CACHE: dict[str, dict[str, Any]] = {}
+_CONNECTION_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_DEFAULT_CONN_IDS = ("default", "analytics")
+_CONN_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SF_BASE_URL": ("base_url", "url", "host", "sf_base_url"),
@@ -65,32 +68,44 @@ def _auth_options(service_name: str) -> list[tuple[str, str]]:
     return options
 
 
-def _fetch_connection(service_name: str) -> dict[str, Any]:
+def _connection_ids(conn_id: str | None = None) -> tuple[str, ...]:
+    requested = (conn_id or "").strip()
+    if not requested:
+        return _DEFAULT_CONN_IDS
+    if not _CONN_ID_RE.fullmatch(requested):
+        raise ValueError("invalid Vault connection id")
+    return (requested,)
+
+
+def _fetch_connection(service_name: str, conn_id: str | None = None) -> dict[str, Any]:
     service = service_name.strip().lower()
-    cached = _CONNECTION_CACHE.get(service)
+    cache_key = (service, (conn_id or "").strip())
+    cached = _CONNECTION_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
     console_url = os.environ.get("CONSOLE_URL", "http://console:8000").rstrip("/")
-    for conn_id in ("default", "analytics"):
+    for candidate_conn_id in _connection_ids(conn_id):
         for key, internal_service in _auth_options(service):
             try:
                 response = requests.get(
-                    f"{console_url}/api/vault/connections/{service}/{conn_id}/reveal",
+                    f"{console_url}/api/vault/connections/{service}/{candidate_conn_id}/reveal",
                     headers={"x-api-key": key, "x-internal-service": internal_service},
                     timeout=5,
                 )
                 if response.status_code == 404:
-                    break
+                    continue
                 if response.status_code in {401, 403}:
                     continue
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict):
-                    _CONNECTION_CACHE[service] = payload
+                    payload.setdefault("conn_id", candidate_conn_id)
+                    payload.setdefault("id", candidate_conn_id)
+                    _CONNECTION_CACHE[cache_key] = payload
                     return payload
             except Exception as exc:
-                logger.debug("Vault reveal failed for %s/%s: %s", service, conn_id, exc)
+                logger.debug("Vault reveal failed for %s/%s: %s", service, candidate_conn_id, exc)
     return {}
 
 
@@ -105,13 +120,13 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(fields))
 
 
-def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
+def get_secret_for_worker(service_name: str, env_var_name: str, conn_id: str | None = None) -> str:
     """Resolve a worker credential from env first, then Console Vault."""
     value = os.environ.get(env_var_name)
     if value:
         return value
 
-    payload = _fetch_connection(service_name)
+    payload = _fetch_connection(service_name, conn_id=conn_id)
     for field in _candidate_fields(env_var_name):
         value = payload.get(field)
         if value is not None and str(value).strip():
@@ -119,9 +134,9 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
     return ""
 
 
-def get_connection_for_worker(service_name: str) -> dict[str, Any]:
+def get_connection_for_worker(service_name: str, conn_id: str | None = None) -> dict[str, Any]:
     """Return the resolved Console Vault connection payload for a worker."""
-    return dict(_fetch_connection(service_name))
+    return dict(_fetch_connection(service_name, conn_id=conn_id))
 
 
 def get_sap_successfactors_credentials() -> tuple[str, str, str, str, str]:

@@ -312,6 +312,66 @@ services:
       retries: 3
       start_period: 15s
 
+  sap-successfactors:
+    image: ghcr.io/${GHCR_OWNER:-emmanuelnavaromero02-commits}/sap_successfactors:${IMAGE_TAG:?IMAGE_TAG is required}
+    container_name: mode_sap_successfactors
+    env_file:
+      - path: ${AWS_ENV_FILE:-.env}
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      SECURITY_CONTEXT_SIGNING_KEY: ${SECURITY_CONTEXT_SIGNING_KEY:?SECURITY_CONTEXT_SIGNING_KEY is required}
+      INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE: ${INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE:?INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE is required}
+      INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE: ${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE: ${INTERNAL_API_KEY_AIRFLOW_TO_CARTRIDGE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE: ${INTERNAL_API_KEY_CARTRIDGE_TO_CONSOLE:-}
+      INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT: ${INTERNAL_API_KEY_CARTRIDGE_TO_REFINEMENT:-}
+      CONSOLE_URL: http://console:8000
+      DATABASE_URL: "postgresql+psycopg2://omega_cartridge_sap_sf:${OMEGA_CARTRIDGE_SAP_SF_PASSWORD:?OMEGA_CARTRIDGE_SAP_SF_PASSWORD is required}@postgres:5432/modecissions"
+      MINIO_ENDPOINT: "s3.${AWS_REGION:?AWS_REGION is required}.amazonaws.com"
+      MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:-}
+      MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      MINIO_BUCKET: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      MINIO_SECURE: "true"
+      AWS_DEFAULT_REGION: ${AWS_REGION:?AWS_REGION is required}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:?S3_BUCKET_NAME is required}
+      REFINEMENT_URL: http://refinement:8500
+      SF_BASE_URL: ${SF_BASE_URL:-}
+      SF_COMPANY_ID: ${SF_COMPANY_ID:-}
+      SF_CLIENT_ID: ${SF_CLIENT_ID:-}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
+      SF_TOKEN_URL: ${SF_TOKEN_URL:-}
+      SF_IDP_URL: ${SF_IDP_URL:-}
+      SF_AUTH_METHOD: ${SF_AUTH_METHOD:-oauth2_client_credentials}
+      SF_ADMIN_USER: ${SF_ADMIN_USER:-}
+      SF_PRIVATE_KEY_PATH: ${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required for SAP cartridges}
+    volumes:
+      # Optional X.509 key for SuccessFactors OAuth2 SAML Bearer Assertion.
+      # Most production installs store the PEM in scoped Vault as private_key_pem;
+      # this mount is available only for operators who prefer a host secret file.
+      - ${SF_PRIVATE_KEY_HOST_PATH:-/dev/null}:${SF_PRIVATE_KEY_PATH:-/run/secrets/sf_epiuse_iaappliance_connector.pem}:ro
+    ports:
+      - "8203:8203"
+    networks:
+      - modecissions_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      console:
+        condition: service_healthy
+      refinement:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8203/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # ── MCP Infrastructure ────────────────────────────────────────────────────
 
   mcp-infra:

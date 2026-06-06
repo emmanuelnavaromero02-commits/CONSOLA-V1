@@ -181,9 +181,10 @@ export async function saveCredentials(
   return data;
 }
 
-export async function testConnection(id: string): Promise<TestConnectionResult> {
+export async function testConnection(id: string, connId?: string): Promise<TestConnectionResult> {
+  const query = connId?.trim() ? `?conn_id=${encodeURIComponent(connId.trim())}` : "";
   const { data } = await api.post<TestConnectionResult>(
-    `/api/cartridges/${encodeURIComponent(id)}/test_connection`,
+    `/api/cartridges/${encodeURIComponent(id)}/test_connection${query}`,
   );
   return data;
 }
