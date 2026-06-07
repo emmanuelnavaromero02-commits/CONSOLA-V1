@@ -23,7 +23,7 @@ from urllib3.util.retry import Retry
 from app.core.auth_factory import auth_trace, build_auth_headers
 from app.core.config import settings
 from app.core.settings_proxy import get_setting
-from app.core.vault_client import get_connection_for_worker, get_secret_for_worker
+from app.core.vault_client import _candidate_fields, get_connection_for_worker, get_secret_for_worker
 
 logger = logging.getLogger(__name__)
 # urllib3 retry logger is noisy by default; INFO surfaces retries
@@ -151,7 +151,21 @@ class SapSfClient:
             security_context=self._security_context,
         )
 
+        def vault_connection_secret(env_var_name: str) -> str:
+            for field in _candidate_fields(env_var_name):
+                value = _normalize_config_value(self._vault_connection.get(field))
+                if value:
+                    return value
+            return ""
+
         def worker_secret(env_var_name: str) -> str:
+            # An explicit Vault connection is selected by the user and must win
+            # over container-level defaults such as SF_AUTH_METHOD. Those env
+            # defaults remain the fallback for legacy/default flows.
+            if self._conn_id:
+                value = vault_connection_secret(env_var_name)
+                if value:
+                    return value
             return get_secret_for_worker(
                 "sap_successfactors",
                 env_var_name,

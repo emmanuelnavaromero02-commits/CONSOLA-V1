@@ -101,6 +101,39 @@ def test_saml_bearer_auth_gets_assertion_from_successfactors_idp_and_caches_toke
     assert "client_secret" not in token_body
 
 
+def test_explicit_vault_connection_auth_method_wins_over_container_default(monkeypatch):
+    """A selected Vault connection must not be downgraded by SF_AUTH_METHOD env."""
+    monkeypatch.setenv("SF_AUTH_METHOD", "oauth2_client_credentials")
+
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": "https://api68sales.successfactors.com/oauth/token",
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(
+        sap_client,
+        "get_secret_for_worker",
+        lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
+    )
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf", security_context='{"trusted":true}')
+    status = client.configuration_status()
+
+    assert client.auth_method == "saml_bearer_assertion"
+    assert status["configured"] is True
+    assert status["missing"] == []
+
+
 def test_live_saml_bearer_test_connection_against_configured_successfactors():
     if os.getenv("OMEGA_ENABLE_LIVE_SF_SAML_TEST") != "1":
         pytest.skip("set OMEGA_ENABLE_LIVE_SF_SAML_TEST=1 with real SF SAML credentials")
