@@ -37,6 +37,7 @@ def test_console_entity_run_forwards_backend_security_context_to_cartridge_skill
     source = _read("console/app/routers/cartridges.py")
 
     assert "security_context = build_security_context(user)" in source
+    assert 'params={"conn_id": selected_conn_id} if selected_conn_id else None' in source
     assert 'json={"security_context": security_context}' in source
 
 
@@ -48,6 +49,8 @@ def test_skills_preserve_forwarded_workspace_scope():
         assert "def _security_context(" in source
         assert "token = set_security_context(ctx)" in source
         assert 'scoped_config = {**config, "security_context": ctx}' in source
+        if cartridge == "sap_successfactors":
+            assert 'scoped_config = {**scoped_config, "conn_id": conn_id}' in source
         assert "def _run_kb_with_context(" in source
         assert "return run_knowledge_bit(kb_id, ctx)" in source
         assert "return run_all_knowledge_bits(ctx)" in source
@@ -84,6 +87,8 @@ def test_cartridge_job_runners_pass_scope_to_airflow_conf():
         assert 'conf["security_context"] = security_context' in source
         assert 'conf["tenant_id"] = security_context["tenant_id"]' in source
         assert 'conf["workspace_id"] = security_context["workspace_id"]' in source
+        if cartridge == "sap_successfactors":
+            assert 'conf["conn_id"] = conn_id' in source
 
 
 def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
@@ -121,15 +126,34 @@ def test_airflow_dags_forward_scope_to_raw_writes_and_skill_calls():
     for cartridge in SAP_CARTRIDGES:
         source = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract.py")
         assert "skill_body = {" in source
-        assert 'for key in ("tenant_id", "workspace_id", "security_context")' in source
+        if cartridge == "sap_successfactors":
+            assert "def _security_context_from_conf(" in source
+            assert '"conn_id": conf.get("conn_id") or conf.get("connection_id") or None' in source
+        else:
+            assert 'for key in ("tenant_id", "workspace_id", "security_context")' in source
         assert "json=skill_body" in source
         extract_all = _read(f"cartridges/{cartridge}/dags/{cartridge}_extract_all.py")
         assert "skill_body = {" in extract_all
-        assert (
-            'for key in ("tenant_id", "workspace_id", "security_context")'
-            in extract_all
-        )
+        if cartridge == "sap_successfactors":
+            assert "def _security_context_from_conf(" in extract_all
+            assert '"conn_id": conf.get("conn_id") or conf.get("connection_id") or None' in extract_all
+        else:
+            assert (
+                'for key in ("tenant_id", "workspace_id", "security_context")'
+                in extract_all
+            )
         assert "json=skill_body" in extract_all
+
+
+def test_entity_scheduler_forwards_scope_and_connection_id_to_scheduled_dags():
+    source = _read("airflow/dags/entity_scheduler.py")
+
+    assert "ec.tenant_id::text AS tenant_id" in source
+    assert "ec.workspace_id::text AS workspace_id" in source
+    assert "ec.connection_id" in source
+    assert 'conf["tenant_id"] = it["tenant_id"]' in source
+    assert 'conf["workspace_id"] = it["workspace_id"]' in source
+    assert 'conf["conn_id"] = it["conn_id"]' in source
 
 
 def test_scoped_allowed_prefixes_are_emitted_for_all_live_cartridges():

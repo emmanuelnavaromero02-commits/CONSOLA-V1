@@ -39,12 +39,15 @@ def _security_context(body: dict[str, Any] | None) -> dict[str, Any] | None:
 def _run_entity_with_context(
     config: dict[str, Any],
     body: dict[str, Any] | None,
+    conn_id: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     ctx = _security_context(body)
     token = set_security_context(ctx)
     try:
         scoped_config = {**config, "security_context": ctx} if ctx else config
+        if conn_id:
+            scoped_config = {**scoped_config, "conn_id": conn_id}
         return run_entity(scoped_config, **kwargs)
     finally:
         reset_security_context(token)
@@ -168,33 +171,44 @@ def entities() -> dict:
 
 
 @router.post("/run_full_load/{entity}")
-def run_full_load(entity: str, body: dict[str, Any] | None = Body(None)) -> dict:
+def run_full_load(
+    entity: str,
+    conn_id: str | None = Query(default=None, max_length=128),
+    body: dict[str, Any] | None = Body(None),
+) -> dict:
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
     try:
-        return _run_entity_with_context({**config, "mode": "full"}, body)
+        return _run_entity_with_context({**config, "mode": "full"}, body, conn_id=conn_id)
     except Exception as exc:
         return _external_failure(exc, entity)
 
 
 @router.post("/run_incremental/{entity}")
-def run_incremental(entity: str, body: dict[str, Any] | None = Body(None)) -> dict:
+def run_incremental(
+    entity: str,
+    conn_id: str | None = Query(default=None, max_length=128),
+    body: dict[str, Any] | None = Body(None),
+) -> dict:
     config = get_entity_config(entity)
     if not config:
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity}")
     try:
-        return _run_entity_with_context({**config, "mode": "incremental"}, body)
+        return _run_entity_with_context({**config, "mode": "incremental"}, body, conn_id=conn_id)
     except Exception as exc:
         return _external_failure(exc, entity)
 
 
 @router.post("/run_full_load_all")
-def run_full_load_all(body: dict[str, Any] | None = Body(None)) -> dict:
+def run_full_load_all(
+    conn_id: str | None = Query(default=None, max_length=128),
+    body: dict[str, Any] | None = Body(None),
+) -> dict:
     results = []
     for config in get_all_entities():
         try:
-            results.append(_run_entity_with_context({**config, "mode": "full"}, body))
+            results.append(_run_entity_with_context({**config, "mode": "full"}, body, conn_id=conn_id))
         except Exception as exc:
             results.append(
                 {
@@ -207,12 +221,15 @@ def run_full_load_all(body: dict[str, Any] | None = Body(None)) -> dict:
 
 
 @router.post("/run_incremental_all")
-def run_incremental_all(body: dict[str, Any] | None = Body(None)) -> dict:
+def run_incremental_all(
+    conn_id: str | None = Query(default=None, max_length=128),
+    body: dict[str, Any] | None = Body(None),
+) -> dict:
     results = []
     for config in get_all_entities():
         mode = "incremental" if config.get("watermark_field") else "full"
         try:
-            results.append(_run_entity_with_context({**config, "mode": mode}, body))
+            results.append(_run_entity_with_context({**config, "mode": mode}, body, conn_id=conn_id))
         except Exception as exc:
             results.append(
                 {
@@ -229,6 +246,7 @@ def run_historical_load(
     entity: str,
     from_date: str,
     to_date: str,
+    conn_id: str | None = Query(default=None, max_length=128),
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     config = get_entity_config(entity)
@@ -243,6 +261,7 @@ def run_historical_load(
         return _run_entity_with_context(
             dict(config),
             body,
+            conn_id=conn_id,
             from_date=from_date,
             to_date=to_date,
         )
@@ -254,6 +273,7 @@ def run_historical_load(
 def run_historical_load_all(
     from_date: str,
     to_date: str,
+    conn_id: str | None = Query(default=None, max_length=128),
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
@@ -265,6 +285,7 @@ def run_historical_load_all(
                 _run_entity_with_context(
                     dict(config),
                     body,
+                    conn_id=conn_id,
                     from_date=from_date,
                     to_date=to_date,
                 )

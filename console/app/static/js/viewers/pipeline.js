@@ -13,6 +13,8 @@ let _cartridge    = 'replicon';
 let _activeTab    = 'pipeline';
 let _selectedDag  = null;  // currently selected dag_id in editor
 let _airflowPublicUrl = '';
+let _vaultConnections = [];
+let _selectedConnId = '';
 
 async function loadRuntimeConfig() {
   try {
@@ -56,6 +58,8 @@ function onCartridgeChange() {
   const sel = document.getElementById('cart-sel');
   _cartridge = sel.value || 'replicon';
   activeJobs = {};
+  _vaultConnections = [];
+  _selectedConnId = '';
   load();
   loadDags();
 }
@@ -113,7 +117,31 @@ function renderStats(rows) {
     <div class="stat"><div class="stat-val s-never">${never}</div><div class="stat-lbl">SIN DATOS</div></div>
     <div class="stat"><div class="stat-val s-running">${running}</div><div class="stat-lbl">EXTRAYENDO</div></div>
     <div class="stat"><div class="stat-val">${silverTotal}</div><div class="stat-lbl">DATASETS SILVER</div></div>
+    ${renderConnectionPicker()}
   `;
+}
+
+function renderConnectionPicker() {
+  if (!_vaultConnections.length) return '';
+  const options = _vaultConnections.map(conn => {
+    const id = String(conn.conn_id || conn.id || '').trim();
+    if (!id) return '';
+    return `<option value="${esc(id)}" ${id === _selectedConnId ? 'selected' : ''}>${esc(id)}</option>`;
+  }).join('');
+  if (!options) return '';
+  return `<label class="stat" style="min-width:180px">
+    <div class="stat-lbl">CONEXIÓN</div>
+    <select id="extract-conn-sel" data-action="select-connection"
+            style="width:100%;height:28px;margin-top:4px;background:var(--bg2);color:var(--text);border:1px solid var(--border);font-family:var(--font-mono);font-size:11px">
+      ${options}
+    </select>
+  </label>`;
+}
+
+function selectedConnectionId() {
+  const sel = document.getElementById('extract-conn-sel');
+  const value = sel ? sel.value : _selectedConnId;
+  return String(value || '').trim();
 }
 
 function renderRow(row) {
@@ -256,11 +284,14 @@ function render(rows) {
 // ── Extract actions ───────────────────────────────────────────────────────────
 
 async function extractEntity(cartridge, entity) {
+  const body = {mode: 'incremental'};
+  const connId = selectedConnectionId();
+  if (connId) body.conn_id = connId;
   const r = await fetch(`/api/pipeline/${cartridge}/${entity}/extract`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: jsonHeaders(),
-    body: JSON.stringify({mode: 'incremental'}),
+    body: JSON.stringify(body),
   });
   const d = await r.json();
   if (d.job_id) {
@@ -271,11 +302,14 @@ async function extractEntity(cartridge, entity) {
 }
 
 async function extractAll() {
+  const body = {mode: 'incremental'};
+  const connId = selectedConnectionId();
+  if (connId) body.conn_id = connId;
   const r = await fetch(`/api/pipeline/${encodeURIComponent(_cartridge)}/extract_all`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: jsonHeaders(),
-    body: JSON.stringify({mode: 'incremental'}),
+    body: JSON.stringify(body),
   });
   const d = await r.json();
   if (!r.ok) {
@@ -327,6 +361,7 @@ function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function load() {
   try {
+    await loadVaultConnections();
     const r = await fetch(`/api/pipeline?cartridge=${encodeURIComponent(_cartridge)}`);
     const d = await r.json();
     pipelineData = d.pipeline || [];
@@ -345,6 +380,18 @@ async function load() {
   } catch(e) {
     document.getElementById('last-update').textContent = 'Error: ' + e.message;
   }
+}
+
+async function loadVaultConnections() {
+  try {
+    const r = await fetch(`/api/vault/connections/${encodeURIComponent(_cartridge)}`, {credentials: 'same-origin'});
+    if (!r.ok) return;
+    const d = await r.json();
+    _vaultConnections = d.connections || [];
+    if (!_selectedConnId && _vaultConnections.length) {
+      _selectedConnId = String(_vaultConnections[0].conn_id || _vaultConnections[0].id || '').trim();
+    }
+  } catch (e) {}
 }
 
 function _rerender() {
@@ -792,6 +839,8 @@ function _wireDelegation() {
       extractEntity(target.dataset.cartridge, target.dataset.entity);
     } else if (action === 'extract-all') {
       extractAll();
+    } else if (action === 'select-connection') {
+      _selectedConnId = target.value || '';
     } else if (action === 'select-dag') {
       selectDag(target.dataset.dagId);
     } else if (action === 'apply-template') {

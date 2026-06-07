@@ -3587,10 +3587,10 @@ async def api_pipeline_extract(
         if not dag_id:
             raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
 
-        conf = _apply_user_scope_to_dag_conf(
-            _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body),
-            user,
-        )
+        extract_conf = _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body)
+        if not extract_conf.get("conn_id") and metadata.get("connection_id"):
+            extract_conf["conn_id"] = _normalize_pipeline_conn_id(metadata.get("connection_id"))
+        conf = _apply_user_scope_to_dag_conf(extract_conf, user)
         requested_dag_run_id = _dag_run_id_from_idempotency_key(
             dag_id,
             body.get("idempotency_key") or body.get("request_id"),
@@ -3622,10 +3622,14 @@ async def api_pipeline_extract(
         }
 
     mode = body.get("mode", "incremental")
-    result = await mcp_registry.invoke(cartridge, "extract", {
+    args = {
         "entity": entity,
         "mode": mode,
-    }, user=user)
+    }
+    conn_id = _normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    if conn_id:
+        args["conn_id"] = conn_id
+    result = await mcp_registry.invoke(cartridge, "extract", args, user=user)
     return result
 
 
@@ -3696,7 +3700,8 @@ async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
             e.dag_id AS dag_id,
             e.mode AS mode,
             e.enabled AS enabled,
-            e.primary_key AS primary_key
+            e.primary_key AS primary_key,
+            e.connection_id AS connection_id
         FROM cartridges c
         LEFT JOIN entity_config e
           ON e.cartridge_id = c.id
@@ -3718,11 +3723,25 @@ def _build_dag_extract_conf(cartridge: str, entity: str, configured_mode: str | 
         "entity": entity,
         "mode": mode,
     }
+    conn_id = _normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    if conn_id:
+        conf["conn_id"] = conn_id
     if body.get("from_date"):
         conf["from_date"] = body["from_date"]
     if body.get("to_date"):
         conf["to_date"] = body["to_date"]
     return conf
+
+
+def _normalize_pipeline_conn_id(conn_id: object | None) -> str | None:
+    if conn_id is None:
+        return None
+    value = str(conn_id).strip()
+    if not value:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+        raise HTTPException(400, "invalid connection id")
+    return value
 
 
 def _apply_user_scope_to_dag_conf(conf: dict, user: dict | None) -> dict:

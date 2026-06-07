@@ -160,6 +160,10 @@ async def create_extract_job(
     mode   = config.get("mode", "full")
     job_id = str(uuid.uuid4())[:8]
     args   = {"entity": entity, "mode": mode, "from_date": from_date, "to_date": to_date}
+    conn_id = (str(config.get("conn_id") or config.get("connection_id") or "").strip() or None)
+    if conn_id:
+        args["conn_id"] = conn_id
+        config = {**config, "conn_id": conn_id}
     security_context = get_security_context()
     if security_context:
         config = {**config, "security_context": security_context}
@@ -184,17 +188,21 @@ async def create_extract_job(
     }
 
 
-async def create_extract_all_job(mode: str = "incremental") -> dict:
+async def create_extract_all_job(mode: str = "incremental", conn_id: str | None = None) -> dict:
     """
     Extract all enabled entities in parallel (max 4 concurrent).
     Logs progress to run_logs; updates job message after each entity.
     """
     job_id = str(uuid.uuid4())[:8]
-    await _insert(job_id, "sap_successfactors__extract_all", {"mode": mode})
+    selected_conn_id = (conn_id or "").strip() or None
+    args = {"mode": mode}
+    if selected_conn_id:
+        args["conn_id"] = selected_conn_id
+    await _insert(job_id, "sap_successfactors__extract_all", args)
     security_context = get_security_context()
 
     task = asyncio.create_task(
-        _run_extract_all(job_id, mode, security_context),
+        _run_extract_all(job_id, mode, security_context, selected_conn_id),
         name=f"extract-all-{job_id}",
     )
     _tasks[job_id] = task
@@ -277,6 +285,9 @@ async def _trigger_airflow(
         "watermark_field":   config.get("watermark_field") or "",
         "sf_base_url": settings.sf_base_url,
     }
+    conn_id = (str(config.get("conn_id") or config.get("connection_id") or "").strip() or None)
+    if conn_id:
+        conf["conn_id"] = conn_id
     security_context = config.get("security_context")
     if isinstance(security_context, dict):
         conf["security_context"] = security_context
@@ -299,7 +310,12 @@ async def _trigger_airflow(
 
 # ── Background executor ───────────────────────────────────────────────────────
 
-async def _run_extract_all(job_id: str, mode: str, security_context: dict | None = None) -> None:
+async def _run_extract_all(
+    job_id: str,
+    mode: str,
+    security_context: dict | None = None,
+    conn_id: str | None = None,
+) -> None:
     from app.services.catalog_service import get_all_entities
     from app.services.extraction_service import run_entity
 
@@ -323,6 +339,8 @@ async def _run_extract_all(job_id: str, mode: str, security_context: dict | None
             try:
                 overridden = dict(config)
                 overridden["mode"] = mode
+                if conn_id:
+                    overridden["conn_id"] = conn_id
                 if security_context:
                     overridden["security_context"] = security_context
                 result = await loop.run_in_executor(

@@ -310,6 +310,7 @@ def cartridge_get_semantic(cartridge_id: str) -> dict[str, Any]:
             "cartridge_id": {"type": "string"},
             "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
+            "conn_id": {"type": "string", "description": "Optional Vault connection id"},
             "security_context": {"type": "object"},
         },
         "required": ["cartridge_id"],
@@ -853,6 +854,7 @@ async def cartridge_extract(
     to_date: str | None = None,
     tenant_id: str | None = None,
     workspace_id: str | None = None,
+    conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Look up the DAG bound to this entity. Accept the business name, the full
@@ -864,17 +866,20 @@ async def cartridge_extract(
                 "error": f"Entity '{entity}' not found in cartridge '{cartridge_id}'"
             }
         cur.execute(
-            "SELECT dag_id FROM entity_config WHERE cartridge_id=%s AND entity=%s",
+            "SELECT dag_id, connection_id FROM entity_config WHERE cartridge_id=%s AND entity=%s",
             (cartridge_id, resolved),
         )
         row = cur.fetchone()
     if not row or not row[0]:
         return {"error": f"No dag_id configured for {cartridge_id}.{resolved}"}
     dag_id = row[0]
+    selected_conn_id = (conn_id or row[1] or "").strip()
     entity = resolved
     run_id = uuid.uuid4().hex[:8]
 
     conf = {"job_id": run_id, "run_id": run_id, "entity": entity, "mode": mode}
+    if selected_conn_id:
+        conf["conn_id"] = selected_conn_id
     if from_date:
         conf["from_date"] = from_date
     if to_date:
@@ -922,6 +927,7 @@ async def cartridge_extract(
             },
             "tenant_id": {"type": "string"},
             "workspace_id": {"type": "string"},
+            "conn_id": {"type": "string", "description": "Optional Vault connection id"},
             "security_context": {"type": "object"},
         },
         "required": ["cartridge_id"],
@@ -932,11 +938,12 @@ async def cartridge_extract_all(
     mode: str = "incremental",
     tenant_id: str | None = None,
     workspace_id: str | None = None,
+    conn_id: str | None = None,
     security_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with _conn() as c, c.cursor() as cur:
         cur.execute(
-            "SELECT entity, dag_id FROM entity_config "
+            "SELECT entity, dag_id, connection_id FROM entity_config "
             "WHERE cartridge_id=%s AND enabled=TRUE AND dag_id IS NOT NULL",
             (cartridge_id,),
         )
@@ -948,14 +955,16 @@ async def cartridge_extract_all(
     async with httpx.AsyncClient(
         auth=_airflow_auth(), timeout=30, headers=_request_headers()
     ) as client:
-        for entity, dag_id in rows:
+        for entity, dag_id, configured_conn_id in rows:
             run_id = uuid.uuid4().hex[:8]
+            selected_conn_id = (conn_id or configured_conn_id or "").strip()
             conf = _attach_security_scope(
                 {
                     "job_id": run_id,
                     "run_id": run_id,
                     "entity": entity,
                     "mode": mode,
+                    **({"conn_id": selected_conn_id} if selected_conn_id else {}),
                 },
                 security_context,
                 tenant_id,

@@ -71,6 +71,13 @@ def _scoped_config(config: dict[str, Any], ctx: dict[str, Any] | None) -> dict[s
     return {**config, "security_context": ctx} if ctx else config
 
 
+def _with_optional_conn(config: dict[str, Any], conn_id: str | None) -> dict[str, Any]:
+    selected = (conn_id or "").strip()
+    if not selected:
+        return config
+    return {**config, "conn_id": selected}
+
+
 # ── Catalogue ────────────────────────────────────────────────────────────────
 
 @router.get("/entities")
@@ -133,6 +140,7 @@ def entity_preview(
 def entity_extract(
     entity_id: str,
     mode: str = Query("incremental", pattern="^(full|incremental|historical)$"),
+    conn_id: str | None = Query(default=None, max_length=128),
     from_date: str | None = None,
     to_date: str | None = None,
     job_id: str | None = None,
@@ -158,7 +166,7 @@ def entity_extract(
     token = set_security_context(ctx)
     try:
         result = run_entity(
-            _scoped_config({**config, "mode": mode}, ctx),
+            _with_optional_conn(_scoped_config({**config, "mode": mode}, ctx), conn_id),
             from_date=from_date,
             to_date=to_date,
         )
@@ -182,6 +190,7 @@ def entity_extract(
 @router.post("/extract-all")
 def extract_all(
     mode: str = Query("incremental", pattern="^(full|incremental)$"),
+    conn_id: str | None = Query(default=None, max_length=128),
     body: dict[str, Any] | None = Body(None),
 ):
     """Run every enabled entity, one after the other."""
@@ -196,7 +205,9 @@ def extract_all(
         for config in get_all_entities():
             effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
             try:
-                result = run_entity(_scoped_config({**config, "mode": effective_mode}, ctx))
+                result = run_entity(
+                    _with_optional_conn(_scoped_config({**config, "mode": effective_mode}, ctx), conn_id)
+                )
                 _mark_external_job(_trigger_silver_refresh, config.get("entity"), ctx)
                 results.append(result)
             except SAPClientError as exc:

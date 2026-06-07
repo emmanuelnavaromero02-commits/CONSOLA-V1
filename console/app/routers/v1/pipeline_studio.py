@@ -486,10 +486,10 @@ async def api_pipeline_extract(
         if not dag_id:
             raise HTTPException(400, f"No dag_id configured for {cartridge}.{entity}")
 
-        conf = _apply_user_scope_to_dag_conf(
-            _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body),
-            user,
-        )
+        extract_conf = _build_dag_extract_conf(cartridge, entity, metadata.get("mode"), body)
+        if not extract_conf.get("conn_id") and metadata.get("connection_id"):
+            extract_conf["conn_id"] = _normalize_pipeline_conn_id(metadata.get("connection_id"))
+        conf = _apply_user_scope_to_dag_conf(extract_conf, user)
         requested_dag_run_id = _dag_run_id_from_idempotency_key(
             dag_id,
             body.get("idempotency_key") or body.get("request_id"),
@@ -521,10 +521,14 @@ async def api_pipeline_extract(
         }
 
     mode = body.get("mode", "incremental")
-    result = await mcp_registry.invoke(cartridge, "extract", {
+    args = {
         "entity": entity,
         "mode": mode,
-    }, user=user)
+    }
+    conn_id = _normalize_pipeline_conn_id(body.get("conn_id") or body.get("connection_id"))
+    if conn_id:
+        args["conn_id"] = conn_id
+    result = await mcp_registry.invoke(cartridge, "extract", args, user=user)
     return result
 
 # /api/pipeline/{cartridge}/extract_all

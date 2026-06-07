@@ -195,6 +195,7 @@ async def extract(
     mode: str = "incremental",
     from_date: str | None = None,
     to_date: str | None = None,
+    conn_id: str | None = None,
 ) -> dict[str, Any]:
     """
     [BATCH — async] Trigger extraction of a SAP SuccessFactors entity into Bronze (MinIO Parquet).
@@ -207,12 +208,15 @@ async def extract(
         mode:      "full" | "incremental" | "historical" (default: incremental)
         from_date: ISO date — historical mode only (e.g. "2024-01-01")
         to_date:   ISO date — historical mode only (e.g. "2024-03-31")
+        conn_id:   optional Vault connection id (e.g. "femsa_sf")
     """
     config = get_entity_config(entity)
     if not config:
         return {"error": f"Entity '{entity}' not found"}
     overridden = dict(config)
     overridden["mode"] = mode
+    if conn_id:
+        overridden["conn_id"] = conn_id
     return await job_runner.create_extract_job(
         overridden, from_date=from_date, to_date=to_date
     )
@@ -222,7 +226,7 @@ async def extract(
 
 
 @mcp.tool()
-async def extract_all(mode: str = "incremental") -> dict[str, Any]:
+async def extract_all(mode: str = "incremental", conn_id: str | None = None) -> dict[str, Any]:
     """
     [BATCH — async] Extrae TODAS las entidades de SAP SuccessFactors en paralelo (máx 4 simultáneas).
 
@@ -234,8 +238,9 @@ async def extract_all(mode: str = "incremental") -> dict[str, Any]:
 
     Args:
         mode: "full" | "incremental" (default: incremental)
+        conn_id: optional Vault connection id (e.g. "femsa_sf")
     """
-    return await job_runner.create_extract_all_job(mode)
+    return await job_runner.create_extract_all_job(mode, conn_id=conn_id)
 
 
 # ── Tool 4c: get_run_logs ─────────────────────────────────────────────────────

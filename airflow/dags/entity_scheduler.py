@@ -140,6 +140,9 @@ def find_due_entities(**context):
             cur.execute(
                 """SELECT ec.cartridge_id, ec.entity, ec.dag_id, ec.mode,
                           ec.cron_expression, ec.last_scheduled_at,
+                          ec.tenant_id::text AS tenant_id,
+                          ec.workspace_id::text AS workspace_id,
+                          ec.connection_id,
                           CASE WHEN ec.dag_params IS NULL
                                  OR ec.dag_params = '{}'::jsonb
                                THEN COALESCE(cd.dag_params_example, '{}'::jsonb)
@@ -167,7 +170,7 @@ def find_due_entities(**context):
         conn.close()
 
     due = []
-    for cartridge_id, entity, dag_id, mode, cron_expr, last_at, dag_params in rows:
+    for cartridge_id, entity, dag_id, mode, cron_expr, last_at, tenant_id, workspace_id, connection_id, dag_params in rows:
         fire = _fire_in_window(cron_expr, logical_date, window_end)
         if fire is None:
             continue
@@ -185,6 +188,9 @@ def find_due_entities(**context):
             "entity":       entity,
             "dag_id":       dag_id,
             "mode":         mode or "full",
+            "tenant_id":    tenant_id,
+            "workspace_id": workspace_id,
+            "conn_id":      connection_id,
             "fire_time":    fire.isoformat(),
             "dag_params":   dag_params or {},
         })
@@ -221,6 +227,11 @@ def trigger_each(**context):
                 "cartridge_id": it["cartridge_id"],
                 "triggered_by": "entity_scheduler",
             }
+            if it.get("tenant_id") and it.get("workspace_id"):
+                conf["tenant_id"] = it["tenant_id"]
+                conf["workspace_id"] = it["workspace_id"]
+            if it.get("conn_id"):
+                conf["conn_id"] = it["conn_id"]
             # Merge per-entity dag_params (file_pattern, parser, etc.) — but
             # never let them clobber the canonical fields above.
             for k, v in (it.get("dag_params") or {}).items():

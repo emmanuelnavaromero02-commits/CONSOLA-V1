@@ -999,6 +999,13 @@ import { state } from './legacy-state.js';
       patchEntityField(cartridge, entity, 'connection_id', val, el);
     }
 
+    function entityConnectionId(entity) {
+      const entities = state._currentCartridge?.entities || [];
+      const ent = entities.find(e => (e.id || e.entity) === entity);
+      const value = ent?.connection_id || ent?.conn_id || '';
+      return String(value || '').trim();
+    }
+
     export async function toggleEntitySchedule(cartridge, entity, currentType, currentCron) {
       if (currentType === 'scheduled') {
         // Switch to manual — clear schedule in Airflow
@@ -1204,10 +1211,13 @@ import { state } from './legacy-state.js';
       _updateRunBadge(row, entity, 'extracting');
 
       try {
+        const connId = entityConnectionId(entity);
+        const body = { mode: mode || 'incremental', dag_id: dagId };
+        if (connId) body.conn_id = connId;
         const r = await fetch(`/api/pipeline/${encodeURIComponent(cartridge)}/${encodeURIComponent(entity)}/extract`, {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ mode: mode || 'incremental', dag_id: dagId }),
+          body: JSON.stringify(body),
         });
         const d = await jsonOrThrow(r);
         dagId = d.dag_id || dagId;

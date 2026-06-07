@@ -134,6 +134,7 @@ export function useVaultConnections(cartridge: string) {
   return useQuery({
     queryKey: ["monitor", "vault", "connections", cartridge],
     queryFn: () => listVaultConnections(cartridge),
+    enabled: Boolean(cartridge),
     staleTime: 30_000,
   });
 }

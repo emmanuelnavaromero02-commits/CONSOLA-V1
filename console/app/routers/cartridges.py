@@ -94,6 +94,8 @@ def _test_connection_succeeded(http_success: bool, payload: dict) -> bool:
 
 
 def _normalize_conn_id(conn_id: str | None) -> str | None:
+    if conn_id is not None and not isinstance(conn_id, str):
+        return None
     requested = (conn_id or "").strip()
     if not requested:
         return None
@@ -192,7 +194,13 @@ async def entities(cartridge: str, user: dict = Depends(require_authenticated)):
     "/{cartridge}/entities/{entity}/run",
     dependencies=[Depends(require_csrf), Depends(require_permission("cartridges.execute"))],
 )
-async def run_entity(cartridge: str, entity: str, request: Request, mode: str = "incremental"):
+async def run_entity(
+    cartridge: str,
+    entity: str,
+    request: Request,
+    mode: str = "incremental",
+    conn_id: str | None = Query(default=None, max_length=128),
+):
     """Trigger entity extraction via the cartridge /skills router."""
     user = getattr(request.state, "user", None) or {}
     _require_cartridge_visible(user, cartridge)
@@ -200,9 +208,11 @@ async def run_entity(cartridge: str, entity: str, request: Request, mode: str = 
         raise HTTPException(400, "mode must be 'full' or 'incremental'")
     skill = "run_full_load" if mode == "full" else "run_incremental"
     security_context = build_security_context(user)
+    selected_conn_id = _normalize_conn_id(conn_id)
     async with httpx.AsyncClient(timeout=30.0, headers=_cartridge_internal_headers()) as c:
         r = await c.post(
             _cartridge_url(cartridge, f"/skills/{skill}/{entity}"),
+            params={"conn_id": selected_conn_id} if selected_conn_id else None,
             json={"security_context": security_context},
         )
     if r.status_code >= 400:

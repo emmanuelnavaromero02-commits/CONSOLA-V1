@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import { useVaultConnections } from "@/lib/monitor/hooks";
 import type { PipelineEntity } from "@/lib/monitor/types";
 import { StatusPill } from "./StatusPill";
 
@@ -24,6 +25,12 @@ export function PipelineTable({
   const [pendingEntity, setPendingEntity] = useState<string | null>(null);
   const [extractingAll, setExtractingAll] = useState(false);
   const activeCartridge = cartridge || rows[0]?.cartridge || "";
+  const connections = useVaultConnections(activeCartridge);
+  const connectionOptions = (connections.data ?? [])
+    .map((conn) => String(conn.conn_id || conn.id || "").trim())
+    .filter(Boolean);
+  const [selectedConnId, setSelectedConnId] = useState("");
+  const effectiveConnId = selectedConnId || connectionOptions[0] || "";
   const isExtractAllLoading = extractingAll;
 
   async function extractEntity(row: PipelineEntity) {
@@ -32,7 +39,7 @@ export function PipelineTable({
     try {
       await api.post(
         `/api/pipeline/${encodeURIComponent(row.cartridge)}/${encodeURIComponent(row.entity)}/extract`,
-        { mode: "incremental" },
+        { mode: "incremental", ...(effectiveConnId ? { conn_id: effectiveConnId } : {}) },
       );
       toast.success(`Extracción enviada para ${row.entity}.`);
       onExtractionStarted?.();
@@ -49,7 +56,7 @@ export function PipelineTable({
     try {
       const { data } = await api.post<{ count?: number; error_count?: number }>(
         `/api/pipeline/${encodeURIComponent(activeCartridge)}/extract_all`,
-        { mode: "incremental" },
+        { mode: "incremental", ...(effectiveConnId ? { conn_id: effectiveConnId } : {}) },
       );
       const count = data.count ?? 0;
       const errors = data.error_count ?? 0;
@@ -78,19 +85,37 @@ export function PipelineTable({
     <div className="rounded-lg border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Extracción</span>
-        <button
-          type="button"
-          onClick={extractAll}
-          disabled={isExtractAllLoading || !activeCartridge}
-          className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isExtractAllLoading ? (
-            <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
-          ) : (
-            <PlayCircle aria-hidden className="h-4 w-4" />
-          )}
-          Extraer Todo
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {connectionOptions.length ? (
+            <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              Conexión
+              <select
+                value={effectiveConnId}
+                onChange={(event) => setSelectedConnId(event.target.value)}
+                className="min-h-[36px] rounded-md border bg-background px-2 text-xs text-foreground"
+              >
+                {connectionOptions.map((connId) => (
+                  <option key={connId} value={connId}>
+                    {connId}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            onClick={extractAll}
+            disabled={isExtractAllLoading || !activeCartridge}
+            className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isExtractAllLoading ? (
+              <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+            ) : (
+              <PlayCircle aria-hidden className="h-4 w-4" />
+            )}
+            Extraer Todo
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
