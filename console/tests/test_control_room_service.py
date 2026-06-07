@@ -102,6 +102,49 @@ async def test_query_dataset_rows_treats_refinement_error_payload_as_unavailable
 
 
 @pytest.mark.asyncio
+async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
+    from app.services.intelligence import gold_fetcher
+
+    calls: list[tuple[str, dict | None, int]] = []
+
+    async def fake_gold_rows(dataset: str, user: dict | None, limit: int) -> list[dict]:
+        calls.append((dataset, user, limit))
+        if dataset == "sap_successfactors_employee_360":
+            return [
+                {"user_id": "100", "full_name": "A", "is_active": True},
+                {"user_id": "101", "full_name": "B", "is_active": "true"},
+                {"user_id": "102", "full_name": "C", "is_active": False},
+            ]
+        if dataset == "sap_successfactors_headcount_by_company":
+            return [{"company_id": "MX01", "company_name": "FEMSA", "headcount": 2}]
+        if dataset == "sap_successfactors_headcount_by_location":
+            return [{"location_id": "MTY", "location_name": "Monterrey", "headcount": 2}]
+        if dataset == "sap_successfactors_headcount_by_department":
+            return [{"department_id": "HR", "department_name": "People", "headcount": 2}]
+        return []
+
+    monkeypatch.setattr(gold_fetcher, "query_gold_dataset_rows", fake_gold_rows)
+
+    result = await control_room_service.sap_successfactors_gold_kpis(USER)
+
+    assert result["connection_id"] == "femsa_sf"
+    assert result["tenant_id"] == USER["tenant_id"]
+    assert result["workspace_id"] == USER["active_workspace_id"]
+    active = next(widget for widget in result["widgets"] if widget["id"] == "sf_active_headcount")
+    assert active["value"] == 2
+    assert active["dataset"] == "sap_successfactors_employee_360"
+    by_company = next(widget for widget in result["widgets"] if widget["id"] == "sf_headcount_by_company")
+    assert by_company["rows"] == [{"label": "FEMSA", "id": "MX01", "headcount": 2}]
+    assert {dataset for dataset, _user, _limit in calls} == {
+        "sap_successfactors_employee_360",
+        "sap_successfactors_headcount_by_company",
+        "sap_successfactors_headcount_by_location",
+        "sap_successfactors_headcount_by_department",
+    }
+    assert all(user is USER for _dataset, user, _limit in calls)
+
+
+@pytest.mark.asyncio
 async def test_list_anomalies_normalizes_all_real_sources():
     result = await control_room_service.list_anomalies(USER, fetcher=sample_fetcher)
 
