@@ -46,22 +46,32 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
     await expect(repliconLink.first()).toBeVisible({ timeout: 10_000 });
     await repliconLink.first().click();
     await page.waitForURL(/\/cartridges\/viewer\/?\?id=replicon/, { timeout: 10_000 });
-    await expect(page.locator("form")).toBeVisible({ timeout: 15_000 });
+    // v1.45 Vault-only UX (#273 B5): the viewer delegates credential
+    // writes to the scoped Vault page instead of an inline form.
+    await expect(
+      page.getByRole("link", { name: /configurar en vault/i }),
+    ).toBeVisible({ timeout: 15_000 });
   });
 });
 
 test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
-  test("the form renders real <input> elements (not stub rectangles)", async ({
+  test("the viewer renders the Vault-scoped config surface (no inline credential inputs)", async ({
     authedPage: page,
   }) => {
     await page.goto("/cartridges/viewer?id=replicon");
-    // The dynamic form builds at least one labelled input — count
-    // the form inputs after the schema load resolves.
-    await expect(page.locator("form")).toBeVisible({ timeout: 15_000 });
-    const inputs = await page.locator("form input, form select").count();
-    expect(inputs,
-      "credentials form must render at least one input from the schema",
-    ).toBeGreaterThan(0);
+    // #273 B5: credentials are never typed into the browser. The viewer
+    // shows the expected-field summary + a CTA to the scoped Vault page,
+    // and must NOT render credential inputs.
+    await expect(
+      page.getByRole("link", { name: /configurar en vault/i }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: /probar conexión/i }),
+    ).toBeVisible();
+    expect(
+      await page.locator('input[type="password"]').count(),
+      "Vault-only viewer must never render a password input",
+    ).toBe(0);
   });
 
   test("'Probar conexión' button is present and clickable", async ({
@@ -73,30 +83,29 @@ test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
     await expect(btn).toBeEnabled();
   });
 
-  test("'Guardar credenciales' button is present", async ({
+  test("'Configurar en Vault' CTA links to the scoped Vault page", async ({
     authedPage: page,
   }) => {
     await page.goto("/cartridges/viewer?id=replicon");
-    await expect(
-      page.getByRole("button", { name: /guardar credenciales/i }),
-    ).toBeVisible({ timeout: 15_000 });
+    const cta = page.getByRole("link", { name: /configurar en vault/i });
+    await expect(cta).toBeVisible({ timeout: 15_000 });
+    await expect(cta).toHaveAttribute("href", /\/operations\/vault/);
   });
 
-  test("'Borrar credenciales' opens the confirm dialog", async ({
+  test("credential writes are delegated to Vault (no inline Guardar/Borrar)", async ({
     authedPage: page,
   }) => {
     await page.goto("/cartridges/viewer?id=replicon");
-    const deleteBtn = page.getByRole("button", { name: /borrar credenciales/i });
-    await expect(deleteBtn).toBeVisible({ timeout: 15_000 });
-    await deleteBtn.click();
-    // The dialog ships with aria-labelledby="confirm-delete-title".
     await expect(
-      page.getByRole("dialog", { name: /borrar credenciales/i }),
-    ).toBeVisible({ timeout: 5_000 });
-    // ESC dismisses (regression guard for v1.44.3 R1 P2 fix).
-    await page.keyboard.press("Escape");
+      page.getByRole("button", { name: /probar conexión/i }),
+    ).toBeVisible({ timeout: 15_000 });
+    // #273 B5 removed the inline credential write/delete affordances so
+    // secrets never live in the browser. Guard against their return.
     await expect(
-      page.getByRole("dialog", { name: /borrar credenciales/i }),
-    ).toBeHidden({ timeout: 2_000 });
+      page.getByRole("button", { name: /guardar credenciales/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /borrar credenciales/i }),
+    ).toHaveCount(0);
   });
 });

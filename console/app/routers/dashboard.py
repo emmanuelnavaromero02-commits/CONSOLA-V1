@@ -284,7 +284,12 @@ async def dashboard_kpis(user: dict = Depends(require_authenticated)):
     small queries) and return the shape documented in the v1.44.1
     brief."""
     pool = await auth.pool()
-    active_cartridges = await _active_scoped_cartridges(user)
+    # Scope KPIs to cartridges with an active scoped Vault connection. When
+    # NONE are connected yet (fresh install / local / E2E / demo stack), fall
+    # back to the full built-in catalog so the dashboard is never a dead
+    # surface. Once a real connection exists (e.g. FEMSA's femsa_sf) the view
+    # scopes down to it automatically.
+    active_cartridges = await _active_scoped_cartridges(user) or _CARTRIDGES
     return {
         "active_cartridges": list(active_cartridges),
         "cartridges":    await _cartridge_counts(pool, active_cartridges),

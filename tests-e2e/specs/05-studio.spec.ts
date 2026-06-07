@@ -143,16 +143,36 @@ test.describe("Legacy /studio page (port 8000)", () => {
     ).not.toBeNull();
   });
 
-  test("'Deploy a Airflow' button fires /api/studio/dag-deploy (USER-REPORTED BUG)",
+  test("'Deploy a Airflow' is gated: fires /api/studio/dag-deploy OR is disabled with a reason (USER-REPORTED BUG)",
     async ({ authedPage: page }) => {
       await openStudio(page);
       await goStudioStep(page, 2);
-      const deployBtn = page.getByRole("button", { name: /deploy a airflow|deploy/i }).first();
+      const deployBtn = page.getByRole("button", { name: /deploy/i }).first();
       if (!(await deployBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
         test.skip(true, "'Deploy a Airflow' button not present on /studio");
       }
-      // Wait for the request initiated by the click. Fails if the
-      // click is a no-op.
+      // #273 B4: the button must never be a silent no-op. Two valid
+      // states, both observable:
+      //   (a) packaged cartridge DAG (or production) -> DISABLED with a
+      //       clear reason: packaged DAGs already run in Airflow, and the
+      //       backend owns the production RCE gate.
+      //   (b) user-authored DAG in dev -> fires POST /api/studio/dag-deploy.
+      // refreshDagDeployButton() runs synchronously when the DAG editor
+      // renders; give it a moment to settle the gated state before we read it.
+      await page.waitForTimeout(2_000);
+      if (await deployBtn.isDisabled().catch(() => false)) {
+        const reason =
+          (await deployBtn.getAttribute("title")) ||
+          (await deployBtn.getAttribute("data-disabled-reason")) ||
+          (await deployBtn.textContent()) ||
+          "";
+        expect(reason,
+          "a disabled 'Deploy a Airflow' must explain why (packaged DAG / production gate)",
+        ).toMatch(/deshabilitado|empaquetado|producci[oó]n|ci\/cd|airflow/i);
+        return;
+      }
+      // Enabled button: it MUST fire the backend deploy request (which is
+      // itself gated server-side). A no-op enabled button is the bug.
       const requestPromise = page.waitForRequest(
         (req) => req.url().includes("/api/studio/dag-deploy"),
         { timeout: 10_000 },
@@ -160,8 +180,8 @@ test.describe("Legacy /studio page (port 8000)", () => {
       await deployBtn.click();
       await requestPromise.catch(() => {
         throw new Error(
-          "Click on 'Deploy a Airflow' did NOT trigger a request to " +
-          "/api/studio/dag-deploy within 10 s. User-reported bug confirmed.",
+          "An ENABLED 'Deploy a Airflow' did NOT trigger /api/studio/dag-deploy " +
+          "within 10 s. User-reported bug: the button is unresponsive.",
         );
       });
     },
