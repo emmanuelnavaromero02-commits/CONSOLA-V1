@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ CLIENT_CREDENTIALS_AUTH_METHODS = {"oauth2", "oauth2_client_credentials", "clien
 SAML_BEARER_AUTH_METHODS = {"saml_bearer_assertion", "saml2_bearer", "oauth2_saml_bearer"}
 SAML_BEARER_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:saml2-bearer"
 DEFAULT_SF_PRIVATE_KEY_PATH = "/run/secrets/sf_epiuse_iaappliance_connector.pem"
+_PEM_ARMOR_RE = re.compile(r"-----BEGIN [^-]+-----|-----END [^-]+-----")
 
 
 def _normalize_config_value(value: Any) -> str:
@@ -54,6 +56,19 @@ def _get_setting_or_env(key: str, *, default: str = "", env_fallback: str | None
         if value:
             return value
     return _normalize_config_value(default)
+
+
+def _successfactors_idp_private_key_payload(private_key_text: str) -> str:
+    """Return the private_key form expected by SuccessFactors /oauth/idp.
+
+    The endpoint expects the raw base64 key body on one line. Users commonly
+    paste a full PEM block into Vault; preserve already-raw values while
+    stripping PEM armor and whitespace when present.
+    """
+    text = _normalize_config_value(private_key_text)
+    if "-----BEGIN " in text or "-----END " in text:
+        text = _PEM_ARMOR_RE.sub("", text)
+    return re.sub(r"\s+", "", text)
 
 
 
@@ -441,7 +456,7 @@ class SapSfClient:
             raise SAPClientError(f"SAML bearer private key is not readable at {path}") from exc
 
     def _request_saml_assertion_from_successfactors(self) -> str:
-        private_key = self._load_saml_private_key_text()
+        private_key = _successfactors_idp_private_key_payload(self._load_saml_private_key_text())
         logger.warning("SAP SuccessFactors outbound POST %s", self.idp_url)
         logger.warning("%s", auth_trace("successfactors_oauth_idp", ("private_key",)))
         resp = self._session.post(
@@ -455,6 +470,17 @@ class SapSfClient:
             headers={"Accept": "text/plain, application/json"},
             timeout=30,
         )
+        if not resp.ok:
+            headers = dict(resp.headers)
+            for sensitive_header in ("set-cookie", "Set-Cookie", "authorization", "Authorization"):
+                if sensitive_header in headers:
+                    headers[sensitive_header] = "***REDACTED***"
+            logger.error(
+                "SAP SuccessFactors /oauth/idp non-2xx status=%s headers=%s body=%s",
+                resp.status_code,
+                headers,
+                resp.text,
+            )
         if resp.status_code in {401, 403}:
             CartridgeCircuitBreaker.record_success()
             resp.raise_for_status()

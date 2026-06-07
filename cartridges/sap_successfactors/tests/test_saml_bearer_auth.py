@@ -89,7 +89,9 @@ def test_saml_bearer_auth_gets_assertion_from_successfactors_idp_and_caches_toke
     assert idp_body["client_id"] == "sf-client-id"
     assert idp_body["user_id"] == "admin@example.com"
     assert idp_body["token_url"] == token_url
-    assert idp_body["private_key"] == private_key_pem
+    assert idp_body["private_key"] == "unit-test-private-key-body"
+    assert "BEGIN PRIVATE KEY" not in idp_body["private_key"]
+    assert "\n" not in idp_body["private_key"]
     assert "company_id" not in idp_body
     assert "grant_type" not in idp_body
 
@@ -132,6 +134,15 @@ def test_explicit_vault_connection_auth_method_wins_over_container_default(monke
     assert client.auth_method == "saml_bearer_assertion"
     assert status["configured"] is True
     assert status["missing"] == []
+
+
+def test_successfactors_idp_private_key_payload_preserves_raw_key(monkeypatch):
+    sap_client = _import_client()
+
+    raw = "alreadyRawBase64KeyBody123"
+
+    assert sap_client._successfactors_idp_private_key_payload(raw) == raw
+    assert sap_client._successfactors_idp_private_key_payload(" alreadyRawBase64KeyBody123\n") == raw
 
 
 def test_live_saml_bearer_test_connection_against_configured_successfactors():
