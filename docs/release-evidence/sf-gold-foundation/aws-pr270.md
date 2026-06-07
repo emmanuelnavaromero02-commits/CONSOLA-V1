@@ -11,6 +11,7 @@ AWS validation commits:
 - `da50031` - declared missing `fobusinessunit_latest` source for org structure.
 - `039c376` - treated open-ended employment as active.
 - `a320349` - treated missing SuccessFactors employment dates as active.
+- `1d60a91` - parsed SAP OData `/Date(ms)/` values in `EmpEmployment` so terminated employees are not counted as active.
 
 AWS stack:
 
@@ -80,28 +81,63 @@ Final AWS materialization output:
 ```text
 sap_successfactors_employee_360
 row_count=1362
-storage_uri=s3://modecissions-lakehouse-783792/silver/sap_successfactors/sap_successfactors_employee_360/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T085708954375Z-2f1b417d2aea.parquet
+storage_uri=s3://modecissions-lakehouse-783792/silver/sap_successfactors/sap_successfactors_employee_360/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T091000470319Z-58b00b6cdbdb.parquet
 
 sap_successfactors_headcount_by_location
-row_count=96
-storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_headcount_by_location/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T085710650805Z-06949454fe40.parquet
+row_count=95
+storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_headcount_by_location/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T091002596339Z-8a673d7c5b6e.parquet
 
 sap_successfactors_headcount_by_department
-row_count=319
-storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_headcount_by_department/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T085711188037Z-338ba8cfc807.parquet
+row_count=316
+storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_headcount_by_department/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T091003407660Z-fb958cb05d28.parquet
 
 sap_successfactors_headcount_by_company
 row_count=44
-storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_headcount_by_company/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T085711767612Z-2fc8ce82c6c9.parquet
+storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_headcount_by_company/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T091004107080Z-602e87b85c2d.parquet
 
 sap_successfactors_org_structure
 row_count=515
-storage_uri=s3://modecissions-lakehouse-783792/silver/sap_successfactors/sap_successfactors_org_structure/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T085712601363Z-86dc3b53c360.parquet
+storage_uri=s3://modecissions-lakehouse-783792/silver/sap_successfactors/sap_successfactors_org_structure/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T091005087701Z-e55a3e15c5ca.parquet
 
 sap_successfactors_manager_hierarchy
-row_count=1362
-storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_manager_hierarchy/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T085716616489Z-37266ae0b0ae.parquet
+row_count=1288
+storage_uri=s3://modecissions-lakehouse-783792/gold/sap_successfactors/sap_successfactors_manager_hierarchy/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/_snapshots/20260607T091009637027Z-15ff9d1edde5.parquet
 ```
+
+## Employment Active Rule Validation
+
+Initial validation showed `TRY_CAST('/Date(ms)/' AS DATE)` was losing SAP OData dates and making all `start_date` / `end_date` values `NULL` in Silver. The PR now parses `/Date(ms)/` into proper dates in `sap_successfactors_empemployment_latest`.
+
+Exact latest snapshot status:
+
+```json
+{
+  "active_closed_dates": 3,
+  "null_dates": 1285,
+  "already_terminated": 74,
+  "total": 1362,
+  "min_start": "1990-09-03",
+  "max_start": "2026-03-19",
+  "min_end": "2016-06-09",
+  "max_end": "2030-12-31"
+}
+```
+
+Exact latest `employee_360` status after the fix:
+
+```json
+{
+  "active_employee_360": 1288,
+  "inactive_employee_360": 74,
+  "total": 1362
+}
+```
+
+Interpretation:
+
+- The 74 rows with `end_date < CURRENT_DATE` are excluded from active counts.
+- The 1285 rows with `end_date IS NULL` have valid parsed `start_date` values and are treated as open-ended active employment.
+- Cross-check against `EmpEmploymentTermination` is still pending because that extraction is blocked by SuccessFactors `/oauth/token` returning 400.
 
 Not materialized:
 
@@ -130,4 +166,3 @@ Do not force these until their source entities are extracted live:
 .venv/bin/pytest tests -k "sap_successfactors" -q
 162 passed, 1 skipped, 2241 deselected in 9.55s
 ```
-
