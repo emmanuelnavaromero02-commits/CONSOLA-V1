@@ -2206,7 +2206,16 @@ def _reindex_dataset_best_effort(name: str, auth_body: dict | None = None) -> No
                 "source": "refinement",
             })
         with _httpx.Client(timeout=15, headers=headers) as client:
-            client.post(f"{mcp}/rag/reindex", json=payload)
+            response = client.post(f"{mcp}/rag/reindex", json=payload)
+        if response.status_code == 404:
+            logger.debug("dataset RAG reindex endpoint unavailable for %s", name)
+            return
+        if response.status_code >= 400:
+            logger.debug(
+                "dataset RAG reindex skipped for %s: status=%s",
+                name,
+                response.status_code,
+            )
     except Exception:
         logger.debug("dataset RAG reindex skipped for %s", name, exc_info=True)
 

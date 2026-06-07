@@ -1,5 +1,5 @@
 -- sap_successfactors_employee_360  (silver)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/PerPersonal", "raw/sap_successfactors/FOCompany", "raw/sap_successfactors/FODepartment", "raw/sap_successfactors/FODivision", "raw/sap_successfactors/FOLocation"]
+-- sources: ["silver/sap_successfactors/sap_successfactors_empemployment_latest", "silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_perpersonal_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]
 -- description: Vista 360 del empleado activo: empleo + puesto + nombre (PerPersonal) + nombres de org. Una fila por empleado.
 
 -- NOTA de privacidad: se une por claves PLANAS (EmpEmployment/EmpJob.user_id y

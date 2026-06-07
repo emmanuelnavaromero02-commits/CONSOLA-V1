@@ -169,7 +169,7 @@ def test_sf_inventory_blocks_a_to_e():
     assert len([k for k in kb_ids if k.startswith("kb_sap_successfactors_")]) == 8
     sql82 = MIGRATION_82.read_text(encoding="utf-8")
     n_datasets = len(re.findall(r"\$seed\$[a-z0-9_]+\$seed\$,\s*\$seed\$(?:silver|gold)\$seed\$", sql82))
-    assert n_datasets == 30, f"expected 30 datasets, got {n_datasets}"
+    assert n_datasets == 32, f"expected 32 datasets, got {n_datasets}"
     apps = sorted(p.stem for p in APPS_DIR.glob("*.html"))
     assert apps == ["sap_successfactors_talent_health", "sap_successfactors_workforce_overview"]
     assert HINTS.is_file()
