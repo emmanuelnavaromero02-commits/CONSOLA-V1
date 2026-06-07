@@ -726,14 +726,14 @@ def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[
         return False
     if _has_invalid_scoped_storage_path(sec, key):
         tenant, workspace = _storage_scope_markers(key)
-        legacy_registered_snapshot = (
-            bool(declared)
-            and tenant is None
-            and workspace is None
-            and len(parts) == 4
-            and parts[3] == "data.parquet"
-        )
-        return legacy_registered_snapshot
+        if not bool(declared) or tenant is not None or workspace is not None:
+            return False
+        # Registered legacy datasets may still be materialized under the old
+        # unpartitioned snapshot layout. Only allow exact dataset-local parquet
+        # readers for datasets explicitly declared as sources and already
+        # authorized by _dataset_allowed; never allow arbitrary descendants.
+        suffix = parts[3:]
+        return suffix in (["data.parquet"], ["*.parquet"], ["**", "*.parquet"])
     return True
 
 
