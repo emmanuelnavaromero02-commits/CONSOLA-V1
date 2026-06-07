@@ -7,6 +7,7 @@ os.environ.setdefault("FIELD_ENCRYPTION_KEY", "ZVi4nlltq1NSkJjp17QoaHhaRB2RDQRsN
 
 from app.api import routes_console
 from app.core import minio_client
+from app.services import parquet_service
 from app.services import preflight
 from app.services import extraction_service
 
@@ -153,3 +154,26 @@ def test_minio_client_uses_iam_provider_for_aws_s3_without_static_keys(monkeypat
     assert captured["secure"] is True
     assert "access_key" not in captured
     assert "secret_key" not in captured
+
+
+def test_parquet_storage_uri_uses_configured_bucket(monkeypatch):
+    uploaded: dict = {}
+
+    def fake_upload_file_to_minio(local_path, object_name):
+        uploaded["local_path"] = local_path
+        uploaded["object_name"] = object_name
+
+    monkeypatch.setattr(parquet_service.settings, "minio_bucket", "modecissions-lakehouse-783792")
+    monkeypatch.setattr(parquet_service, "upload_file_to_minio", fake_upload_file_to_minio)
+
+    uri = parquet_service.write_parquet_and_upload(
+        entity="PerPerson",
+        rows=[],
+        run_id="run-1",
+        load_type="full",
+        expected_columns=["personId"],
+        security_context={"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert uri.startswith("s3://modecissions-lakehouse-783792/")
+    assert uploaded["object_name"] in uri
