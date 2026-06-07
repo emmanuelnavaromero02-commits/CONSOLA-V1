@@ -294,6 +294,26 @@ async def test_dag_based_missing_entity_returns_404(console_main, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_dag_based_orphan_static_entity_without_scoped_config_returns_400(console_main, monkeypatch):
+    async def metadata(cartridge, entity):
+        return {"pattern": "dag-based", "entity": None}
+
+    monkeypatch.setattr(console_main, "_pipeline_extract_metadata", metadata)
+    monkeypatch.setattr(
+        console_main,
+        "_entity_declared_in_static_catalog",
+        lambda cartridge, entity: cartridge == "sap_successfactors" and entity == "PerPhone",
+        raising=False,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main.api_pipeline_extract("sap_successfactors", "PerPhone", {})
+
+    assert exc.value.status_code == 400
+    assert "entity_config" in str(exc.value.detail)
+
+
+@pytest.mark.anyio
 async def test_dag_based_disabled_entity_returns_400(console_main, monkeypatch):
     async def metadata(cartridge, entity):
         return {

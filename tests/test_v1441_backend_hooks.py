@@ -175,6 +175,10 @@ def test_dashboard_kpis_payload_includes_all_sections():
         assert f'"{key}"' in src, (
             f"dashboard /kpis payload missing key {key!r}"
         )
+    assert "_active_scoped_cartridges" in src, (
+        "dashboard KPIs must scope cartridge/extraction/freshness counts to "
+        "cartridges with an active scoped Vault connection"
+    )
 
 
 def test_dashboard_freshness_labels_handle_never_and_old():
@@ -188,20 +192,14 @@ def test_dashboard_freshness_labels_handle_never_and_old():
         )
 
 
-def test_dashboard_freshness_covers_all_built_in_cartridges():
-    """Per the brief: every cartridge appears in data_freshness even
-    if it has zero extraction_runs (status='never'). The helper does
-    this by iterating a constant list — verify the list contains all built-ins."""
+def test_dashboard_freshness_uses_active_scoped_cartridge_set():
+    """Customer dashboards must not emit freshness/no-extraction noise for
+    built-in cartridges that lack a scoped Vault connection in this workspace."""
     src = _read(DASH_ROUTER)
-    cart_list_match = re.search(
-        r"_CARTRIDGES\s*=\s*\(([^)]+)\)", src
-    )
-    assert cart_list_match, "_CARTRIDGES constant not found"
-    list_body = cart_list_match.group(1)
-    for cart in ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"):
-        assert f'"{cart}"' in list_body, (
-            f"dashboard _CARTRIDGES list missing {cart}"
-        )
+    assert "_active_scoped_cartridges" in src
+    assert "active_cartridges" in src
+    assert "_freshness_per_cartridge(pool, active_cartridges)" in src
+    assert "_extraction_counts(pool, active_cartridges)" in src
 
 
 def test_dashboard_copilot_helper_uses_to_regclass_guard():

@@ -479,6 +479,12 @@ async def api_pipeline_extract(
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if (metadata.get("pattern") or "").lower() == "dag-based":
         if not metadata.get("entity"):
+            if _entity_declared_in_static_catalog(cartridge, entity):
+                raise HTTPException(
+                    400,
+                    f"Entity '{entity}' is declared in entities.yaml for cartridge '{cartridge}' "
+                    "but has no scoped entity_config entry; configure scope before extraction",
+                )
             raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
         if not metadata.get("enabled"):
             raise HTTPException(400, f"Entity '{entity}' is disabled")

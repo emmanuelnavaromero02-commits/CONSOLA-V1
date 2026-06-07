@@ -18,6 +18,27 @@ USER = {
 }
 
 
+@pytest.fixture(autouse=True)
+def scoped_test_installations(monkeypatch):
+    async def installed(user):
+        allowed = {
+            str(item)
+            for item in (user or {}).get("allowed_cartridges", [])
+            if str(item).strip()
+        }
+        return [
+            {
+                "cartridge_id": cartridge_id,
+                "installation_status": "ready",
+                "connection_id": f"{cartridge_id}_test",
+                "auth_method": "test",
+            }
+            for cartridge_id in sorted(allowed)
+        ]
+
+    monkeypatch.setattr(control_room_service, "_installed_cartridges", installed)
+
+
 SAMPLE_ROWS = {
     "employees_anomalies": [
         {
@@ -160,6 +181,103 @@ async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypat
     assert result["workspace_id"] == USER["active_workspace_id"]
     assert [widget["value"] for widget in result["widgets"]] == [0, 0, 0, 0]
     assert all(widget["rows"] == [] for widget in result["widgets"])
+
+
+@pytest.mark.asyncio
+async def test_summary_uses_scoped_vault_connected_cartridges(monkeypatch):
+    async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        return SAMPLE_ROWS[dataset]
+
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {
+                    "cartridge_id": "sap_successfactors",
+                    "installation_status": "ready",
+                    "connection_id": "femsa_sf",
+                    "auth_method": "saml_bearer_assertion",
+                },
+            ]),
+        ),
+    ):
+        result = await control_room_service.summary(USER, fetcher=fetcher)
+
+    assert {source["cartridge"] for source in result["sources"]} == {"sap_successfactors"}
+    assert set(result["by_cartridge"]) <= {"sap_successfactors"}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_filters_persisted_intelligence_to_active_connections(monkeypatch):
+    async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        return []
+
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 0
+
+    stale_item = {
+        "id": "alert:hubspot:stale",
+        "kind": "intelligence_signal",
+        "domain": "Ventas",
+        "module": "HubSpot",
+        "module_id": "hubspot",
+        "cartridge": "hubspot",
+        "source_dataset": "hubspot_deals",
+        "entity_kind": "Deal",
+        "entity_id": "D-1",
+        "entity_label": "Deal",
+        "anomaly_type": "forecast",
+        "severity": "high",
+        "severity_weight": 3,
+        "detected_at": "2026-06-07T00:00:00Z",
+        "title": "HubSpot stale alert",
+        "description": "Should be hidden without scoped connection.",
+        "recommendation": "Hidden",
+        "status": "open",
+    }
+    active_item = {
+        **stale_item,
+        "id": "alert:sf:active",
+        "domain": "Recursos Humanos",
+        "module": "Employee Central",
+        "module_id": "sap_successfactors",
+        "cartridge": "sap_successfactors",
+        "source_dataset": "sap_successfactors_employee_360",
+        "title": "SuccessFactors active alert",
+    }
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_load_lesson_rows", new=AsyncMock(return_value=[])),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {
+                    "cartridge_id": "sap_successfactors",
+                    "installation_status": "ready",
+                    "connection_id": "femsa_sf",
+                    "auth_method": "saml_bearer_assertion",
+                },
+            ]),
+        ),
+        patch.object(
+            control_room_service,
+            "_persisted_intelligence_items",
+            new=AsyncMock(return_value=[stale_item, active_item]),
+        ),
+    ):
+        result = await control_room_service.dashboard(USER, fetcher=fetcher, persist=True)
+
+    assert {item["cartridge"] for item in result["items"]} == {"sap_successfactors"}
+    assert {alert["cartridge"] for alert in result["alerts"]} == {"sap_successfactors"}
 
 
 @pytest.mark.asyncio

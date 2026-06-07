@@ -3563,6 +3563,12 @@ async def api_pipeline_extract(
     metadata = await _pipeline_extract_metadata(cartridge, entity)
     if (metadata.get("pattern") or "").lower() == "dag-based":
         if not metadata.get("entity"):
+            if _entity_declared_in_static_catalog(cartridge, entity):
+                raise HTTPException(
+                    400,
+                    f"Entity '{entity}' is declared in entities.yaml for cartridge '{cartridge}' "
+                    "but has no scoped entity_config entry; configure scope before extraction",
+                )
             raise HTTPException(404, f"Entity '{entity}' not found for cartridge '{cartridge}'")
         if not metadata.get("enabled"):
             raise HTTPException(400, f"Entity '{entity}' is disabled")
@@ -3697,6 +3703,35 @@ async def _pipeline_extract_metadata(cartridge: str, entity: str) -> dict:
     if not row:
         raise HTTPException(404, f"Cartridge '{cartridge}' not found")
     return dict(row)
+
+
+def _entity_declared_in_static_catalog(cartridge: str, entity: str) -> bool:
+    import yaml
+
+    wanted = str(entity or "").strip()
+    if not wanted:
+        return False
+    candidates = [
+        Path(f"/registry/cartridges/{cartridge}/app/config/entities.yaml"),
+        Path(__file__).resolve().parents[2] / "cartridges" / cartridge / "app" / "config" / "entities.yaml",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        raw_entities = parsed.get("entities") if isinstance(parsed, dict) else []
+        if not isinstance(raw_entities, list):
+            continue
+        for item in raw_entities:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("entity") or item.get("name") or item.get("id") or "").strip()
+            if name == wanted:
+                return True
+    return False
 
 
 def _build_dag_extract_conf(cartridge: str, entity: str, configured_mode: str | None, body: dict) -> dict:

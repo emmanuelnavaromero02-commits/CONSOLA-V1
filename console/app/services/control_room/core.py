@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Iterable
+from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
@@ -21,6 +22,7 @@ from app.services.security_context import build_security_context, rls_user_conte
 
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500").rstrip("/")
+VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 
 ACTIVE_INSTALLATION_STATUSES = {"ready", "active"}
 CONTROL_ROOM_REFRESH_INTERVAL_SECONDS = 30

@@ -16,8 +16,7 @@ import { state } from './legacy-state.js';
       .catch(() => {});
 
     function airflowDagUrl(dagId) {
-      const base = state.AIRFLOW_PUBLIC_URL;
-      return base ? `${base}/dags/${encodeURIComponent(dagId)}/grid` : '#';
+      return `/viewer?type=jobs${dagId ? `&dag_id=${encodeURIComponent(dagId)}` : ''}`;
     }
 
     function supersetUrl() {
@@ -1327,18 +1326,18 @@ import { state } from './legacy-state.js';
                     onclick="sendLogsToAssistant(${JSON.stringify(prompt).replace(/</g,'\\u003c').replace(/"/g,'&quot;')})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
+            <a href="${esc(airflowUrl)}" target="_self" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
-              ◈ Ver en Airflow
+              ◈ Ver jobs en consola
             </a>
           </div>
         </div>`;
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-err">No se pudieron cargar los logs: ${esc(e.message)}</div>
-          <a href="${esc(airflowDagUrl(dagId))}" target="_blank"
+          <a href="${esc(airflowDagUrl(dagId))}" target="_self"
              class="btn btn-sm" style="color:var(--amber);border-color:var(--amber);text-decoration:none;margin-top:8px">
-            ◈ Ver en Airflow
+            ◈ Ver jobs en consola
           </a>
         </div>`;
       }
@@ -1525,9 +1524,9 @@ import { state } from './legacy-state.js';
                     onclick="sendLogsToAssistant(${JSON.stringify(prompt).replace(/</g,'\\u003c').replace(/"/g,'&quot;')})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
+            <a href="${esc(airflowUrl)}" target="_self" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
-              ◈ Ver en Airflow
+              ◈ Ver jobs en consola
             </a>
           </div>
         </div>`;
@@ -3582,6 +3581,29 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       return state._currentCartridge?.id || '';
     }
 
+    function _packagedDagIds() {
+      const entries = state._currentCartridge?.dags || [];
+      const ids = new Set();
+      for (const dag of entries) {
+        const dagId = dag?.dag_id || '';
+        if (dagId) ids.add(dagId);
+      }
+      return ids;
+    }
+
+    function _isCartridgeManagedDag(dagId) {
+      const safeDagId = String(dagId || '').trim();
+      if (!safeDagId) return false;
+      const cartridge = _dagCartridge();
+      const cached = (state._dagsCache || []).find(d => d.dag_id === safeDagId);
+      if (cached && cached.registered_only) return true;
+      if (!cartridge) {
+        return !!_packagedDagIds().has(safeDagId);
+      }
+      if (cached?.cartridge_id && cached.cartridge_id !== cartridge) return false;
+      return _packagedDagIds().has(safeDagId);
+    }
+
     export function renderDagEditor() {
       const el = document.getElementById('step-content');
       el.style.padding = '0';   // remove default padding so editor fills edge-to-edge
@@ -3623,9 +3645,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
                   <span style="margin-left:auto;font-size:9px;color:var(--text3);font-family:var(--font-ui)">
                     Tab=indent &nbsp;·&nbsp; Ctrl+S=deploy
                   </span>
-                  <a id="dag-airflow-link" href="#" target="_blank" class="btn btn-sm"
+                  <a id="dag-airflow-link" href="/viewer?type=jobs" target="_self" class="btn btn-sm"
                      style="color:var(--amber);border-color:var(--amber);text-decoration:none"
-                     title="Ver en Airflow UI">◈ Airflow</a>
+                     title="Ver estado de DAGs y jobs en consola">◈ DAG status</a>
                   <button class="btn btn-sm" id="btn-dag-graph" onclick="toggleDagGraph()"
                           style="color:var(--cyan);border-color:var(--cyan);background:rgba(0,230,230,.1)" title="Ocultar/mostrar grafo">⬡ Grafo</button>
                 </div>
@@ -3686,6 +3708,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       document.getElementById('btn-dag-rename')?.addEventListener('click', renameDag);
       document.getElementById('btn-dag-delete')?.addEventListener('click', deleteDag);
 
+      refreshDagDeployButton();
       loadDags();
     }
 
@@ -3765,6 +3788,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           : `<span class="dag-badge dag-active">activo</span>`;
       }
 
+      refreshDagDeployButton();
+
       dagSetEditorCode('# Cargando fuente…');
       setDeployMsg('', '');
 
@@ -3796,7 +3821,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const afLink  = document.getElementById('dag-airflow-link');
       if (nameEl) nameEl.textContent = 'nuevo_dag';
       if (badgeEl) badgeEl.innerHTML = '';
-      if (afLink) afLink.href = '#';
+      if (afLink) afLink.href = airflowDagUrl('');
       dagSetEditorCode(
         `# Nuevo DAG — ${cartridge}\n` +
         `# dag_id recomendado: ${cartridge}_<entidad>_<modo>\n\n` +
@@ -3813,6 +3838,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         `    pass\n`
       );
       setDeployMsg('', '');
+      refreshDagDeployButton();
     }
 
     // v1.43.2 (Frontend R2 hardening): cache /api/system/info once so
@@ -3857,11 +3883,30 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       return false;
     }
 
-    export async function deployDag() {
-      // The backend owns the production RCE gate. The UI must still issue
-      // the request so this button is never a silent no-op; production gets
-      // the structured 403 from /api/studio/dag-deploy.
+    async function refreshDagDeployButton() {
+      const btn = document.getElementById('btn-deploy');
+      if (!btn) return;
+      const isCartridgeManaged = _isCartridgeManagedDag(state._selectedDag);
+      if (isCartridgeManaged) {
+        const message = 'Deploy a Airflow deshabilitado: DAG empaquetado por el cartucho, ya activo en Airflow.';
+        btn.disabled = true;
+        btn.dataset.disabledReason = message;
+        btn.textContent = 'Deploy deshabilitado';
+        btn.title = message;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        setDeployMsg(message, 'err');
+        return;
+      }
+      btn.disabled = false;
+      btn.dataset.disabledReason = '';
+      btn.textContent = '▶ Deploy a Airflow';
+      btn.title = '';
+      btn.style.opacity = '';
+      btn.style.cursor = '';
+    }
 
+    export async function deployDag() {
       const code = document.getElementById('dag-code-textarea')?.value?.trim();
       if (!code) { setDeployMsg('Sin código', 'err'); return; }
 
@@ -3869,6 +3914,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const m = code.match(/dag_id\s*=\s*['"]([^'"]+)['"]/);
       if (m) dagId = m[1];
       if (!dagId) { setDeployMsg('No se encontró dag_id en el código', 'err'); return; }
+
+      if (_isCartridgeManagedDag(dagId)) {
+        setDeployMsg('DAG empaquetado por el cartucho, ya activo en Airflow.', 'err');
+        return;
+      }
+
+      const hasProductionGate = !(await _isDagDeployEnabled());
 
       const btn = document.getElementById('btn-deploy');
       if (btn) btn.disabled = true;
@@ -3887,7 +3939,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || d.status === 'failed' || d.error || d.detail) {
-          setDeployMsg(`Error: ${esc(friendlyError(d, `HTTP ${r.status}`))}`, 'err');
+          const errorMsg = `${friendlyError(d, `HTTP ${r.status}`)}${hasProductionGate ? ' — backend owns the production RCE gate' : ''}`;
+          setDeployMsg(`Error: ${esc(errorMsg)}`, 'err');
         } else if (d.status === 'deployed' || d.result?.created || d.result?.dag_id) {
           setDeployMsg(`✓ Desplegado: ${esc(d.result?.created || d.dag_id || dagId)}`, 'ok');
           state._deployedCode = code;

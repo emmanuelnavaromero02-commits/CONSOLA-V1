@@ -291,8 +291,38 @@ def test_legacy_js_gates_every_dev_only_action():
     )
     assert deploy, "function deployDag not found in legacy.js"
     deploy_body = deploy.group(1)
-    assert "/api/studio/dag-deploy" in deploy_body
+
+    # Case A: packaged cartridge DAG cannot be deployed from Studio.
+    # It must short-circuit and never perform an API call.
+    m_packaged = re.search(
+        r"if\s*\(_isCartridgeManagedDag\(dagId\)\)\s*\{[^\n]*?\n.*?return;",
+        deploy_body,
+        re.DOTALL,
+    )
+    assert m_packaged, (
+        "deployDag must early-return for cartridge-managed DAGs "
+        "(no backend mutation call)."
+    )
+    assert "DAG empaquetado por el cartucho, ya activo en Airflow" in m_packaged.group(0)
+
+    # Case B: user-authored DAG keeps the backend path alive (for RCE
+    # ownership + auditing in /api/studio/dag-deploy).
+    assert re.search(
+        r"const hasProductionGate = !\(await _isDagDeployEnabled\(\)\);",
+        deploy_body,
+    )
+    assert re.search(
+        r"fetch\('/api/studio/dag-deploy'",
+        deploy_body,
+    )
     assert "backend owns the production RCE gate" in deploy_body
+
+    packaged_cut = m_packaged.end()
+    first_backend_call = deploy_body.find("fetch('/api/studio/dag-deploy'")
+    assert first_backend_call != -1 and first_backend_call > packaged_cut
+
+    # Explicitly ensure this is UI-hardening only; server-side gate remains.
+    assert "_gateDevOnlyAction" not in deploy_body
 
 
 def test_aws_compose_app_env_defaults_production():
