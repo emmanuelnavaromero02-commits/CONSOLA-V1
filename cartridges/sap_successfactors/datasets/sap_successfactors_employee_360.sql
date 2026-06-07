@@ -5,6 +5,9 @@
 -- NOTA de privacidad: se une por claves PLANAS (EmpEmployment/EmpJob.user_id y
 -- EmpEmployment.person_id_external). User y PerPerson quedan FUERA porque su
 -- clave está shadowed (hash) y no casa con las planas — artefacto del Bloque A.
+-- Regla de actividad: Considera activo si end_date IS NULL o end_date >= hoy.
+-- Las filas con start_date NULL se asumen activas pendiente de validación contra
+-- EmpEmploymentTermination. Las filas con end_date < hoy NO cuentan como activas.
 WITH emp AS (
     SELECT user_id, person_id_external, start_date, end_date,
            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY start_date DESC) AS rn
