@@ -1,5 +1,5 @@
 -- sap_successfactors_headcount_by_department  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FODepartment"]
+-- sources: ["silver/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por departamento (snapshot del mes en curso).
 
 -- Nombre prefijado con el cartucho: datasets.name es PK global y headcount_by_department

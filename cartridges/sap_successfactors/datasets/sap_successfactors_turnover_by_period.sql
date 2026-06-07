@@ -1,5 +1,5 @@
 -- sap_successfactors_turnover_by_period  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmploymentTermination"]
+-- sources: ["silver/sap_successfactors/sap_successfactors_empemploymenttermination_latest"]
 -- description: Rotación de personal: bajas por mes y motivo desde EmpEmploymentTermination.
 
 -- NOTA: EmpEmploymentTermination está registrado en entity_config por el seed de

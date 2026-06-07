@@ -1,5 +1,5 @@
 -- sap_successfactors_headcount_by_location  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOLocation"]
+-- sources: ["silver/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por ubicación (snapshot del mes en curso).
 
 WITH emp AS (
