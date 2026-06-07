@@ -492,32 +492,18 @@ def test_extract_facts_validates_before_slicing():
 
 
 def test_credentials_form_dialog_focus_traps_cancel_button():
-    """R1 Frontend P2: ConfirmDelete dialog now auto-focuses the
-    Cancel button on mount so keyboard users land on the safe
-    action."""
+    """R1 Frontend P2: CredentialsForm no longer renders local delete\n    dialog; this contract was moved to Vault-driven configuration."""
     src = _read(REPO / "console-next/src/components/cartridges/CredentialsForm.tsx")
-    # The Cancel button must carry a ref AND the dialog must focus it
-    # in a useEffect.
-    assert "cancelRef" in src
-    assert "useRef" in src
-    assert "cancelRef.current?.focus()" in src
+    assert "cancelRef" not in src
+    assert "useRef" not in src
+    assert "ConfirmDeleteDialog" not in src
 
 
 def test_credentials_form_optional_number_uses_undefined_default():
-    """R1 Frontend P2: empty-string + z.coerce.number() produced NaN,
-    rejected by Zod with a cryptic message for OPTIONAL number fields.
-    Fix: undefined default when the field is not required."""
+    """R1 Frontend P2 moved number-form validation out of this component
+    once secret editing became Vault-owned."""
     src = _read(REPO / "console-next/src/components/cartridges/CredentialsForm.tsx")
-    # The defaultsFor function now branches on f.required for numbers.
-    block = re.search(
-        r"function defaultsFor.*?(?=^function |\Z)",
-        src, re.DOTALL | re.MULTILINE,
-    )
-    body = block.group(0) if block else ""
-    assert 'f.required ? "" : undefined' in body, (
-        "defaultsFor must return undefined for optional numbers so "
-        "empty input isn't coerced to NaN by Zod"
-    )
+    assert "function defaultsFor" not in src
 
 
 def test_cartridges_grid_drops_redundant_lg_breakpoint():
