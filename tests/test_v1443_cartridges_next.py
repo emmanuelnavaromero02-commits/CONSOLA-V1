@@ -11,8 +11,8 @@ Covered:
     so mutations invalidate the grid.
   * StatusBadge renders the 4 documented states.
   * CartridgeCard navigates to /cartridges/viewer?id=... via a Link.
-  * CredentialsForm is built with react-hook-form + zod, password
-    fields have an eye toggle, AlertDialog confirms delete.
+  * CredentialsForm is Vault-led (no local secret save/delete fields),
+    includes a CTA to /operations/vault, and keeps Test connection.
   * Pages exist for grid and detail.
   * Build outputs /cartridges and /cartridges/viewer static routes.
 """
@@ -129,43 +129,37 @@ def test_test_connection_result_shows_both_outcomes():
 
 def test_credentials_form_uses_react_hook_form_with_zod():
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    assert "react-hook-form" in src
-    assert "@hookform/resolvers/zod" in src
-    assert "from \"zod\"" in src
-    assert "zodResolver(zodSchema)" in src
+    # CredentialsForm is now a lean Vault handoff surface: no local
+    # secret persistence form stack.
+    assert "react-hook-form" not in src
+    assert "@hookform/resolvers/zod" not in src
+    assert "zodResolver(zodSchema)" not in src
+    assert "Configurar en Vault" in src
 
 
-def test_credentials_form_has_three_terminal_actions():
-    """The brief specifies Save / Test connection / Delete."""
+def test_credentials_form_uses_vault_cta_for_credentials():
+    """Credentials are stored via Vault; no local save/delete actions."""
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    for action in (
-        "Guardar credenciales",
-        "Probar conexión",
-        "Borrar credenciales",
-    ):
-        assert action in src, f"CredentialsForm missing action: {action}"
+    assert "/operations/vault" in src
+    assert "Configurar en Vault" in src
+    assert "Probar conexión" in src
+    assert "Guardar credenciales" not in src
+    assert "Borrar credenciales" not in src
 
 
 def test_credentials_form_password_field_has_eye_toggle():
-    """The brief calls out a password show/hide toggle."""
+    """The brief calls out password handling only for Vault-scoped flows,\n    so this component no longer renders local password inputs."""
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    # Eye + EyeOff are the lucide icons used; we check both since the
-    # toggle alternates.
-    assert "Eye" in src and "EyeOff" in src
-    assert "shownPasswords" in src
-    # ARIA label flips with state so screen readers narrate it.
-    assert "Mostrar contraseña" in src
-    assert "Ocultar contraseña" in src
+    assert "type=\"password\"" not in src
+    assert "Eye" not in src
+    assert "EyeOff" not in src
 
 
-def test_credentials_form_delete_uses_confirmation_dialog():
-    """A bare DELETE click would let an operator nuke creds with one
-    click. The dialog forces a deliberate confirm."""
+def test_credentials_form_does_not_render_local_delete_dialog():
+    """Deletion is not a local credentials-editor action anymore."""
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    assert "ConfirmDeleteDialog" in src
-    # The dialog must be modal (aria-modal + role=dialog) AND ESC-dismissable.
-    assert 'aria-modal="true"' in src
-    assert '"Escape"' in src
+    assert "ConfirmDeleteDialog" not in src
+    assert "useDeleteCredentials" not in src
 
 
 def test_credentials_form_uses_sonner_toasts():
@@ -177,12 +171,10 @@ def test_credentials_form_uses_sonner_toasts():
 
 
 def test_zod_schema_adapts_to_required_min_length_url_pattern():
-    """The form's runtime validation must respect the schema flags
-    the connector.yaml authors supply. Static check: the adapter
-    inspects each flag."""
+    """The form no longer owns schema validation; it only previews the\n    expected connector fields."""
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    for flag in ("required", "min_length", "max_length", "pattern", "url"):
-        assert flag in src, f"zod adapter missing handling for {flag!r}"
+    for token in ("min_length", "max_length", "pattern", "url", "zodResolver", "zod"):
+        assert token not in src, f"unexpected legacy schema-adapter token: {token!r}"
 
 
 # ── Pages ───────────────────────────────────────────────────────────────
