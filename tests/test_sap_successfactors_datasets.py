@@ -1,6 +1,6 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-22 silver + 8 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
+24 silver + 8 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
 registered in the `datasets` catalog via
 infra/init/82_sap_successfactors_datasets_seed.sql (a migration, mirroring the
 HCM/S4 datasets seeds).
@@ -28,9 +28,18 @@ MIGRATION = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
-EXPECTED_SILVER = 22
+EXPECTED_SILVER = 24
 EXPECTED_GOLD = 8
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
+DEDUP_LATEST_KEYS = {
+    "sap_successfactors_perperson_latest.sql": ("personIdExternal",),
+    "sap_successfactors_perpersonal_latest.sql": ("personIdExternal", "startDate"),
+    "sap_successfactors_peremail_latest.sql": ("personIdExternal", "emailType", "emailAddress"),
+    "sap_successfactors_empemployment_latest.sql": ("personIdExternal", "userId", "startDate"),
+    "sap_successfactors_empjob_latest.sql": ("userId", "startDate"),
+    "sap_successfactors_paymentinformationdetailv3_latest.sql": ("externalCode",),
+    "sap_successfactors_folocation_latest.sql": ("externalCode",),
+}
 
 
 def _dataset_files() -> list[Path]:
@@ -55,7 +64,7 @@ def _parse_header(path: Path) -> tuple[str, str, list[str], str]:
     return name, layer, sources, desc_m.group(1)
 
 
-def test_there_are_30_datasets():
+def test_there_are_32_datasets():
     assert len(_dataset_files()) == EXPECTED_SILVER + EXPECTED_GOLD
 
 
@@ -113,15 +122,40 @@ def test_migration_idempotent_and_scoped():
         assert other not in sql, f"migration seeds another cartridge: {other}"
 
 
+def test_live_successfactors_silver_entities_present():
+    files = {p.name for p in _dataset_files()}
+    for filename in DEDUP_LATEST_KEYS:
+        assert filename in files
+
+
+def test_live_successfactors_latest_deduplicates_by_business_key():
+    for filename, keys in DEDUP_LATEST_KEYS.items():
+        sql = (DATASETS_DIR / filename).read_text(encoding="utf-8")
+        assert "ROW_NUMBER() OVER" in sql, f"{filename}: missing window dedupe"
+        assert "WHERE _rn = 1" in sql, f"{filename}: missing latest row filter"
+        assert "MAX(load_date)" not in sql, f"{filename}: still dedupes only by load_date"
+        partition = re.search(r"PARTITION BY\s+(.+?)\s+ORDER BY", sql, re.DOTALL)
+        assert partition, f"{filename}: missing partition key"
+        partition_sql = partition.group(1)
+        for key in keys:
+            assert key in partition_sql, f"{filename}: missing dedupe key {key}"
+        assert "_extracted_at" in sql and "batch_id" in sql, f"{filename}: missing batch recency tie-breakers"
+
+
 def test_declared_sources_are_real_sf_entities():
     entities = _sf_entities()
     assert len(entities) == 31
+    dataset_names = {p.stem for p in _dataset_files()}
     for path in _dataset_files():
         _, _, sources, _ = _parse_header(path)
         for src in sources:
-            m = re.match(r"raw/sap_successfactors/(\w+)$", src)
-            assert m, f"{path.name}: malformed source {src!r}"
-            assert m.group(1) in entities, f"{path.name}: source {src!r} not a SF entity"
+            raw = re.match(r"raw/sap_successfactors/(\w+)$", src)
+            if raw:
+                assert raw.group(1) in entities, f"{path.name}: source {src!r} not a SF entity"
+                continue
+            silver = re.match(r"silver/sap_successfactors/([a-z0-9_]+)$", src)
+            assert silver, f"{path.name}: malformed source {src!r}"
+            assert silver.group(1) in dataset_names, f"{path.name}: source {src!r} not a packaged dataset"
 
 
 def test_golds_do_not_expose_encrypted_columns():

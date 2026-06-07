@@ -46,7 +46,7 @@ UPDATE entity_config
 UPDATE entity_config
    SET effective_dated = FALSE,
        date_field = NULL,
-       select_fields = '["personIdExternal","userId","startDate","endDate","employeeClass","originalStartDate","lastModifiedDateTime"]'::jsonb
+       select_fields = '["personIdExternal","userId","startDate","endDate","assignmentClass","originalStartDate","lastModifiedDateTime"]'::jsonb
  WHERE cartridge_id = 'sap_successfactors'
    AND entity = 'EmpEmployment';
 
