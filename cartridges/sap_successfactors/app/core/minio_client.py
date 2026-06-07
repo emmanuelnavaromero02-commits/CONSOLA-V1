@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 from minio import Minio
+from minio.credentials import IamAwsProvider
 
 from app.core.config import settings
 
 
 def get_minio_client() -> Minio:
+    endpoint = str(settings.minio_endpoint or "").strip()
+    access_key = str(settings.minio_access_key or "").strip()
+    secret_key = str(settings.minio_secret_key or "").strip()
+    if "amazonaws.com" in endpoint.lower() and not (access_key or secret_key):
+        return Minio(
+            endpoint=endpoint,
+            credentials=IamAwsProvider(),
+            secure=bool(settings.minio_secure),
+        )
     return Minio(
-        endpoint=settings.minio_endpoint,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
         secure=bool(settings.minio_secure),
     )
 

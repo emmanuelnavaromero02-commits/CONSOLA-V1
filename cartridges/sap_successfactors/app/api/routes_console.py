@@ -158,11 +158,11 @@ def entity_extract(
             detail=f"Entity {entity_id} has no date_field — cannot run historical",
         )
 
-    report = preflight_for_extract()
+    ctx = _security_context(body)
+    report = preflight_for_extract(conn_id=conn_id, security_context=ctx)
     if report is not None:
         return _degraded_503(report)
 
-    ctx = _security_context(body)
     token = set_security_context(ctx)
     try:
         result = run_entity(
@@ -194,11 +194,11 @@ def extract_all(
     body: dict[str, Any] | None = Body(None),
 ):
     """Run every enabled entity, one after the other."""
-    report = preflight_for_extract()
+    ctx = _security_context(body)
+    report = preflight_for_extract(conn_id=conn_id, security_context=ctx)
     if report is not None:
         return _degraded_503(report)
 
-    ctx = _security_context(body)
     token = set_security_context(ctx)
     try:
         results = []
