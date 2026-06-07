@@ -257,10 +257,9 @@ def test_pipeline_js_hides_deploy_button_outside_dev_mode():
     assert "btn-deploy" in js
 
 
-def test_studio_airflow_button_stays_visible_and_internal():
-    """The Studio Airflow button must remain visible without opening the
-    external Airflow UI, which is not exposed behind the ALB. It must open
-    the in-console Airflow monitor, not the generic Jobs table."""
+def test_studio_airflow_button_stays_visible_and_external():
+    """The Studio Airflow button must remain visible and open the external
+    Airflow UI deep link for the selected DAG, matching the legacy Studio UX."""
     legacy_js = (REPO / "console" / "app" / "static" / "js" / "studio"
                  / "legacy.js").read_text(encoding="utf-8")
     pipeline_html = (REPO / "console" / "app" / "static" / "viewers"
@@ -274,23 +273,27 @@ def test_studio_airflow_button_stays_visible_and_internal():
         re.DOTALL,
     )
     assert airflow_url_fn, "Studio legacy.js must define airflowDagUrl"
-    assert "type: 'airflow'" in airflow_url_fn.group(1)
-    assert "URLSearchParams" in airflow_url_fn.group(1)
-    assert "/viewer?type=jobs" not in airflow_url_fn.group(1)
-    assert "AIRFLOW_PUBLIC_URL" not in airflow_url_fn.group(1)
+    assert "airflowBaseUrl()" in airflow_url_fn.group(1)
+    assert "/dags/${encodeURIComponent(dagId)}/grid" in airflow_url_fn.group(1)
+    assert "/viewer?type=jobs" not in legacy_js
+    assert "AIRFLOW_PUBLIC_URL" in legacy_js
+    assert ":8082" in legacy_js
 
     assert 'id="dag-airflow-link"' in legacy_js
-    assert 'href="/viewer?type=airflow"' in legacy_js
-    assert 'target="_self"' in legacy_js
+    assert 'href="#"' in legacy_js
+    assert 'target="_blank"' in legacy_js
+    assert 'title="Ver en Airflow UI"' in legacy_js
     assert ">◈ Airflow</a>" in legacy_js
-    assert "DAG status" not in legacy_js
+    assert "Airflow en consola" not in legacy_js
 
     assert 'id="dag-airflow-link"' in pipeline_html
-    assert 'href="/viewer?type=airflow"' in pipeline_html
-    assert 'target="_self"' in pipeline_html
+    assert 'href="#"' in pipeline_html
+    assert 'target="_blank"' in pipeline_html
+    assert 'title="Ver en Airflow UI"' in pipeline_html
     assert ">◈ Airflow</a>" in pipeline_html
-    assert "DAG status" not in pipeline_html
-    assert "document.getElementById('dag-airflow-link').href = airflowDagUrl('');" in pipeline_js
+    assert "Airflow en consola" not in pipeline_html
+    assert "/dags/${encodeURIComponent(dagId)}/grid" in pipeline_js
+    assert "document.getElementById('dag-airflow-link').href = '#';" in pipeline_js
 
 
 def test_legacy_js_gates_every_dev_only_action():

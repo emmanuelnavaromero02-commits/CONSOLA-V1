@@ -102,7 +102,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
     await expect(eitherState.first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("'Airflow' button opens the internal Airflow viewer, not generic jobs or the external UI", async ({
+  test("'Airflow' button opens the external Airflow UI deep link, not generic jobs", async ({
     authedPage: page,
   }) => {
     await openStudio(page);
@@ -112,23 +112,44 @@ test.describe("Legacy /studio page (port 8000)", () => {
     await expect(airflow).toBeVisible({ timeout: 15_000 });
     await expect(airflow).toContainText(/Airflow/i);
 
-    const href = await airflow.getAttribute("href");
-    expect(href, "Airflow button must use the in-console Airflow viewer").toMatch(
-      /^\/viewer\?type=airflow(?:&.+)?$/,
+    const config = await page.evaluate(async () => {
+      const r = await fetch("/api/config", { credentials: "same-origin" });
+      return r.ok ? r.json() : {};
+    });
+    const expectedBase = String((config as { airflow_url?: string }).airflow_url || "").replace(
+      /\/+$/,
+      "",
     );
+
+    await page.waitForFunction(
+      (base) => {
+        const href = document.querySelector("#dag-airflow-link")?.getAttribute("href") || "";
+        if (!href || href === "#") return false;
+        if (href.includes("type=jobs")) return false;
+        if (base) return href.startsWith(base) && /\/dags\/.+\/grid$/.test(href);
+        return /\/dags\/.+\/grid$/.test(href);
+      },
+      expectedBase,
+      { timeout: 15_000 },
+    );
+
+    const href = await airflow.getAttribute("href");
     expect(href, "Airflow button must not be a no-op").not.toBe("#");
     expect(href, "Airflow button must not open the generic Jobs viewer").not.toContain(
       "type=jobs",
     );
-    expect(href, "Airflow button must not open the external Airflow UI").not.toMatch(
-      /\/dags\/|:8080|:8082/,
+    expect(href, "Airflow button must not open the in-console monitor as primary action").not.toContain(
+      "/viewer?type=airflow",
     );
-
-    await airflow.click();
-    await page.waitForURL(/\/viewer\?type=airflow/, { timeout: 10_000 });
-    await expect(page.getByRole("heading", { name: /^Airflow$/ })).toBeVisible({
-      timeout: 15_000,
-    });
+    expect(href, "Airflow button must deep-link to the selected DAG in Airflow").toMatch(
+      /\/dags\/.+\/grid$/,
+    );
+    if (expectedBase) {
+      expect(href, "Airflow button must use the configured Airflow public URL").toContain(
+        expectedBase,
+      );
+    }
+    await expect(airflow).toHaveAttribute("target", "_blank");
   });
 
   test("'Grafo' button responds to click (USER-REPORTED BUG)", async ({

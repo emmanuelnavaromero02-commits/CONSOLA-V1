@@ -11,16 +11,34 @@ import { state } from './legacy-state.js';
         if (d.s3_bucket) state.S3_BUCKET = d.s3_bucket;
         if (d.airflow_url) state.AIRFLOW_PUBLIC_URL = d.airflow_url.replace(/\/+$/, '');
         if (d.superset_url) state.SUPERSET_PUBLIC_URL = d.superset_url.replace(/\/+$/, '');
+        const afLink = document.getElementById('dag-airflow-link');
+        if (afLink && state._selectedDag && state._selectedDag !== '__new__') {
+          afLink.setAttribute('href', airflowDagUrl(state._selectedDag));
+        }
         document.getElementById('analytics-superset-link')?.setAttribute('href', supersetUrl());
       })
       .catch(() => {});
 
-    function airflowDagUrl(dagId) {
+    function airflowFallbackUrl(dagId) {
       const params = new URLSearchParams({type: 'airflow'});
       const cartridge = currentCartridgeId();
       if (cartridge) params.set('cartridge', cartridge);
       if (dagId) params.set('dag_id', dagId);
       return `/viewer?${params.toString()}`;
+    }
+
+    function airflowBaseUrl() {
+      if (state.AIRFLOW_PUBLIC_URL) return state.AIRFLOW_PUBLIC_URL;
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') return `${window.location.protocol}//${host}:8082`;
+      return '';
+    }
+
+    function airflowDagUrl(dagId) {
+      const base = airflowBaseUrl();
+      if (!base) return airflowFallbackUrl(dagId);
+      if (!dagId) return base;
+      return `${base}/dags/${encodeURIComponent(dagId)}/grid`;
     }
 
     function supersetUrl() {
@@ -1330,18 +1348,18 @@ import { state } from './legacy-state.js';
                     onclick="sendLogsToAssistant(${JSON.stringify(prompt).replace(/</g,'\\u003c').replace(/"/g,'&quot;')})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_self" class="btn btn-sm"
+            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
-              ◈ Airflow en consola
+              ◈ Ver en Airflow
             </a>
           </div>
         </div>`;
       } catch(e) {
         panel.innerHTML = `<div class="et-preview-inner">
           <div class="preview-err">No se pudieron cargar los logs: ${esc(e.message)}</div>
-          <a href="${esc(airflowDagUrl(dagId))}" target="_self"
+          <a href="${esc(airflowDagUrl(dagId))}" target="_blank"
              class="btn btn-sm" style="color:var(--amber);border-color:var(--amber);text-decoration:none;margin-top:8px">
-            ◈ Airflow en consola
+            ◈ Ver en Airflow
           </a>
         </div>`;
       }
@@ -1528,9 +1546,9 @@ import { state } from './legacy-state.js';
                     onclick="sendLogsToAssistant(${JSON.stringify(prompt).replace(/</g,'\\u003c').replace(/"/g,'&quot;')})">
               ✎ Analizar con Asistente
             </button>
-            <a href="${esc(airflowUrl)}" target="_self" class="btn btn-sm"
+            <a href="${esc(airflowUrl)}" target="_blank" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
-              ◈ Airflow en consola
+              ◈ Ver en Airflow
             </a>
           </div>
         </div>`;
@@ -3649,9 +3667,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
                   <span style="margin-left:auto;font-size:9px;color:var(--text3);font-family:var(--font-ui)">
                     Tab=indent &nbsp;·&nbsp; Ctrl+S=deploy
                   </span>
-                  <a id="dag-airflow-link" href="/viewer?type=airflow" target="_self" class="btn btn-sm"
+                  <a id="dag-airflow-link" href="#" target="_blank" class="btn btn-sm"
                      style="color:var(--amber);border-color:var(--amber);text-decoration:none"
-                     title="Ver estado de DAGs y jobs de Airflow en consola">◈ Airflow</a>
+                     title="Ver en Airflow UI">◈ Airflow</a>
                   <button class="btn btn-sm" id="btn-dag-graph" onclick="toggleDagGraph()"
                           style="color:var(--cyan);border-color:var(--cyan);background:rgba(0,230,230,.1)" title="Ocultar/mostrar grafo">⬡ Grafo</button>
                 </div>
@@ -3825,7 +3843,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const afLink  = document.getElementById('dag-airflow-link');
       if (nameEl) nameEl.textContent = 'nuevo_dag';
       if (badgeEl) badgeEl.innerHTML = '';
-      if (afLink) afLink.href = airflowDagUrl('');
+      if (afLink) afLink.href = '#';
       dagSetEditorCode(
         `# Nuevo DAG — ${cartridge}\n` +
         `# dag_id recomendado: ${cartridge}_<entidad>_<modo>\n\n` +
