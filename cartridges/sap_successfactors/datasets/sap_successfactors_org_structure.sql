@@ -1,4 +1,4 @@
--- sap_successfactors_org_structure  (silver)  cartridge: sap_successfactors
+-- sap_successfactors_org_structure  (gold)  cartridge: sap_successfactors
 -- sources: ["silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest", "silver/sap_successfactors/sap_successfactors_fobusinessunit_latest"]
 -- description: Estructura organizacional observada: combinaciones distintas de compañía/división/departamento/ubicación según las asignaciones de EmpJob, con nombres de los FO.
 

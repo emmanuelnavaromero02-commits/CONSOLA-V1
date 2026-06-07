@@ -1,6 +1,6 @@
 """Phase 2 Block B — SAP SuccessFactors silver/gold datasets.
 
-24 silver + 8 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
+22 silver + 10 gold dataset SQL files in cartridges/sap_successfactors/datasets/,
 registered in the `datasets` catalog via
 infra/init/82_sap_successfactors_datasets_seed.sql (a migration, mirroring the
 HCM/S4 datasets seeds).
@@ -28,8 +28,8 @@ MIGRATION = REPO_ROOT / "infra" / "init" / "82_sap_successfactors_datasets_seed.
 ENTITIES_YAML = REPO_ROOT / "cartridges" / "sap_successfactors" / "app" / "config" / "entities.yaml"
 
 HEADER_RE = re.compile(r"^--\s+(\S+)\s+\((silver|gold)\)\s+cartridge:\s+sap_successfactors\s*$")
-EXPECTED_SILVER = 24
-EXPECTED_GOLD = 8
+EXPECTED_SILVER = 22
+EXPECTED_GOLD = 10
 ENCRYPTED_FIELDS = ("paycomp_value", "date_of_birth", "national_id")
 DEDUP_LATEST_KEYS = {
     "sap_successfactors_perperson_latest.sql": ("personIdExternal",),
@@ -120,7 +120,7 @@ def test_migration_sets_workspace_id_on_every_row():
     sql = MIGRATION.read_text(encoding="utf-8")
     rows = sql.count("$seed$sap_successfactors$seed$")
     ws = sql.count("SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1")
-    assert rows == EXPECTED_SILVER + EXPECTED_GOLD, f"expected 30 rows, got {rows}"
+    assert rows == EXPECTED_SILVER + EXPECTED_GOLD, f"expected {EXPECTED_SILVER + EXPECTED_GOLD} rows, got {rows}"
     assert ws == rows, f"workspace_id missing on some rows: {ws} of {rows}"
 
 
@@ -163,9 +163,9 @@ def test_declared_sources_are_real_sf_entities():
             if raw:
                 assert raw.group(1) in entities, f"{path.name}: source {src!r} not a SF entity"
                 continue
-            silver = re.match(r"silver/sap_successfactors/([a-z0-9_]+)$", src)
-            assert silver, f"{path.name}: malformed source {src!r}"
-            assert silver.group(1) in dataset_names, f"{path.name}: source {src!r} not a packaged dataset"
+            packaged = re.match(r"(?:silver|gold)/sap_successfactors/([a-z0-9_]+)$", src)
+            assert packaged, f"{path.name}: malformed source {src!r}"
+            assert packaged.group(1) in dataset_names, f"{path.name}: source {src!r} not a packaged dataset"
 
 
 def test_golds_do_not_expose_encrypted_columns():
