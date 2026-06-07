@@ -2930,10 +2930,14 @@ async def api_apps_delete(name: str, user: dict = Depends(require_authenticated)
 
 
 @app.get("/api/data/{dataset}", dependencies=[Depends(require_authenticated)])
-async def api_data(dataset: str, request: Request, limit: int = 5000):
+async def api_data(
+    dataset: str,
+    request: Request,
+    limit: int = 5000,
+    user: dict = Depends(require_authenticated),
+):
     """Return dataset rows as JSON array for use by analytic apps."""
     _validate_dataset_name(dataset)
-    user = getattr(request.state, "user", None) or {}
 
     # Prefer already-materialized, workspace-scoped Gold tables. This keeps
     # production reads on the same path as the intelligence readiness gate and
