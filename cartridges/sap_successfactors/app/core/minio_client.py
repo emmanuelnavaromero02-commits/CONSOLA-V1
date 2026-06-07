@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from urllib import request
+from urllib.parse import urlsplit
 
 from minio import Minio
 from minio.credentials import Credentials, Provider
@@ -21,13 +22,20 @@ class Ec2ImdsV2Provider(Provider):
         self._credentials: Credentials | None = None
 
     def _read(self, path: str, *, token: str | None = None, method: str = "GET") -> str:
+        parsed = urlsplit(self._base_url)
+        if parsed.scheme != "http" or parsed.netloc != "169.254.169.254":
+            raise ValueError("EC2 IMDS provider only permits the link-local metadata endpoint")
+        if not path.startswith("/latest/"):
+            raise ValueError("EC2 IMDS provider only permits /latest metadata paths")
         headers = {}
         if token:
             headers["X-aws-ec2-metadata-token"] = token
         if method == "PUT":
             headers["X-aws-ec2-metadata-token-ttl-seconds"] = "21600"
         req = request.Request(f"{self._base_url}{path}", headers=headers, method=method)
-        with request.urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 - IMDS link-local only.
+        # Bandit B310 false positive: URL is restricted above to EC2 IMDSv2
+        # link-local 169.254.169.254 and fixed /latest/* paths.
+        with request.urlopen(req, timeout=self._timeout) as resp:  # nosec B310
             return resp.read().decode("utf-8")
 
     def retrieve(self) -> Credentials:
