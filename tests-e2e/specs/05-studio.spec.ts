@@ -102,7 +102,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
     await expect(eitherState.first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("'Airflow' button opens the internal jobs viewer, not the external UI", async ({
+  test("'Airflow' button opens the internal Airflow viewer, not generic jobs or the external UI", async ({
     authedPage: page,
   }) => {
     await openStudio(page);
@@ -113,16 +113,22 @@ test.describe("Legacy /studio page (port 8000)", () => {
     await expect(airflow).toContainText(/Airflow/i);
 
     const href = await airflow.getAttribute("href");
-    expect(href, "Airflow button must use the in-console jobs viewer").toMatch(
-      /^\/viewer\?type=jobs(?:&dag_id=.+)?$/,
+    expect(href, "Airflow button must use the in-console Airflow viewer").toMatch(
+      /^\/viewer\?type=airflow(?:&.+)?$/,
     );
     expect(href, "Airflow button must not be a no-op").not.toBe("#");
+    expect(href, "Airflow button must not open the generic Jobs viewer").not.toContain(
+      "type=jobs",
+    );
     expect(href, "Airflow button must not open the external Airflow UI").not.toMatch(
       /\/dags\/|:8080|:8082/,
     );
 
     await airflow.click();
-    await page.waitForURL(/\/viewer\?type=jobs/, { timeout: 10_000 });
+    await page.waitForURL(/\/viewer\?type=airflow/, { timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: /^Airflow$/ })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test("'Grafo' button responds to click (USER-REPORTED BUG)", async ({

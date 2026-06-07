@@ -321,7 +321,10 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
                 f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
                 cartridge, limit, *scope_values,
             )
-        return {"runs": [dict(r) for r in rows]}
+        refreshed = []
+        for row in rows:
+            refreshed.append(await _refresh_dag_run_status(dict(row), user))
+        return {"runs": refreshed}
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("pipeline runs query failed error_id=%s", _eid)

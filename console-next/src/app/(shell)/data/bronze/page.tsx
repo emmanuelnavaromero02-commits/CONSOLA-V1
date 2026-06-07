@@ -7,6 +7,7 @@ import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { queryBronze } from "@/lib/data/client";
+import { normalizeBronzeSources, normalizeBronzeSql } from "@/lib/data/bronze-paths";
 import type { BronzeQueryPayload, BronzeRow } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
@@ -21,9 +22,9 @@ export default function BronzeQueryPage() {
 
   const bronzeQuery = useMutation({
     mutationFn: () => queryBronze({
-      sql: sql.trim(),
+      sql: normalizeBronzeSql(sql.trim()),
       limit,
-      sources: scopedSources(sql, sources),
+      sources: normalizeBronzeSources(scopedSources(sql, sources)),
     }),
     onMutate: () => {
       setResult(null);

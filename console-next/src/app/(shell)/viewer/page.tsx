@@ -30,11 +30,13 @@ import {
   useDatasetPreview,
   useDatasets,
   useFreshness,
+  useAirflowDags,
   useJob,
   useJobLogs,
   useJobs,
   useLineage,
   usePipeline,
+  usePipelineRuns,
   useSemantic,
   useSourceSchema,
   useSources,
@@ -42,6 +44,7 @@ import {
   useVaultSecrets,
 } from "@/lib/monitor/hooks";
 import type {
+  AirflowDag,
   DataRow,
   DatasetDetail,
   DatasetLineageRow,
@@ -51,6 +54,7 @@ import type {
   JobRun,
   LineageEdge,
   LineageNode,
+  PipelineRun,
   SemanticEntity,
   SemanticPayload,
   SourceSchemaPayload,
@@ -61,6 +65,7 @@ import type {
 const DEFAULT_CARTRIDGE = "replicon";
 
 type ViewerType =
+  | "airflow"
   | "jobs"
   | "job"
   | "pipeline"
@@ -73,6 +78,7 @@ type ViewerType =
   | "vault";
 
 const VIEWER_LINKS: Array<{ type: ViewerType; label: string; icon: LucideIcon }> = [
+  { type: "airflow", label: "Airflow", icon: Network },
   { type: "jobs", label: "Jobs", icon: ListChecks },
   { type: "pipeline", label: "Pipeline", icon: Layers3 },
   { type: "watermarks", label: "Watermarks", icon: Droplets },
@@ -94,12 +100,16 @@ export default function ViewerPage() {
 function ViewerContent() {
   const params = useSearchParams();
   const type = normaliseType(params.get("type"));
-  const cartridge = params.get("cartridge") || DEFAULT_CARTRIDGE;
+  const dagId = params.get("dag_id");
+  const cartridge = params.get("cartridge") || cartridgeFromDagId(dagId) || DEFAULT_CARTRIDGE;
   const jobId = params.get("id") || params.get("job_id");
   const datasetName = params.get("name") || params.get("dataset") || params.get("id");
   const source = params.get("source");
   const scope = params.get("scope") || cartridge;
 
+  if (type === "airflow") {
+    return <AirflowViewer cartridge={cartridge} selectedDagId={dagId} />;
+  }
   if (type === "job") {
     return <JobViewer jobId={jobId} />;
   }
@@ -131,6 +141,7 @@ function ViewerContent() {
 }
 
 function normaliseType(value: string | null): ViewerType {
+  if (value === "airflow" || value === "dags") return "airflow";
   if (value === "job" || value === "logs") return "job";
   if (value === "pipeline") return "pipeline";
   if (value === "watermarks" || value === "freshness") return "watermarks";
@@ -198,12 +209,24 @@ function ViewerSwitcher() {
 }
 
 function viewerHref(type: ViewerType): string {
+  if (type === "airflow") return `/viewer?type=airflow&cartridge=${DEFAULT_CARTRIDGE}`;
   if (type === "jobs") return "/viewer?type=jobs";
   if (type === "schema") return "/viewer?type=schema";
   if (type === "datasets") return "/viewer?type=datasets";
   if (type === "lineage") return "/viewer?type=lineage";
   if (type === "vault") return `/viewer?type=vault&cartridge=${DEFAULT_CARTRIDGE}&scope=${DEFAULT_CARTRIDGE}`;
   return `/viewer?type=${type}&cartridge=${DEFAULT_CARTRIDGE}`;
+}
+
+function cartridgeFromDagId(dagId: string | null): string | null {
+  if (!dagId) return null;
+  if (dagId.startsWith("sap_successfactors_")) return "sap_successfactors";
+  if (dagId.startsWith("sap_s4hana_")) return "sap_s4hana";
+  if (dagId.startsWith("sap_hcm_")) return "sap_hcm";
+  if (dagId.startsWith("salesforce_")) return "salesforce";
+  if (dagId.startsWith("hubspot_")) return "hubspot";
+  if (dagId.startsWith("replicon_")) return "replicon";
+  return null;
 }
 
 function JobsViewer() {
@@ -221,6 +244,72 @@ function JobsViewer() {
       ) : (
         <JobTable jobs={jobs.data ?? []} />
       )}
+    </ViewerShell>
+  );
+}
+
+function AirflowViewer({
+  cartridge,
+  selectedDagId,
+}: {
+  cartridge: string;
+  selectedDagId: string | null;
+}) {
+  const dags = useAirflowDags(cartridge);
+  const runs = usePipelineRuns(cartridge, 100);
+  const dagRows = dags.data ?? [];
+  const runRows = runs.data ?? [];
+  const activeRuns = runRows.filter((run) => {
+    const status = String(run.status || "").toLowerCase();
+    return status === "queued" || status === "running";
+  }).length;
+  const failedRuns = runRows.filter((run) => String(run.status || "").toLowerCase() === "failed").length;
+  const successfulRuns = runRows.filter((run) => String(run.status || "").toLowerCase() === "success").length;
+  const activeDags = dagRows.filter((dag) => dag.is_active !== false && !dag.is_paused).length;
+
+  return (
+    <ViewerShell
+      title="Airflow"
+      subtitle={`DAGs y corridas reales de Airflow para ${cartridge}.`}
+      actions={<RefreshButton onClick={() => { dags.refetch(); runs.refetch(); }} />}
+    >
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-4" aria-label="Resumen Airflow">
+        <MetricBox label="DAGs" value={dagRows.length} />
+        <MetricBox label="Activas" value={activeDags} />
+        <MetricBox label="Runs activos" value={activeRuns} />
+        <MetricBox label="Fallidos" value={failedRuns} />
+      </section>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <section className="space-y-3 rounded-lg border bg-card p-4" aria-label="DAGs Airflow">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-base font-semibold">DAGs</h2>
+            <StatusPill status={dags.isError ? "error" : dags.isLoading ? "running" : "success"} />
+          </div>
+          {dags.isError ? (
+            <ErrorPanel message="No se pudieron cargar los DAGs de Airflow." onRetry={() => dags.refetch()} />
+          ) : dags.isLoading ? (
+            <SkeletonRows rows={6} />
+          ) : (
+            <AirflowDagTable rows={dagRows} selectedDagId={selectedDagId} cartridge={cartridge} />
+          )}
+        </section>
+        <section className="space-y-3 rounded-lg border bg-card p-4" aria-label="Corridas Airflow">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-base font-semibold">Corridas recientes</h2>
+            <div className="flex gap-2 text-xs text-muted-foreground">
+              <span>{successfulRuns} success</span>
+              <span>{failedRuns} failed</span>
+            </div>
+          </div>
+          {runs.isError ? (
+            <ErrorPanel message="No se pudieron cargar las corridas de Airflow." onRetry={() => runs.refetch()} />
+          ) : runs.isLoading ? (
+            <SkeletonRows rows={6} />
+          ) : (
+            <PipelineRunsTable rows={runRows} />
+          )}
+        </section>
+      </div>
     </ViewerShell>
   );
 }
@@ -606,6 +695,104 @@ function JobLogTable({ logs }: { logs: JobLogLine[] }) {
               </td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AirflowDagTable({
+  rows,
+  selectedDagId,
+  cartridge,
+}: {
+  rows: AirflowDag[];
+  selectedDagId: string | null;
+  cartridge: string;
+}) {
+  if (!rows.length) {
+    return <EmptyPanel icon={Network} title="Sin DAGs" detail="Airflow no devolvió DAGs visibles para este cartucho." />;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border bg-background">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 font-medium">DAG</th>
+            <th className="px-3 py-2 font-medium">Estado</th>
+            <th className="px-3 py-2 font-medium">Tags</th>
+            <th className="px-3 py-2 font-medium">Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((dag) => {
+            const selected = selectedDagId === dag.dag_id;
+            const status = dag.is_paused ? "paused" : dag.is_active === false ? "inactive" : "active";
+            return (
+              <tr key={dag.dag_id} className={cn("border-t", selected && "bg-primary/5")}>
+                <td className="px-3 py-2 align-top">
+                  <div className="font-mono text-xs font-medium">{dag.dag_id}</div>
+                  {selected ? <div className="mt-1 text-xs text-primary">Seleccionado desde Studio</div> : null}
+                </td>
+                <td className="px-3 py-2 align-top"><StatusPill status={status} /></td>
+                <td className="px-3 py-2 align-top text-xs text-muted-foreground">
+                  {(dag.tags ?? []).length ? (dag.tags ?? []).join(", ") : "-"}
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <Link
+                    href={`/viewer?type=airflow&cartridge=${encodeURIComponent(dag.cartridge_id || cartridge)}&dag_id=${encodeURIComponent(dag.dag_id)}`}
+                    className="inline-flex min-h-[40px] items-center justify-center rounded-md border bg-card px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Abrir
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PipelineRunsTable({ rows }: { rows: PipelineRun[] }) {
+  if (!rows.length) {
+    return <EmptyPanel icon={ListChecks} title="Sin corridas" detail="No hay corridas registradas para este cartucho." />;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border bg-background">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 font-medium">Entidad</th>
+            <th className="px-3 py-2 font-medium">DAG</th>
+            <th className="px-3 py-2 font-medium">Estado</th>
+            <th className="px-3 py-2 font-medium">Modo</th>
+            <th className="px-3 py-2 font-medium">Inicio</th>
+            <th className="px-3 py-2 font-medium">Fin</th>
+            <th className="px-3 py-2 font-medium">Airflow Run</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((run, index) => {
+            const key = run.run_id || run.airflow_dag_run_id || `${run.dag_id}:${index}`;
+            return (
+              <tr key={key} className="border-t">
+                <td className="px-3 py-2 align-top font-medium">{run.entity || "-"}</td>
+                <td className="px-3 py-2 align-top font-mono text-xs text-muted-foreground">{run.dag_id || "-"}</td>
+                <td className="px-3 py-2 align-top">
+                  <StatusPill status={run.status || "unknown"} />
+                  {run.error_message ? <div className="mt-1 max-w-sm text-xs text-destructive">{run.error_message}</div> : null}
+                </td>
+                <td className="px-3 py-2 align-top text-xs">{run.mode || "-"}</td>
+                <td className="px-3 py-2 align-top text-xs">{formatDate(run.started_at)}</td>
+                <td className="px-3 py-2 align-top text-xs">{formatDate(run.finished_at)}</td>
+                <td className="max-w-64 truncate px-3 py-2 align-top font-mono text-xs text-muted-foreground">
+                  {run.airflow_dag_run_id || run.run_id || "-"}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -16,7 +16,11 @@ import { state } from './legacy-state.js';
       .catch(() => {});
 
     function airflowDagUrl(dagId) {
-      return `/viewer?type=jobs${dagId ? `&dag_id=${encodeURIComponent(dagId)}` : ''}`;
+      const params = new URLSearchParams({type: 'airflow'});
+      const cartridge = currentCartridgeId();
+      if (cartridge) params.set('cartridge', cartridge);
+      if (dagId) params.set('dag_id', dagId);
+      return `/viewer?${params.toString()}`;
     }
 
     function supersetUrl() {
@@ -3645,7 +3649,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
                   <span style="margin-left:auto;font-size:9px;color:var(--text3);font-family:var(--font-ui)">
                     Tab=indent &nbsp;·&nbsp; Ctrl+S=deploy
                   </span>
-                  <a id="dag-airflow-link" href="/viewer?type=jobs" target="_self" class="btn btn-sm"
+                  <a id="dag-airflow-link" href="/viewer?type=airflow" target="_self" class="btn btn-sm"
                      style="color:var(--amber);border-color:var(--amber);text-decoration:none"
                      title="Ver estado de DAGs y jobs de Airflow en consola">◈ Airflow</a>
                   <button class="btn btn-sm" id="btn-dag-graph" onclick="toggleDagGraph()"

@@ -259,7 +259,8 @@ def test_pipeline_js_hides_deploy_button_outside_dev_mode():
 
 def test_studio_airflow_button_stays_visible_and_internal():
     """The Studio Airflow button must remain visible without opening the
-    external Airflow UI, which is not exposed behind the ALB."""
+    external Airflow UI, which is not exposed behind the ALB. It must open
+    the in-console Airflow monitor, not the generic Jobs table."""
     legacy_js = (REPO / "console" / "app" / "static" / "js" / "studio"
                  / "legacy.js").read_text(encoding="utf-8")
     pipeline_html = (REPO / "console" / "app" / "static" / "viewers"
@@ -273,17 +274,19 @@ def test_studio_airflow_button_stays_visible_and_internal():
         re.DOTALL,
     )
     assert airflow_url_fn, "Studio legacy.js must define airflowDagUrl"
-    assert "/viewer?type=jobs" in airflow_url_fn.group(1)
+    assert "type: 'airflow'" in airflow_url_fn.group(1)
+    assert "URLSearchParams" in airflow_url_fn.group(1)
+    assert "/viewer?type=jobs" not in airflow_url_fn.group(1)
     assert "AIRFLOW_PUBLIC_URL" not in airflow_url_fn.group(1)
 
     assert 'id="dag-airflow-link"' in legacy_js
-    assert 'href="/viewer?type=jobs"' in legacy_js
+    assert 'href="/viewer?type=airflow"' in legacy_js
     assert 'target="_self"' in legacy_js
     assert ">◈ Airflow</a>" in legacy_js
     assert "DAG status" not in legacy_js
 
     assert 'id="dag-airflow-link"' in pipeline_html
-    assert 'href="/viewer?type=jobs"' in pipeline_html
+    assert 'href="/viewer?type=airflow"' in pipeline_html
     assert 'target="_self"' in pipeline_html
     assert ">◈ Airflow</a>" in pipeline_html
     assert "DAG status" not in pipeline_html

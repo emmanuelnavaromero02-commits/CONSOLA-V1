@@ -13,8 +13,10 @@ import {
   getPipeline,
   getSemantic,
   getSourceSchema,
+  listAirflowDags,
   listDatasets,
   listJobs,
+  listPipelineRuns,
   listSources,
   listVaultConnections,
   listVaultSecrets,
@@ -43,6 +45,23 @@ export function useJobLogs(jobId: string | null) {
     queryFn: () => getJobLogs(jobId as string),
     enabled: Boolean(jobId),
     refetchInterval: 10_000,
+  });
+}
+
+export function useAirflowDags(cartridge?: string) {
+  return useQuery({
+    queryKey: ["monitor", "airflow", "dags", cartridge || "all"],
+    queryFn: () => listAirflowDags(cartridge),
+    refetchInterval: 30_000,
+  });
+}
+
+export function usePipelineRuns(cartridge: string, limit = 100) {
+  return useQuery({
+    queryKey: ["monitor", "pipeline-runs", cartridge, limit],
+    queryFn: () => listPipelineRuns(cartridge, limit),
+    enabled: Boolean(cartridge),
+    refetchInterval: 30_000,
   });
 }
 

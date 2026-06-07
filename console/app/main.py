@@ -2520,6 +2520,85 @@ async def api_sources(user: dict = Depends(require_authenticated)):
         return {"sources": sources}
     return {"sources": []}
 
+
+_BRONZE_READER_RE = re.compile(
+    r"\bread_(?:parquet|csv|json)\s*\(\s*(['\"])([^'\"]+)\1",
+    re.IGNORECASE,
+)
+_BRONZE_STORAGE_LAYERS = {"raw", "silver", "gold"}
+
+
+def _bronze_query_bucket() -> str:
+    return os.environ.get("S3_BUCKET_NAME") or os.environ.get("MINIO_BUCKET", "lakehouse")
+
+
+def _strip_s3_bucket(value: str) -> str:
+    if not value.lower().startswith("s3://"):
+        return value
+    without_scheme = value[5:]
+    return without_scheme.split("/", 1)[1] if "/" in without_scheme else ""
+
+
+def _strip_parquet_glob(value: str) -> str:
+    out = re.sub(r"/\*\*/\*\.parquet$", "", value, flags=re.IGNORECASE)
+    out = re.sub(r"/\*\.parquet$", "", out, flags=re.IGNORECASE)
+    out = re.sub(r"/load_date=\*/batch_id=\*/\*\.parquet$", "", out, flags=re.IGNORECASE)
+    return out.strip("/")
+
+
+def _canonical_bronze_source(source: str) -> str:
+    cleaned = _strip_parquet_glob(_strip_s3_bucket(str(source or "").strip()))
+    parts = [part for part in cleaned.split("/") if part]
+    if not parts or parts[0] not in _BRONZE_STORAGE_LAYERS:
+        return cleaned
+    return "/".join(parts[:3])
+
+
+def _normalize_bronze_reader_path(path: str) -> str:
+    raw = str(path or "").strip()
+    if not raw:
+        return raw
+    bucket = _bronze_query_bucket()
+    if raw.lower().startswith("s3://"):
+        without_scheme = raw[5:]
+        source_bucket, _, key = without_scheme.partition("/")
+        if source_bucket not in {"lakehouse", bucket} or not key:
+            return raw
+        raw = key
+
+    canonical = _canonical_bronze_source(raw)
+    if not canonical or canonical.split("/", 1)[0] not in _BRONZE_STORAGE_LAYERS:
+        return path
+    if canonical.startswith("raw/") and not re.search(r"[/\*]\.parquet$", canonical, flags=re.IGNORECASE):
+        return f"s3://{bucket}/{canonical}/**/*.parquet"
+    return f"s3://{bucket}/{canonical}"
+
+
+def _normalize_bronze_query_sql(sql: str) -> str:
+    def repl(match: re.Match) -> str:
+        quote = match.group(1)
+        path = match.group(2)
+        return match.group(0).replace(
+            f"{quote}{path}{quote}",
+            f"{quote}{_normalize_bronze_reader_path(path)}{quote}",
+        )
+
+    return _BRONZE_READER_RE.sub(repl, sql)
+
+
+def _normalize_bronze_query_sources(sources: list) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for source in sources or []:
+        canonical = _canonical_bronze_source(str(source))
+        if not canonical or canonical.split("/", 1)[0] not in _BRONZE_STORAGE_LAYERS:
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        out.append(canonical)
+    return out
+
 @app.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
 async def api_dataset_save(body: dict, user: dict = Depends(require_permission("datasets.write"))):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
@@ -2541,9 +2620,10 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
     # which build SQL server-side instead of trusting client input.
     sql     = body.get("sql", "").strip()
     limit   = min(int(body.get("limit", 200)), 2000)
-    sources = body.get("sources") or []
+    sources = _normalize_bronze_query_sources(body.get("sources") or [])
     if not sql:
         raise HTTPException(400, "sql is required")
+    sql = _normalize_bronze_query_sql(sql)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
@@ -3393,7 +3473,10 @@ async def api_pipeline_runs(cartridge: str = "replicon", entity: str = None, lim
                 f"{scope_sql} ORDER BY started_at DESC NULLS LAST LIMIT $2",
                 cartridge, limit, *scope_values,
             )
-        return {"runs": [dict(r) for r in rows]}
+        refreshed = []
+        for row in rows:
+            refreshed.append(await _refresh_dag_run_status(dict(row), user))
+        return {"runs": refreshed}
     except Exception:
         _eid = uuid.uuid4().hex
         logger.exception("pipeline runs query failed error_id=%s", _eid)

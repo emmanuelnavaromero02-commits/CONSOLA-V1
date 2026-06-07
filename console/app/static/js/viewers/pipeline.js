@@ -26,7 +26,10 @@ async function loadRuntimeConfig() {
 }
 
 function airflowDagUrl(dagId) {
-  return `/viewer?type=jobs${dagId ? `&dag_id=${encodeURIComponent(dagId)}` : ''}`;
+  const params = new URLSearchParams({type: 'airflow'});
+  if (_cartridge) params.set('cartridge', _cartridge);
+  if (dagId) params.set('dag_id', dagId);
+  return `/viewer?${params.toString()}`;
 }
 
 function csrfToken() {

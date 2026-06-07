@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import type {
   DataRow,
+  AirflowDag,
   DatasetDetail,
   DatasetLineageRow,
   DatasetSummary,
@@ -8,6 +9,7 @@ import type {
   JobLogLine,
   JobRun,
   LineagePayload,
+  PipelineRun,
   PipelineEntity,
   SemanticPayload,
   SourceSchemaPayload,
@@ -30,6 +32,18 @@ export async function getJobLogs(jobId: string, limit = 500): Promise<JobLogLine
     `/api/jobs/${encodeURIComponent(jobId)}/logs?limit=${limit}`,
   );
   return data.logs ?? [];
+}
+
+export async function listAirflowDags(cartridge?: string): Promise<AirflowDag[]> {
+  const query = cartridge ? `?cartridge=${encodeURIComponent(cartridge)}` : "";
+  const { data } = await api.get<{ dags?: AirflowDag[] }>(`/api/studio/dags${query}`);
+  return data.dags ?? [];
+}
+
+export async function listPipelineRuns(cartridge: string, limit = 100): Promise<PipelineRun[]> {
+  const params = new URLSearchParams({ cartridge, limit: String(limit) });
+  const { data } = await api.get<{ runs?: PipelineRun[] }>(`/api/pipeline_runs?${params.toString()}`);
+  return data.runs ?? [];
 }
 
 export async function getPipeline(cartridge: string): Promise<PipelineEntity[]> {

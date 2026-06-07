@@ -20,6 +20,32 @@ export interface JobLogLine {
   ts?: string | null;
 }
 
+export interface AirflowDag {
+  dag_id: string;
+  id?: string;
+  is_paused?: boolean | null;
+  is_active?: boolean | null;
+  tags?: string[] | null;
+  description?: string | null;
+  cartridge_id?: string | null;
+}
+
+export interface PipelineRun {
+  run_id: string;
+  dag_id?: string | null;
+  cartridge_id?: string | null;
+  entity?: string | null;
+  airflow_dag_run_id?: string | null;
+  status?: string | null;
+  mode?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_seconds?: number | null;
+  record_count?: number | null;
+  storage_uri?: string | null;
+  error_message?: string | null;
+}
+
 export interface PipelineNode {
   name: string;
   layer: string;
