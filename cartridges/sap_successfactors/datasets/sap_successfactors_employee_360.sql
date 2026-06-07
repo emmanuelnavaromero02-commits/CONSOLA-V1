@@ -44,7 +44,8 @@ SELECT
     j.manager_id                    AS manager_id,         -- plano (para manager_hierarchy)
     e.start_date                    AS start_date,
     e.end_date                      AS end_date,
-    CASE WHEN e.start_date <= CURRENT_DATE AND (e.end_date IS NULL OR e.end_date >= CURRENT_DATE)
+    CASE WHEN (e.start_date IS NULL OR e.start_date <= CURRENT_DATE)
+           AND (e.end_date IS NULL OR e.end_date >= CURRENT_DATE)
          THEN TRUE ELSE FALSE END   AS is_active
 FROM emp e
 LEFT JOIN job j  ON j.user_id = e.user_id AND j.rn = 1
