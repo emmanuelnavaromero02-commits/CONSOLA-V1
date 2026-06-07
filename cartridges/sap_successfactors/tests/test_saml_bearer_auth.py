@@ -69,7 +69,11 @@ def test_saml_bearer_auth_gets_assertion_from_successfactors_idp_and_caches_toke
     monkeypatch.setenv("SF_PRIVATE_KEY_PATH", str(key_path))
 
     sap_client = _import_client()
-    monkeypatch.setattr(sap_client, "get_connection_for_worker", lambda _cart: {"auth_method": "saml_bearer_assertion"})
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {"auth_method": "saml_bearer_assertion"},
+    )
     monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: None)
 
     try:

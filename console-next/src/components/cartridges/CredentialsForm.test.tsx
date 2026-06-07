@@ -4,10 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectorSchema } from "@/lib/cartridges";
 import { CredentialsForm } from "./CredentialsForm";
 
+type MockVaultConnection = { conn_id: string; auth_method?: string };
+
+const vaultConnectionsMock = vi.hoisted(() =>
+  vi.fn((): { data: { connections: MockVaultConnection[] } } => ({ data: { connections: [] } })),
+);
+
 vi.mock("@/lib/hooks/useCartridges", () => ({
   useSaveCredentials: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useTestConnection: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useDeleteCredentials: () => ({ isPending: false, mutateAsync: vi.fn() }),
+}));
+
+vi.mock("@/lib/operations/hooks", () => ({
+  useVaultConnections: () => vaultConnectionsMock(),
 }));
 
 vi.mock("sonner", () => ({
@@ -45,5 +55,24 @@ describe("CredentialsForm", () => {
 
     expect(markup).toContain("Este cartucho no expone un schema de configuración.");
     expect(markup).toContain("Guardar credenciales");
+  });
+
+  it("renders saved Vault connections as test-connection choices", () => {
+    vaultConnectionsMock.mockReturnValueOnce({
+      data: {
+        connections: [
+          { conn_id: "femsa_sf", auth_method: "saml_bearer_assertion" },
+          { conn_id: "default", auth_method: "oauth2_client_credentials" },
+        ],
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <CredentialsForm cartridgeId="sap_successfactors" schema={{ fields: [] }} />,
+    );
+
+    expect(markup).toContain("Conexión a probar");
+    expect(markup).toContain('value="femsa_sf"');
+    expect(markup).toContain('value="default"');
   });
 });

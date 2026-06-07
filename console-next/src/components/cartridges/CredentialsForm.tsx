@@ -13,6 +13,8 @@ import {
   useTestConnection,
   useDeleteCredentials,
 } from "@/lib/hooks/useCartridges";
+import { useVaultConnections } from "@/lib/operations/hooks";
+import type { VaultConnection } from "@/lib/operations/types";
 import { TestConnectionResult } from "./TestConnectionResult";
 
 interface Props {
@@ -45,10 +47,17 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
   const saveMut   = useSaveCredentials(cartridgeId);
   const testMut   = useTestConnection(cartridgeId);
   const deleteMut = useDeleteCredentials(cartridgeId);
+  const vaultConnections = useVaultConnections(cartridgeId);
 
   const [lastTest, setLastTest] = useState<Result | null>(null);
+  const [selectedConnId, setSelectedConnId] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [shownPasswords, setShownPasswords] = useState<Record<string, boolean>>({});
+  const connectionOptions = useMemo(
+    () => uniqueConnectionIds(vaultConnections.data?.connections ?? []),
+    [vaultConnections.data?.connections],
+  );
+  const connIdForTest = selectedConnId || connectionOptions[0] || "";
 
   const onSubmit = async (values: FormValues) => {
     try {
@@ -62,7 +71,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
 
   const onTest = async () => {
     try {
-      const r = await testMut.mutateAsync();
+      const r = await testMut.mutateAsync(connIdForTest || undefined);
       setLastTest(r);
       if (r.ok) {
         toast.success("Conexión OK.");
@@ -142,15 +151,33 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
             {saveMut.isPending ? "Guardando…" : "Guardar credenciales"}
           </button>
 
-          <button
-            type="button"
-            onClick={onTest}
-            disabled={testMut.isPending}
-            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
-          >
-            <span aria-hidden>🔌</span>
-            {testMut.isPending ? "Probando…" : "Probar conexión"}
-          </button>
+          <div className="flex flex-wrap items-end gap-2">
+            {connectionOptions.length ? (
+              <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                Conexión a probar
+                <select
+                  value={connIdForTest}
+                  onChange={(event) => setSelectedConnId(event.target.value)}
+                  className="min-h-[44px] rounded-md border bg-background px-3 text-sm text-foreground"
+                >
+                  {connectionOptions.map((connId) => (
+                    <option key={connId} value={connId}>
+                      {connId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={testMut.isPending}
+              className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md border bg-background px-4 text-sm font-medium transition-colors hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+            >
+              <span aria-hidden>🔌</span>
+              {testMut.isPending ? "Probando…" : "Probar conexión"}
+            </button>
+          </div>
 
           <button
             type="button"
@@ -175,6 +202,13 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
       ) : null}
     </div>
   );
+}
+
+function uniqueConnectionIds(connections: VaultConnection[]): string[] {
+  const ids = connections
+    .map((conn) => String(conn.conn_id ?? conn.id ?? "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(ids));
 }
 
 // ── Inner field renderer ──────────────────────────────────────────────
