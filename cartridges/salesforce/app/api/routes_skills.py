@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 _ISO_DATE_RE = re.compile(
@@ -157,11 +157,13 @@ def skills_root() -> dict:
 # v1.41.0 — auditor P1: validate credentials from the console without
 # triggering an extraction. SalesforceClient.test_connection() is degraded-aware.
 @router.post("/test_connection")
-def test_connection() -> dict:
+def test_connection(
+    x_security_context: str | None = Header(default=None, alias="x-security-context"),
+) -> dict:
     try:
         from app.core.salesforce_client import SalesforceClient
 
-        return SalesforceClient().test_connection()
+        return SalesforceClient(security_context=x_security_context).test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 

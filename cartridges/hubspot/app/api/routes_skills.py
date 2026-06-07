@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -130,12 +130,14 @@ def skills_root() -> dict:
 
 
 @router.post("/test_connection")
-def test_connection() -> dict:
+def test_connection(
+    x_security_context: str | None = Header(default=None, alias="x-security-context"),
+) -> dict:
     """Validate HubSpot credentials without triggering extraction."""
     try:
         from app.core.hubspot_client import HubSpotClient
 
-        return HubSpotClient().test_connection()
+        return HubSpotClient(security_context=x_security_context).test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 

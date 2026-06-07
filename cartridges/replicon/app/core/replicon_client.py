@@ -68,8 +68,8 @@ class RepliconClient:
       4. Parse CSV → list[dict]
     """
 
-    def __init__(self) -> None:
-        connection = get_replicon_connection()
+    def __init__(self, security_context: str | None = None) -> None:
+        connection = get_replicon_connection(security_context=security_context)
         self.base_url = str(connection.get("base_url") or "").rstrip("/")
         self._auth_connection = connection
 

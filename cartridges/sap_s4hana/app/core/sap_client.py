@@ -128,27 +128,28 @@ class SapS4Client:
     _RETRY_BACKOFF_FACTOR = 2.0
 
 
-    def __init__(self) -> None:
+    def __init__(self, security_context: str | None = None) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
-        self._vault_connection = get_connection_for_worker("sap_s4hana")
+        self._security_context = (security_context or "").strip() or None
+        self._vault_connection = get_connection_for_worker("sap_s4hana", security_context=self._security_context)
         self.base_url = (
-            get_secret_for_worker("sap_s4hana", "SAP_S4_BASE_URL")
+            get_secret_for_worker("sap_s4hana", "SAP_S4_BASE_URL", security_context=self._security_context)
             or settings.sap_s4_base_url
             or ""
         ).rstrip("/")
-        self.user = get_secret_for_worker("sap_s4hana", "SAP_S4_USER") or settings.sap_s4_user
-        self.password = get_secret_for_worker("sap_s4hana", "SAP_S4_PASS") or settings.sap_s4_pass
+        self.user = get_secret_for_worker("sap_s4hana", "SAP_S4_USER", security_context=self._security_context) or settings.sap_s4_user
+        self.password = get_secret_for_worker("sap_s4hana", "SAP_S4_PASS", security_context=self._security_context) or settings.sap_s4_pass
         self.client_mandant = (
-            get_secret_for_worker("sap_s4hana", "SAP_S4_CLIENT_MANDANT")
+            get_secret_for_worker("sap_s4hana", "SAP_S4_CLIENT_MANDANT", security_context=self._security_context)
             or settings.sap_s4_client_mandant
             or "100"
         )
         self.api_key = (
-            get_secret_for_worker("sap_s4hana", "SAP_S4_API_KEY")
+            get_secret_for_worker("sap_s4hana", "SAP_S4_API_KEY", security_context=self._security_context)
             or settings.sap_s4_api_key
             or os.environ.get("S4_API_KEY", "")
         )
-        self.token = get_secret_for_worker("sap_s4hana", "SAP_S4_TOKEN")
+        self.token = get_secret_for_worker("sap_s4hana", "SAP_S4_TOKEN", security_context=self._security_context)
         self.auth_method = normalize_auth_method(
             self._vault_connection.get("auth_method"),
             "basic",

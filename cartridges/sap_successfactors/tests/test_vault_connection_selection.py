@@ -60,6 +60,42 @@ def test_explicit_conn_id_reveals_that_vault_connection(monkeypatch):
     }
 
 
+def test_scoped_security_context_is_forwarded_to_vault_reveal(monkeypatch):
+    client = _load_vault_client(monkeypatch)
+    calls: list[tuple[str, dict]] = []
+    signed_context = '{"trusted":true,"tenant_id":"b95","workspace_id":"a2","_signature":"sig"}'
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response(
+            200,
+            {
+                "conn_id": "femsa_sf",
+                "auth_method": "saml_bearer_assertion",
+                "base_url": "https://api68sales.successfactors.com",
+                "client_id": "client",
+                "company_id": "company",
+                "admin_user": "SFAPI",
+                "private_key_pem": "-----BEGIN PRIVATE KEY-----\\n...",
+            },
+        )
+
+    monkeypatch.setattr(client.requests, "get", fake_get)
+
+    payload = client.get_connection_for_worker(
+        "sap_successfactors",
+        conn_id="femsa_sf",
+        security_context=signed_context,
+    )
+
+    assert payload["auth_method"] == "saml_bearer_assertion"
+    assert calls[0][1]["headers"] == {
+        "x-api-key": "dedicated",
+        "x-internal-service": "cartridge-sap_successfactors",
+        "x-security-context": signed_context,
+    }
+
+
 def test_missing_conn_id_keeps_default_then_analytics_fallback(monkeypatch):
     client = _load_vault_client(monkeypatch)
     calls: list[str] = []

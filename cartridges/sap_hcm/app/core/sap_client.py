@@ -115,18 +115,19 @@ class SapHcmClient:
     _RETRY_BACKOFF_FACTOR = 2.0
 
 
-    def __init__(self) -> None:
+    def __init__(self, security_context: str | None = None) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
-        self._vault_connection = get_connection_for_worker("sap_hcm")
+        self._security_context = (security_context or "").strip() or None
+        self._vault_connection = get_connection_for_worker("sap_hcm", security_context=self._security_context)
         self.base_url = (
-            get_secret_for_worker("sap_hcm", "SAP_HCM_BASE_URL")
+            get_secret_for_worker("sap_hcm", "SAP_HCM_BASE_URL", security_context=self._security_context)
             or settings.sap_hcm_base_url
             or ""
         ).rstrip("/")
-        self.user = get_secret_for_worker("sap_hcm", "SAP_HCM_USER") or settings.sap_hcm_user
-        self.password = get_secret_for_worker("sap_hcm", "SAP_HCM_PASS") or settings.sap_hcm_pass
+        self.user = get_secret_for_worker("sap_hcm", "SAP_HCM_USER", security_context=self._security_context) or settings.sap_hcm_user
+        self.password = get_secret_for_worker("sap_hcm", "SAP_HCM_PASS", security_context=self._security_context) or settings.sap_hcm_pass
         self.client_mandant = (
-            get_secret_for_worker("sap_hcm", "SAP_HCM_CLIENT_MANDANT")
+            get_secret_for_worker("sap_hcm", "SAP_HCM_CLIENT_MANDANT", security_context=self._security_context)
             or settings.sap_hcm_client_mandant
             or "100"
         )
@@ -134,8 +135,8 @@ class SapHcmClient:
             self._vault_connection.get("auth_method"),
             "basic",
         )
-        self.api_key = get_secret_for_worker("sap_hcm", "SAP_HCM_API_KEY")
-        self.token = get_secret_for_worker("sap_hcm", "SAP_HCM_TOKEN")
+        self.api_key = get_secret_for_worker("sap_hcm", "SAP_HCM_API_KEY", security_context=self._security_context)
+        self.token = get_secret_for_worker("sap_hcm", "SAP_HCM_TOKEN", security_context=self._security_context)
         self._auth_payload = {
             **self._vault_connection,
             "auth_method": self.auth_method,

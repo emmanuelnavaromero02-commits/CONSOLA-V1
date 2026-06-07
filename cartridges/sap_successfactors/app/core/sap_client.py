@@ -141,13 +141,23 @@ class SapSfClient:
     _RETRY_BACKOFF_FACTOR = 2.0
 
 
-    def __init__(self, conn_id: str | None = None) -> None:
+    def __init__(self, conn_id: str | None = None, security_context: str | None = None) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
         self._conn_id = (conn_id or "").strip() or None
-        self._vault_connection = get_connection_for_worker("sap_successfactors", conn_id=self._conn_id)
+        self._security_context = (security_context or "").strip() or None
+        self._vault_connection = get_connection_for_worker(
+            "sap_successfactors",
+            conn_id=self._conn_id,
+            security_context=self._security_context,
+        )
 
         def worker_secret(env_var_name: str) -> str:
-            return get_secret_for_worker("sap_successfactors", env_var_name, conn_id=self._conn_id)
+            return get_secret_for_worker(
+                "sap_successfactors",
+                env_var_name,
+                conn_id=self._conn_id,
+                security_context=self._security_context,
+            )
 
         self.base_url = (
             worker_secret("SF_BASE_URL")

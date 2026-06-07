@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import json
 from pathlib import Path
 
 import httpx
@@ -77,6 +78,12 @@ def _cartridge_internal_headers() -> dict[str, str]:
         "X-Api-Key": key,
         "X-Internal-Service": "console",
     }
+
+
+def _cartridge_internal_headers_for_user(user: dict | None) -> dict[str, str]:
+    headers = _cartridge_internal_headers()
+    headers["X-Security-Context"] = json.dumps(build_security_context(user), ensure_ascii=False)
+    return headers
 
 
 def _test_connection_succeeded(http_success: bool, payload: dict) -> bool:
@@ -248,7 +255,8 @@ async def test_connection(
     the response body so a chatty cartridge error can't leak
     sensitive substrings into audit_events.
     """
-    _require_cartridge_visible(getattr(request.state, "user", None), cartridge)
+    user = getattr(request.state, "user", None) or {}
+    _require_cartridge_visible(user, cartridge)
     selected_conn_id = _normalize_conn_id(conn_id)
 
     started = time.monotonic()
@@ -257,7 +265,7 @@ async def test_connection(
     payload: dict = {}
     try:
         async with httpx.AsyncClient(
-            timeout=10.0, headers=_cartridge_internal_headers()
+            timeout=10.0, headers=_cartridge_internal_headers_for_user(user)
         ) as c:
             params = {"conn_id": selected_conn_id} if selected_conn_id else None
             r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), params=params)
@@ -278,7 +286,6 @@ async def test_connection(
         # surface internal endpoints / tokens / file paths.
         message = str(exc)[:200] or "connection error"
 
-    user = getattr(request.state, "user", None) or {}
     await audit_service.record_event(
         user_id=user.get("id"),
         email=user.get("email"),

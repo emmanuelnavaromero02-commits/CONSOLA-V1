@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -144,11 +144,14 @@ def skills_root() -> dict:
 # v1.41.0 — auditor P1: validate credentials from the console without
 # triggering an extraction. SapSfClient.test_connection() is degraded-aware.
 @router.post("/test_connection")
-def test_connection(conn_id: str | None = Query(default=None, max_length=128)) -> dict:
+def test_connection(
+    conn_id: str | None = Query(default=None, max_length=128),
+    x_security_context: str | None = Header(default=None, alias="x-security-context"),
+) -> dict:
     try:
         from app.core.sap_client import SapSfClient
 
-        return SapSfClient(conn_id=conn_id).test_connection()
+        return SapSfClient(conn_id=conn_id, security_context=x_security_context).test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 
