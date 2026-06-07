@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 
@@ -32,12 +35,20 @@ def _console_main():
     return importlib.import_module("app.main")
 
 
-def _request(path: str, service: str, key: str, method: str = "GET") -> Request:
+def _request(
+    path: str,
+    service: str,
+    key: str,
+    method: str = "GET",
+    extra_headers: dict[str, str] | None = None,
+) -> Request:
     headers = [
         (b"host", b"testserver"),
         (b"x-internal-service", service.encode()),
         (b"x-api-key", key.encode()),
     ]
+    for name, value in (extra_headers or {}).items():
+        headers.append((name.lower().encode(), value.encode()))
     return Request(
         {
             "type": "http",
@@ -102,6 +113,63 @@ def test_salesforce_reveal_requires_salesforce_dedicated_key(monkeypatch):
     assert console_main._is_cartridge_vault_reveal_request(
         _request(path, "cartridge-salesforce", salesforce)
     ) is True
+
+
+def test_scoped_cartridge_vault_reveal_uses_signed_security_context(monkeypatch):
+    console_main = _console_main()
+    key = "sap-successfactors-dedicated-key-yyyyyyyyyyyyyyy"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", key)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_console")
+    ctx = console_main.build_security_context({
+        "id": 42,
+        "email": "scoped@example.com",
+        "role": "workspace_admin",
+        "active_tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
+        "active_workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "allowed_cartridges": ["sap_successfactors"],
+    })
+
+    user = console_main._cartridge_vault_reveal_user(
+        _request(
+            "/api/vault/connections/sap_successfactors/femsa_sf/reveal",
+            "cartridge-sap_successfactors",
+            key,
+            extra_headers={"x-security-context": json.dumps(ctx)},
+        )
+    )
+
+    assert user["role"] == console_main.ROLE_ADMIN
+    assert user["active_tenant_id"] == "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78"
+    assert user["active_workspace_id"] == "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4"
+    assert user["allowed_cartridges"] == ["sap_successfactors"]
+
+
+def test_scoped_cartridge_vault_reveal_rejects_unsigned_trusted_context(monkeypatch):
+    console_main = _console_main()
+    key = "sap-successfactors-dedicated-key-yyyyyyyyyyyyyyy"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("INTERNAL_API_KEY_SAP_SUCCESSFACTORS_TO_CONSOLE", key)
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_console")
+    unsigned = {
+        "trusted": True,
+        "source": "console",
+        "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
+        "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "allowed_cartridges": ["sap_successfactors"],
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        console_main._cartridge_vault_reveal_user(
+            _request(
+                "/api/vault/connections/sap_successfactors/femsa_sf/reveal",
+                "cartridge-sap_successfactors",
+                key,
+                extra_headers={"x-security-context": json.dumps(unsigned)},
+            )
+        )
+
+    assert exc.value.status_code == 403
 
 
 def test_vault_reveal_connection_records_critical_audit_event():
