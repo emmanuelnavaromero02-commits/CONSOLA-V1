@@ -7,7 +7,7 @@
 -- EmpEmploymentTermination activa cruzada): activo con baja registrada.
 WITH emp AS (
     SELECT user_id, full_name, department_id, manager_id, job_code
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 ),
 job_codes AS (

@@ -216,22 +216,50 @@ entities:
     watermark_field: lastModifiedDateTime
     page_size: 200
     date_field: endDate
+    select_fields:
+      - userId
+      - endDate
+      - eventReasonExternalCode
+      - lastModifiedDateTime
 
   # ── Org structure (Foundation Objects) ────────────────────────────────────
   - entity: FOCompany
     description: "Foundation Object: legal companies."
     mode: full
     page_size: 500
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - country
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: FODepartment
     description: "Foundation Object: departments."
     mode: full
     page_size: 1000
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - costCenter
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: FODivision
     description: "Foundation Object: divisions."
     mode: full
     page_size: 500
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: FOLocation
     description: "Foundation Object: locations / sites."
@@ -249,6 +277,13 @@ entities:
     description: "Foundation Object: business units."
     mode: full
     page_size: 500
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: FOCostCenter
     description: "Foundation Object: cost centers."
@@ -259,6 +294,13 @@ entities:
     description: "Foundation Object: job codes / job classifications."
     mode: full
     page_size: 1000
+    select_fields:
+      - externalCode
+      - name_defaultValue
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: Position
     description: "Position Management: positions (incumbent, parent, FTE)."

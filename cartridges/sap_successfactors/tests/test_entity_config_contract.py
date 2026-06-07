@@ -22,6 +22,12 @@ def test_live_scoped_entities_have_odata_v2_metadata():
         "EmpJob",
         "PaymentInformationDetailV3",
         "FOLocation",
+        "FOCompany",
+        "FODepartment",
+        "FODivision",
+        "FOBusinessUnit",
+        "FOJobCode",
+        "EmpEmploymentTermination",
     }
 
     assert expected <= set(entities)
@@ -41,3 +47,10 @@ def test_live_scoped_entities_have_odata_v2_metadata():
     assert entities["EmpJob"]["date_field"] == "startDate"
     assert entities["EmpJob"]["effective_from_date"] == "1900-01-01"
     assert entities["EmpJob"]["effective_to_date"] == "9999-12-31"
+
+    assert entities["EmpEmploymentTermination"]["date_field"] == "endDate"
+    assert "eventReasonExternalCode" in entities["EmpEmploymentTermination"]["select_fields"]
+    for name in ("FOCompany", "FODepartment", "FODivision", "FOBusinessUnit", "FOJobCode"):
+        assert entities[name]["mode"] == "full"
+        assert "externalCode" in entities[name]["select_fields"]
+        assert "name_defaultValue" in entities[name]["select_fields"]

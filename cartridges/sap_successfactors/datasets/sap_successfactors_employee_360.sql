@@ -1,10 +1,13 @@
--- sap_successfactors_employee_360  (silver)  cartridge: sap_successfactors
+-- sap_successfactors_employee_360  (gold)  cartridge: sap_successfactors
 -- sources: ["silver/sap_successfactors/sap_successfactors_empemployment_latest", "silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_perpersonal_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]
 -- description: Vista 360 del empleado activo: empleo + puesto + nombre (PerPersonal) + nombres de org. Una fila por empleado.
 
 -- NOTA de privacidad: se une por claves PLANAS (EmpEmployment/EmpJob.user_id y
 -- EmpEmployment.person_id_external). User y PerPerson quedan FUERA porque su
 -- clave está shadowed (hash) y no casa con las planas — artefacto del Bloque A.
+-- Regla de actividad: Considera activo si end_date IS NULL o end_date >= hoy.
+-- Las filas con start_date NULL se asumen activas pendiente de validación contra
+-- EmpEmploymentTermination. Las filas con end_date < hoy NO cuentan como activas.
 WITH emp AS (
     SELECT user_id, person_id_external, start_date, end_date,
            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY start_date DESC) AS rn
@@ -44,7 +47,8 @@ SELECT
     j.manager_id                    AS manager_id,         -- plano (para manager_hierarchy)
     e.start_date                    AS start_date,
     e.end_date                      AS end_date,
-    CASE WHEN e.start_date <= CURRENT_DATE AND e.end_date >= CURRENT_DATE
+    CASE WHEN (e.start_date IS NULL OR e.start_date <= CURRENT_DATE)
+           AND (e.end_date IS NULL OR e.end_date >= CURRENT_DATE)
          THEN TRUE ELSE FALSE END   AS is_active
 FROM emp e
 LEFT JOIN job j  ON j.user_id = e.user_id AND j.rn = 1

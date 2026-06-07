@@ -230,8 +230,8 @@ SELECT
 FROM latest
 ORDER BY user_id, start_date
 $seed$, $seed$Última extracción de EmpJob (asignación de puesto efectivo-fechada). userId y managerId planos; códigos de org casan con externalCode de los FO.$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_employee_360$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["silver/sap_successfactors/sap_successfactors_empemployment_latest", "silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_perpersonal_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]$seed$::jsonb, $seed$
--- sap_successfactors_employee_360  (silver)  cartridge: sap_successfactors
+($seed$sap_successfactors_employee_360$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["silver/sap_successfactors/sap_successfactors_empemployment_latest", "silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_perpersonal_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]$seed$::jsonb, $seed$
+-- sap_successfactors_employee_360  (gold)  cartridge: sap_successfactors
 -- sources: ["silver/sap_successfactors/sap_successfactors_empemployment_latest", "silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_perpersonal_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]
 -- description: Vista 360 del empleado activo: empleo + puesto + nombre (PerPersonal) + nombres de org. Una fila por empleado.
 
@@ -299,7 +299,7 @@ $seed$, $seed$Vista 360 del empleado activo: empleo + puesto + nombre (PerPerson
 -- EmpEmploymentTermination activa cruzada): activo con baja registrada.
 WITH emp AS (
     SELECT user_id, full_name, department_id, manager_id, job_code
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 ),
 job_codes AS (
@@ -540,7 +540,7 @@ $seed$, $seed$Última extracción del objeto de fundación Ubicación (FOLocatio
 
 WITH emp AS (
     SELECT company_id, company_name
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 )
 SELECT
@@ -561,7 +561,7 @@ $seed$, $seed$Empleados activos por compañía legal (snapshot del mes en curso)
 -- ya existe para sap_hcm.
 WITH emp AS (
     SELECT department_id, department_name
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 )
 SELECT
@@ -580,7 +580,7 @@ $seed$, $seed$Empleados activos por departamento (snapshot del mes en curso).$se
 
 WITH emp AS (
     SELECT location_id, location_name
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 )
 SELECT
@@ -623,7 +623,7 @@ $seed$, $seed$Última extracción de requisiciones de empleo (Recruiting).$seed$
 
 WITH RECURSIVE emp AS (
     SELECT user_id, full_name, manager_id
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 ),
 reports AS (
@@ -656,9 +656,9 @@ LEFT JOIN reports r ON r.manager_id = e.user_id
 LEFT JOIN depth_per_user d ON d.user_id = e.user_id
 ORDER BY depth, direct_reports DESC, e.user_id
 $seed$, $seed$Árbol de supervisión: cada empleado activo con su manager directo, número de reportes directos y profundidad en la jerarquía. Real gracias a EmpJob.managerId (plano).$seed$, $seed${}$seed$::jsonb, $seed$$seed$, NOW(), (SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1)),
-($seed$sap_successfactors_org_structure$seed$, $seed$silver$seed$, $seed$sap_successfactors$seed$, $seed$["silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]$seed$::jsonb, $seed$
--- sap_successfactors_org_structure  (silver)  cartridge: sap_successfactors
--- sources: ["silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest"]
+($seed$sap_successfactors_org_structure$seed$, $seed$gold$seed$, $seed$sap_successfactors$seed$, $seed$["silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest", "silver/sap_successfactors/sap_successfactors_fobusinessunit_latest"]$seed$::jsonb, $seed$
+-- sap_successfactors_org_structure  (gold)  cartridge: sap_successfactors
+-- sources: ["silver/sap_successfactors/sap_successfactors_empjob_latest", "silver/sap_successfactors/sap_successfactors_focompany_latest", "silver/sap_successfactors/sap_successfactors_fodivision_latest", "silver/sap_successfactors/sap_successfactors_fodepartment_latest", "silver/sap_successfactors/sap_successfactors_folocation_latest", "silver/sap_successfactors/sap_successfactors_fobusinessunit_latest"]
 -- description: Estructura organizacional observada: combinaciones distintas de compañía/división/departamento/ubicación según las asignaciones de EmpJob, con nombres de los FO.
 
 -- Los maestros FO no tienen FK entre sí en la extracción plana; la estructura

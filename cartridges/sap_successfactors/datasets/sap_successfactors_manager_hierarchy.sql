@@ -1,10 +1,10 @@
 -- sap_successfactors_manager_hierarchy  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/PerPersonal"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Árbol de supervisión: cada empleado activo con su manager directo, número de reportes directos y profundidad en la jerarquía. Real gracias a EmpJob.managerId (plano).
 
 WITH RECURSIVE emp AS (
     SELECT user_id, full_name, manager_id
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 ),
 reports AS (

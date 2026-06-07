@@ -1,12 +1,12 @@
 -- sap_successfactors_headcount_by_department  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FODepartment"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por departamento (snapshot del mes en curso).
 
 -- Nombre prefijado con el cartucho: datasets.name es PK global y headcount_by_department
 -- ya existe para sap_hcm.
 WITH emp AS (
     SELECT department_id, department_name
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 )
 SELECT

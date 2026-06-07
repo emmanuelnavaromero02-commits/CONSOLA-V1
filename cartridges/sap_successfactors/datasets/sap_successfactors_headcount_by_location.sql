@@ -1,10 +1,10 @@
 -- sap_successfactors_headcount_by_location  (gold)  cartridge: sap_successfactors
--- sources: ["raw/sap_successfactors/EmpEmployment", "raw/sap_successfactors/EmpJob", "raw/sap_successfactors/FOLocation"]
+-- sources: ["gold/sap_successfactors/sap_successfactors_employee_360"]
 -- description: Empleados activos por ubicación (snapshot del mes en curso).
 
 WITH emp AS (
     SELECT location_id, location_name
-    FROM read_parquet('s3://{bucket}/silver/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
+    FROM read_parquet('s3://{bucket}/gold/sap_successfactors/sap_successfactors_employee_360/**/*.parquet')
     WHERE is_active = TRUE
 )
 SELECT
