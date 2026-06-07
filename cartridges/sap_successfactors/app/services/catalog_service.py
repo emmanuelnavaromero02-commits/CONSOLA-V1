@@ -64,9 +64,15 @@ def _yaml_entity_map() -> dict[str, dict[str, Any]]:
 def _merge_yaml_runtime_fields(row: dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
     yaml_entity = _yaml_entity_map().get(str(data.get("entity"))) or {}
-    for key in ("odata_entity", "service_path"):
+    for key in ("odata_entity", "service_path", "date_field", "effective_from_date", "effective_to_date"):
         if yaml_entity.get(key) and not data.get(key):
             data[key] = yaml_entity[key]
+    if yaml_entity.get("effective_dated") and not data.get("effective_dated"):
+        data["effective_dated"] = True
+    if yaml_entity.get("select_fields") and not data.get("select_fields"):
+        data["select_fields"] = yaml_entity["select_fields"]
+    if yaml_entity.get("protection") and not data.get("protection"):
+        data["protection"] = yaml_entity["protection"]
     return data
 
 
