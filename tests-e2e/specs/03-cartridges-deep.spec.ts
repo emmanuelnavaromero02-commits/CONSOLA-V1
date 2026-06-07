@@ -76,14 +76,17 @@ test.describe("Cartridges grid — coverage of all 5", () => {
 
 test.describe("Cartridge detail — schema-driven form", () => {
   for (const cart of CARTRIDGES) {
-    test(`${cart} detail page loads schema + renders form`,
+    test(`${cart} detail page loads the Vault-scoped config surface`,
       async ({ page }) => {
         await page.goto(cartridgeViewer(cart));
-        await expect(page.locator("form")).toBeVisible({ timeout: 15_000 });
-        const fields = await page.locator("form input, form select").count();
-        expect(fields,
-          `${cart} schema should produce at least one input`,
-        ).toBeGreaterThan(0);
+        // #273 B5: no inline credentials form; every cartridge viewer
+        // shows the scoped Vault CTA + a "Probar conexión" affordance.
+        await expect(
+          page.getByRole("link", { name: /configurar en vault/i }),
+        ).toBeVisible({ timeout: 15_000 });
+        await expect(
+          page.getByRole("button", { name: /probar conexión/i }),
+        ).toBeVisible();
       },
     );
 
@@ -95,37 +98,32 @@ test.describe("Cartridge detail — schema-driven form", () => {
       await expect(back).toBeVisible();
     });
 
-    test(`${cart} has Save + Test + Delete buttons`, async ({ page }) => {
+    test(`${cart} exposes Probar conexión + Vault CTA (no inline Save/Delete)`, async ({ page }) => {
       await page.goto(cartridgeViewer(cart));
       await expect(
-        page.getByRole("button", { name: /guardar credenciales/i }),
+        page.getByRole("button", { name: /probar conexión/i }),
       ).toBeVisible({ timeout: 15_000 });
       await expect(
-        page.getByRole("button", { name: /probar conexión/i }),
+        page.getByRole("link", { name: /configurar en vault/i }),
       ).toBeVisible();
       await expect(
+        page.getByRole("button", { name: /guardar credenciales/i }),
+      ).toHaveCount(0);
+      await expect(
         page.getByRole("button", { name: /borrar credenciales/i }),
-      ).toBeVisible();
+      ).toHaveCount(0);
     });
   }
 });
 
 test.describe("Cartridge detail — interactions (Replicon)", () => {
-  test("Save with empty form: required fields surface errors",
+  test("'Configurar en Vault' navigates to the scoped Vault page",
     async ({ page }) => {
       await page.goto(cartridgeViewer("replicon"));
-      await page.getByRole("button", { name: /guardar credenciales/i }).click();
-      await page.waitForTimeout(800);
-      // Either react-hook-form renders an inline error OR the
-      // sonner toast surfaces a 400-style message.
-      const inlineError = page.locator('[role="alert"]').first();
-      const toast = page.locator("[data-sonner-toast]").first();
-      const ok =
-        (await inlineError.isVisible({ timeout: 2_000 }).catch(() => false)) ||
-        (await toast.isVisible({ timeout: 2_000 }).catch(() => false));
-      expect(ok,
-        "empty-form Save must surface validation feedback (inline OR toast)",
-      ).toBe(true);
+      const cta = page.getByRole("link", { name: /configurar en vault/i });
+      await expect(cta).toBeVisible({ timeout: 15_000 });
+      await cta.click();
+      await page.waitForURL(/\/operations\/vault/, { timeout: 10_000 });
     },
   );
 
@@ -159,134 +157,53 @@ test.describe("Cartridge detail — interactions (Replicon)", () => {
     },
   );
 
-  test("Delete with no credentials: confirm dialog still opens",
+  test("no inline destructive credential delete is exposed (delegated to Vault)",
     async ({ page }) => {
       await page.goto(cartridgeViewer("replicon"));
-      await page.getByRole("button", { name: /borrar credenciales/i }).click();
+      await expect(
+        page.getByRole("button", { name: /probar conexión/i }),
+      ).toBeVisible({ timeout: 15_000 });
+      // #273 B5 removed the inline "Borrar credenciales" destructive flow;
+      // the credential lifecycle now lives on the scoped Vault page.
+      await expect(
+        page.getByRole("button", { name: /borrar credenciales/i }),
+      ).toHaveCount(0);
       await expect(
         page.getByRole("dialog", { name: /borrar credenciales/i }),
-      ).toBeVisible({ timeout: 5_000 });
-    },
-  );
-
-  test("Delete dialog auto-focuses Cancel button (v1.44.3 R1 regression guard)",
-    async ({ page }) => {
-      await page.goto(cartridgeViewer("replicon"));
-      await page.getByRole("button", { name: /borrar credenciales/i }).click();
-      const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
-      await expect(dialog).toBeVisible({ timeout: 5_000 });
-      const focused = await page.evaluate(
-        () => document.activeElement?.textContent?.trim(),
-      );
-      expect(focused?.toLowerCase()).toContain("cancelar");
-    },
-  );
-
-  test("Delete dialog: ESC closes without firing the delete",
-    async ({ page }) => {
-      await page.goto(cartridgeViewer("replicon"));
-      await page.getByRole("button", { name: /borrar credenciales/i }).click();
-      const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
-      await expect(dialog).toBeVisible({ timeout: 5_000 });
-      let deleteFired = false;
-      page.on("request", (req) => {
-        if (
-          req.method() === "DELETE" &&
-          req.url().includes("/credentials")
-        ) deleteFired = true;
-      });
-      await page.keyboard.press("Escape");
-      await page.waitForTimeout(1_000);
-      expect(deleteFired,
-        "ESC must NOT trigger the destructive DELETE",
-      ).toBe(false);
-      await expect(dialog).toBeHidden({ timeout: 2_000 });
-    },
-  );
-
-  test("Delete dialog: backdrop click closes (also non-destructive)",
-    async ({ page }) => {
-      await page.goto(cartridgeViewer("replicon"));
-      await page.getByRole("button", { name: /borrar credenciales/i }).click();
-      const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
-      await expect(dialog).toBeVisible({ timeout: 5_000 });
-      // Click the backdrop (the overlay's outer div).
-      await page.mouse.click(50, 50);
-      await expect(dialog).toBeHidden({ timeout: 2_000 });
+      ).toHaveCount(0);
     },
   );
 });
 
-test.describe("Cartridge detail — backend round-trip with fake creds", () => {
-  // These tests use throwaway credential values. They write to the
-  // Vault and then delete cleanly — leaving the cartridge in the
-  // SAME state as before the test ran.
-  test("Save → toast.success appears + invalidates grid", async ({ page }) => {
+test.describe("Cartridge detail — credentials are Vault-delegated", () => {
+  // #273 B5: the viewer no longer writes credentials from the browser.
+  // Secrets live in the scoped Vault page; the viewer only tests the
+  // connection. This guards against a regression that re-introduces an
+  // inline credential write path.
+  test("viewer never POSTs credentials from the browser", async ({ page }) => {
+    const credentialWrites: string[] = [];
+    page.on("request", (req) => {
+      if (
+        req.method() === "POST" &&
+        /\/api\/cartridges\/[^/]+\/credentials/.test(req.url())
+      ) {
+        credentialWrites.push(req.url());
+      }
+    });
     await page.goto(cartridgeViewer("replicon"));
-    const form = page.locator("form").first();
-    await expect(form).toBeVisible({ timeout: 15_000 });
-
-    const baseUrl = form.getByLabel(/base url/i).first();
-    if (await baseUrl.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await baseUrl.fill("https://e2e.invalid.local/probe");
-    }
-
-    const token = form.getByLabel(/bearer token|api key|token/i).first();
-    if (await token.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await token.fill("e2e-token");
-    }
-
-    // Fill any remaining required fields with throwaway values. Scope
-    // the selector to the form so shell/sidebar inputs never get mixed
-    // into the dynamic connector schema.
-    const required = form.locator('input[required], input[aria-required="true"]');
-    const count = await required.count();
-    for (let i = 0; i < count; i++) {
-      const el = required.nth(i);
-      if (!(await el.isVisible().catch(() => false))) continue;
-      if ((await el.inputValue()).trim()) continue;
-      const type = await el.getAttribute("type");
-      const name = await el.getAttribute("name");
-      if (type === "url" || /url/i.test(name ?? "")) {
-        await el.fill("https://e2e.invalid.local/probe");
-      } else if (type === "number") {
-        await el.fill("1");
-      } else {
-        await el.fill(`e2e-throwaway-${i}`);
-      }
-    }
-    const saveResponse = page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/cartridges/replicon/credentials") &&
-        response.request().method() === "POST",
-      { timeout: 15_000 },
-    ).catch(() => null);
-    await form.getByRole("button", { name: /guardar credenciales/i }).click();
-    // v1.44.3.2.1 R1 Security P2: wrap the cleanup in try/finally so
-    // a failed assertion above doesn't leave throwaway credentials in
-    // the Vault. The cleanup runs even on cancellation/assertion-fail.
-    try {
-      expect(await saveResponse,
-        "Save must submit the Replicon credentials payload",
-      ).not.toBeNull();
-      const toast = page.locator("[data-sonner-toast]").first();
-      await expect(toast).toBeVisible({ timeout: 15_000 });
-      const text = (await toast.innerText()).toLowerCase();
-      // Either success (200 round-trip) or a USEFUL error (4xx/5xx
-      // with a real message) is acceptable. A SILENT failure is not.
-      expect(text.length).toBeGreaterThan(3);
-    } finally {
-      await page
-        .getByRole("button", { name: /borrar credenciales/i })
-        .click()
-        .catch(() => null);
-      const dialog = page.getByRole("dialog", { name: /borrar credenciales/i });
-      if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
-        await page
-          .getByRole("button", { name: /^borrar$/i })
-          .click()
-          .catch(() => null);
-      }
-    }
+    await expect(
+      page.getByRole("link", { name: /configurar en vault/i }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: /probar conexión/i }),
+    ).toBeVisible();
+    // No inline Save affordance exists to trigger a credential write.
+    await expect(
+      page.getByRole("button", { name: /guardar credenciales/i }),
+    ).toHaveCount(0);
+    expect(
+      credentialWrites,
+      "viewer must not write credentials from the browser",
+    ).toEqual([]);
   });
 });
