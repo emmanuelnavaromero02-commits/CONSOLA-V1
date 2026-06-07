@@ -39,6 +39,16 @@ DEDUP_LATEST_KEYS = {
     "sap_successfactors_empjob_latest.sql": ("userId", "startDate"),
     "sap_successfactors_paymentinformationdetailv3_latest.sql": ("externalCode",),
     "sap_successfactors_folocation_latest.sql": ("externalCode",),
+    "sap_successfactors_focompany_latest.sql": ("externalCode",),
+    "sap_successfactors_fodepartment_latest.sql": ("externalCode",),
+    "sap_successfactors_fodivision_latest.sql": ("externalCode",),
+    "sap_successfactors_fobusinessunit_latest.sql": ("externalCode",),
+    "sap_successfactors_fojobcode_latest.sql": ("externalCode",),
+    "sap_successfactors_empemploymenttermination_latest.sql": (
+        "userId",
+        "endDate",
+        "eventReasonExternalCode",
+    ),
 }
 
 
