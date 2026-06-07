@@ -291,8 +291,15 @@ def test_legacy_js_gates_every_dev_only_action():
     )
     assert deploy, "function deployDag not found in legacy.js"
     deploy_body = deploy.group(1)
+    # Case A: packaged cartridge DAG cannot be deployed from Studio and must
+    # stay purely managed by cartridge shipping.
+    assert "_isCartridgeManagedDag" in deploy_body
+    assert "DAG empaquetado por el cartucho, ya activo en Airflow" in deploy_body
+    # Case B: user-authored DAG must still call backend, and backend keeps the
+    # RCE gate owner in production.
     assert "/api/studio/dag-deploy" in deploy_body
     assert "backend owns the production RCE gate" in deploy_body
+    assert "_gateDevOnlyAction" not in deploy_body
 
 
 def test_aws_compose_app_env_defaults_production():

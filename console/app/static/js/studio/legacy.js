@@ -3581,6 +3581,29 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       return state._currentCartridge?.id || '';
     }
 
+    function _packagedDagIds() {
+      const entries = state._currentCartridge?.dags || [];
+      const ids = new Set();
+      for (const dag of entries) {
+        const dagId = dag?.dag_id || '';
+        if (dagId) ids.add(dagId);
+      }
+      return ids;
+    }
+
+    function _isCartridgeManagedDag(dagId) {
+      const safeDagId = String(dagId || '').trim();
+      if (!safeDagId) return false;
+      const cartridge = _dagCartridge();
+      const cached = (state._dagsCache || []).find(d => d.dag_id === safeDagId);
+      if (cached && cached.registered_only) return true;
+      if (!cartridge) {
+        return !!_packagedDagIds().has(safeDagId);
+      }
+      if (cached?.cartridge_id && cached.cartridge_id !== cartridge) return false;
+      return _packagedDagIds().has(safeDagId);
+    }
+
     export function renderDagEditor() {
       const el = document.getElementById('step-content');
       el.style.padding = '0';   // remove default padding so editor fills edge-to-edge
@@ -3765,6 +3788,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           : `<span class="dag-badge dag-active">activo</span>`;
       }
 
+      refreshDagDeployButton();
+
       dagSetEditorCode('# Cargando fuente…');
       setDeployMsg('', '');
 
@@ -3813,6 +3838,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         `    pass\n`
       );
       setDeployMsg('', '');
+      refreshDagDeployButton();
     }
 
     // v1.43.2 (Frontend R2 hardening): cache /api/system/info once so
@@ -3860,33 +3886,27 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     async function refreshDagDeployButton() {
       const btn = document.getElementById('btn-deploy');
       if (!btn) return;
-      if (await _isDagDeployEnabled()) {
-        btn.disabled = false;
-        btn.dataset.disabledReason = '';
-        btn.textContent = '▶ Deploy a Airflow';
-        btn.title = '';
-        btn.style.opacity = '';
-        btn.style.cursor = '';
+      const isCartridgeManaged = _isCartridgeManagedDag(state._selectedDag);
+      if (isCartridgeManaged) {
+        const message = 'Deploy a Airflow deshabilitado: DAG empaquetado por el cartucho, ya activo en Airflow.';
+        btn.disabled = true;
+        btn.dataset.disabledReason = message;
+        btn.textContent = 'Deploy deshabilitado';
+        btn.title = message;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        setDeployMsg(message, 'err');
         return;
       }
-      const info = await _systemInfo();
-      const message = info.dev_mode
-        ? 'Deploy a Airflow bloqueado: falta ALLOW_RCE_TOOLS=true en el entorno local.'
-        : 'Deploy a Airflow deshabilitado en producción: usar CI/CD y la imagen GHCR oficial.';
-      btn.disabled = true;
-      btn.dataset.disabledReason = message;
-      btn.textContent = 'Deploy deshabilitado';
-      btn.title = message;
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'not-allowed';
-      setDeployMsg(message, 'err');
+      btn.disabled = false;
+      btn.dataset.disabledReason = '';
+      btn.textContent = '▶ Deploy a Airflow';
+      btn.title = '';
+      btn.style.opacity = '';
+      btn.style.cursor = '';
     }
 
     export async function deployDag() {
-      if (!(await _gateDevOnlyAction(
-        'Deploy a Airflow deshabilitado en producción: usar CI/CD y la imagen GHCR oficial.'
-      ))) return;
-
       const code = document.getElementById('dag-code-textarea')?.value?.trim();
       if (!code) { setDeployMsg('Sin código', 'err'); return; }
 
@@ -3894,6 +3914,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       const m = code.match(/dag_id\s*=\s*['"]([^'"]+)['"]/);
       if (m) dagId = m[1];
       if (!dagId) { setDeployMsg('No se encontró dag_id en el código', 'err'); return; }
+
+      if (_isCartridgeManagedDag(dagId)) {
+        setDeployMsg('DAG empaquetado por el cartucho, ya activo en Airflow.', 'err');
+        return;
+      }
+
+      const hasProductionGate = !(await _isDagDeployEnabled());
 
       const btn = document.getElementById('btn-deploy');
       if (btn) btn.disabled = true;
@@ -3912,7 +3939,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || d.status === 'failed' || d.error || d.detail) {
-          setDeployMsg(`Error: ${esc(friendlyError(d, `HTTP ${r.status}`))}`, 'err');
+          const errorMsg = `${friendlyError(d, `HTTP ${r.status}`)}${hasProductionGate ? ' — backend owns the production RCE gate' : ''}`;
+          setDeployMsg(`Error: ${esc(errorMsg)}`, 'err');
         } else if (d.status === 'deployed' || d.result?.created || d.result?.dag_id) {
           setDeployMsg(`✓ Desplegado: ${esc(d.result?.created || d.dag_id || dagId)}`, 'ok');
           state._deployedCode = code;
