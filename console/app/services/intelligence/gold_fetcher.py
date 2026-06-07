@@ -70,14 +70,14 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
                 raise HTTPException(403, f"dataset is not workspace scoped: {dataset}")
             if "tenant_id" in columns and tenant_id:
                 rows = await conn.fetch(
-                    f'SELECT * FROM public."{table}" WHERE workspace_id = $1::uuid AND tenant_id = $2::uuid LIMIT $3',
+                    f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT $3',
                     workspace_id,
                     tenant_id,
                     safe_limit,
                 )
             else:
                 rows = await conn.fetch(
-                    f'SELECT * FROM public."{table}" WHERE workspace_id = $1::uuid LIMIT $2',
+                    f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 LIMIT $2',
                     workspace_id,
                     safe_limit,
                 )

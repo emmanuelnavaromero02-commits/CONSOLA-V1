@@ -148,7 +148,7 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
         "project_id": user.get("active_project_id") or user.get("project_id"),
         "permissions": sorted(effective),
         "allowed_cartridges": allowed_cartridges,
-        "allowed_buckets": ["lakehouse"],
+        "allowed_buckets": _allowed_buckets(),
         "allowed_prefixes": _allowed_prefixes(
             allowed_cartridges,
             role,
@@ -156,6 +156,26 @@ def build_security_context(user: dict | None) -> dict[str, Any]:
             workspace_id=user.get("active_workspace_id") or user.get("workspace_id"),
         ),
     })
+
+
+def _allowed_buckets() -> list[str]:
+    """Buckets the Console may authorize downstream data readers to touch.
+
+    Local MinIO historically uses ``lakehouse``. AWS deployments use the real
+    S3 bucket name via ``S3_BUCKET_NAME``/``MINIO_BUCKET`` while still reading
+    through the same Refinement guards. Include only configured bucket names,
+    never wildcard buckets.
+    """
+    buckets: list[str] = []
+    for candidate in (
+        "lakehouse",
+        os.environ.get("MINIO_BUCKET"),
+        os.environ.get("S3_BUCKET_NAME"),
+    ):
+        value = str(candidate or "").strip()
+        if value and value not in buckets:
+            buckets.append(value)
+    return buckets
 
 
 def rls_user_context(user: dict | None) -> dict[str, Any]:

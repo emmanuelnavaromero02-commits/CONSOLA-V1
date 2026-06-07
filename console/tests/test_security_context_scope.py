@@ -27,6 +27,24 @@ def test_security_context_is_backend_owned_and_scoped_to_user_cartridges():
     assert "_trusted_admin" not in ctx
 
 
+def test_security_context_allows_configured_aws_s3_bucket(monkeypatch):
+    monkeypatch.setenv("MINIO_BUCKET", "modecissions-lakehouse-783792")
+    monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
+
+    ctx = build_security_context(
+        {
+            "id": 42,
+            "email": "analyst@example.com",
+            "role": "analyst",
+            "workspace_id": "ws_1",
+            "tenant_id": "tenant_1",
+            "allowed_cartridges": ["sap_successfactors"],
+        }
+    )
+
+    assert ctx["allowed_buckets"] == ["lakehouse", "modecissions-lakehouse-783792"]
+
+
 def test_security_context_admin_can_traverse_platform_prefixes():
     ctx = build_security_context({"id": 1, "email": "admin@example.com", "role": "admin"})
 

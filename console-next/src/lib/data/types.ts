@@ -16,6 +16,8 @@ export interface CatalogDataset {
   layer?: string | null;
   cartridge?: string | null;
   description?: string | null;
+  row_count?: number | null;
+  last_refresh?: string | null;
   columns?: CatalogColumn[] | null;
 }
 
@@ -62,6 +64,7 @@ export interface CatalogRelationshipInput {
 }
 
 export type BronzeRow = Record<string, unknown>;
+export type DatasetRow = Record<string, unknown>;
 
 export interface BronzeQueryInput {
   sql: string;

@@ -726,14 +726,14 @@ def _storage_path_matches_registered_dataset(sec: dict, key: str, sources: list[
         return False
     if _has_invalid_scoped_storage_path(sec, key):
         tenant, workspace = _storage_scope_markers(key)
-        legacy_registered_snapshot = (
-            bool(declared)
-            and tenant is None
-            and workspace is None
-            and len(parts) == 4
-            and parts[3] == "data.parquet"
-        )
-        return legacy_registered_snapshot
+        if not bool(declared) or tenant is not None or workspace is not None:
+            return False
+        # Registered legacy datasets may still be materialized under the old
+        # unpartitioned snapshot layout. Only allow exact dataset-local parquet
+        # readers for datasets explicitly declared as sources and already
+        # authorized by _dataset_allowed; never allow arbitrary descendants.
+        suffix = parts[3:]
+        return suffix in (["data.parquet"], ["*.parquet"], ["**", "*.parquet"])
     return True
 
 
@@ -1794,6 +1794,8 @@ def _get_data_catalog(
                 "layer":       row["layer"],
                 "cartridge":   row["cartridge"],
                 "description": ds_meta.get("description", "") if ds_meta else "",
+                "row_count":   ds_meta.get("row_count") if ds_meta else None,
+                "last_refresh": ds_meta.get("last_refresh") if ds_meta else None,
                 "columns":     [],
             }
         ev = row["example_values"]
@@ -1811,6 +1813,33 @@ def _get_data_catalog(
             "is_metric":      row["is_metric"],
             "example_values": ev,
         })
+
+    # Some Gold datasets are materialized and registered in ``datasets`` but do
+    # not yet have per-column rows in ``data_catalog``. They must still appear
+    # in the UI catalog with metadata and preview links; schema enrichment can
+    # catch up separately when columns are seeded.
+    if not tags:
+        for ds_meta in store.list_datasets():
+            name = str(ds_meta.get("name") or "")
+            if not name or name in datasets_out:
+                continue
+            if layer and str(ds_meta.get("layer") or "") != layer:
+                continue
+            if cartridge and str(ds_meta.get("cartridge") or "") != cartridge:
+                continue
+            if datasets and name not in datasets:
+                continue
+            if security_context and not _dataset_allowed(security_context, ds_meta):
+                continue
+            datasets_out[name] = {
+                "layer":        ds_meta.get("layer") or "",
+                "cartridge":    ds_meta.get("cartridge") or "",
+                "description":  ds_meta.get("description") or "",
+                "row_count":    ds_meta.get("row_count"),
+                "last_refresh": ds_meta.get("last_refresh"),
+                "columns":      [],
+            }
+            ds_names.add(name)
 
     # Fetch relevant relationships
     rels: list = []
