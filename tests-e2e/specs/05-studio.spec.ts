@@ -102,6 +102,29 @@ test.describe("Legacy /studio page (port 8000)", () => {
     await expect(eitherState.first()).toBeVisible({ timeout: 15_000 });
   });
 
+  test("'Airflow' button opens the internal jobs viewer, not the external UI", async ({
+    authedPage: page,
+  }) => {
+    await openStudio(page);
+    await goStudioStep(page, 2);
+
+    const airflow = page.locator("#dag-airflow-link");
+    await expect(airflow).toBeVisible({ timeout: 15_000 });
+    await expect(airflow).toContainText(/Airflow/i);
+
+    const href = await airflow.getAttribute("href");
+    expect(href, "Airflow button must use the in-console jobs viewer").toMatch(
+      /^\/viewer\?type=jobs(?:&dag_id=.+)?$/,
+    );
+    expect(href, "Airflow button must not be a no-op").not.toBe("#");
+    expect(href, "Airflow button must not open the external Airflow UI").not.toMatch(
+      /\/dags\/|:8080|:8082/,
+    );
+
+    await airflow.click();
+    await page.waitForURL(/\/viewer\?type=jobs/, { timeout: 10_000 });
+  });
+
   test("'Grafo' button responds to click (USER-REPORTED BUG)", async ({
     authedPage: page,
   }) => {

@@ -1328,7 +1328,7 @@ import { state } from './legacy-state.js';
             </button>
             <a href="${esc(airflowUrl)}" target="_self" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
-              ◈ Ver jobs en consola
+              ◈ Airflow en consola
             </a>
           </div>
         </div>`;
@@ -1337,7 +1337,7 @@ import { state } from './legacy-state.js';
           <div class="preview-err">No se pudieron cargar los logs: ${esc(e.message)}</div>
           <a href="${esc(airflowDagUrl(dagId))}" target="_self"
              class="btn btn-sm" style="color:var(--amber);border-color:var(--amber);text-decoration:none;margin-top:8px">
-            ◈ Ver jobs en consola
+            ◈ Airflow en consola
           </a>
         </div>`;
       }
@@ -1526,7 +1526,7 @@ import { state } from './legacy-state.js';
             </button>
             <a href="${esc(airflowUrl)}" target="_self" class="btn btn-sm"
                style="color:var(--amber);border-color:var(--amber);text-decoration:none">
-              ◈ Ver jobs en consola
+              ◈ Airflow en consola
             </a>
           </div>
         </div>`;
@@ -3647,7 +3647,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
                   </span>
                   <a id="dag-airflow-link" href="/viewer?type=jobs" target="_self" class="btn btn-sm"
                      style="color:var(--amber);border-color:var(--amber);text-decoration:none"
-                     title="Ver estado de DAGs y jobs en consola">◈ DAG status</a>
+                     title="Ver estado de DAGs y jobs de Airflow en consola">◈ Airflow</a>
                   <button class="btn btn-sm" id="btn-dag-graph" onclick="toggleDagGraph()"
                           style="color:var(--cyan);border-color:var(--cyan);background:rgba(0,230,230,.1)" title="Ocultar/mostrar grafo">⬡ Grafo</button>
                 </div>
