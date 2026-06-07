@@ -15,10 +15,18 @@ to hide.
 """
 from __future__ import annotations
 
+import json
+import os
+from typing import Any
+from urllib.parse import quote
+
+import httpx
 from fastapi import APIRouter, Depends
 
 from app.dependencies import require_authenticated
+from app.security import get_internal_api_key
 from app.services import auth
+from app.services.security_context import build_security_context
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -29,6 +37,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 # console/app/routers/cartridges.py. Adding a new cartridge means
 # updating those + this list (the test guards parity).
 _CARTRIDGES = ("replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors")
+VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
 
 
 def _freshness_label(age_hours: float | None) -> str:
@@ -42,25 +51,62 @@ def _freshness_label(age_hours: float | None) -> str:
     return "very_stale"
 
 
-async def _cartridge_counts(pool) -> dict:
-    """Healthy vs disconnected per the mcp_servers registry."""
-    row = await pool.fetchrow(
-        """
-        SELECT
-            COUNT(*) FILTER (WHERE category = 'cartridge') AS total,
-            COUNT(*) FILTER (WHERE category = 'cartridge' AND healthy IS TRUE)  AS connected,
-            COUNT(*) FILTER (WHERE category = 'cartridge' AND healthy IS NOT TRUE) AS disconnected
-        FROM mcp_servers
-        """
-    ) or {}
+def _vault_headers_for_user(user: dict | None) -> dict[str, str]:
+    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_VAULT") or get_internal_api_key()
     return {
-        "total":        int(row.get("total") or 0),
-        "connected":    int(row.get("connected") or 0),
-        "disconnected": int(row.get("disconnected") or 0),
+        "x-api-key": key,
+        "x-internal-service": "console",
+        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
     }
 
 
-async def _extraction_counts(pool) -> dict:
+async def _vault_connections_for_cartridge(cartridge_id: str, user: dict | None) -> list[dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=6.0) as client:
+            response = await client.get(f"{VAULT_URL}/connections/{quote(cartridge_id, safe='')}")
+    except Exception:
+        return []
+    if response.status_code in {404, 204} or response.status_code >= 400:
+        return []
+    try:
+        payload = response.json()
+    except ValueError:
+        return []
+    raw = payload.get("connections") if isinstance(payload, dict) else []
+    if not isinstance(raw, list):
+        return []
+    return [conn for conn in raw if isinstance(conn, dict) and str(conn.get("conn_id") or conn.get("id") or "").strip()]
+
+
+async def _active_scoped_cartridges(user: dict | None) -> tuple[str, ...]:
+    active: list[str] = []
+    for cartridge_id in _CARTRIDGES:
+        if await _vault_connections_for_cartridge(cartridge_id, user):
+            active.append(cartridge_id)
+    return tuple(active)
+
+
+async def _cartridge_counts(pool, active_cartridges: tuple[str, ...]) -> dict:
+    """Count only cartridges with an active scoped Vault connection."""
+    if not active_cartridges:
+        return {"total": 0, "connected": 0, "disconnected": 0}
+    row = await pool.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE category = 'cartridge' AND id = ANY($1::text[])) AS connected
+        FROM mcp_servers
+        """,
+        list(active_cartridges),
+    ) or {}
+    connected = int(row.get("connected") or 0)
+    return {
+        "total": len(active_cartridges),
+        "connected": connected,
+        "disconnected": max(0, len(active_cartridges) - connected),
+    }
+
+
+async def _extraction_counts(pool, active_cartridges: tuple[str, ...]) -> dict:
     """Extraction runs started today + over the last 7 days.
 
     Uses ``started_at`` (not finished_at) because migration 40 only
@@ -70,36 +116,73 @@ async def _extraction_counts(pool) -> dict:
     equivalent for a daily window (an extraction started 2 minutes
     ago that hasn't finished still counts as "today's work").
     """
+    if not active_cartridges:
+        return {
+            "today": 0,
+            "week": 0,
+            "productive_failures_today": 0,
+            "unscope_noise_failures_today": 0,
+        }
     today = await pool.fetchval(
         """
         SELECT COUNT(*)
           FROM extraction_runs
          WHERE started_at >= date_trunc('day', NOW())
-        """
+           AND cartridge_id = ANY($1::text[])
+        """,
+        list(active_cartridges),
     )
     week = await pool.fetchval(
         """
         SELECT COUNT(*)
           FROM extraction_runs
          WHERE started_at >= NOW() - INTERVAL '7 days'
+           AND cartridge_id = ANY($1::text[])
+        """,
+        list(active_cartridges),
+    )
+    productive_failures = await pool.fetchval(
         """
+        SELECT COUNT(*)
+          FROM extraction_runs
+         WHERE started_at >= date_trunc('day', NOW())
+           AND status = 'failed'
+           AND cartridge_id = ANY($1::text[])
+        """,
+        list(active_cartridges),
+    )
+    unscope_noise = await pool.fetchval(
+        """
+        SELECT COUNT(*)
+          FROM extraction_runs
+         WHERE started_at >= date_trunc('day', NOW())
+           AND status = 'failed'
+           AND NOT (cartridge_id = ANY($1::text[]))
+        """,
+        list(active_cartridges),
     )
     return {
         "today": int(today or 0),
         "week":  int(week or 0),
+        "productive_failures_today": int(productive_failures or 0),
+        "unscope_noise_failures_today": int(unscope_noise or 0),
     }
 
 
-async def _freshness_per_cartridge(pool) -> dict:
+async def _freshness_per_cartridge(pool, active_cartridges: tuple[str, ...]) -> dict:
     """Hours since the latest successful extraction per cartridge."""
+    if not active_cartridges:
+        return {}
     rows = await pool.fetch(
         """
         SELECT cartridge_id,
                EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600.0 AS age_hours
           FROM extraction_runs
          WHERE status = 'success'
+           AND cartridge_id = ANY($1::text[])
          GROUP BY cartridge_id
-        """
+        """,
+        list(active_cartridges),
     )
     by_id: dict = {}
     for row in rows:
@@ -107,7 +190,7 @@ async def _freshness_per_cartridge(pool) -> dict:
         age = float(row["age_hours"]) if row["age_hours"] is not None else None
         by_id[cid] = age
     out: dict = {}
-    for cart in _CARTRIDGES:
+    for cart in active_cartridges:
         age = by_id.get(cart)
         out[cart] = {
             "age_hours": age,
@@ -201,10 +284,12 @@ async def dashboard_kpis(user: dict = Depends(require_authenticated)):
     small queries) and return the shape documented in the v1.44.1
     brief."""
     pool = await auth.pool()
+    active_cartridges = await _active_scoped_cartridges(user)
     return {
-        "cartridges":    await _cartridge_counts(pool),
-        "extractions":   await _extraction_counts(pool),
-        "data_freshness": await _freshness_per_cartridge(pool),
+        "active_cartridges": list(active_cartridges),
+        "cartridges":    await _cartridge_counts(pool, active_cartridges),
+        "extractions":   await _extraction_counts(pool, active_cartridges),
+        "data_freshness": await _freshness_per_cartridge(pool, active_cartridges),
         "users":         await _user_counts(pool),
         "copilot":       await _copilot_counts(pool),
         "audit":         await _audit_counts(pool),

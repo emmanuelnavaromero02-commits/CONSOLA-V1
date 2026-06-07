@@ -26,7 +26,7 @@ async function loadRuntimeConfig() {
 }
 
 function airflowDagUrl(dagId) {
-  return _airflowPublicUrl ? `${_airflowPublicUrl}/dags/${encodeURIComponent(dagId)}/grid` : '#';
+  return `/viewer?type=jobs${dagId ? `&dag_id=${encodeURIComponent(dagId)}` : ''}`;
 }
 
 function csrfToken() {
@@ -553,6 +553,11 @@ function newDag() {
 }
 
 async function deployDag() {
+  const existingBtn = document.getElementById('btn-deploy');
+  if (existingBtn?.dataset.disabledReason) {
+    setDeployMsg(existingBtn.dataset.disabledReason, 'err');
+    return;
+  }
   const code   = document.getElementById('dag-code-textarea').value.trim();
   if (!code) { setDeployMsg('Sin código', 'err'); return; }
 
@@ -864,10 +869,12 @@ async function _gateDevModeUI() {
       const btn = document.getElementById('btn-deploy');
       if (btn) {
         btn.disabled = true;
-        btn.title = 'Deploy is disabled outside development. ' +
-                    'Use the Airflow UI or the deploy pipeline instead.';
+        btn.dataset.disabledReason = 'Deploy a Airflow deshabilitado en producción: usar CI/CD y la imagen GHCR oficial.';
+        btn.title = btn.dataset.disabledReason;
+        btn.textContent = 'Deploy deshabilitado';
         btn.style.opacity = '0.5';
         btn.style.cursor = 'not-allowed';
+        setDeployMsg(btn.dataset.disabledReason, 'err');
       }
     }
   } catch (e) {

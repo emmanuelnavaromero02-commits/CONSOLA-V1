@@ -253,14 +253,48 @@ async def _vault_connection(cartridge_id: str, conn_id: str = "default", user: d
             response = await client.get(
                 f"{VAULT_URL.rstrip('/')}/connections/{quote(cartridge_id, safe='')}/{quote(conn_id, safe='')}"
             )
+            if response.status_code == 404 and conn_id == "default":
+                list_response = await client.get(
+                    f"{VAULT_URL.rstrip('/')}/connections/{quote(cartridge_id, safe='')}"
+                )
+                if list_response.status_code in {404, 204}:
+                    return {}, "no scoped Vault connection"
+                if list_response.status_code >= 400:
+                    return {}, f"vault returned HTTP {list_response.status_code}"
+                try:
+                    list_payload = list_response.json()
+                except ValueError:
+                    return {}, "vault returned invalid JSON"
+                raw_connections = list_payload.get("connections") if isinstance(list_payload, dict) else []
+                if not isinstance(raw_connections, list):
+                    return {}, "no scoped Vault connection"
+                first = next(
+                    (
+                        item
+                        for item in raw_connections
+                        if isinstance(item, dict)
+                        and str(item.get("conn_id") or item.get("id") or "").strip()
+                    ),
+                    None,
+                )
+                if not first:
+                    return {}, "no scoped Vault connection"
+                selected_conn_id = str(first.get("conn_id") or first.get("id")).strip()
+                response = await client.get(
+                    f"{VAULT_URL.rstrip('/')}/connections/{quote(cartridge_id, safe='')}/{quote(selected_conn_id, safe='')}"
+                )
     except Exception as exc:
         return {}, f"vault unavailable: {type(exc).__name__}"
     if response.status_code == 404:
-        return {}, "no saved credentials in vault"
+        return {}, "no scoped Vault connection"
     if response.status_code >= 400:
         return {}, f"vault returned HTTP {response.status_code}"
     payload = response.json()
-    return payload if isinstance(payload, dict) else {}, ""
+    if not isinstance(payload, dict):
+        return {}, "vault returned invalid JSON"
+    if not str(payload.get("conn_id") or payload.get("id") or "").strip():
+        payload["conn_id"] = conn_id
+    return payload, ""
 
 
 def _connector_payload(connector_schema: dict[str, Any]) -> dict[str, Any]:
@@ -1405,6 +1439,20 @@ def _entity_identity(entity: dict[str, Any]) -> str:
     return str(entity.get("entity") or entity.get("name") or entity.get("id") or "").strip()
 
 
+def _vault_connection_evidence(connection: dict[str, Any]) -> dict[str, Any]:
+    conn_id = str(connection.get("conn_id") or connection.get("id") or "").strip()
+    auth_method = str(connection.get("auth_method") or "").strip()
+    evidence: dict[str, Any] = {
+        "status": "present",
+        "connection_id": conn_id,
+    }
+    if auth_method:
+        evidence["auth_method"] = auth_method
+    if connection.get("base_url") or connection.get("url"):
+        evidence["base_url_configured"] = True
+    return evidence
+
+
 async def _studio_cartridge_self_check_impl(cartridge_id: str, user: dict | None) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -1441,9 +1489,16 @@ async def _studio_cartridge_self_check_impl(cartridge_id: str, user: dict | None
         blockers.append(_diag_item("connector_schema no disponible", evidence=type(exc).__name__, severity="critical"))
 
     vault_connection, vault_reason = await _vault_connection(cartridge_id, "default", user)
-    evidence["vault"] = "present" if vault_connection else vault_reason
+    evidence["vault"] = (
+        _vault_connection_evidence(vault_connection)
+        if vault_connection
+        else {"status": "missing", "reason": vault_reason or "no scoped Vault connection", "configure_url": "/operations/vault"}
+    )
     if not vault_connection:
-        warnings.append(_diag_item("Credenciales default no encontradas en Vault", evidence=vault_reason or "no saved credentials"))
+        warnings.append(_diag_item(
+            "Conexion Vault scoped no encontrada",
+            evidence=f"{vault_reason or 'missing'}; configurar en /operations/vault",
+        ))
 
     entities = manifest.get("entities") if isinstance(manifest.get("entities"), list) else []
     if not entities:
@@ -1578,11 +1633,15 @@ async def _execute_studio_goal_step(
         }
     if step_key == "vault_credentials":
         connection, reason = await _vault_connection(cartridge_id, "default", user)
+        evidence = _vault_connection_evidence(connection) if connection else {}
         return {
             "ok": bool(connection),
             "source": "vault.connections",
             "status": "present" if connection else "missing",
+            "connection_id": evidence.get("connection_id") or "",
+            "auth_method": evidence.get("auth_method") or "",
             "reason": "" if connection else reason,
+            "configure_url": "" if connection else "/operations/vault",
         }
     if step_key == "introspect_source":
         result = await _studio_introspect_source({"cartridge_id": cartridge_id}, user)

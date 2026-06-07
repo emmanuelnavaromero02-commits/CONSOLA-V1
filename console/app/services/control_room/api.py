@@ -301,6 +301,86 @@ def _allowed_from_user(user: dict | None) -> set[str] | None:
 
 
 @_bind_to_core
+def _vault_headers_for_user(user: dict | None) -> dict[str, str]:
+    return {
+        **_internal_headers("VAULT"),
+        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
+    }
+
+
+@_bind_to_core
+def _safe_connection_summary(connection: dict[str, Any]) -> dict[str, Any]:
+    conn_id = str(connection.get("conn_id") or connection.get("id") or "").strip()
+    out: dict[str, Any] = {"conn_id": conn_id}
+    auth_method = str(connection.get("auth_method") or "").strip()
+    if auth_method:
+        out["auth_method"] = auth_method
+    base_url = str(connection.get("base_url") or connection.get("url") or "").strip()
+    if base_url:
+        out["base_url"] = base_url
+    return out
+
+
+@_bind_to_core
+async def _vault_connections_for_cartridge(cartridge_id: str, user: dict | None) -> list[dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=6.0) as client:
+            response = await client.get(f"{VAULT_URL}/connections/{quote(cartridge_id, safe='')}")
+    except Exception:
+        return []
+    if response.status_code in {404, 204}:
+        return []
+    if response.status_code >= 400:
+        return []
+    try:
+        payload = response.json()
+    except ValueError:
+        return []
+    raw_connections = payload.get("connections") if isinstance(payload, dict) else []
+    if not isinstance(raw_connections, list):
+        return []
+    connections: list[dict[str, Any]] = []
+    for raw in raw_connections:
+        if not isinstance(raw, dict):
+            continue
+        summary = _safe_connection_summary(raw)
+        if summary.get("conn_id"):
+            connections.append(summary)
+    return connections
+
+
+@_bind_to_core
+async def _filter_installations_by_scoped_connections(
+    installations: list[dict[str, Any]],
+    user: dict | None,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in installations:
+        cartridge_id = str(row.get("cartridge_id") or "").strip()
+        if not cartridge_id or cartridge_id in seen:
+            continue
+        seen.add(cartridge_id)
+        status = str(row.get("installation_status") or "ready").strip().lower()
+        if status not in ACTIVE_INSTALLATION_STATUSES:
+            continue
+        connections = await _vault_connections_for_cartridge(cartridge_id, user)
+        if not connections:
+            continue
+        first = connections[0]
+        filtered.append({
+            **row,
+            "installation_status": status,
+            "connections": connections,
+            "connection_count": len(connections),
+            "active_connection_ids": [conn["conn_id"] for conn in connections],
+            "connection_id": first.get("conn_id"),
+            "auth_method": first.get("auth_method"),
+        })
+    return filtered
+
+
+@_bind_to_core
 def _attach_thresholds(
     item: dict[str, Any],
     thresholds_applied: list[dict[str, Any]],
@@ -316,8 +396,8 @@ def _attach_thresholds(
 @_bind_to_core
 async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
     tenant_id, workspace_id = _workspace_scope(user)
-    pool = await auth.pool()
     try:
+        pool = await auth.pool()
         rows = await pool.fetch(
             """
             SELECT
@@ -348,20 +428,24 @@ async def _installed_cartridges(user: dict | None) -> list[dict[str, Any]]:
             workspace_id,
             (user or {}).get("id"),
         )
-        return [_row_to_public(row) for row in rows]
+        return await _filter_installations_by_scoped_connections([_row_to_public(row) for row in rows], user)
     except Exception:
         allowed = _allowed_from_user(user)
-        modules = MODULES if allowed is None else [module for module in MODULES if module.cartridge in allowed]
-        return [
-            {
-                "cartridge_id": module.cartridge,
-                "installation_status": "ready",
-                "current_step": "fallback",
-                "label": module.label,
-                "category": "platform" if module.operational else "cartridge",
-            }
-            for module in modules
-        ]
+        fallback: dict[str, dict[str, Any]] = {}
+        for module in MODULES:
+            if allowed is not None and module.cartridge not in allowed:
+                continue
+            fallback.setdefault(
+                module.cartridge,
+                {
+                    "cartridge_id": module.cartridge,
+                    "installation_status": "ready",
+                    "current_step": "fallback",
+                    "label": module.label,
+                    "category": "platform" if module.operational else "cartridge",
+                },
+            )
+        return await _filter_installations_by_scoped_connections(list(fallback.values()), user)
 
 
 @_bind_to_core
@@ -1107,7 +1191,7 @@ async def _collect_items(
     items: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     rows_by_dataset: dict[str, list[dict[str, Any]]] = {}
-    threshold_rows = await _load_threshold_rows(user) if use_catalog else []
+    threshold_rows = await _load_threshold_rows(user) if use_catalog and (persist or include_source_state_items) else []
     thresholds = _threshold_map(threshold_rows)
     for module in modules:
         installation = installation_by_cartridge.get(module.cartridge, {})
@@ -1291,12 +1375,20 @@ async def dashboard(
     installations = payload["installations"]
     financial = payload["financial"]
     thresholds = payload.get("thresholds") or []
+    active_cartridges = {
+        str(row.get("cartridge_id") or "").strip()
+        for row in installations
+        if str(row.get("cartridge_id") or "").strip()
+        and str(row.get("installation_status") or "ready").strip().lower() in ACTIVE_INSTALLATION_STATUSES
+    }
     lesson_rows = await _load_lesson_rows(user, limit=200)
     lesson_summary = _lesson_insights(lesson_rows)
     items = _attach_lessons_to_items(items, lesson_rows)
     if persist:
         known_ids = {str(item.get("id")) for item in items}
         for item in await _persisted_intelligence_items(user):
+            if str(item.get("cartridge") or "").strip() not in active_cartridges:
+                continue
             if str(item.get("id")) not in known_ids:
                 items.append(item)
                 known_ids.add(str(item.get("id")))
@@ -1461,7 +1553,7 @@ async def list_anomalies(
         limit_per_source=limit_per_source,
         include_source_state_items=False,
         persist=False,
-        use_catalog=False,
+        use_catalog=True,
     )
     anomalies = [item for item in payload["items"] if item["kind"] == "anomaly"]
     return {"anomalies": anomalies, "sources": payload["sources"]}
@@ -1474,7 +1566,7 @@ async def summary(user: dict | None, *, fetcher: DatasetFetcher = query_dataset_
         fetcher=fetcher,
         include_source_state_items=False,
         persist=False,
-        use_catalog=False,
+        use_catalog=True,
     )
     items = [item for item in collected["items"] if item["kind"] == "anomaly"]
     by_severity = _severity_counts(items)

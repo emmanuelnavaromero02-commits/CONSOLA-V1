@@ -10,19 +10,20 @@ import { queryBronze } from "@/lib/data/client";
 import type { BronzeQueryPayload, BronzeRow } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_SQL = "select * from bronze limit 50";
+const DEFAULT_SOURCE = "raw/sap_successfactors/PerPerson";
+const DEFAULT_SQL = `select * from read_parquet('${DEFAULT_SOURCE}') limit 50`;
 
 export default function BronzeQueryPage() {
   const [sql, setSql] = useState(DEFAULT_SQL);
   const [limit, setLimit] = useState(200);
-  const [sources, setSources] = useState("");
+  const [sources, setSources] = useState(DEFAULT_SOURCE);
   const [result, setResult] = useState<BronzeQueryPayload | null>(null);
 
   const bronzeQuery = useMutation({
     mutationFn: () => queryBronze({
       sql: sql.trim(),
       limit,
-      sources: splitCsv(sources),
+      sources: scopedSources(sql, sources),
     }),
     onMutate: () => {
       setResult(null);
@@ -64,7 +65,7 @@ export default function BronzeQueryPage() {
           type="button"
           onClick={() => {
             setSql(DEFAULT_SQL);
-            setSources("");
+            setSources(DEFAULT_SOURCE);
             setLimit(200);
             setResult(null);
           }}
@@ -111,7 +112,7 @@ export default function BronzeQueryPage() {
                 <input
                   value={sources}
                   onChange={(event) => setSources(event.target.value)}
-                  placeholder="raw/replicon/Client, raw/replicon/Project"
+                  placeholder={DEFAULT_SOURCE}
                   className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
@@ -123,7 +124,7 @@ export default function BronzeQueryPage() {
               className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {bronzeQuery.isPending ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Play aria-hidden className="h-4 w-4" />}
-              Ejecutar
+              Query
             </button>
           </div>
         </div>
@@ -244,6 +245,16 @@ function toErrorMessage(error: unknown): string {
 
 function splitCsv(value: string): string[] {
   return value.split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function scopedSources(sql: string, sourceInput: string): string[] {
+  const explicit = splitCsv(sourceInput);
+  if (explicit.length > 0) return explicit;
+  const matches = Array.from(
+    sql.matchAll(/\bread_(?:parquet|csv|json)\s*\(\s*['"]([^'"]+)['"]/gi),
+    (match) => match[1]?.trim(),
+  ).filter(Boolean) as string[];
+  return Array.from(new Set(matches));
 }
 
 function clamp(value: number, min: number, max: number): number {
