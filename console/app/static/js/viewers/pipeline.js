@@ -533,7 +533,7 @@ function newDag() {
   _showEditor();
   document.getElementById('dag-editor-name').textContent = 'nuevo_dag';
   document.getElementById('dag-editor-badge').innerHTML = '';
-  document.getElementById('dag-airflow-link').href = '#';
+  document.getElementById('dag-airflow-link').href = airflowDagUrl('');
   setEditorCode(
     `# Nuevo DAG — ${_cartridge}\n` +
     `# dag_id recomendado: ${_cartridge}_<entidad>_<modo>\n\n` +
