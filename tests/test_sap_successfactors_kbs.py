@@ -36,6 +36,7 @@ NEW_KB_IDS = {
     "kb_sap_successfactors_employees_anomalies",
     "kb_sap_successfactors_workforce_distribution",
 }
+EXPECTED_GOLD_DATASETS = 10
 
 
 def _kbs(path: Path = KBS_YAML) -> list[dict]:
@@ -87,7 +88,9 @@ def test_new_kb_sql_parses():
 def test_new_kbs_read_existing_datasets():
     all_datasets = _dataset_names()
     golds = _dataset_names("gold")
-    assert len(golds) == 8, f"expected 8 golds in migration 82, got {len(golds)}"
+    assert len(golds) == EXPECTED_GOLD_DATASETS, (
+        f"expected {EXPECTED_GOLD_DATASETS} golds in migration 82, got {len(golds)}"
+    )
     for kb in _kbs():
         if kb["id"] not in NEW_KB_IDS:
             continue
