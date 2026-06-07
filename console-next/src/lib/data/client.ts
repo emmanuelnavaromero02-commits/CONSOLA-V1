@@ -6,6 +6,7 @@ import type {
   CatalogFilters,
   CatalogRelationshipInput,
   DataCatalogPayload,
+  DatasetRow,
   LineagePayload,
 } from "./types";
 
@@ -30,6 +31,15 @@ function normalizeCatalog(payload: Partial<DataCatalogPayload> | null | undefine
 export async function getDataCatalog(filters: CatalogFilters = {}): Promise<DataCatalogPayload> {
   const { data } = await api.get<Partial<DataCatalogPayload>>(`/api/catalog${buildQuery(filters)}`);
   return normalizeCatalog(data);
+}
+
+export async function getDatasetRows(dataset: string, limit = 20): Promise<DatasetRow[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const { data } = await api.get<DatasetRow[] | { data?: DatasetRow[] }>(
+    `/api/data/${encodeURIComponent(dataset)}?${params.toString()}`,
+  );
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data.data) ? data.data : [];
 }
 
 export async function upsertCatalogEntry(entry: CatalogEntryInput): Promise<unknown> {

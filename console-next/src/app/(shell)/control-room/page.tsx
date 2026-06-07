@@ -166,6 +166,30 @@ interface ThresholdPayload {
   };
 }
 
+interface SfGoldWidgetRow {
+  label?: string;
+  id?: string | null;
+  headcount?: number;
+  [key: string]: unknown;
+}
+
+interface SfGoldWidget {
+  id: string;
+  title: string;
+  value: number;
+  dataset: string;
+  href: string;
+  rows: SfGoldWidgetRow[];
+}
+
+interface SfGoldKpisPayload {
+  generated_at?: string;
+  connection_id?: string;
+  tenant_id?: string;
+  workspace_id?: string;
+  widgets: SfGoldWidget[];
+}
+
 interface ThresholdCandidate extends DetectionThreshold {
   key: string;
   module: string;
@@ -666,6 +690,9 @@ export default function ControlRoomPage() {
   const [thresholdSaving, setThresholdSaving] = useState(false);
   const [thresholdSaveMessage, setThresholdSaveMessage] = useState("");
   const [thresholdSaveError, setThresholdSaveError] = useState("");
+  const [sfGoldKpis, setSfGoldKpis] = useState<SfGoldKpisPayload | null>(null);
+  const [sfGoldLoading, setSfGoldLoading] = useState(false);
+  const [sfGoldError, setSfGoldError] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
@@ -750,6 +777,19 @@ export default function ControlRoomPage() {
     }
   }, []);
 
+  const loadSfGoldKpis = useCallback(async () => {
+    setSfGoldLoading(true);
+    setSfGoldError("");
+    try {
+      const response = await api.get<SfGoldKpisPayload>("/api/control-room/sap-successfactors/gold-kpis");
+      setSfGoldKpis(response.data);
+    } catch (err) {
+      setSfGoldError(errorMessage(err, "No se pudieron cargar KPIs Gold de SuccessFactors"));
+    } finally {
+      setSfGoldLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadDashboard(undefined, false);
@@ -770,19 +810,21 @@ export default function ControlRoomPage() {
         void loadDashboard(selectedId, true);
         void loadLessons();
         void loadThresholds();
+        void loadSfGoldKpis();
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadThresholds, selectedId, state]);
+  }, [dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfGoldKpis, loadThresholds, selectedId, state]);
 
   useEffect(() => {
     if (state !== "ready") return;
     const timer = window.setTimeout(() => {
       void loadLessons();
       void loadThresholds();
+      void loadSfGoldKpis();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, domain, loadLessons, loadThresholds, state]);
+  }, [cartridge, domain, loadLessons, loadSfGoldKpis, loadThresholds, state]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -1365,6 +1407,7 @@ export default function ControlRoomPage() {
       loadDashboard(selectedId, false),
       loadLessons(),
       loadThresholds(),
+      loadSfGoldKpis(),
     ]);
   }
 
@@ -1480,6 +1523,9 @@ export default function ControlRoomPage() {
             contextCritical={contextCritical}
             contextAttention={contextAttention}
             contextDecisionCount={contextDecisionCount}
+            sfGoldKpis={sfGoldKpis}
+            sfGoldLoading={sfGoldLoading}
+            sfGoldError={sfGoldError}
             domain={domain}
             cartridge={cartridge}
             severity={severity}
@@ -1713,6 +1759,9 @@ function DashboardView({
   contextCritical,
   contextAttention,
   contextDecisionCount,
+  sfGoldKpis,
+  sfGoldLoading,
+  sfGoldError,
   domain,
   cartridge,
   severity,
@@ -1754,6 +1803,9 @@ function DashboardView({
   contextCritical: number;
   contextAttention: number;
   contextDecisionCount: number;
+  sfGoldKpis: SfGoldKpisPayload | null;
+  sfGoldLoading: boolean;
+  sfGoldError: string;
   domain: string;
   cartridge: string;
   severity: Severity | "all";
@@ -1801,6 +1853,8 @@ function DashboardView({
         <SummaryCard icon={Activity} label="Atencion" value={contextIsPortfolio ? dashboard?.summary.attention ?? 0 : contextAttention} tone="attention" />
         <SummaryCard icon={ShieldCheck} label={contextIsPortfolio ? "Decisiones abiertas" : "Con decision"} value={contextDecisionCount} />
       </section>
+
+      <SfGoldKpiPanel payload={sfGoldKpis} loading={sfGoldLoading} error={sfGoldError} />
 
       <section className="grid gap-4 lg:grid-cols-4" aria-label="Ciclo y salud operativa">
         <OmegaCycleBar steps={dashboard?.omega_steps ?? defaultOmegaSteps} counts={contextCycleCounts} />
@@ -1986,6 +2040,60 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
   );
 }
 
+function SfGoldKpiPanel({ payload, loading, error }: { payload: SfGoldKpisPayload | null; loading: boolean; error: string }) {
+  const widgets = payload?.widgets ?? [];
+  return (
+    <section className="rounded-lg border bg-card p-4" aria-label="KPIs Gold SuccessFactors FEMSA">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase text-muted-foreground">SuccessFactors Gold · FEMSA</p>
+          <h2 className="text-lg font-semibold">Plantilla activa y distribución organizacional</h2>
+          <p className="text-sm text-muted-foreground">
+            Scope del workspace activo · conexión {payload?.connection_id || "femsa_sf"}
+            {payload?.generated_at ? ` · actualizado ${fmtDate(payload.generated_at)}` : ""}
+          </p>
+        </div>
+        <a
+          href="/data/catalog?layer=gold&cartridge=sap_successfactors"
+          className="inline-flex min-h-[40px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5"
+        >
+          Ver Gold en catálogo
+        </a>
+      </div>
+      {loading ? <StatePanel icon={Loader2} text="Cargando KPIs Gold de SuccessFactors..." spinning /> : null}
+      {error ? <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
+      {!loading && !error && widgets.length === 0 ? <StatePanel icon={CheckCircle2} text="Sin Gold visible para este workspace." /> : null}
+      {widgets.length ? (
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
+          {widgets.map((widget) => (
+            <article key={widget.id} className="rounded-lg border bg-background p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">{widget.title}</p>
+                  <strong className="mt-2 block text-3xl font-semibold tracking-tight">{formatNumber(widget.value)}</strong>
+                </div>
+                <a href={widget.href} className="text-xs font-medium text-primary hover:underline">Dataset</a>
+              </div>
+              <div className="mt-3 space-y-2">
+                {widget.rows.slice(0, 5).map((row, index) => (
+                  <div key={`${widget.id}:${index}`} className="flex items-center justify-between gap-3 rounded-md border bg-card px-2.5 py-2 text-sm">
+                    <span className="min-w-0 truncate text-muted-foreground">
+                      {String(row.label || row.company_name || row.location_name || row.department_name || row.user_id || "Registro")}
+                    </span>
+                    {typeof row.headcount === "number" ? (
+                      <strong className="tabular-nums">{formatNumber(row.headcount)}</strong>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function SummaryCard({ icon: Icon, label, value, tone = "neutral" }: { icon: LucideIcon; label: string; value: string | number; tone?: "neutral" | "critical" | "attention" }) {
   return (
     <article className="rounded-lg border bg-card p-4 shadow-sm">
@@ -1996,6 +2104,10 @@ function SummaryCard({ icon: Icon, label, value, tone = "neutral" }: { icon: Luc
       <strong className="mt-2 block text-3xl font-semibold tracking-tight">{value}</strong>
     </article>
   );
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("es-MX").format(value);
 }
 
 function OmegaCycleBar({ steps, counts }: { steps: Array<{ id: string; label: string }>; counts?: Record<string, number> }) {

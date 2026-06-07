@@ -1794,6 +1794,8 @@ def _get_data_catalog(
                 "layer":       row["layer"],
                 "cartridge":   row["cartridge"],
                 "description": ds_meta.get("description", "") if ds_meta else "",
+                "row_count":   ds_meta.get("row_count") if ds_meta else None,
+                "last_refresh": ds_meta.get("last_refresh") if ds_meta else None,
                 "columns":     [],
             }
         ev = row["example_values"]

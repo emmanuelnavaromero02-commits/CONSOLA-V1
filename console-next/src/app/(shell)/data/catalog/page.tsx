@@ -1,22 +1,31 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Database, KeyRound, Link2, Loader2, RefreshCw, Save, Search, Tags } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import {
+  getDatasetRows,
   getDataCatalog,
   registerCatalogRelationship,
   upsertCatalogEntry,
 } from "@/lib/data/client";
-import type { CatalogColumn, CatalogDataset, CatalogRelationshipInput } from "@/lib/data/types";
+import type { CatalogColumn, CatalogDataset, CatalogRelationshipInput, DatasetRow } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
 const LAYERS = ["bronze", "silver", "gold", "master"] as const;
 const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
 const JOIN_HINTS = ["many_to_one", "one_to_many", "one_to_one", "many_to_many"] as const;
+const SF_GOLD_DATASETS = new Set([
+  "sap_successfactors_employee_360",
+  "sap_successfactors_headcount_by_location",
+  "sap_successfactors_headcount_by_department",
+  "sap_successfactors_headcount_by_company",
+  "sap_successfactors_org_structure",
+  "sap_successfactors_manager_hierarchy",
+]);
 
 interface EntryForm {
   dataset: string;
@@ -58,7 +67,7 @@ const EMPTY_RELATIONSHIP: RelationshipForm = {
 
 export default function DataCatalogPage() {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState({ layer: "", cartridge: "", tags: "", datasets: "" });
+  const [filters, setFilters] = useState(() => initialFiltersFromUrl());
   const [search, setSearch] = useState("");
   const [entryForm, setEntryForm] = useState<EntryForm>(EMPTY_ENTRY);
   const [relationshipForm, setRelationshipForm] = useState<RelationshipForm>(EMPTY_RELATIONSHIP);
@@ -317,6 +326,8 @@ function CatalogTable({ rows }: { rows: Array<{ name: string; dataset: CatalogDa
           <tr>
             <th className="px-4 py-3 text-left font-medium">Dataset</th>
             <th className="px-4 py-3 text-left font-medium">Capa</th>
+            <th className="px-4 py-3 text-left font-medium">Filas</th>
+            <th className="px-4 py-3 text-left font-medium">Último refresh</th>
             <th className="px-4 py-3 text-left font-medium">Columnas</th>
             <th className="px-4 py-3 text-left font-medium">Descripción</th>
           </tr>
@@ -324,37 +335,103 @@ function CatalogTable({ rows }: { rows: Array<{ name: string; dataset: CatalogDa
         <tbody className="divide-y">
           {rows.map(({ name, dataset }) => {
             const readiness = datasetReadiness(dataset.description);
+            const showGoldPreview = dataset.cartridge === "sap_successfactors"
+              && dataset.layer === "gold"
+              && SF_GOLD_DATASETS.has(name);
             return (
-              <tr key={name} className="align-top">
-                <td className="px-4 py-3">
-                  <div className="font-medium">{name}</div>
-                  <div className="text-xs text-muted-foreground">{dataset.cartridge || "sin cartucho"}</div>
-                  {readiness ? (
-                    <span className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                      <AlertTriangle aria-hidden className="h-3.5 w-3.5" />
-                      {readiness}
-                    </span>
-                  ) : null}
-                </td>
-                <td className="px-4 py-3">
-                  <Badge>{dataset.layer || "n/a"}</Badge>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="space-y-2">
-                    {(dataset.columns ?? []).slice(0, 6).map((column) => (
-                      <ColumnPill key={`${name}:${column.name}`} column={column} />
-                    ))}
-                    {(dataset.columns?.length ?? 0) > 6 ? (
-                      <div className="text-xs text-muted-foreground">+{(dataset.columns?.length ?? 0) - 6} columnas</div>
+              <Fragment key={name}>
+                <tr className="align-top">
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{name}</div>
+                    <div className="text-xs text-muted-foreground">{dataset.cartridge || "sin cartucho"}</div>
+                    {readiness ? (
+                      <span className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                        <AlertTriangle aria-hidden className="h-3.5 w-3.5" />
+                        {readiness}
+                      </span>
                     ) : null}
-                  </div>
-                </td>
-                <td className="max-w-md px-4 py-3 text-muted-foreground">{dataset.description || "Sin descripción"}</td>
-              </tr>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge>{dataset.layer || "n/a"}</Badge>
+                  </td>
+                  <td className="px-4 py-3 tabular-nums">{formatCount(dataset.row_count)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{formatDate(dataset.last_refresh)}</td>
+                  <td className="px-4 py-3">
+                    <div className="space-y-2">
+                      {(dataset.columns ?? []).slice(0, 6).map((column) => (
+                        <ColumnPill key={`${name}:${column.name}`} column={column} />
+                      ))}
+                      {(dataset.columns?.length ?? 0) > 6 ? (
+                        <div className="text-xs text-muted-foreground">+{(dataset.columns?.length ?? 0) - 6} columnas</div>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="max-w-md px-4 py-3 text-muted-foreground">{dataset.description || "Sin descripción"}</td>
+                </tr>
+                {showGoldPreview ? (
+                  <tr key={`${name}:preview`}>
+                    <td colSpan={6} className="bg-muted/20 px-4 py-3">
+                      <GoldDatasetPreview dataset={name} />
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
             );
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function GoldDatasetPreview({ dataset }: { dataset: string }) {
+  const preview = useQuery({
+    queryKey: ["data", "dataset-preview", dataset],
+    queryFn: () => getDatasetRows(dataset, 20),
+  });
+
+  if (preview.isLoading) {
+    return <div className="text-xs text-muted-foreground">Cargando preview Gold...</div>;
+  }
+  if (preview.isError) {
+    return <div className="text-xs text-destructive">No se pudo cargar el preview scoped de {dataset}.</div>;
+  }
+  const rows = preview.data ?? [];
+  if (!rows.length) {
+    return <div className="text-xs text-muted-foreground">Preview vacío para el workspace activo.</div>;
+  }
+  const columns = Object.keys(rows[0] ?? {}).slice(0, 8);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase text-muted-foreground">Preview Gold scoped · primeras 20 filas</span>
+        <a
+          href={`/api/data/${encodeURIComponent(dataset)}?limit=20`}
+          className="text-xs font-medium text-primary hover:underline"
+        >
+          Ver JSON
+        </a>
+      </div>
+      <div className="overflow-x-auto rounded-md border bg-background">
+        <table className="min-w-full divide-y text-xs">
+          <thead className="bg-muted/40 text-muted-foreground">
+            <tr>
+              {columns.map((column) => <th key={column} className="px-2 py-2 text-left font-medium">{column}</th>)}
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.slice(0, 20).map((row, index) => (
+              <tr key={previewRowKey(row, index)}>
+                {columns.map((column) => (
+                  <td key={`${index}:${column}`} className="max-w-[220px] truncate px-2 py-2 text-muted-foreground">
+                    {formatCell(row[column])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -486,6 +563,40 @@ function Badge({ children }: { children: ReactNode }) {
       {children}
     </span>
   );
+}
+
+function initialFiltersFromUrl() {
+  if (typeof window === "undefined") return { layer: "", cartridge: "", tags: "", datasets: "" };
+  const params = new URLSearchParams(window.location.search);
+  return {
+    layer: params.get("layer") || "",
+    cartridge: params.get("cartridge") || "",
+    tags: params.get("tags") || "",
+    datasets: params.get("datasets") || "",
+  };
+}
+
+function formatCount(value?: number | null): string {
+  if (value === null || value === undefined) return "n/a";
+  return new Intl.NumberFormat("es-MX").format(value);
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return "Sin refresh";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function previewRowKey(row: DatasetRow, index: number): string {
+  const id = row.user_id || row.company_id || row.location_id || row.department_id || row.manager_id;
+  return id ? `${String(id)}:${index}` : String(index);
 }
 
 function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {

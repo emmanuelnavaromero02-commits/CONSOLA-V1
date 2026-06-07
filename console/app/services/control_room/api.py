@@ -83,6 +83,124 @@ async def query_dataset_rows(dataset: str, user: dict | None, limit: int = 1000)
 
 
 @_bind_to_core
+async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
+    """Core SuccessFactors Gold widgets for the active tenant/workspace.
+
+    Reads go through the scoped Gold fetcher. A user outside the FEMSA
+    workspace simply receives empty widgets because native Gold RLS filters the
+    rows before they reach this code path.
+    """
+    from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+
+    sf_gold_datasets = {
+        "employee_360": "sap_successfactors_employee_360",
+        "headcount_by_company": "sap_successfactors_headcount_by_company",
+        "headcount_by_location": "sap_successfactors_headcount_by_location",
+        "headcount_by_department": "sap_successfactors_headcount_by_department",
+    }
+
+    def truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "activo", "active"}
+
+    def public_value(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+    def public_rows(rows: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+        return [
+            {str(key): public_value(value) for key, value in row.items()}
+            for row in rows[:limit]
+        ]
+
+    def dataset_href(dataset: str) -> str:
+        return (
+            "/data/catalog?layer=gold&cartridge=sap_successfactors"
+            f"&datasets={dataset}"
+        )
+
+    def top_headcount_rows(rows: list[dict[str, Any]], label_keys: tuple[str, str], limit: int = 5) -> list[dict[str, Any]]:
+        id_key, name_key = label_keys
+        top: list[dict[str, Any]] = []
+        for row in rows:
+            label = str(row.get(name_key) or row.get(id_key) or "Sin clasificar")
+            top.append({
+                "label": label,
+                "id": public_value(row.get(id_key)),
+                "headcount": int(row.get("headcount") or 0),
+            })
+        return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[:limit]
+
+    async def gold_rows(dataset: str, limit: int) -> list[dict[str, Any]]:
+        try:
+            return await query_gold_dataset_rows(dataset, user, limit)
+        except HTTPException as exc:
+            if exc.status_code in {404, 503}:
+                return []
+            raise
+
+    employee_rows = await gold_rows(sf_gold_datasets["employee_360"], 5000)
+    company_rows = await gold_rows(sf_gold_datasets["headcount_by_company"], 1000)
+    location_rows = await gold_rows(sf_gold_datasets["headcount_by_location"], 1000)
+    department_rows = await gold_rows(sf_gold_datasets["headcount_by_department"], 1000)
+
+    company_headcount_total = sum(int(row.get("headcount") or 0) for row in company_rows)
+    active_headcount = company_headcount_total or sum(1 for row in employee_rows if truthy(row.get("is_active")))
+    generated_at = datetime.now(UTC).isoformat()
+    tenant_id, workspace_id = _workspace_scope(user)
+
+    widgets = [
+        {
+            "id": "sf_active_headcount",
+            "title": "Headcount total activo",
+            "value": active_headcount,
+            "dataset": sf_gold_datasets["employee_360"],
+            "href": dataset_href(sf_gold_datasets["employee_360"]),
+            "rows": public_rows(employee_rows, 5),
+        },
+        {
+            "id": "sf_headcount_by_company",
+            "title": "Headcount por compania",
+            "value": company_headcount_total,
+            "dataset": sf_gold_datasets["headcount_by_company"],
+            "href": dataset_href(sf_gold_datasets["headcount_by_company"]),
+            "rows": top_headcount_rows(company_rows, ("company_id", "company_name")),
+        },
+        {
+            "id": "sf_headcount_by_location",
+            "title": "Headcount por ubicacion",
+            "value": sum(int(row.get("headcount") or 0) for row in location_rows),
+            "dataset": sf_gold_datasets["headcount_by_location"],
+            "href": dataset_href(sf_gold_datasets["headcount_by_location"]),
+            "rows": top_headcount_rows(location_rows, ("location_id", "location_name")),
+        },
+        {
+            "id": "sf_headcount_by_department",
+            "title": "Headcount por departamento",
+            "value": sum(int(row.get("headcount") or 0) for row in department_rows),
+            "dataset": sf_gold_datasets["headcount_by_department"],
+            "href": dataset_href(sf_gold_datasets["headcount_by_department"]),
+            "rows": top_headcount_rows(department_rows, ("department_id", "department_name")),
+        },
+    ]
+    return {
+        "generated_at": generated_at,
+        "connection_id": "femsa_sf",
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "widgets": widgets,
+    }
+
+
+@_bind_to_core
 def _details(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value

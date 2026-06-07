@@ -25,6 +25,11 @@ async def control_room_dashboard(user: dict = Depends(require_authenticated)):
     return await control_room_service.dashboard(user)
 
 
+@router.get("/sap-successfactors/gold-kpis", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require_authenticated)):
+    return await control_room_service.sap_successfactors_gold_kpis(user)
+
+
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_ops_summary(user: dict = Depends(require_authenticated)):
     """Lightweight, pollable operational summary (persisted state only)."""
