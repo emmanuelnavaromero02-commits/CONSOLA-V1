@@ -69,4 +69,4 @@ def test_successfactors_health_probe_runs_oauth_and_metadata_handshake(monkeypat
 
     assert result["status"] == "ok", result
     assert result["reachable"] is True
-    assert calls == ["POST /oauth/token", "GET /$metadata?%24format=json"]
+    assert calls == ["POST /oauth/token", "GET /odata/v2/$metadata"]

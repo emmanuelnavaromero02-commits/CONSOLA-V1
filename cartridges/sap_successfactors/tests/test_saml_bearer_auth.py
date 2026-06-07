@@ -145,6 +145,27 @@ def test_successfactors_idp_private_key_payload_preserves_raw_key(monkeypatch):
     assert sap_client._successfactors_idp_private_key_payload(" alreadyRawBase64KeyBody123\n") == raw
 
 
+def test_successfactors_odata_base_url_normalizes_host_root(monkeypatch):
+    sap_client = _import_client()
+
+    assert (
+        sap_client._normalize_odata_base_url("https://api68sales.successfactors.com")
+        == "https://api68sales.successfactors.com/odata/v2"
+    )
+    assert (
+        sap_client._normalize_odata_base_url("https://api68sales.successfactors.com/")
+        == "https://api68sales.successfactors.com/odata/v2"
+    )
+    assert (
+        sap_client._normalize_odata_base_url("https://api68sales.successfactors.com/odata/v2")
+        == "https://api68sales.successfactors.com/odata/v2"
+    )
+    assert (
+        sap_client._normalize_odata_base_url("https://api68sales.successfactors.com/custom")
+        == "https://api68sales.successfactors.com/custom"
+    )
+
+
 def test_live_saml_bearer_test_connection_against_configured_successfactors():
     if os.getenv("OMEGA_ENABLE_LIVE_SF_SAML_TEST") != "1":
         pytest.skip("set OMEGA_ENABLE_LIVE_SF_SAML_TEST=1 with real SF SAML credentials")

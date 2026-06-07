@@ -71,6 +71,26 @@ def _successfactors_idp_private_key_payload(private_key_text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
+def _normalize_odata_base_url(base_url: str) -> str:
+    """Return the SuccessFactors OData v2 service root.
+
+    Vault connections often store the tenant host root
+    (https://apiXX.sales.successfactors.com). The OData metadata and entity
+    APIs live under /odata/v2; preserve already-explicit paths so custom
+    deployments are not rewritten unexpectedly.
+    """
+    url = _normalize_config_value(base_url).rstrip("/")
+    if not url:
+        return ""
+    parsed = urlsplit(url)
+    path = parsed.path.rstrip("/")
+    if not path:
+        return urlunsplit((parsed.scheme, parsed.netloc, "/odata/v2", "", ""))
+    if path.lower().endswith("/odata/v2"):
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+    return url
+
+
 
 # Sprint v1.17: shared by the 3 SAP cartridges (no shared lib between
 # cartridges → copied textually into each). Exponential backoff for
@@ -188,7 +208,7 @@ class SapSfClient:
                 security_context=self._security_context,
             )
 
-        self.base_url = (
+        self.base_url = _normalize_odata_base_url(
             worker_secret("SF_BASE_URL")
             or _get_setting_or_env(
                 "sap_successfactors_base_url",
@@ -196,7 +216,7 @@ class SapSfClient:
                 env_fallback="SF_BASE_URL",
             )
             or ""
-        ).rstrip("/")
+        )
         self.token_url = (
             worker_secret("SF_TOKEN_URL")
             or _get_setting_or_env(
@@ -543,10 +563,11 @@ class SapSfClient:
         try:
             CartridgeCircuitBreaker.before_request()
             logger.warning("SAP SuccessFactors outbound GET %s", f"{self.base_url}/$metadata")
+            headers = dict(self._headers())
+            headers["Accept"] = "application/xml, text/xml, */*"
             resp = self._session.get(
                 f"{self.base_url}/$metadata",
-                headers=self._headers(),
-                params={"$format": "json"},
+                headers=headers,
                 timeout=30,
             )
             self._log_auth(resp.status_code)
