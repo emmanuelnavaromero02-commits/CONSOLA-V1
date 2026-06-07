@@ -15,6 +15,8 @@ from app.services.watermark_service import get_watermark, update_watermark
 BATCH_SIZE = 10_000
 WATERMARK_BUFFER_MINUTES = 5
 CARTRIDGE_ID = "sap_successfactors"
+DEFAULT_EFFECTIVE_FROM_DATE = "1900-01-01"
+DEFAULT_EFFECTIVE_TO_DATE = "9999-12-31"
 
 
 def _max_watermark(rows: list[dict[str, Any]], watermark_field: str | None) -> str | None:
@@ -48,6 +50,26 @@ def _apply_date_range_filter(
     return out
 
 
+def _effective_date_window(
+    config: dict[str, Any],
+    from_date: str | None,
+    to_date: str | None,
+) -> tuple[str | None, str | None]:
+    """Return OData fromDate/toDate for effective-dated SuccessFactors entities."""
+    if not config.get("effective_dated"):
+        return from_date, to_date
+    return (
+        from_date
+        or config.get("effective_from_date")
+        or config.get("default_from_date")
+        or DEFAULT_EFFECTIVE_FROM_DATE,
+        to_date
+        or config.get("effective_to_date")
+        or config.get("default_to_date")
+        or DEFAULT_EFFECTIVE_TO_DATE,
+    )
+
+
 def run_entity(
     config: dict[str, Any],
     from_date: str | None = None,
@@ -69,6 +91,7 @@ def run_entity(
         mode = "historical"
     else:
         mode = config.get("mode", "full")
+    odata_from_date, odata_to_date = _effective_date_window(config, from_date, to_date)
     security_context = config.get("security_context")
     conn_id = (str(config.get("conn_id") or config.get("connection_id") or "").strip() or None)
     serialized_security_context = (
@@ -133,6 +156,8 @@ def run_entity(
                 page_size=page_size,
                 skip=offset,
                 filter_expr=filter_expr,
+                from_date=odata_from_date,
+                to_date=odata_to_date,
             )
             if not page:
                 break

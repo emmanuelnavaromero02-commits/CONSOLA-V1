@@ -52,6 +52,19 @@ entities:
     page_size: 200
     effective_dated: true
     date_field: startDate
+    effective_from_date: "1900-01-01"
+    effective_to_date: "9999-12-31"
+    select_fields:
+      - personIdExternal
+      - startDate
+      - endDate
+      - firstName
+      - middleName
+      - lastName
+      - gender
+      - maritalStatus
+      - nationality
+      - lastModifiedDateTime
     protection:
       firstName: masked
       lastName: masked
@@ -63,6 +76,12 @@ entities:
     mode: incremental
     watermark_field: lastModifiedDateTime
     page_size: 500
+    select_fields:
+      - personIdExternal
+      - emailType
+      - emailAddress
+      - isPrimary
+      - lastModifiedDateTime
     protection:
       emailAddress: masked
 
@@ -112,6 +131,8 @@ entities:
     page_size: 200
     effective_dated: true
     date_field: startDate
+    effective_from_date: "1900-01-01"
+    effective_to_date: "9999-12-31"
     select_fields:
       - userId
       - startDate
@@ -155,6 +176,40 @@ entities:
     protection:
       paycompValue: encrypted
 
+  - entity: PaymentInformationDetailV3
+    description: "Payment information detail V3 (bank/payment-method details)."
+    mode: incremental
+    watermark_field: lastModifiedDateTime
+    page_size: 200
+    select_fields:
+      - externalCode
+      - PaymentInformationV3_worker
+      - PaymentInformationV3_effectiveStartDate
+      - mdfSystemEffectiveStartDate
+      - mdfSystemEffectiveEndDate
+      - paymentMethod
+      - bankCountry
+      - bank
+      - businessIdentifierCode
+      - routingNumber
+      - accountNumber
+      - accountOwner
+      - iban
+      - currency
+      - amount
+      - percent
+      - payType
+      - customPayType
+      - paySequence
+      - purpose
+      - lastModifiedDateTime
+    protection:
+      accountNumber: encrypted
+      accountOwner: masked
+      iban: encrypted
+      routingNumber: encrypted
+      businessIdentifierCode: encrypted
+
   - entity: EmpEmploymentTermination
     description: "Termination record (last day, reason)."
     mode: incremental
@@ -182,6 +237,13 @@ entities:
     description: "Foundation Object: locations / sites."
     mode: full
     page_size: 1000
+    select_fields:
+      - externalCode
+      - name
+      - status
+      - startDate
+      - endDate
+      - lastModifiedDateTime
 
   - entity: FOBusinessUnit
     description: "Foundation Object: business units."

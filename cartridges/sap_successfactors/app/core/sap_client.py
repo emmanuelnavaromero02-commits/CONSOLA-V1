@@ -658,6 +658,8 @@ class SapSfClient:
         page_size: int = 200,
         skip: int = 0,
         filter_expr: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> list[dict[str, Any]]:
         """OData v2 GET with pagination. Refuses to run if not configured."""
         self._require_configured()
@@ -671,6 +673,10 @@ class SapSfClient:
             params["$select"] = ",".join(select)
         if filter_expr:
             params["$filter"] = filter_expr
+        if from_date:
+            params["fromDate"] = from_date
+        if to_date:
+            params["toDate"] = to_date
 
         url = f"{self.base_url}/{entity}"
         try:

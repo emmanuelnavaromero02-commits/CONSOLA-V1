@@ -115,7 +115,7 @@ def test_migration_idempotent_and_scoped():
 
 def test_declared_sources_are_real_sf_entities():
     entities = _sf_entities()
-    assert len(entities) == 30
+    assert len(entities) == 31
     for path in _dataset_files():
         _, _, sources, _ = _parse_header(path)
         for src in sources:

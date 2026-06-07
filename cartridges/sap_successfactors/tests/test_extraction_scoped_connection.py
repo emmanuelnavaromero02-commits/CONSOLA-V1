@@ -87,6 +87,40 @@ def test_extraction_service_passes_conn_id_and_scope_to_sap_client(monkeypatch):
     assert json.loads(captured["security_context"]) == ctx
 
 
+def test_effective_dated_entity_sends_odata_from_to_date(monkeypatch):
+    captured: dict = {}
+
+    class FakeSapSfClient:
+        def __init__(self, conn_id=None, security_context=None):
+            captured["conn_id"] = conn_id
+            captured["security_context"] = security_context
+
+        def fetch_entity(self, **kwargs):
+            captured["fetch_kwargs"] = kwargs
+            return []
+
+    monkeypatch.setattr(extraction_service, "SapSfClient", FakeSapSfClient)
+    monkeypatch.setattr(extraction_service, "create_run", lambda **_kwargs: "run-empjob")
+    monkeypatch.setattr(extraction_service, "finish_run", lambda **_kwargs: None)
+    monkeypatch.setattr(extraction_service, "fail_run", lambda **_kwargs: None)
+    monkeypatch.setattr(extraction_service, "write_parquet_and_upload", lambda **_kwargs: "s3://bronze/empjob")
+    monkeypatch.setattr(extraction_service, "get_watermark", lambda _entity: None)
+    monkeypatch.setattr(extraction_service, "update_watermark", lambda **_kwargs: None)
+
+    result = extraction_service.run_entity({
+        "entity": "EmpJob",
+        "mode": "incremental",
+        "effective_dated": True,
+        "date_field": "startDate",
+        "conn_id": "femsa_sf",
+    })
+
+    assert result["status"] == "success"
+    assert captured["fetch_kwargs"]["entity"] == "EmpJob"
+    assert captured["fetch_kwargs"]["from_date"] == "1900-01-01"
+    assert captured["fetch_kwargs"]["to_date"] == "9999-12-31"
+
+
 def test_preflight_uses_scoped_vault_connection(monkeypatch):
     captured: dict = {}
     ctx = {
