@@ -25,7 +25,7 @@ vi.mock("sonner", () => ({
 }));
 
 describe("CredentialsForm", () => {
-  it("renders required dynamic fields, secret toggles and action buttons", () => {
+  it("routes credential writes to the scoped Vault operations page", () => {
     const schema: ConnectorSchema = {
       fields: [
         { name: "base_url", type: "url", label: "Base URL", required: true },
@@ -37,15 +37,11 @@ describe("CredentialsForm", () => {
 
     const markup = renderToStaticMarkup(<CredentialsForm cartridgeId="hubspot" schema={schema} />);
 
-    expect(markup).toContain("Base URL");
-    expect(markup).toContain("API token");
-    expect(markup).toContain("Region");
-    expect(markup).toContain("Enabled");
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain('aria-label="Mostrar contraseña"');
-    expect(markup).toContain("Guardar credenciales");
+    expect(markup).toContain("Configurar en Vault");
+    expect(markup).toContain("/operations/vault");
+    expect(markup).not.toContain("Guardar credenciales");
+    expect(markup).not.toContain('type="password"');
     expect(markup).toContain("Probar conexión");
-    expect(markup).toContain("Borrar credenciales");
   });
 
   it("renders an explicit empty state when a cartridge has no connector schema", () => {
@@ -54,7 +50,8 @@ describe("CredentialsForm", () => {
     );
 
     expect(markup).toContain("Este cartucho no expone un schema de configuración.");
-    expect(markup).toContain("Guardar credenciales");
+    expect(markup).toContain("Configurar en Vault");
+    expect(markup).not.toContain("Guardar credenciales");
   });
 
   it("renders saved Vault connections as test-connection choices", () => {
