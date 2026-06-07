@@ -91,7 +91,7 @@ from app.services import email_service as _email
 from app.services import vpn_service as _vpn
 from app.services.jwt_auth import JWTAuthError, create_access_token, decode_access_token, verify_access_token_async
 from app.services.csrf import CSRF_COOKIE_NAME, require_csrf, set_csrf_cookie, clear_csrf_cookie
-from app.security import get_internal_api_key, required_secret
+from app.security import get_internal_api_key
 from app.dependencies import (
     ROLE_ADMIN,
     ROLE_ANALYST,
@@ -108,6 +108,7 @@ from app.dependencies import (
 from app.services.auth import verify_internal_api_key
 from app.services import audit_service as _audit
 from app.services.permissions import ROLE_DEFINITIONS, get_effective_permissions, has_permission, require_permission, workspace_role as _workspace_role
+from app.services.s3_client import get_boto3_s3_client, get_minio_client
 from app.services.security_context import build_security_context, rls_user_context, verify_signed_security_context
 from app.middleware.request_id import request_id_var
 
@@ -636,14 +637,7 @@ def _bronze_latest_date_from_objects(cartridge: str, entity: str, object_names: 
 
 
 def _minio_client():
-    from minio import Minio
-
-    return Minio(
-        os.environ.get("MINIO_ENDPOINT", "minio:9000"),
-        access_key=os.environ.get("MINIO_ACCESS_KEY", "minio"),
-        secret_key=required_secret("MINIO_SECRET_KEY", dev_default="minioadmin"),
-        secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
-    )
+    return get_minio_client()
 
 
 async def _count_bronze_parquet_rows(source: str, latest_date: str, user: dict | None) -> int | None:
@@ -2609,22 +2603,7 @@ _EXPLORER_QUICKLINKS = [
 
 
 def _s3_client():
-    import boto3
-    endpoint_url = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_S3_ENDPOINT_URL")
-    if not endpoint_url and os.environ.get("MINIO_ENDPOINT"):
-        scheme = "https" if os.environ.get("MINIO_SECURE", "false").lower() == "true" else "http"
-        endpoint_url = f"{scheme}://{os.environ.get('MINIO_ENDPOINT')}"
-    kwargs: dict = {
-        "region_name": os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1",
-    }
-    if endpoint_url:
-        kwargs["endpoint_url"] = endpoint_url
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY")
-    if access_key and secret_key:
-        kwargs["aws_access_key_id"] = access_key
-        kwargs["aws_secret_access_key"] = secret_key
-    return boto3.client("s3", **kwargs)
+    return get_boto3_s3_client()
 
 
 def _resolve_explorer_bucket(bucket: str, user: dict | None = None) -> str:

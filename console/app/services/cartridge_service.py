@@ -20,11 +20,11 @@ import re
 import textwrap
 import zipfile
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import asyncpg
 
 from app.security import get_internal_api_key
+from app.services.s3_client import get_minio_client
 from app.services.security_context import build_security_context
 
 _DATABASE_URL = (
@@ -34,11 +34,7 @@ _DATABASE_URL = (
 )
 _POOL: asyncpg.Pool | None = None
 
-_MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "minio:9000")
-_MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
-_MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 _MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "lakehouse")
-_MINIO_SECURE     = os.environ.get("MINIO_SECURE", "false").lower() == "true"
 _MAX_IMPORT_ZIP_BYTES = int(os.environ.get("CARTRIDGE_IMPORT_MAX_BYTES", str(25 * 1024 * 1024)))
 _MAX_IMPORT_UNCOMPRESSED_BYTES = int(
     os.environ.get("CARTRIDGE_IMPORT_MAX_UNCOMPRESSED_BYTES", str(50 * 1024 * 1024))
@@ -152,56 +148,7 @@ async def _pg():
 # ── MinIO ─────────────────────────────────────────────────────────────────────
 
 def _minio():
-    if _MINIO_SECURE and "amazonaws.com" in _MINIO_ENDPOINT and not _MINIO_SECRET_KEY:
-        return _BotoS3ObjectStore(_MINIO_BUCKET)
-    from minio import Minio
-    return Minio(
-        _MINIO_ENDPOINT,
-        access_key=_MINIO_ACCESS_KEY,
-        secret_key=_MINIO_SECRET_KEY,
-        secure=_MINIO_SECURE,
-    )
-
-
-class _BotoS3ObjectStore:
-    """Small adapter for AWS S3 with instance-profile credentials.
-
-    The rest of this service uses the MinIO client's tiny object-store surface;
-    this adapter keeps production AWS from requiring static access keys.
-    """
-
-    def __init__(self, default_bucket: str):
-        import boto3
-        self._default_bucket = default_bucket
-        self._client = boto3.client("s3")
-
-    def bucket_exists(self, bucket: str) -> bool:
-        try:
-            self._client.head_bucket(Bucket=bucket)
-            return True
-        except Exception:
-            return False
-
-    def make_bucket(self, bucket: str) -> None:
-        self._client.create_bucket(Bucket=bucket)
-
-    def put_object(self, bucket: str, key: str, data, length: int, content_type: str | None = None):
-        extra = {"ContentType": content_type} if content_type else {}
-        self._client.put_object(Bucket=bucket, Key=key, Body=data.read(length), **extra)
-
-    def list_objects(self, bucket: str, prefix: str = "", recursive: bool = True):
-        paginator = self._client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for obj in page.get("Contents", []):
-                yield SimpleNamespace(
-                    object_name=obj["Key"],
-                    size=obj.get("Size", 0),
-                    last_modified=obj.get("LastModified"),
-                )
-
-    def get_object(self, bucket: str, key: str):
-        obj = self._client.get_object(Bucket=bucket, Key=key)
-        return obj["Body"]
+    return get_minio_client()
 
 
 def _ensure_bucket(c) -> None:
