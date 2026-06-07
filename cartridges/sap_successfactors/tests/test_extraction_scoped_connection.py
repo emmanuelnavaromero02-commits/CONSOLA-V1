@@ -149,7 +149,7 @@ def test_minio_client_uses_iam_provider_for_aws_s3_without_static_keys(monkeypat
     minio_client.get_minio_client()
 
     assert captured["endpoint"] == "s3.us-east-1.amazonaws.com"
-    assert "credentials" in captured
+    assert isinstance(captured["credentials"], minio_client.Ec2ImdsV2Provider)
     assert captured["secure"] is True
     assert "access_key" not in captured
     assert "secret_key" not in captured
