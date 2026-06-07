@@ -323,6 +323,16 @@ def check_max_prereqs(ctx: HarnessContext) -> bool:
             "VERSION must remain beta/rc while GA stress is running",
             "Keep VERSION beta until all A-I max phases pass",
         ),
+        (
+            bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "ANTHROPIC_API_KEY missing",
+            "Export ANTHROPIC_API_KEY for live LLM soak and adversarial Copilot probes",
+        ),
+        (
+            bool(os.environ.get("HUBSPOT_ACCESS_TOKEN")),
+            "HubSpot live sandbox token missing",
+            "Export HUBSPOT_ACCESS_TOKEN for the first-tenant live sandbox cartridge probe",
+        ),
     ]
     if ctx.public_console_url and is_public_aws_url(ctx.public_console_url):
         checks.append(
