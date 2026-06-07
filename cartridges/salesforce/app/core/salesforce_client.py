@@ -100,26 +100,27 @@ class SalesforceClient:
     _RETRY_MAX = 3
     _RETRY_BACKOFF_FACTOR = 2.0
 
-    def __init__(self) -> None:
+    def __init__(self, security_context: str | None = None) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
-        self._vault_connection = get_connection_for_worker("salesforce")
+        self._security_context = (security_context or "").strip() or None
+        self._vault_connection = get_connection_for_worker("salesforce", security_context=self._security_context)
 
         self.base_url = (
-            get_secret_for_worker("salesforce", "SF_BASE_URL")
+            get_secret_for_worker("salesforce", "SF_BASE_URL", security_context=self._security_context)
             or get_setting("salesforce_base_url", default=settings.sf_base_url, env_fallback="SF_BASE_URL")
             or ""
         ).rstrip("/")
         self.token_url = (
-            get_secret_for_worker("salesforce", "SF_TOKEN_URL")
+            get_secret_for_worker("salesforce", "SF_TOKEN_URL", security_context=self._security_context)
             or settings.sf_token_url
             or "https://login.salesforce.com/services/oauth2/token"
         )
         self.client_id = (
-            get_secret_for_worker("salesforce", "SF_CLIENT_ID")
+            get_secret_for_worker("salesforce", "SF_CLIENT_ID", security_context=self._security_context)
             or get_setting("salesforce_client_id", default=settings.sf_client_id, env_fallback="SF_CLIENT_ID")
         )
         self.client_secret = (
-            get_secret_for_worker("salesforce", "SF_CLIENT_SECRET")
+            get_secret_for_worker("salesforce", "SF_CLIENT_SECRET", security_context=self._security_context)
             or get_setting(
                 "salesforce_client_secret",
                 default=settings.sf_client_secret,
@@ -127,17 +128,17 @@ class SalesforceClient:
             )
         )
         self.username = (
-            get_secret_for_worker("salesforce", "SF_USERNAME") or settings.sf_username
+            get_secret_for_worker("salesforce", "SF_USERNAME", security_context=self._security_context) or settings.sf_username
         )
         self.password = (
-            get_secret_for_worker("salesforce", "SF_PASSWORD") or settings.sf_password
+            get_secret_for_worker("salesforce", "SF_PASSWORD", security_context=self._security_context) or settings.sf_password
         )
         self.security_token = (
-            get_secret_for_worker("salesforce", "SF_SECURITY_TOKEN")
+            get_secret_for_worker("salesforce", "SF_SECURITY_TOKEN", security_context=self._security_context)
             or settings.sf_security_token
         )
         self.api_version = (
-            get_secret_for_worker("salesforce", "SF_API_VERSION")
+            get_secret_for_worker("salesforce", "SF_API_VERSION", security_context=self._security_context)
             or settings.sf_api_version
             or "v60.0"
         )
@@ -145,8 +146,8 @@ class SalesforceClient:
             self._vault_connection.get("auth_method") or "oauth2_password",
         ).strip().lower().replace("-", "_")
         static_token = (
-            get_secret_for_worker("salesforce", "SF_ACCESS_TOKEN")
-            or get_secret_for_worker("salesforce", "SF_API_KEY")
+            get_secret_for_worker("salesforce", "SF_ACCESS_TOKEN", security_context=self._security_context)
+            or get_secret_for_worker("salesforce", "SF_API_KEY", security_context=self._security_context)
         )
         self._auth_payload = {
             **self._vault_connection,

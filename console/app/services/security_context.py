@@ -16,6 +16,8 @@ _SIGNED_AT_FIELD = "_signed_at"
 _SIGNATURE_VERSION_FIELD = "_signature_version"
 _SIGNATURE_VERSION = "hmac-sha256-v1"
 _MIN_SIGNING_KEY_LEN = 32
+_SIGNATURE_TTL_SECONDS = 300
+_SIGNATURE_FUTURE_SKEW_SECONDS = 30
 
 
 def _runtime_env() -> str:
@@ -59,6 +61,42 @@ def sign_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
             hashlib.sha256,
         ).hexdigest()
     return signed
+
+
+def verify_signed_security_context(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Validate a trusted security_context signed by Console.
+
+    Internal callers may omit a security context for legacy unscoped flows, but
+    once a payload declares ``trusted=true`` it must be signed, fresh, and
+    transport-key distinct in every environment.
+    """
+    if not isinstance(ctx, dict):
+        raise ValueError("security_context must be an object")
+    if not ctx.get("trusted"):
+        return dict(ctx)
+    signature = str(ctx.get(_SIGNATURE_FIELD) or "")
+    if not signature:
+        raise ValueError("security_context signature is required")
+    if ctx.get(_SIGNATURE_VERSION_FIELD) != _SIGNATURE_VERSION:
+        raise ValueError("unsupported security_context signature version")
+    try:
+        signed_at = int(ctx.get(_SIGNED_AT_FIELD))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("security_context signed_at is required") from exc
+    now = int(time.time())
+    if signed_at > now + _SIGNATURE_FUTURE_SKEW_SECONDS:
+        raise ValueError("security_context signature is from the future")
+    if now - signed_at > int(os.environ.get("SECURITY_CONTEXT_SIGNATURE_TTL_SECONDS", _SIGNATURE_TTL_SECONDS)):
+        raise ValueError("security_context signature expired")
+    key = _signing_key()
+    expected = hmac.new(
+        key.encode("utf-8"),
+        _canonical_context(ctx),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("security_context signature mismatch")
+    return dict(ctx)
 
 
 def build_security_context(user: dict | None) -> dict[str, Any]:

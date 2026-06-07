@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
@@ -148,11 +148,13 @@ def skills_root() -> dict:
 # triggering an extraction. SapHcmClient.test_connection() is degraded-aware,
 # so a missing vault entry returns {"status": "degraded", ...} instead of 500.
 @router.post("/test_connection")
-def test_connection() -> dict:
+def test_connection(
+    x_security_context: str | None = Header(default=None, alias="x-security-context"),
+) -> dict:
     try:
         from app.core.sap_client import SapHcmClient
 
-        return SapHcmClient().test_connection()
+        return SapHcmClient(security_context=x_security_context).test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 

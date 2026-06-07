@@ -77,7 +77,7 @@ class HubSpotClient:
     _RETRY_MAX = 3
     _RETRY_BACKOFF_FACTOR = 2.0
 
-    def __init__(self) -> None:
+    def __init__(self, security_context: str | None = None) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
         if settings.use_demo_data:
             connection = {
@@ -86,7 +86,7 @@ class HubSpotClient:
                 "token": settings.hubspot_api_token or "",
             }
         else:
-            connection = get_hubspot_connection()
+            connection = get_hubspot_connection(security_context=security_context)
         self.base_url = str(
             connection.get("base_url") or settings.hubspot_base_url or ""
         ).rstrip("/")

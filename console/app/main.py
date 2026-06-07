@@ -108,7 +108,7 @@ from app.dependencies import (
 from app.services.auth import verify_internal_api_key
 from app.services import audit_service as _audit
 from app.services.permissions import ROLE_DEFINITIONS, get_effective_permissions, has_permission, require_permission, workspace_role as _workspace_role
-from app.services.security_context import build_security_context, rls_user_context
+from app.services.security_context import build_security_context, rls_user_context, verify_signed_security_context
 from app.middleware.request_id import request_id_var
 
 
@@ -381,12 +381,54 @@ def _is_cartridge_vault_reveal_request(request: Request) -> bool:
     return any(secrets.compare_digest(str(supplied), key) for key in accepted if key)
 
 
+def _cartridge_vault_reveal_user(request: Request) -> dict | None:
+    """Return the internal reveal actor, optionally scoped by signed context."""
+    if not _is_cartridge_vault_reveal_request(request):
+        return None
+    header = (request.headers.get("x-security-context") or "").strip()
+    if not header:
+        return _internal_service_user()
+    try:
+        raw_ctx = json.loads(header)
+        if not isinstance(raw_ctx, dict):
+            raise ValueError("security_context must be an object")
+        ctx = verify_signed_security_context(raw_ctx)
+    except Exception as exc:
+        raise HTTPException(403, "invalid signed security context") from exc
+    if ctx.get("trusted") is not True or ctx.get("source") != "console":
+        raise HTTPException(403, "invalid signed security context")
+
+    match = re.fullmatch(r"/api/vault/connections/([^/]+)/[^/]+/reveal", request.url.path)
+    cartridge = match.group(1) if match else ""
+    allowed = {str(c).strip() for c in (ctx.get("allowed_cartridges") or []) if str(c).strip()}
+    if "*" not in allowed and cartridge not in allowed:
+        raise HTTPException(403, "cartridge not allowed")
+
+    user = _internal_service_user()
+    tenant_id = str(ctx.get("tenant_id") or "").strip() or None
+    workspace_id = str(ctx.get("workspace_id") or "").strip() or None
+    user.update({
+        "active_tenant_id": tenant_id,
+        "tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
+        "workspace_id": workspace_id,
+        "active_project_id": ctx.get("project_id"),
+        "project_id": ctx.get("project_id"),
+        "allowed_cartridges": sorted(allowed) if allowed else [cartridge],
+        "security_context_actor_id": ctx.get("user_id"),
+        "security_context_actor_email": ctx.get("email"),
+        "_service_scoped_context": bool(tenant_id and workspace_id),
+    })
+    return user
+
+
 def _internal_service_user() -> dict:
     return {
         "id": 0,
         "email": "internal@omega.local",
         "role": ROLE_ADMIN,
         "workspace_role": None,
+        "active_tenant_id": None,
         "active_workspace_id": None,
     }
 
@@ -1288,8 +1330,12 @@ async def auth_middleware(request: Request, call_next):
         request.state.user = _internal_service_user()
         return await call_next(request)
 
-    if _is_cartridge_vault_reveal_request(request):
-        request.state.user = _internal_service_user()
+    try:
+        cartridge_vault_user = _cartridge_vault_reveal_user(request)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    if cartridge_vault_user:
+        request.state.user = cartridge_vault_user
         return await call_next(request)
 
     # Airflow scheduled agent runs authenticate with X-Agent-Runner-Token;

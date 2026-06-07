@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import hashlib
 from typing import Any
 
 import requests
@@ -10,7 +11,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_CONNECTION_CACHE: dict[str, dict[str, Any]] = {}
+_CONNECTION_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "SAP_S4_BASE_URL": ("base_url", "url", "host", "sap_s4_base_url"),
@@ -58,9 +59,18 @@ def _auth_options(service_name: str) -> list[tuple[str, str]]:
     return options
 
 
-def _fetch_connection(service_name: str) -> dict[str, Any]:
+def _context_cache_key(security_context: str | None) -> str:
+    value = (security_context or "").strip()
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _fetch_connection(service_name: str, security_context: str | None = None) -> dict[str, Any]:
     service = service_name.strip().lower()
-    cached = _CONNECTION_CACHE.get(service)
+    scoped_context = (security_context or "").strip() or None
+    cache_key = (service, _context_cache_key(scoped_context))
+    cached = _CONNECTION_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
@@ -68,9 +78,12 @@ def _fetch_connection(service_name: str) -> dict[str, Any]:
     for conn_id in ("default", "analytics"):
         for key, internal_service in _auth_options(service):
             try:
+                headers = {"x-api-key": key, "x-internal-service": internal_service}
+                if scoped_context:
+                    headers["x-security-context"] = scoped_context
                 response = requests.get(
                     f"{console_url}/api/vault/connections/{service}/{conn_id}/reveal",
-                    headers={"x-api-key": key, "x-internal-service": internal_service},
+                    headers=headers,
                     timeout=5,
                 )
                 if response.status_code == 404:
@@ -80,7 +93,7 @@ def _fetch_connection(service_name: str) -> dict[str, Any]:
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict):
-                    _CONNECTION_CACHE[service] = payload
+                    _CONNECTION_CACHE[cache_key] = payload
                     return payload
             except Exception as exc:
                 logger.debug("Vault reveal failed for %s/%s: %s", service, conn_id, exc)
@@ -98,13 +111,13 @@ def _candidate_fields(env_var_name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(fields))
 
 
-def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
+def get_secret_for_worker(service_name: str, env_var_name: str, security_context: str | None = None) -> str:
     """Resolve a worker credential from env first, then Console Vault."""
     value = os.environ.get(env_var_name)
     if value:
         return value
 
-    payload = _fetch_connection(service_name)
+    payload = _fetch_connection(service_name, security_context=security_context)
     for field in _candidate_fields(env_var_name):
         value = payload.get(field)
         if value is not None and str(value).strip():
@@ -112,9 +125,9 @@ def get_secret_for_worker(service_name: str, env_var_name: str) -> str:
     return ""
 
 
-def get_connection_for_worker(service_name: str) -> dict[str, Any]:
+def get_connection_for_worker(service_name: str, security_context: str | None = None) -> dict[str, Any]:
     """Return the resolved Console Vault connection payload for a worker."""
-    return dict(_fetch_connection(service_name))
+    return dict(_fetch_connection(service_name, security_context=security_context))
 
 
 def get_sap_s4hana_credentials() -> tuple[str, str, str]:
