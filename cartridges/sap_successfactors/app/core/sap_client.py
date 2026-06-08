@@ -230,6 +230,7 @@ class SapSfClient:
                 default=settings.sf_token_url,
                 env_fallback="SF_TOKEN_URL",
             )
+            or self._derive_token_url(self.base_url)
         )
         self.idp_url = (
             worker_secret("SF_IDP_URL")
@@ -363,6 +364,16 @@ class SapSfClient:
     # ------------------------------------------------------------------
     # OAuth2
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _derive_token_url(base_url: str) -> str:
+        base_url = (base_url or "").strip()
+        if not base_url:
+            return ""
+        parsed = urlsplit(base_url)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        return urlunsplit((parsed.scheme, parsed.netloc, "/oauth/token", "", ""))
 
     @staticmethod
     def _derive_idp_url(token_url: str) -> str:

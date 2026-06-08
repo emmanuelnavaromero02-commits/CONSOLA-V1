@@ -194,6 +194,31 @@ def test_temporary_base_url_override_wins_only_for_client_instance(monkeypatch):
     assert client.configuration_status()["configured"] is True
 
 
+def test_successfactors_oauth_urls_are_derived_from_base_url(monkeypatch):
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: None)
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf", security_context='{"trusted":true}')
+
+    assert client.base_url == "https://api68sales.successfactors.com/odata/v2"
+    assert client.token_url == "https://api68sales.successfactors.com/oauth/token"
+    assert client.idp_url == "https://api68sales.successfactors.com/oauth/idp"
+    assert client.configuration_status()["configured"] is True
+
+
 def test_live_saml_bearer_test_connection_against_configured_successfactors():
     if os.getenv("OMEGA_ENABLE_LIVE_SF_SAML_TEST") != "1":
         pytest.skip("set OMEGA_ENABLE_LIVE_SF_SAML_TEST=1 with real SF SAML credentials")
