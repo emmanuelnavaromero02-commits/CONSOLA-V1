@@ -5,9 +5,9 @@ export default function SecurityPage() {
   return (
     <main className="mx-auto max-w-7xl space-y-8 px-6 py-8">
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Security Center</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Seguridad</h1>
         <p className="text-sm text-muted-foreground">
-          Sesiones activas, revocación y auditoría reciente.
+          Quién tiene la sesión abierta y los últimos eventos de seguridad.
         </p>
       </header>
 
@@ -15,7 +15,7 @@ export default function SecurityPage() {
         <div className="space-y-1">
           <h2 className="text-xl font-semibold tracking-tight">Sesiones</h2>
           <p className="text-sm text-muted-foreground">
-            Revoca sesiones por identificador seguro sin exponer tokens completos.
+            Cierra sesiones abiertas de forma segura.
           </p>
         </div>
         <SessionsTable />
@@ -25,7 +25,7 @@ export default function SecurityPage() {
         <div className="space-y-1">
           <h2 className="text-xl font-semibold tracking-tight">Auditoría</h2>
           <p className="text-sm text-muted-foreground">
-            Últimos eventos con request-id y detalles sanitizados.
+            Últimos eventos de seguridad registrados.
           </p>
         </div>
         <AuditTable />

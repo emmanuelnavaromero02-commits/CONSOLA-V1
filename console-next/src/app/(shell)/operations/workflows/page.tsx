@@ -70,9 +70,9 @@ export default function OperationsWorkflowsPage() {
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Workflows</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Flujos de trabajo</h1>
           <p className="text-sm text-muted-foreground">
-            Flujos operativos del Copiloto con ejecución y cancelación controlada.
+            Tareas automáticas del Copiloto: míralas, ejecútalas o cancélalas.
           </p>
         </div>
         <button

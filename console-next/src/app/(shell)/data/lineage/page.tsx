@@ -48,9 +48,9 @@ export default function DataLineagePage() {
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Linaje de datos</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Mapa de datos</h1>
           <p className="text-sm text-muted-foreground">
-            Grafo operativo de fuentes, datasets derivados y relaciones de transformación.
+            De dónde salen tus datos y cómo se transforman hasta llegar a los reportes.
           </p>
         </div>
         <button
@@ -66,7 +66,7 @@ export default function DataLineagePage() {
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-label="Resumen del linaje">
         <MetricCard icon={Layers3} label="Nodos" value={metrics.nodes} />
         <MetricCard icon={GitBranch} label="Relaciones" value={metrics.edges} />
-        <MetricCard icon={TriangleAlert} label="Stale" value={metrics.stale} />
+        <MetricCard icon={TriangleAlert} label="Atrasados" value={metrics.stale} />
       </section>
 
       <section className="rounded-lg border bg-card p-4 shadow-sm">
@@ -425,7 +425,7 @@ function NodeCard({ node }: { node: LineageNode }) {
           <h3 className="truncate font-medium">{node.label || node.id}</h3>
           <p className="truncate text-xs text-muted-foreground">{node.cartridge || "sin cartucho"}</p>
         </div>
-        {node.is_stale ? <span className="rounded-md bg-destructive/10 px-2 py-0.5 text-xs text-destructive">stale</span> : null}
+        {node.is_stale ? <span className="rounded-md bg-destructive/10 px-2 py-0.5 text-xs text-destructive">atrasado</span> : null}
       </div>
       <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
         <div>

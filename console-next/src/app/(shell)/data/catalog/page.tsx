@@ -161,7 +161,7 @@ export default function DataCatalogPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Catálogo de datos</h1>
           <p className="text-sm text-muted-foreground">
-            Inventario operativo de datasets, columnas, términos y relaciones.
+            Lista de todas tus tablas de datos, sus columnas y cómo se relacionan.
           </p>
         </div>
         <button

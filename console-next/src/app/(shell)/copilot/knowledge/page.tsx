@@ -228,7 +228,7 @@ export default function KnowledgePage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Base de conocimiento</h1>
           <p className="text-sm text-muted-foreground">
-            Fuentes RAG, reindexado vectorial e inspección directa para Copiloto.
+            Documentos y fuentes que el Copiloto usa para responder tus preguntas.
           </p>
         </div>
         <button
@@ -308,7 +308,7 @@ export default function KnowledgePage() {
                 />
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium">Top K</span>
+                <span className="font-medium">Resultados a mostrar</span>
                 <input
                   type="number"
                   min={1}
@@ -510,7 +510,7 @@ function SourcesTable({ sources }: { sources: RagSource[] }) {
           <tr>
             <th className="px-4 py-2 font-medium">Fuente</th>
             <th className="px-4 py-2 font-medium">Tipo</th>
-            <th className="px-4 py-2 font-medium">Chunks</th>
+            <th className="px-4 py-2 font-medium">Fragmentos</th>
             <th className="px-4 py-2 font-medium">Tamaño</th>
             <th className="px-4 py-2 font-medium">Creada</th>
           </tr>
@@ -599,7 +599,7 @@ function SegmentedControl({
             value === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent/10",
           )}
         >
-          {mode === "ask" ? "Ask" : "Search"}
+          {mode === "ask" ? "Preguntar" : "Buscar"}
         </button>
       ))}
     </div>

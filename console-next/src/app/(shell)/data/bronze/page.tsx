@@ -56,9 +56,9 @@ export default function BronzeQueryPage() {
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Bronze Query</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Consulta de datos sin procesar</h1>
           <p className="text-sm text-muted-foreground">
-            Consulta directa a capa cruda con ejecución protegida por el backend.
+            Consulta los datos tal como llegan, sin procesar. Necesitas saber SQL.
           </p>
         </div>
         <button
@@ -97,7 +97,7 @@ export default function BronzeQueryPage() {
             </label>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
               <label className="space-y-1 text-sm">
-                <span className="text-xs font-medium uppercase text-muted-foreground">Limit</span>
+                <span className="text-xs font-medium uppercase text-muted-foreground">Límite</span>
                 <input
                   type="number"
                   min={1}
@@ -108,7 +108,7 @@ export default function BronzeQueryPage() {
                 />
               </label>
               <label className="space-y-1 text-sm">
-                <span className="text-xs font-medium uppercase text-muted-foreground">Sources</span>
+                <span className="text-xs font-medium uppercase text-muted-foreground">Fuentes</span>
                 <input
                   value={sources}
                   onChange={(event) => setSources(event.target.value)}

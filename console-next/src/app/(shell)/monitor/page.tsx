@@ -34,7 +34,7 @@ export default function MonitorPage() {
         <div className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight">Monitor</h1>
           <p className="text-sm text-muted-foreground">
-            Runlogs, pipelines, marcas de agua y capa semántica desde FastAPI en same-origin.
+            Cómo van tus cargas de datos: qué se está procesando ahora y cuándo se actualizó cada fuente por última vez.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -42,7 +42,7 @@ export default function MonitorPage() {
             value={cartridge}
             onChange={(event) => setCartridge(event.target.value)}
             className="min-h-[44px] rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Cartucho"
+            aria-label="Fuente de datos"
           >
             {CARTRIDGES.map((id) => <option key={id} value={id}>{id}</option>)}
           </select>
@@ -62,28 +62,28 @@ export default function MonitorPage() {
       </header>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4" aria-label="Resumen operativo">
-        <MetricCard icon={Activity} label="Jobs activos" value={running} tone={running > 0 ? "warning" : "success"} />
-        <MetricCard icon={Database} label="Entidades pipeline" value={pipeline.data?.length ?? 0} />
-        <MetricCard icon={Droplets} label="Watermarks" value={watermarks.length} />
-        <MetricCard icon={Layers3} label="Bronze no fresh" value={stale} tone={stale > 0 ? "warning" : "success"} />
+        <MetricCard icon={Activity} label="Tareas en curso" value={running} tone={running > 0 ? "warning" : "success"} />
+        <MetricCard icon={Database} label="Tablas en proceso" value={pipeline.data?.length ?? 0} />
+        <MetricCard icon={Droplets} label="Fuentes con datos" value={watermarks.length} />
+        <MetricCard icon={Layers3} label="Datos atrasados" value={stale} tone={stale > 0 ? "warning" : "success"} />
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]" aria-label="Vistas rápidas">
         <div className="space-y-3 rounded-lg border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold">Pipeline</h2>
-              <p className="text-xs text-muted-foreground">Bronze, silver, gold y última corrida por entidad.</p>
+              <h2 className="text-base font-semibold">Proceso de datos</h2>
+              <p className="text-xs text-muted-foreground">Cada paso (sin procesar, limpio y listo) y cuándo corrió por última vez.</p>
             </div>
             <Link
               href={`/viewer?type=pipeline&cartridge=${encodeURIComponent(cartridge)}`}
               className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Abrir viewer
+              Ver detalle
             </Link>
           </div>
           {pipeline.isError ? (
-            <ErrorPanel message="No se pudo cargar el pipeline." onRetry={() => pipeline.refetch()} />
+            <ErrorPanel message="No se pudo cargar el proceso de datos." onRetry={() => pipeline.refetch()} />
           ) : pipeline.isLoading ? (
             <SkeletonRows />
           ) : (
@@ -102,42 +102,42 @@ export default function MonitorPage() {
         <div className="space-y-3 rounded-lg border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold">Watermarks</h2>
-              <p className="text-xs text-muted-foreground">Última marca por entidad.</p>
+              <h2 className="text-base font-semibold">Última actualización</h2>
+              <p className="text-xs text-muted-foreground">Hasta qué fecha se trajeron los datos de cada tabla.</p>
             </div>
             <Link
               href={`/viewer?type=watermarks&cartridge=${encodeURIComponent(cartridge)}`}
               className="inline-flex min-h-[44px] items-center justify-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Ver marcas
+              Ver detalle
             </Link>
           </div>
           {freshness.isError ? (
-            <ErrorPanel message="No se pudieron cargar watermarks." onRetry={() => freshness.refetch()} />
+            <ErrorPanel message="No se pudo cargar la última actualización." onRetry={() => freshness.refetch()} />
           ) : (
             <div className="space-y-2">
               {watermarks.slice(0, 8).map((row) => (
                 <div key={row.entity} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
                   <div>
                     <div className="text-sm font-medium">{row.entity}</div>
-                    <div className="text-xs text-muted-foreground">{row.watermark_value || "sin valor"}</div>
+                    <div className="text-xs text-muted-foreground">{row.watermark_value || "sin datos aún"}</div>
                   </div>
                   <StatusPill status={row.last_run_status || "unknown"} />
                 </div>
               ))}
               {!watermarks.length && !freshness.isLoading ? (
-                <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Sin watermarks.</p>
+                <p className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Todavía no hay datos cargados.</p>
               ) : null}
             </div>
           )}
         </div>
       </section>
 
-      <section className="space-y-3" aria-label="Jobs recientes">
+      <section className="space-y-3" aria-label="Tareas recientes">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold">Jobs recientes</h2>
-            <p className="text-xs text-muted-foreground">Historial de ejecución y deeplinks a logs.</p>
+            <h2 className="text-base font-semibold">Tareas recientes</h2>
+            <p className="text-xs text-muted-foreground">Historial de ejecuciones y enlaces a los registros.</p>
           </div>
           <Link
             href="/viewer?type=jobs"
@@ -147,7 +147,7 @@ export default function MonitorPage() {
           </Link>
         </div>
         {jobs.isError ? (
-          <ErrorPanel message="No se pudieron cargar jobs." onRetry={() => jobs.refetch()} />
+          <ErrorPanel message="No se pudieron cargar las tareas." onRetry={() => jobs.refetch()} />
         ) : jobs.isLoading ? (
           <SkeletonRows />
         ) : (
