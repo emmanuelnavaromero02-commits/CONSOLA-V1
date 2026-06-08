@@ -1530,6 +1530,12 @@ async def dashboard(
             if source.domain not in domain_labels:
                 domain_labels.append(source.domain)
     domains = [_domain_payload(domain, modules_for_payload, items, sources) for domain in domain_labels]
+    if not _show_known_non_ready_sources():
+        domains = [
+            domain
+            for domain in domains
+            if domain.get("modules") or int(domain.get("item_count") or 0) > 0
+        ]
     data_readiness = _readiness_counts(sources)
     data_ready_modules = [row for row in cartridges if row["active"] and row.get("operationally_ready")]
     partial_modules = [row for row in cartridges if row["active"] and row.get("data_readiness") == "partial"]
