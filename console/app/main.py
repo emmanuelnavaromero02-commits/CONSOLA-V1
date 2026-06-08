@@ -3022,22 +3022,34 @@ async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]
 
 async def _active_scoped_connection_cartridges(user: dict | None) -> set[str]:
     tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
-    if not tenant_id or not workspace_id:
-        return set()
     try:
         pool = await _get_db_pool()
-        rows = await pool.fetch(
-            """
-            SELECT DISTINCT cartridge
-              FROM vault_entries
-             WHERE scope = 'connections'
-               AND tenant_id = $1::uuid
-               AND workspace_id = $2::uuid
-               AND COALESCE(cartridge, '') <> ''
-            """,
-            tenant_id,
-            workspace_id,
-        )
+        if tenant_id and workspace_id:
+            rows = await pool.fetch(
+                """
+                SELECT DISTINCT cartridge
+                  FROM vault_entries
+                 WHERE scope = 'connections'
+                   AND tenant_id = $1::uuid
+                   AND workspace_id = $2::uuid
+                   AND COALESCE(cartridge, '') <> ''
+                """,
+                tenant_id,
+                workspace_id,
+            )
+        elif str((user or {}).get("role") or "").strip() in {"admin", "owner", "super_admin"}:
+            rows = await pool.fetch(
+                """
+                SELECT DISTINCT cartridge
+                  FROM vault_entries
+                 WHERE scope = 'connections'
+                   AND tenant_id IS NOT NULL
+                   AND workspace_id IS NOT NULL
+                   AND COALESCE(cartridge, '') <> ''
+                """
+            )
+        else:
+            return set()
     except Exception:
         logger.debug("Failed to load scoped Vault connection cartridges", exc_info=True)
         return set()

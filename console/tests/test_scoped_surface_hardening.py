@@ -144,6 +144,51 @@ async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(mo
 
 
 @pytest.mark.asyncio
+async def test_apps_list_global_super_admin_falls_back_to_any_scoped_vault_connection(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "apps": [
+                    {"name": "sap_hcm_people_quality_dashboard"},
+                    {"name": "sap_successfactors_workforce_overview"},
+                    {"name": "salesforce_pipeline"},
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    fake_pool = AsyncMock()
+    fake_pool.fetch.return_value = [{"cartridge": "sap_successfactors"}]
+    monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(return_value=fake_pool))
+    monkeypatch.setattr(console_main, "_workspace_memberships", AsyncMock(return_value=[]))
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
+
+    result = await console_main.api_apps({
+        "id": USER["id"],
+        "email": USER["email"],
+        "role": "super_admin",
+        "allowed_cartridges": USER["allowed_cartridges"],
+    })
+
+    assert result["apps"] == [{"name": "sap_successfactors_workforce_overview"}]
+    assert result["active_scoped_cartridges"] == ["sap_successfactors"]
+    assert "tenant_id = $1::uuid" not in fake_pool.fetch.call_args.args[0]
+
+
+@pytest.mark.asyncio
 async def test_control_room_query_prefers_scoped_gold_fetcher(monkeypatch):
     from app.services.intelligence import gold_fetcher
 
