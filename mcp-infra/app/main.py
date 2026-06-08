@@ -698,6 +698,10 @@ def _require_pipeline_run_scope(ctx: dict[str, Any], run_id: str) -> None:
     run_id = str(run_id or "").strip()
     if not run_id:
         raise HTTPException(403, detail="run_id is required")
+    ctx_tenant = str(ctx.get("tenant_id") or "").strip()
+    ctx_workspace = str(ctx.get("workspace_id") or "").strip()
+    if not ctx_tenant or not ctx_workspace:
+        raise HTTPException(403, detail="tenant/workspace scope required for run access")
     import psycopg2
     from app.config import settings as s
 
@@ -710,6 +714,11 @@ def _require_pipeline_run_scope(ctx: dict[str, Any], run_id: str) -> None:
             password=s.pg_password,
         )
         with conn.cursor() as cur:
+            cur.execute(
+                "SELECT set_config('app.tenant_id', %s, true), "
+                "set_config('app.workspace_id', %s, true)",
+                (ctx_tenant, ctx_workspace),
+            )
             cur.execute(
                 """
                 SELECT column_name
@@ -748,10 +757,6 @@ def _require_pipeline_run_scope(ctx: dict[str, Any], run_id: str) -> None:
     if not row:
         raise HTTPException(403, detail="run_id not found or not allowed")
     cartridge_id, tenant_id, workspace_id = row
-    ctx_tenant = str(ctx.get("tenant_id") or "").strip()
-    ctx_workspace = str(ctx.get("workspace_id") or "").strip()
-    if not ctx_tenant or not ctx_workspace:
-        raise HTTPException(403, detail="tenant/workspace scope required for run access")
     if not tenant_id or not workspace_id:
         raise HTTPException(403, detail="run tenant/workspace scope missing")
     if ctx_tenant != tenant_id:
