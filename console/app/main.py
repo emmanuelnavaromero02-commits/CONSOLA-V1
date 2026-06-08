@@ -688,7 +688,7 @@ def _bronze_latest_date_from_objects(cartridge: str, entity: str, object_names: 
 
     prefix = f"raw/{cartridge}/{entity}/"
     pattern = re.compile(
-        rf"^{re.escape(prefix)}load_date=(\d{{4}}-\d{{2}}-\d{{2}})/.+\.parquet$"
+        rf"^{re.escape(prefix)}(?:tenant_id=[^/]+/workspace_id=[^/]+/)?load_date=(\d{{4}}-\d{{2}}-\d{{2}})/.+\.parquet$"
     )
     dates = []
     for object_name in object_names:
@@ -698,13 +698,28 @@ def _bronze_latest_date_from_objects(cartridge: str, entity: str, object_names: 
     return max(dates) if dates else None
 
 
+def _bronze_latest_s3_glob(source: str, latest_date: str, user: dict | None) -> str:
+    path = str(source or "").strip().strip("/")
+    parts = path.split("/")
+    if len(parts) < 3 or parts[0] != "raw" or any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(400, "Invalid bronze source path")
+    bucket = _bronze_bucket_name()
+    try:
+        tenant_id, workspace_id = _workspace_scope_from_user(user)
+    except HTTPException:
+        return f"s3://{bucket}/{path}/load_date={latest_date}/**/*.parquet"
+    return (
+        f"s3://{bucket}/{path}/tenant_id={tenant_id}/"
+        f"workspace_id={workspace_id}/load_date={latest_date}/**/*.parquet"
+    )
+
+
 def _minio_client():
     return get_minio_client()
 
 
 async def _count_bronze_parquet_rows(source: str, latest_date: str, user: dict | None) -> int | None:
-    bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
-    parquet_glob = f"s3://{bucket}/{source}/load_date={latest_date}/*.parquet"
+    parquet_glob = _bronze_latest_s3_glob(source, latest_date, user)
     sql = (
         "SELECT COUNT(*) AS record_count "
         f"FROM read_parquet('{parquet_glob}', hive_partitioning=true, union_by_name=true)"

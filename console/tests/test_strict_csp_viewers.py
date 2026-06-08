@@ -187,3 +187,22 @@ def test_pipeline_extract_all_uses_canonical_endpoint_and_csrf():
     assert "/api/pipeline/${encodeURIComponent(_cartridge)}/extract_all" in src
     assert "X-CSRF-Token" in src
     assert "jsonHeaders()" in src
+
+
+def test_schema_viewer_preserves_viewer_type_in_history_url():
+    src = (JS_DIR / "schema.js").read_text(encoding="utf-8")
+
+    assert "nextParams.set('type', 'schema')" in src
+    assert "`?source=${encodeURIComponent(source)}`" not in src
+
+
+def test_semantic_and_pipeline_default_to_active_scoped_cartridge():
+    semantic = (JS_DIR / "semantic.js").read_text(encoding="utf-8")
+    pipeline = (JS_DIR / "pipeline.js").read_text(encoding="utf-8")
+
+    for src in (semantic, pipeline):
+        assert "active_scoped_cartridges" in src
+        assert "api/apps" in src
+
+    assert "|| 'replicon'" not in semantic
+    assert "_cartridge    = 'replicon'" not in pipeline

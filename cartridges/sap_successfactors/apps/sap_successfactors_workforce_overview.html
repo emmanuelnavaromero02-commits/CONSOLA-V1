@@ -45,6 +45,8 @@
   .empty{padding:28px;text-align:center;color:var(--text3);font-style:italic}
   .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);
          padding:14px;border-radius:6px;margin-bottom:16px}
+  .notice{background:rgba(210,153,34,.12);color:var(--amber);border:1px solid var(--amber);
+          padding:12px;border-radius:6px;margin-bottom:16px}
   @media(max-width:880px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -86,16 +88,28 @@ const COLORS = ['#7c9fff','#3fb950','#d29922','#bc8cff','#39d3ff','#f85149','#db
 const fmtN = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
 const charts = {};
 function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">Error cargando datos: ${msg}</div>`; }
+function showNotice(msg){ document.getElementById('error').innerHTML = msg ? `<div class="notice">${msg}</div>` : ''; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 async function fetchJson(url){
   const r = await fetch(url);
   if(!r.ok) throw new Error(url + ' (' + r.status + ')');
   const d = await r.json();
+  if(d && d.error) throw new Error(d.error);
   return Array.isArray(d) ? d : (d.data || []);
 }
 
 let DEPT = [], LOC = [], COMP = [], TURN = [];
+const UNAVAILABLE = {};
+
+async function fetchOptional(label, url){
+  try{
+    return await fetchJson(url);
+  }catch(e){
+    UNAVAILABLE[label] = e.message;
+    return [];
+  }
+}
 
 function hbar(canvasId, labels, values, color){
   if(charts[canvasId]) charts[canvasId].destroy();
@@ -166,6 +180,10 @@ function renderCompanyChart(compRows){
 function renderTurnoverChart(){
   if(charts['chart-turnover']) charts['chart-turnover'].destroy();
   const ctx = document.getElementById('chart-turnover');
+  if(UNAVAILABLE['Rotacion']){
+    ctx.parentElement.innerHTML = `<div class="empty">Rotacion pendiente: ${esc(UNAVAILABLE['Rotacion'])}</div>`;
+    return;
+  }
   if(!TURN.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos de rotación en la ventana extraída</div>'; return; }
   const agg = {};
   TURN.forEach(r=>{ const m = String(r.termination_month||''); agg[m] = (agg[m]||0) + Number(r.terminations||0); });
@@ -189,12 +207,14 @@ function resetFilter(){ document.getElementById('company-filter').value = ''; ap
 async function init(){
   try{
     const [dept, loc, comp, turn] = await Promise.all([
-      fetchJson('/api/data/sap_successfactors_headcount_by_department'),
-      fetchJson('/api/data/sap_successfactors_headcount_by_location'),
-      fetchJson('/api/data/sap_successfactors_headcount_by_company'),
-      fetchJson('/api/data/sap_successfactors_turnover_by_period'),
+      fetchOptional('Departamentos', '/api/data/sap_successfactors_headcount_by_department'),
+      fetchOptional('Ubicaciones', '/api/data/sap_successfactors_headcount_by_location'),
+      fetchOptional('Companias', '/api/data/sap_successfactors_headcount_by_company'),
+      fetchOptional('Rotacion', '/api/data/sap_successfactors_turnover_by_period'),
     ]);
     DEPT = dept; LOC = loc; COMP = comp; TURN = turn;
+    const missing = Object.entries(UNAVAILABLE).map(([k,v]) => `${esc(k)}: ${esc(v)}`);
+    showNotice(missing.length ? `Datos parciales cargados. Pendiente: ${missing.join(' · ')}` : '');
 
     const companies = [...new Set(COMP.map(r=> String(r.company_id||r.company_name||'')).filter(Boolean))];
     document.getElementById('company-filter').insertAdjacentHTML('beforeend',

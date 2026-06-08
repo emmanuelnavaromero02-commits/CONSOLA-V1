@@ -39,3 +39,12 @@ def test_cartridge_service_uses_pool_instead_of_per_operation_connect():
     assert "asyncpg.connect" not in source
     assert "asyncpg.create_pool" in source
     assert "async def close_pool()" in source
+
+
+def test_cartridge_service_exposes_entity_select_fields_to_semantic_viewer():
+    source = CARTRIDGE_SERVICE_SOURCE.read_text(encoding="utf-8")
+
+    assert "select_fields, protection, effective_dated" in source
+    assert '"select_fields":   r["select_fields"] or []' in source
+    assert '"fields":          r["select_fields"] or []' in source
+    assert '"columns":         r["select_fields"] or []' in source

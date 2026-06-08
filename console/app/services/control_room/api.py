@@ -39,10 +39,8 @@ def _show_known_non_ready_sources() -> bool:
     explicit = os.environ.get("CONTROL_ROOM_SHOW_KNOWN_NON_READY")
     if explicit is not None:
         return explicit.strip().lower() in {"1", "true", "yes", "on"}
-    app_env = os.environ.get("APP_ENV")
-    if app_env:
-        return app_env.strip().lower() not in {"production", "prod"}
-    return True
+    app_env = os.environ.get("APP_ENV", "production")
+    return app_env.strip().lower() not in {"production", "prod"}
 
 
 @_bind_to_core
@@ -1340,8 +1338,21 @@ def _domain_payload(
     items: list[dict[str, Any]],
     sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    domain_modules = [module for module in modules if module.domain == domain or any(source.domain == domain for source in module.sources)]
     domain_items = [item for item in items if item["domain"] == domain]
+    domain_modules = []
+    for module in modules:
+        if module.domain != domain and not any(source.domain == domain for source in module.sources):
+            continue
+        module_has_sources = any(
+            source.get("module_id") == module.visible_id and source.get("domain") == domain
+            for source in sources
+        )
+        module_has_items = any(
+            item.get("module_id", item.get("cartridge")) == module.visible_id
+            for item in domain_items
+        )
+        if module_has_sources or module_has_items or _show_known_non_ready_sources():
+            domain_modules.append(module)
     module_payload = []
     for module in domain_modules:
         module_sources = [
@@ -1466,8 +1477,20 @@ async def dashboard(
         for row in installations
         if str(row.get("cartridge_id") or "").strip()
     }
+    visible_module_ids = {
+        str(source.get("module_id") or "").strip()
+        for source in sources
+        if str(source.get("module_id") or "").strip()
+    } | {
+        str(item.get("module_id") or item.get("cartridge") or "").strip()
+        for item in items
+        if str(item.get("module_id") or item.get("cartridge") or "").strip()
+    }
+    modules_for_payload = modules if _show_known_non_ready_sources() else [
+        module for module in modules if module.visible_id in visible_module_ids
+    ]
     cartridges = []
-    for module in modules:
+    for module in modules_for_payload:
         row = installation_by_cartridge.get(module.cartridge, {})
         cartridge_id = module.visible_id
         module_items = [
@@ -1500,13 +1523,13 @@ async def dashboard(
         })
 
     domain_labels = list(DOMAIN_ORDER)
-    for module in modules:
+    for module in modules_for_payload:
         if module.domain not in domain_labels:
             domain_labels.append(module.domain)
         for source in module.sources:
             if source.domain not in domain_labels:
                 domain_labels.append(source.domain)
-    domains = [_domain_payload(domain, modules, items, sources) for domain in domain_labels]
+    domains = [_domain_payload(domain, modules_for_payload, items, sources) for domain in domain_labels]
     data_readiness = _readiness_counts(sources)
     data_ready_modules = [row for row in cartridges if row["active"] and row.get("operationally_ready")]
     partial_modules = [row for row in cartridges if row["active"] and row.get("data_readiness") == "partial"]
