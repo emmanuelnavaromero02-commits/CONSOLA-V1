@@ -129,6 +129,8 @@ export interface SourceSchemaPayload {
   };
   preview?: {
     columns?: string[];
+    schema?: Array<{ name?: string; type?: string; [key: string]: unknown }>;
+    data?: DataRow[];
     rows?: DataRow[];
     result?: DataRow[];
     [key: string]: unknown;

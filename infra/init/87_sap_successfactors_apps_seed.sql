@@ -103,6 +103,10 @@ async function fetchJson(url){
   const d = await r.json();
   return Array.isArray(d) ? d : (d.data || []);
 }
+async function fetchOptional(url){
+  try { return await fetchJson(url); }
+  catch(e) { console.warn('dataset opcional no disponible', url, e.message); return []; }
+}
 
 let DEPT = [], LOC = [], COMP = [], TURN = [];
 
@@ -201,7 +205,7 @@ async function init(){
       fetchJson('/api/data/sap_successfactors_headcount_by_department'),
       fetchJson('/api/data/sap_successfactors_headcount_by_location'),
       fetchJson('/api/data/sap_successfactors_headcount_by_company'),
-      fetchJson('/api/data/sap_successfactors_turnover_by_period'),
+      fetchOptional('/api/data/sap_successfactors_turnover_by_period'),
     ]);
     DEPT = dept; LOC = loc; COMP = comp; TURN = turn;
 
@@ -222,7 +226,14 @@ init();
 </body>
 </html>
 $seed$, $seed$Dashboard ejecutivo de plantilla: headcount por departamento, ubicacion y compania, y rotacion mensual.$seed$, $seed$sap_successfactors$seed$, $seed$shared$seed$, $seed${sap_successfactors_headcount_by_department,sap_successfactors_headcount_by_location,sap_successfactors_headcount_by_company,sap_successfactors_turnover_by_period}$seed$::text[], NOW())
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (name) DO UPDATE
+SET title = EXCLUDED.title,
+    html = EXCLUDED.html,
+    description = EXCLUDED.description,
+    cartridge_id = EXCLUDED.cartridge_id,
+    visibility = EXCLUDED.visibility,
+    datasets_used = EXCLUDED.datasets_used,
+    updated_at = EXCLUDED.updated_at;
 
 INSERT INTO analytic_apps (name, title, html, description, cartridge_id, visibility, datasets_used, updated_at)
 VALUES ($seed$sap_successfactors_talent_health$seed$, $seed$Talent Health$seed$, $seed$<!DOCTYPE html>
@@ -326,6 +337,10 @@ async function fetchJson(url){
   const d = await r.json();
   return Array.isArray(d) ? d : (d.data || []);
 }
+async function fetchOptional(url){
+  try { return await fetchJson(url); }
+  catch(e) { console.warn('dataset opcional no disponible', url, e.message); return []; }
+}
 
 let ANOM = [], FUNNEL = [], MGR = [];
 
@@ -423,8 +438,8 @@ function resetFilter(){ document.getElementById('anomaly-filter').value = ''; ap
 async function init(){
   try{
     const [anom, funnel, mgr] = await Promise.all([
-      fetchJson('/api/data/sap_successfactors_employees_anomalies'),
-      fetchJson('/api/data/sap_successfactors_recruitment_funnel'),
+      fetchOptional('/api/data/sap_successfactors_employees_anomalies'),
+      fetchOptional('/api/data/sap_successfactors_recruitment_funnel'),
       fetchJson('/api/data/sap_successfactors_manager_hierarchy'),
     ]);
     ANOM = anom; FUNNEL = funnel; MGR = mgr;
@@ -445,7 +460,14 @@ init();
 </body>
 </html>
 $seed$, $seed$Salud de talento: anomalias de datos, embudo de reclutamiento y span of control de managers.$seed$, $seed$sap_successfactors$seed$, $seed$shared$seed$, $seed${sap_successfactors_employees_anomalies,sap_successfactors_recruitment_funnel,sap_successfactors_manager_hierarchy}$seed$::text[], NOW())
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (name) DO UPDATE
+SET title = EXCLUDED.title,
+    html = EXCLUDED.html,
+    description = EXCLUDED.description,
+    cartridge_id = EXCLUDED.cartridge_id,
+    visibility = EXCLUDED.visibility,
+    datasets_used = EXCLUDED.datasets_used,
+    updated_at = EXCLUDED.updated_at;
 
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('87_sap_successfactors_apps_seed.sql', NOW())

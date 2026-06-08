@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   Database,
@@ -58,7 +58,7 @@ import type {
   VaultSecret,
 } from "@/lib/monitor/types";
 
-const DEFAULT_CARTRIDGE = "replicon";
+const DEFAULT_CARTRIDGE = "sap_successfactors";
 
 type ViewerType =
   | "jobs"
@@ -94,11 +94,21 @@ export default function ViewerPage() {
 function ViewerContent() {
   const params = useSearchParams();
   const type = normaliseType(params.get("type"));
-  const cartridge = params.get("cartridge") || DEFAULT_CARTRIDGE;
+  const activeCartridges = useActiveScopedCartridges();
+  const requestedCartridge = params.get("cartridge") || DEFAULT_CARTRIDGE;
+  const cartridge = resolveScopedCartridge(requestedCartridge, activeCartridges);
   const jobId = params.get("id") || params.get("job_id");
   const datasetName = params.get("name") || params.get("dataset") || params.get("id");
   const source = params.get("source");
-  const scope = params.get("scope") || cartridge;
+  const scope = type === "vault" ? cartridge : (params.get("scope") || cartridge);
+
+  useEffect(() => {
+    if (!activeCartridges.length || requestedCartridge === cartridge || !cartridgeViewerUsesCartridge(type)) return;
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.set("cartridge", cartridge);
+    if (type === "vault") nextParams.set("scope", cartridge);
+    window.history.replaceState(null, "", `${window.location.pathname}?${nextParams.toString()}`);
+  }, [activeCartridges.length, cartridge, requestedCartridge, type]);
 
   if (type === "job") {
     return <JobViewer jobId={jobId} />;
@@ -122,7 +132,7 @@ function ViewerContent() {
     return <DatasetViewer name={datasetName} />;
   }
   if (type === "lineage") {
-    return <LineageViewer cartridge={params.get("cartridge") || ""} />;
+    return <LineageViewer cartridge={params.get("cartridge") ? cartridge : ""} />;
   }
   if (type === "vault") {
     return <VaultViewer cartridge={cartridge} scope={scope} />;
@@ -143,16 +153,51 @@ function normaliseType(value: string | null): ViewerType {
   return "jobs";
 }
 
+function cartridgeViewerUsesCartridge(type: ViewerType): boolean {
+  return type === "pipeline" || type === "watermarks" || type === "semantic" || type === "vault" || type === "lineage";
+}
+
+function resolveScopedCartridge(requested: string, activeCartridges: string[]): string {
+  const cleanRequested = requested.trim() || DEFAULT_CARTRIDGE;
+  if (activeCartridges.length === 0) return cleanRequested;
+  return activeCartridges.includes(cleanRequested) ? cleanRequested : activeCartridges[0] || DEFAULT_CARTRIDGE;
+}
+
+function useActiveScopedCartridges(): string[] {
+  const [active, setActive] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/apps", { credentials: "same-origin" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        if (cancelled) return;
+        const cartridges = Array.isArray(payload?.active_scoped_cartridges)
+          ? payload.active_scoped_cartridges.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0)
+          : [];
+        setActive(cartridges);
+      })
+      .catch(() => {
+        if (!cancelled) setActive([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return active;
+}
+
 function ViewerShell({
   title,
   subtitle,
   children,
   actions,
+  activeCartridge,
 }: {
   title: string;
   subtitle?: string;
   children?: ReactNode;
   actions?: ReactNode;
+  activeCartridge?: string;
 }) {
   return (
     <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
@@ -172,7 +217,7 @@ function ViewerShell({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {actions}
-          <ViewerSwitcher />
+          <ViewerSwitcher activeCartridge={activeCartridge} />
         </div>
       </header>
       {children}
@@ -180,13 +225,15 @@ function ViewerShell({
   );
 }
 
-function ViewerSwitcher() {
+function ViewerSwitcher({ activeCartridge = DEFAULT_CARTRIDGE }: { activeCartridge?: string }) {
+  const activeCartridges = useActiveScopedCartridges();
+  const cartridge = resolveScopedCartridge(activeCartridge, activeCartridges);
   return (
     <nav aria-label="Viewers" className="flex flex-wrap gap-2">
       {VIEWER_LINKS.map(({ type, label, icon: Icon }) => (
         <Link
           key={type}
-          href={viewerHref(type)}
+          href={viewerHref(type, cartridge)}
           className="inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Icon aria-hidden className="h-4 w-4" />
@@ -197,13 +244,13 @@ function ViewerSwitcher() {
   );
 }
 
-function viewerHref(type: ViewerType): string {
+function viewerHref(type: ViewerType, cartridge = DEFAULT_CARTRIDGE): string {
   if (type === "jobs") return "/viewer?type=jobs";
   if (type === "schema") return "/viewer?type=schema";
   if (type === "datasets") return "/viewer?type=datasets";
   if (type === "lineage") return "/viewer?type=lineage";
-  if (type === "vault") return `/viewer?type=vault&cartridge=${DEFAULT_CARTRIDGE}&scope=${DEFAULT_CARTRIDGE}`;
-  return `/viewer?type=${type}&cartridge=${DEFAULT_CARTRIDGE}`;
+  if (type === "vault") return `/viewer?type=vault&cartridge=${encodeURIComponent(cartridge)}&scope=${encodeURIComponent(cartridge)}`;
+  return `/viewer?type=${type}&cartridge=${encodeURIComponent(cartridge)}`;
 }
 
 function JobsViewer() {
@@ -280,6 +327,7 @@ function PipelineViewer({ cartridge }: { cartridge: string }) {
       title="Pipeline"
       subtitle={`Cartucho ${cartridge}: bronze, silver, gold y última corrida.`}
       actions={<RefreshButton onClick={() => pipeline.refetch()} />}
+      activeCartridge={cartridge}
     >
       {pipeline.isError ? (
         <ErrorPanel message="No se pudo cargar el pipeline." onRetry={() => pipeline.refetch()} />
@@ -303,6 +351,7 @@ function WatermarksViewer({ cartridge }: { cartridge: string }) {
       title="Watermarks"
       subtitle={`Cartucho ${cartridge}: marcas de agua y último estado por entidad.`}
       actions={<RefreshButton onClick={() => freshness.refetch()} />}
+      activeCartridge={cartridge}
     >
       {freshness.isError ? (
         <ErrorPanel message="No se pudieron cargar las marcas de agua." onRetry={() => freshness.refetch()} />
@@ -324,6 +373,7 @@ function SemanticViewer({ cartridge }: { cartridge: string }) {
       title="Semantic Layer"
       subtitle={`Cartucho ${cartridge}: entidades, campos y metadatos expuestos por /api/semantic.`}
       actions={<RefreshButton onClick={() => semantic.refetch()} />}
+      activeCartridge={cartridge}
     >
       {semantic.isError ? (
         <ErrorPanel message="No se pudo cargar la capa semántica." onRetry={() => semantic.refetch()} />
@@ -491,6 +541,7 @@ function LineageViewer({ cartridge }: { cartridge: string }) {
       title="Lineage"
       subtitle={cartridge ? `Grafo de datasets para ${cartridge}.` : "Grafo global de fuentes raw y datasets Silver/Gold."}
       actions={<RefreshButton onClick={() => lineage.refetch()} />}
+      activeCartridge={cartridge || DEFAULT_CARTRIDGE}
     >
       {lineage.isError ? (
         <ErrorPanel message="No se pudo cargar el lineage." onRetry={() => lineage.refetch()} />
@@ -512,6 +563,7 @@ function VaultViewer({ cartridge, scope }: { cartridge: string; scope: string })
       title="Vault"
       subtitle={`Conexiones de ${cartridge} y secretos masked del scope ${scope}.`}
       actions={<RefreshButton onClick={() => { connections.refetch(); secrets.refetch(); }} />}
+      activeCartridge={cartridge}
     >
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <section className="space-y-3 rounded-lg border bg-card p-4">
@@ -685,8 +737,11 @@ function SchemaPanel({ payload }: { payload: SourceSchemaPayload | undefined }) 
   const partitions = payload?.partitions?.partitions ?? [];
   const latest = payload?.partitions?.latest;
   const sqlLatest = payload?.partitions?.sql_latest;
-  const rows = payload?.preview?.rows ?? payload?.preview?.result ?? [];
-  const columns = payload?.preview?.columns ?? columnsFromRows(rows);
+  const rows = payload?.preview?.rows ?? payload?.preview?.data ?? payload?.preview?.result ?? [];
+  const schemaColumns = (payload?.preview?.schema ?? [])
+    .map((column) => column.name)
+    .filter((name): name is string => Boolean(name));
+  const columns = payload?.preview?.columns ?? (schemaColumns.length ? schemaColumns : columnsFromRows(rows));
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">

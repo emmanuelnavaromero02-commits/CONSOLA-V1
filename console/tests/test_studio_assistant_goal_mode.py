@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 
 import pytest
@@ -123,3 +124,78 @@ def test_approval_tool_requires_explicit_current_user_message():
         {"approval_key": "11111111-1111-1111-1111-111111111111"},
         "rechazo 11111111-1111-1111-1111-111111111111",
     )
+
+
+@pytest.mark.asyncio
+async def test_refine_admin_save_dataset_bypasses_goal_approval_after_preview(monkeypatch):
+    studio_assistant = importlib.import_module("app.services.studio_assistant")
+
+    async def list_servers():
+        return [{
+            "id": "refinement",
+            "name": "Refinement",
+            "healthy": True,
+            "tools": [
+                {"name": "preview_transform", "description": "", "input_schema": {"type": "object"}},
+                {"name": "save_dataset", "description": "", "input_schema": {"type": "object"}},
+            ],
+        }]
+
+    async def invoke(server_id, tool, args, user=None):
+        if server_id == "refinement" and tool == "preview_transform":
+            return {"row_count": 1, "data": [{"ok": 1}]}
+        if server_id == "refinement" and tool == "save_dataset":
+            return {"saved": True, "name": args["name"], "user": (user or {}).get("email")}
+        return {"error": "unexpected tool"}
+
+    async def record_event(**_kwargs):
+        return None
+
+    async def chat(**kwargs):
+        preview = await kwargs["invoke_tool"](
+            "refinement",
+            "preview_transform",
+            {"sql": "SELECT 1 AS ok", "limit": 20},
+        )
+        saved = await kwargs["invoke_tool"](
+            "refinement",
+            "save_dataset",
+            {
+                "name": "sap_successfactors_workforce_composition",
+                "sql": "SELECT 1 AS ok",
+                "layer": "gold",
+                "sources": ["sap_successfactors_employee_360"],
+                "cartridge": "sap_successfactors",
+            },
+        )
+        return json.dumps({"preview": preview, "saved": saved}), [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant.mcp_registry, "list_servers", list_servers)
+    monkeypatch.setattr(studio_assistant.mcp_registry, "invoke", invoke)
+    monkeypatch.setattr(studio_assistant.audit_service, "record_event", record_event)
+    monkeypatch.setattr(studio_assistant.llm_client, "chat", chat)
+
+    result = await studio_assistant.chat(
+        "genera un gold y guárdalo tras preview",
+        [],
+        step=4,
+        manifest={"id": "sap_successfactors", "name": "SAP SuccessFactors"},
+        actor_role="super_admin",
+        actor_user={
+            "id": 7,
+            "email": "admin@local.ai",
+            "role": "super_admin",
+            "workspace_role": "super_admin",
+        },
+        tools_whitelist={"preview_transform", "save_dataset"},
+    )
+
+    payload = json.loads(result["reply"])
+    assert payload["preview"]["row_count"] == 1
+    assert payload["saved"] == {
+        "saved": True,
+        "name": "sap_successfactors_workforce_composition",
+        "user": "admin@local.ai",
+    }
+    assert "approval_required" not in result["reply"]
+    assert "approval_key" not in result["reply"]
