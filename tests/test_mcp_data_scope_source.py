@@ -95,6 +95,24 @@ def test_mcp_infra_rag_and_cartridge_sql_are_scoped():
     assert "source = next((s for s in sources" in source
 
 
+def test_airflow_run_status_sets_rls_context_before_pipeline_run_lookup():
+    source = MCP_MAIN.read_text(encoding="utf-8")
+    ast.parse(source)
+
+    block = source.split("def _require_pipeline_run_scope", 1)[1].split(
+        "def _pipeline_run_allowed", 1
+    )[0]
+
+    tenant_set = "SELECT set_config('app.tenant_id'"
+    workspace_set = "set_config('app.workspace_id'"
+    pipeline_lookup = "FROM pipeline_runs"
+
+    assert tenant_set in block
+    assert workspace_set in block
+    assert block.index(tenant_set) < block.index(pipeline_lookup)
+    assert block.index(workspace_set) < block.index(pipeline_lookup)
+
+
 def test_minio_sample_rows_are_capped():
     source = MINIO_TOOLS.read_text(encoding="utf-8")
     ast.parse(source)
