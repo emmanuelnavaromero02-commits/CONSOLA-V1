@@ -22,11 +22,32 @@ async function loadRuntimeConfig() {
     if (!r.ok) return;
     const d = await r.json();
     _airflowPublicUrl = (d.airflow_url || '').replace(/\/+$/, '');
+    const afLink = document.getElementById('dag-airflow-link');
+    if (afLink && _selectedDag && _selectedDag !== '__new__') {
+      afLink.setAttribute('href', airflowDagUrl(_selectedDag));
+    }
   } catch (e) {}
 }
 
+function airflowFallbackUrl(dagId) {
+  const params = new URLSearchParams({type: 'airflow'});
+  if (_cartridge) params.set('cartridge', _cartridge);
+  if (dagId) params.set('dag_id', dagId);
+  return `/viewer?${params.toString()}`;
+}
+
+function airflowBaseUrl() {
+  if (_airflowPublicUrl) return _airflowPublicUrl;
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return `${window.location.protocol}//${host}:8082`;
+  return '';
+}
+
 function airflowDagUrl(dagId) {
-  return `/viewer?type=jobs${dagId ? `&dag_id=${encodeURIComponent(dagId)}` : ''}`;
+  const base = airflowBaseUrl();
+  if (!base) return airflowFallbackUrl(dagId);
+  if (!dagId) return base;
+  return `${base}/dags/${encodeURIComponent(dagId)}/grid`;
 }
 
 function csrfToken() {
@@ -533,7 +554,7 @@ function newDag() {
   _showEditor();
   document.getElementById('dag-editor-name').textContent = 'nuevo_dag';
   document.getElementById('dag-editor-badge').innerHTML = '';
-  document.getElementById('dag-airflow-link').href = airflowDagUrl('');
+  document.getElementById('dag-airflow-link').href = '#';
   setEditorCode(
     `# Nuevo DAG — ${_cartridge}\n` +
     `# dag_id recomendado: ${_cartridge}_<entidad>_<modo>\n\n` +
