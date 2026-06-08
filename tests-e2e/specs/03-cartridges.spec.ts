@@ -89,7 +89,10 @@ test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
     await page.goto("/cartridges/viewer?id=replicon");
     const cta = page.getByRole("link", { name: /configurar en vault/i });
     await expect(cta).toBeVisible({ timeout: 15_000 });
-    await expect(cta).toHaveAttribute("href", /\/operations\/vault/);
+    await expect(cta).toHaveAttribute(
+      "href",
+      /\/operations\/vault\?cartridge=replicon(?:&conn_id=[^&]+)?/,
+    );
   });
 
   test("credential writes are delegated to Vault (no inline Guardar/Borrar)", async ({

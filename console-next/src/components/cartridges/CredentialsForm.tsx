@@ -26,6 +26,11 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
     [vaultConnections.data?.connections],
   );
   const connIdForTest = selectedConnId || connectionOptions[0] || "";
+  const vaultHref = useMemo(() => {
+    const params = new URLSearchParams({ cartridge: cartridgeId });
+    if (connIdForTest) params.set("conn_id", connIdForTest);
+    return `/operations/vault?${params.toString()}`;
+  }, [cartridgeId, connIdForTest]);
 
   const onTest = async () => {
     try {
@@ -55,7 +60,7 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
             Vault scoped
           </div>
           <a
-            href="/operations/vault"
+            href={vaultHref}
             className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Configurar en Vault

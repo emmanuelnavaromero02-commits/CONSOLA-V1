@@ -4578,10 +4578,25 @@ async def api_vault_reveal_connection(cartridge: str, conn_id: str, user: dict =
 async def api_vault_upsert_connection(cartridge: str, conn_id: str, body: dict, user: dict = Depends(require_authenticated)):
     _require_cartridge_visible(user, cartridge)
     vault_conn_id = _tenant_vault_conn_id(user, conn_id)
+    payload = dict(body or {})
     async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as c:
+        existing = await c.get(
+            f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}"
+        )
+        if existing.status_code == 200:
+            try:
+                current = existing.json()
+            except ValueError:
+                current = {}
+            if isinstance(current, dict):
+                current.pop("id", None)
+                current.pop("conn_id", None)
+                payload = {**current, **payload}
+        elif existing.status_code != 404:
+            existing.raise_for_status()
         r = await c.put(
             f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}/{quote(vault_conn_id, safe='')}",
-            json=body,
+            json=payload,
         )
         r.raise_for_status()
         data = r.json()

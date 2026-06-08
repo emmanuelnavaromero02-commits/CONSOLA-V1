@@ -38,7 +38,7 @@ describe("CredentialsForm", () => {
     const markup = renderToStaticMarkup(<CredentialsForm cartridgeId="hubspot" schema={schema} />);
 
     expect(markup).toContain("Configurar en Vault");
-    expect(markup).toContain("/operations/vault");
+    expect(markup).toContain("/operations/vault?cartridge=hubspot");
     expect(markup).not.toContain("Guardar credenciales");
     expect(markup).not.toContain('type="password"');
     expect(markup).toContain("Probar conexión");
@@ -69,6 +69,7 @@ describe("CredentialsForm", () => {
     );
 
     expect(markup).toContain("Conexión a probar");
+    expect(markup).toContain("/operations/vault?cartridge=sap_successfactors&amp;conn_id=femsa_sf");
     expect(markup).toContain('value="femsa_sf"');
     expect(markup).toContain('value="default"');
   });

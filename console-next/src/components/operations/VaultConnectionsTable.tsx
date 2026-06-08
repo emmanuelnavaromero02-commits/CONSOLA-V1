@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -95,6 +95,37 @@ const EXPLICIT_CONNECTION_FIELDS = [
   "idp_url",
 ];
 
+export interface VaultUrlRequest {
+  tab: VaultTab | null;
+  cartridge: string | null;
+  connId: string;
+  scope: string;
+}
+
+export function vaultRequestFromSearch(search: string): VaultUrlRequest {
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab") === "secrets" ? "secrets" : params.get("tab") === "connections" ? "connections" : null;
+  return {
+    tab,
+    cartridge: normalizeCartridgeId(params.get("cartridge") || params.get("id")),
+    connId: (params.get("conn_id") || params.get("connection") || "").trim(),
+    scope: (params.get("scope") || "").trim(),
+  };
+}
+
+function vaultRequestFromLocation(): VaultUrlRequest {
+  if (typeof window === "undefined") {
+    return { tab: null, cartridge: null, connId: "", scope: "" };
+  }
+  return vaultRequestFromSearch(window.location.search);
+}
+
+function normalizeCartridgeId(value: string | null): string | null {
+  const clean = (value || "").trim();
+  if (!clean) return null;
+  return CARTRIDGES.some((item) => item.id === clean) ? clean : null;
+}
+
 export function VaultConnectionsTable() {
   const [tab, setTab] = useState<VaultTab>("connections");
   const [cartridge, setCartridge] = useState("replicon");
@@ -121,6 +152,45 @@ export function VaultConnectionsTable() {
 
   const rows = connections.data?.connections ?? [];
   const secretRows = secrets.data?.secrets ?? [];
+
+  useEffect(() => {
+    const request = vaultRequestFromLocation();
+    if (request.tab) setTab(request.tab);
+    if (request.cartridge) {
+      setCartridge(request.cartridge);
+      setRevealedTokens({});
+    }
+    if (request.scope) {
+      setScope(request.scope);
+      setRevealedSecrets({});
+    }
+    if (request.connId) {
+      setTab("connections");
+      setEditingConnId(request.connId);
+      setConnForm((current) => ({ ...current, connId: request.connId }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!editingConnId) return;
+    const row = rows.find((conn) => connectionId(conn) === editingConnId);
+    if (!row) return;
+    setConnForm((current) => {
+      if (current.connId !== editingConnId) return current;
+      return {
+        ...current,
+        baseUrl: current.baseUrl || String(row.base_url ?? ""),
+        authMethod: current.authMethod === EMPTY_CONN_FORM.authMethod
+          ? String(row.auth_method ?? row.kind ?? current.authMethod)
+          : current.authMethod,
+        clientId: current.clientId || String(row.client_id ?? ""),
+        tokenUrl: current.tokenUrl || String(row.token_url ?? ""),
+        companyId: current.companyId || String(row.company_id ?? ""),
+        adminUser: current.adminUser || String(row.admin_user ?? ""),
+        idpUrl: current.idpUrl || String(row.idp_url ?? ""),
+      };
+    });
+  }, [editingConnId, rows]);
 
   function resetConnectionForm() {
     setEditingConnId(null);

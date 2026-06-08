@@ -6,6 +6,7 @@ import {
   ConnectionForm,
   getAuthMethodOptions,
   VaultConnectionsTable,
+  vaultRequestFromSearch,
   type ConnForm,
 } from "./VaultConnectionsTable";
 
@@ -69,6 +70,27 @@ describe("VaultConnectionsTable", () => {
     expect(markup).toContain("Nueva conexión");
     expect(markup).toContain("Campos extra JSON");
     expect(markup).toContain("Revelar secreto");
+  });
+
+  it("parses scoped Vault handoff query params from cartridge viewer CTAs", () => {
+    expect(vaultRequestFromSearch("?cartridge=sap_successfactors&conn_id=femsa_sf")).toEqual({
+      tab: null,
+      cartridge: "sap_successfactors",
+      connId: "femsa_sf",
+      scope: "",
+    });
+    expect(vaultRequestFromSearch("?id=hubspot&tab=connections")).toEqual({
+      tab: "connections",
+      cartridge: "hubspot",
+      connId: "",
+      scope: "",
+    });
+    expect(vaultRequestFromSearch("?cartridge=unknown&tab=secrets&scope=llm")).toEqual({
+      tab: "secrets",
+      cartridge: null,
+      connId: "",
+      scope: "llm",
+    });
   });
 
   it("uses SuccessFactors connector auth methods and renders SAML PEM fields", () => {
