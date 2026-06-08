@@ -108,6 +108,15 @@ datasets:
     evidence:
       - cartridges/sap_successfactors/datasets/sap_successfactors_employees_anomalies.sql
       - infra/init/82_sap_successfactors_datasets_seed.sql
+  - cartridge: sap_successfactors
+    dataset: sap_successfactors_turnover_by_period
+    readiness: partial
+    reason: "Turnover by period depends on EmpEmploymentTermination, which is blocked by the FEMSA SuccessFactors OAuth client scope."
+    blockers:
+      - "Enable EmpEmploymentTermination in the FEMSA SuccessFactors OAuth client before materializing turnover_by_period."
+    evidence:
+      - cartridges/sap_successfactors/datasets/sap_successfactors_turnover_by_period.sql
+      - infra/init/82_sap_successfactors_datasets_seed.sql
 knowledge_bits:
   - cartridge: sap_hcm
     id: kb_sap_hcm_employees_anomalies_active

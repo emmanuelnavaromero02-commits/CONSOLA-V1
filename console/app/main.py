@@ -18,6 +18,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlencode
 
 logger = logging.getLogger(__name__)
@@ -591,6 +592,67 @@ def _rls_user_context(user: dict | None) -> dict:
 
 def _runtime_user(user) -> dict | None:
     return user if isinstance(user, dict) else None
+
+
+_BRONZE_LOGICAL_READ_PARQUET_CALL_RE = re.compile(
+    r"\bread_parquet\s*\(\s*(['\"])(raw/[A-Za-z0-9_./=-]+)\1\s*\)",
+    re.IGNORECASE,
+)
+_BRONZE_LOGICAL_READ_PARQUET_PATH_RE = re.compile(
+    r"(\bread_parquet\s*\(\s*['\"])(raw/[A-Za-z0-9_./=-]+)(['\"])",
+    re.IGNORECASE,
+)
+
+
+def _workspace_scope_from_user(user: dict | None) -> tuple[str, str]:
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        raise HTTPException(400, "Bronze query requires tenant/workspace scope")
+    return tenant_id, workspace_id
+
+
+def _bronze_bucket_name() -> str:
+    return (
+        os.environ.get("S3_BUCKET_NAME")
+        or os.environ.get("MINIO_BUCKET")
+        or "lakehouse"
+    ).strip()
+
+
+def _scoped_bronze_s3_path(logical_path: str, user: dict | None) -> str:
+    path = str(logical_path or "").strip().strip("/")
+    parts = path.split("/")
+    if len(parts) < 3 or parts[0] != "raw" or any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(400, "Invalid bronze source path")
+    if "tenant_id=" in path or "workspace_id=" in path:
+        raise HTTPException(400, "Bronze logical paths must omit tenant/workspace partitions")
+    tenant_id, workspace_id = _workspace_scope_from_user(user)
+    return (
+        f"s3://{_bronze_bucket_name()}/{path}/"
+        f"tenant_id={tenant_id}/workspace_id={workspace_id}/**/*.parquet"
+    )
+
+
+def _rewrite_bronze_logical_paths(sql: str, user: dict | None) -> str:
+    """Allow the UI to submit logical raw paths while preserving scoped S3 reads."""
+    if "read_parquet" not in (sql or "").lower():
+        return sql
+
+    def replace_call(match: re.Match[str]) -> str:
+        scoped_path = _scoped_bronze_s3_path(match.group(2), user)
+        return (
+            f"read_parquet({match.group(1)}{scoped_path}{match.group(1)}, "
+            "hive_partitioning=true, union_by_name=true)"
+        )
+
+    rewritten = _BRONZE_LOGICAL_READ_PARQUET_CALL_RE.sub(replace_call, sql)
+
+    def replace_path(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{_scoped_bronze_s3_path(match.group(2), user)}{match.group(3)}"
+
+    return _BRONZE_LOGICAL_READ_PARQUET_PATH_RE.sub(replace_path, rewritten)
 
 
 async def _call_with_optional_user(fn, *args, user=None):
@@ -2544,6 +2606,7 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
     sources = body.get("sources") or []
     if not sql:
         raise HTTPException(400, "sql is required")
+    sql = _rewrite_bronze_logical_paths(sql, user)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",
@@ -2905,15 +2968,89 @@ async def serve_app(name: str, request: Request, user: dict = Depends(require_pe
     return await _proxy_workspace_app(request, name)
 
 
+async def _active_scoped_connection_cartridges(user: dict | None) -> set[str]:
+    tenant_id = str((user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+    workspace_id = str((user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip()
+    if not tenant_id or not workspace_id:
+        return set()
+    try:
+        pool = await _get_db_pool()
+        rows = await pool.fetch(
+            """
+            SELECT DISTINCT cartridge
+              FROM vault_entries
+             WHERE scope = 'connections'
+               AND tenant_id = $1::uuid
+               AND workspace_id = $2::uuid
+               AND COALESCE(cartridge, '') <> ''
+            """,
+            tenant_id,
+            workspace_id,
+        )
+    except Exception:
+        logger.debug("Failed to load scoped Vault connection cartridges", exc_info=True)
+        return set()
+    cartridges: set[str] = set()
+    for row in rows:
+        item = dict(row)
+        cartridge = str(item.get("cartridge") or "").strip()
+        if cartridge:
+            cartridges.add(cartridge)
+    return cartridges
+
+
+def _app_cartridge_id(app: dict) -> str:
+    for key in ("cartridge", "cartridge_id", "connector_id"):
+        value = str(app.get(key) or "").strip()
+        if value:
+            return value
+    name = str(app.get("name") or app.get("id") or "").strip()
+    for cartridge in ("sap_successfactors", "sap_s4hana", "sap_hcm", "salesforce", "replicon", "hubspot"):
+        if name == cartridge or name.startswith(f"{cartridge}_"):
+            return cartridge
+    return ""
+
+
+def _filter_apps_payload_to_scoped_connections(payload: Any, active_cartridges: set[str]) -> dict[str, Any]:
+    if isinstance(payload, list):
+        normalized: dict[str, Any] = {"apps": payload}
+    elif isinstance(payload, dict):
+        normalized = dict(payload)
+    else:
+        normalized = {"apps": []}
+
+    apps = normalized.get("apps")
+    result = normalized.get("result")
+    apps_key = "apps"
+    if not isinstance(apps, list) and isinstance(result, list):
+        apps = result
+        apps_key = "result"
+    if not isinstance(apps, list):
+        apps = []
+    normalized["apps"] = apps
+
+    if active_cartridges:
+        apps = [
+            app
+            for app in apps
+            if isinstance(app, dict) and _app_cartridge_id(app) in active_cartridges
+        ]
+        normalized[apps_key] = apps
+        normalized["apps"] = apps
+        normalized["active_scoped_cartridges"] = sorted(active_cartridges)
+    return normalized
+
+
 @app.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
 async def api_apps(user: dict = Depends(require_permission("apps.read"))):
-    """List all published analytic apps."""
+    """List published analytic apps visible to the active scoped connections."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("list_apps", {}, user))
     if r.status_code >= 400:
         raise HTTPException(r.status_code, _upstream_error_detail(r, "Apps service unavailable"))
-    return r.json()
+    active_cartridges = await _active_scoped_connection_cartridges(user)
+    return _filter_apps_payload_to_scoped_connections(r.json(), active_cartridges)
 
 
 @app.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])

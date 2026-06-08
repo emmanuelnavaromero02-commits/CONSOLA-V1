@@ -133,6 +133,7 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
     sources = body.get("sources") or []
     if not sql:
         raise HTTPException(400, "sql is required")
+    sql = _rewrite_bronze_logical_paths(sql, user)
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=120) as c:
         r = await c.post(
             f"{REFINEMENT_URL}/mcp/invoke",

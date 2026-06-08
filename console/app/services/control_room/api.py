@@ -35,6 +35,22 @@ def _is_production_env() -> bool:
 
 
 @_bind_to_core
+def _show_known_non_ready_sources() -> bool:
+    explicit = os.environ.get("CONTROL_ROOM_SHOW_KNOWN_NON_READY")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    app_env = os.environ.get("APP_ENV")
+    if app_env:
+        return app_env.strip().lower() not in {"production", "prod"}
+    return True
+
+
+@_bind_to_core
+def _source_has_ready_contract(source: ControlRoomSource) -> bool:
+    return _readiness_contract(source).get("data_readiness") in DATA_READY_STATES
+
+
+@_bind_to_core
 def _internal_headers(server: str) -> dict[str, str]:
     pair = os.environ.get(f"INTERNAL_API_KEY_CONSOLE_TO_{server}")
     if pair:
@@ -56,6 +72,16 @@ def _mcp_payload(tool: str, args: dict[str, Any], user: dict | None) -> dict[str
 
 @_bind_to_core
 async def query_dataset_rows(dataset: str, user: dict | None, limit: int = 1000) -> list[dict[str, Any]]:
+    try:
+        from app.services.intelligence.gold_fetcher import query_gold_dataset_rows
+
+        return await query_gold_dataset_rows(dataset, user, limit)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 503}:
+            raise
+    except Exception:
+        pass
+
     async with httpx.AsyncClient(headers=_internal_headers("REFINEMENT"), timeout=45) as client:
         response = await client.post(
             f"{REFINEMENT_URL}/mcp/invoke",
@@ -1237,6 +1263,9 @@ async def _collect_items(
                         items.append(source_item)
             continue
         for source in module.sources:
+            if not _show_known_non_ready_sources() and not _source_has_ready_contract(source):
+                rows_by_dataset[source.dataset] = []
+                continue
             rows, source_status = await _fetch_source(source, user, fetcher, limit_per_source)
             rows_by_dataset[source.dataset] = rows if source_status["status"] == "ok" else []
             sources.append(source_status)
