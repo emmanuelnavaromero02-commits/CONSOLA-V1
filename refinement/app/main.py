@@ -523,12 +523,20 @@ def _schema_for_transform_source(body: dict, source: str, ctx: dict) -> dict:
         return engine.get_source_schema(source, ctx)
     _require_dataset_scope(body, ds)
     schema = engine.get_dataset_schema(ds)
-    return {
+    layer = str(ds.get("layer") or "").strip().lower()
+    cartridge = str(ds.get("cartridge") or "").strip()
+    out = {
         "source": source,
         "dataset": ds_name,
-        "layer": ds.get("layer"),
+        "layer": layer,
+        "cartridge": cartridge,
         "fields": schema.get("fields", []),
     }
+    if layer in {"silver", "gold"} and cartridge:
+        out["storage_path"] = f"s3://lakehouse/{layer}/{cartridge}/{ds_name}/data.parquet"
+    if layer == "gold":
+        out["gold_table"] = f"pggold.gold_{ds_name}"
+    return out
 
 
 def _require_transform_source_scope(body: dict, source: str, permission: str = "datasets.read") -> None:

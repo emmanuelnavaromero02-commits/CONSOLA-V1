@@ -402,3 +402,7 @@ async def test_generate_transform_mcp_propagates_gold_layer_for_registered_datas
     assert result["layer"] == "gold"
     assert captured["layer"] == "gold"
     assert captured["schemas"]["timeentry_clean"]["fields"][0]["name"] == "customer_id"
+    assert captured["schemas"]["timeentry_clean"]["cartridge"] == "replicon"
+    assert captured["schemas"]["timeentry_clean"]["storage_path"] == (
+        "s3://lakehouse/silver/replicon/timeentry_clean/data.parquet"
+    )

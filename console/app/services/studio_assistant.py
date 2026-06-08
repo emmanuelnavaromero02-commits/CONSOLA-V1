@@ -279,6 +279,14 @@ _SENSITIVE_ARG_FRAGMENTS = (
 )
 
 _APPROVAL_DECISION_TOOLS = {"approve_goal_step", "reject_goal_step"}
+_REFINE_DIRECT_ADMIN_TOOLS = {"save_dataset", "materialize"}
+_REFINE_GOAL_KEYWORDS = (
+    "dataset",
+    "gold",
+    "materializ",
+    "refinar",
+    "silver",
+)
 _APPROVAL_PHRASES = (
     "apruebo",
     "aprobado",
@@ -331,6 +339,31 @@ def _current_user_text_allows_approval_tool(tool_name: str, args: dict[str, Any]
     if bare == "approve_goal_step":
         return has_approval and not has_rejection
     return has_rejection
+
+
+def _is_studio_admin(actor_role: str | None, actor_user: dict | None) -> bool:
+    values = {
+        str(actor_role or "").strip().lower(),
+        str((actor_user or {}).get("role") or "").strip().lower(),
+        str((actor_user or {}).get("workspace_role") or "").strip().lower(),
+    }
+    return bool(values & {"admin", "super_admin", "super-admin", "tenant_admin", "workspace_admin", "owner"})
+
+
+def _result_is_error(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("error"):
+        return True
+    try:
+        return int(result.get("status_code") or 0) >= 400
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_refine_dataset_goal(args: dict[str, Any] | None) -> bool:
+    text = " ".join(str((args or {}).get(key) or "") for key in ("intent", "description", "title")).casefold()
+    return any(keyword in text for keyword in _REFINE_GOAL_KEYWORDS)
 
 
 def is_tool_allowed_for_role(role: str | None, tool_name: str) -> bool:
@@ -463,6 +496,13 @@ FLUJO:
      · gold   → tabla en postgres_gold: gold_{name} (alias DuckDB: pggold; visible en Superset)
    - materialize(name) ejecuta y escribe.
 5. VERIFICAR: get_schema(name), query_dataset(name), get_lineage(name).
+
+CONTRATO EN ESTE PASO:
+- Si generate_transform falla, NO inventes SQL manual ni sigas a guardar; corrige
+  la generación o reporta el error textual.
+- Si preview_transform falla, NO llames save_dataset, materialize ni create_goal_run.
+- Para super-admin/admin, NO uses approval_key ni goal run para guardar un dataset
+  de Refinar: tras un preview_transform exitoso llama save_dataset/materialize directo.
 
 PATRONES SQL COMUNES (silver):
 - Última partición: SELECT * FROM read_parquet('...load_date=*/...', hive_partitioning=true)
@@ -606,6 +646,9 @@ Restricciones globales:
 - PROHIBIDO ejecutar acciones mutantes sin approval del goal run cuando la tool
   devuelva `approval_required`. Explica tool, riesgo, razón y args_preview; espera
   que el usuario apruebe antes de llamar `studio__approve_goal_step`.
+- Excepción de Refinar para super-admin/admin: save_dataset/materialize pueden
+  ejecutarse directo después de preview_transform exitoso. No pidas ni menciones
+  approval_key para ese flujo.
 - En respuestas de goal run, SIEMPRE reporta pasos completados, pasos bloqueados,
   evidencia relevante y próxima acción concreta.
 - PROHIBIDO pegar código (HTML, SQL, JS, Python, YAML) en el chat. El código se
@@ -749,6 +792,8 @@ async def chat(
             f"</hints_cartucho>"
         )
 
+    refine_preview_state = {"ok": False}
+
     async def _invoke_tool(srv: str, tool: str, args: dict):
         if not srv and tool in _LOCAL_TOOL_HANDLERS:
             srv = STUDIO_LOCAL_SERVER_ID
@@ -808,9 +853,35 @@ async def chat(
                     "approval or rejection in the current message"
                 )
             }
+        if step == 4 and bare_name in _REFINE_DIRECT_ADMIN_TOOLS and not refine_preview_state["ok"]:
+            return {
+                "error": (
+                    "Refinar requiere un preview_transform exitoso antes de guardar "
+                    "o materializar. Corrige el SQL y vuelve a previsualizar; no se "
+                    "necesita approval_key para super-admin cuando el preview ya pasó."
+                )
+            }
+        if step == 4 and bare_name == "create_goal_run" and _is_refine_dataset_goal(args):
+            return {
+                "error": (
+                    "No uses goal run ni approval_key para crear/materializar datasets "
+                    "en Refinar. Primero ejecuta preview_transform; si pasa, usa "
+                    "save_dataset/materialize directamente."
+                )
+            }
         risk_meta = classify_tool(bare_name)
         risk = risk_meta["risk_level"]
-        if bare_name not in _APPROVAL_DECISION_TOOLS and (risk_meta.get("requires_approval") or requires_approval(bare_name)):
+        direct_refine_admin_write = (
+            step == 4
+            and bare_name in _REFINE_DIRECT_ADMIN_TOOLS
+            and refine_preview_state["ok"]
+            and _is_studio_admin(actor_role, actor_user)
+        )
+        if (
+            not direct_refine_admin_write
+            and bare_name not in _APPROVAL_DECISION_TOOLS
+            and (risk_meta.get("requires_approval") or requires_approval(bare_name))
+        ):
             payload = {
                 "approval_required": True,
                 "tool": full_name,
@@ -864,6 +935,8 @@ async def chat(
                     "details": detail_payload,
                 }
             return {"error": str(error_message), "status_code": exc.status_code}
+        if step == 4 and bare_name == "preview_transform":
+            refine_preview_state["ok"] = not _result_is_error(result)
         status = "error" if isinstance(result, dict) and result.get("error") else "success"
         await audit_service.record_event(
             user_id=(actor_user or {}).get("id"),

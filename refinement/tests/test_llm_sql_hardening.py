@@ -51,6 +51,54 @@ async def test_generate_sql_rejects_non_json(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_generate_sql_recovers_json_from_markdown_fence(monkeypatch):
+    class Messages:
+        async def create(self, **_kwargs):
+            return SimpleNamespace(content=[SimpleNamespace(text="""```json
+{"sql": "SELECT * FROM pggold.gold_timeentry_clean", "explanation": "ok"}
+```""")])
+
+    monkeypatch.setitem(generate_sql.__globals__, "_client", SimpleNamespace(messages=Messages()))
+
+    sql, explanation = await generate_sql(
+        "make gold dataset",
+        {"timeentry_clean": {"fields": [{"name": "id", "type": "VARCHAR"}]}},
+        layer="gold",
+    )
+
+    assert sql == "SELECT * FROM pggold.gold_timeentry_clean"
+    assert explanation == "ok"
+
+
+@pytest.mark.anyio
+async def test_generate_sql_retries_once_after_invalid_json(monkeypatch):
+    calls = 0
+
+    class Messages:
+        async def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return SimpleNamespace(content=[SimpleNamespace(text="SELECT * FROM pggold.gold_timeentry_clean")])
+            return SimpleNamespace(content=[SimpleNamespace(text=json.dumps({
+                "sql": "SELECT * FROM pggold.gold_timeentry_clean",
+                "explanation": "gold ok",
+            }))])
+
+    monkeypatch.setitem(generate_sql.__globals__, "_client", SimpleNamespace(messages=Messages()))
+
+    sql, explanation = await generate_sql(
+        "make gold dataset",
+        {"timeentry_clean": {"fields": [{"name": "id", "type": "VARCHAR"}]}},
+        layer="gold",
+    )
+
+    assert calls == 2
+    assert sql == "SELECT * FROM pggold.gold_timeentry_clean"
+    assert explanation == "gold ok"
+
+
+@pytest.mark.anyio
 async def test_generate_sql_returns_only_valid_json_sql(monkeypatch):
     class Messages:
         async def create(self, **_kwargs):

@@ -18,6 +18,7 @@ _SQL_FORBIDDEN_RE = re.compile(
 )
 _SQL_COMMENT_RE = re.compile(r"(--|/\*)")
 _SINGLE_QUOTED_RE = re.compile(r"'(?:''|[^'])*'", re.DOTALL)
+_JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.IGNORECASE | re.DOTALL)
 
 
 class GeneratedSQLValidationError(ValueError):
@@ -74,8 +75,10 @@ tablas pggold permitidas o fuentes que el motor ya expone al contexto.
 
 Reglas:
 - Devuelve SOLO una consulta SELECT o WITH.
-- Lee datasets Silver registrados mediante read_parquet('s3://lakehouse/silver/<cartridge>/<dataset>/data.parquet') solo si aparecen en las fuentes disponibles.
-- Lee tablas Gold registradas como pggold.gold_<dataset>.
+- Lee datasets Silver registrados SOLO mediante la ruta exacta `Ruta permitida`
+  mostrada para esa fuente. No inventes rutas ni cambies el nombre del dataset.
+- Lee tablas Gold registradas SOLO mediante el alias `Tabla Gold permitida`
+  mostrado para esa fuente; la forma esperada es pggold.gold_<dataset>.
 - NO uses DDL/DML, comentarios, punto y coma ni múltiples statements.
 - NO es obligatorio usar read_parquet ni el placeholder {latest_date}; esas reglas son sólo de Silver.
 
@@ -88,14 +91,65 @@ SYSTEM_BY_LAYER = {
 }
 
 
+def _source_location_for_prompt(src: str, schema: dict, layer: str) -> str:
+    if layer == "silver" and str(src).startswith("raw/"):
+        return f"s3://lakehouse/{src}/**/*.parquet"
+    storage_path = str(schema.get("storage_path") or "").strip()
+    if storage_path:
+        return storage_path
+    gold_table = str(schema.get("gold_table") or "").strip()
+    if gold_table:
+        return gold_table
+    return src
+
+
+def _schema_lines_for_prompt(src: str, schema: dict, layer: str) -> str:
+    lines = [
+        f"Fuente: {src}",
+        f"  Ruta/tabla: {_source_location_for_prompt(src, schema, layer)}",
+    ]
+    source_layer = str(schema.get("layer") or "").strip().lower()
+    cartridge = str(schema.get("cartridge") or "").strip()
+    if source_layer:
+        lines.append(f"  Capa registrada: {source_layer}")
+    if cartridge:
+        lines.append(f"  Cartucho: {cartridge}")
+    if schema.get("storage_path"):
+        lines.append(f"  Ruta permitida: {schema['storage_path']}")
+    if schema.get("gold_table"):
+        lines.append(f"  Tabla Gold permitida: {schema['gold_table']}")
+    fields = schema.get("fields", [])
+    lines.append(f"  Campos: {', '.join(f['name'] + ':' + f['type'] for f in fields)}")
+    return "\n".join(lines)
+
+
+def _normalise_json_text(text: str) -> str:
+    text = (text or "").strip()
+    match = _JSON_FENCE_RE.match(text)
+    if match:
+        return match.group(1).strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    start = text.find("{")
+    end = text.rfind("}")
+    if 0 <= start < end:
+        return text[start:end + 1].strip()
+    return text
+
+
+def _parse_sql_json(text: str) -> dict:
+    try:
+        data = json.loads(_normalise_json_text(text))
+    except json.JSONDecodeError as exc:
+        raise GeneratedSQLValidationError(f"LLM SQL response was not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise GeneratedSQLValidationError("LLM SQL response must be a JSON object")
+    return data
+
+
 async def generate_sql(description: str, schemas: dict[str, dict], layer: str = "silver") -> tuple[str, str]:
     layer = _normalise_layer(layer)
-    schema_text = "\n".join(
-        f"Fuente: {src}\n"
-        f"  Ruta/tabla: {('s3://lakehouse/' + src + '/**/*.parquet') if layer == 'silver' and str(src).startswith('raw/') else src}\n"
-        f"  Campos: {', '.join(f['name'] + ':' + f['type'] for f in s.get('fields', []))}"
-        for src, s in schemas.items()
-    )
+    schema_text = "\n".join(_schema_lines_for_prompt(src, s, layer) for src, s in schemas.items())
 
     layer_hint = (
         "Genera el SQL DuckDB para esta transformación Silver. "
@@ -113,24 +167,39 @@ Esquemas disponibles:
 
 {layer_hint}"""
 
-    resp = await _client.messages.create(
-        model=SQL_MODEL,
-        max_tokens=2048,
-        system=SYSTEM_BY_LAYER[layer],
-        messages=[{"role": "user", "content": prompt}],
-    )
+    messages = [{"role": "user", "content": prompt}]
+    last_error: GeneratedSQLValidationError | None = None
+    for attempt in range(2):
+        resp = await _client.messages.create(
+            model=SQL_MODEL,
+            max_tokens=2048,
+            system=SYSTEM_BY_LAYER[layer],
+            messages=messages,
+        )
 
-    text = resp.content[0].text.strip()
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise GeneratedSQLValidationError(f"LLM SQL response was not valid JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise GeneratedSQLValidationError("LLM SQL response must be a JSON object")
-    sql = data.get("sql")
-    explanation = data.get("explanation", "")
-    if not isinstance(sql, str):
-        raise GeneratedSQLValidationError("LLM SQL JSON field 'sql' must be a string")
-    if not isinstance(explanation, str):
-        explanation = ""
-    return validate_generated_sql(sql, layer=layer), explanation
+        text = resp.content[0].text.strip()
+        try:
+            data = _parse_sql_json(text)
+            sql = data.get("sql")
+            explanation = data.get("explanation", "")
+            if not isinstance(sql, str):
+                raise GeneratedSQLValidationError("LLM SQL JSON field 'sql' must be a string")
+            if not isinstance(explanation, str):
+                explanation = ""
+            return validate_generated_sql(sql, layer=layer), explanation
+        except GeneratedSQLValidationError as exc:
+            last_error = exc
+            if attempt:
+                break
+            messages.extend([
+                {"role": "assistant", "content": text[:4000]},
+                {
+                    "role": "user",
+                    "content": (
+                        "La respuesta anterior no cumplió el contrato. Devuelve SOLO JSON válido "
+                        "con campos sql y explanation. El SQL debe ser SELECT/WITH, sin comentarios "
+                        "ni punto y coma, usando únicamente las rutas/tablas permitidas."
+                    ),
+                },
+            ])
+    raise last_error or GeneratedSQLValidationError("LLM SQL generation failed")

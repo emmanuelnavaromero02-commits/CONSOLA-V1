@@ -40,6 +40,18 @@ def _servers():
     }]
 
 
+def _refinement_servers():
+    return [{
+        "id": "refinement",
+        "name": "Refinement",
+        "healthy": True,
+        "tools": [
+            {"name": "preview_transform", "description": "Preview", "input_schema": {"type": "object"}},
+            {"name": "save_dataset", "description": "Save", "input_schema": {"type": "object"}},
+        ],
+    }]
+
+
 @pytest.mark.asyncio
 async def test_studio_assistant_uses_scoped_system_prompt(studio_assistant_module, monkeypatch):
     captured = {}
@@ -133,6 +145,105 @@ async def test_studio_assistant_blocks_direct_write_tool_invocation(studio_assis
     assert captured["result"]["args_preview"]["password"] == "***"
     assert audits[-1]["status"] == "pending_approval"
     assert audits[-1]["tool_result_status"] == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_refine_step_blocks_save_after_failed_preview(studio_assistant_module, monkeypatch):
+    captured = {}
+    invocations = []
+
+    async def fake_list_servers():
+        return _refinement_servers()
+
+    async def fake_invoke(_srv, tool, args, **_kwargs):
+        invocations.append((tool, args))
+        if tool == "preview_transform":
+            return {"error": "SQL storage path not allowed", "status_code": 403}
+        raise AssertionError("save_dataset must not be invoked after a failed preview")
+
+    async def fake_audit(**_kwargs):
+        return None
+
+    async def fake_chat(**kwargs):
+        await kwargs["invoke_tool"](
+            "refinement",
+            "preview_transform",
+            {"sql": "SELECT * FROM missing", "limit": 20},
+        )
+        captured["save_result"] = await kwargs["invoke_tool"](
+            "refinement",
+            "save_dataset",
+            {"name": "bad_gold", "sql": "SELECT * FROM missing", "layer": "gold"},
+        )
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "list_servers", fake_list_servers)
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_assistant_module.audit_service, "record_event", fake_audit)
+    monkeypatch.setattr(studio_assistant_module.llm_client, "chat", fake_chat)
+
+    await studio_assistant_module.chat(
+        "crea un gold",
+        [],
+        step=4,
+        manifest={"id": "sap_successfactors", "name": "SAP SuccessFactors"},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai"},
+    )
+
+    assert [tool for tool, _args in invocations] == ["preview_transform"]
+    assert "preview_transform exitoso" in captured["save_result"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_refine_step_super_admin_can_save_after_successful_preview_without_approval_key(studio_assistant_module, monkeypatch):
+    captured = {}
+    invocations = []
+
+    async def fake_list_servers():
+        return _refinement_servers()
+
+    async def fake_invoke(_srv, tool, args, **_kwargs):
+        invocations.append((tool, args))
+        if tool == "preview_transform":
+            return {"row_count": 1, "rows": [{"ok": 1}]}
+        if tool == "save_dataset":
+            return {"saved": True, "name": args["name"]}
+        raise AssertionError(f"unexpected tool {tool}")
+
+    async def fake_audit(**_kwargs):
+        return None
+
+    async def fake_chat(**kwargs):
+        await kwargs["invoke_tool"](
+            "refinement",
+            "preview_transform",
+            {"sql": "SELECT 1 AS ok", "limit": 20},
+        )
+        captured["save_result"] = await kwargs["invoke_tool"](
+            "refinement",
+            "save_dataset",
+            {"name": "good_gold", "sql": "SELECT 1 AS ok", "layer": "gold"},
+        )
+        return "ok", [], kwargs["messages"]
+
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "list_servers", fake_list_servers)
+    monkeypatch.setattr(studio_assistant_module.mcp_registry, "invoke", fake_invoke)
+    monkeypatch.setattr(studio_assistant_module.audit_service, "record_event", fake_audit)
+    monkeypatch.setattr(studio_assistant_module.llm_client, "chat", fake_chat)
+
+    await studio_assistant_module.chat(
+        "crea un gold",
+        [],
+        step=4,
+        manifest={"id": "sap_successfactors", "name": "SAP SuccessFactors"},
+        actor_role="admin",
+        actor_user={"id": 7, "email": "admin@local.ai", "role": "admin"},
+    )
+
+    assert [tool for tool, _args in invocations] == ["preview_transform", "save_dataset"]
+    assert captured["save_result"] == {"saved": True, "name": "good_gold"}
+    assert "approval_key" not in captured["save_result"]
 
 
 @pytest.mark.asyncio
