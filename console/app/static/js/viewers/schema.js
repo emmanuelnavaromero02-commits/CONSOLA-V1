@@ -31,7 +31,10 @@ async function loadSchema() {
   const source = document.getElementById('source-sel').value;
   if (!source) return;
   currentSource = source;
-  history.replaceState(null, '', `?source=${encodeURIComponent(source)}`);
+  const nextParams = new URLSearchParams(location.search);
+  nextParams.set('type', 'schema');
+  nextParams.set('source', source);
+  history.replaceState(null, '', `${location.pathname}?${nextParams.toString()}`);
 
   document.getElementById('schema-area').style.display = 'none';
   document.getElementById('loading').style.display = 'block';

@@ -53,6 +53,8 @@
   .empty{padding:28px;text-align:center;color:var(--text3);font-style:italic}
   .error{background:rgba(248,81,73,.12);color:var(--red);border:1px solid var(--red);
          padding:14px;border-radius:6px;margin-bottom:16px}
+  .notice{background:rgba(210,153,34,.12);color:var(--amber);border:1px solid var(--amber);
+          padding:12px;border-radius:6px;margin-bottom:16px}
   @media(max-width:880px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -91,16 +93,28 @@ const fmtN = n => n==null ? '—' : Number(n).toLocaleString('es-MX');
 const fmtD = n => n==null ? '—' : Number(n).toLocaleString('es-MX',{minimumFractionDigits:1,maximumFractionDigits:1});
 const charts = {};
 function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">Error cargando datos: ${msg}</div>`; }
+function showNotice(msg){ document.getElementById('error').innerHTML = msg ? `<div class="notice">${msg}</div>` : ''; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 async function fetchJson(url){
   const r = await fetch(url);
   if(!r.ok) throw new Error(url + ' (' + r.status + ')');
   const d = await r.json();
+  if(d && d.error) throw new Error(d.error);
   return Array.isArray(d) ? d : (d.data || []);
 }
 
 let ANOM = [], FUNNEL = [], MGR = [];
+const UNAVAILABLE = {};
+
+async function fetchOptional(label, url){
+  try{
+    return await fetchJson(url);
+  }catch(e){
+    UNAVAILABLE[label] = e.message;
+    return [];
+  }
+}
 
 function renderKPIs(anomRows){
   const openReq = FUNNEL.reduce((s,r)=> s + Number(r.open_requisitions||0), 0);
@@ -170,6 +184,10 @@ function renderSpanChart(){
 function renderRecruitChart(){
   if(charts['chart-recruit']) charts['chart-recruit'].destroy();
   const ctx = document.getElementById('chart-recruit');
+  if(UNAVAILABLE['Reclutamiento']){
+    ctx.parentElement.innerHTML = `<div class="empty">Reclutamiento pendiente: ${esc(UNAVAILABLE['Reclutamiento'])}</div>`;
+    return;
+  }
   if(!FUNNEL.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin requisiciones</div>'; return; }
   const top = [...FUNNEL].sort((a,b)=> Number(b.requisitions)-Number(a.requisitions)).slice(0,10);
   const labels = top.map(r=> r.department || '(sin depto)');
@@ -196,11 +214,13 @@ function resetFilter(){ document.getElementById('anomaly-filter').value = ''; ap
 async function init(){
   try{
     const [anom, funnel, mgr] = await Promise.all([
-      fetchJson('/api/data/sap_successfactors_employees_anomalies'),
-      fetchJson('/api/data/sap_successfactors_recruitment_funnel'),
-      fetchJson('/api/data/sap_successfactors_manager_hierarchy'),
+      fetchOptional('Anomalias', '/api/data/sap_successfactors_employees_anomalies'),
+      fetchOptional('Reclutamiento', '/api/data/sap_successfactors_recruitment_funnel'),
+      fetchOptional('Jerarquia', '/api/data/sap_successfactors_manager_hierarchy'),
     ]);
     ANOM = anom; FUNNEL = funnel; MGR = mgr;
+    const missing = Object.entries(UNAVAILABLE).map(([k,v]) => `${esc(k)}: ${esc(v)}`);
+    showNotice(missing.length ? `Datos parciales cargados. Pendiente: ${missing.join(' · ')}` : '');
 
     const types = [...new Set(ANOM.map(r=> r.anomaly_type).filter(Boolean))].sort();
     document.getElementById('anomaly-filter').insertAdjacentHTML('beforeend',

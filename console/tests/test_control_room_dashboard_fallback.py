@@ -31,6 +31,38 @@ def _zero_pool() -> AsyncMock:
     return pool
 
 
+def test_control_room_known_non_ready_sources_default_to_hidden(monkeypatch):
+    monkeypatch.delenv("CONTROL_ROOM_SHOW_KNOWN_NON_READY", raising=False)
+    monkeypatch.delenv("APP_ENV", raising=False)
+
+    assert control_room_service._show_known_non_ready_sources() is False
+
+
+def test_control_room_domain_payload_hides_modules_without_runtime_data(monkeypatch):
+    monkeypatch.delenv("CONTROL_ROOM_SHOW_KNOWN_NON_READY", raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    modules = [
+        module
+        for module in control_room_service.MODULES
+        if module.cartridge == "sap_successfactors"
+    ]
+    sources = [
+        {
+            "module_id": "sap_successfactors_org",
+            "domain": "Recursos Humanos",
+            "dataset": "sap_successfactors_org_structure",
+            "count": 515,
+            "status": "ok",
+            "operationally_ready": True,
+            "data_readiness": "ready",
+        }
+    ]
+
+    payload = control_room_service._domain_payload("Recursos Humanos", modules, [], sources)
+
+    assert [module["id"] for module in payload["modules"]] == ["sap_successfactors_org"]
+
+
 @pytest.mark.asyncio
 async def test_dashboard_kpis_falls_back_to_catalog_without_active_connection():
     with (

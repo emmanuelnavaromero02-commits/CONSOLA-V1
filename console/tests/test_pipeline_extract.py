@@ -19,6 +19,19 @@ def _module(**attrs):
     return mod
 
 
+def test_bronze_latest_date_from_scoped_tenant_workspace_paths(console_main):
+    latest = console_main._bronze_latest_date_from_objects(
+        "sap_successfactors",
+        "FOCompany",
+        [
+            "raw/sap_successfactors/FOCompany/tenant_id=t1/workspace_id=w1/load_date=2026-06-07/batch_id=a/data.parquet",
+            "raw/sap_successfactors/FOCompany/tenant_id=t1/workspace_id=w1/load_date=2026-06-08/batch_id=b/data.parquet",
+        ],
+    )
+
+    assert latest == "2026-06-08"
+
+
 async def _noop_async(*args, **kwargs):
     return None
 

@@ -192,7 +192,8 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
             cartridge_id,
         )
         entities = await conn.fetch(
-            "SELECT entity, display_name, mode, primary_key, dag_id, "
+            "SELECT entity, display_name, mode, primary_key, watermark_field, "
+            "       page_size, select_fields, protection, effective_dated, date_field, dag_id, "
             "       trigger_type, cron_expression, description, enabled, "
             "       COALESCE(dag_params, '{}'::jsonb) AS dag_params "
             "FROM entity_config WHERE cartridge_id=$1 AND enabled=TRUE ORDER BY entity",
@@ -226,9 +227,19 @@ async def get_cartridge(cartridge_id: str) -> dict | None:
         "entities": [
             {
                 "entity":          r["entity"],
+                "name":            r["entity"],
                 "display_name":    r["display_name"] or "",
                 "mode":            r["mode"],
                 "primary_key":     r["primary_key"] or "",
+                "watermark_field": r["watermark_field"] or "",
+                "watermark":       r["watermark_field"] or "",
+                "page_size":       r["page_size"],
+                "select_fields":   r["select_fields"] or [],
+                "fields":          r["select_fields"] or [],
+                "columns":         r["select_fields"] or [],
+                "protection":      r["protection"] or {},
+                "effective_dated": r["effective_dated"],
+                "date_field":      r["date_field"] or "",
                 "dag_id":          r["dag_id"] or "",
                 "trigger_type":    r["trigger_type"] or "manual",
                 "cron_expression": r["cron_expression"] or "",

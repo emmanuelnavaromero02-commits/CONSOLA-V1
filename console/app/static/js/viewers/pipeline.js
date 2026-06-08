@@ -9,12 +9,31 @@
 let pipelineData  = [];
 let activeJobs    = {};   // entity → job_id (jobs being polled)
 let _autoTimer    = null;
-let _cartridge    = 'replicon';
+const _initialParams = new URLSearchParams(location.search);
+let _cartridge    = _initialParams.get('cartridge') || '';
 let _activeTab    = 'pipeline';
 let _selectedDag  = null;  // currently selected dag_id in editor
 let _airflowPublicUrl = '';
 let _vaultConnections = [];
 let _selectedConnId = '';
+
+function syncPipelineUrl() {
+  const nextParams = new URLSearchParams(location.search);
+  nextParams.set('type', 'pipeline');
+  nextParams.set('cartridge', _cartridge);
+  history.replaceState(null, '', `${location.pathname}?${nextParams.toString()}`);
+}
+
+async function activeScopedCartridges() {
+  try {
+    const r = await fetch('/api/apps', { credentials: 'same-origin' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d.active_scoped_cartridges) ? d.active_scoped_cartridges : [];
+  } catch (e) {
+    return [];
+  }
+}
 
 async function loadRuntimeConfig() {
   try {
@@ -64,20 +83,32 @@ function jsonHeaders() {
 
 async function loadCartridgeSelector() {
   try {
-    const r = await fetch('/studio/cartridges');
-    const d = await r.json();
+    const [cartridgesResp, active] = await Promise.all([
+      fetch('/studio/cartridges', {credentials: 'same-origin'}),
+      activeScopedCartridges(),
+    ]);
+    const d = await cartridgesResp.json();
     const list = d.cartridges || [];
+    const visibleList = active.length ? list.filter(c => active.includes(c.id)) : list;
+    const requested = _cartridge;
+    const nextCartridge = requested && (!active.length || active.includes(requested))
+      ? requested
+      : (visibleList[0]?.id || active[0] || requested || 'sap_successfactors');
+    _cartridge = nextCartridge;
     const sel  = document.getElementById('cart-sel');
-    sel.innerHTML = list.map(c =>
+    const options = visibleList.length ? visibleList : [{id: _cartridge, name: _cartridge}];
+    sel.innerHTML = options.map(c =>
       `<option value="${esc(c.id)}" ${c.id === _cartridge ? 'selected' : ''}>${esc(c.name)} (${esc(c.id)})</option>`
     ).join('');
-    if (list.length === 1) _cartridge = list[0].id;
+    sel.value = _cartridge;
+    syncPipelineUrl();
   } catch(e) {}
 }
 
 function onCartridgeChange() {
   const sel = document.getElementById('cart-sel');
-  _cartridge = sel.value || 'replicon';
+  _cartridge = sel.value || 'sap_successfactors';
+  syncPipelineUrl();
   activeJobs = {};
   _vaultConnections = [];
   _selectedConnId = '';

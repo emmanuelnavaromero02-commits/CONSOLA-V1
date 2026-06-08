@@ -4,14 +4,33 @@ function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 const params = new URLSearchParams(location.search);
 let semanticData = null;
 
+async function activeScopedCartridges() {
+  try {
+    const r = await fetch('/api/apps', { credentials: 'same-origin' });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d.active_scoped_cartridges) ? d.active_scoped_cartridges : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function loadCartridges() {
   try {
-    const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
-    const d = await r.json();
+    const [serversResp, active] = await Promise.all([
+      fetch('/api/mcp/servers', { credentials: 'same-origin' }),
+      activeScopedCartridges(),
+    ]);
+    const d = await serversResp.json();
     const servers = d.servers || [];
     const sel = document.getElementById('cartridge-sel');
-    const cartridge = params.get('cartridge') || 'replicon';
-    sel.innerHTML = servers.map(s => `<option value="${esc(s.id)}" ${s.id === cartridge ? 'selected' : ''}>${esc(s.id)}</option>`).join('');
+    const requested = params.get('cartridge') || '';
+    const visibleServers = active.length ? servers.filter(s => active.includes(s.id)) : servers;
+    const fallback = visibleServers[0]?.id || active[0] || requested || 'sap_successfactors';
+    const cartridge = requested && (!active.length || active.includes(requested)) ? requested : fallback;
+    const options = visibleServers.length ? visibleServers : [{id: cartridge}];
+    sel.innerHTML = options.map(s => `<option value="${esc(s.id)}" ${s.id === cartridge ? 'selected' : ''}>${esc(s.id)}</option>`).join('');
+    sel.value = cartridge;
     loadSemantic();
   } catch (e) {
     loadSemantic();
@@ -19,8 +38,11 @@ async function loadCartridges() {
 }
 
 async function loadSemantic() {
-  const cartridge = document.getElementById('cartridge-sel').value || 'replicon';
-  history.replaceState(null, '', `?cartridge=${encodeURIComponent(cartridge)}`);
+  const cartridge = document.getElementById('cartridge-sel').value || params.get('cartridge') || 'sap_successfactors';
+  const nextParams = new URLSearchParams(location.search);
+  nextParams.set('type', 'semantic');
+  nextParams.set('cartridge', cartridge);
+  history.replaceState(null, '', `${location.pathname}?${nextParams.toString()}`);
   document.getElementById('main-area').innerHTML = '<div class="empty-state">Cargando modelo semántico...</div>';
   document.getElementById('server-info').innerHTML = '';
 
