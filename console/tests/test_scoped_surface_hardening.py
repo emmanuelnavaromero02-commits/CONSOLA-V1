@@ -83,6 +83,67 @@ async def test_apps_list_filters_to_active_scoped_vault_cartridges(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_apps_list_resolves_scope_from_membership_when_user_is_unscoped(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "apps": [
+                    {"name": "sap_hcm_people_quality_dashboard", "cartridge": "sap_hcm"},
+                    {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"},
+                    {"name": "salesforce_pipeline", "cartridge": "salesforce"},
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    fake_pool = AsyncMock()
+    fake_pool.fetch.return_value = [{"cartridge": "sap_successfactors"}]
+    monkeypatch.setattr(console_main, "_get_db_pool", AsyncMock(return_value=fake_pool))
+    monkeypatch.setattr(
+        console_main,
+        "_workspace_memberships",
+        AsyncMock(return_value=[
+            {
+                "workspace_id": USER["active_workspace_id"],
+                "tenant_id": USER["active_tenant_id"],
+                "workspace_role": "workspace_admin",
+            }
+        ]),
+    )
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
+
+    unscoped_super_admin = {
+        "id": USER["id"],
+        "email": USER["email"],
+        "role": "super_admin",
+        "allowed_cartridges": USER["allowed_cartridges"],
+    }
+    result = await console_main.api_apps(unscoped_super_admin)
+
+    assert result["apps"] == [
+        {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"}
+    ]
+    fake_pool.fetch.assert_called_once()
+    assert fake_pool.fetch.call_args.args[1:] == (
+        USER["active_tenant_id"],
+        USER["active_workspace_id"],
+    )
+
+
+@pytest.mark.asyncio
 async def test_control_room_query_prefers_scoped_gold_fetcher(monkeypatch):
     from app.services.intelligence import gold_fetcher
 

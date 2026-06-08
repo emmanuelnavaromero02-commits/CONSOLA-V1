@@ -42,13 +42,14 @@ async def api_auth_login(request: Request, body: dict):
 @router.get("/api/apps", dependencies=[Depends(require_permission("apps.read"))])
 @_bind_to_main
 async def api_apps(user: dict = Depends(require_permission("apps.read"))):
-    """List all published analytic apps."""
+    """List published analytic apps visible to the active scoped connections."""
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=10) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("list_apps", {}, user))
     if r.status_code >= 400:
         raise HTTPException(r.status_code, _upstream_error_detail(r, "Apps service unavailable"))
-    return r.json()
+    active_cartridges = await _active_scoped_connection_cartridges(user)
+    return _filter_apps_payload_to_scoped_connections(r.json(), active_cartridges)
 
 # /api/apps/{name}
 @router.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])

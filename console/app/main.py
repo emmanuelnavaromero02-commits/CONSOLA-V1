@@ -2968,9 +2968,60 @@ async def serve_app(name: str, request: Request, user: dict = Depends(require_pe
     return await _proxy_workspace_app(request, name)
 
 
+async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]:
+    if not user:
+        return "", ""
+    ctx = build_security_context(user)
+    tenant_id = str(
+        ctx.get("tenant_id")
+        or user.get("active_tenant_id")
+        or user.get("tenant_id")
+        or ""
+    ).strip()
+    workspace_id = str(
+        ctx.get("workspace_id")
+        or user.get("active_workspace_id")
+        or user.get("workspace_id")
+        or ""
+    ).strip()
+
+    workspaces = user.get("workspaces")
+    if (not tenant_id or not workspace_id) and not isinstance(workspaces, list):
+        user_id = user.get("id")
+        if user_id is not None:
+            try:
+                workspaces = await _workspace_memberships(int(user_id))
+            except Exception:
+                logger.debug("Failed to resolve user workspaces for scoped apps filter", exc_info=True)
+                workspaces = []
+
+    if (not tenant_id or not workspace_id) and isinstance(workspaces, list) and workspaces:
+        active = None
+        if workspace_id:
+            active = next((w for w in workspaces if str(w.get("workspace_id") or "") == workspace_id), None)
+        if active is None:
+            active = workspaces[0]
+        tenant_id = tenant_id or str(active.get("tenant_id") or "").strip()
+        workspace_id = workspace_id or str(active.get("workspace_id") or "").strip()
+
+    if workspace_id and not tenant_id:
+        try:
+            pool = await _get_db_pool()
+            tenant_id = str(
+                await pool.fetchval(
+                    "SELECT tenant_id::text FROM workspaces WHERE id = $1::uuid",
+                    workspace_id,
+                )
+                or ""
+            ).strip()
+        except Exception:
+            logger.debug("Failed to resolve tenant from workspace for scoped apps filter", exc_info=True)
+
+    return tenant_id, workspace_id
+
+
 async def _active_scoped_connection_cartridges(user: dict | None) -> set[str]:
-    tenant_id = str((user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
-    workspace_id = str((user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip()
+    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
     if not tenant_id or not workspace_id:
         return set()
     try:
