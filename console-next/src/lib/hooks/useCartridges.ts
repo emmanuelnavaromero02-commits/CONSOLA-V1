@@ -9,6 +9,7 @@ import {
   saveCredentials,
   testConnection,
   type ConnectorSchema,
+  type TestConnectionOptions,
 } from "@/lib/cartridges";
 
 /**
@@ -52,7 +53,7 @@ export function useSaveCredentials(cartridgeId: string) {
 
 export function useTestConnection(cartridgeId: string) {
   return useMutation({
-    mutationFn: (connId?: string) => testConnection(cartridgeId, connId),
+    mutationFn: (options?: string | TestConnectionOptions) => testConnection(cartridgeId, options),
   });
 }
 

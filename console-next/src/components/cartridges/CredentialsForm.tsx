@@ -21,11 +21,16 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
 
   const [lastTest, setLastTest] = useState<Result | null>(null);
   const [selectedConnId, setSelectedConnId] = useState("");
+  const [testBaseUrl, setTestBaseUrl] = useState("");
   const connectionOptions = useMemo(
     () => uniqueConnectionIds(vaultConnections.data?.connections ?? []),
     [vaultConnections.data?.connections],
   );
   const connIdForTest = selectedConnId || connectionOptions[0] || "";
+  const selectedConnection = useMemo(
+    () => findConnection(vaultConnections.data?.connections ?? [], connIdForTest),
+    [connIdForTest, vaultConnections.data?.connections],
+  );
   const vaultHref = useMemo(() => {
     const params = new URLSearchParams({ cartridge: cartridgeId });
     if (connIdForTest) params.set("conn_id", connIdForTest);
@@ -34,7 +39,10 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
 
   const onTest = async () => {
     try {
-      const r = await testMut.mutateAsync(connIdForTest || undefined);
+      const r = await testMut.mutateAsync({
+        connId: connIdForTest || undefined,
+        baseUrl: testBaseUrl.trim() || undefined,
+      });
       setLastTest(r);
       if (r.ok) {
         toast.success("Conexion OK.");
@@ -50,6 +58,11 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
   };
 
   const fields = schema.fields ?? [];
+  const baseUrlPlaceholder = firstString(
+    selectedConnection?.base_url,
+    fields.find((field) => field.name === "base_url")?.default,
+    fields.find((field) => field.type === "url")?.default,
+  ) ?? "https://api68sales.successfactors.com";
 
   return (
     <div className="space-y-6">
@@ -94,6 +107,16 @@ export function CredentialsForm({ cartridgeId, schema }: Props) {
         )}
 
         <div className="flex flex-wrap items-end gap-2 pt-2">
+          <label className="flex min-w-[min(100%,24rem)] flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
+            Base URL para prueba
+            <input
+              type="url"
+              value={testBaseUrl}
+              onChange={(event) => setTestBaseUrl(event.target.value)}
+              placeholder={baseUrlPlaceholder}
+              className="min-h-[44px] min-w-0 rounded-md border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground"
+            />
+          </label>
           {connectionOptions.length ? (
             <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
               Conexión a probar
@@ -132,4 +155,17 @@ function uniqueConnectionIds(connections: VaultConnection[]): string[] {
     .map((conn) => String(conn.conn_id ?? conn.id ?? "").trim())
     .filter(Boolean);
   return Array.from(new Set(ids));
+}
+
+function findConnection(connections: VaultConnection[], connId: string): VaultConnection | undefined {
+  const target = connId.trim();
+  if (!target) return undefined;
+  return connections.find((conn) => String(conn.conn_id ?? conn.id ?? "").trim() === target);
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
 }

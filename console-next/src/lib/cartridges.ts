@@ -47,6 +47,11 @@ export interface TestConnectionResult {
   latency_ms: number;
 }
 
+export interface TestConnectionOptions {
+  connId?:   string;
+  baseUrl?:  string;
+}
+
 export interface CartridgeActivation {
   installation?: {
     id?: string;
@@ -181,11 +186,19 @@ export async function saveCredentials(
   return data;
 }
 
-export async function testConnection(id: string, connId?: string): Promise<TestConnectionResult> {
-  const query = connId?.trim() ? `?conn_id=${encodeURIComponent(connId.trim())}` : "";
-  const { data } = await api.post<TestConnectionResult>(
-    `/api/cartridges/${encodeURIComponent(id)}/test_connection${query}`,
-  );
+export async function testConnection(
+  id: string,
+  options?: string | TestConnectionOptions,
+): Promise<TestConnectionResult> {
+  const normalized = typeof options === "string" ? { connId: options } : (options ?? {});
+  const connId = normalized.connId?.trim();
+  const baseUrl = normalized.baseUrl?.trim();
+  const query = connId ? `?conn_id=${encodeURIComponent(connId)}` : "";
+  const path = `/api/cartridges/${encodeURIComponent(id)}/test_connection${query}`;
+  const body = baseUrl ? { base_url: baseUrl } : undefined;
+  const { data } = body
+    ? await api.post<TestConnectionResult>(path, body)
+    : await api.post<TestConnectionResult>(path);
   return data;
 }
 

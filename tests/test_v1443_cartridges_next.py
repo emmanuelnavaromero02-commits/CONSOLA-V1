@@ -173,7 +173,7 @@ def test_credentials_form_uses_sonner_toasts():
 def test_zod_schema_adapts_to_required_min_length_url_pattern():
     """The form no longer owns schema validation; it only previews the\n    expected connector fields."""
     src = _read(NEXT_SRC / "components/cartridges/CredentialsForm.tsx")
-    for token in ("min_length", "max_length", "pattern", "url", "zodResolver", "zod"):
+    for token in ("min_length", "max_length", "pattern", "zodResolver", "zod"):
         assert token not in src, f"unexpected legacy schema-adapter token: {token!r}"
 
 

@@ -16,9 +16,10 @@ import re
 import time
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.security import get_internal_api_key
 from app.dependencies import ROLE_ADMIN, require_authenticated, require_global_any_role
@@ -102,6 +103,34 @@ def _normalize_conn_id(conn_id: str | None) -> str | None:
     if not _CONN_ID_RE.fullmatch(requested):
         raise HTTPException(400, "invalid connection id")
     return requested
+
+
+def _normalize_test_base_url(body: dict | None) -> str | None:
+    if body is None:
+        return None
+    if not isinstance(body, dict):
+        return None
+    raw = body.get("base_url")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise HTTPException(400, "invalid base_url")
+    value = raw.strip().rstrip("/")
+    if not value:
+        return None
+    if len(value) > 2048:
+        raise HTTPException(400, "invalid base_url")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise HTTPException(400, "invalid base_url")
+    return value
 
 
 def _running_in_container() -> bool:
@@ -255,6 +284,7 @@ async def test_connection(
     cartridge: str,
     request: Request,
     conn_id: str | None = Query(default=None, max_length=128),
+    body: dict | None = Body(default=None),
 ):
     """Validate credentials by hitting the cartridge's /skills/test_connection.
 
@@ -268,6 +298,7 @@ async def test_connection(
     user = getattr(request.state, "user", None) or {}
     _require_cartridge_visible(user, cartridge)
     selected_conn_id = _normalize_conn_id(conn_id)
+    base_url_override = _normalize_test_base_url(body)
 
     started = time.monotonic()
     ok = False
@@ -278,7 +309,12 @@ async def test_connection(
             timeout=10.0, headers=_cartridge_internal_headers_for_user(user)
         ) as c:
             params = {"conn_id": selected_conn_id} if selected_conn_id else None
-            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), params=params)
+            kwargs = {}
+            if params:
+                kwargs["params"] = params
+            if base_url_override:
+                kwargs["json"] = {"base_url": base_url_override}
+            r = await c.post(_cartridge_url(cartridge, "/skills/test_connection"), **kwargs)
         latency_ms = int((time.monotonic() - started) * 1000)
         payload = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         ok = _test_connection_succeeded(r.is_success, payload)
@@ -307,6 +343,7 @@ async def test_connection(
             "latency_ms": latency_ms,
             "outcome_message": message[:160],
             **({"conn_id": selected_conn_id} if selected_conn_id else {}),
+            **({"base_url_override": True} if base_url_override else {}),
         },
     )
 

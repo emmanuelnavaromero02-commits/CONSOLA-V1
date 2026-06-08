@@ -55,16 +55,17 @@ test.describe("Cartridges grid (Next.js, /cartridges)", () => {
 });
 
 test.describe("Cartridge detail (Next.js, /cartridges/viewer?id=...)", () => {
-  test("the viewer renders the Vault-scoped config surface (no inline credential inputs)", async ({
+  test("the viewer renders the Vault-scoped config surface with a test URL override", async ({
     authedPage: page,
   }) => {
     await page.goto("/cartridges/viewer?id=replicon");
     // #273 B5: credentials are never typed into the browser. The viewer
-    // shows the expected-field summary + a CTA to the scoped Vault page,
-    // and must NOT render credential inputs.
+    // shows the expected-field summary + a CTA to the scoped Vault page.
+    // #277 restores a temporary Base URL override only for connection tests.
     await expect(
       page.getByRole("link", { name: /configurar en vault/i }),
     ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByLabel(/base url para prueba/i)).toBeVisible();
     await expect(
       page.getByRole("button", { name: /probar conexión/i }),
     ).toBeVisible();

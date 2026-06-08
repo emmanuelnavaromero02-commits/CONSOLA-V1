@@ -86,3 +86,42 @@ async def test_test_connection_forwards_selected_conn_id(monkeypatch):
     assert forwarded_ctx["_signature"]
     cartridges.audit_service.record_event.assert_awaited_once()
     assert cartridges.audit_service.record_event.await_args.kwargs["metadata"]["conn_id"] == "femsa_sf"
+
+
+@pytest.mark.asyncio
+async def test_test_connection_forwards_temporary_base_url_override(monkeypatch):
+    monkeypatch.setenv("SECURITY_CONTEXT_SIGNING_KEY", "security_context_signing_key_distinct_64_chars_router")
+    monkeypatch.setenv("INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE", "console_to_cartridge_key")
+    response = SimpleNamespace(
+        is_success=True,
+        status_code=200,
+        headers={"content-type": "application/json"},
+        json=lambda: {"status": "ok", "message": "ok"},
+    )
+    monkeypatch.setattr(cartridges.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(response, **kwargs))
+    monkeypatch.setattr(cartridges.audit_service, "record_event", AsyncMock())
+
+    request = SimpleNamespace(state=SimpleNamespace(user={
+        "id": 1,
+        "email": "admin@example.com",
+        "role": "admin",
+        "active_tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
+        "active_workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+        "allowed_cartridges": ["sap_successfactors"],
+    }))
+
+    result = await cartridges.test_connection(
+        "sap_successfactors",
+        request,
+        conn_id="femsa_sf",
+        body={"base_url": "https://api68sales.successfactors.com/"},
+    )
+
+    assert result["ok"] is True
+    assert _FakeAsyncClient.last_instance.kwargs["params"] == {"conn_id": "femsa_sf"}
+    assert _FakeAsyncClient.last_instance.kwargs["json"] == {
+        "base_url": "https://api68sales.successfactors.com"
+    }
+    metadata = cartridges.audit_service.record_event.await_args.kwargs["metadata"]
+    assert metadata["conn_id"] == "femsa_sf"
+    assert metadata["base_url_override"] is True

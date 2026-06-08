@@ -176,7 +176,12 @@ class SapSfClient:
     _RETRY_BACKOFF_FACTOR = 2.0
 
 
-    def __init__(self, conn_id: str | None = None, security_context: str | None = None) -> None:
+    def __init__(
+        self,
+        conn_id: str | None = None,
+        security_context: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
         self._session = _make_retry_session(self._RETRY_MAX, self._RETRY_BACKOFF_FACTOR)
         self._conn_id = (conn_id or "").strip() or None
         self._security_context = (security_context or "").strip() or None
@@ -209,7 +214,8 @@ class SapSfClient:
             )
 
         self.base_url = _normalize_odata_base_url(
-            worker_secret("SF_BASE_URL")
+            base_url
+            or worker_secret("SF_BASE_URL")
             or _get_setting_or_env(
                 "sap_successfactors_base_url",
                 default=settings.sf_base_url,

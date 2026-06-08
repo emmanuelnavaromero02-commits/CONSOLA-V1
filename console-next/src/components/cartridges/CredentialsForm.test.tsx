@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectorSchema } from "@/lib/cartridges";
 import { CredentialsForm } from "./CredentialsForm";
 
-type MockVaultConnection = { conn_id: string; auth_method?: string };
+type MockVaultConnection = { conn_id: string; auth_method?: string; base_url?: string };
 
 const vaultConnectionsMock = vi.hoisted(() =>
   vi.fn((): { data: { connections: MockVaultConnection[] } } => ({ data: { connections: [] } })),
@@ -41,6 +41,7 @@ describe("CredentialsForm", () => {
     expect(markup).toContain("/operations/vault?cartridge=hubspot");
     expect(markup).not.toContain("Guardar credenciales");
     expect(markup).not.toContain('type="password"');
+    expect(markup).toContain("Base URL para prueba");
     expect(markup).toContain("Probar conexión");
   });
 
@@ -59,7 +60,7 @@ describe("CredentialsForm", () => {
       data: {
         connections: [
           { conn_id: "femsa_sf", auth_method: "saml_bearer_assertion" },
-          { conn_id: "default", auth_method: "oauth2_client_credentials" },
+          { conn_id: "default", auth_method: "oauth2_client_credentials", base_url: "https://api68sales.successfactors.com" },
         ],
       },
     });
@@ -72,5 +73,6 @@ describe("CredentialsForm", () => {
     expect(markup).toContain("/operations/vault?cartridge=sap_successfactors&amp;conn_id=femsa_sf");
     expect(markup).toContain('value="femsa_sf"');
     expect(markup).toContain('value="default"');
+    expect(markup).toContain("Base URL para prueba");
   });
 });

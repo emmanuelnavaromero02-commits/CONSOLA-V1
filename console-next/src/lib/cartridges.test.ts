@@ -92,13 +92,19 @@ describe("cartridge client", () => {
     await saveCredentials("sap hcm", { token: "secret" });
     await testConnection("sap hcm");
     await testConnection("sap hcm", "femsa_sf");
+    await testConnection("sap hcm", { connId: "femsa_sf", baseUrl: "https://api68sales.successfactors.com" });
     await deleteCredentials("sap hcm");
     await activateCartridge("sap hcm");
 
     expect(apiMock.post).toHaveBeenNthCalledWith(1, "/api/cartridges/sap%20hcm/credentials", { token: "secret" });
     expect(apiMock.post).toHaveBeenNthCalledWith(2, "/api/cartridges/sap%20hcm/test_connection");
     expect(apiMock.post).toHaveBeenNthCalledWith(3, "/api/cartridges/sap%20hcm/test_connection?conn_id=femsa_sf");
+    expect(apiMock.post).toHaveBeenNthCalledWith(
+      4,
+      "/api/cartridges/sap%20hcm/test_connection?conn_id=femsa_sf",
+      { base_url: "https://api68sales.successfactors.com" },
+    );
     expect(apiMock.delete).toHaveBeenCalledWith("/api/cartridges/sap%20hcm/credentials");
-    expect(apiMock.post).toHaveBeenNthCalledWith(4, "/api/marketplace/products/sap%20hcm/activate", {});
+    expect(apiMock.post).toHaveBeenNthCalledWith(5, "/api/marketplace/products/sap%20hcm/activate", {});
   });
 });

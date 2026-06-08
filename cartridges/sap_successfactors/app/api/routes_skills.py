@@ -149,12 +149,18 @@ def skills_root() -> dict:
 @router.post("/test_connection")
 def test_connection(
     conn_id: str | None = Query(default=None, max_length=128),
+    body: dict[str, Any] | None = Body(default=None),
     x_security_context: str | None = Header(default=None, alias="x-security-context"),
 ) -> dict:
     try:
         from app.core.sap_client import SapSfClient
 
-        return SapSfClient(conn_id=conn_id, security_context=x_security_context).test_connection()
+        base_url = str((body or {}).get("base_url") or "").strip() or None
+        return SapSfClient(
+            conn_id=conn_id,
+            security_context=x_security_context,
+            base_url=base_url,
+        ).test_connection()
     except Exception as exc:
         return {"status": "error", "message": str(exc)[:200]}
 
