@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 import app.main as console_main
 from app.services import control_room_service
@@ -35,6 +36,9 @@ def test_bronze_query_rewrites_logical_raw_paths_to_scoped_s3(monkeypatch):
     rewritten = console_main._rewrite_bronze_logical_paths(sql, USER)
 
     assert "raw/sap_successfactors/PerPerson')" not in rewritten
+    assert "read_parquet(read_parquet" not in rewritten
+    assert "read_parquet('s3://modecissions-lakehouse-783792/" in rewritten
+    assert "hive_partitioning=true, union_by_name=true" in rewritten
     assert (
         "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerPerson/"
         "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
@@ -85,6 +89,26 @@ async def test_apps_list_filters_to_active_scoped_vault_cartridges(monkeypatch):
         {"name": "sap_successfactors_workforce_overview", "cartridge": "sap_successfactors"}
     ]
     assert result["active_scoped_cartridges"] == ["sap_successfactors"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_app_proxy_redirects_inactive_cartridge_deep_links(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/apps/sap_hcm_people_quality_dashboard",
+        "headers": [],
+    })
+    request.state.user = USER
+
+    response = await console_main._proxy_workspace_app(request, "sap_hcm_people_quality_dashboard")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/apps-gallery"
 
 
 @pytest.mark.asyncio

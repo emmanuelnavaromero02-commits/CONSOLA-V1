@@ -642,8 +642,9 @@ def _rewrite_bronze_logical_paths(sql: str, user: dict | None) -> str:
 
     def replace_call(match: re.Match[str]) -> str:
         scoped_path = _scoped_bronze_s3_path(match.group(2), user)
+        quote = match.group(1)
         return (
-            f"read_parquet({match.group(1)}{scoped_path}{match.group(1)}, "
+            f"read_parquet({quote}{scoped_path}{quote}, "
             "hive_partitioning=true, union_by_name=true)"
         )
 
@@ -2935,6 +2936,17 @@ async def _proxy_workspace_app(request: Request, name: str, *, content: bool = F
     checks. Console only proxies the HTML so users stay on the same :8000
     origin as the rest of the console.
     """
+    app_cartridge = _app_cartridge_id({"name": name})
+    if app_cartridge:
+        active_cartridges = await _active_scoped_connection_cartridges(
+            getattr(request.state, "user", None),
+            {"sap_successfactors", "sap_s4hana", "sap_hcm", "salesforce", "replicon", "hubspot"},
+        )
+        if active_cartridges and app_cartridge not in active_cartridges:
+            if content:
+                raise HTTPException(404, "app cartridge is not active for this workspace")
+            return RedirectResponse(url="/apps-gallery", status_code=303)
+
     workspace_url = _workspace_server_url()
     if not workspace_url:
         raise HTTPException(503, "workspace internal URL is not configured")
