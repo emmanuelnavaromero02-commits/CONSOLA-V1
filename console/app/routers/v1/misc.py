@@ -48,8 +48,12 @@ async def api_apps(user: dict = Depends(require_permission("apps.read"))):
                          json=_mcp_payload("list_apps", {}, user))
     if r.status_code >= 400:
         raise HTTPException(r.status_code, _upstream_error_detail(r, "Apps service unavailable"))
-    active_cartridges = await _active_scoped_connection_cartridges(user)
-    return _filter_apps_payload_to_scoped_connections(r.json(), active_cartridges)
+    payload = r.json()
+    active_cartridges = await _active_scoped_connection_cartridges(
+        user,
+        _app_payload_cartridge_candidates(payload),
+    )
+    return _filter_apps_payload_to_scoped_connections(payload, active_cartridges)
 
 # /api/apps/{name}
 @router.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])

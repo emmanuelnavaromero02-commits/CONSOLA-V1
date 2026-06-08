@@ -3020,46 +3020,73 @@ async def _workspace_scope_for_apps_filter(user: dict | None) -> tuple[str, str]
     return tenant_id, workspace_id
 
 
-async def _active_scoped_connection_cartridges(user: dict | None) -> set[str]:
-    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
-    try:
-        pool = await _get_db_pool()
-        if tenant_id and workspace_id:
-            rows = await pool.fetch(
-                """
-                SELECT DISTINCT cartridge
-                  FROM vault_entries
-                 WHERE scope = 'connections'
-                   AND tenant_id = $1::uuid
-                   AND workspace_id = $2::uuid
-                   AND COALESCE(cartridge, '') <> ''
-                """,
-                tenant_id,
-                workspace_id,
-            )
-        elif str((user or {}).get("role") or "").strip() in {"admin", "owner", "super_admin"}:
-            rows = await pool.fetch(
-                """
-                SELECT DISTINCT cartridge
-                  FROM vault_entries
-                 WHERE scope = 'connections'
-                   AND tenant_id IS NOT NULL
-                   AND workspace_id IS NOT NULL
-                   AND COALESCE(cartridge, '') <> ''
-                """
-            )
-        else:
-            return set()
-    except Exception:
-        logger.debug("Failed to load scoped Vault connection cartridges", exc_info=True)
+def _apps_from_payload(payload: Any) -> list[dict]:
+    if isinstance(payload, list):
+        apps = payload
+    elif isinstance(payload, dict):
+        raw_apps = payload.get("apps")
+        raw_result = payload.get("result")
+        apps = raw_apps if isinstance(raw_apps, list) else raw_result
+    else:
+        apps = []
+    if not isinstance(apps, list):
+        return []
+    return [app for app in apps if isinstance(app, dict)]
+
+
+def _app_payload_cartridge_candidates(payload: Any) -> set[str]:
+    return {
+        cartridge
+        for app in _apps_from_payload(payload)
+        if (cartridge := _app_cartridge_id(app))
+    }
+
+
+def _user_with_apps_scope(user: dict | None, tenant_id: str, workspace_id: str) -> dict | None:
+    if not user:
+        return user
+    if not tenant_id or not workspace_id:
+        return user
+    return {
+        **user,
+        "tenant_id": user.get("tenant_id") or tenant_id,
+        "workspace_id": user.get("workspace_id") or workspace_id,
+        "active_tenant_id": tenant_id,
+        "active_workspace_id": workspace_id,
+    }
+
+
+async def _active_scoped_connection_cartridges(
+    user: dict | None,
+    candidate_cartridges: set[str] | None = None,
+) -> set[str]:
+    candidates = {
+        str(cartridge).strip()
+        for cartridge in (candidate_cartridges or set())
+        if str(cartridge).strip()
+    }
+    if not candidates:
         return set()
-    cartridges: set[str] = set()
-    for row in rows:
-        item = dict(row)
-        cartridge = str(item.get("cartridge") or "").strip()
-        if cartridge:
-            cartridges.add(cartridge)
-    return cartridges
+    tenant_id, workspace_id = await _workspace_scope_for_apps_filter(user)
+    scoped_user = _user_with_apps_scope(user, tenant_id, workspace_id)
+    active: set[str] = set()
+    for cartridge in sorted(candidates):
+        try:
+            async with httpx.AsyncClient(headers=_vault_headers_for_user(scoped_user or {}), timeout=5) as c:
+                response = await c.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
+        except Exception:
+            logger.debug("Failed to load scoped Vault connections for %s", cartridge, exc_info=True)
+            continue
+        if response.status_code in {404, 204} or response.status_code >= 400:
+            continue
+        try:
+            payload = response.json()
+        except ValueError:
+            continue
+        connections = payload.get("connections") if isinstance(payload, dict) else []
+        if isinstance(connections, list) and any(isinstance(conn, dict) for conn in connections):
+            active.add(cartridge)
+    return active
 
 
 def _app_cartridge_id(app: dict) -> str:
@@ -3112,8 +3139,12 @@ async def api_apps(user: dict = Depends(require_permission("apps.read"))):
                          json=_mcp_payload("list_apps", {}, user))
     if r.status_code >= 400:
         raise HTTPException(r.status_code, _upstream_error_detail(r, "Apps service unavailable"))
-    active_cartridges = await _active_scoped_connection_cartridges(user)
-    return _filter_apps_payload_to_scoped_connections(r.json(), active_cartridges)
+    payload = r.json()
+    active_cartridges = await _active_scoped_connection_cartridges(
+        user,
+        _app_payload_cartridge_candidates(payload),
+    )
+    return _filter_apps_payload_to_scoped_connections(payload, active_cartridges)
 
 
 @app.delete("/api/apps/{name}", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
