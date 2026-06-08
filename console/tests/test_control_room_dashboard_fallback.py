@@ -136,3 +136,39 @@ async def test_filter_installations_scopes_when_a_connection_exists():
     # Only the connected cartridge survives; no fallback to the catalog.
     assert {row["cartridge_id"] for row in result} == {"sap_successfactors"}
     assert result[0]["connection_id"] == "femsa_sf"
+
+
+@pytest.mark.asyncio
+async def test_control_room_scoped_dashboard_omits_empty_domains(monkeypatch):
+    monkeypatch.delenv("CONTROL_ROOM_SHOW_KNOWN_NON_READY", raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    user = {**USER, "allowed_cartridges": ["sap_successfactors"]}
+
+    async def fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:
+        if dataset == "sap_successfactors_org_structure":
+            return [{"node_id": "org-1", "node_type": "department"}]
+        if dataset == "sap_successfactors_employee_360":
+            return [{"user_id": "u-1", "department": "Ventas"}]
+        return []
+
+    with (
+        patch.object(control_room_service.auth, "pool", new=AsyncMock(return_value=_zero_pool())),
+        patch.object(
+            control_room_service,
+            "_installed_cartridges",
+            new=AsyncMock(return_value=[
+                {
+                    "cartridge_id": "sap_successfactors",
+                    "installation_status": "ready",
+                    "connection_id": "femsa_sf",
+                    "connection_count": 1,
+                    "active_connection_ids": ["femsa_sf"],
+                    "auth_method": "saml_bearer_assertion",
+                }
+            ]),
+        ),
+    ):
+        result = await control_room_service.dashboard(user, fetcher=fetcher, persist=False)
+
+    assert [domain["label"] for domain in result["domains"]] == ["Recursos Humanos"]
+    assert all(domain["modules"] for domain in result["domains"])

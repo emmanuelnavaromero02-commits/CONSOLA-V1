@@ -110,7 +110,7 @@ def _security_context_from_conf(conf: dict) -> dict | None:
     })
 
 
-@dag(schedule=None, catchup=False, default_args=default_args)
+@dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=2)
 def sap_successfactors_extract():
     @task
     def trigger_extract(**context):
