@@ -23,13 +23,31 @@ import type { LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { SuccessFactorsGoldPanel } from "@/components/control-room/SuccessFactorsGoldPanel";
+import {
+  CommandMetric,
+  MiniBar,
+  OperationalNotice,
+  ReadinessBadge,
+  readinessLabels,
+  readinessTone,
+} from "@/components/control-room/StatusBadge";
 import { api, isApiError } from "@/lib/api";
+import {
+  getControlRoomActivity,
+  getControlRoomDashboard,
+  getControlRoomImpact,
+  getControlRoomLessons,
+  getControlRoomThresholds,
+  getSuccessFactorsGoldKpis,
+} from "@/lib/control-room/client";
+import type { ImpactPayload } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 type Severity = "critical" | "high" | "medium" | "low";
 type SourceState = "ok" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
-type DataReadiness = "ready" | "partial" | "stub" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission";
-type SourceRollup = SourceState | "partial" | "stub" | "attention" | "inactive" | "no_sources";
+type DataReadiness = "ready" | "partial" | "stub" | "empty" | "missing" | "unavailable" | "invalid_schema" | "blocked" | "no_permission" | "error";
+type SourceRollup = SourceState | "partial" | "stub" | "attention" | "inactive" | "no_sources" | "error";
 type LoadState = "loading" | "ready" | "error";
 type DetailMode = "auto" | "manual" | null;
 type AlertOperation = "ack" | "snooze" | "assign" | "false-positive";
@@ -448,8 +466,8 @@ interface Dashboard {
     active_modules?: number;
     active_cartridges: number;
     operational_cartridges: number;
-    source_states: Record<SourceState, number>;
-    data_readiness?: Record<DataReadiness, number>;
+    source_states: Partial<Record<SourceState, number>>;
+    data_readiness?: Partial<Record<DataReadiness, number>>;
     data_ready_sources?: number;
     data_ready_modules?: number;
     partial_modules?: number;
@@ -511,21 +529,7 @@ const severityLabels: Record<Severity, string> = {
   low: "Baja",
 };
 
-const sourceStateLabels: Record<SourceState | SourceRollup | DataReadiness, string> = {
-  ok: "Operativa",
-  ready: "Operativa",
-  partial: "Parcial",
-  stub: "Stub",
-  empty: "Vacia",
-  missing: "Faltante",
-  unavailable: "No disponible",
-  invalid_schema: "Schema invalido",
-  blocked: "Bloqueada",
-  no_permission: "Sin permiso",
-  attention: "Atencion",
-  inactive: "Inactiva",
-  no_sources: "Sin fuentes",
-};
+const sourceStateLabels = readinessLabels as Record<SourceState | SourceRollup | DataReadiness, string>;
 
 const alertOperationLabels: Record<AlertOperation, string> = {
   ack: "Alerta reconocida y enviada a investigacion.",
@@ -649,10 +653,7 @@ function activityDescription(entry: ActivityEntry): string {
 }
 
 function sourceStateTone(status: SourceState | SourceRollup | DataReadiness): string {
-  if (status === "ok" || status === "ready") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  if (status === "empty" || status === "inactive" || status === "no_sources") return "border-muted bg-muted/30 text-muted-foreground";
-  if (status === "stub") return "border-destructive/40 bg-destructive/10 text-destructive";
-  return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  return readinessTone(status);
 }
 
 function severityTone(severity: Severity): string {
@@ -681,6 +682,9 @@ export default function ControlRoomPage() {
   const [activityByItem, setActivityByItem] = useState<Record<string, ActivityPayload>>({});
   const [activityLoading, setActivityLoading] = useState("");
   const [activityError, setActivityError] = useState("");
+  const [impactByItem, setImpactByItem] = useState<Record<string, ImpactPayload>>({});
+  const [impactLoading, setImpactLoading] = useState("");
+  const [impactError, setImpactError] = useState("");
   const [lessonsPayload, setLessonsPayload] = useState<LessonsPayload | null>(null);
   const [lessonsLoading, setLessonsLoading] = useState(false);
   const [lessonsError, setLessonsError] = useState("");
@@ -706,8 +710,7 @@ export default function ControlRoomPage() {
     setRefreshing(true);
     setState((current) => (current === "ready" || background ? current : "loading"));
     try {
-      const response = await api.get<Dashboard>("/api/control-room/dashboard");
-      const nextDashboard = response.data;
+      const nextDashboard = await getControlRoomDashboard();
       setDashboard(nextDashboard);
       setSelectedId((current) => preferredId || current || nextDashboard.items[0]?.id || "");
       const generatedAt = parseDate(nextDashboard.meta?.generated_at) || new Date();
@@ -738,12 +741,26 @@ export default function ControlRoomPage() {
     setActivityLoading(itemId);
     setActivityError("");
     try {
-      const response = await api.get<ActivityPayload>(`/api/control-room/items/${encodeURIComponent(itemId)}/activity`);
-      setActivityByItem((current) => ({ ...current, [itemId]: response.data }));
+      const payload = await getControlRoomActivity(itemId);
+      setActivityByItem((current) => ({ ...current, [itemId]: payload }));
     } catch (err) {
       setActivityError(errorMessage(err, "No se pudo cargar la bitacora operativa"));
     } finally {
       setActivityLoading((current) => (current === itemId ? "" : current));
+    }
+  }, []);
+
+  const loadImpact = useCallback(async (itemId: string) => {
+    if (!itemId) return;
+    setImpactLoading(itemId);
+    setImpactError("");
+    try {
+      const payload = await getControlRoomImpact(itemId);
+      setImpactByItem((current) => ({ ...current, [itemId]: payload }));
+    } catch (err) {
+      setImpactError(errorMessage(err, "No se pudo cargar el impacto operativo"));
+    } finally {
+      setImpactLoading((current) => (current === itemId ? "" : current));
     }
   }, []);
 
@@ -752,11 +769,8 @@ export default function ControlRoomPage() {
     setLessonsError("");
     try {
       const selectedModule = dashboard?.cartridges.find((item) => item.id === cartridge);
-      const params = new URLSearchParams();
-      if (selectedModule?.connector_id) params.set("cartridge_id", selectedModule.connector_id);
-      const query = params.toString();
-      const response = await api.get<LessonsPayload>(`/api/control-room/lessons${query ? `?${query}` : ""}`);
-      setLessonsPayload(response.data);
+      const payload = await getControlRoomLessons(selectedModule?.connector_id);
+      setLessonsPayload(payload);
     } catch (err) {
       setLessonsError(errorMessage(err, "No se pudieron cargar lecciones"));
     } finally {
@@ -768,8 +782,8 @@ export default function ControlRoomPage() {
     setThresholdsLoading(true);
     setThresholdsError("");
     try {
-      const response = await api.get<ThresholdPayload>("/api/control-room/thresholds");
-      setThresholdsPayload(response.data);
+      const payload = await getControlRoomThresholds();
+      setThresholdsPayload(payload);
     } catch (err) {
       setThresholdsError(errorMessage(err, "No se pudieron cargar umbrales"));
     } finally {
@@ -781,8 +795,8 @@ export default function ControlRoomPage() {
     setSfGoldLoading(true);
     setSfGoldError("");
     try {
-      const response = await api.get<SfGoldKpisPayload>("/api/control-room/sap-successfactors/gold-kpis");
-      setSfGoldKpis(response.data);
+      const payload = await getSuccessFactorsGoldKpis();
+      setSfGoldKpis(payload);
     } catch (err) {
       setSfGoldError(errorMessage(err, "No se pudieron cargar KPIs Gold de SuccessFactors"));
     } finally {
@@ -996,9 +1010,10 @@ export default function ControlRoomPage() {
     if (!detailOpen || !selected?.id) return;
     const timer = window.setTimeout(() => {
       void loadActivity(selected.id);
+      void loadImpact(selected.id);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [detailOpen, loadActivity, selected?.id]);
+  }, [detailOpen, loadActivity, loadImpact, selected?.id]);
 
   function mergeDashboardItem(nextItem: ControlItem) {
     setSelectedId(nextItem.id);
@@ -1018,6 +1033,7 @@ export default function ControlRoomPage() {
     mergeDashboardItem(nextItem);
     void loadDashboard(nextItem.id, true);
     void loadActivity(nextItem.id);
+    void loadImpact(nextItem.id);
     void loadLessons();
     void loadThresholds();
   }
@@ -1436,15 +1452,7 @@ export default function ControlRoomPage() {
       />
 
       {state === "error" ? (
-        <section className="rounded-lg border border-destructive/30 bg-destructive/5 p-4" role="alert">
-          <div className="flex items-start gap-3">
-            <AlertTriangle aria-hidden className="mt-0.5 h-5 w-5 text-destructive" />
-            <div>
-              <h2 className="font-semibold text-destructive">No se pudo cargar la Sala de Control</h2>
-              <p className="text-sm text-muted-foreground">{error}</p>
-            </div>
-          </div>
-        </section>
+        <OperationalNotice tone="error" title="No se pudo cargar la Sala de Control">{error}</OperationalNotice>
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
@@ -1474,6 +1482,9 @@ export default function ControlRoomPage() {
             activity={activityByItem[selected.id]}
             activityLoading={activityLoading === selected.id}
             activityError={activityError}
+            impact={impactByItem[selected.id]}
+            impactLoading={impactLoading === selected.id}
+            impactError={impactError}
             onBack={() => {
               setDetailOpen(false);
               setDetailMode(null);
@@ -1854,7 +1865,7 @@ function DashboardView({
         <SummaryCard icon={ShieldCheck} label={contextIsPortfolio ? "Decisiones abiertas" : "Con decision"} value={contextDecisionCount} />
       </section>
 
-      <SfGoldKpiPanel payload={sfGoldKpis} loading={sfGoldLoading} error={sfGoldError} />
+      <SuccessFactorsGoldPanel payload={sfGoldKpis} loading={sfGoldLoading} error={sfGoldError} sources={contextSources} />
 
       <section className="grid gap-4 lg:grid-cols-4" aria-label="Ciclo y salud operativa">
         <OmegaCycleBar steps={dashboard?.omega_steps ?? defaultOmegaSteps} counts={contextCycleCounts} />
@@ -2040,74 +2051,8 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
   );
 }
 
-function SfGoldKpiPanel({ payload, loading, error }: { payload: SfGoldKpisPayload | null; loading: boolean; error: string }) {
-  const widgets = payload?.widgets ?? [];
-  return (
-    <section className="rounded-lg border bg-card p-4" aria-label="KPIs Gold SuccessFactors FEMSA">
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">SuccessFactors Gold · FEMSA</p>
-          <h2 className="text-lg font-semibold">Plantilla activa y distribución organizacional</h2>
-          <p className="text-sm text-muted-foreground">
-            Scope del workspace activo · conexión {payload?.connection_id || "femsa_sf"}
-            {payload?.generated_at ? ` · actualizado ${fmtDate(payload.generated_at)}` : ""}
-          </p>
-        </div>
-        <a
-          href="/data/catalog?layer=gold&cartridge=sap_successfactors"
-          className="inline-flex min-h-[40px] items-center justify-center rounded-md border bg-background px-3 text-sm font-medium hover:bg-accent/5"
-        >
-          Ver Gold en catálogo
-        </a>
-      </div>
-      {loading ? <StatePanel icon={Loader2} text="Cargando KPIs Gold de SuccessFactors..." spinning /> : null}
-      {error ? <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
-      {!loading && !error && widgets.length === 0 ? <StatePanel icon={CheckCircle2} text="Sin Gold visible para este workspace." /> : null}
-      {widgets.length ? (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
-          {widgets.map((widget) => (
-            <article key={widget.id} className="rounded-lg border bg-background p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">{widget.title}</p>
-                  <strong className="mt-2 block text-3xl font-semibold tracking-tight">{formatNumber(widget.value)}</strong>
-                </div>
-                <a href={widget.href} className="text-xs font-medium text-primary hover:underline">Dataset</a>
-              </div>
-              <div className="mt-3 space-y-2">
-                {widget.rows.slice(0, 5).map((row, index) => (
-                  <div key={`${widget.id}:${index}`} className="flex items-center justify-between gap-3 rounded-md border bg-card px-2.5 py-2 text-sm">
-                    <span className="min-w-0 truncate text-muted-foreground">
-                      {String(row.label || row.company_name || row.location_name || row.department_name || row.user_id || "Registro")}
-                    </span>
-                    {typeof row.headcount === "number" ? (
-                      <strong className="tabular-nums">{formatNumber(row.headcount)}</strong>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function SummaryCard({ icon: Icon, label, value, tone = "neutral" }: { icon: LucideIcon; label: string; value: string | number; tone?: "neutral" | "critical" | "attention" }) {
-  return (
-    <article className="rounded-lg border bg-card p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase text-muted-foreground">{label}</span>
-        <Icon aria-hidden className={cn("h-4 w-4", tone === "critical" ? "text-destructive" : tone === "attention" ? "text-amber-500" : "text-muted-foreground")} />
-      </div>
-      <strong className="mt-2 block text-3xl font-semibold tracking-tight">{value}</strong>
-    </article>
-  );
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("es-MX").format(value);
+  return <CommandMetric icon={Icon} label={label} value={value} tone={tone === "critical" ? "danger" : tone === "attention" ? "warning" : "neutral"} />;
 }
 
 function OmegaCycleBar({ steps, counts }: { steps: Array<{ id: string; label: string }>; counts?: Record<string, number> }) {
@@ -2132,6 +2077,9 @@ function SourceHealthPanel({ dataReadySources, totalSources }: { dataReadySource
       <p className="text-xs font-semibold uppercase text-muted-foreground">Salud de fuentes</p>
       <strong className="mt-2 block text-2xl">{dataReadySources}/{totalSources}</strong>
       <p className="text-sm text-muted-foreground">Data-ready</p>
+      <div className="mt-3">
+        <MiniBar value={dataReadySources} max={totalSources || 1} tone={dataReadySources === totalSources && totalSources > 0 ? "good" : "warning"} />
+      </div>
     </article>
   );
 }
@@ -2162,7 +2110,7 @@ function DomainSection({ domain, collapsed, onToggle }: { domain: Domain; collap
             <article key={module.id} className="rounded-md border bg-card p-3">
               <div className="flex items-center justify-between gap-3">
                 <strong className="text-sm">{module.label}</strong>
-                <span className={cn("rounded-full border px-2 py-0.5 text-xs", sourceStateTone(module.source_status))}>{sourceStateLabels[module.source_status]}</span>
+                <ReadinessBadge status={module.source_status} compact />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{module.item_count} senales · {module.critical_count} criticas</p>
             </article>
@@ -2191,7 +2139,7 @@ function SourceInventoryPanel({ context, sources }: { context: ActiveContext; so
       </div>
       <div className="mb-4 flex flex-wrap gap-2" aria-label="Estados de fuentes del contexto">
         {readinessStates.map((state) => (
-          <span className={cn("rounded-full border px-2.5 py-1 text-xs", sourceStateTone(state))} key={state}>
+          <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs", sourceStateTone(state))} key={state}>
             {sourceStateLabels[state]} <strong>{readinessCounts[state]}</strong>
           </span>
         ))}
@@ -2203,8 +2151,8 @@ function SourceInventoryPanel({ context, sources }: { context: ActiveContext; so
               <strong>{source.dataset}</strong>
               <p className="text-xs text-muted-foreground">{source.module} · {source.cartridge}</p>
             </div>
-            <span className={cn("w-fit rounded-full border px-2.5 py-1 text-xs", sourceStateTone(source.status))}>{sourceStateLabels[source.status]}</span>
-            <span className={cn("w-fit rounded-full border px-2.5 py-1 text-xs", sourceStateTone(source.data_readiness || "ready"))}>{sourceStateLabels[source.data_readiness || "ready"]}</span>
+            <ReadinessBadge status={source.status} compact />
+            <ReadinessBadge status={source.data_readiness || "ready"} compact />
             <span>{source.count} filas</span>
             <span className="text-muted-foreground">{source.checked_at ? `Revisada ${timeAgo(parseDate(source.checked_at), 0)}` : "Sin revision"}</span>
             {source.readiness_reason ? <p className="md:col-span-5 text-xs text-amber-700 dark:text-amber-300">{source.readiness_reason}</p> : null}
@@ -2372,6 +2320,9 @@ function DetailPage({
   activity,
   activityLoading,
   activityError,
+  impact,
+  impactLoading,
+  impactError,
   onBack,
   onMode,
   onManualTab,
@@ -2399,6 +2350,9 @@ function DetailPage({
   activity?: ActivityPayload;
   activityLoading: boolean;
   activityError: string;
+  impact?: ImpactPayload;
+  impactLoading: boolean;
+  impactError: string;
   onBack: () => void;
   onMode: (mode: DetailMode) => void;
   onManualTab: (tab: number) => void;
@@ -2435,6 +2389,8 @@ function DetailPage({
           </div>
         </div>
       </div>
+
+      <ImpactSnapshot item={item} impact={impact} loading={impactLoading} error={impactError} />
 
       {mode === "auto" ? (
         <section className="rounded-lg border bg-card p-4" aria-label="Modo automatico">
@@ -2500,6 +2456,57 @@ function DetailPage({
       {actionMessage ? <p className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300" role="status">{actionMessage}</p> : null}
       {actionError ? <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{actionError}</p> : null}
       <ActivityTrail activity={activity} loading={activityLoading} error={activityError} currentMessage={actionMessage} />
+    </section>
+  );
+}
+
+function ImpactSnapshot({
+  item,
+  impact,
+  loading,
+  error,
+}: {
+  item: ControlItem;
+  impact?: ImpactPayload;
+  loading: boolean;
+  error: string;
+}) {
+  const drivers = impact?.drivers || item.impact_drivers || [];
+  const estimate = impact?.estimate ?? item.impact_estimate ?? null;
+  const currency = impact?.currency || item.impact_currency || "USD";
+  const confidence = typeof impact?.confidence === "number" ? `${Math.round(impact.confidence * 100)}%` : "N/D";
+  return (
+    <section className="rounded-lg border bg-card p-4" aria-label="Impacto operativo">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Impacto</p>
+          <h3 className="text-lg font-semibold">{estimate ? fmtMoney(estimate, currency) : "Impacto sin estimacion"}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{impact?.explanation || item.impact || item.recommendation}</p>
+        </div>
+        <div className="grid min-w-[260px] grid-cols-2 gap-2">
+          <InfoBlock label="Confianza" value={confidence} />
+          <InfoBlock label="Prioridad" value={impact?.priority_score ?? item.priority_score ?? item.priority?.score ?? "N/D"} />
+        </div>
+      </div>
+      {loading ? <div className="mt-3"><StatePanel icon={Loader2} text="Cargando impacto operativo..." spinning /></div> : null}
+      {error ? <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
+      {impact?.formula ? <p className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">Formula: {impact.formula}</p> : null}
+      {drivers.length ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {drivers.slice(0, 6).map((driver, index) => (
+            <InfoBlock
+              key={`${driver.label}:${index}`}
+              label={driver.label}
+              value={[
+                driver.value === null || driver.value === undefined ? "" : String(driver.value),
+                driver.unit,
+                driver.currency,
+                typeof driver.points === "number" ? `${driver.points} pts` : "",
+              ].filter(Boolean).join(" ") || "N/D"}
+            />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
