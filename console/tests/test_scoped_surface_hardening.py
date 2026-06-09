@@ -54,6 +54,50 @@ def test_bronze_query_rewrites_logical_raw_paths_to_scoped_s3(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bronze_query_endpoint_sends_scoped_s3_to_refinement(monkeypatch):
+    monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
+    captured: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"rows": [{"personIdExternal": "1"}]}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, json=None, **_kwargs):
+            captured["payload"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
+
+    result = await console_main.api_bronze_query(
+        {"sql": "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 20"},
+        USER,
+    )
+
+    sql = captured["payload"]["args"]["sql"]
+    assert result == {"rows": [{"personIdExternal": "1"}]}
+    assert "read_parquet('raw/sap_successfactors/PerPerson')" not in sql
+    assert (
+        "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerPerson/"
+        "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
+        "workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/**/*.parquet"
+    ) in sql
+    assert captured["payload"]["args"]["user_context"]["tenant_id"] == USER["active_tenant_id"]
+    assert captured["payload"]["args"]["user_context"]["workspace_id"] == USER["active_workspace_id"]
+
+
+@pytest.mark.asyncio
 async def test_apps_list_filters_to_active_scoped_vault_cartridges(monkeypatch):
     class FakeResponse:
         def __init__(self, payload, status_code=200):
@@ -326,6 +370,7 @@ async def test_sources_cache_is_scoped_by_workspace(monkeypatch):
     class FakeResponse:
         def __init__(self, payload):
             self._payload = payload
+            self.status_code = 200
 
         def json(self):
             return self._payload

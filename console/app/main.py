@@ -2659,10 +2659,16 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("get_source_partitions", {"source": source}, user))
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement schema lookup failed"))
         partitions = r.json()
+        _raise_for_refinement_payload_error(partitions, "Refinement schema lookup failed")
         r2 = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                           json=_mcp_payload("preview_source", {"source": source, "limit": 5}, user))
+        if r2.status_code >= 400:
+            raise HTTPException(r2.status_code, _upstream_error_detail(r2, "Refinement schema preview failed"))
         preview = r2.json()
+        _raise_for_refinement_payload_error(preview, "Refinement schema preview failed")
     result = {"partitions": partitions, "preview": preview}
     return _scoped_read_cache_set("schema", user, result, source)
 
@@ -2674,7 +2680,10 @@ async def api_sources(user: dict = Depends(require_authenticated)):
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("list_sources", {}, user))
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement source list failed"))
     data = r.json()
+    _raise_for_refinement_payload_error(data, "Refinement source list failed")
     # Normalize: result may be {"result": [...]} or {"sources": [...]}
     sources = data.get("result") or data.get("sources") or []
     if isinstance(sources, list):
@@ -2722,7 +2731,9 @@ async def api_bronze_query(body: dict, user: dict = Depends(require_permission("
         )
     if r.status_code >= 400:
         raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement query failed"))
-    return r.json()
+    result = r.json()
+    _raise_for_refinement_payload_error(result, "Refinement query failed")
+    return result
 
 
 @app.delete("/api/datasets", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.delete"))])
@@ -3384,6 +3395,7 @@ async def api_data(
     if r.status_code != 200:
         raise HTTPException(r.status_code, "Dataset unavailable")
     data = r.json()
+    _raise_for_refinement_payload_error(data, "Dataset unavailable")
     return data.get("data", data)
 
 
@@ -5221,6 +5233,7 @@ async def api_catalog_get(
     if cached is not None:
         return cached
     result = await _refinement_invoke("get_data_catalog", args, user=user)
+    _raise_for_refinement_payload_error(result, "Refinement catalog failed")
     return _scoped_read_cache_set("catalog", user, result, cache_args)
 
 
@@ -5256,6 +5269,80 @@ def _upstream_error_detail(response, fallback: str = "Upstream request failed"):
     return fallback
 
 
+def _payload_error_detail(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("detail", "error", "message"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            nested = _payload_error_detail(value)
+            if nested:
+                return nested
+            return _redact(str(value))
+        if value:
+            detail = str(value)
+            raw_error = payload.get("raw_error")
+            if raw_error and str(raw_error) not in detail:
+                detail = f"{detail}: {raw_error}"
+            code = payload.get("code")
+            if code and str(code) not in detail:
+                detail = f"{code}: {detail}"
+            return _redact(detail) or detail
+    result = payload.get("result")
+    if isinstance(result, dict):
+        return _payload_error_detail(result)
+    return None
+
+
+def _refinement_error_status(detail: str) -> int:
+    lower = (detail or "").lower()
+    if any(token in lower for token in (
+        "accessdenied",
+        "access denied",
+        "not authorized",
+        "forbidden",
+        "permission",
+        "outside the caller tenant",
+        "unapproved bucket",
+        "storage path not allowed",
+        "path not allowed",
+    )):
+        return 403
+    if any(token in lower for token in (
+        "source_files_missing",
+        "no files found",
+        "not found",
+        "404",
+        "no such key",
+        "does not exist",
+    )):
+        return 404
+    if any(token in lower for token in (
+        "timeout",
+        "timed out",
+        "connecterror",
+        "connection refused",
+        "temporarily unavailable",
+        "service unavailable",
+    )):
+        return 503
+    if any(token in lower for token in (
+        "sql could not be parsed",
+        "failed ast parse",
+        "invalid bronze source",
+        "sql is required",
+    )):
+        return 400
+    return 502
+
+
+def _raise_for_refinement_payload_error(payload, fallback: str = "Refinement request failed") -> None:
+    detail = _payload_error_detail(payload)
+    if not detail:
+        return
+    raise HTTPException(_refinement_error_status(detail), detail or fallback)
+
+
 async def _refinement_invoke(tool: str, args: dict, *, timeout: int = 30, user: dict | None = None):
     import httpx
     refinement_url = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
@@ -5266,7 +5353,9 @@ async def _refinement_invoke(tool: str, args: dict, *, timeout: int = 30, user: 
         )
         if r.status_code >= 400:
             raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement request failed"))
-        return r.json()
+        payload = r.json()
+        _raise_for_refinement_payload_error(payload, "Refinement request failed")
+        return payload
 
 
 # ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────
