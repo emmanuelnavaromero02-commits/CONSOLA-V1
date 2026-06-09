@@ -1,0 +1,47 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const pageSource = readFileSync(join(process.cwd(), "src/app/(shell)/control-room/page.tsx"), "utf8");
+
+describe("Control Room page functional contract", () => {
+  it("keeps existing read surfaces wired after the visual redesign", () => {
+    expect(pageSource).toContain("getControlRoomDashboard");
+    expect(pageSource).toContain("getControlRoomActivity");
+    expect(pageSource).toContain("getControlRoomImpact");
+    expect(pageSource).toContain("getControlRoomLessons");
+    expect(pageSource).toContain("getControlRoomThresholds");
+    expect(pageSource).toContain("getSuccessFactorsGoldKpis");
+    expect(pageSource).toContain("SuccessFactorsGoldPanel");
+    expect(pageSource).toContain("SourceInventoryPanel");
+  });
+
+  it("keeps OMEGA detail capabilities accessible", () => {
+    expect(pageSource).toContain("ImpactSnapshot");
+    expect(pageSource).toContain("ActivityTrail");
+    expect(pageSource).toContain("ThresholdRulesBoard");
+    expect(pageSource).toContain("LessonsBoard");
+    expect(pageSource).toContain("onApplyLesson");
+    expect(pageSource).toContain("ExecutionStep");
+    expect(pageSource).toContain("ControlStep");
+  });
+
+  it("keeps supervised execution and approval flows wired to existing endpoints", () => {
+    expect(pageSource).toContain("/action-preview");
+    expect(pageSource).toContain("/action-dry-run");
+    expect(pageSource).toContain("/execute");
+    expect(pageSource).toContain("/auto-run");
+    expect(pageSource).toContain("/approve");
+    expect(pageSource).toContain("/dismiss");
+    expect(pageSource).toContain("/alerts/");
+  });
+
+  it("keeps operational links and does not depend on the reference HTML", () => {
+    expect(pageSource).toContain("sourceCatalogHref");
+    expect(pageSource).toContain("sourceDataHref");
+    expect(pageSource).toContain("sourceSchemaHref");
+    expect(pageSource).not.toContain("sap.html");
+    expect(pageSource).not.toContain("mock");
+  });
+});
