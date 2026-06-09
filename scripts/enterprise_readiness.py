@@ -105,6 +105,18 @@ def record(ctx: Context, name: str, status: str, evidence: str, *, command: str 
     ctx.steps.append(Step(name, status, command, evidence, note))
 
 
+def _record_safe_skips(ctx: Context, stages: list[tuple[str, str, dict[str, str]]], reason: Step) -> None:
+    for name, command, _env in stages:
+        record(
+            ctx,
+            name,
+            "BLOCKED",
+            f"skipped after {reason.name} returned {reason.status}",
+            command=command,
+            note="SAFE-SKIPPED: production load stages stop after the first non-PASS load gate",
+        )
+
+
 def _slug(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
 
@@ -186,39 +198,6 @@ def main(argv: list[str] | None = None) -> int:
             note="SAFE-ONLY: verifies refusal rather than executing chaos",
         )
     stress_host = _target_host(ctx)
-    run(
-        ctx,
-        "stress smoke",
-        "make stress-smoke",
-        env={
-            "OMEGA_STRESS_HOST": stress_host,
-            "OMEGA_STRESS_WORKLOAD": ctx.workload,
-            "OMEGA_STRESS_ARTIFACT_DIR": str(ctx.evidence_dir / "stress-smoke"),
-            "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "stress-smoke" / "data-integrity"),
-        },
-    )
-    run(
-        ctx,
-        "stress beta",
-        "make stress-beta",
-        env={
-            "OMEGA_STRESS_HOST": stress_host,
-            "OMEGA_STRESS_WORKLOAD": ctx.workload,
-            "OMEGA_STRESS_ARTIFACT_DIR": str(ctx.evidence_dir / "stress-beta"),
-            "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "stress-beta" / "data-integrity"),
-        },
-    )
-    run(
-        ctx,
-        "stress spike",
-        "make stress-spike",
-        env={
-            "OMEGA_STRESS_HOST": stress_host,
-            "OMEGA_STRESS_WORKLOAD": ctx.workload,
-            "OMEGA_STRESS_ARTIFACT_DIR": str(ctx.evidence_dir / "stress-spike"),
-            "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "stress-spike" / "data-integrity"),
-        },
-    )
     write_env = {
         "OMEGA_STRESS_HOST": stress_host,
         "OMEGA_STRESS_WORKLOAD": ctx.workload,
@@ -227,7 +206,44 @@ def main(argv: list[str] | None = None) -> int:
     }
     if ctx.target == "aws":
         write_env.setdefault("OMEGA_STRESS_ENABLE_SF_REFRESH", os.environ.get("OMEGA_STRESS_ENABLE_SF_REFRESH", "0"))
-    run(ctx, "stress write-heavy", "make stress-write-heavy", env=write_env)
+    load_stages = [
+        (
+            "stress smoke",
+            "make stress-smoke",
+            {
+                "OMEGA_STRESS_HOST": stress_host,
+                "OMEGA_STRESS_WORKLOAD": ctx.workload,
+                "OMEGA_STRESS_ARTIFACT_DIR": str(ctx.evidence_dir / "stress-smoke"),
+                "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "stress-smoke" / "data-integrity"),
+            },
+        ),
+        (
+            "stress beta",
+            "make stress-beta",
+            {
+                "OMEGA_STRESS_HOST": stress_host,
+                "OMEGA_STRESS_WORKLOAD": ctx.workload,
+                "OMEGA_STRESS_ARTIFACT_DIR": str(ctx.evidence_dir / "stress-beta"),
+                "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "stress-beta" / "data-integrity"),
+            },
+        ),
+        (
+            "stress spike",
+            "make stress-spike",
+            {
+                "OMEGA_STRESS_HOST": stress_host,
+                "OMEGA_STRESS_WORKLOAD": ctx.workload,
+                "OMEGA_STRESS_ARTIFACT_DIR": str(ctx.evidence_dir / "stress-spike"),
+                "OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "stress-spike" / "data-integrity"),
+            },
+        ),
+        ("stress write-heavy", "make stress-write-heavy", write_env),
+    ]
+    for index, (name, command, env) in enumerate(load_stages):
+        step = run(ctx, name, command, env=env)
+        if ctx.target == "aws" and step.status != "PASS":
+            _record_safe_skips(ctx, load_stages[index + 1 :], step)
+            break
     run(ctx, "copilot redteam", "make copilot-redteam", env={"OMEGA_COPILOT_REDTEAM_EVIDENCE_DIR": str(ctx.evidence_dir / "copilot-redteam")})
     run(ctx, "cartridge resilience", "make cartridge-resilience", env={"OMEGA_CARTRIDGE_RESILIENCE_EVIDENCE_DIR": str(ctx.evidence_dir / "cartridge-resilience")})
     run(ctx, "data integrity audit", "make data-integrity-audit", env={"OMEGA_AUDIT_EVIDENCE_DIR": str(ctx.evidence_dir / "data-integrity")})

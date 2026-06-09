@@ -101,10 +101,14 @@ def test_stress_runner_supports_successfactors_workload_and_summary_gate():
         "scripts/stress_summary.py",
         "LOCUST_CODE",
         "SUMMARY_CODE",
+        "remote target ${STRESS_HOST} requires explicit E2E_ADMIN_PASSWORD or TEST_PASSWORD",
+        "OMEGA_STRESS_LOGIN_PREFLIGHT",
     ):
         assert needle in script
     for needle in (
         "WORKLOAD",
+        "LOGIN_PATH",
+        '"/auth/login"',
         "sap_successfactors_employee_360",
         "/api/control-room/sap-successfactors/gold-kpis",
         "/api/bronze/query",
@@ -161,3 +165,64 @@ def test_enterprise_aws_blocks_without_public_console_url(tmp_path: Path):
     report = (tmp_path / "ENT_BLOCKED" / "REPORT.md").read_text(encoding="utf-8")
     assert "PUBLIC_CONSOLE_URL missing" in report
     assert "BLOCKED" in report
+
+
+def test_enterprise_aws_safe_skips_remaining_load_after_smoke_failure(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    called = tmp_path / "called.txt"
+    fake_make = fake_bin / "make"
+    fake_make.write_text(
+        f"""#!/bin/sh
+echo "$@" >> "{called}"
+case "$1" in
+  stress-smoke)
+    echo "fake smoke failure"
+    exit 1
+    ;;
+  copilot-redteam|cartridge-resilience|data-integrity-audit)
+    echo "fake blocked follow-up"
+    exit 2
+    ;;
+  *)
+    echo "unexpected make target $1"
+    exit 0
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_make.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "OMEGA_ENTERPRISE_RUN_ID": "ENT_FAIL_FAST",
+            "OMEGA_ENTERPRISE_EVIDENCE_ROOT": str(tmp_path),
+            "PUBLIC_CONSOLE_URL": "http://modecissions-public-255609366.us-east-1.elb.amazonaws.com",
+        }
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--target",
+            "aws",
+            "--workload",
+            "sap_successfactors",
+            "--profile",
+            "beta-safe",
+        ],
+        cwd=REPO,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+    report = (tmp_path / "ENT_FAIL_FAST" / "REPORT.md").read_text(encoding="utf-8")
+    assert "stress smoke | FAIL" in report
+    assert "stress beta | BLOCKED | skipped after stress smoke returned FAIL" in report
+    assert "SAFE-SKIPPED" in report
+    assert "stress-beta" not in called.read_text(encoding="utf-8")

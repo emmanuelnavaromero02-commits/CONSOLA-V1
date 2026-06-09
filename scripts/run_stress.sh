@@ -91,9 +91,28 @@ FAKE_PORT="${FAKE_HUBSPOT_PORT:-18030}"
 FAKE_TOKEN="${FAKE_HUBSPOT_TOKEN:-pat-na1-stress-token}"
 FAKE_BASE_URL="http://host.docker.internal:${FAKE_PORT}"
 ENABLE_WRITES="${OMEGA_STRESS_ENABLE_WRITES:-$DEFAULT_WRITES}"
+REMOTE_STRESS_HOST=1
+case "$STRESS_HOST" in
+  http://127.0.0.1*|https://127.0.0.1*|http://localhost*|https://localhost*|http://0.0.0.0*|https://0.0.0.0*)
+    REMOTE_STRESS_HOST=0
+    ;;
+esac
+EXPLICIT_ADMIN_SECRET=0
+if [[ -n "${E2E_ADMIN_PASSWORD:-}" || -n "${TEST_PASSWORD:-}" ]]; then
+  EXPLICIT_ADMIN_SECRET=1
+fi
+if [[ -z "${E2E_ADMIN_PASSWORD:-}" && -n "${TEST_PASSWORD:-}" ]]; then
+  E2E_ADMIN_PASSWORD="$TEST_PASSWORD"
+  export E2E_ADMIN_PASSWORD
+fi
+if [[ -z "${E2E_ADMIN_EMAIL:-}" && -n "${TEST_EMAIL:-}" ]]; then
+  E2E_ADMIN_EMAIL="$TEST_EMAIL"
+  export E2E_ADMIN_EMAIL
+fi
 export OMEGA_STRESS_ENABLE_WRITES="$ENABLE_WRITES"
 export OMEGA_STRESS_ENABLE_INTERNAL_PROBES="$DEFAULT_INTERNAL_PROBES"
 export OMEGA_STRESS_WORKLOAD="$STRESS_WORKLOAD"
+export STRESS_HOST STRESS_ARTIFACT_DIR
 
 mkdir -p "$STRESS_ARTIFACT_DIR"
 
@@ -103,6 +122,13 @@ PY
 then
   echo "[stress] Locust is not installed for ${PYTHON_BIN}."
   echo "[stress] Install it with: ${PYTHON_BIN} -m pip install -r tests/stress/requirements.txt"
+  exit 2
+fi
+
+if [[ "$REMOTE_STRESS_HOST" == "1" && "$EXPLICIT_ADMIN_SECRET" != "1" ]]; then
+  echo "[stress] remote target ${STRESS_HOST} requires explicit E2E_ADMIN_PASSWORD or TEST_PASSWORD."
+  echo "[stress] Local .env/.env.example fallbacks are disabled for remote targets to avoid account lockout."
+  echo "[stress] Export E2E_ADMIN_EMAIL/E2E_ADMIN_PASSWORD for this AWS stack, then rerun."
   exit 2
 fi
 
@@ -141,6 +167,58 @@ if [[ -z "${E2E_ADMIN_PASSWORD:-}" ]]; then
   echo "[stress] E2E_ADMIN_PASSWORD is required."
   echo "[stress] Export it with the bootstrap admin password used by this stack."
   exit 2
+fi
+
+if [[ "${OMEGA_STRESS_LOGIN_PREFLIGHT:-$REMOTE_STRESS_HOST}" =~ ^(1|true|yes)$ ]]; then
+  "$PYTHON_BIN" - <<'PY'
+import http.cookiejar
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+base = os.environ["STRESS_HOST"].rstrip("/")
+email = os.environ.get("E2E_ADMIN_EMAIL", "admin@example.com")
+password = os.environ.get("E2E_ADMIN_PASSWORD", "")
+artifact_dir = Path(os.environ["STRESS_ARTIFACT_DIR"])
+artifact_dir.mkdir(parents=True, exist_ok=True)
+summary_path = artifact_dir / "login_preflight.json"
+jar = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+def request(req: urllib.request.Request):
+    try:
+        with opener.open(req, timeout=20) as response:
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+status, body = request(urllib.request.Request(f"{base}/login"))
+if status != 200:
+    summary_path.write_text(json.dumps({"status": "BLOCKED", "step": "GET /login", "http_status": status, "body": body[:200]}, indent=2) + "\n")
+    print(f"[stress] login preflight failed GET /login HTTP {status}: {body[:200]}")
+    sys.exit(2)
+
+csrf = ""
+for cookie in jar:
+    if cookie.name in {"csrf_token", "csrftoken"}:
+        csrf = cookie.value
+headers = {"Content-Type": "application/json"}
+if csrf:
+    headers["X-CSRF-Token"] = csrf
+payload = json.dumps({"email": email, "password": password}).encode("utf-8")
+login_path = os.environ.get("OMEGA_STRESS_LOGIN_PATH", "/auth/login")
+status, body = request(urllib.request.Request(f"{base}{login_path}", data=payload, headers=headers, method="POST"))
+summary_path.write_text(json.dumps({"status": "PASS" if status == 200 else "BLOCKED", "step": f"POST {login_path}", "http_status": status, "body": body[:200]}, indent=2) + "\n")
+if status != 200:
+    print(f"[stress] login preflight failed POST {login_path} HTTP {status}: {body[:200]}")
+    sys.exit(2)
+print(f"[stress] login preflight OK for {email}")
+PY
 fi
 
 if ! curl -fsS "${STRESS_HOST}/healthz" >/dev/null 2>&1; then

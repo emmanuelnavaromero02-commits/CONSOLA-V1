@@ -12,6 +12,7 @@ from locust import HttpUser, between, task
 
 ADMIN_EMAIL = os.environ.get("E2E_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.environ.get("E2E_ADMIN_PASSWORD", "")
+LOGIN_PATH = os.environ.get("OMEGA_STRESS_LOGIN_PATH", "/auth/login")
 
 ENABLE_WRITES = os.environ.get("OMEGA_STRESS_ENABLE_WRITES", "").strip().lower() in {"1", "true", "yes"}
 ENABLE_COPILOT_WRITES = os.environ.get("OMEGA_STRESS_ENABLE_COPILOT_WRITES", "").strip().lower() in {
@@ -179,7 +180,7 @@ class OmegaStressUser(HttpUser):
             self._mirror_cookie("csrf_token", self.csrf_token)
 
         with self.client.post(
-            "/api/auth/login",
+            LOGIN_PATH,
             name="auth:login",
             json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
             headers=self._csrf_headers(),
