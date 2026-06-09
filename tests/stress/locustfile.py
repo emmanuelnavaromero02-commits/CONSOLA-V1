@@ -4,6 +4,7 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from gevent.lock import RLock
@@ -13,6 +14,9 @@ from locust import HttpUser, between, task
 ADMIN_EMAIL = os.environ.get("E2E_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.environ.get("E2E_ADMIN_PASSWORD", "")
 LOGIN_PATH = os.environ.get("OMEGA_STRESS_LOGIN_PATH", "/auth/login")
+SESSION_COOKIES = os.environ.get("OMEGA_STRESS_SESSION_COOKIES", "").strip()
+SESSION_COOKIE_FILE = os.environ.get("OMEGA_STRESS_SESSION_COOKIE_FILE", "").strip()
+SESSION_BEARER_TOKEN = os.environ.get("OMEGA_STRESS_BEARER_TOKEN", "").strip()
 
 ENABLE_WRITES = os.environ.get("OMEGA_STRESS_ENABLE_WRITES", "").strip().lower() in {"1", "true", "yes"}
 ENABLE_COPILOT_WRITES = os.environ.get("OMEGA_STRESS_ENABLE_COPILOT_WRITES", "").strip().lower() in {
@@ -140,11 +144,13 @@ class OmegaStressUser(HttpUser):
     wait_time = between(WAIT_MIN, WAIT_MAX)
 
     csrf_token: str = ""
+    bearer_token: str = ""
 
     def on_start(self) -> None:
-        if not ADMIN_PASSWORD:
+        if not self._bootstrap_session_from_env() and not ADMIN_PASSWORD:
             raise RuntimeError("E2E_ADMIN_PASSWORD is required for stress login")
-        self._login()
+        if not self.csrf_token and not self.bearer_token:
+            self._login()
         if REQUIRE_LIVE_LLM:
             self._ensure_live_llm_ready()
         self._probe_console_pages()
@@ -167,9 +173,48 @@ class OmegaStressUser(HttpUser):
         # so stress mirrors them as host-only test cookies.
         self.client.cookies.set(name, value, path="/")
 
+    def _set_cookie_string(self, raw: str) -> None:
+        for chunk in raw.split(";"):
+            if "=" not in chunk:
+                continue
+            name, value = chunk.split("=", 1)
+            self._mirror_cookie(name.strip(), value.strip())
+
+    def _bootstrap_session_from_env(self) -> bool:
+        loaded = False
+        if SESSION_COOKIE_FILE:
+            path = Path(SESSION_COOKIE_FILE)
+            if path.exists():
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    raise RuntimeError(f"invalid OMEGA_STRESS_SESSION_COOKIE_FILE: {type(exc).__name__}") from exc
+                cookies = payload.get("cookies") if isinstance(payload, dict) else None
+                if isinstance(cookies, dict):
+                    for name, value in cookies.items():
+                        self._mirror_cookie(str(name), str(value))
+                    loaded = True
+        if SESSION_COOKIES:
+            self._set_cookie_string(SESSION_COOKIES)
+            loaded = True
+        if SESSION_BEARER_TOKEN:
+            self.bearer_token = SESSION_BEARER_TOKEN
+            loaded = True
+        self.csrf_token = self._cookie_value("csrf_token", "csrftoken")
+        return loaded
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.bearer_token}"} if self.bearer_token else {}
+
     def _csrf_headers(self) -> dict[str, str]:
+        headers = self._auth_headers()
         token = self.csrf_token or self._cookie_value("csrf_token", "csrftoken")
-        return {"X-CSRF-Token": token} if token else {}
+        if token:
+            headers["X-CSRF-Token"] = token
+        return headers
+
+    def _get_headers(self) -> dict[str, str]:
+        return self._auth_headers()
 
     def _login(self) -> None:
         with self.client.get("/login", name="auth:get-login", catch_response=True) as response:
@@ -195,7 +240,7 @@ class OmegaStressUser(HttpUser):
 
     def _get_json(self, path: str, *, name: str, expected_status: set[int] | None = None) -> Any:
         expected = expected_status or {200}
-        with self.client.get(path, name=name, catch_response=True) as response:
+        with self.client.get(path, name=name, headers=self._get_headers(), catch_response=True) as response:
             if response.status_code not in expected:
                 response.failure(f"{path} returned {response.status_code}: {response.text[:200]}")
                 return None
@@ -209,7 +254,7 @@ class OmegaStressUser(HttpUser):
 
     def _get_ok(self, path: str, *, name: str, expected_status: set[int] | None = None) -> None:
         expected = expected_status or {200}
-        with self.client.get(path, name=name, catch_response=True) as response:
+        with self.client.get(path, name=name, headers=self._get_headers(), catch_response=True) as response:
             if response.status_code not in expected:
                 response.failure(f"{path} returned {response.status_code}: {response.text[:200]}")
                 return
@@ -599,7 +644,7 @@ class OmegaStressUser(HttpUser):
         with self.client.get(
             f"/api/data/{dataset}?limit=1",
             name="security:forged-workspace-data",
-            headers={"x-workspace-id": FORGED_WORKSPACE_ID},
+            headers={**self._get_headers(), "x-workspace-id": FORGED_WORKSPACE_ID},
             catch_response=True,
         ) as response:
             if response.status_code in {401, 403, 404, 422}:
