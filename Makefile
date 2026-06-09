@@ -13,8 +13,11 @@ MOCK_REPLICON_PORT ?= 18201
 MOCK_SAP_HCM_PORT ?= 18202
 MOCK_SAP_SUCCESSFACTORS_PORT ?= 18203
 MOCK_SAP_S4HANA_PORT ?= 18204
+TARGET ?= local
+WORKLOAD ?= sap_successfactors
+PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report dr-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness dr-rehearsal rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -37,6 +40,23 @@ help:
 	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
 	@echo "  make stress       run Locust stress profile against the running stack"
+	@echo "  make stress-smoke run 25-user/5m smoke load with p95/p99 summary"
+	@echo "  make stress-beta  run beta load profile with p95/p99 summary"
+	@echo "  make stress-spike run controlled spike profile with p95/p99 summary"
+	@echo "  make stress-breakpoint"
+	@echo "                    run breakpoint profile until thresholds expose capacity"
+	@echo "  make stress-soak-24h"
+	@echo "                    run 24h soak profile (guarded by operator env)"
+	@echo "  make stress-write-heavy"
+	@echo "                    run write-heavy profile and require data audit evidence"
+	@echo "  make data-integrity-audit"
+	@echo "                    run enterprise post-test data/RLS/Gold/parquet audit"
+	@echo "  make copilot-redteam"
+	@echo "                    run adversarial Copilot/MCP live gate or BLOCKED evidence"
+	@echo "  make cartridge-resilience"
+	@echo "                    run cartridge contract/resilience gauntlet"
+	@echo "  make enterprise-readiness"
+	@echo "                    run OMEGA 20x enterprise gate (TARGET/WORKLOAD/PROFILE)"
 	@echo "  make multiuser-simulation"
 	@echo "                    run prod-like tenant/workspace/employee isolation simulation"
 	@echo "  make live-cartridge-tests"
@@ -186,6 +206,42 @@ smoke:
 stress:
 	@bash scripts/run_stress.sh
 
+stress-smoke:
+	@OMEGA_STRESS_PROFILE=smoke $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
+
+stress-beta:
+	@OMEGA_STRESS_PROFILE=beta $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
+
+stress-spike:
+	@OMEGA_STRESS_PROFILE=spike $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
+
+stress-breakpoint:
+	@OMEGA_STRESS_PROFILE=breakpoint $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
+
+stress-soak-24h:
+	@OMEGA_STRESS_PROFILE=soak-24h $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
+
+stress-write-heavy:
+	@OMEGA_STRESS_PROFILE=write-heavy OMEGA_STRESS_ENABLE_WRITES=1 $(MAKE) stress; stress_code=$$?; $(MAKE) data-integrity-audit; audit_code=$$?; if [ $$stress_code -ne 0 ]; then exit $$stress_code; fi; exit $$audit_code
+
+data-integrity-audit:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/data_integrity_audit.py
+
+copilot-redteam:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/copilot_redteam.py
+
+cartridge-resilience:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/cartridge_resilience.py --workload "$(WORKLOAD)"
+
+chaos-local:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/chaos_gate.py --target local
+
+chaos-aws:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/chaos_gate.py --target aws
+
+enterprise-readiness:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/enterprise_readiness.py --target "$(TARGET)" --workload "$(WORKLOAD)" --profile "$(PROFILE)"
+
 multiuser-simulation:
 	@bash scripts/run_multiuser_isolation_simulation.sh
 
@@ -221,6 +277,9 @@ v1-ga-report:
 
 dr-rehearsal:
 	@bash scripts/run_dr_rehearsal.sh
+
+rollback-rehearsal:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/rollback_rehearsal.py
 
 # Sprint v1.44.3.2: Playwright browser-driven E2E suite.
 # Validates the FastAPI-served static console (port 8000), legacy HTML
