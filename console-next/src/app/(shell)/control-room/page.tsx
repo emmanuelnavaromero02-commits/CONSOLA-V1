@@ -1428,7 +1428,7 @@ export default function ControlRoomPage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <main className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <Header
         context={activeContext}
         period={dashboard?.period || "Periodo operativo"}
@@ -1600,68 +1600,76 @@ function Header({
   onDomain: (domain: string) => void;
 }) {
   return (
-    <header className="space-y-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 space-y-2">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">{context.eyebrow}</p>
-          <h1 className="text-3xl font-semibold tracking-tight">{context.title}</h1>
-          <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground" aria-label="Ruta de navegacion">
-            <button type="button" className="rounded-md px-1.5 py-1 hover:bg-accent/10 hover:text-foreground" onClick={onAll}>
-              Sala de Control
-            </button>
-            <span>/</span>
-            {context.level === "portfolio" ? (
-              <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">Todos</span>
-            ) : context.level === "domain" ? (
-              <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">{context.domainLabel}</span>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="rounded-md px-1.5 py-1 hover:bg-accent/10 hover:text-foreground"
-                  onClick={() => context.domainLabel && onDomain(context.domainLabel)}
-                >
-                  {context.domainLabel}
-                </button>
-                <span>/</span>
-                <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">{context.moduleLabel}</span>
-              </>
-            )}
-            <span>· {period}</span>
-          </nav>
-          <p className="text-sm text-muted-foreground">{context.subtitle}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="rounded-full border bg-card px-3 py-1.5">Beta{version ? ` ${version}` : ""}{appEnv ? ` · ${appEnv}` : ""}</span>
-          <span className={cn("rounded-full border px-3 py-1.5", writeBackEnabled ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300")}>
-            {writeBackEnabled ? "Write-back ERP flag ON" : "Ejecucion supervisada V1"}
-          </span>
-          <span className={cn("inline-flex items-center gap-1 rounded-full border bg-card px-3 py-1.5", syncError ? "border-amber-500/40 text-amber-700 dark:text-amber-300" : "")}>
-            <Activity aria-hidden className="h-3.5 w-3.5" />
-            {syncError ? "Sync con alerta" : `${liveMode === "polling" ? "Vivo" : liveMode} ${refreshSeconds}s`}
-          </span>
-          <span className="rounded-full border bg-card px-3 py-1.5">Actualizado {lastUpdated}</span>
-          <span className="rounded-full border bg-card px-3 py-1.5">Siguiente {nextRefresh}</span>
-          <span className="rounded-full border bg-card px-3 py-1.5">
-            {activeConnectors} conectores · {activeModules} modulos operativos · {dataReadyModules} data-ready
-          </span>
-          {partialModules || stubModules ? (
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-amber-700 dark:text-amber-300">
-              {partialModules} parciales · {stubModules} stub
-            </span>
-          ) : null}
+    <header className="overflow-hidden rounded-lg border bg-card">
+      <div className="border-b bg-muted/30 p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <p className="text-xs font-semibold uppercase text-muted-foreground">{context.eyebrow}</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{context.title}</h1>
+            <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground" aria-label="Ruta de navegacion">
+              <button type="button" className="rounded-md px-1.5 py-1 hover:bg-accent/10 hover:text-foreground" onClick={onAll}>
+                Sala de Control
+              </button>
+              <span>/</span>
+              {context.level === "portfolio" ? (
+                <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">Todos</span>
+              ) : context.level === "domain" ? (
+                <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">{context.domainLabel}</span>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="rounded-md px-1.5 py-1 hover:bg-accent/10 hover:text-foreground"
+                    onClick={() => context.domainLabel && onDomain(context.domainLabel)}
+                  >
+                    {context.domainLabel}
+                  </button>
+                  <span>/</span>
+                  <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">{context.moduleLabel}</span>
+                </>
+              )}
+              <span>· {period}</span>
+            </nav>
+            <p className="max-w-3xl text-sm text-muted-foreground">{context.subtitle}</p>
+          </div>
           <button
             type="button"
             onClick={onRefresh}
             disabled={loading}
-            className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             {loading ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCcw aria-hidden className="h-4 w-4" />}
             Refrescar
           </button>
         </div>
       </div>
-      {syncError ? <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300" role="status">Ultimo refresh fallido: {syncError}</p> : null}
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="rounded-md border bg-background p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Version</p>
+          <p className="mt-1 text-sm font-medium">Beta{version ? ` ${version}` : ""}{appEnv ? ` · ${appEnv}` : ""}</p>
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Ejecucion</p>
+          <ReadinessBadge status={writeBackEnabled ? "ready" : "partial"} label={writeBackEnabled ? "Write-back ERP flag ON" : "Supervisada V1"} compact className="mt-1" />
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Auto-refresh</p>
+          <p className="mt-1 inline-flex items-center gap-1 text-sm font-medium">
+            <Activity aria-hidden className="h-3.5 w-3.5" />
+            {syncError ? "Sync con alerta" : `${liveMode === "polling" ? "Vivo" : liveMode} ${refreshSeconds}s`}
+          </p>
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Actualizacion</p>
+          <p className="mt-1 text-sm font-medium">{lastUpdated} · siguiente {nextRefresh}</p>
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Readiness</p>
+          <p className="mt-1 text-sm font-medium">{activeConnectors} conectores · {activeModules} modulos · {dataReadyModules} data-ready</p>
+          {partialModules || stubModules ? <p className="mt-1 text-xs text-amber-600">{partialModules} parciales · {stubModules} stub</p> : null}
+        </div>
+      </div>
+      {syncError ? <div className="border-t p-4"><OperationalNotice tone="warning" title="Ultimo refresh fallido">{syncError}</OperationalNotice></div> : null}
     </header>
   );
 }
@@ -2121,6 +2129,22 @@ function DomainSection({ domain, collapsed, onToggle }: { domain: Domain; collap
   );
 }
 
+function sourceCatalogHref(source: SourceStatus): string {
+  const params = new URLSearchParams();
+  if (source.cartridge) params.set("cartridge", source.cartridge);
+  if (source.dataset) params.set("dataset", source.dataset);
+  return `/data/catalog${params.toString() ? `?${params.toString()}` : ""}`;
+}
+
+function sourceDataHref(source: SourceStatus): string {
+  return `/api/data/${encodeURIComponent(source.dataset)}?limit=20`;
+}
+
+function sourceSchemaHref(source: SourceStatus): string | null {
+  if (!source.dataset.startsWith("raw/")) return null;
+  return `/viewer?type=schema&source=${encodeURIComponent(source.dataset)}`;
+}
+
 function SourceInventoryPanel({ context, sources }: { context: ActiveContext; sources: SourceStatus[] }) {
   const readinessStates: DataReadiness[] = ["ready", "partial", "stub", "empty", "missing", "invalid_schema", "unavailable", "blocked", "no_permission"];
   const readinessCounts = readinessStates.reduce((acc, state) => {
@@ -2155,6 +2179,11 @@ function SourceInventoryPanel({ context, sources }: { context: ActiveContext; so
             <ReadinessBadge status={source.data_readiness || "ready"} compact />
             <span>{source.count} filas</span>
             <span className="text-muted-foreground">{source.checked_at ? `Revisada ${timeAgo(parseDate(source.checked_at), 0)}` : "Sin revision"}</span>
+            <div className="flex flex-wrap gap-2 md:col-span-5">
+              <a className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent/10" href={sourceCatalogHref(source)}>Catalogo</a>
+              {source.count > 0 ? <a className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent/10" href={sourceDataHref(source)}>Data</a> : null}
+              {sourceSchemaHref(source) ? <a className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent/10" href={sourceSchemaHref(source) || "#"}>Schema</a> : null}
+            </div>
             {source.readiness_reason ? <p className="md:col-span-5 text-xs text-amber-700 dark:text-amber-300">{source.readiness_reason}</p> : null}
             {source.readiness_blockers?.length ? <p className="md:col-span-5 text-xs text-muted-foreground">{source.readiness_blockers.join(" · ")}</p> : null}
             {source.error ? <p className="md:col-span-5 text-xs text-destructive">{source.error}</p> : null}
