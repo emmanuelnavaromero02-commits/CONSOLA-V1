@@ -9,11 +9,11 @@ import { getDataLineage } from "@/lib/data/client";
 import type { LineageEdge, LineageNode } from "@/lib/data/types";
 import { cn } from "@/lib/utils";
 
-const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["sap_successfactors", "replicon", "hubspot", "sap_hcm", "sap_s4hana"] as const;
 const TYPE_ORDER = ["raw", "bronze", "silver", "gold", "master"] as const;
 
 export default function DataLineagePage() {
-  const [cartridge, setCartridge] = useState("");
+  const [cartridge, setCartridge] = useState("sap_successfactors");
   const [search, setSearch] = useState("");
 
   const lineage = useQuery({

@@ -57,9 +57,9 @@ def _tenant_workspace(user: dict | None) -> tuple[str | None, str | None]:
 
 
 def _scoped_where(user: dict | None, table_alias: str = "", *, metadata: bool = False) -> tuple[str, tuple]:
-    if _is_platform_admin(user):
-        return "", ()
     tenant_id, workspace_id = _tenant_workspace(user)
+    if _is_platform_admin(user) and not (tenant_id and workspace_id):
+        return "", ()
     if not tenant_id or not workspace_id:
         return " AND FALSE", ()
     prefix = f"{table_alias}." if table_alias else ""
@@ -112,40 +112,49 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
     async with pool.acquire() as conn:
         platform = _is_platform_admin(user)
         if platform:
+            run_where, run_args = _scoped_where(user)
             extractions_24h = await _safe_fetchval(conn,
-                """
+                f"""
                 SELECT COUNT(*) FROM extraction_runs
                 WHERE started_at >= now() - INTERVAL '24 hours'
-                """
+                {run_where}
+                """,
+                *run_args,
             )
             errors_24h = await _safe_fetchval(conn,
-                """
+                f"""
                 SELECT COUNT(*) FROM extraction_runs
                 WHERE started_at >= now() - INTERVAL '24 hours'
                   AND status = 'failed'
-                """
+                {run_where}
+                """,
+                *run_args,
             )
             avg_duration_sec = await _safe_fetchval(conn,
-                """
+                f"""
                 SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))
                 FROM extraction_runs
                 WHERE started_at >= now() - INTERVAL '24 hours'
                   AND status = 'success'
                   AND finished_at IS NOT NULL
-                """
+                {run_where}
+                """,
+                *run_args,
             )
             slowest = await _safe_fetch(conn,
-                """
+                f"""
                 SELECT cartridge_id, entity_name,
                        AVG(EXTRACT(EPOCH FROM (finished_at - started_at))) AS avg_sec
                 FROM extraction_runs
                 WHERE started_at >= now() - INTERVAL '7 days'
                   AND status = 'success'
                   AND finished_at IS NOT NULL
+                  {run_where}
                 GROUP BY cartridge_id, entity_name
                 ORDER BY avg_sec DESC NULLS LAST
                 LIMIT 5
-                """
+                """,
+                *run_args,
             )
         else:
             extractions_24h = errors_24h = avg_duration_sec = 0
@@ -189,18 +198,23 @@ async def operational_metrics(user: dict = Depends(require_operations_read)) -> 
             *cr_args,
         )
         if platform:
+            job_where, job_args = _scoped_where(user)
             jobs_24h = await _safe_fetchval(conn,
-                """
+                f"""
                 SELECT COUNT(*) FROM jobs
                 WHERE created_at >= now() - INTERVAL '24 hours'
-                """
+                {job_where}
+                """,
+                *job_args,
             )
             failed_jobs_24h = await _safe_fetchval(conn,
-                """
+                f"""
                 SELECT COUNT(*) FROM jobs
                 WHERE created_at >= now() - INTERVAL '24 hours'
                   AND status IN ('failed', 'error')
-                """
+                {job_where}
+                """,
+                *job_args,
             )
         else:
             jobs_24h = failed_jobs_24h = 0

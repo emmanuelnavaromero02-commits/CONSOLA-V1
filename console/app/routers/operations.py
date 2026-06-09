@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
+from urllib.parse import quote
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import require_authenticated, ROLE_ADMIN
+from app.security import get_internal_api_key
 from app.services import operations_service
 from app.services.permissions import canonical_role, require_permission
+from app.services.security_context import build_security_context
 
 
 async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
@@ -16,6 +23,39 @@ async def _require_admin(user: dict = Depends(require_authenticated)) -> dict:
 
 def _is_platform_admin(user: dict | None) -> bool:
     return canonical_role((user or {}).get("role")) in {"owner", "super_admin", ROLE_ADMIN}
+
+
+_OPERATIONAL_CARTRIDGES = {"replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"}
+_VAULT_URL = os.environ.get("VAULT_URL", "http://vault:8300").rstrip("/")
+
+
+def _vault_headers_for_user(user: dict | None) -> dict[str, str]:
+    key = os.environ.get("INTERNAL_API_KEY_CONSOLE_TO_VAULT") or get_internal_api_key()
+    return {
+        "x-api-key": key,
+        "x-internal-service": "console",
+        "x-security-context": json.dumps(build_security_context(user), ensure_ascii=False),
+    }
+
+
+async def _active_scoped_cartridges(user: dict | None) -> set[str]:
+    active: set[str] = set()
+    async with httpx.AsyncClient(headers=_vault_headers_for_user(user), timeout=5) as client:
+        for cartridge in sorted(_OPERATIONAL_CARTRIDGES):
+            try:
+                response = await client.get(f"{_VAULT_URL}/connections/{quote(cartridge, safe='')}")
+            except Exception:
+                continue
+            if response.status_code in {404, 204} or response.status_code >= 400:
+                continue
+            try:
+                payload = response.json()
+            except ValueError:
+                continue
+            connections = payload.get("connections") if isinstance(payload, dict) else []
+            if isinstance(connections, list) and any(isinstance(conn, dict) for conn in connections):
+                active.add(cartridge)
+    return active
 
 
 router = APIRouter(
@@ -39,7 +79,7 @@ async def system_health(user: dict = Depends(require_permission("operations.read
             "summary": {"total": 0, "up": 0, "down": 0},
             "scope": "workspace",
         }
-    services = await operations_service.probe_services()
+    services = await operations_service.probe_services(await _active_scoped_cartridges(user))
     up = sum(1 for s in services if s["status"] == "up")
     version = await operations_service.get_system_version()
     return {

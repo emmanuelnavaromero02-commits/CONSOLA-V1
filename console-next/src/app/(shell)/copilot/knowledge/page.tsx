@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["sap_successfactors", "replicon", "hubspot", "sap_hcm", "sap_s4hana"] as const;
 const SOURCE_KINDS = ["document", "schema"] as const;
 
 interface RagSource {
@@ -93,7 +93,7 @@ const EMPTY_INGEST: IngestForm = {
 const EMPTY_REINDEX: ReindexForm = {
   kind: "dataset",
   name: "",
-  cartridge: "replicon",
+  cartridge: "sap_successfactors",
 };
 
 const EMPTY_QUERY: QueryForm = {

@@ -16,7 +16,7 @@ import type { CatalogColumn, CatalogDataset, CatalogRelationshipInput, DatasetRo
 import { cn } from "@/lib/utils";
 
 const LAYERS = ["bronze", "silver", "gold", "master"] as const;
-const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["sap_successfactors", "replicon", "hubspot", "sap_hcm", "sap_s4hana"] as const;
 const JOIN_HINTS = ["many_to_one", "one_to_many", "one_to_one", "many_to_many"] as const;
 const SF_GOLD_DATASETS = new Set([
   "sap_successfactors_employee_360",
@@ -566,11 +566,11 @@ function Badge({ children }: { children: ReactNode }) {
 }
 
 function initialFiltersFromUrl() {
-  if (typeof window === "undefined") return { layer: "", cartridge: "", tags: "", datasets: "" };
+  if (typeof window === "undefined") return { layer: "", cartridge: "sap_successfactors", tags: "", datasets: "" };
   const params = new URLSearchParams(window.location.search);
   return {
     layer: params.get("layer") || "",
-    cartridge: params.get("cartridge") || "",
+    cartridge: params.get("cartridge") || "sap_successfactors",
     tags: params.get("tags") || "",
     datasets: params.get("datasets") || "",
   };

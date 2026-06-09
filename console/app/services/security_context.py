@@ -202,6 +202,8 @@ def _allowed_prefixes(
     scoped = bool(tenant_id and workspace_id)
     if "*" in cartridges and not scoped:
         return ["raw/", "silver/", "gold/", "uploads/", "cartridges/", "inbound/", "inbound-processed/"]
+    if "*" in cartridges and scoped:
+        return ["raw/", "silver/", "gold/", "uploads/", "cartridges/"]
     prefixes: list[str] = []
     for cart in cartridges:
         c = str(cart).strip().strip("/")
@@ -210,9 +212,9 @@ def _allowed_prefixes(
         if scoped:
             scope = f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
             prefixes.extend([
-                f"raw/{c}/{scope}",
-                f"silver/{c}/{scope}",
-                f"gold/{c}/{scope}",
+                f"raw/{c}/",
+                f"silver/{c}/",
+                f"gold/{c}/",
                 f"uploads/{c}/{scope}",
                 f"cartridges/{c}/",
             ])

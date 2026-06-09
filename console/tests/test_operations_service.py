@@ -85,6 +85,24 @@ async def test_probe_services_returns_one_entry_per_service():
 
 
 @pytest.mark.asyncio
+async def test_probe_services_filters_cartridge_services_to_active_connections():
+    async def fake_probe(name, url):
+        return {"name": name, "status": "down", "error": "ConnectError"}
+
+    with patch.object(operations_service, "_probe_one", side_effect=fake_probe):
+        result = await operations_service.probe_services(active_cartridges={"sap_successfactors"})
+
+    names = {s["name"] for s in result}
+    assert "sap-successfactors" in names
+    assert "replicon" not in names
+    assert "hubspot" not in names
+    assert "sap-hcm" not in names
+    assert "sap-s4hana" not in names
+    assert "console" in names
+    assert "refinement" in names
+
+
+@pytest.mark.asyncio
 async def test_probe_one_marks_console_up_on_401():
     """/api/system/info returns 401 without session — we still consider console UP."""
     mock_resp = type("R", (), {"status_code": 401})()

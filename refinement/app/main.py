@@ -785,6 +785,18 @@ def _require_sql_storage_scope(
     if _PGDB_SCHEMA_RE.search(masked):
         raise HTTPException(403, "pgdb schema is not readable through refinement")
 
+    validation_sql = sql
+    try:
+        validation_sql = engine._scope_storage_sql(
+            engine._inject_bucket(sql),
+            sources or [],
+            _trusted_user_context(body, {}),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        validation_sql = sql
+
     for source in sources or []:
         if _prefix_allowed(sec, str(source)):
             continue
@@ -794,8 +806,8 @@ def _require_sql_storage_scope(
             continue
         raise HTTPException(403, "source prefix not allowed")
 
-    reader_calls = list(_SQL_READER_CALL_RE.finditer(sql))
-    direct_readers = list(_SCOPED_READER_RE.finditer(sql))
+    reader_calls = list(_SQL_READER_CALL_RE.finditer(validation_sql))
+    direct_readers = list(_SCOPED_READER_RE.finditer(validation_sql))
     if len(reader_calls) != len(direct_readers):
         raise HTTPException(403, "SQL readers must use a direct string literal path")
     for match in direct_readers:
@@ -805,14 +817,14 @@ def _require_sql_storage_scope(
             sources=sources,
             allow_registered_dataset_paths=allow_registered_dataset_paths,
         )
-    for match in _SQL_STORAGE_LITERAL_RE.finditer(sql):
+    for match in _SQL_STORAGE_LITERAL_RE.finditer(validation_sql):
         _require_sql_path_scope(
             sec,
             match.group(2),
             sources=sources,
             allow_registered_dataset_paths=allow_registered_dataset_paths,
         )
-    for match in _DIRECT_STORAGE_SCAN_RE.finditer(sql):
+    for match in _DIRECT_STORAGE_SCAN_RE.finditer(validation_sql):
         _require_sql_path_scope(
             sec,
             match.group(2),
