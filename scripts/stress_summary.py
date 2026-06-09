@@ -42,14 +42,31 @@ def _read_stats(path: Path) -> dict[str, str]:
     return rows[-1]
 
 
+def _read_exceptions(path: Path) -> tuple[int, list[str]]:
+    exceptions_csv = path / "locust_exceptions.csv"
+    if not exceptions_csv.exists():
+        return 0, []
+    count = 0
+    messages: list[str] = []
+    for row in csv.DictReader(exceptions_csv.open(encoding="utf-8")):
+        current = int(_float(row.get("Count")))
+        count += current
+        message = str(row.get("Message") or "").strip()
+        if message:
+            messages.append(f"{current}x {message}")
+    return count, messages
+
+
 def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds) -> dict[str, object]:
     row = _read_stats(path)
     requests = int(_float(row.get("Request Count")))
     failures = int(_float(row.get("Failure Count")))
+    exception_count, exception_messages = _read_exceptions(path)
     p95 = _float(row.get("95%"))
     p99 = _float(row.get("99%"))
     rps = _float(row.get("Requests/s"))
-    error_rate = (failures / requests) if requests else 0.0
+    total_failures = failures + exception_count
+    error_rate = (total_failures / requests) if requests else 0.0
     violations: list[str] = []
     if p95 > thresholds.p95_ms:
         violations.append(f"p95 {p95:.1f}ms > {thresholds.p95_ms:.1f}ms")
@@ -57,11 +74,16 @@ def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds
         violations.append(f"p99 {p99:.1f}ms > {thresholds.p99_ms:.1f}ms")
     if error_rate > thresholds.max_error_rate:
         violations.append(f"error_rate {error_rate:.4f} > {thresholds.max_error_rate:.4f}")
+    if exception_count:
+        violations.append(f"locust_exceptions {exception_count} > 0")
     return {
         "profile": profile,
         "workload": workload,
         "request_count": requests,
         "failure_count": failures,
+        "exception_count": exception_count,
+        "exception_messages": exception_messages[:10],
+        "total_failure_count": total_failures,
         "error_rate": round(error_rate, 6),
         "requests_per_second": round(rps, 3),
         "p95_ms": p95,
@@ -85,6 +107,7 @@ def _write_report(path: Path, summary: dict[str, object]) -> None:
         f"- status: `{summary['status']}`",
         f"- requests: `{summary.get('request_count', 'n/a')}`",
         f"- failures: `{summary.get('failure_count', 'n/a')}`",
+        f"- exceptions: `{summary.get('exception_count', 'n/a')}`",
         f"- error_rate: `{summary.get('error_rate', 'n/a')}`",
         f"- p95_ms: `{summary.get('p95_ms', 'n/a')}`",
         f"- p99_ms: `{summary.get('p99_ms', 'n/a')}`",
@@ -100,6 +123,11 @@ def _write_report(path: Path, summary: dict[str, object]) -> None:
     if violations:
         lines.append("## Violations")
         lines.extend(f"- {item}" for item in violations)
+        lines.append("")
+    exception_messages = summary.get("exception_messages") or []
+    if exception_messages:
+        lines.append("## Exceptions")
+        lines.extend(f"- {item}" for item in exception_messages)
         lines.append("")
     (path / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 

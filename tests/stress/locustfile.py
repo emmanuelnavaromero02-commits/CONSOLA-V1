@@ -204,6 +204,9 @@ class OmegaStressUser(HttpUser):
             except Exception as exc:
                 response.failure(f"{path} returned non-json: {type(exc).__name__}")
                 return None
+            if isinstance(payload, dict) and payload.get("error"):
+                response.failure(f"{path} returned error payload: {str(payload.get('error'))[:200]}")
+                return None
             response.success()
             return payload
 
@@ -249,6 +252,9 @@ class OmegaStressUser(HttpUser):
                 payload = response.json()
             except Exception as exc:
                 response.failure(f"{path} returned non-json: {type(exc).__name__}")
+                return None
+            if isinstance(payload, dict) and payload.get("error"):
+                response.failure(f"{path} returned error payload: {str(payload.get('error'))[:200]}")
                 return None
             response.success()
             return payload

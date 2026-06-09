@@ -33,6 +33,21 @@ def _write_stats(path: Path, *, requests: int = 1000, failures: int = 0, p95: fl
         )
 
 
+def _write_exceptions(path: Path, *, count: int = 3, message: str = "dataset response is not a list: dict") -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    with (path / "locust_exceptions.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["Count", "Message", "Traceback", "Nodes"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Count": count,
+                "Message": message,
+                "Traceback": "Traceback trimmed for test",
+                "Nodes": "node-1",
+            }
+        )
+
+
 def _run(path: Path, **env_overrides: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(env_overrides)
@@ -56,6 +71,8 @@ def test_stress_summary_passes_under_thresholds(tmp_path: Path):
     assert summary["workload"] == "sap_successfactors"
     assert summary["p95_ms"] == 250.0
     assert summary["p99_ms"] == 900.0
+    assert summary["exception_count"] == 0
+    assert summary["total_failure_count"] == 0
 
 
 def test_stress_summary_fails_threshold_violations(tmp_path: Path):
@@ -67,6 +84,23 @@ def test_stress_summary_fails_threshold_violations(tmp_path: Path):
     assert "p95" in " ".join(summary["violations"])
     assert "p99" in " ".join(summary["violations"])
     assert "error_rate" in " ".join(summary["violations"])
+    assert summary["total_failure_count"] == 25
+
+
+def test_stress_summary_fails_locust_exceptions(tmp_path: Path):
+    _write_stats(tmp_path, requests=100, failures=0, p95=250.0, p99=900.0)
+    _write_exceptions(tmp_path, count=3)
+    result = _run(tmp_path)
+    assert result.returncode == 1, result.stdout
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    report = (tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert summary["status"] == "FAIL"
+    assert summary["failure_count"] == 0
+    assert summary["exception_count"] == 3
+    assert summary["total_failure_count"] == 3
+    assert summary["error_rate"] == 0.03
+    assert "locust_exceptions 3 > 0" in summary["violations"]
+    assert "dataset response is not a list: dict" in report
 
 
 def test_stress_summary_missing_locust_csv_is_blocked(tmp_path: Path):

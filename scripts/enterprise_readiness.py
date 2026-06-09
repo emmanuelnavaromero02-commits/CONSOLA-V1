@@ -55,6 +55,24 @@ def _command_status(code: int) -> str:
     return "FAIL"
 
 
+def _step_status(left: str, right: str) -> str:
+    return max((left, right), key=lambda item: STATUS_ORDER[item])
+
+
+def _stress_summary_status(ctx: Context, name: str) -> str | None:
+    if not name.startswith("stress "):
+        return None
+    artifact_dir = ctx.evidence_dir / name.replace(" ", "-")
+    summary_path = artifact_dir / "summary.json"
+    if not summary_path.exists():
+        return None
+    try:
+        status = str(json.loads(summary_path.read_text(encoding="utf-8")).get("status") or "")
+    except Exception:
+        return None
+    return status if status in STATUS_ORDER else None
+
+
 def _write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -96,7 +114,15 @@ def run(ctx: Context, name: str, command: str, *, env: dict[str, str] | None = N
         check=False,
     )
     _write(log_path, f"$ {command}\nexit_code={proc.returncode}\n\n{proc.stdout}")
-    step = Step(name, _command_status(proc.returncode), command, _evidence_ref(log_path), exit_code=proc.returncode)
+    status = _command_status(proc.returncode)
+    note = ""
+    stress_summary_status = _stress_summary_status(ctx, name)
+    if stress_summary_status:
+        resolved_status = _step_status(status, stress_summary_status)
+        if resolved_status != status:
+            note = f"stress summary reported {stress_summary_status}"
+        status = resolved_status
+    step = Step(name, status, command, _evidence_ref(log_path), note=note, exit_code=proc.returncode)
     ctx.steps.append(step)
     return step
 

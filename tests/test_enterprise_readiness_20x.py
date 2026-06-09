@@ -101,6 +101,7 @@ def test_stress_runner_supports_successfactors_workload_and_summary_gate():
         "scripts/stress_summary.py",
         "LOCUST_CODE",
         "SUMMARY_CODE",
+        "SUMMARY_STATUS",
         "remote target ${STRESS_HOST} requires explicit E2E_ADMIN_PASSWORD or TEST_PASSWORD",
         "OMEGA_STRESS_LOGIN_PREFLIGHT",
     ):
@@ -115,8 +116,10 @@ def test_stress_runner_supports_successfactors_workload_and_summary_gate():
         "/viewer?type=schema",
         "forged workspace returned rows",
         "OMEGA_STRESS_ENABLE_SF_REFRESH",
+        "returned error payload",
     ):
         assert needle in locust
+    assert "locust_exceptions" in _read("scripts/stress_summary.py")
 
 
 def test_enterprise_dry_run_writes_evidence_and_guards_prod_chaos(tmp_path: Path):
@@ -226,3 +229,63 @@ esac
     assert "stress beta | BLOCKED | skipped after stress smoke returned FAIL" in report
     assert "SAFE-SKIPPED" in report
     assert "stress-beta" not in called.read_text(encoding="utf-8")
+
+
+def test_enterprise_uses_stress_summary_fail_when_make_returns_blocked(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_make = fake_bin / "make"
+    fake_make.write_text(
+        """#!/bin/sh
+case "$1" in
+  stress-smoke)
+    mkdir -p "$OMEGA_STRESS_ARTIFACT_DIR"
+    cat > "$OMEGA_STRESS_ARTIFACT_DIR/summary.json" <<'JSON'
+{"status":"FAIL","violations":["p95 9000.0ms > 800.0ms"]}
+JSON
+    echo "stress failed, audit blocked"
+    exit 2
+    ;;
+  copilot-redteam|cartridge-resilience|data-integrity-audit)
+    exit 2
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_make.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "OMEGA_ENTERPRISE_RUN_ID": "ENT_STRESS_SUMMARY_FAIL",
+            "OMEGA_ENTERPRISE_EVIDENCE_ROOT": str(tmp_path),
+            "PUBLIC_CONSOLE_URL": "http://modecissions-public-255609366.us-east-1.elb.amazonaws.com",
+        }
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--target",
+            "aws",
+            "--workload",
+            "sap_successfactors",
+            "--profile",
+            "beta-safe",
+        ],
+        cwd=REPO,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+    report = (tmp_path / "ENT_STRESS_SUMMARY_FAIL" / "REPORT.md").read_text(encoding="utf-8")
+    assert "stress smoke | FAIL" in report
+    assert "stress summary reported FAIL" in report
+    assert "stress beta | BLOCKED | skipped after stress smoke returned FAIL" in report

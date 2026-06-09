@@ -368,9 +368,31 @@ set +e
 "$PYTHON_BIN" scripts/stress_summary.py "$STRESS_ARTIFACT_DIR" --profile "$STRESS_PROFILE" --workload "$STRESS_WORKLOAD"
 SUMMARY_CODE=$?
 set -e
+SUMMARY_STATUS="$(
+  "$PYTHON_BIN" - "$STRESS_ARTIFACT_DIR/summary.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print("BLOCKED")
+    raise SystemExit(0)
+try:
+    print(json.loads(path.read_text(encoding="utf-8")).get("status") or "BLOCKED")
+except Exception:
+    print("BLOCKED")
+PY
+)"
 
 echo "[stress] completed"
+if [[ "$SUMMARY_STATUS" == "BLOCKED" ]]; then
+  exit 2
+fi
+if [[ "$SUMMARY_STATUS" == "FAIL" ]]; then
+  exit 1
+fi
 if [[ "$LOCUST_CODE" -ne 0 ]]; then
-  exit "$LOCUST_CODE"
+  exit 1
 fi
 exit "$SUMMARY_CODE"
