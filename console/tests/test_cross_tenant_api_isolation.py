@@ -60,6 +60,15 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return result
 
 
+def _require_docker() -> None:
+    result = _docker("info", check=False)
+    if result.returncode != 0:
+        pytest.skip(
+            "Docker is required for live cross-tenant RLS isolation test: "
+            f"{result.stderr.strip()}"
+        )
+
+
 def _init_pgoptions() -> str:
     passwords = {
         "app.omega_console_password": "test_omega_console_password",
@@ -124,6 +133,7 @@ async def _wait_for_schema(dsn: str, container_id: str) -> None:
 
 @pytest.fixture(scope="module")
 def postgres_with_real_init_schema() -> str:
+    _require_docker()
     container_name = f"consola-cross-tenant-rls-{uuid.uuid4().hex[:12]}"
     init_dir = REPO_ROOT / "infra" / "init"
     if not init_dir.is_dir():
