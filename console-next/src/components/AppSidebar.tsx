@@ -79,7 +79,9 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/data/lineage", label: "Linaje", icon: GitBranch, section: "Datos", active: ["/data/lineage", "/viewer", "/lineage", "/linaje"], permission: "datasets.read", keywords: "lineage linaje grafo dependencias" },
       { href: "/data/bronze", label: "Consulta Bronce", icon: Table2, section: "Datos", permission: "datasets.write", keywords: "raw bronze query consultas" },
       { href: "/explorer", label: "Explorer", icon: Search, section: "Datos", permission: "pipelines.read", keywords: "explorar esquema datasets" },
-      { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", permission: "studio.read", keywords: "studio semantic dag datasets" },
+      // The legacy /studio route also requires admin server-side (main.py),
+      // so non-admins with studio.read would only get a raw 403.
+      { href: "/studio", label: "Studio", icon: Sparkles, section: "Datos", permission: "studio.read", adminOnly: true, keywords: "studio semantic dag datasets" },
     ],
   },
   {

@@ -69,3 +69,8 @@ smtp_from_domain = "modecissions.local"
 smtp_use_tls     = false
 
 vpn_admin_allowed_cidrs = []
+
+# Required even when enable_vpn=false (the variable has no default, so
+# terraform plan prompts for it otherwise). Generate a real value with:
+#   htpasswd -bnBC 12 "" '<password>' | tr -d ':\n'
+vpn_admin_password_hash = "$2b$12$REPLACE.WITH.A.REAL.BCRYPT.HASH.BEFORE.ENABLING.THE.VPN"

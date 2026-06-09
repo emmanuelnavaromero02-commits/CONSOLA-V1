@@ -85,7 +85,7 @@ fi
 # ── 5. Required host ports free ────────────────────────────────────────
 echo ""
 echo "Ports (must be free before 'make up'):"
-PORTS="8000 8001 8010 8082 8088 8300 8500 9001 8025 8201 8202 8203 8204 15432"
+PORTS="8000 8001 8010 8082 8088 8300 8500 9000 9001 1025 8025 8201 8202 8203 8204 8205 8210 15432 15433"
 port_in_use() {
     local p="$1"
     if command -v ss >/dev/null 2>&1; then

@@ -98,7 +98,7 @@ SECURITY_CONTEXT_SIGNING_KEY=${SECURITY_CONTEXT_SIGNING_KEY}
 SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
 # Optional: set to the previous Superset SECRET_KEY before rotating
 # SUPERSET_SECRET_KEY against an existing Superset metastore, then run
-# superset-init so `superset re-encrypt-secrets` can migrate encrypted rows.
+# superset-init so \`superset re-encrypt-secrets\` can migrate encrypted rows.
 SUPERSET_PREVIOUS_SECRET_KEY=
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}

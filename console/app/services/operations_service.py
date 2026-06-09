@@ -59,6 +59,7 @@ _BASE_SERVICE_PROBES = {
 _CARTRIDGE_SERVICE_PROBES = {
     "replicon":           ("replicon", "REPLICON_URL", "http://replicon:8201", "http://127.0.0.1:8201", "/health"),
     "hubspot":            ("hubspot", "HUBSPOT_URL", "http://hubspot:8210", "http://127.0.0.1:8210", "/health"),
+    "salesforce":         ("salesforce", "SALESFORCE_URL", "http://salesforce:8205", "http://127.0.0.1:8205", "/health"),
     "sap-hcm":            ("sap_hcm", "SAP_HCM_URL", "http://sap-hcm:8202", "http://127.0.0.1:8202", "/health"),
     "sap-successfactors": ("sap_successfactors", "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203", "http://127.0.0.1:8203", "/health"),
     "sap-s4hana":         ("sap_s4hana", "SAP_S4HANA_URL", "http://sap-s4hana:8204", "http://127.0.0.1:8204", "/health"),

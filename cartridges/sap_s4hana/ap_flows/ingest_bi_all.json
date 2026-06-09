@@ -47,7 +47,7 @@
           "actionName": "send_request",
           "input": {
             "method": "GET",
-            "url": "http://sap_s4hana:8204/skills/entities",
+            "url": "http://sap-s4hana:8204/skills/entities",
             "headers": {},
             "queryParams": {},
             "body": { "type": "none" },
@@ -124,7 +124,7 @@
                   "actionName": "send_request",
                   "input": {
                     "method": "POST",
-                    "url": "{{ 'http://sap_s4hana:8204/skills/run_' + (trigger.body.mode ?? loop_entities.item.mode ?? 'incremental') + '/' + loop_entities.item.entity }}",
+                    "url": "{{ 'http://sap-s4hana:8204/skills/run_' + (trigger.body.mode ?? loop_entities.item.mode ?? 'incremental') + '/' + loop_entities.item.entity }}",
                     "headers": {},
                     "queryParams": {},
                     "body": { "type": "none" },

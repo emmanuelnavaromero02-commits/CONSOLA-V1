@@ -121,12 +121,12 @@ bootstrap-env:
 
 up:
 	$(MAKE) bootstrap-env
-	mkdir -p data/lakehouse
+	mkdir -p data/lakehouse airflow/logs airflow/plugins
 	$(COMPOSE_FULL) up --build -d
 
 up-core:
 	$(MAKE) bootstrap-env
-	mkdir -p data/lakehouse
+	mkdir -p data/lakehouse airflow/logs airflow/plugins
 	$(COMPOSE_DEV) up --build -d
 
 down:
@@ -321,6 +321,7 @@ verify-release:
 	done
 	$(COMPOSE_BASE) --profile sap config -q
 	$(E2E_STACK_ENV) $(COMPOSE_FULL) config -q
+	mkdir -p data/lakehouse airflow/logs airflow/plugins
 	$(E2E_STACK_ENV) $(COMPOSE_FULL) up -d --build --force-recreate
 	bash scripts/wait_for_health.sh
 	$(MAKE) test

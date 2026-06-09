@@ -104,6 +104,12 @@ services:
       - type: bind
         source: ../data/lakehouse
         target: /data
+        # data/ is gitignored, so a fresh checkout doesn't have it; without
+        # this flag any `docker compose up` that skips the Makefile's
+        # `mkdir -p data/lakehouse` fails with "bind source path does not
+        # exist" and takes down every MinIO dependent.
+        bind:
+          create_host_path: true
     # Without a healthcheck, dependents only get service_started semantics
     # and race the MinIO bucket initialization at boot. The /minio/health/live
     # endpoint is part of the MinIO public surface and responds 200 once the
@@ -218,6 +224,13 @@ services:
       # Static console-next is served same-origin by FastAPI on :8000.
       # Workspace keeps :8001 as the only local cross-origin browser client.
       ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:8000,http://localhost:8001}
+      # bootstrap.sh writes these knobs into infra/.env, but compose has no
+      # env_file: — without an explicit passthrough they never reach the
+      # container and silently fall back to code defaults.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-}
+      COOKIE_SECURE:     ${COOKIE_SECURE:-}
+      CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK: ${CONTROL_ROOM_ENABLE_EXTERNAL_WRITEBACK:-false}
+      CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY:  ${CONTROL_ROOM_ENABLE_EXTERNAL_DELIVERY:-false}
     ports:
       - "8000:8000"
     volumes:
@@ -240,6 +253,12 @@ services:
       mailhog:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # /readyz reports refinement as a hard dependency, so without this
+      # console boots "healthy" (healthz) while /readyz returns 503 until
+      # refinement comes up on its own. No cycle: refinement only depends
+      # on postgres, vault, postgres_gold and minio.
+      refinement:
         condition: service_healthy
     healthcheck:
       # Sprint v1.21 (F2): liveness probe so dependent services can

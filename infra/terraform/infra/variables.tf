@@ -71,7 +71,11 @@ variable "nat_instance_type" {
 variable "app_env" {
   description = "Runtime APP_ENV injected into the EC2 app host. Use production only with public HTTPS configured."
   type        = string
-  default     = "production"
+  # production + the empty public_*_domain defaults yields http:// URLs that
+  # scripts/aws-entrypoint.sh rejects (exit 1) in production, leaving the
+  # instance dead after a bare `terraform apply`. Opt in to production
+  # explicitly together with real public HTTPS domains.
+  default     = "staging"
 
   validation {
     condition     = contains(["production", "staging", "development"], lower(var.app_env))
