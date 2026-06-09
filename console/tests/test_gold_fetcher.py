@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app.services.intelligence import gold_fetcher
@@ -40,8 +42,10 @@ class _FakeConn:
 @pytest.fixture(autouse=True)
 def _clear_gold_cache():
     gold_fetcher._GOLD_ROW_CACHE.clear()
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS.clear()
     yield
     gold_fetcher._GOLD_ROW_CACHE.clear()
+    gold_fetcher._GOLD_ROW_CACHE_LOCKS.clear()
 
 
 @pytest.mark.asyncio
@@ -111,3 +115,29 @@ async def test_gold_fetcher_cache_is_scoped_by_workspace(monkeypatch):
     assert first == second
     assert other != first
     assert len(connects) == 2
+
+
+@pytest.mark.asyncio
+async def test_gold_fetcher_singleflights_concurrent_cold_reads(monkeypatch):
+    monkeypatch.setenv("GOLD_DATABASE_URL", "postgresql://gold")
+    monkeypatch.setenv("OMEGA_GOLD_ROW_CACHE_TTL_SECONDS", "60")
+    connects: list[_FakeConn] = []
+
+    async def fake_connect(_dsn: str, command_timeout: int):
+        await asyncio.sleep(0.01)
+        conn = _FakeConn()
+        connects.append(conn)
+        return conn
+
+    monkeypatch.setattr(gold_fetcher.asyncpg, "connect", fake_connect)
+    user = {
+        "tenant_id": "b95f4d58-c9c8-4fd5-8d07-ddde294c7d78",
+        "workspace_id": "a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4",
+    }
+
+    results = await asyncio.gather(
+        *(gold_fetcher.query_gold_dataset_rows("sap_successfactors_employee_360", user, 20) for _ in range(8))
+    )
+
+    assert results == [results[0]] * 8
+    assert len(connects) == 1

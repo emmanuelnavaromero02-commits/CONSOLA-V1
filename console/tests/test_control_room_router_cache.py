@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,8 +23,10 @@ USER = {
 @pytest.fixture(autouse=True)
 def _clear_control_room_cache():
     control_room._CONTROL_ROOM_READ_CACHE.clear()
+    control_room._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
     yield
     control_room._CONTROL_ROOM_READ_CACHE.clear()
+    control_room._CONTROL_ROOM_READ_CACHE_LOCKS.clear()
 
 
 @pytest.mark.asyncio
@@ -64,6 +67,23 @@ async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
     second = await control_room.control_room_sap_successfactors_gold_kpis(USER)
 
     assert first == second == {"headcount": 1288}
+    assert fetch.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_control_room_dashboard_cache_singleflights_concurrent_cold_reads(monkeypatch):
+    monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
+    fetch = AsyncMock(return_value={"items": [{"id": "sf"}]})
+
+    async def slow_dashboard(user):
+        await asyncio.sleep(0.01)
+        return await fetch(user)
+
+    monkeypatch.setattr(control_room.control_room_service, "dashboard", slow_dashboard)
+
+    results = await asyncio.gather(*(control_room.control_room_dashboard(USER) for _ in range(8)))
+
+    assert results == [{"items": [{"id": "sf"}]}] * 8
     assert fetch.await_count == 1
 
 

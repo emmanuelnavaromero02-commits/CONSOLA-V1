@@ -1,11 +1,19 @@
 import json
 import logging
+import sys
 from typing import Any
 
 from app.middleware.request_id import request_id_var
 from app.services import auth
 
 logger = logging.getLogger(__name__)
+
+
+def _audit_auth_module():
+    module = sys.modules.get(__name__)
+    if module is not None and hasattr(module, "auth"):
+        return module.auth
+    return auth
 
 
 def _audit_user_id(value: Any) -> int | None:
@@ -76,7 +84,7 @@ async def record_event(
     vault values, and credentials before invoking this function.
     """
     try:
-        pool = await auth.pool()
+        pool = await _audit_auth_module().pool()
         exists = await pool.fetchval("SELECT to_regclass('public.audit_events')")
         if not exists:
             if critical:

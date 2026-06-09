@@ -122,9 +122,29 @@ class WriteBackAdapterFactory:
         from app.services.adapters.replicon_adapter import RepliconAdapter
         from app.services.adapters.sap_hcm_adapter import SapHcmAdapter
 
-        cls._registry.setdefault("prepare_billing_review", RepliconAdapter)
-        cls._registry.setdefault("prepare_replicon_adjustment", RepliconAdapter)
-        cls._registry.setdefault("sap_hcm_it0008", SapHcmAdapter)
+        cls._register_builtin("prepare_billing_review", RepliconAdapter)
+        cls._register_builtin("prepare_replicon_adjustment", RepliconAdapter)
+        cls._register_builtin("sap_hcm_it0008", SapHcmAdapter)
+
+    @classmethod
+    def _register_builtin(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:
+        registered_cls = adapter_cls
+        if not issubclass(adapter_cls, BaseAdapter):
+            # Pytest can import the legacy facade and modular core in an order
+            # that leaves adapter modules bound to a different BaseAdapter
+            # object with the same module name. Bridge the class back onto the
+            # active factory contract without changing runtime behavior.
+            class BuiltinAdapterBridge(BaseAdapter):
+                def execute(self, action_data, credentials, dry_run=True):
+                    return adapter_cls().execute(action_data, credentials, dry_run=dry_run)
+
+            BuiltinAdapterBridge.__name__ = adapter_cls.__name__
+            BuiltinAdapterBridge.__qualname__ = adapter_cls.__qualname__
+            registered_cls = BuiltinAdapterBridge
+
+        existing = cls._registry.get(template_type)
+        if existing is None or not issubclass(existing, BaseAdapter):
+            cls._registry[template_type] = registered_cls
 
     @classmethod
     def register_adapter(cls, template_type: str, adapter_cls: type[BaseAdapter]) -> None:

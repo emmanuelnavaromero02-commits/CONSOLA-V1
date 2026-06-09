@@ -61,16 +61,12 @@ async def dataset_data(name: str, request: Request, limit: int = 100):
     # tables fall through to the empty-tenant filter (or the revenue_manager
     # 'N/D' fallback) and any authenticated user could read cross-tenant rows.
     user = getattr(request.state, "user", None) or {}
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(
-            f"{REFINEMENT_URL}/mcp/invoke",
-            json=_mcp_payload(
-                "query_dataset",
-                {"name": name, "limit": limit, "user_context": _rls_user_context(user)},
-                user,
-            ),
-        )
-        return r.json()
+    return await _refinement_invoke(
+        "query_dataset",
+        {"name": name, "limit": limit, "user_context": _rls_user_context(user)},
+        timeout=30,
+        user=user,
+    )
 
 # /datasets/{name}/refresh
 @router.post("/datasets/{name}/refresh", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
@@ -82,23 +78,25 @@ async def refresh_dataset(name: str, user: dict = Depends(require_permission("da
 @router.get("/api/schema", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("get_source_partitions", {"source": source}, user))
-        partitions = r.json()
-        r2 = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                          json=_mcp_payload("preview_source", {"source": source, "limit": 5}, user))
-        preview = r2.json()
+    partitions = await _refinement_invoke(
+        "get_source_partitions",
+        {"source": source},
+        timeout=30,
+        user=user,
+    )
+    preview = await _refinement_invoke(
+        "preview_source",
+        {"source": source, "limit": 5},
+        timeout=30,
+        user=user,
+    )
     return {"partitions": partitions, "preview": preview}
 
 # /api/sources
 @router.get("/api/sources", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_sources(user: dict = Depends(require_authenticated)):
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("list_sources", {}, user))
-    data = r.json()
+    data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
     # Normalize: result may be {"result": [...]} or {"sources": [...]}
     sources = data.get("result") or data.get("sources") or []
     if isinstance(sources, list):
@@ -382,16 +380,12 @@ async def api_data(
     except Exception:
         pass
 
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "query_dataset",
-                             {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
-                             user,
-                         ))
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, "Dataset unavailable")
-    data = r.json()
+    data = await _refinement_invoke(
+        "query_dataset",
+        {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
+        timeout=60,
+        user=user,
+    )
     return data.get("data", data)
 
 # /api/data/{dataset}/options

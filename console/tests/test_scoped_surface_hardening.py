@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -32,8 +33,10 @@ USER = {
 @pytest.fixture(autouse=True)
 def _clear_scoped_read_cache():
     console_main._SCOPED_READ_CACHE.clear()
+    console_main._SCOPED_READ_CACHE_LOCKS.clear()
     yield
     console_main._SCOPED_READ_CACHE.clear()
+    console_main._SCOPED_READ_CACHE_LOCKS.clear()
 
 
 def test_bronze_query_rewrites_logical_raw_paths_to_scoped_s3(monkeypatch):
@@ -359,6 +362,31 @@ async def test_catalog_cache_is_scoped_by_workspace(monkeypatch):
     assert len(calls) == 2
     assert calls[0][0] == USER["active_workspace_id"]
     assert calls[1][0] == other_user["active_workspace_id"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_cache_singleflights_concurrent_cold_reads(monkeypatch):
+    console_main._SCOPED_READ_CACHE.clear()
+    console_main._SCOPED_READ_CACHE_LOCKS.clear()
+    monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "60")
+
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    calls: list[dict] = []
+
+    async def fake_refinement(_tool, args, user=None, **_kwargs):
+        await asyncio.sleep(0.01)
+        calls.append(dict(args))
+        return {"datasets": [{"name": "sap_successfactors_employee_360"}]}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
+
+    results = await asyncio.gather(*(console_main.api_catalog_get(layer="gold", user=USER) for _ in range(8)))
+
+    assert results == [{"datasets": [{"name": "sap_successfactors_employee_360"}]}] * 8
+    assert calls == [{"layer": "gold", "cartridge": "sap_successfactors"}]
 
 
 @pytest.mark.asyncio

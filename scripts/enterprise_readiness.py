@@ -55,6 +55,11 @@ def _command_status(code: int) -> str:
     return "FAIL"
 
 
+def _worst_status(*statuses: str) -> str:
+    clean = [status for status in statuses if status in STATUS_ORDER]
+    return max(clean, key=lambda item: STATUS_ORDER[item], default="PASS")
+
+
 def _write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -98,6 +103,45 @@ def run(ctx: Context, name: str, command: str, *, env: dict[str, str] | None = N
     _write(log_path, f"$ {command}\nexit_code={proc.returncode}\n\n{proc.stdout}")
     step = Step(name, _command_status(proc.returncode), command, _evidence_ref(log_path), exit_code=proc.returncode)
     ctx.steps.append(step)
+    return step
+
+
+def apply_stress_summary_status(step: Step, artifact_dir: Path) -> Step:
+    """Preserve a load-test FAIL even when the mandatory audit exits BLOCKED.
+
+    Stress targets intentionally run the data-integrity audit after Locust. When
+    the audit lacks DSNs/manifest it exits 2, which is BLOCKED, but that must not
+    hide a real p95/p99/error-rate failure already written by stress_summary.py.
+    """
+    summary_path = artifact_dir / "summary.json"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return step
+    stress_status = str(summary.get("status") or "").upper()
+    if stress_status not in STATUS_ORDER:
+        return step
+    original_status = step.status
+    step.status = _worst_status(step.status, stress_status)
+    if stress_status == "BLOCKED":
+        step.status = "BLOCKED"
+        blocked_by = summary.get("blocked_by")
+        unblock = summary.get("unblock") or "Resolve the blocked load-test prerequisite and rerun."
+        reason = f"stress summary BLOCKED"
+        if blocked_by:
+            reason += f" by {blocked_by}"
+        step.note = f"{reason}: {unblock}" if not step.note else f"{step.note}; {reason}: {unblock}"
+    elif stress_status == "FAIL" and original_status != "FAIL":
+        violations = summary.get("violations")
+        if isinstance(violations, list) and violations:
+            reason = "; ".join(str(item) for item in violations[:3])
+        else:
+            reason = "stress summary reported FAIL"
+        prefix = f"stress summary FAIL wins over command {original_status}"
+        step.note = f"{prefix}: {reason}" if not step.note else f"{step.note}; {prefix}: {reason}"
+    elif stress_status == "PASS" and original_status == "BLOCKED":
+        note = "load summary passed; mandatory post-load audit is BLOCKED"
+        step.note = note if not step.note else f"{step.note}; {note}"
     return step
 
 
@@ -241,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for index, (name, command, env) in enumerate(load_stages):
         step = run(ctx, name, command, env=env)
+        apply_stress_summary_status(step, Path(env["OMEGA_STRESS_ARTIFACT_DIR"]))
         if ctx.target == "aws" and step.status != "PASS":
             _record_safe_skips(ctx, load_stages[index + 1 :], step)
             break
