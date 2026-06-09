@@ -29,6 +29,13 @@ USER = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _clear_scoped_read_cache():
+    console_main._SCOPED_READ_CACHE.clear()
+    yield
+    console_main._SCOPED_READ_CACHE.clear()
+
+
 def test_bronze_query_rewrites_logical_raw_paths_to_scoped_s3(monkeypatch):
     monkeypatch.setenv("S3_BUCKET_NAME", "modecissions-lakehouse-783792")
     sql = "select * from read_parquet('raw/sap_successfactors/PerPerson') limit 50"
@@ -274,6 +281,88 @@ async def test_catalog_defaults_to_active_scoped_cartridge(monkeypatch):
     assert captured["tool"] == "get_data_catalog"
     assert captured["args"]["cartridge"] == "sap_successfactors"
     assert captured["user"] is USER
+
+
+@pytest.mark.asyncio
+async def test_catalog_cache_is_scoped_by_workspace(monkeypatch):
+    console_main._SCOPED_READ_CACHE.clear()
+    monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "60")
+
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    calls: list[tuple[str | None, dict]] = []
+
+    async def fake_refinement(_tool, args, user=None, **_kwargs):
+        calls.append((user.get("active_workspace_id") or user.get("workspace_id"), dict(args)))
+        return {"datasets": [{"workspace_id": calls[-1][0]}]}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
+
+    first = await console_main.api_catalog_get(layer="gold", user=USER)
+    second = await console_main.api_catalog_get(layer="gold", user=USER)
+
+    other_user = {
+        **USER,
+        "workspace_id": "00000000-0000-0000-0000-000000000002",
+        "active_workspace_id": "00000000-0000-0000-0000-000000000002",
+    }
+    third = await console_main.api_catalog_get(layer="gold", user=other_user)
+
+    assert first == second
+    assert third != first
+    assert len(calls) == 2
+    assert calls[0][0] == USER["active_workspace_id"]
+    assert calls[1][0] == other_user["active_workspace_id"]
+
+
+@pytest.mark.asyncio
+async def test_sources_cache_is_scoped_by_workspace(monkeypatch):
+    console_main._SCOPED_READ_CACHE.clear()
+    monkeypatch.setenv("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "60")
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, _url, *, json):
+            ctx = json.get("security_context") or {}
+            workspace_id = ctx.get("workspace_id")
+            calls.append(workspace_id)
+            return FakeResponse({"sources": [f"raw/sap_successfactors/{workspace_id}"]})
+
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", FakeClient)
+
+    first = await console_main.api_sources(USER)
+    second = await console_main.api_sources(USER)
+    other_user = {
+        **USER,
+        "workspace_id": "00000000-0000-0000-0000-000000000002",
+        "active_workspace_id": "00000000-0000-0000-0000-000000000002",
+    }
+    third = await console_main.api_sources(other_user)
+
+    assert first == second
+    assert third != first
+    assert calls == [
+        USER["active_workspace_id"],
+        other_user["active_workspace_id"],
+    ]
 
 
 @pytest.mark.asyncio

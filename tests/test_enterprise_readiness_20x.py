@@ -103,6 +103,9 @@ def test_stress_runner_supports_successfactors_workload_and_summary_gate():
         "SUMMARY_CODE",
         "remote target ${STRESS_HOST} requires explicit E2E_ADMIN_PASSWORD or TEST_PASSWORD",
         "OMEGA_STRESS_LOGIN_PREFLIGHT",
+        "OMEGA_STRESS_SESSION_COOKIES",
+        "OMEGA_STRESS_SESSION_COOKIE_FILE",
+        "OMEGA_STRESS_BEARER_TOKEN",
     ):
         assert needle in script
     for needle in (
@@ -115,6 +118,7 @@ def test_stress_runner_supports_successfactors_workload_and_summary_gate():
         "/viewer?type=schema",
         "forged workspace returned rows",
         "OMEGA_STRESS_ENABLE_SF_REFRESH",
+        "_bootstrap_session_from_env",
     ):
         assert needle in locust
 

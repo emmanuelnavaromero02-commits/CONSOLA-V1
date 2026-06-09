@@ -17,6 +17,7 @@ import sys
 import time
 import uuid
 import ipaddress
+from copy import deepcopy
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -632,6 +633,60 @@ def _workspace_scope_from_user(user: dict | None) -> tuple[str, str]:
     if not tenant_id or not workspace_id:
         raise HTTPException(400, "Bronze query requires tenant/workspace scope")
     return tenant_id, workspace_id
+
+
+_SCOPED_READ_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
+
+
+def _scoped_read_cache_ttl() -> float:
+    raw = os.environ.get("OMEGA_SCOPED_READ_CACHE_TTL_SECONDS", "20")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 20.0
+    return max(0.0, min(value, 300.0))
+
+
+def _scoped_cache_identity(user: dict | None) -> tuple[Any, ...]:
+    ctx = build_security_context(user)
+    tenant_id = str(ctx.get("tenant_id") or (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip()
+    workspace_id = str(ctx.get("workspace_id") or (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip()
+    allowed = tuple(sorted(str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()))
+    return (
+        tenant_id,
+        workspace_id,
+        str(ctx.get("role") or (user or {}).get("role") or "").strip(),
+        str((user or {}).get("id") or ctx.get("sub") or "").strip(),
+        allowed,
+    )
+
+
+def _scoped_read_cache_key(namespace: str, user: dict | None, *parts: Any) -> tuple[Any, ...]:
+    return (namespace, _scoped_cache_identity(user), parts)
+
+
+def _scoped_read_cache_get(namespace: str, user: dict | None, *parts: Any) -> Any | None:
+    ttl = _scoped_read_cache_ttl()
+    if ttl <= 0:
+        return None
+    key = _scoped_read_cache_key(namespace, user, *parts)
+    cached = _SCOPED_READ_CACHE.get(key)
+    if not cached:
+        return None
+    expires_at, value = cached
+    if expires_at <= time.monotonic():
+        _SCOPED_READ_CACHE.pop(key, None)
+        return None
+    return deepcopy(value)
+
+
+def _scoped_read_cache_set(namespace: str, user: dict | None, value: Any, *parts: Any) -> Any:
+    ttl = _scoped_read_cache_ttl()
+    if ttl <= 0:
+        return value
+    key = _scoped_read_cache_key(namespace, user, *parts)
+    _SCOPED_READ_CACHE[key] = (time.monotonic() + ttl, deepcopy(value))
+    return value
 
 
 def _bronze_bucket_name() -> str:
@@ -2598,6 +2653,9 @@ async def api_tools_manifest():
 
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
+    cached = _scoped_read_cache_get("schema", user, source)
+    if cached is not None:
+        return cached
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("get_source_partitions", {"source": source}, user))
@@ -2605,10 +2663,14 @@ async def api_schema(source: str, user: dict = Depends(require_authenticated)):
         r2 = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                           json=_mcp_payload("preview_source", {"source": source, "limit": 5}, user))
         preview = r2.json()
-    return {"partitions": partitions, "preview": preview}
+    result = {"partitions": partitions, "preview": preview}
+    return _scoped_read_cache_set("schema", user, result, source)
 
 @app.get("/api/sources", dependencies=[Depends(require_authenticated)])
 async def api_sources(user: dict = Depends(require_authenticated)):
+    cached = _scoped_read_cache_get("sources", user, "all")
+    if cached is not None:
+        return cached
     async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
         r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
                          json=_mcp_payload("list_sources", {}, user))
@@ -2616,8 +2678,8 @@ async def api_sources(user: dict = Depends(require_authenticated)):
     # Normalize: result may be {"result": [...]} or {"sources": [...]}
     sources = data.get("result") or data.get("sources") or []
     if isinstance(sources, list):
-        return {"sources": sources}
-    return {"sources": []}
+        return _scoped_read_cache_set("sources", user, {"sources": sources}, "all")
+    return _scoped_read_cache_set("sources", user, {"sources": []}, "all")
 
 @app.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
 async def api_dataset_save(body: dict, user: dict = Depends(require_permission("datasets.write"))):
@@ -5154,8 +5216,12 @@ async def api_catalog_get(
     if cartridge: args["cartridge"] = cartridge
     if tags:     args["tags"]     = [t.strip() for t in tags.split(",") if t.strip()]
     if datasets: args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
+    cache_args = json.dumps(args, sort_keys=True, default=str)
+    cached = _scoped_read_cache_get("catalog", user, cache_args)
+    if cached is not None:
+        return cached
     result = await _refinement_invoke("get_data_catalog", args, user=user)
-    return result
+    return _scoped_read_cache_set("catalog", user, result, cache_args)
 
 
 @app.post("/api/catalog/entries", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])

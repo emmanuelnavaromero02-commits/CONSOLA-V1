@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+import time
+from copy import deepcopy
 from typing import Any
 
 import asyncpg
@@ -11,6 +13,7 @@ from app.services.intelligence.utils import workspace_scope
 
 
 _SAFE_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_GOLD_ROW_CACHE: dict[tuple[str, str, str, int], tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _normalize_dsn(raw: str) -> str:
@@ -26,6 +29,36 @@ def _gold_table(dataset: str) -> str:
     if not _SAFE_DATASET_RE.fullmatch(clean):
         raise HTTPException(400, "invalid intelligence dataset")
     return f"gold_{clean}"
+
+
+def _gold_cache_ttl() -> float:
+    raw = os.environ.get("OMEGA_GOLD_ROW_CACHE_TTL_SECONDS", "15")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 15.0
+    return max(0.0, min(value, 300.0))
+
+
+def _gold_cache_get(key: tuple[str, str, str, int]) -> list[dict[str, Any]] | None:
+    ttl = _gold_cache_ttl()
+    if ttl <= 0:
+        return None
+    cached = _GOLD_ROW_CACHE.get(key)
+    if not cached:
+        return None
+    expires_at, rows = cached
+    if expires_at <= time.monotonic():
+        _GOLD_ROW_CACHE.pop(key, None)
+        return None
+    return deepcopy(rows)
+
+
+def _gold_cache_set(key: tuple[str, str, str, int], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ttl = _gold_cache_ttl()
+    if ttl > 0:
+        _GOLD_ROW_CACHE[key] = (time.monotonic() + ttl, deepcopy(rows))
+    return rows
 
 
 async def _table_columns(conn: asyncpg.Connection, table: str) -> set[str]:
@@ -54,6 +87,10 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
     table = _gold_table(dataset)
     tenant_id, workspace_id = workspace_scope(user)
     safe_limit = max(1, min(int(limit or 5000), 5000))
+    cache_key = (str(dataset), str(tenant_id or ""), str(workspace_id), safe_limit)
+    cached = _gold_cache_get(cache_key)
+    if cached is not None:
+        return cached
     conn = await asyncpg.connect(dsn, command_timeout=10)
     try:
         async with conn.transaction():
@@ -81,7 +118,7 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
                     workspace_id,
                     safe_limit,
                 )
-        return [dict(row) for row in rows]
+        return _gold_cache_set(cache_key, [dict(row) for row in rows])
     finally:
         await conn.close()
 

@@ -1,14 +1,67 @@
 from __future__ import annotations
 
+import os
+import time
+from copy import deepcopy
+from typing import Any
+
 from fastapi import APIRouter, Body, Depends, Query, Request
 
 from app.dependencies import require_authenticated
 from app.services import control_room_service
 from app.services.csrf import require_csrf
 from app.services.permissions import require_permission
+from app.services.security_context import build_security_context
 
 
 router = APIRouter(prefix="/api/control-room", tags=["Control Room"])
+_CONTROL_ROOM_READ_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
+
+
+def _control_room_cache_ttl() -> float:
+    raw = os.environ.get("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "15")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 15.0
+    return max(0.0, min(value, 300.0))
+
+
+def _control_room_cache_identity(user: dict | None) -> tuple[Any, ...]:
+    ctx = build_security_context(user)
+    allowed = tuple(sorted(str(item).strip() for item in (ctx.get("allowed_cartridges") or []) if str(item).strip()))
+    return (
+        str(ctx.get("tenant_id") or (user or {}).get("active_tenant_id") or (user or {}).get("tenant_id") or "").strip(),
+        str(ctx.get("workspace_id") or (user or {}).get("active_workspace_id") or (user or {}).get("workspace_id") or "").strip(),
+        str(ctx.get("role") or (user or {}).get("role") or "").strip(),
+        str((user or {}).get("id") or ctx.get("sub") or "").strip(),
+        allowed,
+    )
+
+
+def _control_room_cache_get(namespace: str, user: dict | None) -> Any | None:
+    ttl = _control_room_cache_ttl()
+    if ttl <= 0:
+        return None
+    key = (namespace, _control_room_cache_identity(user))
+    cached = _CONTROL_ROOM_READ_CACHE.get(key)
+    if not cached:
+        return None
+    expires_at, value = cached
+    if expires_at <= time.monotonic():
+        _CONTROL_ROOM_READ_CACHE.pop(key, None)
+        return None
+    return deepcopy(value)
+
+
+def _control_room_cache_set(namespace: str, user: dict | None, value: Any) -> Any:
+    ttl = _control_room_cache_ttl()
+    if ttl > 0:
+        _CONTROL_ROOM_READ_CACHE[(namespace, _control_room_cache_identity(user))] = (
+            time.monotonic() + ttl,
+            deepcopy(value),
+        )
+    return value
 
 
 def _client_ip(request: Request) -> str | None:
@@ -17,17 +70,30 @@ def _client_ip(request: Request) -> str | None:
 
 @router.get("/summary", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_summary(user: dict = Depends(require_authenticated)):
-    return await control_room_service.summary(user)
+    cached = _control_room_cache_get("summary", user)
+    if cached is not None:
+        return cached
+    return _control_room_cache_set("summary", user, await control_room_service.summary(user))
 
 
 @router.get("/dashboard", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_dashboard(user: dict = Depends(require_authenticated)):
-    return await control_room_service.dashboard(user)
+    cached = _control_room_cache_get("dashboard", user)
+    if cached is not None:
+        return cached
+    return _control_room_cache_set("dashboard", user, await control_room_service.dashboard(user))
 
 
 @router.get("/sap-successfactors/gold-kpis", dependencies=[Depends(require_permission("datasets.read"))])
 async def control_room_sap_successfactors_gold_kpis(user: dict = Depends(require_authenticated)):
-    return await control_room_service.sap_successfactors_gold_kpis(user)
+    cached = _control_room_cache_get("sap-successfactors-gold-kpis", user)
+    if cached is not None:
+        return cached
+    return _control_room_cache_set(
+        "sap-successfactors-gold-kpis",
+        user,
+        await control_room_service.sap_successfactors_gold_kpis(user),
+    )
 
 
 @router.get("/ops/summary", dependencies=[Depends(require_permission("datasets.read"))])
