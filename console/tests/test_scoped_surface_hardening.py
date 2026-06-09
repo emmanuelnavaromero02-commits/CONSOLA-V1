@@ -225,6 +225,94 @@ async def test_apps_list_global_super_admin_uses_vault_service_for_scoped_connec
 
 
 @pytest.mark.asyncio
+async def test_pipeline_rejects_inactive_cartridge_when_scoped_connection_exists(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main.api_pipeline("replicon", USER)
+
+    assert exc.value.status_code == 403
+    assert "active" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_semantic_rejects_inactive_cartridge_when_scoped_connection_exists(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main.api_semantic("replicon", USER)
+
+    assert exc.value.status_code == 403
+    assert "active" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_catalog_defaults_to_active_scoped_cartridge(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    captured: dict = {}
+
+    async def fake_refinement(tool, args, user=None, **_kwargs):
+        captured["tool"] = tool
+        captured["args"] = args
+        captured["user"] = user
+        return {"datasets": []}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+    monkeypatch.setattr(console_main, "_refinement_invoke", fake_refinement)
+
+    result = await console_main.api_catalog_get(layer="gold", user=USER)
+
+    assert result == {"datasets": []}
+    assert captured["tool"] == "get_data_catalog"
+    assert captured["args"]["cartridge"] == "sap_successfactors"
+    assert captured["user"] is USER
+
+
+@pytest.mark.asyncio
+async def test_catalog_rejects_inactive_cartridge_when_scoped_connection_exists(monkeypatch):
+    async def fake_active(_user, _candidates=None):
+        return {"sap_successfactors"}
+
+    monkeypatch.setattr(console_main, "_active_scoped_connection_cartridges", fake_active)
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main.api_catalog_get(layer="gold", cartridge="replicon", user=USER)
+
+    assert exc.value.status_code == 403
+    assert "active" in str(exc.value.detail)
+
+
+def test_explorer_allows_scoped_ancestors_but_rejects_foreign_objects():
+    assert console_main._explorer_path_allowed("raw/sap_successfactors/", USER)
+    assert console_main._explorer_path_allowed("raw/sap_successfactors/PerPerson/", USER)
+    assert console_main._explorer_path_allowed(
+        (
+            "raw/sap_successfactors/PerPerson/"
+            "tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
+            "workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/data.parquet"
+        ),
+        USER,
+        object_access=True,
+    )
+    assert not console_main._explorer_path_allowed(
+        (
+            "raw/sap_successfactors/PerPerson/"
+            "tenant_id=other/workspace_id=a2b1ced2-4d92-4bbe-8f9f-9a7cc88bb9f4/data.parquet"
+        ),
+        USER,
+        object_access=True,
+    )
+
+
+@pytest.mark.asyncio
 async def test_apps_filter_preserves_catalog_fallback_when_no_connections(monkeypatch):
     class FakeResponse:
         status_code = 200

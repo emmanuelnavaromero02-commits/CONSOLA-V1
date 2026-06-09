@@ -16,10 +16,11 @@ import secrets
 import sys
 import time
 import uuid
+import ipaddress
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +61,31 @@ def _public_url(
     if not raw and fallback_env:
         raw = os.environ.get(fallback_env)
     if raw:
-        return raw.rstrip("/")
+        value = raw.rstrip("/")
+        if _is_production_env() and _is_private_public_url(value):
+            logger.warning("%s points at a private/local address in production; omitting public URL", env_name)
+            return ""
+        return value
     if _is_production_env():
         logger.warning("%s is not configured in production; omitting localhost fallback", env_name)
         return ""
     return development_default.rstrip("/")
+
+
+def _is_private_public_url(value: str) -> bool:
+    try:
+        host = urlparse(value).hostname or ""
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local)
 
 
 def _running_in_container() -> bool:
@@ -2672,12 +2693,9 @@ _EXPLORER_DEFAULT_BUCKETS = [
     {"id": "ses_inbox", "label": "SES Inbox", "name": os.environ.get("SES_INBOX_BUCKET", "modecissions-mail-inbound-36243c")},
 ]
 
-_EXPLORER_QUICKLINKS = [
+_EXPLORER_ADMIN_QUICKLINKS = [
     {"label": "SES inbox (incoming)", "bucket": "ses_inbox", "prefix": "inbound/"},
     {"label": "SES inbox (processed)", "bucket": "ses_inbox", "prefix": "inbound-processed/"},
-    {"label": "Replicon uploads", "bucket": "lakehouse", "prefix": "uploads/replicon/in/"},
-    {"label": "Raw - replicon", "bucket": "lakehouse", "prefix": "raw/replicon/"},
-    {"label": "Silver - replicon", "bucket": "lakehouse", "prefix": "silver/replicon/"},
 ]
 
 
@@ -2702,16 +2720,25 @@ def _resolve_explorer_bucket(bucket: str, user: dict | None = None) -> str:
     return resolved
 
 
-def _explorer_path_allowed(path: str, user: dict | None) -> bool:
+def _explorer_quicklinks_for_cartridges(active_cartridges: set[str]) -> list[dict[str, str]]:
+    quicklinks: list[dict[str, str]] = []
+    for cartridge in sorted(active_cartridges):
+        label = cartridge.replace("_", " ")
+        quicklinks.extend([
+            {"label": f"Raw - {label}", "bucket": "lakehouse", "prefix": f"raw/{cartridge}/"},
+            {"label": f"Silver - {label}", "bucket": "lakehouse", "prefix": f"silver/{cartridge}/"},
+            {"label": f"Gold - {label}", "bucket": "lakehouse", "prefix": f"gold/{cartridge}/"},
+        ])
+    return quicklinks
+
+
+def _explorer_path_allowed(path: str, user: dict | None, *, object_access: bool = False) -> bool:
     ctx = build_security_context(user)
     path = (path or "").lstrip("/")
     if _is_security_admin_context(ctx):
         return True
     if not path:
         return False
-    prefixes = [str(p).lstrip("/") for p in ctx.get("allowed_prefixes") or []]
-    if any(path.startswith(prefix.rstrip("/") + "/") or path == prefix.rstrip("/") for prefix in prefixes):
-        return True
 
     allowed = {
         str(item).strip().strip("/")
@@ -2733,9 +2760,27 @@ def _explorer_path_allowed(path: str, user: dict | None) -> bool:
     workspace = str(ctx.get("workspace_id") or "").strip()
     if not tenant or not workspace:
         return True
-    scoped_marker = f"tenant_id={tenant}/workspace_id={workspace}"
-    normalized = path.rstrip("/")
-    return f"/{scoped_marker}/" in f"/{normalized}/" or normalized.endswith(f"/{scoped_marker}")
+
+    tenant_marker = f"tenant_id={tenant}"
+    workspace_marker = f"workspace_id={workspace}"
+    tenant_parts = [part for part in parts if part.startswith("tenant_id=")]
+    workspace_parts = [part for part in parts if part.startswith("workspace_id=")]
+    if tenant_parts and any(part != tenant_marker for part in tenant_parts):
+        return False
+    if workspace_parts and any(part != workspace_marker for part in workspace_parts):
+        return False
+    if workspace_parts and not tenant_parts:
+        return False
+
+    if object_access:
+        return bool(tenant_parts and workspace_parts)
+    if tenant_parts or workspace_parts:
+        return True
+    if root in {"raw", "silver", "gold"}:
+        return len(parts) <= 3
+    if root == "uploads":
+        return len(parts) <= 2
+    return False
 
 
 @app.get("/api/explorer/buckets", dependencies=[Depends(require_permission("pipelines.read"))])
@@ -2744,8 +2789,13 @@ async def api_explorer_buckets(user: dict = Depends(require_authenticated)):
     buckets = _EXPLORER_DEFAULT_BUCKETS if _is_security_admin_context(ctx) else [
         item for item in _EXPLORER_DEFAULT_BUCKETS if item.get("id") == "lakehouse"
     ]
+    active_cartridges = await _active_scoped_connection_cartridges(user, _OPERATIONAL_CARTRIDGES)
+    quicklink_candidates = [
+        *_explorer_quicklinks_for_cartridges(active_cartridges),
+        *_EXPLORER_ADMIN_QUICKLINKS,
+    ]
     quicklinks = [
-        item for item in _EXPLORER_QUICKLINKS
+        item for item in quicklink_candidates
         if _explorer_path_allowed(item.get("prefix", ""), user)
         and (_is_security_admin_context(ctx) or item.get("bucket") == "lakehouse")
     ]
@@ -2802,7 +2852,7 @@ async def api_explorer_download(
 ):
     s3 = _s3_client()
     bucket_name = _resolve_explorer_bucket(bucket, user)
-    if not _explorer_path_allowed(key, user):
+    if not _explorer_path_allowed(key, user, object_access=True):
         raise HTTPException(403, "object not allowed")
     expires_in = min(max(int(expires), 60), 3600)
     try:
@@ -2840,7 +2890,7 @@ async def api_explorer_delete(
 ):
     s3 = _s3_client()
     bucket_name = _resolve_explorer_bucket(bucket, user)
-    if not _explorer_path_allowed(key, user):
+    if not _explorer_path_allowed(key, user, object_access=True):
         raise HTTPException(403, "object not allowed")
     if confirm != key:
         raise HTTPException(400, "strong confirmation required")
@@ -3116,6 +3166,57 @@ async def _active_scoped_connection_cartridges(
     return active
 
 
+_OPERATIONAL_CARTRIDGES = {
+    "hubspot",
+    "replicon",
+    "salesforce",
+    "sap_hcm",
+    "sap_s4hana",
+    "sap_successfactors",
+}
+
+
+async def _resolve_scoped_operation_cartridge(
+    user: dict | None,
+    cartridge: str | None,
+    *,
+    fallback: str = "sap_successfactors",
+    candidates: set[str] | None = None,
+) -> tuple[str, set[str]]:
+    requested = str(cartridge or "").strip()
+    candidate_set = candidates or _OPERATIONAL_CARTRIDGES
+    active = await _active_scoped_connection_cartridges(user, candidate_set)
+    if active:
+        if requested:
+            if requested in active:
+                return requested, active
+            raise HTTPException(403, f"cartridge '{requested}' is not active for this workspace")
+        if fallback in active:
+            return fallback, active
+        return sorted(active)[0], active
+
+    resolved = requested or fallback
+    if resolved:
+        _require_cartridge_visible(user, resolved)
+    return resolved, active
+
+
+async def _scope_catalog_cartridge_arg(user: dict | None, cartridge: str | None) -> str:
+    requested = str(cartridge or "").strip()
+    active = await _active_scoped_connection_cartridges(user, _OPERATIONAL_CARTRIDGES)
+    if active:
+        if requested:
+            if requested in active:
+                return requested
+            raise HTTPException(403, f"cartridge '{requested}' is not active for this workspace")
+        if "sap_successfactors" in active:
+            return "sap_successfactors"
+        return sorted(active)[0]
+    if requested:
+        _require_cartridge_visible(user, requested)
+    return requested
+
+
 def _app_cartridge_id(app: dict) -> str:
     for key in ("cartridge", "cartridge_id", "connector_id"):
         value = str(app.get(key) or "").strip()
@@ -3383,13 +3484,17 @@ async def studio_cartridge_connections(cartridge_id: str, user: dict = Depends(r
 
 
 @app.get("/api/pipeline", dependencies=[Depends(require_authenticated)])
-async def api_pipeline(cartridge: str = "replicon", user: dict = Depends(require_authenticated)):
+async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authenticated)):
     """
     Ensambla el DAG completo: entidades × bronze status × silver datasets × gold deps.
     Fuentes: entity_config (entities), pipeline_runs + jobs (run history), refinement (datasets).
     """
     user = _runtime_user(user)
-    _require_cartridge_visible(user, cartridge)
+    cartridge, _active_cartridges = await _resolve_scoped_operation_cartridge(
+        user,
+        cartridge,
+        fallback="sap_successfactors",
+    )
     import re as _re
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 
@@ -5011,9 +5116,13 @@ async def api_rag_ask(body: dict, user: dict = Depends(require_authenticated)):
 
 
 @app.get("/api/semantic", dependencies=[Depends(require_authenticated)])
-async def api_semantic(cartridge: str = "replicon", user: dict = Depends(require_authenticated)):
+async def api_semantic(cartridge: str = "", user: dict = Depends(require_authenticated)):
     from app.services import cartridge_service as _cs
-    _require_cartridge_visible(user, cartridge)
+    cartridge, _active_cartridges = await _resolve_scoped_operation_cartridge(
+        user,
+        cartridge,
+        fallback="sap_successfactors",
+    )
     manifest = await _cs.get_cartridge(cartridge)
     if manifest:
         # Pass through all entity fields so Studio can render display_name, dag_id, etc.
@@ -5041,6 +5150,7 @@ async def api_catalog_get(
 ):
     args: dict = {}
     if layer:    args["layer"]    = layer
+    cartridge = await _scope_catalog_cartridge_arg(user, cartridge)
     if cartridge: args["cartridge"] = cartridge
     if tags:     args["tags"]     = [t.strip() for t in tags.split(",") if t.strip()]
     if datasets: args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]

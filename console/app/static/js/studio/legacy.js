@@ -15,7 +15,15 @@ import { state } from './legacy-state.js';
         if (afLink && state._selectedDag && state._selectedDag !== '__new__') {
           afLink.setAttribute('href', airflowDagUrl(state._selectedDag));
         }
-        document.getElementById('analytics-superset-link')?.setAttribute('href', supersetUrl());
+        const supersetLink = document.getElementById('analytics-superset-link');
+        if (supersetLink) {
+          const url = supersetUrl();
+          supersetLink.setAttribute('href', url);
+          if (!url || url === '#') {
+            supersetLink.setAttribute('aria-disabled', 'true');
+            supersetLink.textContent = 'Superset no expuesto';
+          }
+        }
       })
       .catch(() => {});
 
@@ -2371,6 +2379,8 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
     export function renderAnalytics() {
       const cartridge = _dagCartridge();
       const initialSql = analyticsSqlText(cartridge);
+      const supersetHref = supersetUrl();
+      const supersetDisabled = !supersetHref || supersetHref === '#';
       document.getElementById('step-content').innerHTML = `
         <div class="step-title">
           <div>
@@ -2378,7 +2388,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
               Describe los KPIs que necesitas y el asistente los configura por ti.</p>
           </div>
-          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetUrl())}" target="_blank" rel="noopener">Abrir Superset ↗</a>
+          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetHref || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset no expuesto' : 'Abrir Superset ↗'}</a>
         </div>
 
         <div class="card">
@@ -2456,9 +2466,14 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       supersetLink?.addEventListener('click', (event) => {
         const url = supersetUrl();
         supersetLink.setAttribute('href', url);
-        if (!url || url === '#') return;
+        if (!url || url === '#') {
+          event.preventDefault();
+          supersetLink.setAttribute('aria-disabled', 'true');
+          supersetLink.textContent = 'Superset no expuesto';
+          return;
+        }
         event.preventDefault();
-        window.location.assign(url);
+        window.open(url, '_blank', 'noopener');
       });
     }
 

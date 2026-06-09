@@ -10,10 +10,10 @@ import { PipelineTable } from "@/components/monitor/PipelineTable";
 import { StatusPill } from "@/components/monitor/StatusPill";
 import { useFreshness, useJobs, usePipeline } from "@/lib/monitor/hooks";
 
-const CARTRIDGES = ["replicon", "hubspot", "sap_hcm", "sap_s4hana", "sap_successfactors"] as const;
+const CARTRIDGES = ["sap_successfactors", "replicon", "hubspot", "sap_hcm", "sap_s4hana"] as const;
 
 export default function MonitorPage() {
-  const [cartridge, setCartridge] = useState<string>("replicon");
+  const [cartridge, setCartridge] = useState<string>("sap_successfactors");
   const jobs = useJobs(50);
   const pipeline = usePipeline(cartridge);
   const freshness = useFreshness(cartridge);

@@ -18,9 +18,16 @@ def _security_context() -> dict:
         "allowed_buckets": ["lakehouse"],
         "allowed_cartridges": ["sap_successfactors"],
         "allowed_prefixes": [
+            "raw/sap_successfactors/",
             "silver/*/tenant_id=tenant-a/workspace_id=workspace-a/",
             "gold/*/tenant_id=tenant-a/workspace_id=workspace-a/",
         ],
+    }
+
+
+def _body() -> dict:
+    return {
+        "security_context": _security_context(),
     }
 
 
@@ -78,3 +85,26 @@ def test_registered_dataset_path_still_rejects_foreign_scope(monkeypatch):
 
     assert exc.value.status_code == 403
     assert exc.value.detail == "SQL storage path not allowed"
+
+
+def test_portable_raw_reader_is_scoped_before_storage_validation(monkeypatch):
+    def fake_scope_sql(sql: str, sources: list[str], user_context: dict) -> str:
+        assert sources == ["raw/sap_successfactors/EmpEmployment"]
+        assert user_context["tenant_id"] == "tenant-a"
+        assert user_context["workspace_id"] == "workspace-a"
+        return (
+            "select * from read_parquet("
+            "'s3://lakehouse/raw/sap_successfactors/EmpEmployment/"
+            "tenant_id=tenant-a/workspace_id=workspace-a/**/*.parquet'"
+            ")"
+        )
+
+    monkeypatch.setattr(refinement_main.engine, "_inject_bucket", lambda sql: sql)
+    monkeypatch.setattr(refinement_main.engine, "_scope_storage_sql", fake_scope_sql)
+    monkeypatch.setattr(refinement_main, "_security_context", lambda _body: _security_context())
+
+    refinement_main._require_sql_storage_scope(
+        _body(),
+        "select * from read_parquet('raw/sap_successfactors/EmpEmployment')",
+        ["raw/sap_successfactors/EmpEmployment"],
+    )

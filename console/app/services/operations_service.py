@@ -44,23 +44,49 @@ def _service_url(env_name: str, docker_default: str, local_default: str) -> str:
     return docker_default.rstrip("/") if _running_in_container() else local_default.rstrip("/")
 
 
-def service_probes() -> dict[str, str]:
-    return {
-        "console":            f"{_service_url('CONSOLE_INTERNAL_URL', 'http://console:8000', 'http://127.0.0.1:8000')}/api/system/info",
-        "workspace":          f"{_service_url('WORKSPACE_INTERNAL_URL', 'http://workspace:8001', 'http://127.0.0.1:8001')}/healthz",
-        "refinement":         f"{_service_url('REFINEMENT_URL', 'http://refinement:8500', 'http://127.0.0.1:8500')}/healthz",
-        "mcp-infra":          f"{_service_url('MCP_INFRA_URL', 'http://mcp-infra:8010', 'http://127.0.0.1:8010')}/healthz",
-        "vault":              f"{_service_url('VAULT_URL', 'http://vault:8300', 'http://127.0.0.1:8300')}/healthz",
-        "replicon":           f"{_service_url('REPLICON_URL', 'http://replicon:8201', 'http://127.0.0.1:8201')}/health",
-        "hubspot":            f"{_service_url('HUBSPOT_URL', 'http://hubspot:8210', 'http://127.0.0.1:8210')}/health",
-        "sap-hcm":            f"{_service_url('SAP_HCM_URL', 'http://sap-hcm:8202', 'http://127.0.0.1:8202')}/health",
-        "sap-successfactors": f"{_service_url('SAP_SUCCESSFACTORS_URL', 'http://sap-successfactors:8203', 'http://127.0.0.1:8203')}/health",
-        "sap-s4hana":         f"{_service_url('SAP_S4HANA_URL', 'http://sap-s4hana:8204', 'http://127.0.0.1:8204')}/health",
-        "airflow":            f"{_service_url('AIRFLOW_URL', 'http://airflow:8080', 'http://127.0.0.1:8082')}/health",
-        "superset":           f"{_service_url('SUPERSET_URL', 'http://superset:8088', 'http://127.0.0.1:8088')}/health",
-        "mailhog":            f"{_service_url('MAILHOG_URL', 'http://mailhog:8025', 'http://127.0.0.1:8025')}/api/v1/messages",
-        "minio":              f"{_service_url('MINIO_HEALTH_URL', 'http://minio:9000', 'http://127.0.0.1:9000')}/minio/health/live",
+_BASE_SERVICE_PROBES = {
+    "console":    ("CONSOLE_INTERNAL_URL", "http://console:8000", "http://127.0.0.1:8000", "/api/system/info"),
+    "workspace":  ("WORKSPACE_INTERNAL_URL", "http://workspace:8001", "http://127.0.0.1:8001", "/healthz"),
+    "refinement": ("REFINEMENT_URL", "http://refinement:8500", "http://127.0.0.1:8500", "/healthz"),
+    "mcp-infra":  ("MCP_INFRA_URL", "http://mcp-infra:8010", "http://127.0.0.1:8010", "/healthz"),
+    "vault":      ("VAULT_URL", "http://vault:8300", "http://127.0.0.1:8300", "/healthz"),
+    "airflow":    ("AIRFLOW_URL", "http://airflow:8080", "http://127.0.0.1:8082", "/health"),
+    "superset":   ("SUPERSET_URL", "http://superset:8088", "http://127.0.0.1:8088", "/health"),
+    "mailhog":    ("MAILHOG_URL", "http://mailhog:8025", "http://127.0.0.1:8025", "/api/v1/messages"),
+    "minio":      ("MINIO_HEALTH_URL", "http://minio:9000", "http://127.0.0.1:9000", "/minio/health/live"),
+}
+
+_CARTRIDGE_SERVICE_PROBES = {
+    "replicon":           ("replicon", "REPLICON_URL", "http://replicon:8201", "http://127.0.0.1:8201", "/health"),
+    "hubspot":            ("hubspot", "HUBSPOT_URL", "http://hubspot:8210", "http://127.0.0.1:8210", "/health"),
+    "sap-hcm":            ("sap_hcm", "SAP_HCM_URL", "http://sap-hcm:8202", "http://127.0.0.1:8202", "/health"),
+    "sap-successfactors": ("sap_successfactors", "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203", "http://127.0.0.1:8203", "/health"),
+    "sap-s4hana":         ("sap_s4hana", "SAP_S4HANA_URL", "http://sap-s4hana:8204", "http://127.0.0.1:8204", "/health"),
+}
+
+
+def _probe_url(env_name: str, docker_default: str, local_default: str, path: str) -> str:
+    return f"{_service_url(env_name, docker_default, local_default)}{path}"
+
+
+def service_probes(active_cartridges: set[str] | None = None) -> dict[str, str]:
+    probes = {
+        name: _probe_url(env_name, docker_default, local_default, path)
+        for name, (env_name, docker_default, local_default, path) in _BASE_SERVICE_PROBES.items()
     }
+    active = None if active_cartridges is None else {
+        str(item).strip() for item in active_cartridges if str(item).strip()
+    }
+    cartridge_items = _CARTRIDGE_SERVICE_PROBES.items()
+    if active is not None:
+        cartridge_items = [
+            (name, cfg)
+            for name, cfg in cartridge_items
+            if cfg[0] in active
+        ]
+    for name, (_cartridge, env_name, docker_default, local_default, path) in cartridge_items:
+        probes[name] = _probe_url(env_name, docker_default, local_default, path)
+    return probes
 
 
 SERVICE_PROBES = service_probes()
@@ -79,6 +105,6 @@ async def _probe_one(name: str, url: str) -> dict:
         return {"name": name, "status": "down", "error": type(e).__name__}
 
 
-async def probe_services() -> list[dict]:
-    tasks = [_probe_one(name, url) for name, url in service_probes().items()]
+async def probe_services(active_cartridges: set[str] | None = None) -> list[dict]:
+    tasks = [_probe_one(name, url) for name, url in service_probes(active_cartridges).items()]
     return await asyncio.gather(*tasks)

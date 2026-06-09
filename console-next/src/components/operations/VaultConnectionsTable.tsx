@@ -26,11 +26,11 @@ import { useConnectorSchema } from "@/lib/hooks/useCartridges";
 import { cn } from "@/lib/utils";
 
 const CARTRIDGES = [
+  { id: "sap_successfactors", label: "SAP SuccessFactors" },
   { id: "replicon", label: "Replicon" },
   { id: "hubspot", label: "HubSpot CRM" },
   { id: "sap_hcm", label: "SAP HCM" },
   { id: "sap_s4hana", label: "SAP S/4HANA" },
-  { id: "sap_successfactors", label: "SAP SuccessFactors" },
 ];
 
 type VaultTab = "connections" | "secrets";
@@ -97,7 +97,7 @@ const EXPLICIT_CONNECTION_FIELDS = [
 
 export function VaultConnectionsTable() {
   const [tab, setTab] = useState<VaultTab>("connections");
-  const [cartridge, setCartridge] = useState("replicon");
+  const [cartridge, setCartridge] = useState("sap_successfactors");
   const [scope, setScope] = useState("llm");
   const [connForm, setConnForm] = useState<ConnForm>(EMPTY_CONN_FORM);
   const [secretForm, setSecretForm] = useState<SecretForm>(EMPTY_SECRET_FORM);

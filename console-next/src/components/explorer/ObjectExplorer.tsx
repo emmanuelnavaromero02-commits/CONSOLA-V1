@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Download, FolderOpen, RefreshCw, Trash2 } from "lucide-react";
 
@@ -55,6 +55,26 @@ export function ObjectExplorer() {
     return rows.find((bucket) => bucket.id === bucketId) ?? rows[0] ?? null;
   }, [bucketId, buckets.data]);
 
+  useEffect(() => {
+    if (submittedPrefix || prefix) return;
+    const quick = buckets.data?.quicklinks?.[0];
+    if (!quick) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (quick.bucket) {
+        const found = buckets.data?.buckets.find((bucket) => bucket.name === quick.bucket || bucket.id === quick.bucket);
+        if (found) setBucketId(found.id);
+      }
+      setPrefix(quick.prefix ?? "");
+      setSubmittedPrefix(quick.prefix ?? "");
+      setContinuationToken(undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [buckets.data, prefix, submittedPrefix]);
+
   const objects = useQuery({
     queryKey: ["explorer", "objects", bucketName(selectedBucket), submittedPrefix, continuationToken],
     queryFn: () => listExplorerObjects({
@@ -62,7 +82,7 @@ export function ObjectExplorer() {
       prefix: submittedPrefix,
       continuationToken,
     }),
-    enabled: Boolean(selectedBucket),
+    enabled: Boolean(selectedBucket && submittedPrefix),
     staleTime: 10_000,
   });
 
@@ -160,7 +180,7 @@ export function ObjectExplorer() {
               onKeyDown={(event) => {
                 if (event.key === "Enter") submitList();
               }}
-              placeholder="tenant_id=.../workspace_id=..."
+              placeholder="raw/sap_successfactors/..."
               className="min-h-[44px] rounded-md border bg-background px-3 text-sm"
             />
           </label>
