@@ -65,3 +65,33 @@ async def test_control_room_gold_kpis_cache_reuses_same_scope(monkeypatch):
 
     assert first == second == {"headcount": 1288}
     assert fetch.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_control_room_write_invalidates_cached_dashboard(monkeypatch):
+    monkeypatch.setenv("OMEGA_CONTROL_ROOM_CACHE_TTL_SECONDS", "60")
+    dashboard = AsyncMock(side_effect=[
+        {"items": [{"id": "item-1", "decision_id": 7}]},
+        {"items": [{"id": "item-1", "decision_id": None}]},
+    ])
+    reopen = AsyncMock(return_value={"reopened": True, "item": {"id": "item-1", "decision_id": None}})
+    monkeypatch.setattr(control_room.control_room_service, "dashboard", dashboard)
+    monkeypatch.setattr(control_room.control_room_service, "reopen_item", reopen)
+
+    class _Req:
+        client = None
+        headers = {}
+
+    cached = await control_room.control_room_dashboard(USER)
+    assert cached["items"][0]["decision_id"] == 7
+
+    await control_room.control_room_reopen_item(
+        "item-1",
+        _Req(),
+        {"reason": "reset stale dashboard state"},
+        USER,
+    )
+
+    fresh = await control_room.control_room_dashboard(USER)
+    assert fresh["items"][0]["decision_id"] is None
+    assert dashboard.await_count == 2
