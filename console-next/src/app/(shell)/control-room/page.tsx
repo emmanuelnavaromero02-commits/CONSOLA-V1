@@ -2761,7 +2761,7 @@ function LessonsStep({ item, busyAction, onCreateLesson, onApplyLesson }: { item
     cartridge_id: item.cartridge,
     anomaly_type: item.anomaly_type,
     rule,
-  }))]);
+  }))]).sort((left, right) => Number(!left.id) - Number(!right.id));
   return (
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-[1fr_auto]">
@@ -2784,7 +2784,13 @@ function LessonsStep({ item, busyAction, onCreateLesson, onApplyLesson }: { item
           <article key={`${lesson.id || lesson.rule}`} className="rounded-lg border bg-card p-4">
             <strong className="text-sm">{lesson.rule}</strong>
             <div className="mt-3">
-              <ActionButton loading={busyAction === `applyLesson:${item.id}:${lesson.id}`} disabled={busyAction !== "" || !lesson.id} onClick={() => onApplyLesson(item, lesson)} icon={CheckCircle2}>Aplicar leccion</ActionButton>
+              {lesson.id ? (
+                <ActionButton loading={busyAction === `applyLesson:${item.id}:${lesson.id}`} disabled={busyAction !== ""} onClick={() => onApplyLesson(item, lesson)} icon={CheckCircle2}>Aplicar leccion</ActionButton>
+              ) : (
+                <span className="inline-flex min-h-[44px] items-center rounded-md border px-3 text-sm text-muted-foreground">
+                  Leccion pendiente de persistencia
+                </span>
+              )}
             </div>
           </article>
         ))}
