@@ -7,5 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd -m appuser
 COPY --chown=appuser:appuser app/ app/
 COPY --chown=appuser:appuser datasets/ datasets/
+COPY --chown=appuser:appuser scripts/ scripts/
 USER appuser
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8500"]
