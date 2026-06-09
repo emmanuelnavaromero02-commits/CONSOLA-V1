@@ -40,12 +40,12 @@ export function readinessTone(status?: ControlRoomStatus): string {
   return "border-destructive/40 bg-destructive/10 text-destructive";
 }
 
-export function readinessIcon(status?: ControlRoomStatus): LucideIcon {
-  if (status === "ready" || status === "ok") return CheckCircle2;
-  if (status === "partial" || status === "attention") return Clock3;
-  if (status === "blocked" || status === "no_permission") return LockKeyhole;
-  if (status === "stub" || status === "empty" || status === "inactive" || status === "no_sources") return AlertTriangle;
-  return XCircle;
+function ReadinessStatusIcon({ status, className }: { status?: ControlRoomStatus; className: string }) {
+  if (status === "ready" || status === "ok") return <CheckCircle2 aria-hidden className={className} />;
+  if (status === "partial" || status === "attention") return <Clock3 aria-hidden className={className} />;
+  if (status === "blocked" || status === "no_permission") return <LockKeyhole aria-hidden className={className} />;
+  if (status === "stub" || status === "empty" || status === "inactive" || status === "no_sources") return <AlertTriangle aria-hidden className={className} />;
+  return <XCircle aria-hidden className={className} />;
 }
 
 export function ReadinessBadge({
@@ -59,7 +59,6 @@ export function ReadinessBadge({
   compact?: boolean;
   className?: string;
 }) {
-  const Icon = readinessIcon(status);
   return (
     <span
       className={cn(
@@ -69,7 +68,7 @@ export function ReadinessBadge({
         className,
       )}
     >
-      <Icon aria-hidden className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
+      <ReadinessStatusIcon status={status} className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
       {label || readinessLabels[status || "missing"] || String(status || "missing")}
     </span>
   );
