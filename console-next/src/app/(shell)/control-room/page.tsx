@@ -1650,7 +1650,7 @@ function Header({
         </div>
         <div className="rounded-md border bg-background p-3">
           <p className="text-xs font-semibold uppercase text-muted-foreground">Ejecucion</p>
-          <ReadinessBadge status={writeBackEnabled ? "ready" : "partial"} label={writeBackEnabled ? "Write-back ERP flag ON" : "Supervisada V1"} compact className="mt-1" />
+          <ReadinessBadge status={writeBackEnabled ? "ready" : "partial"} label={writeBackEnabled ? "Write-back ERP flag ON" : "Ejecucion supervisada V1"} compact className="mt-1" />
         </div>
         <div className="rounded-md border bg-background p-3">
           <p className="text-xs font-semibold uppercase text-muted-foreground">Auto-refresh</p>
