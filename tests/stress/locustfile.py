@@ -29,6 +29,30 @@ REQUIRE_HUBSPOT_OK = os.environ.get("OMEGA_STRESS_REQUIRE_HUBSPOT_OK", "1").stri
     "true",
     "yes",
 }
+WORKLOAD = os.environ.get("OMEGA_STRESS_WORKLOAD", "hubspot").strip().lower()
+REQUIRE_SF_OK = os.environ.get("OMEGA_STRESS_REQUIRE_SF_OK", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+ENABLE_SF_REFRESH = os.environ.get("OMEGA_STRESS_ENABLE_SF_REFRESH", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+SF_CONN_ID = os.environ.get("OMEGA_STRESS_SF_CONN_ID", "femsa_sf")
+SF_BRONZE_SOURCE = os.environ.get("OMEGA_STRESS_SF_BRONZE_SOURCE", "raw/sap_successfactors/PerPerson")
+SF_GOLD_DATASETS = tuple(
+    item.strip()
+    for item in os.environ.get(
+        "OMEGA_STRESS_SF_GOLD_DATASETS",
+        "sap_successfactors_employee_360,"
+        "sap_successfactors_headcount_by_department,"
+        "sap_successfactors_org_structure,"
+        "sap_successfactors_manager_hierarchy",
+    ).split(",")
+    if item.strip()
+)
 POLL_EXTRACT_JOBS = os.environ.get("OMEGA_STRESS_POLL_JOBS", "1").strip().lower() in {"1", "true", "yes"}
 JOB_POLL_ATTEMPTS = int(os.environ.get("OMEGA_STRESS_JOB_POLL_ATTEMPTS", "30"))
 JOB_POLL_INTERVAL_SECONDS = float(os.environ.get("OMEGA_STRESS_JOB_POLL_INTERVAL_SECONDS", "1"))
@@ -88,6 +112,10 @@ HTML_PAGES = (
     ("/control-room", "page:control-room"),
     ("/workspace", "page:workspace"),
     ("/operations/vault", "page:vault"),
+    ("/data/bronze", "page:bronze-query"),
+    ("/viewer?type=schema", "page:schema-viewer"),
+    ("/viewer?type=pipeline&cartridge=sap_successfactors", "page:sf-pipeline"),
+    ("/explorer", "page:explorer"),
 )
 
 INTERNAL_SERVICE_ENDPOINTS = (
@@ -244,8 +272,11 @@ class OmegaStressUser(HttpUser):
                     raise RuntimeError(WRITE_WARMUP_ERROR)
                 return
             try:
-                self._maybe_extract_hubspot_bundle(force=True)
-                if ENABLE_GOLD_REFRESH:
+                if WORKLOAD == "sap_successfactors":
+                    self._maybe_refresh_successfactors_bundle(force=True)
+                else:
+                    self._maybe_extract_hubspot_bundle(force=True)
+                if WORKLOAD != "sap_successfactors" and ENABLE_GOLD_REFRESH:
                     self._maybe_refresh_pipeline(force=True)
             except Exception as exc:
                 WRITE_WARMUP_ERROR = f"write warmup failed: {exc}"
@@ -389,6 +420,46 @@ class OmegaStressUser(HttpUser):
             if payload and payload.get("row_count", 0) < 0:
                 raise RuntimeError(f"{dataset} refresh returned invalid row_count: {payload}")
 
+    def _maybe_refresh_successfactors_bundle(self, *, force: bool = False) -> None:
+        if not ENABLE_SF_REFRESH:
+            return
+        now = time.monotonic()
+        should_refresh = force
+        global GOLD_REFRESH_IN_FLIGHT, LAST_GOLD_REFRESH_AT
+        if not force:
+            if CONCURRENT_WRITES:
+                should_refresh = True
+            else:
+                with WRITE_LOCK:
+                    if GOLD_REFRESH_IN_FLIGHT:
+                        return
+                    if now - LAST_GOLD_REFRESH_AT >= GOLD_REFRESH_INTERVAL_SECONDS:
+                        LAST_GOLD_REFRESH_AT = now
+                        GOLD_REFRESH_IN_FLIGHT = True
+                        should_refresh = True
+        elif not CONCURRENT_WRITES:
+            GOLD_REFRESH_IN_FLIGHT = True
+            LAST_GOLD_REFRESH_AT = now
+
+        if not should_refresh:
+            return
+
+        try:
+            for dataset in SF_GOLD_DATASETS:
+                payload = self._post_json(
+                    f"/datasets/{dataset}/refresh",
+                    name=f"sf:refresh-{dataset}",
+                    body={},
+                    expected_status={200, 202},
+                )
+                if payload and payload.get("row_count", 0) < 0:
+                    raise RuntimeError(f"{dataset} refresh returned invalid row_count: {payload}")
+        finally:
+            if not CONCURRENT_WRITES:
+                with WRITE_LOCK:
+                    GOLD_REFRESH_IN_FLIGHT = False
+                    LAST_GOLD_REFRESH_AT = time.monotonic()
+
     @task(4)
     def read_console_surfaces(self) -> None:
         self._get_json("/api/me", name="read:me")
@@ -404,9 +475,19 @@ class OmegaStressUser(HttpUser):
         self._get_json("/api/dashboard/kpis", name="read:kpis")
         self._get_json("/api/control-room/summary", name="read:control-room-summary")
         self._get_json("/api/control-room/dashboard", name="read:control-room-dashboard")
+        if WORKLOAD == "sap_successfactors":
+            self._get_json("/api/control-room/sap-successfactors/gold-kpis", name="sf:gold-kpis")
 
     @task(6)
     def query_gold_dataset(self) -> None:
+        if WORKLOAD == "sap_successfactors":
+            for dataset in SF_GOLD_DATASETS:
+                payload = self._get_json(f"/api/data/{dataset}?limit=20", name=f"sf:data:{dataset}")
+                if payload is None:
+                    continue
+                if not isinstance(payload, list):
+                    raise RuntimeError(f"{dataset} response is not a list: {type(payload).__name__}")
+            return
         payload = self._get_json("/api/data/pipeline_salud?limit=20", name="data:pipeline-salud")
         if payload is None:
             return
@@ -415,6 +496,11 @@ class OmegaStressUser(HttpUser):
 
     @task(2)
     def read_semantic_and_catalog(self) -> None:
+        if WORKLOAD == "sap_successfactors":
+            self._get_json("/api/semantic?cartridge=sap_successfactors", name="sf:semantic")
+            self._get_json("/api/catalog?cartridge=sap_successfactors&layer=gold", name="sf:catalog-gold")
+            self._get_json("/api/datasets/sap_successfactors_employee_360/lineage", name="sf:lineage-employee-360")
+            return
         self._get_json("/api/semantic?cartridge=hubspot", name="read:semantic-hubspot")
         self._get_json("/api/catalog?cartridge=hubspot", name="read:catalog-hubspot")
         self._get_json("/api/datasets/pipeline_salud/lineage", name="read:lineage-pipeline-salud")
@@ -428,6 +514,20 @@ class OmegaStressUser(HttpUser):
 
     @task(2)
     def studio_introspection(self) -> None:
+        if WORKLOAD == "sap_successfactors":
+            self._get_json("/api/sources", name="sf:sources")
+            self._get_json(f"/api/schema?source={SF_BRONZE_SOURCE}", name="sf:schema-source", expected_status={200})
+            self._post_json(
+                "/api/bronze/query",
+                name="sf:bronze-query",
+                body={
+                    "sql": f"select * from read_parquet('{SF_BRONZE_SOURCE}') limit 20",
+                    "sources": [SF_BRONZE_SOURCE],
+                    "limit": 20,
+                },
+                expected_status={200},
+            )
+            return
         payload = self._post_json(
             "/api/studio/introspect-source",
             name="studio:introspect-openapi",
@@ -446,6 +546,18 @@ class OmegaStressUser(HttpUser):
 
     @task(2)
     def hubspot_connection_and_freshness(self) -> None:
+        if WORKLOAD == "sap_successfactors":
+            payload = self._post_json(
+                f"/api/cartridges/sap_successfactors/test_connection?conn_id={SF_CONN_ID}",
+                name="sf:test-connection",
+                body={},
+                expected_status={200},
+            )
+            if REQUIRE_SF_OK and payload and payload.get("ok") is not True:
+                raise RuntimeError(f"SuccessFactors test_connection not ok: {payload}")
+            self._get_json("/api/vault/connections/sap_successfactors", name="sf:vault-connections")
+            self._get_json("/api/control-room/sap-successfactors/gold-kpis", name="sf:kpis-freshness")
+            return
         payload = self._post_json(
             "/api/cartridges/hubspot/test_connection",
             name="hubspot:test-connection",
@@ -482,8 +594,9 @@ class OmegaStressUser(HttpUser):
 
     @task(1)
     def forged_workspace_isolation_probe(self) -> None:
+        dataset = "sap_successfactors_employee_360" if WORKLOAD == "sap_successfactors" else "pipeline_salud"
         with self.client.get(
-            "/api/data/pipeline_salud?limit=1",
+            f"/api/data/{dataset}?limit=1",
             name="security:forged-workspace-data",
             headers={"x-workspace-id": FORGED_WORKSPACE_ID},
             catch_response=True,
@@ -508,6 +621,10 @@ class OmegaStressUser(HttpUser):
     def optional_write_load(self) -> None:
         if not ENABLE_WRITES:
             self._get_json("/healthz", name="read:healthz")
+            return
+
+        if WORKLOAD == "sap_successfactors":
+            self._maybe_refresh_successfactors_bundle()
             return
 
         self._maybe_extract_hubspot_bundle()
