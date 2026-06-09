@@ -33,6 +33,20 @@ def _write_stats(path: Path, *, requests: int = 1000, failures: int = 0, p95: fl
         )
 
 
+def _write_waf_failures(path: Path, *, occurrences: int = 2500) -> None:
+    with (path / "locust_failures.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["Method", "Name", "Error", "Occurrences"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Method": "GET",
+                "Name": "read:healthz",
+                "Error": "CatchResponseError('/healthz returned 403: <html>\\r\\n<head><title>403 Forbidden</title></head>\\r\\n<body>\\r\\n<center><h1>403 Forbidden</h1></center>\\r\\n</body>\\r\\n</html>\\r\\n')",
+                "Occurrences": str(occurrences),
+            }
+        )
+
+
 def _run(path: Path, **env_overrides: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(env_overrides)
@@ -75,3 +89,17 @@ def test_stress_summary_missing_locust_csv_is_blocked(tmp_path: Path):
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "BLOCKED"
     assert "locust_stats.csv" in summary["error"]
+
+
+def test_stress_summary_classifies_public_waf_global_403_as_blocked(tmp_path: Path):
+    _write_stats(tmp_path, requests=3000, failures=2500, p95=250.0, p99=800.0)
+    _write_waf_failures(tmp_path, occurrences=2500)
+
+    result = _run(tmp_path)
+
+    assert result.returncode == 2, result.stdout
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "BLOCKED"
+    assert summary["blocked_by"] == "aws_waf_rate_limit"
+    assert "public_alb_waf_rate_limit" in summary["unblock"]
+    assert "error_rate" in " ".join(summary["violations"])

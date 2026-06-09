@@ -230,3 +230,131 @@ esac
     assert "stress beta | BLOCKED | skipped after stress smoke returned FAIL" in report
     assert "SAFE-SKIPPED" in report
     assert "stress-beta" not in called.read_text(encoding="utf-8")
+
+
+def test_enterprise_preserves_stress_summary_fail_when_audit_blocks(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_make = fake_bin / "make"
+    fake_make.write_text(
+        """#!/bin/sh
+case "$1" in
+  stress-smoke)
+    mkdir -p "$OMEGA_STRESS_ARTIFACT_DIR"
+    cat > "$OMEGA_STRESS_ARTIFACT_DIR/summary.json" <<'JSON'
+{"status":"FAIL","violations":["p95 30000.0ms > 800.0ms","p99 33000.0ms > 2500.0ms"]}
+JSON
+    echo "stress failed but audit blocked"
+    exit 2
+    ;;
+  copilot-redteam|cartridge-resilience|data-integrity-audit)
+    echo "fake blocked follow-up"
+    exit 2
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_make.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "OMEGA_ENTERPRISE_RUN_ID": "ENT_STRESS_FAIL_AUDIT_BLOCK",
+            "OMEGA_ENTERPRISE_EVIDENCE_ROOT": str(tmp_path),
+            "PUBLIC_CONSOLE_URL": "http://modecissions-public-255609366.us-east-1.elb.amazonaws.com",
+        }
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--target",
+            "aws",
+            "--workload",
+            "sap_successfactors",
+            "--profile",
+            "beta-safe",
+        ],
+        cwd=REPO,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout
+    report = (tmp_path / "ENT_STRESS_FAIL_AUDIT_BLOCK" / "REPORT.md").read_text(encoding="utf-8")
+    summary = (tmp_path / "ENT_STRESS_FAIL_AUDIT_BLOCK" / "summary.json").read_text(encoding="utf-8")
+    assert "stress smoke | FAIL" in report
+    assert "stress summary FAIL wins over command BLOCKED" in report
+    assert "p95 30000.0ms > 800.0ms" in report
+    assert '"status": "FAIL"' in summary
+
+
+def test_enterprise_classifies_public_waf_stress_summary_as_blocked(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_make = fake_bin / "make"
+    fake_make.write_text(
+        """#!/bin/sh
+case "$1" in
+  stress-smoke)
+    mkdir -p "$OMEGA_STRESS_ARTIFACT_DIR"
+    cat > "$OMEGA_STRESS_ARTIFACT_DIR/summary.json" <<'JSON'
+{"status":"BLOCKED","blocked_by":"aws_waf_rate_limit","violations":["error_rate 0.8000 > 0.0100"],"unblock":"Raise public_alb_waf_rate_limit or run against staging/internal endpoint."}
+JSON
+    echo "locust failed after public WAF block"
+    exit 1
+    ;;
+  copilot-redteam|cartridge-resilience|data-integrity-audit)
+    echo "fake blocked follow-up"
+    exit 2
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_make.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "OMEGA_ENTERPRISE_RUN_ID": "ENT_WAF_BLOCK",
+            "OMEGA_ENTERPRISE_EVIDENCE_ROOT": str(tmp_path),
+            "PUBLIC_CONSOLE_URL": "http://modecissions-public-255609366.us-east-1.elb.amazonaws.com",
+        }
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--target",
+            "aws",
+            "--workload",
+            "sap_successfactors",
+            "--profile",
+            "beta-safe",
+        ],
+        cwd=REPO,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert result.returncode == 2, result.stdout
+    report = (tmp_path / "ENT_WAF_BLOCK" / "REPORT.md").read_text(encoding="utf-8")
+    summary = (tmp_path / "ENT_WAF_BLOCK" / "summary.json").read_text(encoding="utf-8")
+    assert "stress smoke | BLOCKED" in report
+    assert "stress summary BLOCKED by aws_waf_rate_limit" in report
+    assert "public_alb_waf_rate_limit" in report
+    assert '"status": "BLOCKED"' in summary

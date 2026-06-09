@@ -636,6 +636,7 @@ def _workspace_scope_from_user(user: dict | None) -> tuple[str, str]:
 
 
 _SCOPED_READ_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
+_SCOPED_READ_CACHE_LOCKS: dict[tuple[Any, ...], asyncio.Lock] = {}
 
 
 def _scoped_read_cache_ttl() -> float:
@@ -687,6 +688,22 @@ def _scoped_read_cache_set(namespace: str, user: dict | None, value: Any, *parts
     key = _scoped_read_cache_key(namespace, user, *parts)
     _SCOPED_READ_CACHE[key] = (time.monotonic() + ttl, deepcopy(value))
     return value
+
+
+async def _scoped_read_cache_get_or_set(namespace: str, user: dict | None, parts: tuple[Any, ...], loader) -> Any:
+    cached = _scoped_read_cache_get(namespace, user, *parts)
+    if cached is not None:
+        return cached
+    ttl = _scoped_read_cache_ttl()
+    if ttl <= 0:
+        return await loader()
+    key = _scoped_read_cache_key(namespace, user, *parts)
+    lock = _SCOPED_READ_CACHE_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        cached = _scoped_read_cache_get(namespace, user, *parts)
+        if cached is not None:
+            return cached
+        return _scoped_read_cache_set(namespace, user, await loader(), *parts)
 
 
 def _bronze_bucket_name() -> str:
@@ -2653,42 +2670,34 @@ async def api_tools_manifest():
 
 @app.get("/api/schema", dependencies=[Depends(require_authenticated)])
 async def api_schema(source: str, user: dict = Depends(require_authenticated)):
-    cached = _scoped_read_cache_get("schema", user, source)
-    if cached is not None:
-        return cached
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=30) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("get_source_partitions", {"source": source}, user))
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement schema lookup failed"))
-        partitions = r.json()
-        _raise_for_refinement_payload_error(partitions, "Refinement schema lookup failed")
-        r2 = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                          json=_mcp_payload("preview_source", {"source": source, "limit": 5}, user))
-        if r2.status_code >= 400:
-            raise HTTPException(r2.status_code, _upstream_error_detail(r2, "Refinement schema preview failed"))
-        preview = r2.json()
-        _raise_for_refinement_payload_error(preview, "Refinement schema preview failed")
-    result = {"partitions": partitions, "preview": preview}
-    return _scoped_read_cache_set("schema", user, result, source)
+    async def load_schema() -> dict:
+        partitions = await _refinement_invoke(
+            "get_source_partitions",
+            {"source": source},
+            timeout=30,
+            user=user,
+        )
+        preview = await _refinement_invoke(
+            "preview_source",
+            {"source": source, "limit": 5},
+            timeout=30,
+            user=user,
+        )
+        return {"partitions": partitions, "preview": preview}
+
+    return await _scoped_read_cache_get_or_set("schema", user, (source,), load_schema)
 
 @app.get("/api/sources", dependencies=[Depends(require_authenticated)])
 async def api_sources(user: dict = Depends(require_authenticated)):
-    cached = _scoped_read_cache_get("sources", user, "all")
-    if cached is not None:
-        return cached
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload("list_sources", {}, user))
-    if r.status_code >= 400:
-        raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement source list failed"))
-    data = r.json()
-    _raise_for_refinement_payload_error(data, "Refinement source list failed")
-    # Normalize: result may be {"result": [...]} or {"sources": [...]}
-    sources = data.get("result") or data.get("sources") or []
-    if isinstance(sources, list):
-        return _scoped_read_cache_set("sources", user, {"sources": sources}, "all")
-    return _scoped_read_cache_set("sources", user, {"sources": []}, "all")
+    async def load_sources() -> dict:
+        data = await _refinement_invoke("list_sources", {}, timeout=60, user=user)
+        # Normalize: result may be {"result": [...]} or {"sources": [...]}
+        sources = data.get("result") or data.get("sources") or []
+        if isinstance(sources, list):
+            return {"sources": sources}
+        return {"sources": []}
+
+    return await _scoped_read_cache_get_or_set("sources", user, ("all",), load_sources)
 
 @app.post("/api/datasets/save", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
 async def api_dataset_save(body: dict, user: dict = Depends(require_permission("datasets.write"))):
@@ -3385,17 +3394,12 @@ async def api_data(
     except Exception:
         pass
 
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=60) as c:
-        r = await c.post(f"{REFINEMENT_URL}/mcp/invoke",
-                         json=_mcp_payload(
-                             "query_dataset",
-                             {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
-                             user,
-                         ))
-    if r.status_code != 200:
-        raise HTTPException(r.status_code, "Dataset unavailable")
-    data = r.json()
-    _raise_for_refinement_payload_error(data, "Dataset unavailable")
+    data = await _refinement_invoke(
+        "query_dataset",
+        {"name": dataset, "limit": limit, "user_context": _rls_user_context(user)},
+        timeout=60,
+        user=user,
+    )
     return data.get("data", data)
 
 
@@ -5229,12 +5233,13 @@ async def api_catalog_get(
     if tags:     args["tags"]     = [t.strip() for t in tags.split(",") if t.strip()]
     if datasets: args["datasets"] = [d.strip() for d in datasets.split(",") if d.strip()]
     cache_args = json.dumps(args, sort_keys=True, default=str)
-    cached = _scoped_read_cache_get("catalog", user, cache_args)
-    if cached is not None:
-        return cached
-    result = await _refinement_invoke("get_data_catalog", args, user=user)
-    _raise_for_refinement_payload_error(result, "Refinement catalog failed")
-    return _scoped_read_cache_set("catalog", user, result, cache_args)
+
+    async def load_catalog() -> Any:
+        result = await _refinement_invoke("get_data_catalog", args, user=user)
+        _raise_for_refinement_payload_error(result, "Refinement catalog failed")
+        return result
+
+    return await _scoped_read_cache_get_or_set("catalog", user, (cache_args,), load_catalog)
 
 
 @app.post("/api/catalog/entries", dependencies=[Depends(require_csrf), Depends(require_any_role(ROLE_ADMIN, ROLE_WORKSPACE_ADMIN))])
@@ -5346,16 +5351,21 @@ def _raise_for_refinement_payload_error(payload, fallback: str = "Refinement req
 async def _refinement_invoke(tool: str, args: dict, *, timeout: int = 30, user: dict | None = None):
     import httpx
     refinement_url = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
-    async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=timeout) as client:
-        r = await client.post(
-            f"{refinement_url}/mcp/invoke",
-            json=_mcp_payload(tool, args, user),
-        )
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement request failed"))
-        payload = r.json()
-        _raise_for_refinement_payload_error(payload, "Refinement request failed")
-        return payload
+    try:
+        async with httpx.AsyncClient(headers=_hdr_for("REFINEMENT"), timeout=timeout) as client:
+            r = await client.post(
+                f"{refinement_url}/mcp/invoke",
+                json=_mcp_payload(tool, args, user),
+            )
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement request failed"))
+            payload = r.json()
+            _raise_for_refinement_payload_error(payload, "Refinement request failed")
+            return payload
+    except httpx.TimeoutException as exc:
+        raise HTTPException(503, f"Refinement timed out while running {tool}") from exc
+    except httpx.TransportError as exc:
+        raise HTTPException(503, f"Refinement unavailable while running {tool}: {type(exc).__name__}") from exc
 
 
 # ── Monitoring MCP server — MCP-compatible wrapper (used by registry) ─────────

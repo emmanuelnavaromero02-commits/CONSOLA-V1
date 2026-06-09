@@ -42,6 +42,51 @@ def _read_stats(path: Path) -> dict[str, str]:
     return rows[-1]
 
 
+def _read_failure_rows(path: Path) -> list[dict[str, str]]:
+    failures_csv = path / "locust_failures.csv"
+    if not failures_csv.exists():
+        return []
+    return list(csv.DictReader(failures_csv.open(encoding="utf-8")))
+
+
+def _is_waf_403_error(error: str) -> bool:
+    lowered = error.lower()
+    return (
+        "returned 403" in lowered
+        and "<title>403 forbidden</title>" in lowered
+        and "<center><h1>403 forbidden</h1></center>" in lowered
+    )
+
+
+def _blocked_by_public_waf(path: Path, *, failures: int) -> bool:
+    """Detect AWS WAF rate-block HTML so prod-safe load is not mislabelled.
+
+    FastAPI/Console 403s are JSON responses. The public ALB WAF returns the
+    stock HTML "403 Forbidden" page and applies globally, including /healthz.
+    When almost every recorded failure has that signature, the correct release
+    evidence is BLOCKED by the public WAF cap, not FAIL for an application bug.
+    """
+    if failures <= 0:
+        return False
+    rows = _read_failure_rows(path)
+    if not rows:
+        return False
+    waf_occurrences = 0
+    total_occurrences = 0
+    saw_healthz = False
+    for row in rows:
+        occurrences = int(_float(row.get("Occurrences"), 0.0))
+        total_occurrences += occurrences
+        error = str(row.get("Error") or "")
+        if _is_waf_403_error(error):
+            waf_occurrences += occurrences
+            if "read:healthz" in str(row.get("Name") or "") or "/healthz returned 403" in error:
+                saw_healthz = True
+    if total_occurrences <= 0:
+        return False
+    return saw_healthz and (waf_occurrences / total_occurrences) >= 0.9
+
+
 def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds) -> dict[str, object]:
     row = _read_stats(path)
     requests = int(_float(row.get("Request Count")))
@@ -57,6 +102,18 @@ def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds
         violations.append(f"p99 {p99:.1f}ms > {thresholds.p99_ms:.1f}ms")
     if error_rate > thresholds.max_error_rate:
         violations.append(f"error_rate {error_rate:.4f} > {thresholds.max_error_rate:.4f}")
+    waf_blocked = _blocked_by_public_waf(path, failures=failures)
+    status = "FAIL" if violations else "PASS"
+    unblock = None
+    error = None
+    if waf_blocked:
+        status = "BLOCKED"
+        error = "Public ALB AWS WAF rate limit returned global 403 Forbidden HTML"
+        unblock = (
+            "Run this load stage against a dedicated staging/internal endpoint, "
+            "or temporarily raise/allowlist the Terraform WAF rule "
+            "`public_alb_waf_rate_limit` for the test source IP, then rerun."
+        )
     return {
         "profile": profile,
         "workload": workload,
@@ -72,7 +129,10 @@ def summarize(path: Path, *, profile: str, workload: str, thresholds: Thresholds
             "max_error_rate": thresholds.max_error_rate,
         },
         "violations": violations,
-        "status": "FAIL" if violations else "PASS",
+        "status": status,
+        "blocked_by": "aws_waf_rate_limit" if waf_blocked else None,
+        "error": error,
+        "unblock": unblock,
     }
 
 
@@ -133,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     (args.artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     _write_report(args.artifact_dir, summary)
     print(json.dumps(summary, indent=2))
-    return 1 if summary["status"] == "FAIL" else 0
+    if summary["status"] == "FAIL":
+        return 1
+    if summary["status"] == "BLOCKED":
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

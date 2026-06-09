@@ -379,6 +379,9 @@ SUMMARY_CODE=$?
 set -e
 
 echo "[stress] completed"
+if [[ "$SUMMARY_CODE" -eq 2 ]]; then
+  exit 2
+fi
 if [[ "$LOCUST_CODE" -ne 0 ]]; then
   exit "$LOCUST_CODE"
 fi

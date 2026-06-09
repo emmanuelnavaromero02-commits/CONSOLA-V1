@@ -46,6 +46,17 @@ class FakeClient:
         return FakeResponse(payload, self._status_code)
 
 
+class TimeoutClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def post(self, *_args, **_kwargs):
+        raise console_main.httpx.ReadTimeout("slow dependency")
+
+
 def _request() -> Request:
     request = Request({"type": "http", "method": "GET", "path": "/api/data/x", "headers": []})
     request.state.user = USER
@@ -141,3 +152,15 @@ async def test_catalog_maps_refinement_error_payload_to_http(monkeypatch):
 
     assert exc.value.status_code == 503
     assert "timeout" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_refinement_transport_timeout_maps_to_503(monkeypatch):
+    monkeypatch.setattr(console_main.httpx, "AsyncClient", lambda **_kwargs: TimeoutClient())
+
+    with pytest.raises(HTTPException) as exc:
+        await console_main._refinement_invoke("get_data_catalog", {"layer": "gold"}, user=USER)
+
+    assert exc.value.status_code == 503
+    assert "timed out" in str(exc.value.detail).lower()
+    assert "get_data_catalog" in str(exc.value.detail)

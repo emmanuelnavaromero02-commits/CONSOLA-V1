@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -14,6 +15,7 @@ from app.services.intelligence.utils import workspace_scope
 
 _SAFE_DATASET_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _GOLD_ROW_CACHE: dict[tuple[str, str, str, int], tuple[float, list[dict[str, Any]]]] = {}
+_GOLD_ROW_CACHE_LOCKS: dict[tuple[str, str, str, int], asyncio.Lock] = {}
 
 
 def _normalize_dsn(raw: str) -> str:
@@ -91,36 +93,41 @@ async def query_gold_dataset_rows(dataset: str, user: dict | None, limit: int = 
     cached = _gold_cache_get(cache_key)
     if cached is not None:
         return cached
-    conn = await asyncpg.connect(dsn, command_timeout=10)
-    try:
-        async with conn.transaction():
-            await conn.execute(
-                "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
-                tenant_id or "",
-                workspace_id,
-            )
-            exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
-            if not exists:
-                raise HTTPException(404, f"dataset unavailable: {dataset}")
-            columns = await _table_columns(conn, table)
-            if "workspace_id" not in columns:
-                raise HTTPException(403, f"dataset is not workspace scoped: {dataset}")
-            if "tenant_id" in columns and tenant_id:
-                rows = await conn.fetch(
-                    f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT $3',
+    lock = _GOLD_ROW_CACHE_LOCKS.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        cached = _gold_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        conn = await asyncpg.connect(dsn, command_timeout=10)
+        try:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                    tenant_id or "",
                     workspace_id,
-                    tenant_id,
-                    safe_limit,
                 )
-            else:
-                rows = await conn.fetch(
-                    f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 LIMIT $2',
-                    workspace_id,
-                    safe_limit,
-                )
-        return _gold_cache_set(cache_key, [dict(row) for row in rows])
-    finally:
-        await conn.close()
+                exists = bool(await conn.fetchval("SELECT to_regclass($1)", f"public.{table}"))
+                if not exists:
+                    raise HTTPException(404, f"dataset unavailable: {dataset}")
+                columns = await _table_columns(conn, table)
+                if "workspace_id" not in columns:
+                    raise HTTPException(403, f"dataset is not workspace scoped: {dataset}")
+                if "tenant_id" in columns and tenant_id:
+                    rows = await conn.fetch(
+                        f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 AND tenant_id::text = $2 LIMIT $3',
+                        workspace_id,
+                        tenant_id,
+                        safe_limit,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        f'SELECT * FROM public."{table}" WHERE workspace_id::text = $1 LIMIT $2',
+                        workspace_id,
+                        safe_limit,
+                    )
+            return _gold_cache_set(cache_key, [dict(row) for row in rows])
+        finally:
+            await conn.close()
 
 
 async def query_intelligence_dataset_rows(dataset: str, user: dict | None, limit: int = 5000) -> list[dict[str, Any]]:
