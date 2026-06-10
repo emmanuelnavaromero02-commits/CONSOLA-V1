@@ -70,7 +70,8 @@ def test_dashboard_exposes_data_readiness_in_backend_and_ui():
     ):
         assert needle in backend
         assert needle in ui
-    assert "modulos operativos" in ui
+    assert "frentes con se\u00f1ales" in ui
+    assert "listos para decidir" in ui
     assert "modulos activos" not in ui
 
 

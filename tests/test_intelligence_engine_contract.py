@@ -222,5 +222,5 @@ def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     assert '"intelligence": metadata.get("intelligence")' in state
     assert '"intelligence_signal"' in ui
     assert "function IntelligencePanel" in ui
-    assert "Registrar outcome" in ui
-    assert "Evidence Pack" in ui
+    assert "Registrar resultado" in ui
+    assert "Evidencia considerada" in ui
