@@ -5,15 +5,15 @@ import { MiniBar, ReadinessBadge, readinessLabels, readinessTone } from "./Statu
 
 describe("Control Room readiness states", () => {
   it.each([
-    ["ready", "Operativa"],
-    ["partial", "Parcial"],
-    ["stub", "Stub"],
-    ["empty", "Sin datos"],
-    ["missing", "Faltante"],
-    ["unavailable", "No disponible"],
-    ["blocked", "Bloqueada"],
-    ["no_permission", "Sin permiso"],
-    ["error", "Error"],
+    ["ready", "Listo"],
+    ["partial", "Datos incompletos"],
+    ["stub", "Sin información suficiente"],
+    ["empty", "Sin información suficiente"],
+    ["missing", "Información no disponible"],
+    ["unavailable", "Información no disponible"],
+    ["blocked", "Bloqueado"],
+    ["no_permission", "Bloqueado por permisos"],
+    ["error", "Error operativo"],
   ] as const)("renders %s explicitly", (status, label) => {
     const markup = renderToStaticMarkup(<ReadinessBadge status={status} />);
 
@@ -30,9 +30,9 @@ describe("Control Room readiness states", () => {
   });
 
   it("renders a bounded lightweight chart without external libraries", () => {
-    const markup = renderToStaticMarkup(<MiniBar value={30} max={100} label="Data-ready" />);
+    const markup = renderToStaticMarkup(<MiniBar value={30} max={100} label="Listos para decidir" />);
 
-    expect(markup).toContain("Data-ready");
+    expect(markup).toContain("Listos para decidir");
     expect(markup).toContain("30%");
   });
 });

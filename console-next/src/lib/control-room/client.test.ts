@@ -7,8 +7,7 @@ import {
   getControlRoomImpact,
   getControlRoomLessons,
   getControlRoomThresholds,
-  getDatasetPreview,
-  getSuccessFactorsGoldCatalog,
+  getSuccessFactorsDecisionModel,
   getSuccessFactorsGoldKpis,
 } from "./client";
 
@@ -26,17 +25,17 @@ afterEach(() => {
 });
 
 describe("control-room client", () => {
-  it("uses existing read endpoints for dashboard, KPIs, catalog and thresholds", async () => {
+  it("uses existing executive read endpoints for dashboard, KPIs and thresholds", async () => {
     apiMock.get.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
 
     await getControlRoomDashboard();
     await getSuccessFactorsGoldKpis();
-    await getSuccessFactorsGoldCatalog();
+    await getSuccessFactorsDecisionModel();
     await getControlRoomThresholds();
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/dashboard");
     expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/sap-successfactors/gold-kpis");
-    expect(apiMock.get).toHaveBeenNthCalledWith(3, "/api/catalog?cartridge=sap_successfactors&layer=gold");
+    expect(apiMock.get).toHaveBeenNthCalledWith(3, "/api/semantic?cartridge=sap_successfactors");
     expect(apiMock.get).toHaveBeenNthCalledWith(4, "/api/control-room/thresholds");
   });
 
@@ -50,15 +49,14 @@ describe("control-room client", () => {
     expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/items/item%201%2Ffemsa/impact");
   });
 
-  it("keeps optional cartridge scope on lessons and data previews", async () => {
+  it("keeps optional cartridge scope on lessons without exposing data preview routes", async () => {
     apiMock.get.mockResolvedValue({ data: {}, status: 200, headers: new Headers(), requestId: "r" });
 
     await getControlRoomLessons("sap successfactors");
     await getControlRoomLessons();
-    await getDatasetPreview("sap_successfactors_employee_360", 7);
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, "/api/control-room/lessons?cartridge_id=sap+successfactors");
     expect(apiMock.get).toHaveBeenNthCalledWith(2, "/api/control-room/lessons");
-    expect(apiMock.get).toHaveBeenNthCalledWith(3, "/api/data/sap_successfactors_employee_360?limit=7");
+    expect(apiMock.get).toHaveBeenCalledTimes(2);
   });
 });

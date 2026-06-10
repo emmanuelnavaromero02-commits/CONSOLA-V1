@@ -162,7 +162,6 @@ export interface SfGoldWidget {
   title: string;
   value: number;
   dataset: string;
-  href: string;
   rows: SfGoldWidgetRow[];
 }
 
@@ -172,6 +171,38 @@ export interface SfGoldKpisPayload {
   tenant_id?: string;
   workspace_id?: string;
   widgets: SfGoldWidget[];
+}
+
+export interface SfDecisionTerm {
+  term?: string;
+  definition?: string;
+  maps_to?: string;
+  [key: string]: unknown;
+}
+
+export interface SfDecisionEntity {
+  entity?: string;
+  name?: string;
+  display_name?: string;
+  description?: string;
+  module?: string;
+  fields?: string[];
+  columns?: string[];
+  select_fields?: string[];
+  [key: string]: unknown;
+}
+
+export interface SfDecisionModelPayload {
+  cartridge?: string;
+  entities?: SfDecisionEntity[] | Record<string, SfDecisionEntity>;
+  server?: {
+    entities?: SfDecisionEntity[];
+    semantic_model?: {
+      vocabulary?: SfDecisionTerm[];
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 }
 
 export interface ThresholdCandidate extends DetectionThreshold {

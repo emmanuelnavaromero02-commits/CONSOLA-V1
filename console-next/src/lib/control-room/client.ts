@@ -2,10 +2,10 @@ import { api } from "@/lib/api";
 
 import type {
   ActivityPayload,
-  CatalogPayload,
   Dashboard,
   ImpactPayload,
   LessonsPayload,
+  SfDecisionModelPayload,
   SfGoldKpisPayload,
   ThresholdPayload,
 } from "./types";
@@ -15,7 +15,7 @@ export const CONTROL_ROOM_PATHS = {
   lessons: "/api/control-room/lessons",
   thresholds: "/api/control-room/thresholds",
   sfGoldKpis: "/api/control-room/sap-successfactors/gold-kpis",
-  sfGoldCatalog: "/api/catalog?cartridge=sap_successfactors&layer=gold",
+  sfDecisionModel: "/api/semantic?cartridge=sap_successfactors",
 } as const;
 
 export async function getControlRoomDashboard(): Promise<Dashboard> {
@@ -57,15 +57,7 @@ export async function getSuccessFactorsGoldKpis(): Promise<SfGoldKpisPayload> {
   return response.data;
 }
 
-export async function getSuccessFactorsGoldCatalog(): Promise<CatalogPayload> {
-  const response = await api.get<CatalogPayload>(CONTROL_ROOM_PATHS.sfGoldCatalog);
-  return response.data;
-}
-
-export async function getDatasetPreview(dataset: string, limit = 20): Promise<unknown> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  const response = await api.get<unknown>(
-    `/api/data/${encodeURIComponent(dataset)}?${params.toString()}`,
-  );
+export async function getSuccessFactorsDecisionModel(): Promise<SfDecisionModelPayload> {
+  const response = await api.get<SfDecisionModelPayload>(CONTROL_ROOM_PATHS.sfDecisionModel);
   return response.data;
 }

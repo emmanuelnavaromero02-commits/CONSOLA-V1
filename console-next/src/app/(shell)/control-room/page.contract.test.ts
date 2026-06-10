@@ -13,6 +13,7 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("getControlRoomLessons");
     expect(pageSource).toContain("getControlRoomThresholds");
     expect(pageSource).toContain("getSuccessFactorsGoldKpis");
+    expect(pageSource).toContain("getSuccessFactorsDecisionModel");
     expect(pageSource).toContain("SuccessFactorsGoldPanel");
     expect(pageSource).toContain("SourceInventoryPanel");
   });
@@ -37,10 +38,13 @@ describe("Control Room page functional contract", () => {
     expect(pageSource).toContain("/alerts/");
   });
 
-  it("keeps operational links and does not depend on the reference HTML", () => {
-    expect(pageSource).toContain("sourceCatalogHref");
-    expect(pageSource).toContain("sourceDataHref");
-    expect(pageSource).toContain("sourceSchemaHref");
+  it("keeps the executive room self-contained and does not depend on the reference HTML", () => {
+    expect(pageSource).not.toContain("sourceCatalogHref");
+    expect(pageSource).not.toContain("sourceDataHref");
+    expect(pageSource).not.toContain("sourceSchemaHref");
+    expect(pageSource).not.toContain("/api/data/");
+    expect(pageSource).not.toContain("/viewer?type=schema");
+    expect(pageSource).not.toContain("/data/catalog");
     expect(pageSource).not.toContain("sap.html");
     expect(pageSource).not.toContain("mock");
   });

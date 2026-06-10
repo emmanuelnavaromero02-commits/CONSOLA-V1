@@ -8,20 +8,20 @@ import { cn } from "@/lib/utils";
 export type ControlRoomStatus = DataReadiness | SourceState | SourceRollup | "error";
 
 export const readinessLabels: Record<string, string> = {
-  ready: "Operativa",
-  ok: "Operativa",
-  partial: "Parcial",
-  stub: "Stub",
-  empty: "Sin datos",
-  missing: "Faltante",
-  unavailable: "No disponible",
-  invalid_schema: "Schema invalido",
-  blocked: "Bloqueada",
-  no_permission: "Sin permiso",
-  attention: "Atencion",
-  inactive: "Inactiva",
-  no_sources: "Sin fuentes",
-  error: "Error",
+  ready: "Listo",
+  ok: "Listo",
+  partial: "Datos incompletos",
+  stub: "Sin información suficiente",
+  empty: "Sin información suficiente",
+  missing: "Información no disponible",
+  unavailable: "Información no disponible",
+  invalid_schema: "Datos incompletos",
+  blocked: "Bloqueado",
+  no_permission: "Bloqueado por permisos",
+  attention: "Requiere atención",
+  inactive: "Actualización pendiente",
+  no_sources: "Sin información suficiente",
+  error: "Error operativo",
 };
 
 export function readinessTone(status?: ControlRoomStatus): string {
@@ -122,25 +122,25 @@ export function CommandMetric({
   tone?: "neutral" | "good" | "warning" | "danger";
 }) {
   return (
-    <article className="min-h-[112px] rounded-lg border bg-card p-4">
+    <article className="min-h-[112px] rounded-xl border bg-card p-4 shadow-sm transition-colors dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_24px_rgba(14,165,233,0.08)]">
       <div className="flex items-start justify-between gap-3">
-        <span className="text-xs font-semibold uppercase text-muted-foreground">{label}</span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
         {Icon ? (
           <span
             className={cn(
               "grid h-9 w-9 place-items-center rounded-md border",
-              tone === "good" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600" : "",
-              tone === "warning" ? "border-amber-500/30 bg-amber-500/10 text-amber-600" : "",
-              tone === "danger" ? "border-destructive/30 bg-destructive/10 text-destructive" : "",
-              tone === "neutral" ? "bg-background text-muted-foreground" : "",
+              tone === "good" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "",
+              tone === "warning" ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300" : "",
+              tone === "danger" ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300" : "",
+              tone === "neutral" ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200" : "",
             )}
           >
             <Icon aria-hidden className="h-4 w-4" />
           </span>
         ) : null}
       </div>
-      <strong className="mt-3 block text-3xl font-semibold tracking-tight">{value}</strong>
-      {detail ? <p className="mt-1 text-sm text-muted-foreground">{detail}</p> : null}
+      <strong className="mt-3 block text-3xl font-semibold tracking-tight text-foreground dark:text-white">{value}</strong>
+      {detail ? <p className="mt-1 truncate text-sm text-muted-foreground">{detail}</p> : null}
     </article>
   );
 }
@@ -165,7 +165,7 @@ export function MiniBar({
           <span>{value}/{max}</span>
         </div>
       ) : null}
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
+      <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
         <span
           className={cn(
             "block h-full rounded-full",

@@ -3,6 +3,7 @@
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Bell,
   CheckCircle2,
   ChevronDown,
@@ -16,7 +17,10 @@ import {
   RefreshCcw,
   ShieldCheck,
   SlidersHorizontal,
+  Target,
+  TrendingUp,
   UserPlus,
+  Users,
   XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -25,7 +29,6 @@ import { toast } from "sonner";
 
 import { SuccessFactorsGoldPanel } from "@/components/control-room/SuccessFactorsGoldPanel";
 import {
-  CommandMetric,
   MiniBar,
   OperationalNotice,
   ReadinessBadge,
@@ -39,9 +42,10 @@ import {
   getControlRoomImpact,
   getControlRoomLessons,
   getControlRoomThresholds,
+  getSuccessFactorsDecisionModel,
   getSuccessFactorsGoldKpis,
 } from "@/lib/control-room/client";
-import type { ImpactPayload } from "@/lib/control-room/types";
+import type { ImpactPayload, SfDecisionModelPayload } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 type Severity = "critical" | "high" | "medium" | "low";
@@ -196,7 +200,6 @@ interface SfGoldWidget {
   title: string;
   value: number;
   dataset: string;
-  href: string;
   rows: SfGoldWidgetRow[];
 }
 
@@ -523,32 +526,32 @@ interface ActiveContext {
 }
 
 const severityLabels: Record<Severity, string> = {
-  critical: "Critica",
+  critical: "Crítica",
   high: "Alta",
-  medium: "Atencion",
+  medium: "Atención",
   low: "Baja",
 };
 
 const sourceStateLabels = readinessLabels as Record<SourceState | SourceRollup | DataReadiness, string>;
 
 const alertOperationLabels: Record<AlertOperation, string> = {
-  ack: "Alerta reconocida y enviada a investigacion.",
+  ack: "Alerta reconocida y enviada a investigación.",
   snooze: "Alerta pospuesta 24h; queda visible con estado operativo.",
   assign: "Alerta asignada al usuario actual.",
   "false-positive": "Alerta cerrada como falso positivo.",
 };
 
 const defaultOmegaSteps = [
-  { id: "signals", label: "Senales" },
-  { id: "investigation", label: "Investigacion" },
+  { id: "signals", label: "Señales" },
+  { id: "investigation", label: "Investigación" },
   { id: "options", label: "Opciones" },
-  { id: "decision", label: "Decision" },
-  { id: "execution", label: "Ejecucion" },
+  { id: "decision", label: "Decisión" },
+  { id: "execution", label: "Ejecución" },
   { id: "control", label: "Control" },
   { id: "lessons", label: "Lecciones" },
 ];
 
-const manualTabs = ["Investigacion", "Opciones", "Decision", "Ejecucion", "Control", "Reglas"] as const;
+const manualTabs = ["Investigación", "Opciones", "Decisión", "Ejecución", "Control", "Reglas"] as const;
 const manualStepIds = ["investigation", "options", "decision", "execution", "control", "lessons"] as const;
 const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
 const DEFAULT_REFRESH_INTERVAL_SECONDS = 30;
@@ -598,7 +601,108 @@ function thresholdKey(threshold: Pick<DetectionThreshold, "cartridge_id" | "anom
 }
 
 function thresholdLabel(threshold: Pick<DetectionThreshold, "anomaly_type" | "metric">): string {
-  return `${threshold.anomaly_type} / ${threshold.metric}`;
+  return `${businessTextLabel(threshold.anomaly_type)} / ${businessTextLabel(threshold.metric)}`;
+}
+
+function businessTextLabel(value?: string | null, fallback = "Información"): string {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const normalized = raw.toLowerCase();
+  const known: Record<string, string> = {
+    employees_anomalies: "Riesgos de personal",
+    headcount_by_department: "Plantilla por departamento",
+    headcount_by_location: "Plantilla por ubicación",
+    headcount_by_company: "Plantilla por compañía",
+    manager_hierarchy: "Jerarquía de supervisión",
+    org_structure: "Estructura organizacional",
+    employee_360: "Vista de personal",
+    workforce_composition: "Composición de plantilla",
+    turnover_by_period: "Rotación por periodo",
+    recruitment_funnel: "Embudo de reclutamiento",
+    recruitment_pipeline: "Avance de reclutamiento",
+    sap_successfactors: "SuccessFactors",
+    replicon: "Replicon",
+    hubspot: "HubSpot",
+    salesforce: "Salesforce",
+    sap_hcm: "SAP HCM",
+    sap_s4hana: "SAP S/4HANA",
+    low_margin: "Margen bajo",
+    missing_manager: "Sin responsable asignado",
+    source_state: "Estado de información",
+    intelligence_signal: "Señal inteligente",
+    control_item: "Control operativo",
+    row_count: "Registros considerados",
+    status: "Estado",
+    state: "Estado",
+    score: "Prioridad",
+    "employee central": "Personal",
+    recruiting: "Reclutamiento",
+    recruitment: "Reclutamiento",
+    performance: "Desempeño",
+    "estructura org": "Estructura organizacional",
+    "recursos humanos": "Recursos Humanos",
+  };
+  if (known[normalized]) return known[normalized];
+  const withoutPrefixes = normalized
+    .replace(/^sap_successfactors_/, "")
+    .replace(/^sap_/, "");
+  if (known[withoutPrefixes]) return known[withoutPrefixes];
+  return raw
+    .replace(/sap_successfactors_/gi, "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function businessAreaLabel(value?: string | null): string {
+  return businessTextLabel(value, "Área de negocio");
+}
+
+function businessFrontLabel(value?: string | null): string {
+  const raw = String(value || "").trim();
+  const normalized = raw.toLowerCase();
+  if (normalized === "employee central") return "Personal";
+  if (normalized.includes("recruit")) return "Reclutamiento";
+  if (normalized.includes("performance") || normalized.includes("desempen")) return "Desempeño";
+  if (normalized.includes("estructura") || normalized.includes("org")) return "Estructura organizacional";
+  if (normalized.includes("successfactors")) return "SuccessFactors";
+  return businessTextLabel(raw, "Frente de negocio");
+}
+
+function businessPeriodLabel(value?: string | null): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "Periodo operativo";
+  const months: Record<string, string> = {
+    january: "enero",
+    february: "febrero",
+    march: "marzo",
+    april: "abril",
+    may: "mayo",
+    june: "junio",
+    july: "julio",
+    august: "agosto",
+    september: "septiembre",
+    october: "octubre",
+    november: "noviembre",
+    december: "diciembre",
+  };
+  return raw.replace(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/gi, (match) => months[match.toLowerCase()] || match);
+}
+
+function sanitizeBusinessCopy(value?: string | null, fallback = "Información operativa"): string {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  return raw
+    .replace(/sap_successfactors_[a-z0-9_]+/gi, (match) => businessTextLabel(match))
+    .replace(/\bemployee_360\b/gi, "Vista de personal")
+    .replace(/\borg_structure\b/gi, "Estructura organizacional")
+    .replace(/\bmanager_hierarchy\b/gi, "Jerarquía de supervisión")
+    .replace(/\bheadcount_by_department\b/gi, "Plantilla por departamento")
+    .replace(/\bheadcount_by_location\b/gi, "Plantilla por ubicación")
+    .replace(/\bheadcount_by_company\b/gi, "Plantilla por compañía")
+    .replace(/\bGold DB\b/gi, "la base ejecutiva")
+    .replace(/\bRefinement\b/gi, "el proceso de actualización")
+    .replace(/\bdataset\b/gi, "información")
+    .replace(/\bS3\b/g, "almacenamiento interno");
 }
 
 function activeOpen(item: ControlItem): boolean {
@@ -646,10 +750,10 @@ function pushControlRoomUrl(nextDomain: string, nextModule: string): void {
 }
 
 function activityDescription(entry: ActivityEntry): string {
-  if (entry.error) return entry.error;
-  if (entry.result && typeof entry.result.message === "string") return entry.result.message;
-  if (entry.metadata && typeof entry.metadata.note === "string" && entry.metadata.note) return entry.metadata.note;
-  return entry.label || entry.status || entry.type;
+  if (entry.error) return sanitizeBusinessCopy(entry.error, "No se pudo completar la actualización.");
+  if (entry.result && typeof entry.result.message === "string") return sanitizeBusinessCopy(entry.result.message, "Actualización registrada.");
+  if (entry.metadata && typeof entry.metadata.note === "string" && entry.metadata.note) return sanitizeBusinessCopy(entry.metadata.note, "Nota operativa registrada.");
+  return sanitizeBusinessCopy(entry.label || entry.status || entry.type, "Actividad operativa");
 }
 
 function sourceStateTone(status: SourceState | SourceRollup | DataReadiness): string {
@@ -661,6 +765,76 @@ function severityTone(severity: Severity): string {
   if (severity === "high") return "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300";
   if (severity === "medium") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+}
+
+function businessStatusLabel(status?: string | null): string {
+  const labels: Record<string, string> = {
+    open: "abierta",
+    in_review: "en revisión",
+    approved: "aprobada",
+    resolved: "resuelta",
+    dismissed: "descartada",
+    acknowledged: "reconocida",
+    snoozed: "pospuesta",
+    not_configured: "pendiente",
+    not_started: "pendiente",
+    running: "en ejecución",
+    completed: "completada",
+    failed: "requiere revisión",
+    blocked: "bloqueada",
+  };
+  if (!status) return "pendiente";
+  return labels[status] || status.replace(/_/g, " ");
+}
+
+function businessDatasetLabel(value?: string | null): string {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("employee_360")) return "Vista de personal";
+  if (text.includes("org_structure")) return "Estructura organizacional";
+  if (text.includes("manager_hierarchy")) return "Jerarquía de supervisión";
+  if (text.includes("headcount_by_location")) return "Plantilla por ubicación";
+  if (text.includes("headcount_by_department")) return "Plantilla por departamento";
+  if (text.includes("headcount_by_company")) return "Plantilla por compañía";
+  if (text.includes("recruitment")) return "Reclutamiento";
+  if (text.includes("turnover")) return "Rotación";
+  if (text.includes("anomal")) return "Riesgos de personal";
+  if (text.includes("person")) return "Personas";
+  if (text.includes("job")) return "Puestos y asignaciones";
+  if (text.includes("department")) return "Departamentos";
+  if (text.includes("location")) return "Ubicaciones";
+  if (text.includes("company")) return "Compañías";
+  return "Información operativa";
+}
+
+function businessItemLabel(item: ControlItem): string {
+  return businessDatasetLabel(item.source_dataset || item.entity_label || item.anomaly_type || item.kind);
+}
+
+function businessItemTitle(item: ControlItem): string {
+  const label = businessItemLabel(item);
+  const title = item.title || "";
+  if (/fuente operativa no disponible/i.test(title) || /unavailable|missing|not found/i.test(title)) {
+    return `${label}: información no disponible`;
+  }
+  return sanitizeBusinessCopy(title, label);
+}
+
+function businessItemDescription(item: ControlItem): string {
+  const label = businessItemLabel(item);
+  const description = item.description || "";
+  if (/no pudo consultarse|not found|unavailable|missing/i.test(description)) {
+    return `${label} no pudo actualizarse; esta decisión queda con información incompleta.`;
+  }
+  return sanitizeBusinessCopy(description, item.recommendation || "OMEGA requiere revisión operativa.");
+}
+
+function businessSourceIssue(source: SourceStatus): string {
+  if (source.data_readiness === "no_permission" || source.status === "no_permission") return "Bloqueado por permisos.";
+  if (source.data_readiness === "partial") return "Datos incompletos para una decisión automática.";
+  if (source.data_readiness === "missing" || source.status === "missing") return "Actualización pendiente.";
+  if (source.error) return "No se pudo actualizar esta información.";
+  if (source.count === 0) return "Sin registros considerados.";
+  return `${source.count.toLocaleString("es-MX")} registros considerados.`;
 }
 
 export default function ControlRoomPage() {
@@ -697,6 +871,9 @@ export default function ControlRoomPage() {
   const [sfGoldKpis, setSfGoldKpis] = useState<SfGoldKpisPayload | null>(null);
   const [sfGoldLoading, setSfGoldLoading] = useState(false);
   const [sfGoldError, setSfGoldError] = useState("");
+  const [sfDecisionModel, setSfDecisionModel] = useState<SfDecisionModelPayload | null>(null);
+  const [sfDecisionModelLoading, setSfDecisionModelLoading] = useState(false);
+  const [sfDecisionModelError, setSfDecisionModelError] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
@@ -785,7 +962,7 @@ export default function ControlRoomPage() {
       const payload = await getControlRoomThresholds();
       setThresholdsPayload(payload);
     } catch (err) {
-      setThresholdsError(errorMessage(err, "No se pudieron cargar umbrales"));
+      setThresholdsError(errorMessage(err, "No se pudieron cargar reglas de decisión"));
     } finally {
       setThresholdsLoading(false);
     }
@@ -798,9 +975,22 @@ export default function ControlRoomPage() {
       const payload = await getSuccessFactorsGoldKpis();
       setSfGoldKpis(payload);
     } catch (err) {
-      setSfGoldError(errorMessage(err, "No se pudieron cargar KPIs Gold de SuccessFactors"));
+      setSfGoldError(errorMessage(err, "No se pudieron cargar indicadores ejecutivos de SuccessFactors"));
     } finally {
       setSfGoldLoading(false);
+    }
+  }, []);
+
+  const loadSfDecisionModel = useCallback(async () => {
+    setSfDecisionModelLoading(true);
+    setSfDecisionModelError("");
+    try {
+      const payload = await getSuccessFactorsDecisionModel();
+      setSfDecisionModel(payload);
+    } catch (err) {
+      setSfDecisionModelError(errorMessage(err, "No se pudo cargar el modelo de decisiones de SuccessFactors"));
+    } finally {
+      setSfDecisionModelLoading(false);
     }
   }, []);
 
@@ -825,10 +1015,11 @@ export default function ControlRoomPage() {
         void loadLessons();
         void loadThresholds();
         void loadSfGoldKpis();
+        void loadSfDecisionModel();
       }
     }, Math.max(10, refreshSeconds) * 1000);
     return () => window.clearInterval(timer);
-  }, [dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfGoldKpis, loadThresholds, selectedId, state]);
+  }, [dashboard?.meta?.refresh_interval_seconds, loadDashboard, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, selectedId, state]);
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -836,9 +1027,10 @@ export default function ControlRoomPage() {
       void loadLessons();
       void loadThresholds();
       void loadSfGoldKpis();
+      void loadSfDecisionModel();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [cartridge, domain, loadLessons, loadSfGoldKpis, loadThresholds, state]);
+  }, [cartridge, domain, loadLessons, loadSfDecisionModel, loadSfGoldKpis, loadThresholds, state]);
 
   const domains = useMemo(() => dashboard?.domains ?? [], [dashboard]);
   const cartridges = useMemo(() => dashboard?.cartridges ?? [], [dashboard]);
@@ -982,23 +1174,23 @@ export default function ControlRoomPage() {
   const selectedModule = cartridges.find((item) => item.id === cartridge);
   const activeContext: ActiveContext = selectedModule && cartridge !== "all" ? {
     level: "module",
-    title: selectedModule.label,
-    eyebrow: "Modulo operativo",
-    subtitle: `${selectedModule.domain} · ${selectedModule.connector_label || selectedModule.connector_id || selectedModule.id}`,
-    domainLabel: selectedModule.domain,
+    title: businessFrontLabel(selectedModule.label),
+    eyebrow: "Frente operativo",
+    subtitle: `${businessAreaLabel(selectedModule.domain)} · ${businessFrontLabel(selectedModule.connector_label || selectedModule.label)}`,
+    domainLabel: businessAreaLabel(selectedModule.domain),
     moduleId: selectedModule.id,
-    moduleLabel: selectedModule.label,
+    moduleLabel: businessFrontLabel(selectedModule.label),
   } : selectedDomain && domain !== "all" ? {
     level: "domain",
-    title: selectedDomain.label,
-    eyebrow: "Dominio operativo",
-    subtitle: `${selectedDomain.cartridge_count} modulos · ${filtered.length} senales`,
-    domainLabel: selectedDomain.label,
+    title: businessAreaLabel(selectedDomain.label),
+    eyebrow: "Área de negocio",
+    subtitle: `${selectedDomain.cartridge_count} frentes con señales · ${filtered.length} señales`,
+    domainLabel: businessAreaLabel(selectedDomain.label),
   } : {
     level: "portfolio",
     title: "Dashboard Operativo",
     eyebrow: "Sala de Control OMEGA",
-    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} modulos operativos · ${dataReadyModuleCount} data-ready`,
+    subtitle: `${activeConnectorCount} conectores activos · ${activeModuleCount} frentes con señales · ${dataReadyModuleCount} listos para decidir`,
   };
 
   const selected = filtered.find((item) => item.id === selectedId)
@@ -1070,7 +1262,7 @@ export default function ControlRoomPage() {
     setManualTab(0);
     setActionMessage("");
     setActionError("");
-    void recordStep(item, "signals", "Senal abierta desde el dashboard", undefined, true);
+    void recordStep(item, "signals", "Señal abierta desde la Sala de Control", undefined, true);
   }
 
   function toggleDomain(domainId: string) {
@@ -1095,10 +1287,10 @@ export default function ControlRoomPage() {
       const item = await request();
       refreshAfterMutation(item);
       const displayMessage = success === "preview_generated" || success === "dry_run_validated"
-        ? "Ejecucion actualizada"
+        ? "Ejecución actualizada"
         : success;
       setActionMessage(displayMessage);
-      toast.success("Accion completada");
+      toast.success("Acción completada");
     } catch (err) {
       const message = errorMessage(err, fallback);
       setActionError(message);
@@ -1123,13 +1315,13 @@ export default function ControlRoomPage() {
         enabled: draft.enabled,
         metadata: { source: "control_room_ui" },
       });
-      const message = `Umbral guardado: ${thresholdLabel(response.data.threshold)}`;
+      const message = `Regla guardada: ${thresholdLabel(response.data.threshold)}`;
       setThresholdSaveMessage(message);
       toast.success("Cambios guardados");
       void loadThresholds();
       void loadDashboard(selectedId, true);
     } catch (err) {
-      const message = errorMessage(err, "No se pudo guardar el umbral");
+      const message = errorMessage(err, "No se pudo guardar la regla de decisión");
       setThresholdSaveError(message);
       toast.error(message);
     } finally {
@@ -1161,13 +1353,13 @@ export default function ControlRoomPage() {
       }
       return;
     }
-    await mutateItem(`step:${item.id}:${stepId}:${controlId || ""}`, "No se pudo registrar el paso OMEGA", run, stepId === "investigation" ? "Investigacion revisada" : "Paso registrado");
+    await mutateItem(`step:${item.id}:${stepId}:${controlId || ""}`, "No se pudo registrar el paso OMEGA", run, stepId === "investigation" ? "Investigación revisada" : "Paso registrado");
   }
 
   async function selectOption(item: ControlItem, optionId: string) {
     await mutateItem(
       `option:${item.id}:${optionId}`,
-      "No se pudo seleccionar la opcion",
+      "No se pudo seleccionar la opción",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/option`,
@@ -1175,19 +1367,19 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Opcion seleccionada",
+      "Opción seleccionada",
     );
   }
 
   async function createDecision(item: ControlItem) {
     await mutateItem(
       `decision:${item.id}`,
-      "No se pudo crear la decision",
+      "No se pudo crear la decisión",
       async () => {
         const response = await api.post<{ item: ControlItem }>(`/api/control-room/items/${encodeURIComponent(item.id)}/decision`, {});
         return response.data.item;
       },
-      "Decision creada",
+      "Decisión creada",
     );
   }
 
@@ -1195,7 +1387,7 @@ export default function ControlRoomPage() {
     const template = executionTemplate(item);
     await mutateItem(
       `preview:${item.id}`,
-      "No se pudo generar el preview",
+      "No se pudo generar la vista previa",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/action-preview`,
@@ -1211,7 +1403,7 @@ export default function ControlRoomPage() {
     const template = executionTemplate(item);
     await mutateItem(
       `dryrun:${item.id}`,
-      "No se pudo validar el dry-run",
+      "No se pudo validar antes de ejecutar",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/action-dry-run`,
@@ -1226,15 +1418,15 @@ export default function ControlRoomPage() {
   async function executeLive(item: ControlItem) {
     const template = executionTemplate(item);
     if (!template?.writeback?.supported) {
-      const message = template?.writeback?.reason || "Sin ejecucion supervisada para este item.";
+      const message = template?.writeback?.reason || "Sin ejecución supervisada para esta señal.";
       setActionError(message);
       return;
     }
-    const confirmed = window.confirm("Registrar ejecucion supervisada auditada. No se escribira en ERP/SAP externo.");
+    const confirmed = window.confirm("Registrar ejecución supervisada auditada. No se escribirá en ERP/SAP externo.");
     if (!confirmed) return;
     await mutateItem(
       `execute:${item.id}`,
-      "Ejecucion supervisada bloqueada",
+      "Ejecución supervisada bloqueada",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/execute`,
@@ -1246,26 +1438,26 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Ejecucion supervisada registrada",
+      "Ejecución supervisada registrada",
     );
   }
 
   async function runAuto(item: ControlItem) {
     await mutateItem(
       `auto:${item.id}`,
-      "No se pudo completar el modo automatico seguro",
+      "No se pudo completar el modo automático seguro",
       async () => {
         const response = await api.post<{ item: ControlItem }>(`/api/control-room/items/${encodeURIComponent(item.id)}/auto-run`, {});
         return response.data.item;
       },
-      "Modo automatico completado",
+      "Modo automático completado",
     );
   }
 
   async function approve(item: ControlItem) {
     await mutateItem(
       `approve:${item.id}`,
-      "No se pudo aprobar la recomendacion",
+      "No se pudo aprobar la recomendación",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/approve`,
@@ -1273,14 +1465,14 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Aprobacion registrada",
+      "Aprobación registrada",
     );
   }
 
   async function dismiss(item: ControlItem) {
     await mutateItem(
       `dismiss:${item.id}`,
-      "No se pudo descartar el item",
+      "No se pudo descartar la señal",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/dismiss`,
@@ -1288,7 +1480,7 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Item descartado",
+      "Señal descartada",
     );
   }
 
@@ -1315,7 +1507,7 @@ export default function ControlRoomPage() {
   async function createLesson(item: ControlItem, rule: string) {
     await mutateItem(
       `lesson:${item.id}`,
-      "No se pudo guardar la leccion",
+      "No se pudo guardar la lección",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/lessons`,
@@ -1323,14 +1515,14 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Leccion registrada",
+      "Lección registrada",
     );
   }
 
   async function recordIntelligenceOutcome(item: ControlItem, draft: IntelligenceOutcomeDraft) {
     await mutateItem(
       `intelOutcome:${item.id}`,
-      "No se pudo registrar el outcome",
+      "No se pudo registrar el resultado",
       async () => {
         const response = await api.post<{ outcome: NonNullable<IntelligencePack["outcome"]> }>(
           `/api/intelligence/signals/${encodeURIComponent(item.id)}/outcome`,
@@ -1344,7 +1536,7 @@ export default function ControlRoomPage() {
           omega: { ...item.omega, intelligence: nextIntelligence },
         };
       },
-      "Outcome registrado",
+      "Resultado registrado",
     );
   }
 
@@ -1352,7 +1544,7 @@ export default function ControlRoomPage() {
     if (!lesson.id) return;
     await mutateItem(
       `applyLesson:${item.id}:${lesson.id}`,
-      "No se pudo aplicar la leccion",
+      "No se pudo aplicar la lección",
       async () => {
         const response = await api.post<{ item: ControlItem }>(
           `/api/control-room/items/${encodeURIComponent(item.id)}/lessons/${lesson.id}/apply`,
@@ -1360,7 +1552,7 @@ export default function ControlRoomPage() {
         );
         return response.data.item;
       },
-      "Leccion aplicada",
+      "Lección aplicada",
     );
   }
 
@@ -1428,10 +1620,11 @@ export default function ControlRoomPage() {
   }
 
   return (
-    <main className="mx-auto max-w-[1680px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <Header
+    <main className="min-h-screen bg-slate-50 text-slate-950 dark:bg-[#050a12] dark:text-slate-100">
+      <div className="mx-auto max-w-[1900px] space-y-4 px-4 py-4 sm:px-5 lg:px-6">
+        <Header
         context={activeContext}
-        period={dashboard?.period || "Periodo operativo"}
+        period={businessPeriodLabel(dashboard?.period || "Periodo operativo")}
         activeConnectors={activeConnectorCount}
         activeModules={activeModuleCount}
         dataReadyModules={dataReadyModuleCount}
@@ -1455,7 +1648,7 @@ export default function ControlRoomPage() {
         <OperationalNotice tone="error" title="No se pudo cargar la Sala de Control">{error}</OperationalNotice>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid gap-4 xl:grid-cols-[270px_minmax(0,1fr)]">
         <Sidebar
           domains={domains}
           cartridges={cartridges}
@@ -1537,6 +1730,9 @@ export default function ControlRoomPage() {
             sfGoldKpis={sfGoldKpis}
             sfGoldLoading={sfGoldLoading}
             sfGoldError={sfGoldError}
+            sfDecisionModel={sfDecisionModel}
+            sfDecisionModelLoading={sfDecisionModelLoading}
+            sfDecisionModelError={sfDecisionModelError}
             domain={domain}
             cartridge={cartridge}
             severity={severity}
@@ -1553,6 +1749,7 @@ export default function ControlRoomPage() {
             onOpenItem={openItem}
           />
         )}
+      </div>
       </div>
     </main>
   );
@@ -1600,43 +1797,43 @@ function Header({
   onDomain: (domain: string) => void;
 }) {
   return (
-    <header className="overflow-hidden rounded-lg border bg-card">
-      <div className="border-b bg-muted/30 p-4">
+    <header className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_40px_rgba(14,165,233,0.10)]">
+      <div className="border-b bg-gradient-to-r from-slate-100 via-white to-slate-50 p-4 dark:border-sky-400/20 dark:from-[#0a192b] dark:via-[#081423] dark:to-[#07111e]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 space-y-2">
-            <p className="text-xs font-semibold uppercase text-muted-foreground">{context.eyebrow}</p>
-            <h1 className="text-3xl font-semibold tracking-tight">{context.title}</h1>
-            <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground" aria-label="Ruta de navegacion">
-              <button type="button" className="rounded-md px-1.5 py-1 hover:bg-accent/10 hover:text-foreground" onClick={onAll}>
+            <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">{context.eyebrow}</p>
+            <h1 className="text-4xl font-semibold tracking-tight text-foreground dark:text-white">{context.title}</h1>
+            <nav className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground" aria-label="Ruta de navegación">
+              <button type="button" className="rounded-md px-1.5 py-1 hover:bg-cyan-400/10 hover:text-cyan-700 dark:text-cyan-100" onClick={onAll}>
                 Sala de Control
               </button>
               <span>/</span>
               {context.level === "portfolio" ? (
-                <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">Todos</span>
+                <span className="rounded-md px-1.5 py-1 text-foreground dark:text-white" aria-current="page">Todos</span>
               ) : context.level === "domain" ? (
-                <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">{context.domainLabel}</span>
+                <span className="rounded-md px-1.5 py-1 text-foreground dark:text-white" aria-current="page">{context.domainLabel}</span>
               ) : (
                 <>
                   <button
                     type="button"
-                    className="rounded-md px-1.5 py-1 hover:bg-accent/10 hover:text-foreground"
+                    className="rounded-md px-1.5 py-1 hover:bg-cyan-400/10 hover:text-cyan-700 dark:text-cyan-100"
                     onClick={() => context.domainLabel && onDomain(context.domainLabel)}
                   >
                     {context.domainLabel}
                   </button>
                   <span>/</span>
-                  <span className="rounded-md px-1.5 py-1 text-foreground" aria-current="page">{context.moduleLabel}</span>
+                  <span className="rounded-md px-1.5 py-1 text-foreground dark:text-white" aria-current="page">{context.moduleLabel}</span>
                 </>
               )}
               <span>· {period}</span>
             </nav>
-            <p className="max-w-3xl text-sm text-muted-foreground">{context.subtitle}</p>
+            <p className="max-w-3xl text-sm text-muted-foreground dark:text-slate-300">{context.subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onRefresh}
             disabled={loading}
-            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border bg-background px-3 text-sm font-medium text-foreground hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-md border border-cyan-300/30 bg-cyan-400/10 px-3 text-sm font-medium text-cyan-700 dark:text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.12)] hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50"
           >
             {loading ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCcw aria-hidden className="h-4 w-4" />}
             Refrescar
@@ -1644,32 +1841,32 @@ function Header({
         </div>
       </div>
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-md border bg-background p-3">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Version</p>
-          <p className="mt-1 text-sm font-medium">Beta{version ? ` ${version}` : ""}{appEnv ? ` · ${appEnv}` : ""}</p>
+        <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Versión</p>
+          <p className="mt-1 text-sm font-medium text-foreground dark:text-white">Beta{version ? ` ${version}` : ""}{appEnv ? ` · ${appEnv}` : ""}</p>
         </div>
-        <div className="rounded-md border bg-background p-3">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Ejecucion</p>
-          <ReadinessBadge status={writeBackEnabled ? "ready" : "partial"} label={writeBackEnabled ? "Write-back ERP flag ON" : "Supervisada V1"} compact className="mt-1" />
+        <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Ejecución</p>
+          <ReadinessBadge status={writeBackEnabled ? "ready" : "partial"} label={writeBackEnabled ? "Ejecución externa habilitada" : "Supervisada"} compact className="mt-1" />
         </div>
-        <div className="rounded-md border bg-background p-3">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Auto-refresh</p>
-          <p className="mt-1 inline-flex items-center gap-1 text-sm font-medium">
+        <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Actualización automática</p>
+          <p className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-foreground dark:text-white">
             <Activity aria-hidden className="h-3.5 w-3.5" />
-            {syncError ? "Sync con alerta" : `${liveMode === "polling" ? "Vivo" : liveMode} ${refreshSeconds}s`}
+            {syncError ? "Con alerta" : `${liveMode === "polling" ? "Vivo" : liveMode} ${refreshSeconds}s`}
           </p>
         </div>
-        <div className="rounded-md border bg-background p-3">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Actualizacion</p>
-          <p className="mt-1 text-sm font-medium">{lastUpdated} · siguiente {nextRefresh}</p>
+        <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Actualización</p>
+          <p className="mt-1 text-sm font-medium text-foreground dark:text-white">{lastUpdated} · siguiente {nextRefresh}</p>
         </div>
-        <div className="rounded-md border bg-background p-3">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Readiness</p>
-          <p className="mt-1 text-sm font-medium">{activeConnectors} conectores · {activeModules} modulos · {dataReadyModules} data-ready</p>
-          {partialModules || stubModules ? <p className="mt-1 text-xs text-amber-600">{partialModules} parciales · {stubModules} stub</p> : null}
+        <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Cobertura</p>
+          <p className="mt-1 text-sm font-medium text-foreground dark:text-white">{activeConnectors} conectores · {activeModules} frentes con señales · {dataReadyModules} listos</p>
+          {partialModules || stubModules ? <p className="mt-1 text-xs text-amber-600">{partialModules} incompletos · {stubModules} sin información suficiente</p> : null}
         </div>
       </div>
-      {syncError ? <div className="border-t p-4"><OperationalNotice tone="warning" title="Ultimo refresh fallido">{syncError}</OperationalNotice></div> : null}
+      {syncError ? <div className="border-t p-4"><OperationalNotice tone="warning" title="Última actualización fallida">{syncError}</OperationalNotice></div> : null}
     </header>
   );
 }
@@ -1700,14 +1897,14 @@ function Sidebar({
   onCartridge: (cartridge: string, domain: string) => void;
 }) {
   return (
-    <aside className="space-y-4 rounded-lg border bg-card p-4 xl:sticky xl:top-20 xl:self-start" aria-label="Navegacion operativa">
+    <aside className="space-y-4 rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)] xl:sticky xl:top-20 xl:self-start" aria-label="Navegación operativa">
       <div>
-        <p className="text-sm font-semibold">OMEGA</p>
-        <p className="text-xs text-muted-foreground">Sala de Control</p>
+        <p className="text-sm font-semibold text-foreground dark:text-white">OMEGA</p>
+        <p className="text-xs text-cyan-700 dark:text-cyan-300/80">Sala de Control</p>
       </div>
       <button
         type="button"
-        className={cn("flex min-h-[44px] w-full items-center justify-between rounded-md border px-3 text-sm font-medium hover:bg-accent/10", domain === "all" && cartridge === "all" ? "bg-accent/15 text-foreground" : "bg-background text-muted-foreground")}
+        className={cn("flex min-h-[44px] w-full items-center justify-between rounded-md border px-3 text-sm font-medium", domain === "all" && cartridge === "all" ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-950 dark:text-cyan-50" : "bg-background text-muted-foreground hover:bg-cyan-500/10 hover:text-cyan-950 dark:border-sky-400/15 dark:bg-[#07111e] dark:text-slate-300 dark:hover:text-cyan-50")}
         onClick={onAll}
       >
         <span className="flex items-center gap-2"><Gauge aria-hidden className="h-4 w-4" />Todos</span>
@@ -1718,11 +1915,11 @@ function Sidebar({
           <section key={group.id} className="space-y-2">
             <button
               type="button"
-              aria-label={`Dominio ${group.label} ${group.item_count}`}
-              className={cn("flex min-h-[44px] w-full items-center justify-between rounded-md px-3 text-sm font-medium hover:bg-accent/10", domain === group.label ? "bg-accent/15 text-foreground" : "text-muted-foreground")}
+              aria-label={`Área ${businessAreaLabel(group.label)} ${group.item_count}`}
+              className={cn("flex min-h-[44px] w-full items-center justify-between rounded-md px-3 text-sm font-medium", domain === group.label ? "bg-cyan-400/15 text-cyan-950 dark:text-cyan-50" : "text-muted-foreground hover:bg-cyan-400/10 hover:text-cyan-950 dark:text-slate-300 dark:hover:text-cyan-50")}
               onClick={() => onDomain(group.label)}
             >
-              <span>{group.label}</span>
+              <span>{businessAreaLabel(group.label)}</span>
               <span>{group.item_count}</span>
             </button>
             <div className="space-y-1">
@@ -1732,12 +1929,12 @@ function Sidebar({
                   <button
                     type="button"
                     key={`${group.id}-${module.id}`}
-                    aria-label={`Modulo ${module.label} ${module.item_count}`}
-                    className={cn("flex min-h-[40px] w-full items-center justify-between rounded-md px-3 text-left text-xs hover:bg-accent/10 disabled:opacity-50", cartridge === module.id ? "bg-accent/15 text-foreground" : "text-muted-foreground")}
+                    aria-label={`Frente ${businessFrontLabel(module.label)} ${module.item_count}`}
+                    className={cn("flex min-h-[40px] w-full items-center justify-between rounded-md px-3 text-left text-xs disabled:opacity-50", cartridge === module.id ? "bg-cyan-400/15 text-cyan-950 dark:text-cyan-50" : "text-muted-foreground hover:bg-cyan-400/10 hover:text-cyan-950 dark:text-slate-300 dark:hover:text-cyan-50")}
                     onClick={() => onCartridge(module.id, group.label)}
                     disabled={installed ? !installed.active : false}
                   >
-                    <span>{module.label}</span>
+                    <span>{businessFrontLabel(module.label)}</span>
                     <span>{module.item_count}</span>
                   </button>
                 );
@@ -1746,7 +1943,7 @@ function Sidebar({
           </section>
         ))}
       </div>
-      <p className="border-t pt-3 text-xs text-muted-foreground">{activeConnectors} conectores · {activeModules} modulos operativos · {dataReadyModules} data-ready</p>
+      <p className="border-t dark:border-sky-400/20 pt-3 text-xs text-muted-foreground">{activeConnectors} conectores · {activeModules} frentes con señales · {dataReadyModules} listos para decidir</p>
     </aside>
   );
 }
@@ -1781,6 +1978,9 @@ function DashboardView({
   sfGoldKpis,
   sfGoldLoading,
   sfGoldError,
+  sfDecisionModel,
+  sfDecisionModelLoading,
+  sfDecisionModelError,
   domain,
   cartridge,
   severity,
@@ -1825,6 +2025,9 @@ function DashboardView({
   sfGoldKpis: SfGoldKpisPayload | null;
   sfGoldLoading: boolean;
   sfGoldError: string;
+  sfDecisionModel: SfDecisionModelPayload | null;
+  sfDecisionModelLoading: boolean;
+  sfDecisionModelError: string;
   domain: string;
   cartridge: string;
   severity: Severity | "all";
@@ -1841,112 +2044,189 @@ function DashboardView({
   onOpenItem: (item: ControlItem) => void;
 }) {
   const contextIsPortfolio = context.level === "portfolio" && severity === "all";
+  const contextItems = groupedItems.flatMap((group) => group.items);
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filtro por dominio">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 shadow-sm dark:border-sky-400/20 dark:bg-[#081423]" role="group" aria-label="Filtro por dominio">
         <button type="button" className={filterButtonClass(domain === "all")} onClick={() => onDomain("all")}>Todos</button>
         {allDomains.filter((item) => item.modules.length > 0).map((item) => (
           <button type="button" key={item.label} className={filterButtonClass(domain === item.label)} onClick={() => onDomain(item.label)}>
-            {item.label} <span className="ml-1 text-muted-foreground">{item.item_count}</span>
+            {businessAreaLabel(item.label)} <span className="ml-1 text-muted-foreground">{item.item_count}</span>
           </button>
         ))}
-        <label className="inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background px-3 text-sm">
+        <label className="inline-flex min-h-[44px] items-center gap-2 rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] px-3 text-sm text-foreground dark:text-slate-200">
           <Filter aria-hidden className="h-4 w-4" />
           <select value={severity} onChange={(event) => onSeverity(event.target.value as Severity | "all")} className="bg-transparent focus-visible:outline-none" aria-label="Severidad">
             <option value="all">Todas</option>
-            <option value="critical">Critica</option>
+            <option value="critical">Crítica</option>
             <option value="high">Alta</option>
-            <option value="medium">Atencion</option>
+            <option value="medium">Atención</option>
             <option value="low">Baja</option>
           </select>
         </label>
       </div>
 
-      <ContextPanel context={context} sourceCount={contextSources.length} moduleCount={contextModules.length} itemCount={filteredCount} openCount={openCount} severity={severity} />
-      <ContextOperations context={context} modules={contextModules} sources={contextSources} items={groupedItems.flatMap((group) => group.items)} lessons={contextLessons} alerts={contextAlerts} onOpenItem={onOpenItem} onCartridge={onCartridge} />
-      <AlertQueuePanel context={context} alerts={contextAlerts} busyAction={busyAction} actionError={alertActionError} actionMessage={alertActionMessage} onOperateAlert={onOperateAlert} onOpenItem={onOpenItem} items={dashboard?.items ?? groupedItems.flatMap((group) => group.items)} />
+      <ExecutiveCommandStrip
+        totalItems={contextIsPortfolio ? dashboard?.summary.total_items ?? 0 : filteredCount}
+        critical={contextIsPortfolio ? dashboard?.summary.critical ?? 0 : contextCritical}
+        attention={contextIsPortfolio ? dashboard?.summary.attention ?? 0 : contextAttention}
+        decisionCount={contextDecisionCount}
+        sources={contextSources}
+        items={contextItems}
+        sfGoldKpis={sfGoldKpis}
+      />
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-4" aria-label="Resumen ejecutivo">
-        <SummaryCard icon={Gauge} label="Senales" value={contextIsPortfolio ? dashboard?.summary.total_items ?? "..." : filteredCount} />
-        <SummaryCard icon={AlertTriangle} label="Criticas" value={contextIsPortfolio ? dashboard?.summary.critical ?? 0 : contextCritical} tone="critical" />
-        <SummaryCard icon={Activity} label="Atencion" value={contextIsPortfolio ? dashboard?.summary.attention ?? 0 : contextAttention} tone="attention" />
-        <SummaryCard icon={ShieldCheck} label={contextIsPortfolio ? "Decisiones abiertas" : "Con decision"} value={contextDecisionCount} />
+      <section className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_390px]" aria-label="Centro de mando visual">
+        <div className="space-y-4">
+          <ContextPanel context={context} sourceCount={contextSources.length} moduleCount={contextModules.length} itemCount={filteredCount} openCount={openCount} severity={severity} />
+          <ContextOperations context={context} modules={contextModules} sources={contextSources} items={contextItems} lessons={contextLessons} alerts={contextAlerts} onOpenItem={onOpenItem} onCartridge={onCartridge} />
+          <SuccessFactorsGoldPanel
+            payload={sfGoldKpis}
+            loading={sfGoldLoading}
+            error={sfGoldError}
+            sources={contextSources}
+            decisionModel={sfDecisionModel}
+            decisionModelLoading={sfDecisionModelLoading}
+            decisionModelError={sfDecisionModelError}
+          />
+
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.7fr)]" aria-label="Ciclo, salud y mapa operativo">
+            <OmegaCycleBar steps={dashboard?.omega_steps ?? defaultOmegaSteps} counts={contextCycleCounts} />
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+              <SourceHealthPanel dataReadySources={contextDataReadySources} totalSources={contextSources.length} />
+              <MiniPanel title="Reglas" value={`${dashboard?.summary.thresholds?.active ?? contextThresholds.length}/${dashboard?.summary.thresholds?.total ?? contextThresholds.length}`} detail="decisiones activas" />
+            </div>
+          </section>
+
+          <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Estado por dominio">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">{cartridge === "all" ? "Estado por dominio" : "Estado del frente"}</p>
+                <h2 className="text-lg font-semibold text-foreground dark:text-white">Mapa operativo</h2>
+              </div>
+              <span className="text-sm text-muted-foreground">{visibleDomains.length} dominios</span>
+            </div>
+            <div className="grid gap-3 xl:grid-cols-2">
+              {visibleDomains.map((item) => (
+                <DomainSection key={item.id} domain={item} collapsed={collapsed.has(item.id)} onToggle={() => onToggleDomain(item.id)} />
+              ))}
+            </div>
+          </section>
+
+          <SourceInventoryPanel context={context} sources={contextSources} />
+        </div>
+
+        <aside className="space-y-4 2xl:sticky 2xl:top-20 2xl:self-start" aria-label="Decisiones y actividad">
+          <AlertQueuePanel context={context} alerts={contextAlerts} busyAction={busyAction} actionError={alertActionError} actionMessage={alertActionMessage} onOperateAlert={onOperateAlert} onOpenItem={onOpenItem} items={dashboard?.items ?? contextItems} />
+          <LiveDataFeed items={contextItems} alerts={contextAlerts} />
+          <MiniPanel title="Aprendizaje" value={lessonsLoading ? "..." : contextLessons.length} detail="reglas visibles" />
+        </aside>
       </section>
 
-      <SuccessFactorsGoldPanel payload={sfGoldKpis} loading={sfGoldLoading} error={sfGoldError} sources={contextSources} />
-
-      <section className="grid gap-4 lg:grid-cols-4" aria-label="Ciclo y salud operativa">
-        <OmegaCycleBar steps={dashboard?.omega_steps ?? defaultOmegaSteps} counts={contextCycleCounts} />
-        <SourceHealthPanel dataReadySources={contextDataReadySources} totalSources={contextSources.length} />
-        <MiniPanel title="Umbrales" value={`${dashboard?.summary.thresholds?.active ?? contextThresholds.length}/${dashboard?.summary.thresholds?.total ?? contextThresholds.length}`} detail="reglas activas" />
-        <MiniPanel title="Aprendizaje" value={lessonsLoading ? "..." : contextLessons.length} detail="reglas visibles" />
-      </section>
-
-      <section className="rounded-lg border bg-card p-4" aria-label="Estado por dominio">
+      <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Anomalías detectadas">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase text-muted-foreground">{cartridge === "all" ? "Estado por dominio" : "Estado del modulo"}</p>
-            <h2 className="text-lg font-semibold">Mapa operativo</h2>
-          </div>
-          <span className="text-sm text-muted-foreground">{visibleDomains.length} dominios</span>
+        <div>
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Riesgos y decisiones</p>
+          <h2 className="text-lg font-semibold text-foreground dark:text-white">{filteredCount} señales priorizadas</h2>
         </div>
-        <div className="space-y-3">
-          {visibleDomains.map((item) => (
-            <DomainSection key={item.id} domain={item} collapsed={collapsed.has(item.id)} onToggle={() => onToggleDomain(item.id)} />
-          ))}
-        </div>
-      </section>
-
-      <SourceInventoryPanel context={context} sources={contextSources} />
-      <ThresholdRulesBoard context={context} thresholds={contextThresholds} candidates={thresholdCandidates} loading={thresholdsLoading} error={thresholdsError} saving={thresholdSaving} saveError={thresholdSaveError} saveMessage={thresholdSaveMessage} onSave={onSaveThreshold} />
-      <LessonsBoard context={context} lessons={contextLessons} loading={lessonsLoading} error={lessonsError} />
-
-      <section className="rounded-lg border bg-card p-4" aria-label="Anomalias detectadas">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase text-muted-foreground">Anomalias detectadas</p>
-            <h2 className="text-lg font-semibold">{filteredCount} senales priorizadas</h2>
-          </div>
-          <span className="text-sm text-muted-foreground">{openCount} abiertas</span>
-        </div>
-        {state === "loading" ? <StatePanel icon={Loader2} text="Cargando datos operativos..." spinning /> : null}
-        {state === "ready" && groupedItems.length === 0 ? <StatePanel icon={CheckCircle2} text="No hay senales para estos filtros." /> : null}
+        <span className="text-sm text-muted-foreground">{openCount} abiertas</span>
+      </div>
+      {state === "loading" ? <StatePanel icon={Loader2} text="Cargando datos operativos..." spinning /> : null}
+      {state === "ready" && groupedItems.length === 0 ? <StatePanel icon={CheckCircle2} text="No hay señales para estos filtros." /> : null}
         <div className="space-y-4">
           {groupedItems.map((group) => (
-            <section key={group.domain.id} className="rounded-lg border bg-background/60">
-              <header className="flex items-center justify-between border-b px-4 py-3">
-                <strong>{group.domain.label}</strong>
-                <span className="text-sm text-muted-foreground">{group.items.length} items</span>
+            <section key={group.domain.id} className="rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f]">
+              <header className="flex items-center justify-between border-b dark:border-sky-400/15 px-4 py-3">
+                <strong className="text-foreground dark:text-white">{businessAreaLabel(group.domain.label)}</strong>
+                <span className="text-sm text-muted-foreground">{group.items.length} señales</span>
               </header>
-              <div className="grid gap-3 p-3 lg:grid-cols-2">
+              <div className="grid gap-3 p-3 lg:grid-cols-2 2xl:grid-cols-3">
                 {group.items.map((item) => <AnomalyCard key={item.id} item={item} onOpen={() => onOpenItem(item)} />)}
               </div>
             </section>
           ))}
         </div>
       </section>
+
+      <ThresholdRulesBoard context={context} thresholds={contextThresholds} candidates={thresholdCandidates} loading={thresholdsLoading} error={thresholdsError} saving={thresholdSaving} saveError={thresholdSaveError} saveMessage={thresholdSaveMessage} onSave={onSaveThreshold} />
+      <LessonsBoard context={context} lessons={contextLessons} loading={lessonsLoading} error={lessonsError} />
     </div>
   );
 }
 
 function filterButtonClass(active: boolean): string {
-  return cn("inline-flex min-h-[44px] items-center justify-center rounded-md border px-3 text-sm font-medium hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-accent/15 text-foreground" : "bg-background text-muted-foreground");
+  return cn(
+    "inline-flex min-h-[44px] items-center justify-center rounded-md border px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+    active
+      ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-950 shadow-sm dark:text-cyan-50 dark:shadow-[0_0_18px_rgba(34,211,238,0.12)]"
+      : "bg-background text-muted-foreground hover:bg-cyan-500/10 hover:text-cyan-950 dark:border-sky-400/20 dark:bg-[#07111e] dark:hover:text-cyan-50",
+  );
+}
+
+function ExecutiveCommandStrip({
+  totalItems,
+  critical,
+  attention,
+  decisionCount,
+  sources,
+  items,
+  sfGoldKpis,
+}: {
+  totalItems: number;
+  critical: number;
+  attention: number;
+  decisionCount: number;
+  sources: SourceStatus[];
+  items: ControlItem[];
+  sfGoldKpis: SfGoldKpisPayload | null;
+}) {
+  const impactValues = items
+    .map((item) => item.impact_estimate)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const impactTotal = impactValues.reduce((sum, value) => sum + value, 0);
+  const readySources = sources.filter((source) => source.operationally_ready || source.data_readiness === "ready").length;
+  const sfRows = sfGoldKpis?.widgets.reduce((sum, widget) => sum + (Number.isFinite(widget.value) ? widget.value : 0), 0) ?? 0;
+  const topDataset = sfGoldKpis?.widgets.find((widget) => widget.value > 0);
+  const severitySeries = (["low", "medium", "high", "critical"] as Severity[]).map((level) => items.filter((item) => item.severity === level).length);
+  const sourceSeries = [
+    readySources,
+    sources.filter((source) => source.data_readiness === "partial").length,
+    sources.filter((source) => ["blocked", "no_permission", "unavailable", "missing", "error"].includes(source.data_readiness || source.status)).length,
+    sources.length,
+  ];
+  const goldSeries = sfGoldKpis?.widgets.map((widget) => widget.value).filter((value) => Number.isFinite(value)).slice(0, 8) ?? [];
+  const decisionSeries = [
+    items.filter((item) => item.status === "open").length,
+    items.filter((item) => item.status === "in_review").length,
+    decisionCount,
+    items.filter((item) => item.execution_status && item.execution_status !== "not_started").length,
+  ];
+  return (
+    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6" aria-label="Números ejecutivos">
+      <SummaryCard icon={Gauge} label="Señales activas" value={totalItems} detail={`${items.length} registros visibles`} series={severitySeries} />
+      <SummaryCard icon={AlertTriangle} label="Críticas" value={critical} detail="riesgo máximo" tone="critical" series={[0, critical, attention, totalItems]} />
+      <SummaryCard icon={Activity} label="Atención" value={attention} detail="alta y media" tone="attention" series={severitySeries} />
+      <SummaryCard icon={ShieldCheck} label="Decisiones" value={decisionCount} detail="supervisadas" series={decisionSeries} />
+      <SummaryCard icon={TrendingUp} label="Valor en riesgo" value={impactValues.length ? fmtMoney(impactTotal, items.find((item) => item.impact_currency)?.impact_currency || "USD") : "N/D"} detail={impactValues.length ? `${impactValues.length} impactos` : "sin impacto"} series={impactValues.slice(0, 8)} />
+      <SummaryCard icon={Users} label="Plantilla y cobertura" value={sfRows ? sfRows.toLocaleString("es-MX") : `${readySources}/${sources.length}`} detail={topDataset ? businessDatasetLabel(topDataset.dataset) : "cobertura del contexto"} series={goldSeries.length ? goldSeries : sourceSeries} tone={readySources === sources.length && sources.length > 0 ? "neutral" : "attention"} />
+    </section>
+  );
 }
 
 function ContextPanel({ context, sourceCount, moduleCount, itemCount, openCount, severity }: { context: ActiveContext; sourceCount: number; moduleCount: number; itemCount: number; openCount: number; severity: Severity | "all" }) {
-  const label = context.level === "portfolio" ? "Vista portfolio" : context.level === "domain" ? "Vista de dominio" : "Vista de modulo";
+  const label = context.level === "portfolio" ? "Vista ejecutiva" : context.level === "domain" ? "Vista de área" : "Vista de frente";
   return (
-    <section className="rounded-lg border bg-card p-4" aria-label="Contexto activo">
+    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Contexto activo">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">{label}</p>
-          <h2 className="text-xl font-semibold">{context.title}</h2>
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">{label}</p>
+          <h2 className="text-xl font-semibold text-foreground dark:text-white">{context.title}</h2>
           <p className="text-sm text-muted-foreground">{context.subtitle}</p>
         </div>
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Metric label="Modulos" value={moduleCount} />
-          <Metric label="Fuentes" value={sourceCount} />
-          <Metric label="Senales" value={itemCount} />
+          <Metric label="Frentes con señales" value={moduleCount} />
+          <Metric label="Información" value={sourceCount} />
+          <Metric label="Señales" value={itemCount} />
           <Metric label="Abiertas" value={openCount} />
         </dl>
       </div>
@@ -1959,45 +2239,60 @@ function ContextOperations({ context, modules, sources, items, lessons, alerts, 
   const topItem = [...items].sort((left, right) => (right.priority_score || 0) - (left.priority_score || 0) || right.severity_weight - left.severity_weight)[0];
   const sourceRisk = sources.filter((source) => source.status !== "ok").length;
   return (
-    <section className="grid gap-4 lg:grid-cols-[1fr_360px]" aria-label="Panel operativo contextual">
-      <article className="rounded-lg border bg-card p-4">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Centro operativo</p>
-        <h2 className="mt-1 text-lg font-semibold">{context.level === "portfolio" ? "Portfolio completo" : context.title}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
+    <section className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]" aria-label="Panel operativo contextual">
+      <article className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]">
+        <div className="border-b dark:border-sky-400/20 p-4">
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Centro operativo</p>
+          <h2 className="mt-1 text-lg font-semibold text-foreground dark:text-white">{context.level === "portfolio" ? "Vista general de decisiones" : context.title}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
           {context.level === "portfolio"
-            ? "Vista consolidada de todos los dominios activos, con fuentes reales y estados operativos."
-            : "Vista exclusiva del contexto seleccionado: solo muestra modulos, fuentes, senales y aprendizaje relacionados."}
-        </p>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Metric label="Modulos en vista" value={modules.length} />
-          <Metric label="Fuentes con riesgo" value={sourceRisk} />
-          <Metric label="Alertas" value={alerts.length} />
-          <Metric label="Lecciones" value={lessons.length} />
+            ? "Vista consolidada de áreas activas, señales, impacto y decisiones pendientes."
+            : "Vista exclusiva del contexto seleccionado: solo muestra frentes, señales, decisiones y aprendizaje relacionados."}
+          </p>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Metric label="Frentes con señales" value={modules.length} />
+              <Metric label="Información en riesgo" value={sourceRisk} />
+              <Metric label="Alertas" value={alerts.length} />
+              <Metric label="Lecciones" value={lessons.length} />
+            </div>
+            <ModuleBarChart modules={modules} />
+          </div>
+          <div className="space-y-4">
+            <SeverityTrend items={items} />
+            <SourceHeatmap modules={modules} />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 border-t dark:border-sky-400/20 p-4">
           {modules.slice(0, 8).map((module) => (
-            <button key={module.id} type="button" onClick={() => onCartridge(module.id, module.domain)} className="inline-flex min-h-[40px] items-center gap-2 rounded-md border bg-background px-3 text-sm hover:bg-accent/10">
-              <Layers3 aria-hidden className="h-4 w-4" />
-              {module.label}
+            <button key={module.id} type="button" onClick={() => onCartridge(module.id, module.domain)} className="inline-flex min-h-[40px] items-center gap-2 rounded-md border bg-background px-3 text-sm text-foreground hover:bg-cyan-500/10 hover:text-cyan-950 dark:border-sky-400/20 dark:bg-[#07111e] dark:text-slate-200 dark:hover:text-cyan-50">
+              <Layers3 aria-hidden className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
+              {businessFrontLabel(module.label)}
               <span className="text-muted-foreground">{module.item_count}</span>
             </button>
           ))}
         </div>
       </article>
-      <article className="rounded-lg border bg-card p-4">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Siguiente accion</p>
+      <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-amber-400/30 dark:bg-[#11131f] dark:shadow-[0_0_26px_rgba(245,158,11,0.08)]">
+        <p className="text-xs font-semibold uppercase text-amber-700 dark:text-amber-300/90">Decisión recomendada</p>
         {topItem ? (
           <div className="mt-3 space-y-3">
             <span className={cn("inline-flex rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(topItem.severity))}>{severityLabels[topItem.severity]}</span>
-            <h3 className="font-semibold">{topItem.title}</h3>
-            <p className="text-sm text-muted-foreground">{topItem.description}</p>
-            <button type="button" className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90" onClick={() => onOpenItem(topItem)}>
-              Investigar senal
+            <h3 className="text-xl font-semibold text-foreground dark:text-white">{businessItemTitle(topItem)}</h3>
+            <p className="text-sm text-muted-foreground dark:text-slate-300">{businessItemDescription(topItem)}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Metric label="Prioridad" value={topItem.priority_score ?? topItem.priority?.score ?? topItem.severity_weight} />
+              <Metric label="Impacto" value={topItem.impact_estimate ? fmtMoney(topItem.impact_estimate, topItem.impact_currency) : "N/D"} />
+            </div>
+            <button type="button" className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200" onClick={() => onOpenItem(topItem)}>
+              Abrir zona de decisión
               <ChevronRight aria-hidden className="h-4 w-4" />
             </button>
           </div>
         ) : (
-          <StatePanel icon={CheckCircle2} text="Sin senales abiertas en este contexto." />
+          <StatePanel icon={CheckCircle2} text="Sin señales abiertas en este contexto." />
         )}
       </article>
     </section>
@@ -2009,38 +2304,45 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
   const topAlerts = alerts.slice(0, 6);
   const critical = alerts.filter((alert) => alert.severity === "critical").length;
   const pushReady = alerts.filter((alert) => alert.push_ready).length;
+  const avgPriority = alerts.length ? Math.round(alerts.reduce((sum, alert) => sum + (alert.priority_score || 0), 0) / alerts.length) : 0;
   return (
-    <section className="rounded-lg border bg-card p-4" aria-label="Cola de alertas operativas">
+    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-red-400/20 dark:bg-[#0d111d] dark:shadow-[0_0_26px_rgba(248,113,113,0.08)]" aria-label="Cola de alertas operativas">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Alertas y prioridad</p>
-          <h2 className="text-lg font-semibold">{alerts.length} alertas activas para {context.title}</h2>
-          <p className="text-sm text-muted-foreground">{pushReady} listas para ruteo · {critical} criticas · ejecucion supervisada</p>
+          <p className="text-xs font-semibold uppercase text-red-700 dark:text-red-300/90">Zona de decisiones</p>
+          <h2 className="text-lg font-semibold text-foreground dark:text-white">{alerts.length} alertas activas</h2>
+          <p className="text-sm text-muted-foreground">{context.title} · {pushReady} listas para atención · {critical} críticas · ejecución supervisada</p>
         </div>
-        <span className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm">
+        <span className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-sm text-red-700 dark:text-red-100">
           <Bell aria-hidden className="h-4 w-4" />
-          {pushReady > 0 ? "Push-ready" : "Cola interna"}
+          {pushReady > 0 ? "Listas para atención" : "Cola interna"}
         </span>
       </div>
+      <div className="mb-4 grid gap-2 sm:grid-cols-3">
+        <Metric label="Listas para atención" value={pushReady} />
+        <Metric label="Críticas" value={critical} />
+        <Metric label="Prioridad media" value={alerts.length ? avgPriority : "N/D"} />
+      </div>
+      <DecisionPulse alerts={alerts} />
       {actionMessage ? <p className="mb-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300" role="status">{actionMessage}</p> : null}
       {actionError ? <p className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{actionError}</p> : null}
       {topAlerts.length ? (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3">
           {topAlerts.map((alert) => {
             const item = itemById.get(alert.item_id);
             return (
-              <article className="rounded-lg border bg-background p-4" key={alert.id}>
+              <article className="rounded-lg border bg-background p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#07111e]" key={alert.id}>
                 <div className="flex items-start justify-between gap-3">
                   <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(alert.severity))}>{severityLabels[alert.severity]}</span>
                   <strong className="text-xs text-muted-foreground">Prioridad {alert.priority_score}</strong>
                 </div>
-                <h3 className="mt-3 font-semibold">{alert.title}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{alert.message}</p>
+                <h3 className="mt-3 font-semibold text-foreground dark:text-white">{sanitizeBusinessCopy(alert.title, "Alerta operativa")}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{sanitizeBusinessCopy(alert.message, "OMEGA requiere revisión operativa.")}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                  <Metric label="Modulo" value={alert.module} />
-                  <Metric label="Entrega" value={alert.delivery?.status || "not_configured"} />
+                  <Metric label="Frente" value={businessFrontLabel(alert.module)} />
+                  <Metric label="Atención" value={businessStatusLabel(alert.delivery?.status || "not_configured")} />
                 </dl>
-                {alert.owner || alert.snoozed_until ? <p className="mt-2 text-xs text-muted-foreground">{alert.owner ? `Owner: ${alert.owner}` : ""}{alert.owner && alert.snoozed_until ? " · " : ""}{alert.snoozed_until ? `Pospuesta hasta ${fmtDate(alert.snoozed_until)}` : ""}</p> : null}
+                {alert.owner || alert.snoozed_until ? <p className="mt-2 text-xs text-muted-foreground">{alert.owner ? `Responsable: ${alert.owner}` : ""}{alert.owner && alert.snoozed_until ? " · " : ""}{alert.snoozed_until ? `Pospuesta hasta ${fmtDate(alert.snoozed_until)}` : ""}</p> : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <ActionButton disabled={!item || busyAction.startsWith("alert:")} onClick={() => item && onOpenItem(item)} icon={Bell}>Abrir</ActionButton>
                   <ActionButton disabled={busyAction !== "" || alert.status === "acknowledged"} loading={busyAction === `alert:ack:${alert.item_id}`} onClick={() => onOperateAlert(alert, "ack")} icon={CheckCircle2}>Reconocer</ActionButton>
@@ -2059,19 +2361,129 @@ function AlertQueuePanel({ context, alerts, items, busyAction, actionError, acti
   );
 }
 
-function SummaryCard({ icon: Icon, label, value, tone = "neutral" }: { icon: LucideIcon; label: string; value: string | number; tone?: "neutral" | "critical" | "attention" }) {
-  return <CommandMetric icon={Icon} label={label} value={value} tone={tone === "critical" ? "danger" : tone === "attention" ? "warning" : "neutral"} />;
+function DecisionPulse({ alerts }: { alerts: ControlAlert[] }) {
+  const critical = alerts.filter((alert) => alert.severity === "critical").length;
+  const high = alerts.filter((alert) => alert.severity === "high").length;
+  const medium = alerts.filter((alert) => alert.severity === "medium").length;
+  const low = alerts.filter((alert) => alert.severity === "low").length;
+  const total = Math.max(1, alerts.length);
+  const segments = [
+    { label: "Críticas", value: critical, className: "bg-red-500" },
+    { label: "Altas", value: high, className: "bg-orange-500" },
+    { label: "Atención", value: medium, className: "bg-amber-500" },
+    { label: "Bajas", value: low, className: "bg-cyan-500" },
+  ];
+  return (
+    <div className="mb-4 rounded-lg border bg-background p-3 dark:border-red-400/15 dark:bg-[#07111e]" aria-label="Pulso de decisiones">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="font-semibold uppercase tracking-wide text-muted-foreground">Pulso de decisión</span>
+        <span className="text-muted-foreground">{alerts.length} señales</span>
+      </div>
+      <div className="flex h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+        {segments.map((segment) => segment.value > 0 ? (
+          <span key={segment.label} className={segment.className} style={{ width: `${(segment.value / total) * 100}%` }} title={`${segment.label}: ${segment.value}`} />
+        ) : null)}
+        {!alerts.length ? <span className="w-full bg-emerald-500" /> : null}
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1 text-[11px] text-muted-foreground">
+        {segments.map((segment) => <span key={segment.label}>{segment.label} · {segment.value}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone = "neutral",
+  series = [],
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string | number;
+  detail?: string;
+  tone?: "neutral" | "critical" | "attention";
+  series?: number[];
+}) {
+  const toneClass = tone === "critical"
+    ? "from-red-500/15 to-red-500/0 text-red-700 dark:text-red-200"
+    : tone === "attention"
+      ? "from-amber-500/15 to-amber-500/0 text-amber-700 dark:text-amber-200"
+      : "from-cyan-500/15 to-emerald-500/0 text-cyan-700 dark:text-cyan-200";
+  return (
+    <article className="group min-h-[150px] overflow-hidden rounded-xl border bg-card shadow-sm transition-colors dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_24px_rgba(14,165,233,0.08)]">
+      <div className={cn("flex h-full flex-col bg-gradient-to-br p-4", toneClass)}>
+        <div className="flex items-start justify-between gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+          <span className="grid h-9 w-9 place-items-center rounded-md border bg-background/70 text-current dark:border-current/20 dark:bg-white/5">
+            <Icon aria-hidden className="h-4 w-4" />
+          </span>
+        </div>
+        <strong className="mt-3 block text-3xl font-semibold tracking-tight text-foreground dark:text-white">{value}</strong>
+        {detail ? <p className="mt-1 truncate text-sm text-muted-foreground">{detail}</p> : null}
+        <MiniSparkline values={series} tone={tone} className="mt-auto pt-4" />
+      </div>
+    </article>
+  );
+}
+
+function MiniSparkline({ values, tone, className }: { values: number[]; tone: "neutral" | "critical" | "attention"; className?: string }) {
+  const clean = values.filter((value) => typeof value === "number" && Number.isFinite(value));
+  const max = Math.max(1, ...clean);
+  const min = Math.min(0, ...clean);
+  const points = clean.length > 1
+    ? clean.map((value, index) => {
+      const x = 4 + (index / (clean.length - 1)) * 112;
+      const y = 34 - ((value - min) / Math.max(1, max - min)) * 28;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ")
+    : "";
+  const color = tone === "critical" ? "#ef4444" : tone === "attention" ? "#f59e0b" : "#06b6d4";
+  return (
+    <div className={cn("min-h-[42px]", className)} aria-hidden>
+      {clean.length > 1 ? (
+        <svg viewBox="0 0 120 40" className="h-10 w-full overflow-visible">
+          <defs>
+            <linearGradient id={`spark-${tone}`} x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+              <stop offset="100%" stopColor={color} />
+            </linearGradient>
+          </defs>
+          {[10, 22, 34].map((y) => (
+            <line key={y} x1="4" x2="116" y1={y} y2={y} stroke="currentColor" strokeOpacity="0.1" />
+          ))}
+          <polyline points={points} fill="none" stroke={`url(#spark-${tone})`} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          {points.split(" ").map((point, index) => {
+            const [x, y] = point.split(",");
+            return <circle key={`${point}-${index}`} cx={x} cy={y} r={index === points.split(" ").length - 1 ? "3.5" : "2.5"} fill={color} />;
+          })}
+        </svg>
+      ) : (
+        <div className="grid h-10 grid-cols-8 items-end gap-1">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <span
+              key={index}
+              className="rounded-t bg-current opacity-20"
+              style={{ height: `${12 + (index % 4) * 7}px` }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function OmegaCycleBar({ steps, counts }: { steps: Array<{ id: string; label: string }>; counts?: Record<string, number> }) {
   return (
-    <article className="rounded-lg border bg-card p-4 lg:col-span-2">
-      <p className="text-xs font-semibold uppercase text-muted-foreground">Ciclo OMEGA</p>
+    <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]">
+      <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Ciclo OMEGA</p>
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {steps.map((step) => (
-          <div key={step.id} className="rounded-md border bg-background p-3">
+          <div key={step.id} className="rounded-md border bg-background p-3 dark:border-sky-400/15 dark:bg-[#07111e]">
             <span className="text-xs text-muted-foreground">{step.label}</span>
-            <strong className="block text-xl">{counts?.[step.id] ?? 0}</strong>
+            <strong className="block text-xl text-foreground dark:text-white">{counts?.[step.id] ?? 0}</strong>
           </div>
         ))}
       </div>
@@ -2081,10 +2493,10 @@ function OmegaCycleBar({ steps, counts }: { steps: Array<{ id: string; label: st
 
 function SourceHealthPanel({ dataReadySources, totalSources }: { dataReadySources: number; totalSources: number }) {
   return (
-    <article className="rounded-lg border bg-card p-4">
-      <p className="text-xs font-semibold uppercase text-muted-foreground">Salud de fuentes</p>
-      <strong className="mt-2 block text-2xl">{dataReadySources}/{totalSources}</strong>
-      <p className="text-sm text-muted-foreground">Data-ready</p>
+    <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]">
+      <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Cobertura de información</p>
+      <strong className="mt-2 block text-2xl text-foreground dark:text-white">{dataReadySources}/{totalSources}</strong>
+      <p className="text-sm text-muted-foreground">listas para decidir</p>
       <div className="mt-3">
         <MiniBar value={dataReadySources} max={totalSources || 1} tone={dataReadySources === totalSources && totalSources > 0 ? "good" : "warning"} />
       </div>
@@ -2094,9 +2506,9 @@ function SourceHealthPanel({ dataReadySources, totalSources }: { dataReadySource
 
 function MiniPanel({ title, value, detail }: { title: string; value: string | number; detail: string }) {
   return (
-    <article className="rounded-lg border bg-card p-4">
-      <p className="text-xs font-semibold uppercase text-muted-foreground">{title}</p>
-      <strong className="mt-2 block text-2xl">{value}</strong>
+    <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]">
+      <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">{title}</p>
+      <strong className="mt-2 block text-2xl text-foreground dark:text-white">{value}</strong>
       <p className="text-sm text-muted-foreground">{detail}</p>
     </article>
   );
@@ -2104,45 +2516,29 @@ function MiniPanel({ title, value, detail }: { title: string; value: string | nu
 
 function DomainSection({ domain, collapsed, onToggle }: { domain: Domain; collapsed: boolean; onToggle: () => void }) {
   return (
-    <section className="rounded-lg border bg-background">
+    <section className="rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f]">
       <button type="button" onClick={onToggle} className="flex min-h-[44px] w-full items-center justify-between px-4 text-left">
         <span className="flex items-center gap-2">
           {collapsed ? <ChevronRight aria-hidden className="h-4 w-4" /> : <ChevronDown aria-hidden className="h-4 w-4" />}
-          <strong>{domain.label}</strong>
+          <strong className="text-foreground dark:text-white">{businessAreaLabel(domain.label)}</strong>
         </span>
-        <span className="text-sm text-muted-foreground">{domain.item_count} senales · {domain.critical_count} criticas</span>
+        <span className="text-sm text-muted-foreground">{domain.item_count} señales · {domain.critical_count} críticas</span>
       </button>
       {!collapsed ? (
-        <div className="grid gap-2 border-t p-3 md:grid-cols-2">
+        <div className="grid gap-2 border-t dark:border-sky-400/15 p-3 md:grid-cols-2">
           {domain.modules.map((module) => (
-            <article key={module.id} className="rounded-md border bg-card p-3">
+            <article key={module.id} className="rounded-md border bg-card dark:border-sky-400/15 dark:bg-[#081423] p-3">
               <div className="flex items-center justify-between gap-3">
-                <strong className="text-sm">{module.label}</strong>
+                <strong className="text-sm text-foreground dark:text-white">{businessFrontLabel(module.label)}</strong>
                 <ReadinessBadge status={module.source_status} compact />
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">{module.item_count} senales · {module.critical_count} criticas</p>
+              <p className="mt-1 text-xs text-muted-foreground">{module.item_count} señales · {module.critical_count} críticas</p>
             </article>
           ))}
         </div>
       ) : null}
     </section>
   );
-}
-
-function sourceCatalogHref(source: SourceStatus): string {
-  const params = new URLSearchParams();
-  if (source.cartridge) params.set("cartridge", source.cartridge);
-  if (source.dataset) params.set("dataset", source.dataset);
-  return `/data/catalog${params.toString() ? `?${params.toString()}` : ""}`;
-}
-
-function sourceDataHref(source: SourceStatus): string {
-  return `/api/data/${encodeURIComponent(source.dataset)}?limit=20`;
-}
-
-function sourceSchemaHref(source: SourceStatus): string | null {
-  if (!source.dataset.startsWith("raw/")) return null;
-  return `/viewer?type=schema&source=${encodeURIComponent(source.dataset)}`;
 }
 
 function SourceInventoryPanel({ context, sources }: { context: ActiveContext; sources: SourceStatus[] }) {
@@ -2153,44 +2549,51 @@ function SourceInventoryPanel({ context, sources }: { context: ActiveContext; so
   }, {} as Record<DataReadiness, number>);
   const sortedSources = [...sources].sort((left, right) => left.module.localeCompare(right.module) || left.dataset.localeCompare(right.dataset));
   return (
-    <section className="rounded-lg border bg-card p-4" aria-label="Inventario de fuentes">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Fuentes del contexto</p>
-          <h2 className="text-lg font-semibold">{context.title}</h2>
+    <details className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]">
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Diagnóstico interno</p>
+            <h2 className="text-lg font-semibold text-foreground dark:text-white">Diagnóstico interno de {context.title}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Visible solo para revisar causas; la decisión principal ya está traducida arriba.</p>
+          </div>
+          <span className="text-sm text-muted-foreground">{sources.length} insumos</span>
         </div>
-        <span className="text-sm text-muted-foreground">{sources.length} datasets</span>
+      </summary>
+      <div className="mt-4">
+        <div className="mb-4 flex flex-wrap gap-2" aria-label="Estados internos del contexto">
+          {readinessStates.map((state) => (
+            <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs", sourceStateTone(state))} key={state}>
+              {sourceStateLabels[state]} <strong>{readinessCounts[state]}</strong>
+            </span>
+          ))}
+        </div>
+        <div className="space-y-2">
+          {sortedSources.length ? sortedSources.map((source) => (
+            <article className="grid gap-2 rounded-md border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-3 text-sm md:grid-cols-[1fr_150px_130px_150px]" key={`${source.module_id}-${source.dataset}`}>
+              <div>
+                <strong className="text-foreground dark:text-white">{businessDatasetLabel(source.dataset)}</strong>
+                <p className="text-xs text-muted-foreground">{businessFrontLabel(source.module)} · {businessSourceIssue(source)}</p>
+              </div>
+              <ReadinessBadge status={source.status} compact />
+              <ReadinessBadge status={source.data_readiness || "ready"} compact />
+              <span className="text-muted-foreground">{source.checked_at ? `Revisada ${timeAgo(parseDate(source.checked_at), 0)}` : "Sin revisión"}</span>
+              <details className="md:col-span-4 text-xs text-muted-foreground">
+                <summary className="cursor-pointer">Detalle técnico</summary>
+                <div className="mt-2 rounded-md border bg-card p-2 dark:border-sky-400/15 dark:bg-[#081423]">
+                  <p>Identificador interno: {source.dataset}</p>
+                  <p>Cartucho: {source.cartridge}</p>
+                  <p>Registros considerados: {source.count.toLocaleString("es-MX")}</p>
+                  {source.readiness_reason ? <p className="text-amber-700 dark:text-amber-300">{source.readiness_reason}</p> : null}
+                  {source.readiness_blockers?.length ? <p>{source.readiness_blockers.join(" · ")}</p> : null}
+                  {source.error ? <p className="text-destructive">{source.error}</p> : null}
+                </div>
+              </details>
+            </article>
+          )) : <StatePanel icon={AlertTriangle} text="No hay información visible para este contexto." />}
+        </div>
       </div>
-      <div className="mb-4 flex flex-wrap gap-2" aria-label="Estados de fuentes del contexto">
-        {readinessStates.map((state) => (
-          <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs", sourceStateTone(state))} key={state}>
-            {sourceStateLabels[state]} <strong>{readinessCounts[state]}</strong>
-          </span>
-        ))}
-      </div>
-      <div className="space-y-2">
-        {sortedSources.length ? sortedSources.map((source) => (
-          <article className="grid gap-2 rounded-md border bg-background p-3 text-sm md:grid-cols-[1fr_120px_120px_90px_150px]" key={`${source.module_id}-${source.dataset}`}>
-            <div>
-              <strong>{source.dataset}</strong>
-              <p className="text-xs text-muted-foreground">{source.module} · {source.cartridge}</p>
-            </div>
-            <ReadinessBadge status={source.status} compact />
-            <ReadinessBadge status={source.data_readiness || "ready"} compact />
-            <span>{source.count} filas</span>
-            <span className="text-muted-foreground">{source.checked_at ? `Revisada ${timeAgo(parseDate(source.checked_at), 0)}` : "Sin revision"}</span>
-            <div className="flex flex-wrap gap-2 md:col-span-5">
-              <a className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent/10" href={sourceCatalogHref(source)}>Catalogo</a>
-              {source.count > 0 ? <a className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent/10" href={sourceDataHref(source)}>Data</a> : null}
-              {sourceSchemaHref(source) ? <a className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent/10" href={sourceSchemaHref(source) || "#"}>Schema</a> : null}
-            </div>
-            {source.readiness_reason ? <p className="md:col-span-5 text-xs text-amber-700 dark:text-amber-300">{source.readiness_reason}</p> : null}
-            {source.readiness_blockers?.length ? <p className="md:col-span-5 text-xs text-muted-foreground">{source.readiness_blockers.join(" · ")}</p> : null}
-            {source.error ? <p className="md:col-span-5 text-xs text-destructive">{source.error}</p> : null}
-          </article>
-        )) : <StatePanel icon={AlertTriangle} text="No hay fuentes visibles para este contexto." />}
-      </div>
-    </section>
+    </details>
   );
 }
 
@@ -2230,37 +2633,37 @@ function ThresholdRulesBoard({ context, thresholds, candidates, loading, error, 
   }
 
   return (
-    <section className="rounded-lg border bg-card p-4" aria-label="Umbrales configurables del contexto">
+    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Reglas de decisión del contexto">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Umbrales configurables</p>
-          <h2 className="text-lg font-semibold">{context.title}</h2>
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Reglas de decisión</p>
+          <h2 className="text-lg font-semibold text-foreground dark:text-white">{context.title}</h2>
         </div>
         <span className="text-sm text-muted-foreground">{loading ? "cargando" : `${thresholds.filter((item) => item.enabled !== false).length} activos`}</span>
       </div>
       {error ? <p className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <article className="space-y-3 rounded-lg border bg-background p-4">
+        <article className="space-y-3 rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-4">
           <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="font-medium">Regla base</span>
-              <select aria-label="Regla de umbral" value={effectiveSelectedKey} onChange={(event) => setSelectedKey(event.target.value)} disabled={!candidates.length || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <select aria-label="Regla de decisión" value={effectiveSelectedKey} onChange={(event) => setSelectedKey(event.target.value)} disabled={!candidates.length || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {candidates.map((candidate) => (
-                  <option value={candidate.key} key={candidate.key}>{candidate.module} · {thresholdLabel(candidate)}</option>
+                  <option value={candidate.key} key={candidate.key}>{businessFrontLabel(candidate.module)} · {thresholdLabel(candidate)}</option>
                 ))}
               </select>
             </label>
             <label className="space-y-1 text-sm">
               <span className="font-medium">Moneda</span>
-              <input aria-label="Moneda del umbral" value={draft.currency} maxLength={8} onChange={(event) => updateDraft({ currency: event.target.value.toUpperCase() })} disabled={!selected || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              <input aria-label="Moneda de la regla" value={draft.currency} maxLength={8} onChange={(event) => updateDraft({ currency: event.target.value.toUpperCase() })} disabled={!selected || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="font-medium">Warning</span>
-              <input aria-label="Valor warning" type="number" step="0.01" value={draft.warning_value} onChange={(event) => updateDraft({ warning_value: event.target.value })} disabled={!selected || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              <span className="font-medium">Advertencia</span>
+              <input aria-label="Valor de advertencia" type="number" step="0.01" value={draft.warning_value} onChange={(event) => updateDraft({ warning_value: event.target.value })} disabled={!selected || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="font-medium">Critico</span>
-              <input aria-label="Valor critico" type="number" step="0.01" value={draft.critical_value} onChange={(event) => updateDraft({ critical_value: event.target.value })} disabled={!selected || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              <span className="font-medium">Crítico</span>
+              <input aria-label="Valor crítico" type="number" step="0.01" value={draft.critical_value} onChange={(event) => updateDraft({ critical_value: event.target.value })} disabled={!selected || saving} className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
             </label>
           </div>
           <label className="flex items-center gap-2 text-sm">
@@ -2269,18 +2672,18 @@ function ThresholdRulesBoard({ context, thresholds, candidates, loading, error, 
           </label>
           <button type="button" onClick={() => onSave(draft)} disabled={!selected || saving} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
             {saving ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <SlidersHorizontal aria-hidden className="h-4 w-4" />}
-            Guardar umbral
+            Guardar regla
           </button>
           {saveMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-300" role="status">{saveMessage}</p> : null}
           {saveError ? <p className="text-sm text-destructive" role="alert">{saveError}</p> : null}
         </article>
-        <aside className="rounded-lg border bg-background p-4" aria-label="Reglas de umbral visibles">
-          <p className="text-sm font-semibold">Reglas de umbral visibles</p>
+        <aside className="rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-4" aria-label="Reglas de decisión visibles">
+          <p className="text-sm font-semibold text-foreground dark:text-white">Reglas de decisión visibles</p>
           <div className="mt-3 space-y-2">
             {candidates.slice(0, 8).map((candidate) => (
-              <div key={candidate.key} className="rounded-md border bg-card p-3 text-sm">
-                <strong>{candidate.anomaly_type}</strong>
-                <p className="text-xs text-muted-foreground">{candidate.module} · {candidate.metric}</p>
+              <div key={candidate.key} className="rounded-md border bg-card dark:border-sky-400/15 dark:bg-[#081423] p-3 text-sm">
+                <strong className="text-foreground dark:text-white">{businessTextLabel(candidate.anomaly_type)}</strong>
+                <p className="text-xs text-muted-foreground">{businessFrontLabel(candidate.module)} · {businessTextLabel(candidate.metric)}</p>
               </div>
             ))}
             {!candidates.length ? <p className="text-sm text-muted-foreground">Sin reglas visibles.</p> : null}
@@ -2293,20 +2696,20 @@ function ThresholdRulesBoard({ context, thresholds, candidates, loading, error, 
 
 function LessonsBoard({ context, lessons, loading, error }: { context: ActiveContext; lessons: Lesson[]; loading: boolean; error: string }) {
   return (
-    <section className="rounded-lg border bg-card p-4" aria-label="Lecciones aprendidas del contexto">
+    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(14,165,233,0.08)]" aria-label="Lecciones aprendidas del contexto">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Lecciones aprendidas del contexto</p>
-          <h2 className="text-lg font-semibold">{context.title}</h2>
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Lecciones aprendidas del contexto</p>
+          <h2 className="text-lg font-semibold text-foreground dark:text-white">{context.title}</h2>
         </div>
         <span className="text-sm text-muted-foreground">{loading ? "cargando" : `${lessons.length} reglas visibles`}</span>
       </div>
       {error ? <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
       <div className="grid gap-2 md:grid-cols-2">
         {lessons.slice(0, 8).map((lesson) => (
-          <article key={`${lesson.id || lesson.item_id}-${lesson.rule}`} className="rounded-md border bg-background p-3 text-sm">
-            <strong>{lesson.rule}</strong>
-            <p className="mt-1 text-xs text-muted-foreground">{lesson.cartridge_id} · {lesson.anomaly_type}</p>
+          <article key={`${lesson.id || lesson.item_id}-${lesson.rule}`} className="rounded-md border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-3 text-sm">
+            <strong className="text-foreground dark:text-white">{sanitizeBusinessCopy(lesson.rule, "Lección operativa")}</strong>
+            <p className="mt-1 text-xs text-muted-foreground">{businessTextLabel(lesson.cartridge_id)} · {businessTextLabel(lesson.anomaly_type)}</p>
           </article>
         ))}
         {!lessons.length && !loading ? <p className="text-sm text-muted-foreground">Sin lecciones visibles.</p> : null}
@@ -2317,22 +2720,22 @@ function LessonsBoard({ context, lessons, loading, error }: { context: ActiveCon
 
 function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }) {
   return (
-    <article className="rounded-lg border bg-card p-4">
+    <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#081423] dark:shadow-[0_0_20px_rgba(14,165,233,0.05)]">
       <div className="flex items-start justify-between gap-3">
         <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(item.severity))}>{severityLabels[item.severity]}</span>
-        <span className="text-xs text-muted-foreground">Score {item.priority_score ?? item.priority?.score ?? item.severity_weight}</span>
+        <span className="text-xs text-muted-foreground">Prioridad {item.priority_score ?? item.priority?.score ?? item.severity_weight}</span>
       </div>
-      <h3 className="mt-3 font-semibold">{item.title}</h3>
-      <p className="mt-1 text-sm text-muted-foreground">{item.entity_label}</p>
-      <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{item.description}</p>
+      <h3 className="mt-3 font-semibold text-foreground dark:text-white">{businessItemTitle(item)}</h3>
+      <p className="mt-1 text-sm text-muted-foreground">{businessItemLabel(item)}</p>
+      <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{businessItemDescription(item)}</p>
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-        <span className="rounded-full border px-2 py-1">{item.module}</span>
-        <span className="rounded-full border px-2 py-1">{item.status}</span>
-        {item.impact_estimate ? <span className="rounded-full border px-2 py-1">{fmtMoney(item.impact_estimate, item.impact_currency)}</span> : null}
+        <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessFrontLabel(item.module)}</span>
+        <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessStatusLabel(item.status)}</span>
+        {item.impact_estimate ? <span className="rounded-full border border-emerald-400/30 px-2 py-1 text-emerald-700 dark:text-emerald-200">{fmtMoney(item.impact_estimate, item.impact_currency)}</span> : null}
       </div>
-      <button type="button" onClick={onOpen} className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+      <button type="button" onClick={onOpen} className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200">
         <Play aria-hidden className="h-4 w-4" />
-        Investigar {item.title} {item.entity_label}
+        Revisar decisión
       </button>
     </article>
   );
@@ -2408,12 +2811,16 @@ function DetailPage({
         <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(item.severity))}>{severityLabels[item.severity]}</span>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight">{item.title}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{item.module} · {item.entity_label} · {item.source_dataset}</p>
-            <p className="mt-3 max-w-3xl text-sm text-muted-foreground">{item.description}</p>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight">{businessItemTitle(item)}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{businessFrontLabel(item.module)} · {businessItemLabel(item)}</p>
+            <p className="mt-3 max-w-3xl text-sm text-muted-foreground">{businessItemDescription(item)}</p>
+            <details className="mt-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer">Diagnóstico técnico</summary>
+              <p className="mt-1">Identificador interno: {item.source_dataset}</p>
+            </details>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => onMode("auto")} className={filterButtonClass(mode === "auto")}>Modo automatico</button>
+            <button type="button" onClick={() => onMode("auto")} className={filterButtonClass(mode === "auto")}>Modo automático</button>
             <button type="button" onClick={() => onMode("manual")} className={filterButtonClass(mode === "manual")}>Modo manual</button>
           </div>
         </div>
@@ -2422,12 +2829,12 @@ function DetailPage({
       <ImpactSnapshot item={item} impact={impact} loading={impactLoading} error={impactError} />
 
       {mode === "auto" ? (
-        <section className="rounded-lg border bg-card p-4" aria-label="Modo automatico">
-          <h3 className="text-lg font-semibold">Modo automatico seguro</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Completa investigacion, opcion, decision y dry-run; registra seguimiento supervisado.</p>
+        <section className="rounded-lg border bg-card p-4" aria-label="Modo automático">
+          <h3 className="text-lg font-semibold">Modo automático seguro</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Completa investigación, opción, decisión y validación previa; registra seguimiento supervisado.</p>
           <button type="button" onClick={() => onRunAuto(item)} disabled={busyAction !== "" || terminalStatuses.has(item.status)} className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
             {busyAction === `auto:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Play aria-hidden className="h-4 w-4" />}
-            Ejecutar modo automatico
+            Ejecutar modo automático
           </button>
         </section>
       ) : null}
@@ -2472,7 +2879,7 @@ function DetailPage({
               className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               {busyAction === `approve:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
-              {item.status === "approved" ? "Recomendacion aprobada" : "Aprobar recomendacion"}
+              {item.status === "approved" ? "Recomendación aprobada" : "Aprobar recomendación"}
             </button>
             <button type="button" onClick={() => onDismiss(item)} disabled={busyAction !== "" || terminalStatuses.has(item.status)} className="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-destructive/40 px-3 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50">
               {busyAction === `dismiss:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <XCircle aria-hidden className="h-4 w-4" />}
@@ -2509,7 +2916,7 @@ function ImpactSnapshot({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase text-muted-foreground">Impacto</p>
-          <h3 className="text-lg font-semibold">{estimate ? fmtMoney(estimate, currency) : "Impacto sin estimacion"}</h3>
+          <h3 className="text-lg font-semibold">{estimate ? fmtMoney(estimate, currency) : "Impacto sin estimación"}</h3>
           <p className="mt-1 text-sm text-muted-foreground">{impact?.explanation || item.impact || item.recommendation}</p>
         </div>
         <div className="grid min-w-[260px] grid-cols-2 gap-2">
@@ -2519,7 +2926,7 @@ function ImpactSnapshot({
       </div>
       {loading ? <div className="mt-3"><StatePanel icon={Loader2} text="Cargando impacto operativo..." spinning /></div> : null}
       {error ? <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
-      {impact?.formula ? <p className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">Formula: {impact.formula}</p> : null}
+      {impact?.formula ? <p className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">Fórmula: {impact.formula}</p> : null}
       {drivers.length ? (
         <div className="mt-3 grid gap-2 md:grid-cols-3">
           {drivers.slice(0, 6).map((driver, index) => (
@@ -2603,12 +3010,12 @@ function InvestigationStep({
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
         <InfoBlock label="Causa probable" value={item.root_cause || item.omega.investigation.root_cause || "Pendiente"} />
-        <InfoBlock label="Impacto" value={item.impact || item.omega.investigation.impact || item.recommendation} />
+        <InfoBlock label="Impacto" value={sanitizeBusinessCopy(item.impact || item.omega.investigation.impact || item.recommendation, "Pendiente")} />
       </div>
       {intelligence ? <IntelligencePanel item={item} intelligence={intelligence} busyAction={busyAction} onRecordOutcome={onRecordIntelligenceOutcome} /> : null}
-      <button type="button" onClick={() => onRecordStep(item, "investigation", "Investigacion revisada")} disabled={busyAction !== ""} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+      <button type="button" onClick={() => onRecordStep(item, "investigation", "Investigación revisada")} disabled={busyAction !== ""} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
         {busyAction.startsWith(`step:${item.id}:investigation`) ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
-        Registrar investigacion revisada
+        Registrar investigación revisada
       </button>
     </div>
   );
@@ -2652,45 +3059,45 @@ function IntelligencePanel({
     <section className="rounded-lg border bg-card p-4" aria-label="Inteligencia operativa">
       <div className="flex flex-col gap-1">
         <p className="text-xs font-semibold uppercase text-muted-foreground">Inteligencia operativa</p>
-        <h4 className="text-base font-semibold">{signal.metric_name || signal.summary || "Senal con baseline"}</h4>
+        <h4 className="text-base font-semibold">{signal.summary || signal.metric_name || "Señal con referencia"}</h4>
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-4">
         <InfoBlock label="Real" value={formatIntelligenceNumber(baseline.actual_value)} />
         <InfoBlock label="Esperado" value={formatIntelligenceNumber(baseline.expected_value)} />
-        <InfoBlock label="Desviacion" value={formatIntelligencePercent(signal.deviation_pct)} />
+        <InfoBlock label="Desviación" value={formatIntelligencePercent(signal.deviation_pct)} />
         <InfoBlock label="Confianza" value={formatIntelligencePercent(signal.confidence)} />
       </div>
       {predictionHorizon || typeof predictedValue === "number" ? (
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <InfoBlock label="Tipo" value={signal.signal_subtype === "observed" ? "Observada" : "Predictiva"} />
-          <InfoBlock label="Horizonte" value={predictionHorizon ? `${predictionHorizon} dias` : "N/D"} />
-          <InfoBlock label="Prediccion" value={formatIntelligenceNumber(predictedValue ?? undefined)} />
+          <InfoBlock label="Horizonte" value={predictionHorizon ? `${predictionHorizon} días` : "N/D"} />
+          <InfoBlock label="Predicción" value={formatIntelligenceNumber(predictedValue ?? undefined)} />
         </div>
       ) : null}
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
-        <InfoBlock label="Evidencia" value={evidence.summary || `${evidence.items?.length || 0} fuentes`} />
-        <InfoBlock label="Hipotesis" value={hypothesis?.title || "Pendiente"} />
-        <InfoBlock label="Opcion top" value={option ? `${option.label || "Opcion"} · score ${option.score ?? "N/D"}` : "Pendiente"} />
+        <InfoBlock label="Evidencia" value={evidence.summary || `${evidence.items?.length || 0} elementos`} />
+        <InfoBlock label="Hipótesis" value={hypothesis?.title || "Pendiente"} />
+        <InfoBlock label="Mejor opción" value={option ? `${option.label || "Opción"} · prioridad ${option.score ?? "N/D"}` : "Pendiente"} />
       </div>
       <div className="mt-3 rounded-md border bg-background p-3">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Evidence Pack</p>
+        <p className="text-xs font-semibold uppercase text-muted-foreground">Evidencia considerada</p>
         <div className="mt-2 grid gap-2 md:grid-cols-2">
           {(evidence.items || []).slice(0, 4).map((evidenceItem, index) => (
-            <div key={`${evidenceItem.source_ref || "source"}:${index}`} className="rounded-md border p-2 text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">{evidenceItem.source_ref || "fuente"}</span>
-              <span> · {evidenceItem.supports_hypothesis || "baseline"}</span>
+            <div key={`${evidenceItem.source_ref || "referencia"}:${index}`} className="rounded-md border p-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{sanitizeBusinessCopy(evidenceItem.source_ref, "Referencia")}</span>
+              <span> · {evidenceItem.supports_hypothesis || "referencia"}</span>
               <span> · fuerza {formatIntelligencePercent(evidenceItem.strength)}</span>
             </div>
           ))}
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">{externalEvidenceCount ? `${externalEvidenceCount} fuente(s) externas consideradas.` : "Sin contexto externo configurado para esta senal."}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{externalEvidenceCount ? `${externalEvidenceCount} referencia(s) externas consideradas.` : "Sin contexto externo configurado para esta señal."}</p>
       </div>
       {topOptions.length ? (
         <div className="mt-3 grid gap-2 lg:grid-cols-3">
           {topOptions.map((candidate) => (
             <div key={candidate.option_id || candidate.label} className="rounded-md border bg-background p-3">
-              <p className="text-sm font-semibold">{candidate.label || "Opcion"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Impacto {formatIntelligenceNumber(candidate.impact_expected)} · score {candidate.score ?? "N/D"}</p>
+              <p className="text-sm font-semibold">{candidate.label || "Opción"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Impacto {formatIntelligenceNumber(candidate.impact_expected)} · prioridad {candidate.score ?? "N/D"}</p>
             </div>
           ))}
         </div>
@@ -2698,9 +3105,9 @@ function IntelligencePanel({
       {hypothesis?.rationale ? <p className="mt-3 text-sm text-muted-foreground">{hypothesis.rationale}</p> : null}
       {option?.score_explanation ? <p className="mt-2 text-xs text-muted-foreground">{option.score_explanation}</p> : null}
       <div className="mt-4 rounded-md border bg-background p-3">
-        <p className="text-sm font-semibold">Registrar outcome</p>
+        <p className="text-sm font-semibold">Registrar resultado</p>
         <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1.2fr)_160px_minmax(0,1fr)_auto]">
-          <input value={actionTaken} onChange={(event) => setActionTaken(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" placeholder="Accion tomada" />
+          <input value={actionTaken} onChange={(event) => setActionTaken(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" placeholder="Acción tomada" />
           <input value={actualValue} onChange={(event) => setActualValue(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" inputMode="decimal" placeholder="Valor real" />
           <input value={outcomeSummary} onChange={(event) => setOutcomeSummary(event.target.value)} className="min-h-[44px] rounded-md border bg-card px-3 text-sm" placeholder="Resumen del resultado" />
           <button type="button" onClick={submitOutcome} disabled={!canSubmitOutcome} className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
@@ -2709,7 +3116,7 @@ function IntelligencePanel({
           </button>
         </div>
         {intelligence.outcome ? (
-          <p className="mt-2 text-xs text-muted-foreground">Ultimo outcome: {intelligence.outcome.outcome_summary || "registrado"} · error {formatIntelligenceNumber(intelligence.outcome.prediction_error)}</p>
+          <p className="mt-2 text-xs text-muted-foreground">Último resultado: {intelligence.outcome.outcome_summary || "registrado"} · desviación {formatIntelligenceNumber(intelligence.outcome.prediction_error)}</p>
         ) : null}
       </div>
     </section>
@@ -2725,7 +3132,7 @@ function OptionsStep({ item, busyAction, onSelectOption }: { item: ControlItem; 
           <button key={option.id} type="button" aria-pressed={selected} onClick={() => onSelectOption(item, option.id)} disabled={busyAction !== "" || terminalStatuses.has(item.status)} className={cn("min-h-[110px] rounded-lg border bg-card p-4 text-left hover:bg-accent/10 disabled:opacity-50", selected ? "ring-2 ring-primary" : "")}>
             <span className="text-sm font-semibold">{option.label}</span>
             <p className="mt-2 text-xs text-muted-foreground">{option.recommendation}</p>
-            <span className="mt-3 inline-flex rounded-full border px-2 py-0.5 text-xs">Score {option.score}</span>
+            <span className="mt-3 inline-flex rounded-full border px-2 py-0.5 text-xs">Prioridad {option.score}</span>
           </button>
         );
       })}
@@ -2737,10 +3144,10 @@ function DecisionStep({ item, busyAction, onCreateDecision }: { item: ControlIte
   const decisionId = item.decision_id || item.omega.decision.decision_id;
   return (
     <div className="mt-4 space-y-3">
-      <p className="text-sm text-muted-foreground">{decisionId ? "Decision operativa creada y auditada." : "Crea una decision operativa ligada a esta senal antes de aprobar."}</p>
+      <p className="text-sm text-muted-foreground">{decisionId ? "Decisión operativa creada y auditada." : "Crea una decisión operativa ligada a esta señal antes de aprobar."}</p>
       <button type="button" onClick={() => !decisionId && onCreateDecision(item)} disabled={busyAction !== "" || Boolean(decisionId)} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-70">
         {busyAction === `decision:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <ShieldCheck aria-hidden className="h-4 w-4" />}
-        {decisionId ? `Decision #${decisionId}` : "Crear decision"}
+        {decisionId ? `Decisión #${decisionId}` : "Crear decisión"}
       </button>
     </div>
   );
@@ -2751,16 +3158,16 @@ function ExecutionStep({ item, busyAction, onPreview, onDryRun, onExecute }: { i
   return (
     <div className="mt-4 space-y-4">
       <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-        V1 registra ejecucion supervisada en OMEGA; {template?.writeback?.supported ? "seguimiento auditado disponible." : "sin ejecucion disponible para este item."}
+        OMEGA registra ejecución supervisada; {template?.writeback?.supported ? "seguimiento auditado disponible." : "sin ejecución disponible para esta señal."}
       </div>
       <div className="grid gap-3 md:grid-cols-3">
-        <InfoBlock label="Template" value={template?.label || "Sin template"} />
+        <InfoBlock label="Acción" value={template?.label || "Sin acción configurada"} />
         <InfoBlock label="Riesgo" value={template?.risk_level || "N/D"} />
-        <InfoBlock label="Estado ejecucion" value={item.execution_status || item.omega.execution.status || "not_started"} />
+        <InfoBlock label="Estado de ejecución" value={businessStatusLabel(item.execution_status || item.omega.execution.status || "not_started")} />
       </div>
       <div className="flex flex-wrap gap-2">
-        <ActionButton loading={busyAction === `preview:${item.id}`} disabled={busyAction !== ""} onClick={() => onPreview(item)} icon={Play}>Preview</ActionButton>
-        <ActionButton loading={busyAction === `dryrun:${item.id}`} disabled={busyAction !== ""} onClick={() => onDryRun(item)} icon={CheckCircle2}>Dry-run</ActionButton>
+        <ActionButton loading={busyAction === `preview:${item.id}`} disabled={busyAction !== ""} onClick={() => onPreview(item)} icon={Play}>Revisar antes de ejecutar</ActionButton>
+        <ActionButton loading={busyAction === `dryrun:${item.id}`} disabled={busyAction !== ""} onClick={() => onDryRun(item)} icon={CheckCircle2}>Validar antes de ejecutar</ActionButton>
         <ActionButton loading={busyAction === `execute:${item.id}`} disabled={busyAction !== "" || !template?.writeback?.supported} onClick={() => onExecute(item)} icon={Activity}>Registrar seguimiento</ActionButton>
       </div>
     </div>
@@ -2776,7 +3183,7 @@ function ControlStep({ item, busyAction, onUpdateControl }: { item: ControlItem;
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <strong>{control.desc}</strong>
-              <p className="text-sm text-muted-foreground">Owner {control.owner} · estado {control.st || control.status || "open"} · {control.due_at ? fmtDate(control.due_at) : `${control.days || 0} dias`}</p>
+              <p className="text-sm text-muted-foreground">Responsable {control.owner} · estado {businessStatusLabel(control.st || control.status || "open")} · {control.due_at ? fmtDate(control.due_at) : `${control.days || 0} días`}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <ActionButton loading={busyAction === `control:${item.id}:${control.id}:in_progress`} disabled={busyAction !== ""} onClick={() => onUpdateControl(item, control, "in_progress")} icon={Clock3}>Seguimiento</ActionButton>
@@ -2785,7 +3192,7 @@ function ControlStep({ item, busyAction, onUpdateControl }: { item: ControlItem;
           </div>
         </article>
       ))}
-      {!controls.length ? <StatePanel icon={CheckCircle2} text="Sin controles pendientes para este item." /> : null}
+      {!controls.length ? <StatePanel icon={CheckCircle2} text="Sin controles pendientes para esta señal." /> : null}
     </div>
   );
 }
@@ -2802,8 +3209,8 @@ function LessonsStep({ item, busyAction, onCreateLesson, onApplyLesson }: { item
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-[1fr_auto]">
         <label className="space-y-1 text-sm">
-          <span className="font-medium">Nueva leccion persistida</span>
-          <input value={lessonDraft} onChange={(event) => setLessonDraft(event.target.value)} aria-label="Nueva leccion persistida" className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <span className="font-medium">Nueva lección persistida</span>
+          <input value={lessonDraft} onChange={(event) => setLessonDraft(event.target.value)} aria-label="Nueva lección persistida" className="min-h-[44px] w-full rounded-md border bg-background px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         </label>
         <button type="button" onClick={() => {
           if (lessonDraft.trim().length >= 8) {
@@ -2812,19 +3219,19 @@ function LessonsStep({ item, busyAction, onCreateLesson, onApplyLesson }: { item
           }
         }} disabled={busyAction !== "" || lessonDraft.trim().length < 8} className="self-end inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
           {busyAction === `lesson:${item.id}` ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
-          Guardar leccion
+          Guardar lección
         </button>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {lessons.map((lesson) => (
           <article key={`${lesson.id || lesson.rule}`} className="rounded-lg border bg-card p-4">
-            <strong className="text-sm">{lesson.rule}</strong>
+            <strong className="text-sm">{sanitizeBusinessCopy(lesson.rule, "Lección operativa")}</strong>
             <div className="mt-3">
               {lesson.id ? (
-                <ActionButton loading={busyAction === `applyLesson:${item.id}:${lesson.id}`} disabled={busyAction !== ""} onClick={() => onApplyLesson(item, lesson)} icon={CheckCircle2}>Aplicar leccion</ActionButton>
+                <ActionButton loading={busyAction === `applyLesson:${item.id}:${lesson.id}`} disabled={busyAction !== ""} onClick={() => onApplyLesson(item, lesson)} icon={CheckCircle2}>Aplicar lección</ActionButton>
               ) : (
                 <span className="inline-flex min-h-[44px] items-center rounded-md border px-3 text-sm text-muted-foreground">
-                  Leccion pendiente de persistencia
+                  Lección pendiente de persistencia
                 </span>
               )}
             </div>
@@ -2844,9 +3251,9 @@ function ActivityTrail({ activity, loading, error, currentMessage }: { activity?
       : value
   );
   return (
-    <section className="rounded-lg border bg-card p-4" aria-label="Bitacora operativa">
+    <section className="rounded-lg border bg-card p-4" aria-label="Bitácora operativa">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold">Bitacora operativa</h3>
+        <h3 className="text-lg font-semibold">Bitácora operativa</h3>
         <span className="text-sm text-muted-foreground">{loading ? "cargando" : `${activity?.counts.total ?? entries.length} eventos`}</span>
       </div>
       {error ? <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">{error}</p> : null}
@@ -2860,7 +3267,156 @@ function ActivityTrail({ activity, loading, error, currentMessage }: { activity?
             <p className="mt-1 text-muted-foreground">{visibleText(activityDescription(entry))}</p>
           </article>
         ))}
-        {!entries.length && !loading ? <p className="text-sm text-muted-foreground">Sin actividad registrada todavia.</p> : null}
+        {!entries.length && !loading ? <p className="text-sm text-muted-foreground">Sin actividad registrada todavía.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function ModuleBarChart({ modules }: { modules: Cartridge[] }) {
+  const visible = [...modules]
+    .sort((left, right) => right.item_count - left.item_count)
+    .slice(0, 7);
+  const max = Math.max(1, ...visible.map((module) => module.item_count));
+  return (
+    <section className="rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-4" aria-label="Gráfica por frente">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold text-foreground dark:text-white">Señales por frente</p>
+        <BarChart3 aria-hidden className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
+      </div>
+      <div className="space-y-3">
+        {visible.map((module) => {
+          const pct = Math.max(3, (module.item_count / max) * 100);
+          return (
+            <div className="grid grid-cols-[130px_1fr_42px] items-center gap-3 text-xs" key={module.id}>
+              <span className="truncate text-muted-foreground dark:text-slate-300">{businessFrontLabel(module.label)}</span>
+              <div className="h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                <span className="block h-full rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.5)]" style={{ width: `${pct}%` }} />
+              </div>
+              <strong className="text-right text-foreground dark:text-white">{module.item_count}</strong>
+            </div>
+          );
+        })}
+        {!visible.length ? <p className="text-sm text-muted-foreground">Sin frentes visibles para graficar.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function SeverityTrend({ items }: { items: ControlItem[] }) {
+  const buckets = ["low", "medium", "high", "critical"] as Severity[];
+  const values = buckets.map((severity) => items.filter((item) => item.severity === severity).length);
+  const max = Math.max(1, ...values);
+  const points = values.map((value, index) => {
+    const x = 12 + index * 58;
+    const y = 82 - (value / max) * 60;
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <section className="rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-4" aria-label="Tendencia por severidad">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm font-semibold text-foreground dark:text-white">Tendencia de riesgo</p>
+        <TrendingUp aria-hidden className="h-4 w-4 text-emerald-300" />
+      </div>
+      <svg viewBox="0 0 200 96" className="h-28 w-full" role="img" aria-label="Línea de severidad">
+        <defs>
+          <linearGradient id="risk-line" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="#22d3ee" />
+            <stop offset="100%" stopColor="#fb7185" />
+          </linearGradient>
+        </defs>
+        {[20, 40, 60, 80].map((line) => (
+          <line key={line} x1="8" x2="192" y1={line} y2={line} stroke="rgba(148,163,184,0.18)" strokeWidth="1" />
+        ))}
+        <polyline points={points} fill="none" stroke="url(#risk-line)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        {points.split(" ").map((point, index) => {
+          const [x, y] = point.split(",");
+          return <circle key={point} cx={x} cy={y} r="4" fill={index === points.split(" ").length - 1 ? "#fb7185" : "#22d3ee"} />;
+        })}
+      </svg>
+      <div className="grid grid-cols-4 gap-2 text-center text-[11px] text-muted-foreground">
+        {buckets.map((severity, index) => (
+          <span key={severity}>{severityLabels[severity]} · {values[index]}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceHeatmap({ modules }: { modules: Cartridge[] }) {
+  const visible = modules.slice(0, 8);
+  const states: Array<SourceRollup | DataReadiness | SourceState> = ["ready", "partial", "blocked", "error"];
+  return (
+    <section className="rounded-xl border bg-background dark:border-sky-400/15 dark:bg-[#06111f] p-4" aria-label="Mapa de cobertura">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold text-foreground dark:text-white">Cobertura por frente</p>
+        <Target aria-hidden className="h-4 w-4 text-amber-600 dark:text-amber-300" />
+      </div>
+      <div className="grid gap-2">
+        {visible.map((module) => (
+          <div key={module.id} className="grid grid-cols-[120px_repeat(4,minmax(0,1fr))] items-center gap-1 text-[11px]">
+            <span className="truncate text-muted-foreground dark:text-slate-300">{businessFrontLabel(module.label)}</span>
+            {states.map((state) => {
+              const active = module.data_readiness === state || module.source_status === state;
+              return (
+                <span
+                  key={state}
+                  title={`${businessFrontLabel(module.label)}: ${readinessLabels[state] || state}`}
+                  className={cn(
+                    "h-7 rounded border text-center leading-7",
+                    active ? readinessTone(state) : "border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900/80 text-slate-400 dark:text-slate-600",
+                  )}
+                >
+                  {active ? "●" : ""}
+                </span>
+              );
+            })}
+          </div>
+        ))}
+        {!visible.length ? <p className="text-sm text-muted-foreground">Sin frentes activos.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function LiveDataFeed({ items, alerts }: { items: ControlItem[]; alerts: ControlAlert[] }) {
+  const feed = [
+    ...alerts.map((alert) => ({
+      id: `alert:${alert.id}`,
+      at: alert.created_at,
+      title: sanitizeBusinessCopy(alert.title, "Alerta operativa"),
+      detail: sanitizeBusinessCopy(alert.message, "OMEGA requiere revisión operativa."),
+      tone: alert.severity,
+    })),
+    ...items.map((item) => ({
+      id: `item:${item.id}`,
+      at: item.detected_at,
+      title: businessItemTitle(item),
+      detail: businessItemLabel(item),
+      tone: item.severity,
+    })),
+  ].sort((left, right) => (parseDate(right.at)?.getTime() || 0) - (parseDate(left.at)?.getTime() || 0)).slice(0, 8);
+  return (
+    <section className="rounded-xl border bg-card p-4 shadow-sm dark:border-cyan-300/20 dark:bg-[#081423] dark:shadow-[0_0_26px_rgba(34,211,238,0.08)]" aria-label="Cambios recientes">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase text-cyan-700 dark:text-cyan-300/80">Cambios recientes</p>
+          <h2 className="text-lg font-semibold text-foreground dark:text-white">Actividad reciente</h2>
+        </div>
+        <Activity aria-hidden className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
+      </div>
+      <div className="space-y-2">
+        {feed.map((event) => (
+          <article key={event.id} className="grid grid-cols-[72px_1fr] gap-3 rounded-md border bg-background p-3 text-xs dark:border-sky-400/10 dark:bg-[#06111f]">
+            <span className="text-muted-foreground">{timeAgo(parseDate(event.at), 0)}</span>
+            <div>
+              <p className="font-medium text-foreground dark:text-white">{event.title}</p>
+              <p className="line-clamp-2 text-muted-foreground">{event.detail}</p>
+              <span className={cn("mt-2 inline-flex rounded-full border px-2 py-0.5", severityTone(event.tone))}>{severityLabels[event.tone]}</span>
+            </div>
+          </article>
+        ))}
+        {!feed.length ? <p className="text-sm text-muted-foreground">Sin eventos recientes visibles.</p> : null}
       </div>
     </section>
   );
@@ -2868,25 +3424,25 @@ function ActivityTrail({ activity, loading, error, currentMessage }: { activity?
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-md border bg-background p-3">
+    <div className="rounded-md border bg-background p-3 dark:border-sky-400/15 dark:bg-[#07111e]">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 text-sm font-semibold">{value}</dd>
+      <dd className="mt-1 text-sm font-semibold text-foreground dark:text-white">{value}</dd>
     </div>
   );
 }
 
 function InfoBlock({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-md border bg-card p-3">
+    <div className="rounded-md border bg-background p-3 dark:border-sky-400/15 dark:bg-[#07111e]">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm">{value}</p>
+      <p className="mt-1 text-sm text-foreground dark:text-white">{value}</p>
     </div>
   );
 }
 
 function formatIntelligenceNumber(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "N/D";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+  return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 2 }).format(value);
 }
 
 function formatIntelligencePercent(value?: number) {
