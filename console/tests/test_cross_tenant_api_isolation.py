@@ -32,6 +32,7 @@ POSTGRES_SUPERUSER = "postgres"
 POSTGRES_PASSWORD = "test_postgres_password"
 OMEGA_WORKSPACE_ROLE = "omega_workspace"
 OMEGA_WORKSPACE_PASSWORD = "test_omega_workspace_password"
+POSTGRES_PULL_ATTEMPTS = int(os.getenv("RLS_TEST_POSTGRES_PULL_ATTEMPTS", "3"))
 
 
 USER_B_WORKSPACE_ADMIN = {
@@ -58,6 +59,28 @@ def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
             f"docker {' '.join(args)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result
+
+
+def _ensure_postgres_image() -> None:
+    """Pull the RLS image with retries so CI does not fail on one registry blip."""
+
+    inspect = _docker("image", "inspect", POSTGRES_IMAGE, check=False)
+    if inspect.returncode == 0:
+        return
+
+    last: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(1, max(1, POSTGRES_PULL_ATTEMPTS) + 1):
+        last = _docker("pull", POSTGRES_IMAGE, check=False)
+        if last.returncode == 0:
+            return
+        if attempt < POSTGRES_PULL_ATTEMPTS:
+            time.sleep(min(10, attempt * 2))
+
+    assert last is not None
+    raise RuntimeError(
+        "docker image pull failed after retries: "
+        f"{POSTGRES_IMAGE}\nstdout:\n{last.stdout}\nstderr:\n{last.stderr}"
+    )
 
 
 def _init_pgoptions() -> str:
@@ -129,6 +152,7 @@ def postgres_with_real_init_schema() -> str:
     if not init_dir.is_dir():
         raise AssertionError(f"infra init directory is missing: {init_dir}")
 
+    _ensure_postgres_image()
     result = _docker(
         "run",
         "-d",
