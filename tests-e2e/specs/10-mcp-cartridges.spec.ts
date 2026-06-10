@@ -24,7 +24,12 @@ const CARTS = [
   { id: "sap_s4hana",          url: process.env.SAP_S4_URL   || "http://localhost:8204" },
 ];
 
-const INTERNAL_KEY = process.env.INTERNAL_API_KEY || "";
+const CONSOLE_TO_CARTRIDGE_KEY = process.env.INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE || "";
+const LEGACY_INTERNAL_KEY = process.env.INTERNAL_API_KEY || "";
+
+function internalKeyForConsole(): string {
+  return CONSOLE_TO_CARTRIDGE_KEY || LEGACY_INTERNAL_KEY;
+}
 
 for (const c of CARTS) {
   test.describe(`MCP — ${c.id} @ ${c.url}`, () => {
@@ -79,15 +84,16 @@ for (const c of CARTS) {
     });
 
     test(`/skills/list GET authed → 200 + {service, skills}`, async () => {
-      if (!INTERNAL_KEY) {
+      const internalKey = internalKeyForConsole();
+      if (!internalKey) {
         test.skip(true,
-          "INTERNAL_API_KEY env var not set — export it to exercise authed skill discovery",
+          "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE env var not set — export it to exercise authed skill discovery",
         );
         return;
       }
       const ctx = await pwRequest.newContext({
         extraHTTPHeaders: {
-          "X-Internal-Api-Key":  INTERNAL_KEY,
+          "X-Internal-Api-Key":  internalKey,
           "X-Internal-Service":  "console",
         },
       });
@@ -131,16 +137,17 @@ for (const c of CARTS) {
 
     test(`/mcp/tools GET WITH X-Internal-Api-Key → 200 + tools array`,
       async () => {
-        if (!INTERNAL_KEY) {
+        const internalKey = internalKeyForConsole();
+        if (!internalKey) {
           test.skip(true,
-            "INTERNAL_API_KEY env var not set — export it to exercise authed MCP probe",
+            "INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE env var not set — export it to exercise authed MCP probe",
           );
           return;
         }
         const ctx = await pwRequest.newContext();
         const r = await ctx.get(`${c.url}/mcp/tools`, {
           headers: {
-            "X-Internal-Api-Key": INTERNAL_KEY,
+            "X-Internal-Api-Key": internalKey,
             "X-Internal-Service": "console",
           },
           timeout: 10_000,

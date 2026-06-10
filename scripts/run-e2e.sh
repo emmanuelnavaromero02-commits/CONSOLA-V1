@@ -46,20 +46,24 @@ source .env
 set +a
 
 # Some deep cartridge probes identify as X-Internal-Service: console,
-# so they need the console→cartridge pair key. Keep tests-e2e/.env
-# operator-facing and export it as INTERNAL_API_KEY for the existing specs.
-if [ -z "${INTERNAL_API_KEY:-}" ] && [ -f "${ROOT}/infra/.env" ]; then
-    INTERNAL_API_KEY="$(
-        awk -F= '/^INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE=/ { print substr($0, index($0, "=") + 1); exit }' \
-            "${ROOT}/infra/.env"
-    )"
-    if [ -z "${INTERNAL_API_KEY}" ]; then
-        INTERNAL_API_KEY="$(
-            awk -F= '/^INTERNAL_API_KEY=/ { print substr($0, index($0, "=") + 1); exit }' \
-                "${ROOT}/infra/.env"
-        )"
+# so they need the console→cartridge pair key. tests-e2e/.env may carry
+# an operator-facing legacy INTERNAL_API_KEY, so always hydrate the
+# pair key explicitly from infra/.env when the caller did not provide it.
+read_infra_env() {
+    local key="$1"
+    awk -F= -v key="${key}" '$1 == key { print substr($0, index($0, "=") + 1); exit }' \
+        "${ROOT}/infra/.env"
+}
+
+if [ -f "${ROOT}/infra/.env" ]; then
+    if [ -z "${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-}" ]; then
+        INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE="$(read_infra_env INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE)"
+        export INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE
     fi
-    export INTERNAL_API_KEY
+    if [ -z "${INTERNAL_API_KEY:-}" ]; then
+        INTERNAL_API_KEY="${INTERNAL_API_KEY_CONSOLE_TO_CARTRIDGE:-$(read_infra_env INTERNAL_API_KEY)}"
+        export INTERNAL_API_KEY
+    fi
 fi
 
 # Static export architecture: FastAPI on :8000 serves the console, APIs,

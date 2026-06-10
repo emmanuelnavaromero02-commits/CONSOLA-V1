@@ -4021,7 +4021,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
       document.getElementById('dag-rename-panel')?.remove();
       const panel = document.createElement('form');
       panel.id = 'dag-rename-panel';
-      panel.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--border);background:var(--bg2)';
+      panel.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0';
       panel.innerHTML = `
         <label for="dag-rename-input" style="font-size:10px;color:var(--text2);font-family:var(--font-ui)">Nuevo nombre</label>
         <input id="dag-rename-input" name="rename-dag" data-testid="rename-input" type="text"
@@ -4032,7 +4032,13 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         event.preventDefault();
         submitDagRename(document.getElementById('dag-rename-input')?.value || '');
       });
-      document.getElementById('dag-editor-body')?.appendChild(panel);
+      const editorBody = document.getElementById('dag-editor-body');
+      const deployBar = editorBody?.querySelector('.dag-deploy-bar');
+      if (editorBody && deployBar?.parentElement === editorBody) {
+        editorBody.insertBefore(panel, deployBar);
+      } else {
+        editorBody?.appendChild(panel);
+      }
       document.getElementById('dag-rename-cancel')?.addEventListener('click', () => {
         document.getElementById('dag-rename-panel')?.remove();
       });

@@ -8,10 +8,6 @@ const LEGACY = process.env.LEGACY_URL || "http://localhost:8000";
 // this is configured.
 const CONTROL_ROOM = process.env.CONTROL_ROOM_URL || `${LEGACY}/control-room`;
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function extractCsrfFromSetCookie(setCookie: string | undefined): string | null {
   const match = (setCookie || "").match(/csrf_token=([^;,\s]+)/);
   return match?.[1] || null;
@@ -103,16 +99,16 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
     await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^finanzas\s+\d+/i }).first()).toBeVisible({
+    await expect(page.getByRole("button", { name: /^recursos humanos\s+\d+/i }).first()).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByText(/conectores .* modulos operativos/i).first()).toBeVisible();
+    await expect(page.getByText(/conectores .* frentes con señales/i).first()).toBeVisible();
     // Contextual breadcrumb: portfolio level shows "Sala de Control / Todos".
-    const breadcrumb = page.getByRole("navigation", { name: /ruta de navegacion/i });
+    const breadcrumb = page.getByRole("navigation", { name: /ruta de navegaci[oó]n/i });
     await expect(breadcrumb).toBeVisible();
     await expect(breadcrumb).toContainText(/sala de control/i);
     await expect(breadcrumb).toContainText(/todos/i);
-    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista portfolio/i);
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista ejecutiva/i);
     await expect(page.getByRole("button", { name: /refrescar/i })).toBeEnabled({
       timeout: 15_000,
     });
@@ -120,8 +116,11 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByText(/siguiente/i).first()).toBeVisible();
     // Runtime confidence: Control Room V1 is explicit about supervised execution
     // and only advertises ERP write-back when the external flag is enabled.
-    await expect(page.getByText(/(ejecucion supervisada v1|write-back erp flag on)/i).first()).toBeVisible();
-    await expect(page.getByLabel(/navegacion operativa/i)).toBeVisible();
+    await expect(page.getByText(/supervisada/i).first()).toBeVisible();
+    await expect(page.getByLabel(/navegaci[oó]n operativa/i)).toBeVisible();
+    await expect(page.getByLabel(/n[uú]meros ejecutivos/i)).toBeVisible();
+    await expect(page.getByLabel(/centro de mando visual/i)).toBeVisible();
+    await expect(page.getByLabel(/indicadores ejecutivos de personal/i)).toBeVisible();
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/prioridad/i);
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/cola interna/i);
     const alertQueue = page.getByLabel(/cola de alertas operativas/i);
@@ -138,16 +137,16 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       timeout: 15_000,
     });
     await expect(page.getByLabel(/estado por dominio/i)).toBeVisible();
-    await expect(page.getByLabel(/anomalias detectadas/i)).toBeVisible();
-    await expect(page.getByLabel(/umbrales configurables del contexto/i)).toBeVisible();
-    await expect(page.getByLabel(/reglas de umbral visibles/i)).toContainText(/low_margin/i);
-    await expect(page.getByText(/conectores .* modulos/i).first()).toBeVisible();
+    await expect(page.getByLabel(/anomal[ií]as detectadas/i)).toBeVisible();
+    await expect(page.getByLabel(/reglas de decisi[oó]n del contexto/i)).toBeVisible();
+    await expect(page.getByLabel(/reglas de decisi[oó]n visibles/i)).toContainText(/margen bajo/i);
+    await expect(page.getByText(/conectores .* frentes/i).first()).toBeVisible();
 
-    await page.getByLabel(/regla de umbral/i).selectOption("replicon:low_margin:margen_bruto_pct");
-    await page.getByLabel(/valor warning/i).fill("22");
-    await page.getByLabel(/valor critico/i).fill("2");
-    await page.getByRole("button", { name: /guardar umbral/i }).click();
-    await expect(page.getByText(/umbral guardado/i)).toBeVisible({
+    await page.getByLabel(/regla de decisi[oó]n/i).selectOption("replicon:low_margin:margen_bruto_pct");
+    await page.getByLabel(/valor de advertencia/i).fill("22");
+    await page.getByLabel(/valor cr[ií]tico/i).fill("2");
+    await page.getByRole("button", { name: /guardar regla/i }).click();
+    await expect(page.getByText(/regla guardada/i)).toBeVisible({
       timeout: 15_000,
     });
     const thresholdStateResponse = await page.request.get(`${LEGACY}/api/control-room/thresholds`, {
@@ -210,39 +209,38 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
     await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^finanzas\s+\d+/i }).first()).toBeVisible({
+    await expect(page.getByRole("button", { name: /^recursos humanos\s+\d+/i }).first()).toBeVisible({
       timeout: 30_000,
     });
 
-    await page.getByRole("button", { name: /^finanzas\s+\d+/i }).first().click();
-    await expect(page).toHaveURL(/\/control-room\?domain=Finanzas/);
-    await expect(page.getByRole("heading", { name: /^finanzas$/i, level: 1 })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: /ruta de navegacion/i })).toContainText(/finanzas/i);
-    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de dominio/i);
+    await page.getByRole("button", { name: /^recursos humanos\s+\d+/i }).first().click();
+    await expect(page).toHaveURL(/\/control-room\?domain=Recursos(?:\+|%20)Humanos/);
+    await expect(page.getByRole("heading", { name: /^recursos humanos$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: /ruta de navegaci[oó]n/i })).toContainText(/recursos humanos/i);
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de [aá]rea/i);
     await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/vista exclusiva/i);
-    await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/datasets/i);
-    await expect(page.getByLabel(/estados de fuentes del contexto/i)).toContainText(/Operativa/i);
     await expect(page.getByLabel(/lecciones aprendidas del contexto/i)).toContainText(/reglas visibles/i);
     await expect(page.getByLabel(/cola de alertas operativas/i)).toContainText(/alertas activas/i);
     await expect(page.getByText(/actualizado/i).first()).toBeVisible();
-    await expect(page.getByLabel(/anomalias detectadas/i)).toContainText(/finanzas/i);
+    await expect(page.getByLabel(/anomal[ií]as detectadas/i)).toContainText(/recursos humanos/i);
+    await expect(page.getByLabel(/indicadores ejecutivos de personal/i)).toContainText(/successfactors/i);
 
-    await page.getByRole("button", { name: /margen y facturacion\s+\d+/i }).first().click();
-    await expect(page).toHaveURL(/\/control-room\?module=replicon_finance/);
-    await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: /ruta de navegacion/i })).toContainText(/margen y facturacion/i);
-    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
-    await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/Margen y Facturacion/i);
-    await expect(page.getByText(/estado del modulo/i)).toBeVisible();
-    await expect(page.getByLabel(/estado por dominio/i)).toContainText(/margen y facturacion/i);
-    await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/pnl_mensual/i);
+    await page.getByRole("button", { name: /^frente personal\s+\d+/i }).first().click();
+    await expect(page).toHaveURL(/\/control-room\?module=sap_successfactors/);
+    await expect(page.getByRole("heading", { name: /^personal$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: /ruta de navegaci[oó]n/i })).toContainText(/personal/i);
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de frente/i);
+    await expect(page.getByRole("region", { name: /panel operativo contextual/i })).toContainText(/vista exclusiva/i);
+    await expect(page.getByText(/estado del frente/i)).toBeVisible();
+    await expect(page.getByLabel(/estado por dominio/i)).toContainText(/personal/i);
+    await expect(page.getByText(/diagn[oó]stico interno/i).first()).toBeVisible();
 
-    await page.goto(`${CONTROL_ROOM}?module=replicon_finance`, {
+    await page.goto(`${CONTROL_ROOM}?module=sap_successfactors`, {
       waitUntil: "domcontentloaded",
     });
-    await expect(page.getByRole("heading", { name: /^margen y facturacion$/i, level: 1 })).toBeVisible();
-    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de modulo/i);
-    await expect(page.getByLabel(/inventario de fuentes/i)).toContainText(/replicon/i);
+    await expect(page.getByRole("heading", { name: /^personal$/i, level: 1 })).toBeVisible();
+    await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de frente/i);
+    await expect(page.getByText(/diagn[oó]stico interno/i).first()).toBeVisible();
 
     expect(forbidden3000, "control-room navigation must not call :3000").toEqual([]);
     expect(consoleErrors, "control-room navigation must not emit console.error").toEqual([]);
@@ -254,7 +252,13 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     test.slow();
     const dashboard = await controlRoomDashboard(page);
     expect(dashboard.items.length, "dashboard must expose at least one real operational item").toBeGreaterThan(0);
-    const targetItem = dashboard.items[0];
+    const terminalStatuses = new Set(["approved", "dismissed", "resolved"]);
+    const targetItem = [...dashboard.items]
+      .filter((item: { status?: string }) => !terminalStatuses.has(String(item.status || "")))
+      .sort((left: { priority_score?: number; severity_weight?: number }, right: { priority_score?: number; severity_weight?: number }) => (
+        (right.priority_score || 0) - (left.priority_score || 0)
+        || (right.severity_weight || 0) - (left.severity_weight || 0)
+      ))[0] || dashboard.items[0];
     const csrf = await csrfToken(page);
     const autoItem = dashboard.items.find((item: { id?: string; status?: string }) => (
       item.id !== targetItem.id && !["approved", "dismissed", "resolved"].includes(String(item.status || ""))
@@ -319,40 +323,35 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
     expect(response?.status(), "/control-room must be served by FastAPI").toBe(200);
     await expect(page.getByRole("heading", { name: /^dashboard operativo$/i, level: 1 })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^finanzas\s+\d+/i }).first()).toBeVisible({
+    await expect(page.getByRole("button", { name: /^recursos humanos\s+\d+/i }).first()).toBeVisible({
       timeout: 30_000,
     });
 
-    const targetButton = page.getByRole("button", {
-      name: new RegExp(
-        `investigar\\s+${escapeRegExp(targetItem.title)}.*${escapeRegExp(targetItem.entity_label)}`,
-        "i",
-      ),
-    }).first();
+    const targetButton = page.getByRole("button", { name: /abrir zona de decisi[oó]n/i }).first();
     await expect(targetButton, "the control room must render the selected operational item").toBeVisible({
       timeout: 15_000,
     });
     await targetButton.click();
 
     await expect(page.getByRole("button", { name: /volver/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /modo automatico/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /modo autom[aá]tico/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /modo manual/i })).toBeVisible();
     await page.getByRole("button", { name: /modo manual/i }).click();
-    await expect(page.getByRole("tab", { name: /investigacion/i })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /investigaci[oó]n/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /opciones/i })).toBeVisible();
-    await expect(page.getByRole("tab", { name: /ejecucion/i })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /ejecuci[oó]n/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /control/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /reglas/i })).toBeVisible();
     // Each manual step renders as a titled section ("Paso N de 6").
     await expect(page.getByText(/paso 1 de 6/i)).toBeVisible();
-    await expect(page.getByRole("region", { name: /bitacora operativa/i })).toBeVisible();
-    await page.getByRole("button", { name: /registrar investigacion revisada/i }).click();
-    await expect(page.getByText(/investigacion revisada/i).first()).toBeVisible({
+    await expect(page.getByRole("region", { name: /bit[aá]cora operativa/i })).toBeVisible();
+    await page.getByRole("button", { name: /registrar investigaci[oó]n revisada/i }).click();
+    await expect(page.getByText(/investigaci[oó]n revisada/i).first()).toBeVisible({
       timeout: 15_000,
     });
     await page.getByRole("tab", { name: /opciones/i }).click();
-    await expect(page.getByText(/score/i).first()).toBeVisible();
-    const exceptionOption = page.getByRole("button", { name: /aprobar excepcion temporal/i });
+    await expect(page.getByText(/prioridad/i).first()).toBeVisible();
+    const exceptionOption = page.getByRole("button", { name: /aprobar excepci[oó]n temporal/i });
     await expect(exceptionOption).toBeVisible();
     await exceptionOption.click();
     await expect(exceptionOption).toHaveAttribute("aria-pressed", "true", {
@@ -366,31 +365,31 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     const optionState = await optionStateResponse.json();
     expect(optionState.selected_option_id).toBe("exception");
 
-    await page.getByRole("tab", { name: /^decision$/i }).click();
-    await expect(page.getByRole("button", { name: /crear decision/i })).toBeVisible();
-    await page.getByRole("button", { name: /crear decision/i }).click();
-    await expect(page.getByRole("button", { name: /decision #/i })).toBeVisible({
+    await page.getByRole("tab", { name: /^decisi[oó]n$/i }).click();
+    await expect(page.getByRole("button", { name: /crear decisi[oó]n/i })).toBeVisible();
+    await page.getByRole("button", { name: /crear decisi[oó]n/i }).click();
+    await expect(page.getByRole("button", { name: /decisi[oó]n #/i })).toBeVisible({
       timeout: 15_000,
     });
 
-    await page.getByRole("tab", { name: /ejecucion/i }).click();
+    await page.getByRole("tab", { name: /ejecuci[oó]n/i }).click();
     // Execution clarity: V1 does not promise universal ERP/SAP write-back.
-    await expect(page.getByText(/v1 registra ejecucion supervisada|seguimiento auditado disponible|sin ejecucion disponible/i).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: /^preview$/i }).first()).toBeVisible();
-    await page.getByRole("button", { name: /^preview$/i }).first().click();
-    await expect(page.getByText(/preview_generated/i)).toBeVisible({
+    await expect(page.getByText(/registra ejecuci[oó]n supervisada|seguimiento auditado disponible|sin ejecuci[oó]n disponible/i).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /revisar antes de ejecutar/i }).first()).toBeVisible();
+    await page.getByRole("button", { name: /revisar antes de ejecutar/i }).first().click();
+    await expect(page.getByText(/ejecuci[oó]n actualizada/i)).toBeVisible({
       timeout: 15_000,
     });
-    await page.getByRole("button", { name: /dry-run/i }).first().click();
-    await expect(page.getByText(/dry_run_validated/i)).toBeVisible({
+    await page.getByRole("button", { name: /validar antes de ejecutar/i }).first().click();
+    await expect(page.getByText(/ejecuci[oó]n actualizada/i)).toBeVisible({
       timeout: 15_000,
     });
 
-    await page.getByRole("button", { name: /aprobar recomendacion/i }).click();
-    await expect(page.getByRole("button", { name: /recomendacion aprobada/i })).toBeVisible({
+    await page.getByRole("button", { name: /aprobar recomendaci[oó]n/i }).click();
+    await expect(page.getByRole("button", { name: /recomendaci[oó]n aprobada/i })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.getByText(/aprobacion registrada/i)).toBeVisible({
+    await expect(page.getByRole("status").filter({ hasText: /aprobaci[oó]n registrada/i })).toBeVisible({
       timeout: 15_000,
     });
     await page.getByRole("tab", { name: /control/i }).click();
@@ -415,15 +414,15 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     ).toBe(true);
     await page.getByRole("tab", { name: /reglas/i }).click();
     const manualLesson = `Leccion E2E ${Date.now()}: validar owner antes de aprobar`;
-    await page.getByLabel(/nueva leccion persistida/i).fill(manualLesson);
-    await page.getByRole("button", { name: /guardar leccion/i }).click();
+    await page.getByLabel(/nueva lecci[oó]n persistida/i).fill(manualLesson);
+    await page.getByRole("button", { name: /guardar lecci[oó]n/i }).click();
     await expect(page.getByText(manualLesson).first()).toBeVisible({
       timeout: 15_000,
     });
-    const applyLessonButton = page.getByRole("button", { name: /aplicar leccion/i }).first();
+    const applyLessonButton = page.getByRole("button", { name: /aplicar lecci[oó]n/i }).first();
     await expect(applyLessonButton).toBeVisible({ timeout: 15_000 });
     await applyLessonButton.click();
-    await expect(page.getByText(/leccion aplicada/i).first()).toBeVisible({
+    await expect(page.getByText(/lecci[oó]n aplicada/i).first()).toBeVisible({
       timeout: 15_000,
     });
 

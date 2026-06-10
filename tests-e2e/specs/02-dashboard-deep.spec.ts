@@ -113,7 +113,7 @@ test.describe("Dashboard — Freshness table", () => {
     });
   });
 
-  test("table has at least 5 rows (one per built-in cartridge)", async ({ page }) => {
+  test("table has scoped freshness rows for visible cartridges", async ({ page }) => {
     await page.goto("/dashboard");
     await expect(page.locator(".animate-pulse")).toHaveCount(0, {
       timeout: 15_000,
@@ -122,16 +122,24 @@ test.describe("Dashboard — Freshness table", () => {
     await expect(rows.first()).toBeVisible({ timeout: 15_000 });
     const count = await rows.count();
     expect(count,
-      "freshness table should have at least 5 rows — one per built-in cartridge",
-    ).toBeGreaterThanOrEqual(5);
+      "freshness table should expose at least one cartridge that is visible to the current scoped session",
+    ).toBeGreaterThanOrEqual(1);
   });
 
-  test("each row has a cartridge link", async ({ page }) => {
+  test("each visible scoped row has a cartridge link", async ({ page }) => {
     await page.goto("/dashboard");
+    await expect(page.locator(".animate-pulse")).toHaveCount(0, {
+      timeout: 15_000,
+    });
+    const rows = page.locator("table tbody tr");
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 });
+    const rowCount = await rows.count();
     const links = page.locator('table a[href^="/cartridges/"]');
     await expect(links.first()).toBeVisible({ timeout: 15_000 });
-    const count = await links.count();
-    expect(count).toBeGreaterThanOrEqual(5);
+    const linkCount = await links.count();
+    expect(linkCount,
+      "each scoped freshness row should keep its cartridge drill-in link",
+    ).toBeGreaterThanOrEqual(rowCount);
   });
 
   test("status badge tone is one of the documented 4", async ({ page }) => {

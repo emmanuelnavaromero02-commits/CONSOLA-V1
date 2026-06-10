@@ -96,10 +96,12 @@ test.describe("External services — root reachability", () => {
       const ctx = await pwRequest.newContext({
         ignoreHTTPSErrors: true,
       });
-      const response = await fetchOrSkip(ctx, svc.url);
+      const reachabilityUrl = svc.pathCheck ? `${svc.url}${svc.pathCheck}` : svc.url;
+      const response = await fetchOrSkip(ctx, reachabilityUrl);
       const status = response.status();
-      expect(svc.okStatuses,
-        `${svc.name} returned ${status}. ${svc.note}`,
+      const okStatuses = svc.pathCheck ? [200, 204] : svc.okStatuses;
+      expect(okStatuses,
+        `${svc.name} returned ${status} at ${reachabilityUrl}. ${svc.note}`,
       ).toContain(status);
       await ctx.dispose();
     });
