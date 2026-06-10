@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ KBS_PATH = BASE_DIR / "config" / "knowledge_bits.yaml"
 
 CARTRIDGE_ID = "sap_successfactors"
 logger = logging.getLogger(__name__)
+DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES = {"EmpEmploymentTermination"}
 
 # Cartridge header metadata — used to UPSERT the `cartridges` row on startup so
 # Studio's "Fuente de datos" dropdown lists this cartridge alongside Replicon.
@@ -183,6 +185,90 @@ def get_all_entities() -> list[dict[str, Any]]:
         return [_merge_yaml_runtime_fields(dict(r)) for r in rows]
     except Exception:
         return _yaml_entities()
+
+
+def _extract_all_excluded_entities() -> set[str]:
+    raw = os.getenv("SAP_SUCCESSFACTORS_EXTRACT_ALL_EXCLUDE_ENTITIES")
+    if raw is None:
+        return set(DEFAULT_EXTRACT_ALL_EXCLUDE_ENTITIES)
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _scope_value(row: dict[str, Any], key: str) -> str:
+    value = row.get(key)
+    return str(value).strip() if value is not None else ""
+
+
+def _security_scope(security_context: dict[str, Any] | None) -> tuple[str, str]:
+    if not isinstance(security_context, dict):
+        return "", ""
+    return (
+        str(security_context.get("tenant_id") or "").strip(),
+        str(security_context.get("workspace_id") or "").strip(),
+    )
+
+
+def _matches_security_scope(row: dict[str, Any], tenant_id: str, workspace_id: str) -> bool:
+    row_tenant = _scope_value(row, "tenant_id")
+    row_workspace = _scope_value(row, "workspace_id")
+    if tenant_id and row_tenant and row_tenant != tenant_id:
+        return False
+    if workspace_id and row_workspace and row_workspace != workspace_id:
+        return False
+    return True
+
+
+def get_extract_all_plan(
+    *,
+    conn_id: str | None = None,
+    security_context: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return the honest live extraction plan for extract_all.
+
+    The catalog can contain aspirational entities from the cartridge YAML. A
+    tenant-scoped live run must only extract entities explicitly bound to the
+    selected Vault connection and scope; everything else is reported as skipped
+    so it cannot become a false product failure or a fake PASS.
+    """
+    selected_conn_id = (conn_id or "").strip()
+    tenant_id, workspace_id = _security_scope(security_context)
+    excluded = _extract_all_excluded_entities()
+    entities: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for config in get_all_entities():
+        entity = str(config.get("entity") or "").strip()
+        if not entity:
+            continue
+
+        if selected_conn_id:
+            config_conn_id = str(config.get("connection_id") or "").strip()
+            if config_conn_id != selected_conn_id:
+                skipped.append({
+                    "entity": entity,
+                    "status": "skipped",
+                    "reason": "not_scoped_for_connection",
+                })
+                continue
+            if not _matches_security_scope(config, tenant_id, workspace_id):
+                skipped.append({
+                    "entity": entity,
+                    "status": "skipped",
+                    "reason": "scope_mismatch",
+                })
+                continue
+
+        if entity in excluded:
+            skipped.append({
+                "entity": entity,
+                "status": "skipped",
+                "reason": "external_scope_blocked",
+            })
+            continue
+
+        entities.append(config)
+
+    return entities, skipped
 
 
 def get_entity_config(entity_name: str) -> dict[str, Any] | None:

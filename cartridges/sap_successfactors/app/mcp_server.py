@@ -228,10 +228,11 @@ async def extract(
 @mcp.tool()
 async def extract_all(mode: str = "incremental", conn_id: str | None = None) -> dict[str, Any]:
     """
-    [BATCH — async] Extrae TODAS las entidades de SAP SuccessFactors en paralelo (máx 4 simultáneas).
+    [BATCH — async] Extrae las entidades scoped de SAP SuccessFactors para la conexión indicada.
 
     Regresa INMEDIATAMENTE con un job_id. El progreso se actualiza en tiempo real:
     cada entidad completada actualiza el mensaje del job y escribe en los logs centrales.
+    Si se pasa conn_id, entidades sin esa conexión/scope se reportan como omitidas.
 
     Usa get_job_status(job_id) para ver avance y el resultado final con detalle por entidad.
     Usa get_run_logs(job_id) para ver el log línea a línea.

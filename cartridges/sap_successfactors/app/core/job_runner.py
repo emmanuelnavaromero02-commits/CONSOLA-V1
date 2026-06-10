@@ -316,19 +316,42 @@ async def _run_extract_all(
     security_context: dict | None = None,
     conn_id: str | None = None,
 ) -> None:
-    from app.services.catalog_service import get_all_entities
+    from app.services.catalog_service import get_extract_all_plan
     from app.services.extraction_service import run_entity
 
-    entities = get_all_entities()
+    entities, skipped = get_extract_all_plan(
+        conn_id=conn_id,
+        security_context=security_context,
+    )
     total = len(entities)
     completed = 0
     failed = 0
     results: list[dict] = []
+    skipped_results = list(skipped)
 
-    await _update(job_id, "running", f"Iniciando — {total} entidades en modo {mode}")
-    await _log(job_id, None, "INFO", f"Batch iniciado: {total} entidades, modo={mode}")
+    await _update(
+        job_id,
+        "running",
+        f"Iniciando — {total} entidades scoped en modo {mode}; {len(skipped_results)} omitidas",
+    )
+    await _log(
+        job_id,
+        None,
+        "INFO",
+        f"Batch iniciado: {total} entidades scoped, {len(skipped_results)} omitidas, modo={mode}",
+        {"skipped": skipped_results},
+    )
 
-    sem = asyncio.Semaphore(4)          # máx 4 extracciones en paralelo
+    default_concurrency = 1 if conn_id else 4
+    try:
+        configured_concurrency = int(os.getenv(
+            "SAP_SUCCESSFACTORS_EXTRACT_ALL_CONCURRENCY",
+            str(default_concurrency),
+        ))
+    except ValueError:
+        configured_concurrency = default_concurrency
+    concurrency = max(1, min(configured_concurrency, 4))
+    sem = asyncio.Semaphore(concurrency)
     loop = asyncio.get_event_loop()
 
     async def _one(config: dict) -> None:
@@ -384,7 +407,10 @@ async def _run_extract_all(
         job_id, final_status,
         message=summary,
         result={"entities": results, "total_records": total_records,
-                "completed": completed, "failed": failed},
+                "completed": completed, "failed": failed,
+                "skipped": skipped_results,
+                "selected": total,
+                "concurrency": concurrency},
         error="" if failed == 0 else f"{failed} entities failed",
     )
     await _log(job_id, None, level, summary)
