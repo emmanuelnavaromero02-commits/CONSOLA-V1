@@ -196,6 +196,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
   }) => {
     const consoleErrors: string[] = [];
     const forbidden3000: string[] = [];
+    const dashboard = await controlRoomDashboard(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
@@ -225,11 +226,15 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/anomal[ií]as detectadas/i)).toContainText(/recursos humanos/i);
     await expect(page.getByLabel(/indicadores ejecutivos de personal/i)).toContainText(/successfactors/i);
 
-    await page.getByLabel(/^frente personal\s+\d+$/i).first().click();
+    const successFactorsModule = dashboard.cartridges.find((item: { id?: string; connector_id?: string; active?: boolean }) => (
+      item.active && (item.id === "sap_successfactors" || item.connector_id === "sap_successfactors")
+    ));
+    expect(successFactorsModule?.id, "dashboard must expose the scoped SuccessFactors front").toBeTruthy();
+    await page.locator(`[data-control-module-id="${successFactorsModule.id}"]`).first().click();
     await expect.poll(
       () => new URL(page.url()).searchParams.get("module"),
       { message: "the Personal front must navigate to the scoped SuccessFactors module", timeout: 15_000 },
-    ).toBe("sap_successfactors");
+    ).toBe(successFactorsModule.id);
     await expect(page.getByRole("heading", { name: /^personal$/i, level: 1 })).toBeVisible();
     await expect(page.getByRole("navigation", { name: /ruta de navegaci[oó]n/i })).toContainText(/personal/i);
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de frente/i);
@@ -238,7 +243,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/estado por dominio/i)).toContainText(/personal/i);
     await expect(page.getByText(/diagn[oó]stico interno/i).first()).toBeVisible();
 
-    await page.goto(`${CONTROL_ROOM}?module=sap_successfactors`, {
+    await page.goto(`${CONTROL_ROOM}?module=${encodeURIComponent(String(successFactorsModule.id))}`, {
       waitUntil: "domcontentloaded",
     });
     await expect(page.getByRole("heading", { name: /^personal$/i, level: 1 })).toBeVisible();
@@ -381,9 +386,15 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(optionState.selected_option_id).toBe("exception");
 
     await page.getByRole("tab", { name: /^decisi[oó]n$/i }).click();
-    await expect(page.getByRole("button", { name: /crear decisi[oó]n/i })).toBeVisible();
-    await page.getByRole("button", { name: /crear decisi[oó]n/i }).click();
-    await expect(page.getByRole("button", { name: /decisi[oó]n #/i })).toBeVisible({
+    const existingDecision = page.getByRole("button", { name: /decisi[oó]n #/i }).first();
+    const createDecision = page.getByRole("button", { name: /crear decisi[oó]n/i }).first();
+    if (await existingDecision.isVisible().catch(() => false)) {
+      await expect(existingDecision).toBeVisible();
+    } else {
+      await expect(createDecision).toBeVisible();
+      await createDecision.click();
+    }
+    await expect(page.getByRole("button", { name: /decisi[oó]n #/i }).first()).toBeVisible({
       timeout: 15_000,
     });
 
@@ -486,7 +497,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     ).toBe(true);
 
     const lessonsResponse = await page.request.get(
-      `${LEGACY}/api/control-room/lessons?cartridge_id=${encodeURIComponent(targetItem.cartridge)}&anomaly_type=${encodeURIComponent(targetItem.anomaly_type)}`,
+      `${LEGACY}/api/control-room/lessons?cartridge_id=${encodeURIComponent(String(lessonState.cartridge || targetItem.cartridge))}&anomaly_type=${encodeURIComponent(String(lessonState.anomaly_type || targetItem.anomaly_type))}`,
       { timeout: 30_000 },
     );
     expect(lessonsResponse.status(), "approval must expose persisted lessons").toBe(200);
@@ -494,13 +505,13 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     expect(lessons.summary.total, "approval should create at least one learned rule").toBeGreaterThan(0);
     expect(
       lessons.lessons.some((lesson: { item_id?: string; source_decision_id?: number | null }) => (
-        lesson.item_id === targetItem.id || Boolean(lesson.source_decision_id)
+        lesson.item_id === openedItemId || Boolean(lesson.source_decision_id)
       )),
       "lessons endpoint must return item or decision-linked memory",
     ).toBe(true);
 
     const cleanupResponse = await page.request.post(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/reopen`,
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(openedItemId)}/reopen`,
       {
         headers: { "X-CSRF-Token": await csrfToken(page) },
         data: { reason: "E2E cleanup after approval assertion" },

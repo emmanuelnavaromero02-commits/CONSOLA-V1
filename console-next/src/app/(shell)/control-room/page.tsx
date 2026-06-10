@@ -1930,6 +1930,7 @@ function Sidebar({
                     type="button"
                     key={`${group.id}-${module.id}`}
                     aria-label={`Frente ${businessFrontLabel(module.label)} ${module.item_count}`}
+                    data-control-module-id={module.id}
                     className={cn("flex min-h-[40px] w-full items-center justify-between rounded-md px-3 text-left text-xs disabled:opacity-50", cartridge === module.id ? "bg-cyan-400/15 text-cyan-950 dark:text-cyan-50" : "text-muted-foreground hover:bg-cyan-400/10 hover:text-cyan-950 dark:text-slate-300 dark:hover:text-cyan-50")}
                     onClick={() => onCartridge(module.id, group.label)}
                     disabled={installed ? !installed.active : false}
