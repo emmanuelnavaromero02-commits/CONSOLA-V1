@@ -17,7 +17,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness dr-rehearsal rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -57,6 +57,8 @@ help:
 	@echo "                    run cartridge contract/resilience gauntlet"
 	@echo "  make enterprise-readiness"
 	@echo "                    run OMEGA 20x enterprise gate (TARGET/WORKLOAD/PROFILE)"
+	@echo "  make sap-successfactors-aws-live-max"
+	@echo "                    run real AWS + SAP SuccessFactors live E2E validation"
 	@echo "  make multiuser-simulation"
 	@echo "                    run prod-like tenant/workspace/employee isolation simulation"
 	@echo "  make live-cartridge-tests"
@@ -241,6 +243,9 @@ chaos-aws:
 
 enterprise-readiness:
 	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/enterprise_readiness.py --target "$(TARGET)" --workload "$(WORKLOAD)" --profile "$(PROFILE)"
+
+sap-successfactors-aws-live-max:
+	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/sap_successfactors_aws_live_max.py
 
 multiuser-simulation:
 	@bash scripts/run_multiuser_isolation_simulation.sh

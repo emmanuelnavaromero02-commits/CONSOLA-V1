@@ -34,6 +34,7 @@ def _internal_key() -> str:
 CARTRIDGE_URL = os.environ.get(
     "SAP_SUCCESSFACTORS_URL", "http://sap-successfactors:8203",
 )
+_DEFAULT_EXTRACT_ALL_TIMEOUT_SECONDS = 3600
 _SIGNATURE_FIELD = "_signature"
 _SIGNED_AT_FIELD = "_signed_at"
 _SIGNATURE_VERSION_FIELD = "_signature_version"
@@ -107,6 +108,20 @@ def _security_context_from_conf(conf: dict) -> dict | None:
     })
 
 
+def _extract_all_timeout_seconds() -> float:
+    raw = os.environ.get(
+        "SAP_SUCCESSFACTORS_EXTRACT_ALL_TIMEOUT_SECONDS",
+        str(_DEFAULT_EXTRACT_ALL_TIMEOUT_SECONDS),
+    )
+    try:
+        timeout = float(raw)
+    except ValueError as exc:
+        raise RuntimeError("SAP_SUCCESSFACTORS_EXTRACT_ALL_TIMEOUT_SECONDS must be numeric") from exc
+    if timeout < 300:
+        raise RuntimeError("SAP_SUCCESSFACTORS_EXTRACT_ALL_TIMEOUT_SECONDS must be at least 300")
+    return timeout
+
+
 @dag(schedule=None, catchup=False, default_args=default_args, max_active_runs=1)
 def sap_successfactors_extract_all():
     @task
@@ -126,7 +141,7 @@ def sap_successfactors_extract_all():
         if security_context:
             skill_body["security_context"] = security_context
 
-        with httpx.Client(timeout=300) as client:
+        with httpx.Client(timeout=httpx.Timeout(_extract_all_timeout_seconds(), connect=30.0)) as client:
             params = {
                 k: v for k, v in {
                     "mode": conf.get("mode") or "incremental",
