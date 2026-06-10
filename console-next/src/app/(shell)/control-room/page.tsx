@@ -2278,7 +2278,7 @@ function ContextOperations({ context, modules, sources, items, lessons, alerts, 
       <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-amber-400/30 dark:bg-[#11131f] dark:shadow-[0_0_26px_rgba(245,158,11,0.08)]">
         <p className="text-xs font-semibold uppercase text-amber-700 dark:text-amber-300/90">Decisión recomendada</p>
         {topItem ? (
-          <div className="mt-3 space-y-3">
+          <div className="mt-3 space-y-3" data-control-item-id={topItem.id}>
             <span className={cn("inline-flex rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(topItem.severity))}>{severityLabels[topItem.severity]}</span>
             <h3 className="text-xl font-semibold text-foreground dark:text-white">{businessItemTitle(topItem)}</h3>
             <p className="text-sm text-muted-foreground dark:text-slate-300">{businessItemDescription(topItem)}</p>
@@ -2286,7 +2286,12 @@ function ContextOperations({ context, modules, sources, items, lessons, alerts, 
               <Metric label="Prioridad" value={topItem.priority_score ?? topItem.priority?.score ?? topItem.severity_weight} />
               <Metric label="Impacto" value={topItem.impact_estimate ? fmtMoney(topItem.impact_estimate, topItem.impact_currency) : "N/D"} />
             </div>
-            <button type="button" className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200" onClick={() => onOpenItem(topItem)}>
+            <button
+              type="button"
+              aria-label={`Abrir zona de decisión ${businessItemTitle(topItem)}`}
+              className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200"
+              onClick={() => onOpenItem(topItem)}
+            >
               Abrir zona de decisión
               <ChevronRight aria-hidden className="h-4 w-4" />
             </button>
@@ -2720,7 +2725,10 @@ function LessonsBoard({ context, lessons, loading, error }: { context: ActiveCon
 
 function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }) {
   return (
-    <article className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#081423] dark:shadow-[0_0_20px_rgba(14,165,233,0.05)]">
+    <article
+      className="rounded-xl border bg-card p-4 shadow-sm dark:border-sky-400/15 dark:bg-[#081423] dark:shadow-[0_0_20px_rgba(14,165,233,0.05)]"
+      data-control-item-id={item.id}
+    >
       <div className="flex items-start justify-between gap-3">
         <span className={cn("rounded-full border px-2.5 py-1 text-xs font-medium", severityTone(item.severity))}>{severityLabels[item.severity]}</span>
         <span className="text-xs text-muted-foreground">Prioridad {item.priority_score ?? item.priority?.score ?? item.severity_weight}</span>
@@ -2733,7 +2741,12 @@ function AnomalyCard({ item, onOpen }: { item: ControlItem; onOpen: () => void }
         <span className="rounded-full border border-sky-400/20 px-2 py-1">{businessStatusLabel(item.status)}</span>
         {item.impact_estimate ? <span className="rounded-full border border-emerald-400/30 px-2 py-1 text-emerald-700 dark:text-emerald-200">{fmtMoney(item.impact_estimate, item.impact_currency)}</span> : null}
       </div>
-      <button type="button" onClick={onOpen} className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200">
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Revisar decisión ${businessItemTitle(item)}`}
+        className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200"
+      >
         <Play aria-hidden className="h-4 w-4" />
         Revisar decisión
       </button>

@@ -225,8 +225,11 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByLabel(/anomal[ií]as detectadas/i)).toContainText(/recursos humanos/i);
     await expect(page.getByLabel(/indicadores ejecutivos de personal/i)).toContainText(/successfactors/i);
 
-    await page.getByRole("button", { name: /^frente personal\s+\d+/i }).first().click();
-    await expect(page).toHaveURL(/\/control-room\?module=sap_successfactors/);
+    await page.getByLabel(/^frente personal\s+\d+$/i).first().click();
+    await expect.poll(
+      () => new URL(page.url()).searchParams.get("module"),
+      { message: "the Personal front must navigate to the scoped SuccessFactors module", timeout: 15_000 },
+    ).toBe("sap_successfactors");
     await expect(page.getByRole("heading", { name: /^personal$/i, level: 1 })).toBeVisible();
     await expect(page.getByRole("navigation", { name: /ruta de navegaci[oó]n/i })).toContainText(/personal/i);
     await expect(page.getByRole("region", { name: /contexto activo/i })).toContainText(/vista de frente/i);
@@ -327,6 +330,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       timeout: 30_000,
     });
 
+    let openedItemId = String(targetItem.id || "");
     const targetButton = page.getByRole("button", { name: /abrir zona de decisi[oó]n/i }).first();
     await expect(targetButton, "the control room must render the selected operational item").toBeVisible({
       timeout: 15_000,
@@ -353,12 +357,23 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     await expect(page.getByText(/prioridad/i).first()).toBeVisible();
     const exceptionOption = page.getByRole("button", { name: /aprobar excepci[oó]n temporal/i });
     await expect(exceptionOption).toBeVisible();
+    const optionPersistResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST"
+        && url.pathname.includes("/api/control-room/items/")
+        && url.pathname.endsWith("/option");
+    });
     await exceptionOption.click();
+    const optionResponse = await optionPersistResponse;
+    expect(optionResponse.status(), "selected option POST must succeed").toBe(200);
+    const optionPayload = await optionResponse.json();
+    openedItemId = String(optionPayload.item?.id || optionPayload.anomaly?.id || openedItemId);
+    expect(optionPayload.option_id || optionPayload.item?.selected_option_id).toBe("exception");
     await expect(exceptionOption).toHaveAttribute("aria-pressed", "true", {
       timeout: 15_000,
     });
     const optionStateResponse = await page.request.get(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}`,
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(openedItemId)}`,
       { timeout: 30_000 },
     );
     expect(optionStateResponse.status(), "selected option must be persisted in backend").toBe(200);
@@ -398,7 +413,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
       timeout: 15_000,
     });
     const controlStateResponse = await page.request.get(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}`,
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(openedItemId)}`,
       { timeout: 30_000 },
     );
     expect(controlStateResponse.status(), "control item state must be persisted").toBe(200);
@@ -427,7 +442,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     });
 
     const lessonStateResponse = await page.request.get(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}`,
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(openedItemId)}`,
       { timeout: 30_000 },
     );
     expect(lessonStateResponse.status(), "lesson application state must be persisted").toBe(200);
@@ -439,7 +454,7 @@ test.describe("Control Room OMEGA on FastAPI :8000", () => {
     ).toBe(true);
 
     const activityResponse = await page.request.get(
-      `${LEGACY}/api/control-room/items/${encodeURIComponent(targetItem.id)}/activity`,
+      `${LEGACY}/api/control-room/items/${encodeURIComponent(openedItemId)}/activity`,
       { timeout: 30_000 },
     );
     expect(activityResponse.status(), "control-room item must expose visible activity trail").toBe(200);
