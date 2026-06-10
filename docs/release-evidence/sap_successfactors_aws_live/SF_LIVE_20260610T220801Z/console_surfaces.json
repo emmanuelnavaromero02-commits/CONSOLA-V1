@@ -1,0 +1,176 @@
+{
+  "catalog": {
+    "datasets": {
+      "sap_successfactors_compensation_distribution": {
+        "columns_count": 8,
+        "description": "Distribuci\u00f3n de compensaci\u00f3n (cuartiles/mediana) por departamento y job_code. PENDIENTE: paycompValue est\u00e1 encrypted en bronze y no es agregable en SQL.",
+        "last_refresh": "2026-06-08T12:02:45.070327+00:00",
+        "layer": "gold",
+        "row_count": 0
+      },
+      "sap_successfactors_employee_360": {
+        "columns_count": 20,
+        "description": "Vista 360 del empleado activo: empleo + puesto + nombre (PerPersonal) + nombres de org. Una fila por empleado.",
+        "last_refresh": "2026-06-10T22:09:52.890739+00:00",
+        "layer": "gold",
+        "row_count": 1362
+      },
+      "sap_successfactors_employees_anomalies": {
+        "columns_count": 0,
+        "description": "Detecci\u00f3n autom\u00e1tica de irregularidades en empleados activos (preparaci\u00f3n Fase 3). UNION de varios casos con tipo, severidad y detalle.",
+        "last_refresh": null,
+        "layer": "gold",
+        "row_count": null
+      },
+      "sap_successfactors_headcount_by_company": {
+        "columns_count": 6,
+        "description": "Empleados activos por compa\u00f1\u00eda legal (snapshot del mes en curso).",
+        "last_refresh": "2026-06-10T22:09:56.618692+00:00",
+        "layer": "gold",
+        "row_count": 44
+      },
+      "sap_successfactors_headcount_by_department": {
+        "columns_count": 6,
+        "description": "Empleados activos por departamento (snapshot del mes en curso).",
+        "last_refresh": "2026-06-10T22:09:56.054398+00:00",
+        "layer": "gold",
+        "row_count": 314
+      },
+      "sap_successfactors_headcount_by_location": {
+        "columns_count": 6,
+        "description": "Empleados activos por ubicaci\u00f3n (snapshot del mes en curso).",
+        "last_refresh": "2026-06-10T22:09:55.238940+00:00",
+        "layer": "gold",
+        "row_count": 96
+      },
+      "sap_successfactors_manager_hierarchy": {
+        "columns_count": 7,
+        "description": "\u00c1rbol de supervisi\u00f3n: cada empleado activo con su manager directo, n\u00famero de reportes directos y profundidad en la jerarqu\u00eda. Real gracias a EmpJob.managerId (plano).",
+        "last_refresh": "2026-06-10T22:10:01.776064+00:00",
+        "layer": "gold",
+        "row_count": 1288
+      },
+      "sap_successfactors_org_structure": {
+        "columns_count": 12,
+        "description": "Estructura organizacional observada: combinaciones distintas de compa\u00f1\u00eda/divisi\u00f3n/departamento/ubicaci\u00f3n seg\u00fan las asignaciones de EmpJob, con nombres de los FO.",
+        "last_refresh": "2026-06-10T22:09:54.613712+00:00",
+        "layer": "gold",
+        "row_count": 555
+      },
+      "sap_successfactors_recruitment_funnel": {
+        "columns_count": 0,
+        "description": "Embudo de reclutamiento por departamento: requisiciones totales y abiertas. Las etapas por candidato requieren JobApplication (no extra\u00edda).",
+        "last_refresh": null,
+        "layer": "gold",
+        "row_count": null
+      },
+      "sap_successfactors_span_control_analysis": {
+        "columns_count": 8,
+        "description": "",
+        "last_refresh": null,
+        "layer": "gold",
+        "row_count": null
+      },
+      "sap_successfactors_talento_kpi_departamentos": {
+        "columns_count": 8,
+        "description": "",
+        "last_refresh": null,
+        "layer": "gold",
+        "row_count": null
+      },
+      "sap_successfactors_turnover_by_period": {
+        "columns_count": 0,
+        "description": "Rotaci\u00f3n de personal: bajas por mes y motivo desde EmpEmploymentTermination.",
+        "last_refresh": null,
+        "layer": "gold",
+        "row_count": null
+      },
+      "sap_successfactors_workforce_snapshot": {
+        "columns_count": 11,
+        "description": "",
+        "last_refresh": null,
+        "layer": "gold",
+        "row_count": null
+      }
+    },
+    "datasets_count": 13
+  },
+  "control_room": {
+    "dashboard": {
+      "alerts_count": 0,
+      "cartridges": [
+        {
+          "data_readiness": "ready",
+          "datasets": [
+            {
+              "count": 314,
+              "data_readiness": "ready",
+              "dataset": "sap_successfactors_headcount_by_department",
+              "status": "ok"
+            }
+          ],
+          "domain": "Recursos Humanos",
+          "id": "sap_successfactors",
+          "item_count": 0,
+          "label": "Employee Central",
+          "operationally_ready": true,
+          "status": "ready"
+        },
+        {
+          "data_readiness": "ready",
+          "datasets": [
+            {
+              "count": 1000,
+              "data_readiness": "ready",
+              "dataset": "sap_successfactors_manager_hierarchy",
+              "status": "ok"
+            },
+            {
+              "count": 555,
+              "data_readiness": "ready",
+              "dataset": "sap_successfactors_org_structure",
+              "status": "ok"
+            }
+          ],
+          "domain": "Recursos Humanos",
+          "id": "sap_successfactors_org",
+          "item_count": 0,
+          "label": "Estructura Org",
+          "operationally_ready": true,
+          "status": "ready"
+        }
+      ],
+      "cartridges_count": 2,
+      "domains_count": 1,
+      "items_count": 0,
+      "meta": {
+        "app_env": "production",
+        "execution_mode": "supervised_execution",
+        "external_writeback_enabled": false,
+        "generated_at": "2026-06-10T22:10:17.080541+00:00",
+        "item_count": 0,
+        "live_mode": "polling",
+        "refresh_interval_seconds": 30,
+        "source_count": 3,
+        "supervised_execution_enabled": true,
+        "version": "unknown",
+        "write_back_enabled": false
+      }
+    },
+    "gold_kpis": {
+      "keys": [
+        "connection_id",
+        "generated_at",
+        "tenant_id",
+        "widgets",
+        "workspace_id"
+      ],
+      "payload": null
+    }
+  },
+  "errors": [],
+  "semantic": {
+    "entities_count": 31,
+    "successfactors_entities": []
+  }
+}

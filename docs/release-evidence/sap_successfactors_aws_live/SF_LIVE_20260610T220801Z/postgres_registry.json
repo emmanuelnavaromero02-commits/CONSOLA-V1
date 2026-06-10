@@ -1,0 +1,569 @@
+{
+  "agents": {
+    "count": 18,
+    "exists": true
+  },
+  "analytic_apps": {
+    "count": 18,
+    "exists": true
+  },
+  "apps": {},
+  "datasets": [
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-08 12:02:45.070327+00",
+      "layer": "gold",
+      "name": "sap_successfactors_compensation_distribution",
+      "row_count": 0
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:52.890739+00",
+      "layer": "gold",
+      "name": "sap_successfactors_employee_360",
+      "row_count": 1362
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "gold",
+      "name": "sap_successfactors_employees_anomalies",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:56.618692+00",
+      "layer": "gold",
+      "name": "sap_successfactors_headcount_by_company",
+      "row_count": 44
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:56.054398+00",
+      "layer": "gold",
+      "name": "sap_successfactors_headcount_by_department",
+      "row_count": 314
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:55.23894+00",
+      "layer": "gold",
+      "name": "sap_successfactors_headcount_by_location",
+      "row_count": 96
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:10:01.776064+00",
+      "layer": "gold",
+      "name": "sap_successfactors_manager_hierarchy",
+      "row_count": 1288
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:54.613712+00",
+      "layer": "gold",
+      "name": "sap_successfactors_org_structure",
+      "row_count": 555
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "gold",
+      "name": "sap_successfactors_recruitment_funnel",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "gold",
+      "name": "sap_successfactors_turnover_by_period",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_candidate_latest",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_compensation_full",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_empcompensation_latest",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:08:24.856048+00",
+      "layer": "silver",
+      "name": "sap_successfactors_empemployment_latest",
+      "row_count": 1362
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_empemploymenttermination_latest",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:08:28.061277+00",
+      "layer": "silver",
+      "name": "sap_successfactors_empjob_latest",
+      "row_count": 2919
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_emppaycompnonrecurring_latest",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_emppaycomprecurring_latest",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:08:34.39903+00",
+      "layer": "silver",
+      "name": "sap_successfactors_fobusinessunit_latest",
+      "row_count": 8
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:08:41.349962+00",
+      "layer": "silver",
+      "name": "sap_successfactors_focompany_latest",
+      "row_count": 48
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:08:48.755057+00",
+      "layer": "silver",
+      "name": "sap_successfactors_fodepartment_latest",
+      "row_count": 527
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:08:56.542211+00",
+      "layer": "silver",
+      "name": "sap_successfactors_fodivision_latest",
+      "row_count": 28
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:03.522946+00",
+      "layer": "silver",
+      "name": "sap_successfactors_fojobcode_latest",
+      "row_count": 63
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:11.025843+00",
+      "layer": "silver",
+      "name": "sap_successfactors_folocation_latest",
+      "row_count": 199
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_jobrequisition_latest",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:13.970811+00",
+      "layer": "silver",
+      "name": "sap_successfactors_paymentinformationdetailv3_latest",
+      "row_count": 890
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:16.664048+00",
+      "layer": "silver",
+      "name": "sap_successfactors_peremail_latest",
+      "row_count": 1276
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:23.426587+00",
+      "layer": "silver",
+      "name": "sap_successfactors_perpersonal_latest",
+      "row_count": 1582
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-10 22:09:20.504836+00",
+      "layer": "silver",
+      "name": "sap_successfactors_perperson_latest",
+      "row_count": 1538
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-07 12:48:00.693017+00",
+      "layer": "silver",
+      "name": "sap_successfactors_position_latest",
+      "row_count": 1590
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": null,
+      "layer": "silver",
+      "name": "sap_successfactors_recruitment_pipeline",
+      "row_count": null
+    },
+    {
+      "cartridge": "sap_successfactors",
+      "last_refresh": "2026-06-07 12:47:42.367138+00",
+      "layer": "silver",
+      "name": "sap_successfactors_user_latest",
+      "row_count": 1
+    }
+  ],
+  "errors": [],
+  "extraction_runs": [
+    {
+      "entity_name": "Candidate",
+      "error_message": "SUCCESSFACTORS_PERMISSION",
+      "finished_at": "2026-06-10 12:04:33.751295+00",
+      "records_extracted": null,
+      "run_id": "1d4f7c89-4964-4246-afce-9b40276a6e60",
+      "started_at": "2026-06-10 12:04:32.800621+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "EmpCompensation",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:04:34.110204+00",
+      "records_extracted": null,
+      "run_id": "678807cc-2fa5-46db-819a-88f4030754ee",
+      "started_at": "2026-06-10 12:04:33.760689+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "EmpEmployment",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:21.569194+00",
+      "records_extracted": 0,
+      "run_id": "a56cdd85-3e74-46c9-b461-bcd57b35d079",
+      "started_at": "2026-06-10 22:08:20.795838+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/EmpEmployment/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/w"
+    },
+    {
+      "entity_name": "EmpEmploymentTermination",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:04:35.023585+00",
+      "records_extracted": null,
+      "run_id": "b2199d56-5d24-41d5-99d5-1320158779a9",
+      "started_at": "2026-06-10 12:04:34.522721+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "EmpJob",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:25.349379+00",
+      "records_extracted": 0,
+      "run_id": "ff812dee-a143-4f42-abdc-b26e5de30ebd",
+      "started_at": "2026-06-10 22:08:24.901142+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/EmpJob/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/workspac"
+    },
+    {
+      "entity_name": "EmpJob_History",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:04:36.157981+00",
+      "records_extracted": null,
+      "run_id": "349791fe-dc2c-4895-aac9-2c977cc9b469",
+      "started_at": "2026-06-10 12:04:35.539681+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "EmployeeTime",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:04:36.533492+00",
+      "records_extracted": null,
+      "run_id": "94e9bea3-6d4e-4876-9553-48c37db84aaf",
+      "started_at": "2026-06-10 12:04:36.166745+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "EmpPayCompNonRecurring",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:04:36.862446+00",
+      "records_extracted": null,
+      "run_id": "d122077f-1e37-4c29-9b61-d2c604374fe0",
+      "started_at": "2026-06-10 12:04:36.542205+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "EmpPayCompRecurring",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:04:37.206241+00",
+      "records_extracted": null,
+      "run_id": "8850546b-4e15-4e78-8937-90a641d49c2f",
+      "started_at": "2026-06-10 12:04:36.899723+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "FOBusinessUnit",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:28.656548+00",
+      "records_extracted": 8,
+      "run_id": "c712f710-5d32-499a-bea8-95f6a17a3ca8",
+      "started_at": "2026-06-10 22:08:28.119065+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FOBusinessUnit/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
+    },
+    {
+      "entity_name": "FOCompany",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:35.087078+00",
+      "records_extracted": 48,
+      "run_id": "7d6ae1f9-f338-49d4-aa5c-1489a2dc72fa",
+      "started_at": "2026-06-10 22:08:34.450452+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FOCompany/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/works"
+    },
+    {
+      "entity_name": "FOCostCenter",
+      "error_message": "",
+      "finished_at": "2026-06-10 12:04:48.239316+00",
+      "records_extracted": 443,
+      "run_id": "89fbd593-1744-4023-b4e4-bc4776ad678c",
+      "started_at": "2026-06-10 12:04:47.250755+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FOCostCenter/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/wo"
+    },
+    {
+      "entity_name": "FODepartment",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:41.979687+00",
+      "records_extracted": 527,
+      "run_id": "c2654eec-82fa-4118-ad03-d8035d5f237e",
+      "started_at": "2026-06-10 22:08:41.376378+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FODepartment/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/wo"
+    },
+    {
+      "entity_name": "FODivision",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:49.375651+00",
+      "records_extracted": 28,
+      "run_id": "d4f20d48-c7a6-4d82-a7ee-f0047e341f2c",
+      "started_at": "2026-06-10 22:08:48.819144+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FODivision/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/work"
+    },
+    {
+      "entity_name": "FOJobCode",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:08:57.22225+00",
+      "records_extracted": 63,
+      "run_id": "6086bbe1-f004-4f52-aeb5-6c562a511ebd",
+      "started_at": "2026-06-10 22:08:56.609603+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FOJobCode/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/works"
+    },
+    {
+      "entity_name": "FOLocation",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:09:04.187357+00",
+      "records_extracted": 199,
+      "run_id": "377359f4-4bd9-4faa-a0a5-0a9bcd2844fa",
+      "started_at": "2026-06-10 22:09:03.55158+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/FOLocation/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/work"
+    },
+    {
+      "entity_name": "GoalPlan",
+      "error_message": "SUCCESSFACTORS_NOT_AVAILABLE",
+      "finished_at": "2026-06-10 12:05:09.180081+00",
+      "records_extracted": null,
+      "run_id": "212ff803-4559-4d00-b51d-f544f5dad4d5",
+      "started_at": "2026-06-10 12:05:08.620639+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "JobRequisition",
+      "error_message": "",
+      "finished_at": "2026-06-10 12:05:09.903247+00",
+      "records_extracted": 0,
+      "run_id": "6af59c4e-ecbb-4954-82ee-0a5c6622660e",
+      "started_at": "2026-06-10 12:05:09.210225+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/JobRequisition/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/"
+    },
+    {
+      "entity_name": "LearningItem",
+      "error_message": "SUCCESSFACTORS_NOT_AVAILABLE",
+      "finished_at": "2026-06-10 12:05:13.825141+00",
+      "records_extracted": null,
+      "run_id": "ac3fd1b4-f3f8-4adc-8a57-36832c115ad8",
+      "started_at": "2026-06-10 12:05:13.512452+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "PaymentInformationDetailV3",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:09:11.448636+00",
+      "records_extracted": 0,
+      "run_id": "b2ded226-d82a-4f76-bb54-117ae866655c",
+      "started_at": "2026-06-10 22:09:11.067022+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PaymentInformationDetailV3/tenant_id=b95f4d58-c9c8-4fd5-8d07-d"
+    },
+    {
+      "entity_name": "PerAddressDEFLT",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:05:14.47061+00",
+      "records_extracted": null,
+      "run_id": "8fd7c5a3-5faa-4290-a2c3-7c9d83b99120",
+      "started_at": "2026-06-10 12:05:14.154278+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "PerEmail",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:09:14.420138+00",
+      "records_extracted": 0,
+      "run_id": "e4f7affb-7a9f-4869-a62c-c567b969c9a7",
+      "started_at": "2026-06-10 22:09:14.013202+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerEmail/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/worksp"
+    },
+    {
+      "entity_name": "PerformanceReview",
+      "error_message": "",
+      "finished_at": "2026-06-10 12:05:15.839069+00",
+      "records_extracted": 1,
+      "run_id": "fc975a64-96c7-4a9c-9174-6b5dcbd0e223",
+      "started_at": "2026-06-10 12:05:14.848244+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerformanceReview/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d"
+    },
+    {
+      "entity_name": "PerNationalId",
+      "error_message": "",
+      "finished_at": "2026-06-10 12:05:17.328833+00",
+      "records_extracted": 939,
+      "run_id": "ae6cb5ea-c52b-4076-86d7-e70e8b87d997",
+      "started_at": "2026-06-10 12:05:15.932192+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerNationalId/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/w"
+    },
+    {
+      "entity_name": "PerPerson",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:09:17.045461+00",
+      "records_extracted": 0,
+      "run_id": "5c45abe9-9f2f-4929-aeb2-92eed788f9a9",
+      "started_at": "2026-06-10 22:09:16.68964+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerPerson/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/works"
+    },
+    {
+      "entity_name": "PerPersonal",
+      "error_message": "",
+      "finished_at": "2026-06-10 22:09:20.886938+00",
+      "records_extracted": 0,
+      "run_id": "1f6aa76a-c7bc-4811-b633-de85d1d08087",
+      "started_at": "2026-06-10 22:09:20.530312+00",
+      "status": "success",
+      "storage_uri": "s3://modecissions-lakehouse-783792/raw/sap_successfactors/PerPersonal/tenant_id=b95f4d58-c9c8-4fd5-8d07-ddde294c7d78/wor"
+    },
+    {
+      "entity_name": "PerPhone",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:05:18.554053+00",
+      "records_extracted": null,
+      "run_id": "d06c7473-f9f0-4b8c-a29a-e038b7d8c536",
+      "started_at": "2026-06-10 12:05:18.164855+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "Position",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:05:19.124092+00",
+      "records_extracted": null,
+      "run_id": "e5a1e49a-f829-46ef-9323-61ce0d2ee0d3",
+      "started_at": "2026-06-10 12:05:18.58159+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "TimeAccount",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:05:19.490906+00",
+      "records_extracted": null,
+      "run_id": "dcefa9a9-aa9c-49fd-8721-fa39bd2fbb31",
+      "started_at": "2026-06-10 12:05:19.145542+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "User",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:05:19.775622+00",
+      "records_extracted": null,
+      "run_id": "1bcdb6a6-acf9-4777-b0c4-ce3c1a7d2a49",
+      "started_at": "2026-06-10 12:05:19.499745+00",
+      "status": "failed",
+      "storage_uri": ""
+    },
+    {
+      "entity_name": "WorkSchedule",
+      "error_message": "ODATA_FILTER_OR_SCOPE",
+      "finished_at": "2026-06-10 12:05:20.085551+00",
+      "records_extracted": null,
+      "run_id": "e63c830a-adea-4b47-a7c5-1f88df46d92c",
+      "started_at": "2026-06-10 12:05:19.784433+00",
+      "status": "failed",
+      "storage_uri": ""
+    }
+  ],
+  "gold_counts": {
+    "gold_sap_successfactors_compensation_distribution": 0,
+    "gold_sap_successfactors_compensation_full": "MISSING",
+    "gold_sap_successfactors_employee_360": 0,
+    "gold_sap_successfactors_employees_anomalies": "MISSING",
+    "gold_sap_successfactors_headcount_by_company": 0,
+    "gold_sap_successfactors_headcount_by_department": 0,
+    "gold_sap_successfactors_headcount_by_location": 0,
+    "gold_sap_successfactors_manager_hierarchy": 0,
+    "gold_sap_successfactors_org_structure": 0,
+    "gold_sap_successfactors_recruitment_funnel": "MISSING",
+    "gold_sap_successfactors_recruitment_pipeline": "MISSING",
+    "gold_sap_successfactors_turnover_by_period": "MISSING"
+  },
+  "gold_nobypassrls": false,
+  "watermarks": {
+    "count": 17,
+    "latest_updated_at": "2026-06-10 10:48:24.305459+00"
+  }
+}

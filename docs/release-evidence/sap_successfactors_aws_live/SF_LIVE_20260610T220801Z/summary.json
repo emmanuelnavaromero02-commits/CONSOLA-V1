@@ -1,0 +1,231 @@
+{
+  "empty_entities": [
+    "PerPerson",
+    "PerPersonal",
+    "PerEmail",
+    "EmpEmployment",
+    "EmpJob",
+    "PaymentInformationDetailV3",
+    "JobRequisition",
+    "compensation_distribution"
+  ],
+  "entities_with_data": [
+    "PerNationalId",
+    "FOCompany",
+    "FODepartment",
+    "FODivision",
+    "FOLocation",
+    "FOBusinessUnit",
+    "FOCostCenter",
+    "FOJobCode",
+    "PerformanceReview",
+    "employee_360",
+    "org_structure",
+    "headcount_by_department",
+    "headcount_by_location",
+    "headcount_by_company",
+    "manager_hierarchy"
+  ],
+  "error_entities": [
+    "User",
+    "PerPhone",
+    "PerAddressDEFLT",
+    "EmpCompensation",
+    "EmpPayCompRecurring",
+    "EmpPayCompNonRecurring",
+    "EmpEmploymentTermination",
+    "Position",
+    "EmployeeTime",
+    "TimeAccount",
+    "WorkSchedule",
+    "Candidate",
+    "GoalPlan",
+    "LearningItem",
+    "EmpJob_History",
+    "compensation_full",
+    "recruitment_pipeline",
+    "recruitment_funnel",
+    "turnover_by_period",
+    "employees_anomalies"
+  ],
+  "evidence_dir": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z",
+  "final_report": "docs/release-evidence/sap_successfactors_aws_live_full_validation_20260610T220801Z.md",
+  "fix_report": "docs/release-evidence/sap_successfactors_aws_live_fix_loop_20260610T220801Z.md",
+  "not_executed_entities": [],
+  "run_id": "SF_LIVE_20260610T220801Z",
+  "status": "YELLOW",
+  "steps": [
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/aws_identity.json",
+      "name": "AWS identity real",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/02-http-healthz.log",
+      "name": "Public /healthz",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/03-http-readyz.log",
+      "name": "Public /readyz",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/04-http-readyz-require-data-1.log",
+      "name": "Public /readyz?require_data=1",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/05-aws-service-preflight.log",
+      "name": "AWS services reales",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/06-successfactors-extract-all-real.log",
+      "name": "SuccessFactors extract-all real",
+      "note": "SF_LIVE_20260610T220801Z-extract-all",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/07-postgres-rds-registry-real.log",
+      "name": "Postgres/RDS real",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/08-s3-list-raw-sap-successfactors.log",
+      "name": "S3 lakehouse raw/sap_successfactors/",
+      "note": "sample_count=20",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/09-s3-list-silver-sap-successfactors.log",
+      "name": "S3 lakehouse silver/sap_successfactors/",
+      "note": "sample_count=20",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/10-s3-list-gold-sap-successfactors.log",
+      "name": "S3 lakehouse gold/sap_successfactors/",
+      "note": "sample_count=20",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/11-gold-foundation-materialization-real.log",
+      "name": "Gold foundation materialization real",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/12-postgres-rds-registry-real.log",
+      "name": "Postgres/RDS real",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "SUCCESSFACTORS_PERMISSION",
+      "command": "",
+      "error": "Requiere entidades de compensacion bloqueadas por OData/scope",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/postgres_registry.json",
+      "name": "Gold dataset sap_successfactors_compensation_full",
+      "note": "",
+      "status": "WARN"
+    },
+    {
+      "classification": "DATASET_NOT_MATERIALIZED",
+      "command": "",
+      "error": "Dataset planeado, sin materializacion operativa en esta version",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/postgres_registry.json",
+      "name": "Gold dataset sap_successfactors_employees_anomalies",
+      "note": "",
+      "status": "WARN"
+    },
+    {
+      "classification": "DEPENDENCY_NOT_EXTRACTED",
+      "command": "",
+      "error": "Requiere detalle de postulaciones no disponible en la extraccion actual",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/postgres_registry.json",
+      "name": "Gold dataset sap_successfactors_recruitment_funnel",
+      "note": "",
+      "status": "WARN"
+    },
+    {
+      "classification": "DEPENDENCY_NOT_EXTRACTED",
+      "command": "",
+      "error": "Requiere detalle de postulaciones no disponible en la extraccion actual",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/postgres_registry.json",
+      "name": "Gold dataset sap_successfactors_recruitment_pipeline",
+      "note": "",
+      "status": "WARN"
+    },
+    {
+      "classification": "AUTH_SCOPE_BLOCKED",
+      "command": "",
+      "error": "Requiere EmpEmploymentTermination bloqueada por scope OAuth/OData",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/postgres_registry.json",
+      "name": "Gold dataset sap_successfactors_turnover_by_period",
+      "note": "",
+      "status": "WARN"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/18-control-room-apps-kb-agents-real.log",
+      "name": "Control Room real",
+      "note": "",
+      "status": "PASS"
+    },
+    {
+      "classification": "NONE",
+      "command": "",
+      "error": "",
+      "evidence": "docs/release-evidence/sap_successfactors_aws_live/SF_LIVE_20260610T220801Z/commands/19-studio-copiloto-real.log",
+      "name": "Studio/copiloto real",
+      "note": "turnos ejecutados=16",
+      "status": "PASS"
+    }
+  ],
+  "successfactors_real_data": "SI"
+}

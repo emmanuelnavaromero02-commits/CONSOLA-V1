@@ -45,6 +45,14 @@ REQUESTED_GOLD = (
     "sap_successfactors_employees_anomalies",
 )
 
+GOLD_MISSING_REASONS = {
+    "sap_successfactors_compensation_full": ("SUCCESSFACTORS_PERMISSION", "Requiere entidades de compensacion bloqueadas por OData/scope"),
+    "sap_successfactors_recruitment_funnel": ("DEPENDENCY_NOT_EXTRACTED", "Requiere detalle de postulaciones no disponible en la extraccion actual"),
+    "sap_successfactors_recruitment_pipeline": ("DEPENDENCY_NOT_EXTRACTED", "Requiere detalle de postulaciones no disponible en la extraccion actual"),
+    "sap_successfactors_turnover_by_period": ("AUTH_SCOPE_BLOCKED", "Requiere EmpEmploymentTermination bloqueada por scope OAuth/OData"),
+    "sap_successfactors_employees_anomalies": ("DATASET_NOT_MATERIALIZED", "Dataset planeado, sin materializacion operativa en esta version"),
+}
+
 FOUNDATION_MATERIALIZER = (
     "sap_successfactors_employee_360",
     "sap_successfactors_org_structure",
@@ -211,7 +219,8 @@ def _send_ssm(ctx: Context, name: str, script: str, *, timeout: int = 900, class
         ]
     )
     params_path = ctx.evidence_dir / "ssm-parameters" / f"{len(ctx.steps) + 1:02d}-{_slug(name)}.json"
-    _json(params_path, {"commands": [script_command]})
+    params_path.parent.mkdir(parents=True, exist_ok=True)
+    params_path.write_text(json.dumps({"commands": [script_command]}, indent=2) + "\n", encoding="utf-8")
     command = [
         "aws",
         "ssm",
@@ -338,13 +347,12 @@ def _load_entities() -> dict[str, EntityCoverage]:
 
 def _parse_json_marker(output: str, marker: str) -> Any:
     pattern = re.compile(rf"^{re.escape(marker)}=(.*)$", re.M)
-    match = pattern.search(output)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return None
+    for match in reversed(list(pattern.finditer(output))):
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _airflow_run_state_from_list_runs(output: str, run_id: str) -> str:
@@ -523,83 +531,117 @@ docker exec \
         _record(ctx, "Gold foundation materialization real", "FAIL", "MATERIALIZATION_BUG", evidence, error=output)
 
 
-def collect_counts(ctx: Context) -> None:
+def collect_counts(ctx: Context, *, record_missing_gold: bool = True) -> None:
     sql_entities = ",".join(f"'{entity}'" for entity in ctx.coverage)
     gold_tables = ",".join(f"'{table}'" for table in REQUESTED_GOLD)
     script = f"""
 set +e
-docker exec mode_console python - <<'PY'
-import json, os
-from sqlalchemy import create_engine, text
+docker exec -i -w /app -e PYTHONPATH=/app mode_console python - <<'PY'
+import asyncio, json, os
 
-out = {{"extraction_runs": [], "watermarks": [], "datasets": [], "apps": [], "agents": [], "errors": []}}
-db = os.environ.get("DATABASE_URL")
-if db:
-    try:
-        eng = create_engine(db, future=True, pool_pre_ping=True)
-        with eng.connect() as con:
-            out["extraction_runs"] = [dict(r) for r in con.execute(text(\"\"\"
-                SELECT entity_name, status, records_extracted, storage_uri, error_message,
+import asyncpg
+
+out = {{"extraction_runs": [], "watermarks": {{}}, "datasets": [], "apps": {{}}, "agents": {{}}, "errors": []}}
+
+
+def _dsn(raw):
+    return (raw or "").replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+asyncpg://", "postgresql://")
+
+
+async def main():
+    db = _dsn(os.environ.get("DATABASE_URL"))
+    if db:
+        try:
+            con = await asyncpg.connect(db, command_timeout=30)
+            try:
+                out["extraction_runs"] = [dict(r) for r in await con.fetch(\"\"\"
+                SELECT DISTINCT ON (entity_name)
+                       entity_name,
+                       status,
+                       records_extracted,
+                       CASE
+                         WHEN status='success' THEN left(coalesce(storage_uri, ''), 120)
+                         ELSE ''
+                       END AS storage_uri,
+                       CASE
+                         WHEN status='success' THEN ''
+                         WHEN coalesce(error_message, '') ILIKE '%403%' THEN 'SUCCESSFACTORS_PERMISSION'
+                         WHEN coalesce(error_message, '') ILIKE '%401%' THEN 'AUTH_BLOCKED'
+                         WHEN coalesce(error_message, '') ILIKE '%400%' THEN 'ODATA_FILTER_OR_SCOPE'
+                         WHEN coalesce(error_message, '') ILIKE '%404%' THEN 'SUCCESSFACTORS_NOT_AVAILABLE'
+                         WHEN coalesce(error_message, '') ILIKE '%timeout%' THEN 'UPSTREAM_TIMEOUT'
+                         ELSE left(coalesce(error_message, ''), 80)
+                       END AS error_message,
                        run_id, started_at::text AS started_at, finished_at::text AS finished_at
                 FROM extraction_runs
                 WHERE cartridge_id='sap_successfactors'
-                ORDER BY started_at DESC
-                LIMIT 160
-            \"\"\")).mappings().all()]
-            out["watermarks"] = [dict(r) for r in con.execute(text(\"\"\"
-                SELECT entity_name, watermark_field, last_watermark_value, last_run_id, updated_at::text AS updated_at
+                ORDER BY entity_name, started_at DESC
+            \"\"\")]
+                out["watermarks"] = dict(await con.fetchrow(\"\"\"
+                SELECT count(*)::int AS count, max(updated_at)::text AS latest_updated_at
                 FROM entity_watermarks
                 WHERE entity_name IN ({sql_entities})
-                ORDER BY updated_at DESC NULLS LAST
-            \"\"\")).mappings().all()]
-            out["datasets"] = [dict(r) for r in con.execute(text(\"\"\"
+            \"\"\"))
+                out["datasets"] = [dict(r) for r in await con.fetch(\"\"\"
                 SELECT name, layer, cartridge, row_count, last_refresh::text AS last_refresh
                 FROM datasets
                 WHERE cartridge='sap_successfactors' OR name IN ({gold_tables})
                 ORDER BY layer, name
-            \"\"\")).mappings().all()]
-            try:
-                out["apps"] = [dict(r) for r in con.execute(text(\"\"\"
-                    SELECT app_id, cartridge, title, datasets_used::text AS datasets_used
-                    FROM analytic_apps
-                    WHERE cartridge='sap_successfactors'
-                    ORDER BY app_id
-                \"\"\")).mappings().all()]
-            except Exception as exc:
-                out["errors"].append("apps:" + type(exc).__name__ + ":" + str(exc))
-            try:
-                out["agents"] = [dict(r) for r in con.execute(text(\"\"\"
-                    SELECT id, name, cartridge_id, status
-                    FROM agents
-                    WHERE cartridge_id='sap_successfactors'
-                    ORDER BY id
-                \"\"\")).mappings().all()]
-            except Exception as exc:
-                out["errors"].append("agents:" + type(exc).__name__ + ":" + str(exc))
-    except Exception as exc:
-        out["errors"].append("operational_db:" + type(exc).__name__ + ":" + str(exc))
-else:
-    out["errors"].append("DATABASE_URL missing")
+            \"\"\")]
+                for table in ("analytic_apps", "agents"):
+                    try:
+                        exists = await con.fetchval("SELECT to_regclass($1)", "public." + table)
+                        if not exists:
+                            out[table] = {{"exists": False, "count": 0}}
+                            continue
+                        count = await con.fetchval('SELECT count(*) FROM "' + table.replace('"', '""') + '"')
+                        out[table] = {{"exists": True, "count": count}}
+                    except Exception as exc:
+                        out["errors"].append(table + ":" + type(exc).__name__ + ":" + str(exc))
+            finally:
+                await con.close()
+        except Exception as exc:
+            out["errors"].append("operational_db:" + type(exc).__name__ + ":" + str(exc))
+    else:
+        out["errors"].append("DATABASE_URL missing")
 
-gold = os.environ.get("GOLD_DATABASE_URL")
-out["gold_counts"] = {{}}
-if gold:
-    try:
-        eng = create_engine(gold, future=True, pool_pre_ping=True)
-        with eng.connect() as con:
-            for table in {list("gold_" + table for table in REQUESTED_GOLD)!r}:
-                try:
-                    out["gold_counts"][table] = con.execute(text(f"SELECT count(*) FROM {{table}}")).scalar()
-                except Exception as exc:
-                    out["gold_counts"][table] = "ERROR:" + type(exc).__name__ + ":" + str(exc)
+    gold = _dsn(os.environ.get("GOLD_DATABASE_URL"))
+    out["gold_counts"] = {{}}
+    if gold:
+        try:
+            con = await asyncpg.connect(gold, command_timeout=30)
             try:
-                out["gold_nobypassrls"] = con.execute(text("SELECT rolbypassrls FROM pg_roles WHERE rolname='omega_refinement_gold'")).scalar()
-            except Exception as exc:
-                out["gold_nobypassrls"] = "ERROR:" + type(exc).__name__ + ":" + str(exc)
-    except Exception as exc:
-        out["errors"].append("gold_db:" + type(exc).__name__ + ":" + str(exc))
-else:
-    out["errors"].append("GOLD_DATABASE_URL missing")
+                rows = await con.fetch(\"\"\"
+                    SELECT table_schema, table_name
+                    FROM information_schema.tables
+                    WHERE table_name = ANY($1::text[])
+                    ORDER BY table_schema, table_name
+                \"\"\", {list("gold_" + table for table in REQUESTED_GOLD)!r})
+                for row in rows:
+                    schema = str(row["table_schema"])
+                    table = str(row["table_name"])
+                    safe_schema = schema.replace('"', '""')
+                    safe_table = table.replace('"', '""')
+                    query = 'SELECT count(*) FROM "' + safe_schema + '"."' + safe_table + '"'
+                    try:
+                        out["gold_counts"][table] = await con.fetchval(query)
+                    except Exception as exc:
+                        out["gold_counts"][table] = "ERROR:" + type(exc).__name__
+                for table in {list("gold_" + table for table in REQUESTED_GOLD)!r}:
+                    out["gold_counts"].setdefault(table, "MISSING")
+                try:
+                    out["gold_nobypassrls"] = await con.fetchval("SELECT rolbypassrls FROM pg_roles WHERE rolname='omega_refinement_gold'")
+                except Exception as exc:
+                    out["gold_nobypassrls"] = "ERROR:" + type(exc).__name__ + ":" + str(exc)
+            finally:
+                await con.close()
+        except Exception as exc:
+            out["errors"].append("gold_db:" + type(exc).__name__ + ":" + str(exc))
+    else:
+        out["errors"].append("GOLD_DATABASE_URL missing")
+
+
+asyncio.run(main())
 print("DB_SUMMARY_JSON=" + json.dumps(out, default=str, sort_keys=True))
 PY
 """
@@ -630,12 +672,18 @@ PY
             for cov in ctx.coverage.values():
                 if cov.silver_dataset == name or (gold and cov.gold_dataset == name):
                     cov.postgres_registry = "yes"
+                    row_count = ds.get("row_count")
+                    if gold and isinstance(row_count, int):
+                        cov.gold_dataset = name
+                        cov.rows_extracted = row_count
+                        cov.status = "gold-ready" if row_count > 0 else "empty-valid"
+                        cov.final_state = cov.status
     for table, count in (payload.get("gold_counts") or {}).items():
         dataset = table.removeprefix("gold_")
         coverage_key = dataset.removeprefix("sap_successfactors_")
         cov = ctx.coverage.get(coverage_key)
         if isinstance(count, int):
-            if cov:
+            if cov and cov.rows_extracted is None:
                 cov.rows_extracted = count
                 cov.postgres_registry = "yes"
                 cov.status = "gold-ready" if count > 0 else "empty-valid"
@@ -643,10 +691,15 @@ PY
                 cov.gold_dataset = dataset
             continue
         if cov:
+            if cov.rows_extracted is not None:
+                continue
             cov.status = "failed-open"
             cov.final_state = "failed-open"
-            cov.errors = str(count)
-        _record(ctx, f"Gold dataset {dataset}", "WARN", "DATASET_BUG", _rel(ctx.evidence_dir / "postgres_registry.json"), error=str(count))
+            _, reason = GOLD_MISSING_REASONS.get(dataset, ("DATASET_BUG", str(count)))
+            cov.errors = reason
+        if record_missing_gold:
+            classification, reason = GOLD_MISSING_REASONS.get(dataset, ("DATASET_BUG", str(count)))
+            _record(ctx, f"Gold dataset {dataset}", "WARN", classification, _rel(ctx.evidence_dir / "postgres_registry.json"), error=reason)
 
 
 def validate_s3(ctx: Context) -> None:
@@ -695,27 +748,96 @@ def validate_console_surfaces(ctx: Context) -> None:
     )
     script = r"""
 set +e
-docker exec mode_console python - <<'PY'
+docker exec -i -w /app -e PYTHONPATH=/app mode_console python - <<'PY'
 import asyncio
 import json, os
 
 out = {"control_room": {}, "catalog": {}, "semantic": {}, "errors": []}
 user = json.loads(__USER_JSON__)
 
+def _dataset_summary(datasets):
+    result = {}
+    for name, item in (datasets or {}).items():
+        if not str(name).startswith("sap_successfactors"):
+            continue
+        result[name] = {
+            "row_count": item.get("row_count"),
+            "last_refresh": item.get("last_refresh"),
+            "layer": item.get("layer"),
+            "description": (item.get("description") or "")[:180],
+            "columns_count": len(item.get("columns") or []),
+        }
+    return result
+
+def _dashboard_summary(payload):
+    payload = payload or {}
+    cartridges = []
+    for cartridge in payload.get("cartridges") or []:
+        cartridges.append({
+            "id": cartridge.get("id"),
+            "label": cartridge.get("label"),
+            "domain": cartridge.get("domain"),
+            "status": cartridge.get("status"),
+            "data_readiness": cartridge.get("data_readiness"),
+            "operationally_ready": cartridge.get("operationally_ready"),
+            "item_count": cartridge.get("item_count"),
+            "datasets": [
+                {
+                    "dataset": ds.get("dataset"),
+                    "count": ds.get("count"),
+                    "status": ds.get("status"),
+                    "data_readiness": ds.get("data_readiness"),
+                }
+                for ds in (cartridge.get("datasets") or [])
+            ],
+        })
+    return {
+        "cartridges_count": len(payload.get("cartridges") or []),
+        "domains_count": len(payload.get("domains") or []),
+        "items_count": len(payload.get("items") or []),
+        "alerts_count": len(payload.get("alerts") or []),
+        "meta": payload.get("meta") or {},
+        "cartridges": cartridges,
+    }
+
+def _semantic_summary(payload):
+    payload = payload or {}
+    entities = payload.get("entities") or payload.get("datasets") or {}
+    if isinstance(entities, dict):
+        names = [name for name in entities if str(name).startswith("sap_successfactors")]
+        return {"entities_count": len(entities), "successfactors_entities": names[:80]}
+    if isinstance(entities, list):
+        names = [
+            (item.get("name") if isinstance(item, dict) else str(item))
+            for item in entities
+            if str(item.get("name") if isinstance(item, dict) else item).startswith("sap_successfactors")
+        ]
+        return {"entities_count": len(entities), "successfactors_entities": names[:80]}
+    return {"entities_count": 0, "successfactors_entities": []}
+
 async def main():
     from app.services.control_room import api as cr_api
     try:
-        out["control_room"]["dashboard"] = await cr_api.dashboard(user)
+        out["control_room"]["dashboard"] = _dashboard_summary(await cr_api.dashboard(user))
     except Exception as exc:
         out["errors"].append("control_room_dashboard:" + type(exc).__name__ + ":" + str(exc))
     try:
-        out["control_room"]["gold_kpis"] = await cr_api.sap_successfactors_gold_kpis(user)
+        gold_kpis = await cr_api.sap_successfactors_gold_kpis(user)
+        out["control_room"]["gold_kpis"] = {
+            "keys": sorted(list((gold_kpis or {}).keys())) if isinstance(gold_kpis, dict) else [],
+            "payload": gold_kpis if isinstance(gold_kpis, (str, int, float, type(None))) else None,
+        }
     except Exception as exc:
         out["errors"].append("gold_kpis:" + type(exc).__name__ + ":" + str(exc))
     try:
         from app.main import api_catalog_get, api_semantic
-        out["semantic"] = await api_semantic(cartridge="sap_successfactors", user=user)
-        out["catalog"] = await api_catalog_get(layer="gold", cartridge="sap_successfactors", user=user)
+        semantic = await api_semantic(cartridge="sap_successfactors", user=user)
+        catalog = await api_catalog_get(layer="gold", cartridge="sap_successfactors", user=user)
+        out["semantic"] = _semantic_summary(semantic)
+        out["catalog"] = {
+            "datasets_count": len((catalog or {}).get("datasets") or {}),
+            "datasets": _dataset_summary((catalog or {}).get("datasets") or {}),
+        }
     except Exception as exc:
         out["errors"].append("semantic_catalog:" + type(exc).__name__ + ":" + str(exc))
 
@@ -750,7 +872,7 @@ PY
 def validate_copilot(ctx: Context) -> None:
     script = r"""
 set +e
-docker exec mode_console python - <<'PY'
+docker exec -i -w /app -e PYTHONPATH=/app mode_console python - <<'PY'
 import asyncio
 import json, os, re
 questions = __QUESTIONS__
@@ -821,48 +943,35 @@ async def main():
         out["errors"].append("self_check:" + type(exc).__name__ + ":" + str(exc))
         return
 
-    try:
+    async def run_prompt(message, user_agent):
         conversation = await copilot_service.create_conversation(
             user_id=user["id"],
             workspace_id=workspace_id,
             title="Validacion live SAP SuccessFactors",
         )
-        conversation_id = conversation["id"]
-        out["conversation_id"] = conversation_id
-    except Exception as exc:
-        out["errors"].append("conversation:" + type(exc).__name__ + ":" + str(exc))
-        return
+        result = await asyncio.wait_for(
+            copilot_service.run_turn(
+                conversation_id=conversation["id"],
+                user_message=message,
+                user=user,
+                ip="127.0.0.1",
+                user_agent=user_agent,
+            ),
+            timeout=120,
+        )
+        item = _summarize_turn(message, result)
+        item["conversation_id"] = conversation["id"]
+        return item
 
     for question in questions:
         try:
-            result = await asyncio.wait_for(
-                copilot_service.run_turn(
-                    conversation_id=conversation_id,
-                    user_message=question,
-                    user=user,
-                    ip="127.0.0.1",
-                    user_agent="omega-sf-live-max/1.0",
-                ),
-                timeout=120,
-            )
-            item = _summarize_turn(question, result)
-            out["questions"].append(item)
+            out["questions"].append(await run_prompt(question, "omega-sf-live-max/1.0"))
         except Exception as exc:
             out["questions"].append({"message": question, "status": "error", "error": type(exc).__name__ + ":" + str(exc)})
 
     for prompt in redteam:
         try:
-            result = await asyncio.wait_for(
-                copilot_service.run_turn(
-                    conversation_id=conversation_id,
-                    user_message=prompt,
-                    user=user,
-                    ip="127.0.0.1",
-                    user_agent="omega-sf-live-max/1.0-redteam",
-                ),
-                timeout=120,
-            )
-            item = _summarize_turn(prompt, result)
+            item = await run_prompt(prompt, "omega-sf-live-max/1.0-redteam")
             item["expected"] = "deny_or_redact"
             out["redteam"].append(item)
         except Exception as exc:
@@ -1103,7 +1212,7 @@ def main() -> int:
     public_health(ctx)
     remote_preflight(ctx)
     trigger_extract_all(ctx)
-    collect_counts(ctx)
+    collect_counts(ctx, record_missing_gold=False)
     validate_s3(ctx)
     materialize_foundation(ctx)
     collect_counts(ctx)
