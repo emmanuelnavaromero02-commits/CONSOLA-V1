@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,17 @@ SAML_BEARER_AUTH_METHODS = {"saml_bearer_assertion", "saml2_bearer", "oauth2_sam
 SAML_BEARER_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:saml2-bearer"
 DEFAULT_SF_PRIVATE_KEY_PATH = "/run/secrets/sf_epiuse_iaappliance_connector.pem"
 _PEM_ARMOR_RE = re.compile(r"-----BEGIN [^-]+-----|-----END [^-]+-----")
+_PLACEHOLDER_SUBJECTS = {
+    "",
+    "{}",
+    "null",
+    "none",
+    "user@company.com",
+    "sf-admin@empresa.com",
+}
+_SHARED_TOKEN_CACHE: dict[tuple[str, ...], tuple[str, float]] = {}
+_SHARED_TOKEN_LOCKS: dict[tuple[str, ...], threading.Lock] = {}
+_SHARED_TOKEN_GUARD = threading.RLock()
 
 
 def _normalize_config_value(value: Any) -> str:
@@ -45,6 +58,33 @@ def _normalize_config_value(value: Any) -> str:
     if text in {'""', "''"}:
         return ""
     return text
+
+
+def _normalize_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _is_placeholder_subject(value: Any) -> bool:
+    text = _normalize_config_value(value)
+    if not text:
+        return True
+    lowered = text.lower()
+    if lowered in _PLACEHOLDER_SUBJECTS:
+        return True
+    return "placeholder" in lowered
+
+
+def _safe_host(url: str) -> str | None:
+    parsed = urlsplit(_normalize_config_value(url))
+    return parsed.netloc or None
 
 
 def _get_setting_or_env(key: str, *, default: str = "", env_fallback: str | None = None) -> str:
@@ -186,6 +226,18 @@ class SapSfClient:
             security_context=self._security_context,
         )
 
+        self._connection_extra_json = _normalize_mapping(
+            self._vault_connection.get("extra_json")
+            or self._vault_connection.get("extra")
+            or self._vault_connection.get("metadata")
+        )
+        if self._conn_id:
+            self._effective_source = "vault" if self._vault_connection else "vault_missing"
+        elif self._vault_connection:
+            self._effective_source = "vault_default"
+        else:
+            self._effective_source = "env"
+
         def vault_connection_secret(env_var_name: str) -> str:
             for field in _candidate_fields(env_var_name):
                 value = _normalize_config_value(self._vault_connection.get(field))
@@ -208,95 +260,120 @@ class SapSfClient:
                 security_context=self._security_context,
             )
 
+        def effective_secret(
+            env_var_name: str,
+            *,
+            setting_key: str | None = None,
+            default: str = "",
+            env_fallback: str | None = None,
+        ) -> str:
+            if self._conn_id:
+                return vault_connection_secret(env_var_name)
+            value = worker_secret(env_var_name)
+            if value:
+                return value
+            value = vault_connection_secret(env_var_name)
+            if value:
+                return value
+            if setting_key:
+                return _get_setting_or_env(
+                    setting_key,
+                    default=default,
+                    env_fallback=env_fallback or env_var_name,
+                )
+            return _normalize_config_value(default)
+
         self.base_url = _normalize_odata_base_url(
-            worker_secret("SF_BASE_URL")
-            or _get_setting_or_env(
-                "sap_successfactors_base_url",
+            effective_secret(
+                "SF_BASE_URL",
+                setting_key="sap_successfactors_base_url",
                 default=settings.sf_base_url,
                 env_fallback="SF_BASE_URL",
             )
             or ""
         )
         self.token_url = (
-            worker_secret("SF_TOKEN_URL")
-            or _get_setting_or_env(
-                "sap_successfactors_token_url",
+            effective_secret(
+                "SF_TOKEN_URL",
+                setting_key="sap_successfactors_token_url",
                 default=settings.sf_token_url,
                 env_fallback="SF_TOKEN_URL",
             )
         )
         self.idp_url = (
-            worker_secret("SF_IDP_URL")
-            or self._vault_connection.get("idp_url")
-            or _get_setting_or_env(
-                "sap_successfactors_idp_url",
+            effective_secret(
+                "SF_IDP_URL",
+                setting_key="sap_successfactors_idp_url",
                 default=settings.sf_idp_url,
                 env_fallback="SF_IDP_URL",
             )
             or self._derive_idp_url(self.token_url)
         )
         self.client_id = (
-            worker_secret("SF_CLIENT_ID")
-            or _get_setting_or_env(
-                "sap_successfactors_client_id",
+            effective_secret(
+                "SF_CLIENT_ID",
+                setting_key="sap_successfactors_client_id",
                 default=settings.sf_client_id,
                 env_fallback="SF_CLIENT_ID",
             )
         )
         self.client_secret = (
-            worker_secret("SF_CLIENT_SECRET")
-            or _get_setting_or_env(
-                "sap_successfactors_client_secret",
+            effective_secret(
+                "SF_CLIENT_SECRET",
+                setting_key="sap_successfactors_client_secret",
                 default=settings.sf_client_secret,
                 env_fallback="SF_CLIENT_SECRET",
             )
         )
         self.company_id = (
-            worker_secret("SF_COMPANY_ID")
-            or _get_setting_or_env(
-                "sap_successfactors_company_id",
+            effective_secret(
+                "SF_COMPANY_ID",
+                setting_key="sap_successfactors_company_id",
                 default=settings.sf_company_id,
                 env_fallback="SF_COMPANY_ID",
             )
         )
-        self.auth_method = str(
-            worker_secret("SF_AUTH_METHOD")
-            or self._vault_connection.get("auth_method")
-            or _get_setting_or_env(
-                "sap_successfactors_auth_method",
-                default=settings.sf_auth_method,
-                env_fallback="SF_AUTH_METHOD",
-            )
-            or "oauth2_client_credentials",
-        ).strip().lower().replace("-", "_")
-        self.admin_user = (
-            worker_secret("SF_ADMIN_USER")
-            or self._vault_connection.get("admin_user")
-            or _get_setting_or_env(
-                "sap_successfactors_admin_user",
-                default=settings.sf_admin_user,
-                env_fallback="SF_ADMIN_USER",
-            )
-            or ""
+        auth_method_value = effective_secret(
+            "SF_AUTH_METHOD",
+            setting_key="sap_successfactors_auth_method",
+            default=settings.sf_auth_method,
+            env_fallback="SF_AUTH_METHOD",
+        )
+        if not self._conn_id and not auth_method_value:
+            auth_method_value = "oauth2_client_credentials"
+        self.auth_method = str(auth_method_value).strip().lower().replace("-", "_")
+        self.admin_user, self._subject_source, self._placeholder_subject_blocked = self._select_saml_subject(
+            vault_admin_user=vault_connection_secret("SF_ADMIN_USER"),
+            extra_username=(
+                self._connection_extra_json.get("username")
+                or self._vault_connection.get("username")
+            ),
+            fallback_admin_user=(
+                ""
+                if self._conn_id
+                else _get_setting_or_env(
+                    "sap_successfactors_admin_user",
+                    default=settings.sf_admin_user,
+                    env_fallback="SF_ADMIN_USER",
+                )
+            ),
         )
         self.private_key_path = (
-            worker_secret("SF_PRIVATE_KEY_PATH")
-            or self._vault_connection.get("private_key_path")
-            or _get_setting_or_env(
-                "sap_successfactors_private_key_path",
+            effective_secret(
+                "SF_PRIVATE_KEY_PATH",
+                setting_key="sap_successfactors_private_key_path",
                 default=settings.sf_private_key_path or DEFAULT_SF_PRIVATE_KEY_PATH,
                 env_fallback="SF_PRIVATE_KEY_PATH",
             )
-            or DEFAULT_SF_PRIVATE_KEY_PATH
+            or ("" if self._conn_id else DEFAULT_SF_PRIVATE_KEY_PATH)
         )
         self._private_key_pem = (
-            worker_secret("SF_PRIVATE_KEY_PEM")
-            or self._vault_connection.get("private_key_pem")
-            or os.getenv("SF_PRIVATE_KEY_PEM")
+            effective_secret("SF_PRIVATE_KEY_PEM")
+            or ("" if self._conn_id else os.getenv("SF_PRIVATE_KEY_PEM", ""))
         )
         static_token = (
-            worker_secret("SF_ACCESS_TOKEN")
-            or worker_secret("SF_API_KEY")
+            effective_secret("SF_ACCESS_TOKEN")
+            or effective_secret("SF_API_KEY")
         )
         self._auth_payload = {
             **self._vault_connection,
@@ -316,6 +393,86 @@ class SapSfClient:
     # Configuration / introspection
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _select_saml_subject(
+        *,
+        vault_admin_user: Any,
+        extra_username: Any,
+        fallback_admin_user: Any,
+    ) -> tuple[str, str, bool]:
+        blocked = False
+        for source, value in (
+            ("admin_user", vault_admin_user),
+            ("extra_json.username", extra_username),
+            ("env_or_settings", fallback_admin_user),
+        ):
+            text = _normalize_config_value(value)
+            if not text:
+                continue
+            if _is_placeholder_subject(text):
+                blocked = True
+                continue
+            return text, source, blocked
+        return "", "missing", blocked
+
+    def _private_key_available(self) -> bool:
+        if self._private_key_pem:
+            return bool(_successfactors_idp_private_key_payload(str(self._private_key_pem)))
+        return bool(self.private_key_path and Path(self.private_key_path).is_file())
+
+    @staticmethod
+    def _env_probe(name: str, *, url: bool = False, sensitive: bool = False) -> dict[str, Any]:
+        value = os.environ.get(name)
+        present = value is not None and str(value).strip() != ""
+        result: dict[str, Any] = {"present": present}
+        if not present:
+            return result
+        if url:
+            result["host"] = _safe_host(str(value))
+        elif sensitive:
+            result["length"] = len(str(value))
+        else:
+            result["length"] = len(str(value))
+        return result
+
+    def sanitized_config_diagnostics(self) -> dict[str, Any]:
+        status = self.configuration_status()
+        extra_username = (
+            self._connection_extra_json.get("username")
+            or self._vault_connection.get("username")
+        )
+        return {
+            "cartridge": self.CARTRIDGE_ID,
+            "conn_id": self._conn_id,
+            "effective_source": self._effective_source,
+            "auth_method": self.auth_method,
+            "base_url_host": _safe_host(self.base_url),
+            "token_url_host": _safe_host(self.token_url),
+            "idp_url_host": _safe_host(self.idp_url),
+            "company_id_present": bool(self.company_id),
+            "client_id_present": bool(self.client_id),
+            "admin_user_present": bool(self.admin_user),
+            "subject_source": self._subject_source,
+            "private_key_present": self._private_key_available(),
+            "extra_username_present": bool(_normalize_config_value(extra_username)),
+            "extra_username_placeholder_blocked": bool(
+                _normalize_config_value(extra_username) and _is_placeholder_subject(extra_username)
+            ),
+            "placeholder_subject_blocked": self._placeholder_subject_blocked,
+            "configured": status["configured"],
+            "missing_fields": status["missing"],
+            "runtime_env": {
+                "SF_BASE_URL": self._env_probe("SF_BASE_URL", url=True),
+                "SF_CLIENT_ID": self._env_probe("SF_CLIENT_ID", sensitive=True),
+                "SF_TOKEN_URL": self._env_probe("SF_TOKEN_URL", url=True),
+                "SF_COMPANY_ID": self._env_probe("SF_COMPANY_ID", sensitive=True),
+                "SF_ADMIN_USER": self._env_probe("SF_ADMIN_USER", sensitive=True),
+                "SF_AUTH_METHOD": self._env_probe("SF_AUTH_METHOD"),
+                "SF_PRIVATE_KEY_PATH": self._env_probe("SF_PRIVATE_KEY_PATH"),
+                "SF_PRIVATE_KEY_PEM": self._env_probe("SF_PRIVATE_KEY_PEM", sensitive=True),
+            },
+        }
+
     def configuration_status(self) -> dict[str, Any]:
         required = {"SF_BASE_URL": self.base_url}
         if self.auth_method in CLIENT_CREDENTIALS_AUTH_METHODS:
@@ -326,19 +483,22 @@ class SapSfClient:
                 "SF_COMPANY_ID": self.company_id,
             })
         elif self.auth_method in SAML_BEARER_AUTH_METHODS:
-            key_available = bool(self._private_key_pem) or bool(self.private_key_path and Path(self.private_key_path).is_file())
             required.update({
                 "SF_CLIENT_ID": self.client_id,
                 "SF_TOKEN_URL": self.token_url,
                 "SF_IDP_URL": self.idp_url,
                 "SF_COMPANY_ID": self.company_id,
                 "SF_ADMIN_USER": self.admin_user,
-                "SF_PRIVATE_KEY_PATH_OR_PEM": key_available,
+                "SF_PRIVATE_KEY_PATH_OR_PEM": self._private_key_available(),
             })
         elif self.auth_method in {"bearer", "bearer_token", "token"}:
             required["SF_ACCESS_TOKEN"] = self._auth_payload.get("token") or self._auth_payload.get("access_token")
         elif self.auth_method in {"api_key", "apikey", "x_api_key"}:
             required["SF_API_KEY"] = self._auth_payload.get("api_key") or self._auth_payload.get("token")
+        elif not self.auth_method:
+            required["SF_AUTH_METHOD"] = ""
+        else:
+            required["SF_AUTH_METHOD_SUPPORTED"] = ""
         missing = [name for name, value in required.items() if not value]
         return {
             "cartridge": self.CARTRIDGE_ID,
@@ -351,7 +511,10 @@ class SapSfClient:
         status = self.configuration_status()
         if not status["configured"]:
             raise SAPClientError(
-                f"sap_successfactors not configured; missing env: {status['missing']}"
+                "CONFIG_INCOMPLETE sap_successfactors effective configuration is incomplete; "
+                f"missing_fields={status['missing']} "
+                f"effective_source={self._effective_source} "
+                f"auth_method={self.auth_method}"
             )
 
     # ------------------------------------------------------------------
@@ -379,6 +542,46 @@ class SapSfClient:
         if self.auth_method in SAML_BEARER_AUTH_METHODS:
             return self._get_saml_bearer_token()
         return self._get_client_credentials_token()
+
+    def _token_cache_key(self) -> tuple[str, ...]:
+        return (
+            self.CARTRIDGE_ID,
+            self._conn_id or "",
+            self._security_context or "",
+            self.auth_method,
+            self.token_url,
+            self.idp_url,
+            self.company_id,
+            self.client_id,
+            self.admin_user,
+        )
+
+    @staticmethod
+    def _shared_token_lock(cache_key: tuple[str, ...]) -> threading.Lock:
+        with _SHARED_TOKEN_GUARD:
+            lock = _SHARED_TOKEN_LOCKS.get(cache_key)
+            if lock is None:
+                lock = threading.Lock()
+                _SHARED_TOKEN_LOCKS[cache_key] = lock
+            return lock
+
+    @staticmethod
+    def _shared_token_get(cache_key: tuple[str, ...]) -> str | None:
+        with _SHARED_TOKEN_GUARD:
+            cached = _SHARED_TOKEN_CACHE.get(cache_key)
+        if not cached:
+            return None
+        token, expires_at = cached
+        if time.time() < expires_at:
+            return token
+        with _SHARED_TOKEN_GUARD:
+            _SHARED_TOKEN_CACHE.pop(cache_key, None)
+        return None
+
+    @staticmethod
+    def _shared_token_set(cache_key: tuple[str, ...], token: str, expires_at: float) -> None:
+        with _SHARED_TOKEN_GUARD:
+            _SHARED_TOKEN_CACHE[cache_key] = (token, expires_at)
 
     def _get_client_credentials_token(self) -> str:
         self._require_configured()
@@ -426,8 +629,29 @@ class SapSfClient:
 
     def _get_saml_bearer_token(self) -> str:
         self._require_configured()
+        cache_key = self._token_cache_key()
+        cached = self._shared_token_get(cache_key)
+        if cached:
+            self._token = cached
+            self._token_expires_at = time.time() + 300
+            return cached
+
+        lock = self._shared_token_lock(cache_key)
+        with lock:
+            cached = self._shared_token_get(cache_key)
+            if cached:
+                self._token = cached
+                self._token_expires_at = time.time() + 300
+                return cached
+            return self._request_uncached_saml_bearer_token(cache_key)
+
+    def _request_uncached_saml_bearer_token(self, cache_key: tuple[str, ...]) -> str:
         try:
             CartridgeCircuitBreaker.before_request()
+            logger.warning(
+                "SAP SuccessFactors sanitized SAML config %s",
+                self.sanitized_config_diagnostics(),
+            )
             assertion = self._request_saml_assertion_from_successfactors()
             logger.warning("SAP SuccessFactors outbound POST %s", self.token_url)
             logger.warning("%s", auth_trace("oauth2_saml_bearer_assertion", ("assertion",)))
@@ -464,6 +688,7 @@ class SapSfClient:
         expires_in = int(payload.get("expires_in", 3600))
         self._token = token
         self._token_expires_at = time.time() + expires_in - 60
+        self._shared_token_set(cache_key, token, self._token_expires_at)
         return token
 
     def _load_saml_private_key_text(self) -> str:

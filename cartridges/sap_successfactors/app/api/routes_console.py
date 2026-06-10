@@ -19,17 +19,22 @@ from __future__ import annotations
 import anyio
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
+from app.core.extraction_status import (
+    classify_extraction_exception,
+    classify_successful_extraction,
+    summarize_extraction_results,
+)
 from app.core.job_runner import (
     _trigger_silver_refresh,
     fail_external_job,
     finish_external_job,
 )
 from app.core.request_context import reset_security_context, set_security_context
-from app.core.sap_client import SAPClientError
+from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
 from app.services.extraction_service import run_entity
 from app.services.preflight import preflight_for_extract
@@ -78,6 +83,11 @@ def _with_optional_conn(config: dict[str, Any], conn_id: str | None) -> dict[str
     return {**config, "conn_id": selected}
 
 
+def _header_security_context(request: Request) -> str | None:
+    value = request.headers.get("x-security-context") or ""
+    return value.strip() or None
+
+
 # ── Catalogue ────────────────────────────────────────────────────────────────
 
 @router.get("/entities")
@@ -102,6 +112,16 @@ def entity_schema(entity_id: str) -> dict:
         "description": config.get("description"),
         "protection": config.get("protection") or {},
     }
+
+
+@router.get("/diagnostics/config")
+def diagnostics_config(
+    request: Request,
+    conn_id: str | None = Query(default=None, max_length=128),
+) -> dict:
+    """Return sanitized effective SuccessFactors config for the live process."""
+    client = SapSfClient(conn_id=conn_id, security_context=_header_security_context(request))
+    return client.sanitized_config_diagnostics()
 
 
 # ── Preview ──────────────────────────────────────────────────────────────────
@@ -210,28 +230,18 @@ def extract_all(
                     _with_optional_conn(_scoped_config({**config, "mode": effective_mode}, ctx), conn_id)
                 )
                 _mark_external_job(_trigger_silver_refresh, config.get("entity"), ctx)
-                results.append(result)
+                results.append(classify_successful_extraction(result))
             except SAPClientError as exc:
-                results.append({
-                    "entity": config.get("entity"),
-                    "status": "degraded",
-                    "error": str(exc),
-                })
+                results.append(classify_extraction_exception(config.get("entity"), exc))
             except Exception as exc:                       # noqa: BLE001
-                results.append({
-                    "entity": config.get("entity"),
-                    "status": "failed",
-                    "error": str(exc),
-                })
+                results.append(classify_extraction_exception(config.get("entity"), exc))
     finally:
         reset_security_context(token)
-    failures = [r for r in results if r.get("status") in {"degraded", "failed"}]
-    if failures:
-        return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"status": "failed", "failed": len(failures), "results": results, "skipped": skipped},
-        )
-    return {"status": "success", "results": results, "skipped": skipped}
+    summary = summarize_extraction_results(results)
+    status_text = "success" if not any(
+        summary[key] for key in ("auth_blocked", "permission_blocked", "failed_open")
+    ) else "completed_with_blocks"
+    return {"status": status_text, "summary": summary, "results": results, "skipped": skipped}
 
 
 # ── Observability ────────────────────────────────────────────────────────────

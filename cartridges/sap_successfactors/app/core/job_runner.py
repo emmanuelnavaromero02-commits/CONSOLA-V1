@@ -21,6 +21,11 @@ import httpx
 import requests as _requests
 
 from app.core.config import settings
+from app.core.extraction_status import (
+    classify_extraction_exception,
+    classify_successful_extraction,
+    summarize_extraction_results,
+)
 from app.core.request_context import get_security_context, refinement_security_context
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
@@ -377,14 +382,16 @@ async def _run_extract_all(
                     f"Completado — {count:,} registros y refresh downstream",
                     {"record_count": count, "storage_uri": result.get("storage_uri")},
                 )
-                results.append({"entity": entity, "status": "success",
-                                 "record_count": count})
+                results.append(classify_successful_extraction({
+                    "entity": entity,
+                    "record_count": count,
+                    "storage_uri": result.get("storage_uri"),
+                }))
             except Exception as exc:
                 failed += 1
                 await _log(job_id, entity, "ERROR", f"Error: {exc}",
                            {"error": str(exc)})
-                results.append({"entity": entity, "status": "failed",
-                                 "error": str(exc)})
+                results.append(classify_extraction_exception(entity, exc))
 
             done = completed + failed
             await _update(
@@ -395,23 +402,25 @@ async def _run_extract_all(
     await asyncio.gather(*[_one(dict(e)) for e in entities])
 
     total_records = sum(
-        r.get("record_count", 0) for r in results if r["status"] == "success"
+        r.get("record_count", 0) for r in results if r["status"] == "extracted"
     )
+    result_summary = summarize_extraction_results(results)
     level = "INFO" if failed == 0 else "WARN"
     summary = (
         f"Completado — {completed}/{total} entidades, "
-        f"{total_records:,} registros totales, {failed} errores"
+        f"{total_records:,} registros totales, {failed} bloqueadas/fallidas"
     )
-    final_status = "done" if failed == 0 else "failed"
+    final_status = "failed" if result_summary["failed_open"] else "done"
     await _update(
         job_id, final_status,
         message=summary,
         result={"entities": results, "total_records": total_records,
                 "completed": completed, "failed": failed,
+                "summary": result_summary,
                 "skipped": skipped_results,
                 "selected": total,
                 "concurrency": concurrency},
-        error="" if failed == 0 else f"{failed} entities failed",
+        error="" if final_status == "done" else f"{failed} entities failed-open",
     )
     await _log(job_id, None, level, summary)
     _tasks.pop(job_id, None)

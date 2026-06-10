@@ -127,9 +127,49 @@ def test_console_extract_all_uses_scoped_plan_and_returns_skipped(monkeypatch):
 
     assert captured == ["PerPerson"]
     assert response["status"] == "success"
+    assert response["summary"]["extracted"] == 1
     assert response["skipped"] == [
         {"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}
     ]
+
+
+def test_console_extract_all_classifies_entity_auth_blocks_without_global_502(monkeypatch):
+    from app.api import routes_console
+    from app.core.sap_client import SAPClientError
+
+    monkeypatch.setattr(routes_console, "preflight_for_extract", lambda **_kwargs: None)
+    monkeypatch.setattr(routes_console, "_mark_external_job", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        routes_console,
+        "get_extract_all_plan",
+        lambda **_kwargs: (
+            [{"entity": "FOCompany"}, {"entity": "EmpJob"}],
+            [],
+        ),
+    )
+
+    def fake_run_entity(config, **_kwargs):
+        if config["entity"] == "EmpJob":
+            raise SAPClientError(
+                "SAML bearer token request failed: 400 Client Error for url: "
+                "https://api68sales.successfactors.com/oauth/token"
+            )
+        return {"entity": config["entity"], "status": "success", "record_count": 7}
+
+    monkeypatch.setattr(routes_console, "run_entity", fake_run_entity)
+
+    response = routes_console.extract_all(
+        mode="incremental",
+        conn_id="femsa_sf",
+        body={"security_context": _ctx()},
+    )
+
+    assert not hasattr(response, "status_code")
+    assert response["status"] == "completed_with_blocks"
+    assert response["summary"]["extracted"] == 1
+    assert response["summary"]["auth_blocked"] == 1
+    assert [row["status"] for row in response["results"]] == ["extracted", "auth-blocked"]
+    assert response["results"][1]["code"] == "AUTH_BLOCKED"
 
 
 def test_skills_extract_all_routes_use_scoped_plan(monkeypatch):
@@ -215,6 +255,7 @@ def test_async_extract_all_job_is_serial_for_scoped_connection_and_preserves_ski
     assert final["status"] == "done"
     assert final["result"]["selected"] == 1
     assert final["result"]["concurrency"] == 1
+    assert final["result"]["summary"]["extracted"] == 1
     assert final["result"]["skipped"] == [
         {"entity": "Position", "status": "skipped", "reason": "not_scoped_for_connection"}
     ]

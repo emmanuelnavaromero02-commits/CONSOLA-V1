@@ -136,6 +136,170 @@ def test_explicit_vault_connection_auth_method_wins_over_container_default(monke
     assert status["missing"] == []
 
 
+def test_vault_admin_user_wins_over_placeholder_extra_username(monkeypatch):
+    """The SAML subject must come from admin_user, not UI/example usernames."""
+    monkeypatch.setenv("SF_ADMIN_USER", "env-should-not-win")
+
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": "https://api68sales.successfactors.com/oauth/token",
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "extra_json": {"username": "user@company.com"},
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(
+        sap_client,
+        "get_secret_for_worker",
+        lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
+    )
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    diagnostics = client.sanitized_config_diagnostics()
+
+    assert client.admin_user == "SFAPI"
+    assert diagnostics["subject_source"] == "admin_user"
+    assert diagnostics["extra_username_placeholder_blocked"] is True
+    assert diagnostics["runtime_env"]["SF_ADMIN_USER"]["present"] is True
+
+
+def test_placeholder_extra_username_is_ignored_and_does_not_default_subject(monkeypatch):
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": "https://api68sales.successfactors.com/oauth/token",
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "extra_json": {"username": "user@company.com"},
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    status = client.configuration_status()
+    diagnostics = client.sanitized_config_diagnostics()
+
+    assert client.admin_user == ""
+    assert "SF_ADMIN_USER" in status["missing"]
+    assert diagnostics["subject_source"] == "missing"
+    assert diagnostics["extra_username_placeholder_blocked"] is True
+
+
+def test_explicit_vault_connection_does_not_mix_missing_fields_from_env(monkeypatch):
+    monkeypatch.setenv("SF_CLIENT_ID", "env-client-id")
+    monkeypatch.setenv("SF_ADMIN_USER", "env-admin")
+
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": "https://api68sales.successfactors.com/oauth/token",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(
+        sap_client,
+        "get_secret_for_worker",
+        lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
+    )
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    status = client.configuration_status()
+
+    assert client.client_id == ""
+    assert "SF_CLIENT_ID" in status["missing"]
+    assert client.admin_user == "SFAPI"
+
+
+def test_explicit_vault_connection_missing_auth_method_does_not_default_to_oauth(monkeypatch):
+    monkeypatch.setenv("SF_AUTH_METHOD", "saml_bearer_assertion")
+
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": "https://api68sales.successfactors.com/oauth/token",
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(
+        sap_client,
+        "get_secret_for_worker",
+        lambda _cart, env_var_name, **_kwargs: os.getenv(env_var_name, ""),
+    )
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    status = client.configuration_status()
+    diagnostics = client.sanitized_config_diagnostics()
+
+    assert client.auth_method == ""
+    assert diagnostics["effective_source"] == "vault"
+    assert status["configured"] is False
+    assert "SF_AUTH_METHOD" in status["missing"]
+
+
+def test_missing_explicit_vault_connection_reports_vault_missing(monkeypatch):
+    sap_client = _import_client()
+    monkeypatch.setattr(sap_client, "get_connection_for_worker", lambda _cart, **_kwargs: {})
+    monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf")
+    diagnostics = client.sanitized_config_diagnostics()
+
+    assert diagnostics["effective_source"] == "vault_missing"
+    assert diagnostics["configured"] is False
+
+
+def test_idp_url_is_derived_from_token_url_for_vault_connection(monkeypatch):
+    sap_client = _import_client()
+    monkeypatch.setattr(
+        sap_client,
+        "get_connection_for_worker",
+        lambda _cart, **_kwargs: {
+            "conn_id": "femsa_sf",
+            "auth_method": "saml_bearer_assertion",
+            "base_url": "https://api68sales.successfactors.com",
+            "token_url": "https://api68sales.successfactors.com/oauth/token",
+            "client_id": "sf-client-id",
+            "company_id": "SFCPART000952",
+            "admin_user": "SFAPI",
+            "private_key_pem": "-----BEGIN PRIVATE KEY-----\nunit-test\n-----END PRIVATE KEY-----\n",
+        },
+    )
+    monkeypatch.setattr(sap_client, "get_secret_for_worker", lambda *_args, **_kwargs: "")
+
+    client = sap_client.SapSfClient(conn_id="femsa_sf")
+
+    assert client.idp_url == "https://api68sales.successfactors.com/oauth/idp"
+    assert client.sanitized_config_diagnostics()["private_key_present"] is True
+
+
 def test_successfactors_idp_private_key_payload_preserves_raw_key(monkeypatch):
     sap_client = _import_client()
 
