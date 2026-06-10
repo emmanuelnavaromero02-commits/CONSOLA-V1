@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.core.sap_client import SapSfClient
+from app.core.sap_client import SAPClientError, SapSfClient
 from app.services.parquet_service import write_parquet_and_upload
 from app.services.runlog_service import create_run, fail_run, finish_run
 from app.services.watermark_service import get_watermark, update_watermark
@@ -17,6 +19,140 @@ WATERMARK_BUFFER_MINUTES = 5
 CARTRIDGE_ID = "sap_successfactors"
 DEFAULT_EFFECTIVE_FROM_DATE = "1900-01-01"
 DEFAULT_EFFECTIVE_TO_DATE = "9999-12-31"
+SAP_DATE_RE = re.compile(r"^/Date\((-?\d+)(?:[+-]\d+)?\)/$")
+logger = logging.getLogger(__name__)
+
+
+def _watermark_value_type(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "empty"
+    if SAP_DATE_RE.match(text):
+        return "sap_date_ms"
+    if re.fullmatch(r"-?\d+(\.\d+)?", text):
+        return "numeric"
+    if re.match(r"^\d{4}-\d{2}-\d{2}([T\s]\d{2}:\d{2}:\d{2})?", text):
+        return "iso8601"
+    return "unknown"
+
+
+def _parse_watermark_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = SAP_DATE_RE.match(text)
+    if match:
+        try:
+            return datetime.fromtimestamp(int(match.group(1)) / 1000, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if re.fullmatch(r"-?\d+(\.\d+)?", text):
+        try:
+            number = float(text)
+            # SAP payloads usually use milliseconds. Accept seconds for small
+            # epoch values so old watermarks do not become year 53900 dates.
+            if abs(number) > 9_999_999_999:
+                number = number / 1000
+            return datetime.fromtimestamp(number, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    try:
+        normalized = text.replace("Z", "+00:00").replace(" ", "T")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _successfactors_datetime_literal(value: Any) -> str | None:
+    parsed = _parse_watermark_datetime(value)
+    if parsed is None:
+        return None
+    if parsed > datetime.now(timezone.utc) + timedelta(minutes=5):
+        return None
+    # SuccessFactors OData v2 accepts datetime literals for Edm.DateTime
+    # filters. Do not send raw SAP /Date(ms)/ payloads as quoted strings.
+    return "datetime'" + parsed.strftime("%Y-%m-%dT%H:%M:%S") + "'"
+
+
+def _build_incremental_filter(
+    *,
+    entity: str,
+    watermark_field: str | None,
+    watermark_value: str | None,
+) -> tuple[str | None, dict[str, Any]]:
+    value_type = _watermark_value_type(watermark_value)
+    plan: dict[str, Any] = {
+        "entity": entity,
+        "watermark_field": watermark_field,
+        "watermark_value_type": value_type,
+        "filter_strategy": "none",
+        "fallback_reason": "",
+        "generated_filter_sanitized": "",
+    }
+    if not watermark_field or not watermark_value:
+        plan["fallback_reason"] = "no_watermark"
+        return None, plan
+    literal = _successfactors_datetime_literal(watermark_value)
+    if literal is None:
+        plan["filter_strategy"] = "full_snapshot"
+        plan["fallback_reason"] = (
+            "future_or_unparseable_watermark"
+            if value_type != "empty"
+            else "no_watermark"
+        )
+        return None, plan
+    filter_expr = f"{watermark_field} gt {literal}"
+    plan["filter_strategy"] = "server_filter"
+    plan["generated_filter_sanitized"] = filter_expr
+    return filter_expr, plan
+
+
+def _is_incremental_filter_rejected(exc: Exception) -> bool:
+    if not isinstance(exc, SAPClientError):
+        return False
+    text = str(exc).lower()
+    if "oauth/token" in text or "token request" in text or "saml bearer" in text:
+        return False
+    return ("400" in text or "bad request" in text) and (
+        "$filter" in text
+        or "filter" in text
+        or "get " in text
+    )
+
+
+def _log_odata_plan(
+    *,
+    entity: str,
+    mode: str,
+    config: dict[str, Any],
+    plan: dict[str, Any],
+    from_date: str | None,
+    to_date: str | None,
+    select_fields: list[str],
+) -> None:
+    logger.info(
+        "sap_successfactors_odata_plan %s",
+        json.dumps(
+            {
+                "entity": entity,
+                "odata_entity": config.get("odata_entity", entity),
+                "mode": mode,
+                "watermark_field": config.get("watermark_field"),
+                "watermark_value_type": plan.get("watermark_value_type"),
+                "filter_strategy": plan.get("filter_strategy"),
+                "fallback_reason": plan.get("fallback_reason"),
+                "generated_filter_sanitized": plan.get("generated_filter_sanitized"),
+                "effective_dated": bool(config.get("effective_dated")),
+                "from_date": from_date,
+                "to_date": to_date,
+                "select_fields_count": len(select_fields),
+            },
+            sort_keys=True,
+        ),
+    )
 
 
 def _max_watermark(rows: list[dict[str, Any]], watermark_field: str | None) -> str | None:
@@ -31,6 +167,14 @@ def _apply_watermark_filter(
     watermark_field: str,
     watermark_value: str,
 ) -> list[dict[str, Any]]:
+    watermark_dt = _parse_watermark_datetime(watermark_value)
+    if watermark_dt is not None:
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            row_dt = _parse_watermark_datetime(row.get(watermark_field))
+            if row_dt is not None and row_dt > watermark_dt:
+                filtered.append(row)
+        return filtered
     return [r for r in rows if str(r.get(watermark_field, "")) > watermark_value]
 
 
@@ -119,6 +263,23 @@ def run_entity(
         watermark: str | None = None
         if mode == "incremental" and watermark_field:
             watermark = get_watermark(entity)
+        filter_expr, filter_plan = _build_incremental_filter(
+            entity=entity,
+            watermark_field=watermark_field,
+            watermark_value=watermark,
+        )
+        watermark_for_client_filter = watermark if filter_expr else None
+        filter_fallback_reason = str(filter_plan.get("fallback_reason") or "")
+        filter_retried_as_full_snapshot = False
+        _log_odata_plan(
+            entity=entity,
+            mode=mode,
+            config=config,
+            plan=filter_plan,
+            from_date=odata_from_date,
+            to_date=odata_to_date,
+            select_fields=select_fields,
+        )
 
         # Streaming buffer — flushed every BATCH_SIZE rows.
         buffer: list[dict[str, Any]] = []
@@ -146,26 +307,50 @@ def run_entity(
             buffer = []
 
         while True:
-            filter_expr = None
-            if mode == "incremental" and watermark and watermark_field:
-                filter_expr = f"{watermark_field} gt '{watermark}'"
-
-            page = client.fetch_entity(
-                entity=config.get("odata_entity", entity),
-                select=select_fields,
-                page_size=page_size,
-                skip=offset,
-                filter_expr=filter_expr,
-                from_date=odata_from_date,
-                to_date=odata_to_date,
-            )
+            try:
+                page = client.fetch_entity(
+                    entity=config.get("odata_entity", entity),
+                    select=select_fields,
+                    page_size=page_size,
+                    skip=offset,
+                    filter_expr=filter_expr,
+                    from_date=odata_from_date,
+                    to_date=odata_to_date,
+                )
+            except Exception as exc:
+                if (
+                    mode == "incremental"
+                    and filter_expr
+                    and not filter_retried_as_full_snapshot
+                    and offset == 0
+                    and total_records == 0
+                    and _is_incremental_filter_rejected(exc)
+                ):
+                    filter_retried_as_full_snapshot = True
+                    filter_fallback_reason = "incremental_filter_rejected_full_snapshot"
+                    filter_plan = {
+                        **filter_plan,
+                        "filter_strategy": "full_snapshot",
+                        "fallback_reason": filter_fallback_reason,
+                        "generated_filter_sanitized": "",
+                    }
+                    filter_expr = None
+                    watermark_for_client_filter = None
+                    logger.warning(
+                        "sap_successfactors_incremental_filter_rejected entity=%s odata_entity=%s fallback=full_snapshot error_type=%s",
+                        entity,
+                        config.get("odata_entity", entity),
+                        type(exc).__name__,
+                    )
+                    continue
+                raise
             if not page:
                 break
 
             # Belt-and-suspenders client-side filters (the OData server
             # MIGHT have ignored $filter — re-apply locally).
-            if mode == "incremental" and watermark and watermark_field:
-                page = _apply_watermark_filter(page, watermark_field, watermark)
+            if mode == "incremental" and watermark_for_client_filter and watermark_field:
+                page = _apply_watermark_filter(page, watermark_field, watermark_for_client_filter)
             page = _apply_date_range_filter(page, date_field, from_date, to_date)
 
             page_wm = _max_watermark(page, watermark_field)
@@ -186,15 +371,11 @@ def run_entity(
 
         if mode == "incremental" and watermark_field and max_wm:
             safe_watermark = max_wm
-            try:
-                dt = datetime.fromisoformat(
-                    max_wm.replace("Z", "+00:00").replace(" ", "T")
-                )
+            dt = _parse_watermark_datetime(max_wm)
+            if dt is not None:
                 safe_watermark = (
                     dt - timedelta(minutes=WATERMARK_BUFFER_MINUTES)
                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            except Exception:
-                pass
 
             update_watermark(
                 entity_name=entity,
@@ -221,6 +402,9 @@ def run_entity(
             "watermark_updated_to": max_wm,
             "batches": batch_num,
             "status": "success",
+            "incremental_filter_strategy": filter_plan.get("filter_strategy"),
+            "incremental_fallback_reason": filter_fallback_reason,
+            "retried_as_full_snapshot": filter_retried_as_full_snapshot,
         }
 
     except Exception as exc:
