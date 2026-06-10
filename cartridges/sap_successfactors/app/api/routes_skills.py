@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.deps import verify_api_key
 from app.core.request_context import reset_security_context, set_security_context
-from app.services.catalog_service import get_all_entities, get_entity_config
+from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
 from app.services.extraction_service import run_entity
 from app.services.kb_service import (
     get_all_knowledge_bits,
@@ -69,6 +69,13 @@ def _run_all_kbs_with_context(body: dict[str, Any] | None) -> list[dict]:
         return run_all_knowledge_bits(ctx)
     finally:
         reset_security_context(token)
+
+
+def _extract_all_plan_with_context(
+    body: dict[str, Any] | None,
+    conn_id: str | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return get_extract_all_plan(conn_id=conn_id, security_context=_security_context(body))
 
 
 def _external_failure(exc: Exception, entity: str | None = None) -> JSONResponse:
@@ -206,7 +213,8 @@ def run_full_load_all(
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
-    for config in get_all_entities():
+    entities, skipped = _extract_all_plan_with_context(body, conn_id)
+    for config in entities:
         try:
             results.append(_run_entity_with_context({**config, "mode": "full"}, body, conn_id=conn_id))
         except Exception as exc:
@@ -217,7 +225,7 @@ def run_full_load_all(
                     "error": str(exc),
                 }
             )
-    return {"results": results}
+    return {"results": results, "skipped": skipped}
 
 
 @router.post("/run_incremental_all")
@@ -226,7 +234,8 @@ def run_incremental_all(
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
-    for config in get_all_entities():
+    entities, skipped = _extract_all_plan_with_context(body, conn_id)
+    for config in entities:
         mode = "incremental" if config.get("watermark_field") else "full"
         try:
             results.append(_run_entity_with_context({**config, "mode": mode}, body, conn_id=conn_id))
@@ -238,7 +247,7 @@ def run_incremental_all(
                     "error": str(exc),
                 }
             )
-    return {"results": results}
+    return {"results": results, "skipped": skipped}
 
 
 @router.post("/run_historical_load/{entity}")
@@ -277,7 +286,8 @@ def run_historical_load_all(
     body: dict[str, Any] | None = Body(None),
 ) -> dict:
     results = []
-    for config in get_all_entities():
+    entities, skipped = _extract_all_plan_with_context(body, conn_id)
+    for config in entities:
         if not config.get("date_field"):
             continue
         try:
@@ -298,7 +308,7 @@ def run_historical_load_all(
                     "error": str(exc),
                 }
             )
-    return {"results": results}
+    return {"results": results, "skipped": skipped}
 
 
 # ── Status / watermarks ──────────────────────────────────────────────────────

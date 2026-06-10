@@ -30,7 +30,7 @@ from app.core.job_runner import (
 )
 from app.core.request_context import reset_security_context, set_security_context
 from app.core.sap_client import SAPClientError
-from app.services.catalog_service import get_all_entities, get_entity_config
+from app.services.catalog_service import get_all_entities, get_entity_config, get_extract_all_plan
 from app.services.extraction_service import run_entity
 from app.services.preflight import preflight_for_extract
 from app.services.runlog_service import get_last_run_status
@@ -202,7 +202,8 @@ def extract_all(
     token = set_security_context(ctx)
     try:
         results = []
-        for config in get_all_entities():
+        entities, skipped = get_extract_all_plan(conn_id=conn_id, security_context=ctx)
+        for config in entities:
             effective_mode = mode if mode == "full" or config.get("watermark_field") else "full"
             try:
                 result = run_entity(
@@ -228,9 +229,9 @@ def extract_all(
     if failures:
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"status": "failed", "failed": len(failures), "results": results},
+            content={"status": "failed", "failed": len(failures), "results": results, "skipped": skipped},
         )
-    return {"status": "success", "results": results}
+    return {"status": "success", "results": results, "skipped": skipped}
 
 
 # ── Observability ────────────────────────────────────────────────────────────
