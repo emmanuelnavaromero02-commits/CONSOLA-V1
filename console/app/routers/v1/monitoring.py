@@ -290,13 +290,16 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
                 if not airflow_run_id and af_runs:
                     airflow_run_id = af_runs[0]["dag_run_id"]
 
-            if airflow_run_id:
-                logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
-                                                   {"dag_id":     dag_id,
-                                                    "dag_run_id": airflow_run_id,
-                                                    "task_id":    "extract"},
-                                                   user=user)
-                airflow_logs = (logs_r or {}).get("logs", "")
+            log_result = await _resolve_airflow_entity_logs(dag_id, airflow_run_id, user)
+            if log_result.get("available"):
+                airflow_logs = log_result.get("logs", "")
+            else:
+                airflow_logs = (
+                    "(No se pudieron obtener logs de Airflow — "
+                    f"DAG={dag_id}, run_id={airflow_run_id or 'n/d'}, "
+                    f"tasks intentadas={log_result.get('tasks_tried') or '[]'}; "
+                    f"{log_result.get('detail') or 'sin logs disponibles'})"
+                )
         except Exception:
             logger.debug("Airflow log fetch failed for %s/%s", cartridge_id, entity, exc_info=True)
             airflow_logs = "(No se pudieron obtener logs de Airflow)"

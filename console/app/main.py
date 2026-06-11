@@ -858,10 +858,15 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str, user: dict | No
     bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
     try:
         client = _minio_client()
-        object_names = [
-            obj.object_name
-            for obj in client.list_objects(bucket, prefix=list_prefix, recursive=True)
-        ]
+        # MinIO's ``list_objects`` is a blocking generator; iterating it inline
+        # blocks the event loop, and ``/api/pipeline`` probes up to 31 entities.
+        # Run the enumeration in a worker thread so the loop stays responsive.
+        def _list_object_names() -> list[str]:
+            return [
+                obj.object_name
+                for obj in client.list_objects(bucket, prefix=list_prefix, recursive=True)
+            ]
+        object_names = await asyncio.to_thread(_list_object_names)
         latest_date = _bronze_latest_date_from_objects(cartridge, entity, object_names)
         if not latest_date:
             return {}
@@ -871,6 +876,13 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str, user: dict | No
         }
     except Exception:
         return {}
+
+
+# ``/api/pipeline`` probes bronze physical state per entity (MinIO list +
+# parquet COUNT). Bound that work so the endpoint can't hang the way it used to
+# (serial probes ran 55-80s). Both are env-overridable for ops tuning.
+_PIPELINE_PHYSICAL_CONCURRENCY = max(1, int(os.environ.get("PIPELINE_PHYSICAL_CONCURRENCY", "8")))
+_PIPELINE_PHYSICAL_BUDGET_S = max(1.0, float(os.environ.get("PIPELINE_PHYSICAL_BUDGET_S", "10")))
 
 
 def _parse_iso_datetime(value: str | None):
@@ -3672,8 +3684,19 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
                 deps.append(gds)
         return deps
 
-    # 4. Assemble pipeline rows
-    rows = []
+    # 4. Assemble pipeline rows.
+    #
+    # Bronze record counts sometimes need a physical probe (MinIO list + parquet
+    # COUNT) when neither pipeline_runs nor the jobs table carry the number. That
+    # probe used to run serially inside this loop — 31 blocking ``list_objects``
+    # enumerations + 31 serial parquet COUNTs — which hung ``/api/pipeline`` for
+    # 55-80s and blocked the event loop. We now (a) derive the cheap fields, then
+    # (b) run the physical probes concurrently under a bounded pool + wall-clock
+    # budget, then (c) finalize. If the budget is exceeded the request returns a
+    # partial result (record_count stays None, ``meta.partial`` is set) instead
+    # of hanging or fabricating a 0.
+    contexts: list[dict] = []
+    needs_physical: list[str] = []
     for e in entity_list:
         entity = e.get("entity") or e.get("name") or ""
         source = f"raw/{cartridge}/{entity}"
@@ -3720,12 +3743,71 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
             }
 
         if not bronze_date or bronze_count is None:
-            physical_bronze = await _call_with_optional_user(
-                _bronze_physical_snapshot,
-                cartridge,
-                entity,
-                user=user,
+            needs_physical.append(entity)
+
+        contexts.append({
+            "e":             e,
+            "entity":        entity,
+            "source":        source,
+            "dag_run":       dag_run,
+            "last_job":      last_job,
+            "bronze_date":   bronze_date,
+            "bronze_count":  bronze_count,
+            "last_run_info": last_run_info,
+        })
+
+    # Physical bronze probes — concurrent, bounded, budgeted. Probes that finish
+    # within the budget are kept; the budget cancels the stragglers, which are
+    # reported as ``pending`` rather than as a fabricated 0.
+    physical_by_entity: dict[str, dict] = {}
+    pending_entities: list[str] = []
+    if needs_physical:
+        _probe_sem = asyncio.Semaphore(_PIPELINE_PHYSICAL_CONCURRENCY)
+
+        async def _probe_bronze(ent: str):
+            async with _probe_sem:
+                return ent, await _call_with_optional_user(
+                    _bronze_physical_snapshot, cartridge, ent, user=user,
+                )
+
+        _probe_tasks = {asyncio.ensure_future(_probe_bronze(ent)): ent for ent in needs_physical}
+        _done, _still_pending = await asyncio.wait(
+            list(_probe_tasks.keys()), timeout=_PIPELINE_PHYSICAL_BUDGET_S,
+        )
+        for _t in _still_pending:
+            _t.cancel()
+        if _still_pending:
+            # Reap the cancellations so they don't surface as "task destroyed"
+            # warnings; cancelled awaits unwind immediately.
+            await asyncio.gather(*_still_pending, return_exceptions=True)
+        pending_entities = [_probe_tasks[_t] for _t in _still_pending]
+        for _t in _done:
+            try:
+                ent, snap = _t.result()
+                if snap:
+                    physical_by_entity[ent] = snap
+            except Exception:
+                logger.debug("api_pipeline bronze probe failed", exc_info=True)
+        if pending_entities:
+            logger.warning(
+                "api_pipeline physical-probe budget %.1fs exceeded: %d/%d entities still pending",
+                _PIPELINE_PHYSICAL_BUDGET_S, len(pending_entities), len(needs_physical),
             )
+
+    # Finalize rows (cheap, no awaits) from the derived + probed bronze state.
+    rows = []
+    for ctx in contexts:
+        e             = ctx["e"]
+        entity        = ctx["entity"]
+        source        = ctx["source"]
+        dag_run       = ctx["dag_run"]
+        last_job      = ctx["last_job"]
+        bronze_date   = ctx["bronze_date"]
+        bronze_count  = ctx["bronze_count"]
+        last_run_info = ctx["last_run_info"]
+
+        if not bronze_date or bronze_count is None:
+            physical_bronze = physical_by_entity.get(entity)
             if physical_bronze:
                 bronze_date = bronze_date or physical_bronze.get("latest_date")
                 if bronze_count is None:
@@ -3793,7 +3875,22 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
 
     _order = {"running": 0, "error": 1, "stale": 2, "fresh": 3, "never": 4, "unknown": 5}
     rows.sort(key=lambda r: _order.get(r["bronze"]["status"], 5))
-    return {"pipeline": rows}
+    # ``meta`` is additive — existing clients read only ``pipeline``. It lets the
+    # UI show "calculando…" instead of a misleading 0 when some bronze counts
+    # were still computing past the budget.
+    if pending_entities:
+        meta = {
+            "partial": True,
+            "status": "partial",
+            "pending_entities": pending_entities,
+            "detail": (
+                f"{len(pending_entities)} entity bronze count(s) still computing "
+                f"(physical-probe budget {_PIPELINE_PHYSICAL_BUDGET_S:.0f}s); showing partial pipeline."
+            ),
+        }
+    else:
+        meta = {"partial": False, "status": "ok", "pending_entities": []}
+    return {"pipeline": rows, "meta": meta}
 
 
 @app.get("/api/dag_templates", dependencies=[Depends(require_authenticated)])
@@ -5510,6 +5607,71 @@ async def studio_ops_tools(user: dict = Depends(_internal_or_authenticated)):
     return {"tools": tools}
 
 
+async def _resolve_airflow_entity_logs(dag_id: str, airflow_run_id: str | None, user: dict | None) -> dict:
+    """Fetch Airflow logs for a DAG run by discovering its real task ids.
+
+    Earlier code hardcoded ``task_id="extract"``, but the SuccessFactors DAGs
+    (``sap_successfactors_extract`` / ``_extract_all``) expose the task as
+    ``trigger_extract`` — and other cartridges differ — so a hardcoded id always
+    404s and surfaces as "No se pudieron obtener logs de Airflow". We list the
+    run's task instances and concatenate their logs (failed tasks first), using
+    the same MCP tools the working ``pipeline_studio`` run-logs endpoint uses.
+    Returns ``{logs, available, tasks_tried, detail, dag_id, dag_run_id}`` so the
+    caller can explain *why* logs are unavailable instead of a generic error.
+    """
+    diag = {
+        "logs": "",
+        "available": False,
+        "tasks_tried": [],
+        "detail": "",
+        "dag_id": dag_id,
+        "dag_run_id": airflow_run_id,
+    }
+    if not airflow_run_id:
+        diag["detail"] = "Aún no hay un run de Airflow asociado a esta entidad."
+        return diag
+    try:
+        tasks_r = await mcp_registry.invoke(
+            "infra", "airflow_list_task_instances",
+            {"dag_id": dag_id, "dag_run_id": airflow_run_id}, user=user,
+        )
+    except Exception:
+        logger.debug("airflow_list_task_instances failed for %s/%s", dag_id, airflow_run_id, exc_info=True)
+        diag["detail"] = f"No se pudieron listar las tasks del run {airflow_run_id} de {dag_id}."
+        return diag
+    tasks = (tasks_r or {}).get("tasks") or []
+    if not tasks:
+        diag["detail"] = f"El run {airflow_run_id} de {dag_id} aún no tiene task instances."
+        return diag
+    # Failed tasks first so the most useful logs appear on top.
+    ordered = sorted(tasks, key=lambda t: 0 if str(t.get("state")) == "failed" else 1)
+    chunks = []
+    for t in ordered:
+        task_id = t.get("task_id")
+        if not task_id:
+            continue
+        diag["tasks_tried"].append(task_id)
+        try:
+            logs_r = await mcp_registry.invoke(
+                "infra", "airflow_get_task_logs",
+                {"dag_id": dag_id, "dag_run_id": airflow_run_id, "task_id": task_id}, user=user,
+            )
+        except Exception:
+            logger.debug("airflow_get_task_logs failed for %s/%s/%s", dag_id, airflow_run_id, task_id, exc_info=True)
+            continue
+        text = (logs_r or {}).get("logs", "")
+        if text:
+            chunks.append(f"===== task: {task_id} (state={t.get('state')}) =====\n{text}")
+    if chunks:
+        diag["logs"] = "\n\n".join(chunks)
+        diag["available"] = True
+    else:
+        diag["detail"] = (
+            f"Las tasks {diag['tasks_tried']} del run {airflow_run_id} no devolvieron logs recuperables."
+        )
+    return diag
+
+
 @app.post("/studio_ops/mcp/invoke", dependencies=[Depends(require_csrf)])
 async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authenticated)):
     tool = body.get("tool")
@@ -5640,13 +5802,16 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
                 if not airflow_run_id and af_runs:
                     airflow_run_id = af_runs[0]["dag_run_id"]
 
-            if airflow_run_id:
-                logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
-                                                   {"dag_id":     dag_id,
-                                                    "dag_run_id": airflow_run_id,
-                                                    "task_id":    "extract"},
-                                                   user=user)
-                airflow_logs = (logs_r or {}).get("logs", "")
+            log_result = await _resolve_airflow_entity_logs(dag_id, airflow_run_id, user)
+            if log_result.get("available"):
+                airflow_logs = log_result.get("logs", "")
+            else:
+                airflow_logs = (
+                    "(No se pudieron obtener logs de Airflow — "
+                    f"DAG={dag_id}, run_id={airflow_run_id or 'n/d'}, "
+                    f"tasks intentadas={log_result.get('tasks_tried') or '[]'}; "
+                    f"{log_result.get('detail') or 'sin logs disponibles'})"
+                )
         except Exception:
             logger.debug("Airflow log fetch failed for %s/%s", cartridge_id, entity, exc_info=True)
             airflow_logs = "(No se pudieron obtener logs de Airflow)"
