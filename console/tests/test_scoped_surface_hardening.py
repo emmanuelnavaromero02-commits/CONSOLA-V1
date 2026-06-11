@@ -535,7 +535,7 @@ async def test_control_room_query_prefers_scoped_gold_fetcher(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_control_room_production_hides_known_non_ready_sources(monkeypatch):
+async def test_control_room_production_reports_known_non_ready_sources_without_fetching(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
 
     async def fetcher(dataset: str, _user: dict | None, _limit: int):
@@ -545,7 +545,7 @@ async def test_control_room_production_hides_known_non_ready_sources(monkeypatch
             return [{"manager_id": "M1", "direct_reports": 4}]
         if dataset == "sap_successfactors_org_structure":
             return [{"department_id": "HR", "department_name": "People"}]
-        raise HTTPException(404, f"non-ready source should be hidden: {dataset}")
+        raise HTTPException(404, f"non-ready source should not be fetched: {dataset}")
 
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = []
@@ -569,9 +569,23 @@ async def test_control_room_production_hides_known_non_ready_sources(monkeypatch
         result = await control_room_service.dashboard(USER, fetcher=fetcher)
 
     source_names = {source["dataset"] for source in result["sources"]}
-    assert source_names == {
+    assert {
         "sap_successfactors_headcount_by_department",
         "sap_successfactors_manager_hierarchy",
         "sap_successfactors_org_structure",
-    }
-    assert not any(item["kind"] == "source_state" for item in result["items"])
+        "sap_successfactors_employees_anomalies",
+        "sap_successfactors_turnover_by_period",
+        "sap_successfactors_recruitment_funnel",
+        "sap_successfactors_recruitment_pipeline",
+        "sap_successfactors_compensation_distribution",
+    }.issubset(source_names)
+    readiness_by_source = {source["dataset"]: source["data_readiness"] for source in result["sources"]}
+    assert readiness_by_source["sap_successfactors_headcount_by_department"] == "ready"
+    assert readiness_by_source["sap_successfactors_manager_hierarchy"] == "ready"
+    assert readiness_by_source["sap_successfactors_org_structure"] == "ready"
+    assert readiness_by_source["sap_successfactors_employees_anomalies"] == "partial"
+    assert readiness_by_source["sap_successfactors_turnover_by_period"] == "partial"
+    assert readiness_by_source["sap_successfactors_recruitment_funnel"] == "partial"
+    assert readiness_by_source["sap_successfactors_recruitment_pipeline"] == "partial"
+    assert readiness_by_source["sap_successfactors_compensation_distribution"] == "stub"
+    assert any(item["kind"] == "source_state" for item in result["items"])

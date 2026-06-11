@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import html
 import inspect
 import json
 import logging
@@ -36,7 +37,7 @@ setup_logging(service_name="console")
 import httpx
 from fastapi import Body, FastAPI, HTTPException, UploadFile, File, Request, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
@@ -498,6 +499,69 @@ def _require_effective_permission(user: dict | None, permission: str) -> None:
 
 
 app = FastAPI(title="ΩMEGA by EPIUSE Console", lifespan=lifespan)
+
+
+def _status_page_title(status_code: int) -> str:
+    if status_code == 403:
+        return "No tienes acceso a esta sección"
+    if status_code == 404:
+        return "Página no disponible"
+    if status_code == 503:
+        return "Fuente temporalmente no disponible"
+    return "No se pudo abrir esta sección"
+
+
+def _status_page_body(status_code: int, detail: object) -> str:
+    if status_code == 403:
+        return "Tu usuario no tiene los permisos necesarios para abrir esta pantalla."
+    if status_code == 404:
+        return "La pantalla o recurso solicitado no está materializado en este entorno."
+    if status_code == 503:
+        return "La fuente necesaria no respondió a tiempo. Intenta de nuevo en unos minutos."
+    return str(detail or "La solicitud no pudo completarse.")
+
+
+def _functional_status_page(status_code: int, detail: object) -> HTMLResponse:
+    title = html.escape(_status_page_title(status_code))
+    body = html.escape(_status_page_body(status_code, detail))
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <style>
+    body {{ margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }}
+    main {{ min-height: 100vh; display: grid; place-items: center; padding: 24px; }}
+    section {{ max-width: 560px; border: 1px solid #cbd5e1; background: white; padding: 28px; border-radius: 8px; box-shadow: 0 10px 30px rgba(15, 23, 42, .08); }}
+    h1 {{ margin: 0 0 12px; font-size: 24px; line-height: 1.2; }}
+    p {{ margin: 0 0 18px; color: #475569; }}
+    a {{ display: inline-flex; min-height: 40px; align-items: center; border: 1px solid #0f172a; border-radius: 6px; padding: 0 14px; color: #0f172a; text-decoration: none; font-weight: 600; }}
+  </style>
+</head>
+<body>
+  <main>
+    <section role="alert">
+      <h1>{title}</h1>
+      <p>{body}</p>
+      <a href="/my-access">Ver mis accesos</a>
+    </section>
+  </main>
+</body>
+</html>""",
+        status_code=status_code,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    path = request.url.path
+    if _is_api_like(path, request.headers.get("accept", "")):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+    if exc.status_code in {403, 404, 503}:
+        return _functional_status_page(exc.status_code, exc.detail)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 
 def _internal_error_request_id(request: Request | None = None) -> str:
@@ -2690,7 +2754,11 @@ async def dataset_data(name: str, request: Request, limit: int = 100):
                 user,
             ),
         )
-        return r.json()
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, _upstream_error_detail(r, "Refinement query failed"))
+        payload = r.json()
+        _raise_for_refinement_payload_error(payload, "Refinement query failed")
+        return payload
 
 @app.post("/datasets/{name}/refresh", dependencies=[Depends(require_csrf), Depends(require_permission("datasets.write"))])
 async def refresh_dataset(name: str, user: dict = Depends(require_permission("datasets.write"))):
@@ -2713,11 +2781,22 @@ async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(requi
     scoped = await job_service.get_scoped(job_id, user=user)
     if scoped.get("error"):
         raise HTTPException(404, "job not found")
+    job_args = scoped.get("args") if isinstance(scoped.get("args"), dict) else {}
+    job_result = scoped.get("result") if isinstance(scoped.get("result"), dict) else {}
+    cartridge = str(
+        job_args.get("cartridge_id")
+        or job_args.get("cartridge")
+        or job_result.get("cartridge_id")
+        or job_result.get("cartridge")
+        or ""
+    ).strip()
+    if not cartridge:
+        raise HTTPException(422, "job cartridge is unavailable; cannot resolve scoped logs")
     pool = await _get_db_pool()
     rows = await pool.fetch(
         "SELECT entity, level, message, detail, ts FROM run_logs "
-        "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
-        job_id, limit
+        "WHERE run_id=$1 AND cartridge=$2 ORDER BY ts ASC LIMIT $3",
+        job_id, cartridge, limit
     )
     result = []
     for row in rows:
@@ -2789,9 +2868,71 @@ async def api_dataset_save(body: dict, user: dict = Depends(require_permission("
     return r.json()
 
 
+def _dataset_detail_columns(schema_payload: dict | None) -> list[dict]:
+    if not isinstance(schema_payload, dict):
+        return []
+    raw = schema_payload.get("columns") or schema_payload.get("fields") or schema_payload.get("schema") or []
+    if not isinstance(raw, list):
+        return []
+    columns = []
+    for item in raw:
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("column") or item.get("column_name")
+            columns.append({**item, "name": name} if name else dict(item))
+        elif item:
+            columns.append({"name": str(item)})
+    return columns
+
+
+def _normalize_dataset_detail(definition: dict, schema_payload: dict | None = None, schema_error: str | None = None) -> dict:
+    row_count = definition.get("row_count")
+    status = str(definition.get("status") or "").strip().lower()
+    if schema_error:
+        status = "unavailable"
+    elif not status:
+        status = "empty" if row_count == 0 else "ok"
+    sql = definition.get("sql") or definition.get("sql_def") or ""
+    metadata = definition.get("metadata") if isinstance(definition.get("metadata"), dict) else {}
+    metadata = {
+        **metadata,
+        "sources": definition.get("sources") or [],
+        "schedule": definition.get("schedule"),
+        "description": definition.get("description") or "",
+        "column_mapping": definition.get("column_mapping") or {},
+    }
+    return {
+        "name": definition.get("name"),
+        "layer": definition.get("layer"),
+        "type": definition.get("type") or definition.get("layer"),
+        "sql": sql,
+        "sql_def": sql,
+        "columns": _dataset_detail_columns(schema_payload),
+        "metadata": metadata,
+        "source_load_date": definition.get("source_load_date"),
+        "source_batch_id": definition.get("source_batch_id"),
+        "status": status,
+        "error": schema_error or definition.get("error"),
+        "row_count": row_count,
+        "cartridge": definition.get("cartridge"),
+        "updated_at": definition.get("updated_at") or definition.get("last_refresh"),
+        "last_refresh": definition.get("last_refresh"),
+        "sources": definition.get("sources") or [],
+        "column_mapping": definition.get("column_mapping") or {},
+        "is_stale": definition.get("is_stale"),
+        "staleness_reason": definition.get("staleness_reason"),
+    }
+
+
 @app.get("/api/datasets/{name}/detail", dependencies=[Depends(require_authenticated)])
 async def api_dataset_detail(name: str, user: dict = Depends(require_authenticated)):
-    return await _refinement_invoke("get_dataset_definition", {"name": name}, user=user)
+    definition = await _refinement_invoke("get_dataset_definition", {"name": name}, user=user)
+    schema_payload = None
+    schema_error = None
+    try:
+        schema_payload = await _refinement_invoke("get_schema", {"name": name}, user=user)
+    except HTTPException as exc:
+        schema_error = str(exc.detail or "Dataset schema unavailable")
+    return _normalize_dataset_detail(definition, schema_payload, schema_error)
 
 
 @app.post("/api/bronze/query", dependencies=[Depends(require_csrf)])

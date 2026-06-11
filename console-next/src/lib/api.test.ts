@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, apiFetch, isApiError } from "./api";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -52,6 +53,41 @@ describe("apiFetch", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = init?.headers as Headers;
     expect(headers.get("X-CSRF-Token")).toBeNull();
+  });
+
+  it("aborts slow requests with a localized timeout error and request id", async () => {
+    vi.useFakeTimers();
+    mockCookie("");
+    vi.stubGlobal("crypto", { randomUUID: () => "req-timeout" });
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
+      const signal = init?.signal as AbortSignal | undefined;
+      signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    })));
+
+    const request = apiFetch("/api/slow", { timeoutMs: 25 });
+    const assertion = expect(request).rejects.toMatchObject({
+      message: "La consulta tardó demasiado",
+      status: 408,
+      data: { timeout_ms: 25 },
+      requestId: "req-timeout",
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await assertion;
+    vi.useRealTimers();
+  });
+
+  it("allows callers to disable the timeout for controlled streaming requests", async () => {
+    mockCookie("");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBeUndefined();
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch("/api/stream", { timeoutMs: 0 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

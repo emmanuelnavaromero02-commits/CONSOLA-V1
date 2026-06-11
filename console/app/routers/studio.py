@@ -1015,6 +1015,34 @@ def _autopilot_blueprint_preview(blueprint: dict[str, Any] | None) -> dict[str, 
     }
 
 
+def _dataset_names_from_blueprint(args: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for item in args.get("datasets") or []:
+        if isinstance(item, dict) and item.get("name"):
+            names.append(str(item["name"]))
+    return names
+
+
+def _mark_partial_if_datasets_missing(args: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    expected = _dataset_names_from_blueprint(args)
+    if not expected:
+        result.setdefault("status", "success" if result.get("created") else "unknown")
+        return result
+    counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
+    registered = counts.get("datasets")
+    if registered == len(expected):
+        result.setdefault("status", "success" if result.get("created") else "unknown")
+        result["missing_datasets"] = []
+        return result
+    result["status"] = "partial"
+    result["missing_datasets"] = expected
+    result["reason"] = (
+        "Autopilot/create_full_cartridge did not confirm all expected Silver/Gold "
+        "datasets were registered."
+    )
+    return result
+
+
 async def _studio_autopilot_build_cartridge(args: dict[str, Any], user: dict | None) -> dict[str, Any]:
     """Studio assistant tool: sentence/spec/source -> dry-run cartridge blueprint."""
     if user is None:
@@ -1242,7 +1270,8 @@ async def _studio_create_full_cartridge(args: dict[str, Any], user: dict | None)
     if user is None:
         raise HTTPException(401, "Authentication required")
     try:
-        return await cartridge_service.create_full_cartridge(args, actor_user=user)
+        result = await cartridge_service.create_full_cartridge(args, actor_user=user)
+        return _mark_partial_if_datasets_missing(args, result if isinstance(result, dict) else {"result": result})
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

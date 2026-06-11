@@ -8,6 +8,21 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
+V1_ROUTE_INVENTORY = {
+    "auth": "legacy_mirror",
+    "system": "legacy_mirror",
+    "jobs": "legacy_mirror",
+    "data": "legacy_mirror",
+    "pipeline_studio": "legacy_mirror",
+    "marketplace_apps": "legacy_mirror",
+    "misc": "legacy_mirror",
+    "rag": "legacy_mirror",
+    "agents": "legacy_mirror",
+    "vault": "legacy_mirror",
+    "monitoring": "legacy_mirror",
+    "admin_decisions": "legacy_mirror",
+}
+
 
 def test_v1_router_paths_are_covered_by_runtime_app_without_duplicates():
     os.environ.setdefault("APP_ENV", "test")
@@ -43,18 +58,36 @@ def test_v1_router_paths_are_covered_by_runtime_app_without_duplicates():
 
 def test_v1_router_aggregate_lists_runtime_router_modules():
     src = (REPO / "console/app/routers/v1/__init__.py").read_text(encoding="utf-8")
-    for module in (
-        "auth",
-        "system",
-        "jobs",
-        "data",
-        "pipeline_studio",
-        "marketplace_apps",
-        "misc",
-        "rag",
-        "agents",
-        "vault",
-        "monitoring",
-        "admin_decisions",
-    ):
+    for module in V1_ROUTE_INVENTORY:
         assert f"{module}.router" in src
+
+
+def test_v1_route_inventory_marks_all_modules_as_legacy_mirrors():
+    """v1 routers are mounted mirrors, not the only production source.
+
+    Product fixes for visible endpoints must land in the live main/router
+    implementation and only then be mirrored here while the v1 aggregate
+    exists. This keeps future fixes from being applied to a dead-looking file
+    that production does not actually serve.
+    """
+    assert set(V1_ROUTE_INVENTORY.values()) == {"legacy_mirror"}
+
+
+def test_visible_endpoint_fixes_are_not_v1_only():
+    main_src = (REPO / "console/app/main.py").read_text(encoding="utf-8")
+    v1_jobs_src = (REPO / "console/app/routers/v1/jobs.py").read_text(encoding="utf-8")
+    v1_data_src = (REPO / "console/app/routers/v1/data.py").read_text(encoding="utf-8")
+
+    assert '@app.get("/api/jobs/{job_id}/logs"' in main_src
+    assert "job_service.get_scoped" in main_src
+    assert 'job_args.get("cartridge_id")' in main_src
+    assert "WHERE run_id=$1 AND cartridge=$2" in main_src
+    assert '@router.get("/api/jobs/{job_id}/logs"' in v1_jobs_src
+    assert "job_service.get_scoped" in v1_jobs_src
+    assert 'job_args.get("cartridge_id")' in v1_jobs_src
+    assert "WHERE run_id=$1 AND cartridge=$2" in v1_jobs_src
+
+    assert '@app.get("/api/datasets/{name}/detail"' in main_src
+    assert "return _normalize_dataset_detail(" in main_src
+    assert '@router.get("/api/datasets/{name}/detail"' in v1_data_src
+    assert "return _normalize_dataset_detail(" in v1_data_src

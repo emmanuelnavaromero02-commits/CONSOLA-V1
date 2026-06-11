@@ -4,6 +4,18 @@ function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&
 const jobId = location.pathname.split('/').pop();
 let isRunning = true;
 
+function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
+  if (timeoutMs === 0) return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: init.signal || controller.signal })
+    .catch(err => {
+      if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
 function badge(s) {
   const cls = { running: 'badge-running', done: 'badge-done', failed: 'badge-failed' }[s] || '';
   return `<span class="badge ${cls}">${s.toUpperCase()}</span>`;
@@ -16,7 +28,8 @@ function dur(s, e) {
 }
 
 async function loadJob() {
-  const r = await fetch(`/api/jobs/${jobId}`);
+  const r = await fetchWithTimeout(`/api/jobs/${jobId}`, {}, 15000);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const j = await r.json();
   if (j.error) { document.getElementById('meta').innerHTML = `<span style="color:var(--red)">${esc(j.error)}</span>`; return; }
 
@@ -60,7 +73,8 @@ async function loadJob() {
 }
 
 async function loadLogs() {
-  const r = await fetch(`/api/jobs/${jobId}/logs?limit=500`);
+  const r = await fetchWithTimeout(`/api/jobs/${jobId}/logs?limit=500`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const d = await r.json();
   const logs = d.logs || [];
   document.getElementById('log-count').textContent = logs.length + ' entradas';
@@ -77,7 +91,11 @@ async function loadLogs() {
 }
 
 async function loadAll() {
-  await Promise.all([loadJob(), loadLogs()]);
+  try {
+    await Promise.all([loadJob(), loadLogs()]);
+  } catch (e) {
+    document.getElementById('log-container').innerHTML = `<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

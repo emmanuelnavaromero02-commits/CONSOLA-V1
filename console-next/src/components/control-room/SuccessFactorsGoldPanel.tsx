@@ -1,7 +1,7 @@
 import { AlertTriangle, BookOpen, BriefcaseBusiness, Building2, CalendarDays, CreditCard, GraduationCap, Network, ShieldCheck, TrendingDown, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SourceStatus } from "@/lib/control-room/types";
+import type { SfDecisionEntity, SfDecisionModelPayload, SfDecisionTerm, SfGoldKpisPayload, SfGoldWidget, SourceStatus } from "@/lib/control-room/types";
 import { cn } from "@/lib/utils";
 
 import { CommandMetric, MiniBar, OperationalNotice, ReadinessBadge, readinessLabels } from "./StatusBadge";
@@ -119,16 +119,25 @@ function sourceMatches(source: SourceStatus, terms: string[]): boolean {
 }
 
 function widgetValue(widgets: SfGoldKpisPayload["widgets"], terms: string[]): number | null {
-  const widget = widgets.find((item) => sourceMatches({ dataset: `${item.id} ${item.dataset}`, module: item.title, cartridge: "", domain: "", status: "ok", count: item.value }, terms));
+  const widget = widgets.find((item) => sourceMatches({ dataset: `${item.id} ${item.dataset}`, module: item.title, cartridge: "", domain: "", status: "ok", count: typeof item.value === "number" ? item.value : 0 }, terms));
   return typeof widget?.value === "number" ? widget.value : null;
 }
 
+function sourceReadiness(source: SourceStatus): SuccessFactorsFront["status"] {
+  if (source.error) return "unavailable";
+  if (source.status !== "ok") return source.status;
+  return source.data_readiness || "ready";
+}
+
 function businessFrontStatus(sources: SourceStatus[], fallbackValue: number | null): SuccessFactorsFront["status"] {
-  if (fallbackValue && fallbackValue > 0) return "ready";
-  if (!sources.length) return "missing";
-  if (sources.some((source) => source.data_readiness === "ready" || source.status === "ok")) return "partial";
-  if (sources.some((source) => source.data_readiness === "no_permission" || source.status === "no_permission")) return "no_permission";
-  if (sources.some((source) => source.error)) return "unavailable";
+  if (!sources.length) {
+    if (fallbackValue !== null) return fallbackValue > 0 ? "ready" : "empty";
+    return "missing";
+  }
+  const statuses = sources.map(sourceReadiness);
+  for (const status of ["no_permission", "blocked", "unavailable", "invalid_schema", "missing", "stub", "partial", "empty", "ready"] as const) {
+    if (statuses.includes(status)) return status;
+  }
   return "missing";
 }
 
@@ -136,9 +145,28 @@ function unavailableBusinessDetail(status: SuccessFactorsFront["status"]): strin
   if (status === "partial") return "Datos parciales";
   if (status === "no_permission" || status === "blocked") return "Requiere permisos OData";
   if (status === "unavailable") return "Dependencia no configurada";
+  if (status === "invalid_schema") return "Dataset no materializado";
   if (status === "missing" || status === "stub") return "Fuera de alcance actual";
   if (status === "empty") return "Sin datos configurados";
   return "Dataset no materializado";
+}
+
+function widgetStatus(widget: SfGoldWidget | undefined): SuccessFactorsFront["status"] {
+  if (!widget) return "missing";
+  if (widget.status) return widget.status;
+  if (typeof widget.value !== "number") return "missing";
+  return widget.value > 0 ? "ready" : "empty";
+}
+
+function widgetValueText(widget: SfGoldWidget | undefined): string {
+  return typeof widget?.value === "number" ? formatNumber(widget.value) : "N/D";
+}
+
+function widgetTone(status: SuccessFactorsFront["status"]): "good" | "warning" | "danger" | "neutral" {
+  if (status === "ready" || status === "ok") return "good";
+  if (status === "partial" || status === "empty") return "warning";
+  if (status === "no_permission" || status === "blocked" || status === "unavailable" || status === "invalid_schema") return "danger";
+  return "neutral";
 }
 
 function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: SourceStatus[]): SuccessFactorsFront[] {
@@ -219,12 +247,12 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
 
   return definitions.map((definition) => {
     const matchingSources = sources.filter((source) => sourceMatches(source, definition.terms));
-    const ready = matchingSources.filter((source) => source.data_readiness === "ready" || source.status === "ok").length;
-    const signals = matchingSources.filter((source) => source.error || source.data_readiness !== "ready" || source.status !== "ok").length;
+    const ready = matchingSources.filter((source) => sourceReadiness(source) === "ready").length;
+    const signals = matchingSources.filter((source) => sourceReadiness(source) !== "ready").length;
     const status = businessFrontStatus(matchingSources, definition.metric);
     const countFallback = matchingSources.reduce((total, source) => total + Math.max(0, source.count || 0), 0);
     const value = definition.metric ?? (countFallback > 0 ? countFallback : null);
-    const tone = status === "ready" || status === "ok" ? "good" : status === "partial" ? "warning" : status === "no_permission" || status === "blocked" ? "danger" : "neutral";
+    const tone = widgetTone(status);
 
     return {
       id: definition.id,
@@ -327,7 +355,7 @@ function buildDecisionCapabilities(
   return definitions.map((definition) => {
     const modelMatches = modelText.filter((text) => definition.terms.some((term) => text.includes(term))).length;
     const sourceMatchesCount = sources.filter((source) => sourceMatches(source, definition.terms)).length;
-    const widgetMatchesCount = widgets.filter((widget) => sourceMatches({ dataset: `${widget.id} ${widget.dataset}`, module: widget.title, cartridge: "", domain: "", status: "ok", count: widget.value }, definition.terms)).length;
+    const widgetMatchesCount = widgets.filter((widget) => sourceMatches({ dataset: `${widget.id} ${widget.dataset}`, module: widget.title, cartridge: "", domain: "", status: "ok", count: typeof widget.value === "number" ? widget.value : 0 }, definition.terms)).length;
     const evidence = modelMatches + sourceMatchesCount + widgetMatchesCount;
     const matchingSources = sources.filter((source) => sourceMatches(source, definition.terms));
     const status = businessFrontStatus(matchingSources, widgetMatchesCount > 0 ? widgetMatchesCount : null);
@@ -366,15 +394,18 @@ export function SuccessFactorsGoldPanel({
   decisionModelError?: string;
 }) {
   const widgets = payload?.widgets ?? [];
-  const readySources = sources.filter((source) => source.status === "ok" || source.data_readiness === "ready").length;
+  const readySources = sources.filter((source) => sourceReadiness(source) === "ready").length;
   const blockedSources = sources.filter((source) => source.status === "blocked" || source.data_readiness === "blocked" || source.data_readiness === "no_permission").length;
   const employeeWidget = widgets.find((widget) => widget.id.includes("employee_360") || widget.dataset.includes("employee_360"));
   const orgWidget = widgets.find((widget) => widget.id.includes("org_structure") || widget.dataset.includes("org_structure"));
   const headcountWidgets = widgets.filter((widget) => widget.id.includes("headcount") || widget.dataset.includes("headcount"));
-  const totalSignals = sources.filter((source) => source.error || source.status !== "ok" || source.data_readiness !== "ready").length;
+  const totalSignals = sources.filter((source) => sourceReadiness(source) !== "ready").length;
   const businessFronts = buildBusinessFronts(widgets, sources);
   const decisionCapabilities = buildDecisionCapabilities(decisionModel ?? null, widgets, sources);
   const readyCapabilities = decisionCapabilities.filter((item) => item.status === "ready" || item.status === "ok").length;
+  const employeeStatus = widgetStatus(employeeWidget);
+  const orgStatus = widgetStatus(orgWidget);
+  const readyHeadcountWidgets = headcountWidgets.filter((widget) => ["ready", "ok", "empty"].includes(widgetStatus(widget)));
 
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-sm dark:border-emerald-400/20 dark:bg-[#081423] dark:shadow-[0_0_30px_rgba(16,185,129,0.08)]" aria-label="Indicadores ejecutivos de personal">
@@ -411,24 +442,24 @@ export function SuccessFactorsGoldPanel({
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <CommandMetric
             label="Plantilla activa"
-            value={employeeWidget ? formatNumber(employeeWidget.value) : "N/D"}
-            detail={employeeWidget ? "personas consideradas" : "Dataset no materializado"}
+            value={widgetValueText(employeeWidget)}
+            detail={employeeWidget && typeof employeeWidget.value === "number" ? "personas consideradas" : unavailableBusinessDetail(employeeStatus)}
             icon={Users}
-            tone={employeeWidget ? "good" : "warning"}
+            tone={widgetTone(employeeStatus)}
           />
           <CommandMetric
             label="Estructura organizacional"
-            value={orgWidget ? formatNumber(orgWidget.value) : "N/D"}
-            detail={orgWidget ? "relaciones disponibles" : "Dependencia no configurada"}
+            value={widgetValueText(orgWidget)}
+            detail={orgWidget && typeof orgWidget.value === "number" ? "relaciones disponibles" : unavailableBusinessDetail(orgStatus)}
             icon={Network}
-            tone={orgWidget ? "good" : "warning"}
+            tone={widgetTone(orgStatus)}
           />
           <CommandMetric
             label="Distribuciones"
-            value={headcountWidgets.length}
-            detail="compañía, ubicación y departamento"
+            value={readyHeadcountWidgets.length}
+            detail={headcountWidgets.length ? "compañía, ubicación y departamento" : "Dataset no materializado"}
             icon={Building2}
-            tone={headcountWidgets.length ? "good" : "warning"}
+            tone={readyHeadcountWidgets.length ? "good" : "warning"}
           />
           <CommandMetric
             label="Riesgos de información"
@@ -530,15 +561,16 @@ export function SuccessFactorsGoldPanel({
           <div className="grid gap-3 xl:grid-cols-2">
             {widgets.map((widget) => {
               const maxHeadcount = Math.max(1, ...widget.rows.map((row) => typeof row.headcount === "number" ? row.headcount : 0));
+              const status = widgetStatus(widget);
               return (
                 <article key={widget.id} className="rounded-xl border bg-background p-4 shadow-sm dark:border-emerald-400/15 dark:bg-[#06111f]">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300/80">{businessWidgetTitle(widget)}</p>
-                      <strong className="mt-1 block text-2xl font-semibold text-foreground dark:text-white">{formatNumber(widget.value)}</strong>
-                      <p className="text-xs text-muted-foreground">{businessWidgetDetail(widget)}</p>
+                      <strong className="mt-1 block text-2xl font-semibold text-foreground dark:text-white">{widgetValueText(widget)}</strong>
+                      <p className="text-xs text-muted-foreground">{typeof widget.value === "number" ? businessWidgetDetail(widget) : unavailableBusinessDetail(status)}</p>
                     </div>
-                    <ReadinessBadge status={widget.value > 0 ? "ready" : "empty"} compact />
+                    <ReadinessBadge status={status} compact />
                   </div>
                   <div className="mt-4 space-y-3">
                     {widget.rows.slice(0, 6).map((row, index) => {
@@ -560,6 +592,8 @@ export function SuccessFactorsGoldPanel({
                     <div className="mt-2 space-y-1">
                       <p>Identificador interno: {widget.dataset}</p>
                       <p>Indicador: {widget.id}</p>
+                      <p>Estado: {readinessLabels[status] || status}</p>
+                      {widget.error ? <p className="text-destructive">{widget.error}</p> : null}
                     </div>
                   </details>
                 </article>

@@ -34,11 +34,11 @@ interface SubNavItem {
  */
 const ITEMS: SubNavItem[] = [
   { href: "/operations",        label: "Resumen",  icon: ShieldCheck },
-  { href: "/operations/users",  label: "Usuarios", icon: Users, permission: "iam.users.read", capability: "can_manage_workspace_users" },
-  { href: "/operations/audit",  label: "Auditoría", icon: FileSearch, permission: "security.audit.read" },
-  { href: "/operations/vault",  label: "Vault",    icon: KeySquare, permission: "vault.connections.read" },
-  { href: "/operations/workflows", label: "Workflows", icon: Workflow, permission: "copilot.execute" },
-  { href: "/operations/metrics",   label: "Métricas",  icon: Activity, permission: "operations.read" },
+  { href: "/operations/users",  label: "Usuarios", icon: Users, capability: "can_manage_workspace_users" },
+  { href: "/operations/audit",  label: "Auditoría", icon: FileSearch, capability: "can_view_audit" },
+  { href: "/operations/vault",  label: "Vault",    icon: KeySquare, capability: "can_view_vault" },
+  { href: "/operations/workflows", label: "Workflows", icon: Workflow, capability: "can_view_workflows" },
+  { href: "/operations/metrics",   label: "Métricas",  icon: Activity, capability: "can_view_metrics" },
 ];
 
 

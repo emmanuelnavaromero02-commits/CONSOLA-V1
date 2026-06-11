@@ -160,9 +160,9 @@ test.describe("Legacy /studio page (port 8000)", () => {
     // The button may render in the DAG tab; navigate there first.
     await goStudioStep(page, 2);
 
-    if (!(await grafoBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-      test.skip(true, "'Grafo' button not present on /studio — tracked in E2E findings");
-    }
+    await expect(grafoBtn,
+      "'Grafo' button is a visible Studio control; absence must fail instead of skip.",
+    ).toBeVisible({ timeout: 10_000 });
 
     // v1.44.3.2 R1 Testing F3 follow-up: use page.waitForRequest with
     // a /studio/* predicate (mirrors the deploy + superset patterns
@@ -198,9 +198,9 @@ test.describe("Legacy /studio page (port 8000)", () => {
       await openStudio(page);
       await goStudioStep(page, 2);
       const deployBtn = page.getByRole("button", { name: /deploy/i }).first();
-      if (!(await deployBtn.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.skip(true, "'Deploy a Airflow' button not present on /studio");
-      }
+      await expect(deployBtn,
+        "'Deploy a Airflow' is a visible Studio control; absence must fail instead of skip.",
+      ).toBeVisible({ timeout: 10_000 });
       // #273 B4: the button must never be a silent no-op. Two valid
       // states, both observable:
       //   (a) packaged cartridge DAG (or production) -> DISABLED with a
@@ -284,9 +284,9 @@ test.describe("Legacy /studio page (port 8000)", () => {
       await openStudio(page);
       await goStudioStep(page, 4);
       const silver = page.locator(".tab").filter({ hasText: /^SILVER|^Silver/i }).first();
-      if (!(await silver.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.skip(true, "Silver subtab not present under /studio Refinar");
-      }
+      await expect(silver,
+        "Silver subtab is a visible Studio control; absence must fail instead of skip.",
+      ).toBeVisible({ timeout: 10_000 });
       await silver.click({ force: true });
       // The Silver pane must render SOMETHING — either a table, a
       // chart, an empty-state, or an error. A truly blank pane (just
@@ -319,7 +319,10 @@ test.describe("Legacy /studio page (port 8000)", () => {
         .getByRole("button", { name: /\+?\s*crear en superset/i })
         .first();
       if (!(await supersetBtn.isVisible().catch(() => false))) {
-        test.skip(true, "'Crear en Superset' button not present on /studio");
+        await expect(page.locator("#gold-list"),
+          "When Superset creation is not visible, Studio must explain that Gold/Superset is unavailable instead of skipping.",
+        ).toContainText(/No hay datasets Gold|Error cargando datasets|Superset.*interno|VPN|seguridad/i);
+        return;
       }
       const requestPromise = page.waitForRequest(
         (req) => req.url().includes("/api/studio/superset"),
@@ -380,9 +383,9 @@ test.describe("Legacy /studio page (port 8000)", () => {
         }
       }
 
-      if (trigger === null) {
-        test.skip(true, "'Plantillas' affordance not present on /studio");
-      }
+      expect(trigger,
+        "'Plantillas' affordance is a visible Studio control; absence must fail instead of skip.",
+      ).not.toBeNull();
 
       // Click must surface a visible content region (list, modal,
       // or panel) within 10 s. Anything is fine — empty state, full
@@ -403,7 +406,7 @@ test.describe("Legacy /studio page (port 8000)", () => {
           .catch(() => null),
       ]);
 
-      await trigger.click().catch(() => {});
+      await trigger!.click().catch(() => {});
       // Also accept "a new dialog or panel appeared" as a positive
       // signal so a purely client-side modal counts.
       const panelAppeared = page

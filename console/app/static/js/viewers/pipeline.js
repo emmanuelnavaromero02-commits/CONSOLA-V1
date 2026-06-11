@@ -380,6 +380,18 @@ async function extractAll() {
 
 // ── Job polling ───────────────────────────────────────────────────────────────
 
+function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
+  if (timeoutMs === 0) return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: init.signal || controller.signal })
+    .catch(err => {
+      if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
 function parseJobPct(msg) {
   if (!msg) return 0;
   const m = msg.match(/(\d+)\/(\d+)/);
@@ -391,7 +403,7 @@ async function _pollJob(entity, jobId) {
   while (!done) {
     await _sleep(2000);
     try {
-      const r = await fetch(`/api/jobs/${jobId}`);
+      const r = await fetchWithTimeout(`/api/jobs/${jobId}`, {}, 15000);
       const j = await r.json();
       if (j.status === 'done' || j.status === 'failed') {
         delete activeJobs[entity];
@@ -414,7 +426,8 @@ function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function load() {
   try {
     await loadVaultConnections();
-    const r = await fetch(`/api/pipeline?cartridge=${encodeURIComponent(_cartridge)}`);
+    const r = await fetchWithTimeout(`/api/pipeline?cartridge=${encodeURIComponent(_cartridge)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     pipelineData = d.pipeline || [];
 
@@ -436,7 +449,7 @@ async function load() {
 
 async function loadVaultConnections() {
   try {
-    const r = await fetch(`/api/vault/connections/${encodeURIComponent(_cartridge)}`, {credentials: 'same-origin'});
+    const r = await fetchWithTimeout(`/api/vault/connections/${encodeURIComponent(_cartridge)}`, {credentials: 'same-origin'});
     if (!r.ok) return;
     const d = await r.json();
     _vaultConnections = d.connections || [];

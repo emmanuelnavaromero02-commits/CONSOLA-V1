@@ -59,7 +59,7 @@ export async function listDatasets(): Promise<DatasetSummary[]> {
 }
 
 export async function getDatasetDetail(name: string): Promise<DatasetDetail> {
-  const { data } = await api.get<DatasetDetail>(`/datasets/${encodeURIComponent(name)}/schema`);
+  const { data } = await api.get<DatasetDetail>(`/api/datasets/${encodeURIComponent(name)}/detail`);
   return data;
 }
 

@@ -19,6 +19,17 @@ function csrfHeaders(base = {}){
 function jsonHeaders(base = {}){
   return csrfHeaders({ 'Content-Type': 'application/json', ...base });
 }
+function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
+  if (timeoutMs === 0) return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: init.signal || controller.signal })
+    .catch(err => {
+      if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
 
 // ── User bar ───────────────────────────────────────────────────────
 let ME = null;
@@ -48,7 +59,8 @@ async function loadApps() {
   const cont = document.getElementById('apps-container');
   cont.innerHTML = '<div class="empty-state">Cargando…</div>';
   try {
-    const r = await fetch('/api/apps');
+    const r = await fetchWithTimeout('/api/apps');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const apps = d.apps || [];
     document.getElementById('cnt-apps').textContent = apps.length;
@@ -616,7 +628,8 @@ function detailKpisHtml(d) {
 async function fetchDatasets() {
   if (DATASETS) return DATASETS;
   try {
-    const r = await fetch('/api/datasets');
+    const r = await fetchWithTimeout('/api/datasets');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     DATASETS = (d.datasets || []).map(x => ({ name: x.name, layer: x.layer || 'silver' }));
   } catch { DATASETS = []; }
@@ -625,7 +638,8 @@ async function fetchDatasets() {
 async function fetchSchema(name) {
   if (SCHEMAS[name]) return SCHEMAS[name];
   try {
-    const r = await fetch('/api/datasets/' + encodeURIComponent(name) + '/schema');
+    const r = await fetchWithTimeout('/api/datasets/' + encodeURIComponent(name) + '/schema');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     SCHEMAS[name] = d.schema || d.fields || [];
   } catch { SCHEMAS[name] = []; }

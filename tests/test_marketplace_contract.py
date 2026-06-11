@@ -45,7 +45,7 @@ def test_marketplace_next_surface_keeps_customer_and_admin_flows():
     for action in ("approve", "pause", "revoke", "reactivate"):
         assert action in component
     assert 'href: "/marketplace"' in navigation
-    assert 'permission: "marketplace.read"' in navigation
+    assert 'capability: "can_view_marketplace"' in navigation
     assert 'can_admin_marketplace' in component
 
 
