@@ -44,6 +44,18 @@ DATASET_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+PIPELINE_DAG_STATUS_TIMEOUT_SEC = _env_float("PIPELINE_DAG_STATUS_TIMEOUT_SEC", 1.5)
+PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC = _env_float("PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC", 2.5)
+PIPELINE_DATASETS_TIMEOUT_SEC = _env_float("PIPELINE_DATASETS_TIMEOUT_SEC", 4.0)
+
+
 def _app_env() -> str:
     return os.environ.get("APP_ENV", "production").strip().lower()
 
@@ -765,6 +777,27 @@ async def _call_with_optional_user(fn, *args, user=None):
     return result
 
 
+async def _pipeline_gather_by_entity(work: dict[str, Any], timeout: float) -> tuple[dict[str, Any], set[str], set[str]]:
+    if not work:
+        return {}, set(), set()
+    tasks_by_task = {
+        asyncio.create_task(coro): entity
+        for entity, coro in work.items()
+    }
+    done, pending = await asyncio.wait(tasks_by_task, timeout=max(timeout, 0.001))
+    results: dict[str, Any] = {}
+    failed: set[str] = set()
+    for task in done:
+        entity = tasks_by_task[task]
+        try:
+            results[entity] = task.result()
+        except Exception:
+            failed.add(entity)
+    for task in pending:
+        task.cancel()
+    return results, {tasks_by_task[task] for task in pending}, failed
+
+
 def _mcp_payload(tool: str, args: dict, user: dict | None = None) -> dict:
     payload = {"tool": tool, "args": args}
     if user is not None:
@@ -857,11 +890,14 @@ async def _bronze_physical_snapshot(cartridge: str, entity: str, user: dict | No
         return {}
     bucket = os.environ.get("MINIO_BUCKET", "lakehouse")
     try:
-        client = _minio_client()
-        object_names = [
-            obj.object_name
-            for obj in client.list_objects(bucket, prefix=list_prefix, recursive=True)
-        ]
+        def _list_object_names() -> list[str]:
+            client = _minio_client()
+            return [
+                obj.object_name
+                for obj in client.list_objects(bucket, prefix=list_prefix, recursive=True)
+            ]
+
+        object_names = await asyncio.to_thread(_list_object_names)
         latest_date = _bronze_latest_date_from_objects(cartridge, entity, object_names)
         if not latest_date:
             return {}
@@ -897,6 +933,51 @@ def _normalize_airflow_state(state: str | None) -> str:
     if normalized in {"queued", "running", "success", "failed"}:
         return normalized
     return "unknown"
+
+
+_AIRFLOW_LOG_TASKS_BY_DAG = {
+    "sap_successfactors_extract": ("trigger_extract",),
+    "sap_successfactors_extract_all": ("trigger_extract_all",),
+}
+
+
+def _airflow_task_id(task: Any) -> str | None:
+    if isinstance(task, dict):
+        value = task.get("task_id")
+    else:
+        value = getattr(task, "task_id", None)
+    value = str(value or "").strip()
+    return value or None
+
+
+def _airflow_log_task_ids(dag_id: str | None, tasks: list[dict] | None = None) -> list[str]:
+    dag_id = str(dag_id or "").strip()
+    preferred = list(_AIRFLOW_LOG_TASKS_BY_DAG.get(dag_id, ()))
+    available = [
+        task_id
+        for task_id in (_airflow_task_id(task) for task in (tasks or []))
+        if task_id
+    ]
+    if available:
+        if preferred:
+            return [task_id for task_id in preferred if task_id in available]
+        return available
+    if preferred:
+        return preferred
+    return ["extract"]
+
+
+def _airflow_log_attempt(dag_id: str | None, dag_run_id: str | None, task_ids: list[str], tasks: list[dict] | None = None) -> dict:
+    return {
+        "dag_id": dag_id,
+        "dag_run_id": dag_run_id,
+        "task_ids": task_ids,
+        "available_task_ids": [
+            task_id
+            for task_id in (_airflow_task_id(task) for task in (tasks or []))
+            if task_id
+        ],
+    }
 
 
 _COLUMN_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
@@ -3605,6 +3686,12 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         elif isinstance(entities_raw, list):
             entity_list = entities_raw
 
+    partial_reasons: dict[str, set[str]] = {}
+
+    def _mark_partial(entity: str, reason: str) -> None:
+        if entity:
+            partial_reasons.setdefault(entity, set()).add(reason)
+
     # 2a. pipeline_runs — most recent run per entity (written by Airflow DAGs)
     dag_runs_by_entity: dict[str, dict] = {}
     try:
@@ -3624,9 +3711,18 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
             cartridge,
             *scope_values,
         )
-        for row in rows_pg:
-            run = await _refresh_dag_run_status(dict(row), user)
-            dag_runs_by_entity[row["entity"]] = run
+        raw_runs_by_entity = {row["entity"]: dict(row) for row in rows_pg}
+        refreshed, pending, failed = await _pipeline_gather_by_entity(
+            {
+                entity: _refresh_dag_run_status(dict(row), user)
+                for entity, row in raw_runs_by_entity.items()
+            },
+            PIPELINE_DAG_STATUS_TIMEOUT_SEC,
+        )
+        for entity, row in raw_runs_by_entity.items():
+            dag_runs_by_entity[entity] = refreshed.get(entity) or row
+        for entity in pending | failed:
+            _mark_partial(entity, "airflow_status_refresh")
     except Exception:
         logger.debug("Could not load pipeline_runs for %s", cartridge, exc_info=True)
 
@@ -3641,7 +3737,9 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
 
     # 3. Silver datasets from refinement
     try:
-        all_datasets = (await _refinement_invoke("list_datasets", {}, timeout=15, user=user)).get("datasets", [])
+        all_datasets = (
+            await _refinement_invoke("list_datasets", {}, timeout=PIPELINE_DATASETS_TIMEOUT_SEC, user=user)
+        ).get("datasets", [])
     except Exception:
         all_datasets = []
         # Some in-process tests replace ``httpx.AsyncClient`` with a minimal
@@ -3672,6 +3770,37 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
                 deps.append(gds)
         return deps
 
+    snapshot_work: dict[str, Any] = {}
+    for e in entity_list:
+        entity = e.get("entity") or e.get("name") or ""
+        if not entity:
+            continue
+        dag_run = dag_runs_by_entity.get(entity)
+        last_job = jobs_by_entity.get(entity)
+        bronze_date = None
+        bronze_count = None
+        if dag_run:
+            bronze_date = str(dag_run.get("finished_at"))[:10] if dag_run.get("finished_at") else None
+            bronze_count = dag_run.get("record_count")
+        elif last_job and last_job.get("status") == "done":
+            res = last_job.get("result") or {}
+            bronze_date = (last_job.get("finished_at") or last_job.get("created_at") or "")[:10]
+            bronze_count = res.get("record_count") or res.get("total_records")
+        if not bronze_date or bronze_count is None:
+            snapshot_work[entity] = _call_with_optional_user(
+                _bronze_physical_snapshot,
+                cartridge,
+                entity,
+                user=user,
+            )
+
+    physical_bronze_by_entity, snapshot_pending, snapshot_failed = await _pipeline_gather_by_entity(
+        snapshot_work,
+        PIPELINE_BRONZE_SNAPSHOT_TIMEOUT_SEC,
+    )
+    for entity in snapshot_pending | snapshot_failed:
+        _mark_partial(entity, "bronze_snapshot")
+
     # 4. Assemble pipeline rows
     rows = []
     for e in entity_list:
@@ -3685,6 +3814,7 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         bronze_date  = None
         bronze_count = None
         last_run_info = None
+        dag_status = None
 
         if dag_run:
             # Airflow DAG run is authoritative
@@ -3720,12 +3850,7 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
             }
 
         if not bronze_date or bronze_count is None:
-            physical_bronze = await _call_with_optional_user(
-                _bronze_physical_snapshot,
-                cartridge,
-                entity,
-                user=user,
-            )
+            physical_bronze = physical_bronze_by_entity.get(entity) or {}
             if physical_bronze:
                 bronze_date = bronze_date or physical_bronze.get("latest_date")
                 if bronze_count is None:
@@ -3734,8 +3859,12 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
         # Bronze freshness
         if dag_run and dag_run["status"] == "failed" and not bronze_date:
             bronze_status = "error"
+        elif dag_status in {"queued", "running"} and not bronze_date:
+            bronze_status = "running"
         elif bronze_date:
             bronze_status = _freshness(bronze_date + "T00:00:00+00:00")
+        elif entity in partial_reasons:
+            bronze_status = "unknown"
         else:
             bronze_status = "never"
 
@@ -3762,6 +3891,7 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
                         "status":       _freshness(gds.get("last_refresh"), threshold_h=24),
                     })
 
+        entity_partial = sorted(partial_reasons.get(entity, set()))
         rows.append({
             "entity":    entity,
             "cartridge": cartridge,
@@ -3789,11 +3919,26 @@ async def api_pipeline(cartridge: str = "", user: dict = Depends(require_authent
             },
             "silver": silver_nodes,
             "gold":   gold_nodes,
+            "metadata": {
+                "partial": bool(entity_partial),
+                "pending": entity_partial,
+                "stale": bool(entity_partial),
+            },
         })
 
     _order = {"running": 0, "error": 1, "stale": 2, "fresh": 3, "never": 4, "unknown": 5}
     rows.sort(key=lambda r: _order.get(r["bronze"]["status"], 5))
-    return {"pipeline": rows}
+    pending_entities = sorted(partial_reasons)
+    return {
+        "pipeline": rows,
+        "metadata": {
+            "partial": bool(pending_entities),
+            "pending_entities": pending_entities,
+            "stale": bool(pending_entities),
+        },
+        "partial": bool(pending_entities),
+        "pending_entities": pending_entities,
+    }
 
 
 @app.get("/api/dag_templates", dependencies=[Depends(require_authenticated)])
@@ -3937,7 +4082,14 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, us
         raise HTTPException(500, f"Internal server error. error_id={_eid}")
 
     if not row:
-        raise HTTPException(404, f"Run '{dag_run_id}' not found for {cartridge}/{entity}")
+        raise HTTPException(404, {
+            "error": f"Run '{dag_run_id}' not found for {cartridge}/{entity}",
+            "attempted": {
+                "dag_id": metadata.get("dag_id"),
+                "dag_run_id": dag_run_id,
+                "task_ids": [],
+            },
+        })
 
     run = await _refresh_dag_run_status(dict(row), user)
     dag_id = run.get("dag_id") or metadata.get("dag_id")
@@ -3952,6 +4104,7 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, us
         "logs": [],
         "error": run.get("error_message"),
         "available": False,
+        "attempted": _airflow_log_attempt(dag_id, resolved_dag_run_id, []),
     }
 
     try:
@@ -3960,16 +4113,27 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, us
             "dag_run_id": resolved_dag_run_id,
         }, user=user)
         if tasks_result.get("error"):
-            response["error"] = tasks_result["error"]
+            fallback_task_ids = _airflow_log_task_ids(dag_id, [])
+            response["attempted"] = _airflow_log_attempt(dag_id, resolved_dag_run_id, fallback_task_ids)
+            response["error"] = (
+                f"Could not list Airflow tasks for dag_id={dag_id} "
+                f"dag_run_id={resolved_dag_run_id}: {tasks_result['error']}"
+            )
             return response
 
         tasks = tasks_result.get("tasks") or []
         response["tasks"] = tasks
+        task_ids = _airflow_log_task_ids(dag_id, tasks)
+        response["attempted"] = _airflow_log_attempt(dag_id, resolved_dag_run_id, task_ids, tasks)
+        if not task_ids:
+            response["error"] = (
+                f"No Airflow log task found for dag_id={dag_id} dag_run_id={resolved_dag_run_id}; "
+                f"available_task_ids={response['attempted']['available_task_ids']}"
+            )
+            return response
+
         logs = []
-        for task in tasks:
-            task_id = task.get("task_id")
-            if not task_id:
-                continue
+        for task_id in task_ids:
             log_result = await mcp_registry.invoke("infra", "airflow_get_task_logs", {
                 "dag_id": dag_id,
                 "dag_run_id": resolved_dag_run_id,
@@ -3977,11 +4141,18 @@ async def api_pipeline_run_logs(cartridge: str, entity: str, dag_run_id: str, us
             }, user=user)
             if log_result.get("error"):
                 logs.append({"task_id": task_id, "available": False, "error": log_result["error"]})
+            elif not log_result.get("logs"):
+                logs.append({"task_id": task_id, "available": False, "error": "No logs returned by Airflow"})
             else:
                 logs.append({"task_id": task_id, "available": True, "logs": log_result.get("logs", "")})
 
         response["logs"] = logs
-        response["available"] = bool(tasks) and all(item.get("available") for item in logs)
+        response["available"] = any(item.get("available") for item in logs)
+        if not response["available"]:
+            response["error"] = (
+                f"No Airflow logs found for dag_id={dag_id} "
+                f"dag_run_id={resolved_dag_run_id} task_ids={task_ids}"
+            )
         return response
     except Exception:
         _eid = uuid.uuid4().hex
@@ -5621,6 +5792,8 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
         # 2. Resolve Airflow dag_run_id — prefer the stored value, fall back to list+match
         airflow_run_id = last_run.get("airflow_dag_run_id")
         airflow_logs   = None
+        airflow_log_error = None
+        airflow_attempt = _airflow_log_attempt(dag_id, airflow_run_id, [])
         try:
             if not airflow_run_id:
                 # Fallback for older runs that predate the airflow_dag_run_id column:
@@ -5641,15 +5814,44 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
                     airflow_run_id = af_runs[0]["dag_run_id"]
 
             if airflow_run_id:
-                logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
-                                                   {"dag_id":     dag_id,
-                                                    "dag_run_id": airflow_run_id,
-                                                    "task_id":    "extract"},
-                                                   user=user)
-                airflow_logs = (logs_r or {}).get("logs", "")
+                tasks_r = await mcp_registry.invoke("infra", "airflow_list_task_instances",
+                                                    {"dag_id": dag_id, "dag_run_id": airflow_run_id},
+                                                    user=user)
+                if (tasks_r or {}).get("error"):
+                    task_ids = _airflow_log_task_ids(dag_id, [])
+                    airflow_attempt = _airflow_log_attempt(dag_id, airflow_run_id, task_ids)
+                    airflow_log_error = (
+                        f"Could not list Airflow tasks for dag_id={dag_id} "
+                        f"dag_run_id={airflow_run_id}: {tasks_r['error']}"
+                    )
+                else:
+                    tasks = (tasks_r or {}).get("tasks") or []
+                    task_ids = _airflow_log_task_ids(dag_id, tasks)
+                    airflow_attempt = _airflow_log_attempt(dag_id, airflow_run_id, task_ids, tasks)
+                    if not task_ids:
+                        airflow_log_error = (
+                            f"No Airflow log task found for dag_id={dag_id} dag_run_id={airflow_run_id}; "
+                            f"available_task_ids={airflow_attempt['available_task_ids']}"
+                        )
+                    for task_id in task_ids:
+                        logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
+                                                           {"dag_id": dag_id,
+                                                            "dag_run_id": airflow_run_id,
+                                                            "task_id": task_id},
+                                                           user=user)
+                        if (logs_r or {}).get("logs"):
+                            airflow_logs = logs_r.get("logs", "")
+                            break
+                    if task_ids and not airflow_logs and not airflow_log_error:
+                        airflow_log_error = (
+                            f"No Airflow logs found for dag_id={dag_id} "
+                            f"dag_run_id={airflow_run_id} task_ids={task_ids}"
+                        )
+            else:
+                airflow_log_error = f"No Airflow dag_run_id found for dag_id={dag_id}"
         except Exception:
             logger.debug("Airflow log fetch failed for %s/%s", cartridge_id, entity, exc_info=True)
-            airflow_logs = "(No se pudieron obtener logs de Airflow)"
+            airflow_log_error = f"Airflow log fetch failed for dag_id={dag_id} dag_run_id={airflow_run_id}"
 
         return {
             "entity":        entity,
@@ -5659,7 +5861,9 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
             "status":        last_run["status"],
             "started_at":    str(last_run.get("started_at",""))[:19],
             "error_message": last_run.get("error_message"),
-            "airflow_logs":  airflow_logs,
+            "airflow_logs":  airflow_logs or "",
+            "airflow_log_error": airflow_log_error,
+            "attempted":     airflow_attempt,
         }
 
     if tool == "update_entity":

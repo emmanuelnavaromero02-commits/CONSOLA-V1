@@ -271,6 +271,8 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
         # 2. Resolve Airflow dag_run_id — prefer the stored value, fall back to list+match
         airflow_run_id = last_run.get("airflow_dag_run_id")
         airflow_logs   = None
+        airflow_log_error = None
+        airflow_attempt = _airflow_log_attempt(dag_id, airflow_run_id, [])
         try:
             if not airflow_run_id:
                 # Fallback for older runs that predate the airflow_dag_run_id column:
@@ -291,15 +293,44 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
                     airflow_run_id = af_runs[0]["dag_run_id"]
 
             if airflow_run_id:
-                logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
-                                                   {"dag_id":     dag_id,
-                                                    "dag_run_id": airflow_run_id,
-                                                    "task_id":    "extract"},
-                                                   user=user)
-                airflow_logs = (logs_r or {}).get("logs", "")
+                tasks_r = await mcp_registry.invoke("infra", "airflow_list_task_instances",
+                                                    {"dag_id": dag_id, "dag_run_id": airflow_run_id},
+                                                    user=user)
+                if (tasks_r or {}).get("error"):
+                    task_ids = _airflow_log_task_ids(dag_id, [])
+                    airflow_attempt = _airflow_log_attempt(dag_id, airflow_run_id, task_ids)
+                    airflow_log_error = (
+                        f"Could not list Airflow tasks for dag_id={dag_id} "
+                        f"dag_run_id={airflow_run_id}: {tasks_r['error']}"
+                    )
+                else:
+                    tasks = (tasks_r or {}).get("tasks") or []
+                    task_ids = _airflow_log_task_ids(dag_id, tasks)
+                    airflow_attempt = _airflow_log_attempt(dag_id, airflow_run_id, task_ids, tasks)
+                    if not task_ids:
+                        airflow_log_error = (
+                            f"No Airflow log task found for dag_id={dag_id} dag_run_id={airflow_run_id}; "
+                            f"available_task_ids={airflow_attempt['available_task_ids']}"
+                        )
+                    for task_id in task_ids:
+                        logs_r = await mcp_registry.invoke("infra", "airflow_get_task_logs",
+                                                           {"dag_id": dag_id,
+                                                            "dag_run_id": airflow_run_id,
+                                                            "task_id": task_id},
+                                                           user=user)
+                        if (logs_r or {}).get("logs"):
+                            airflow_logs = logs_r.get("logs", "")
+                            break
+                    if task_ids and not airflow_logs and not airflow_log_error:
+                        airflow_log_error = (
+                            f"No Airflow logs found for dag_id={dag_id} "
+                            f"dag_run_id={airflow_run_id} task_ids={task_ids}"
+                        )
+            else:
+                airflow_log_error = f"No Airflow dag_run_id found for dag_id={dag_id}"
         except Exception:
             logger.debug("Airflow log fetch failed for %s/%s", cartridge_id, entity, exc_info=True)
-            airflow_logs = "(No se pudieron obtener logs de Airflow)"
+            airflow_log_error = f"Airflow log fetch failed for dag_id={dag_id} dag_run_id={airflow_run_id}"
 
         return {
             "entity":        entity,
@@ -309,7 +340,9 @@ async def studio_ops_invoke(body: dict, user: dict = Depends(_internal_or_authen
             "status":        last_run["status"],
             "started_at":    str(last_run.get("started_at",""))[:19],
             "error_message": last_run.get("error_message"),
-            "airflow_logs":  airflow_logs,
+            "airflow_logs":  airflow_logs or "",
+            "airflow_log_error": airflow_log_error,
+            "attempted":     airflow_attempt,
         }
 
     if tool == "update_entity":
