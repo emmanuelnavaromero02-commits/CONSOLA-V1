@@ -21,7 +21,7 @@ import { state } from './legacy-state.js';
           supersetLink.setAttribute('href', url);
           if (!url || url === '#') {
             supersetLink.setAttribute('aria-disabled', 'true');
-            supersetLink.textContent = 'Superset no expuesto';
+            supersetLink.textContent = 'Superset interno por seguridad';
           }
         }
       })
@@ -2386,9 +2386,9 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
           <div>
             <h2>Analytics &amp; Superset</h2>
             <p class="step-desc">Crea datasets, gráficos y dashboards en Apache Superset directamente desde el asistente.
-              Describe los KPIs que necesitas y el asistente los configura por ti.</p>
+              Superset está disponible solo internamente por seguridad; Solicita acceso interno/VPN para abrir dashboards.</p>
           </div>
-          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetHref || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset no expuesto' : 'Abrir Superset ↗'}</a>
+          <a class="btn btn-sm btn-amber" id="analytics-superset-link" role="button" href="${esc(supersetHref || '#')}" target="_blank" rel="noopener" ${supersetDisabled ? 'aria-disabled="true"' : ''}>${supersetDisabled ? 'Superset interno por seguridad' : 'Abrir Superset ↗'}</a>
         </div>
 
         <div class="card">
@@ -2469,7 +2469,7 @@ FROM read_parquet('${upstream}', hive_partitioning=true, union_by_name=true)`;
         if (!url || url === '#') {
           event.preventDefault();
           supersetLink.setAttribute('aria-disabled', 'true');
-          supersetLink.textContent = 'Superset no expuesto';
+          supersetLink.textContent = 'Superset interno por seguridad';
           return;
         }
         event.preventDefault();

@@ -115,6 +115,23 @@ def test_fetch_urls_literal_and_aligned(name):
         assert ds.startswith("sap_successfactors_"), f"{name}: fetch {ds} missing prefix"
 
 
+def test_successfactors_apps_explain_optional_dependencies_without_false_zeroes():
+    workforce = _html("sap_successfactors_workforce_overview")
+    talent = _html("sap_successfactors_talent_health")
+
+    assert "Datos parciales cargados" in workforce
+    assert "Dato no disponible por alcance actual" in workforce
+    assert "Requiere módulo adicional" in workforce
+    assert "turnover == null ? '—'" in workforce
+    assert "Rotacion pendiente" not in workforce
+
+    assert "Datos parciales cargados" in talent
+    assert "Dataset no materializado" in talent
+    assert "Dependencia no configurada" in talent
+    assert "openReq == null ? '—'" in talent
+    assert "Reclutamiento pendiente" not in talent
+
+
 def test_app_filenames_prefixed():
     for path in APPS_DIR.glob("*.html"):
         assert path.stem.startswith("sap_successfactors_"), f"{path.name} not prefixed"

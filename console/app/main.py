@@ -3410,15 +3410,23 @@ def _filter_apps_payload_to_scoped_connections(payload: Any, active_cartridges: 
         apps = []
     normalized["apps"] = apps
 
-    if active_cartridges:
-        apps = [
-            app
-            for app in apps
-            if isinstance(app, dict) and _app_cartridge_id(app) in active_cartridges
-        ]
-        normalized[apps_key] = apps
-        normalized["apps"] = apps
-        normalized["active_scoped_cartridges"] = sorted(active_cartridges)
+    visible_apps = [
+        app
+        for app in apps
+        if isinstance(app, dict) and _app_cartridge_id(app) in active_cartridges
+    ]
+    normalized[apps_key] = visible_apps
+    normalized["apps"] = visible_apps
+    normalized["active_scoped_cartridges"] = sorted(active_cartridges)
+    normalized["apps_scope"] = {
+        "mode": "active_connections" if active_cartridges else "no_active_connections",
+        "hidden_unconfigured_count": max(0, len(apps) - len(visible_apps)),
+        "message": (
+            "Apps filtradas por conexiones activas del workspace."
+            if active_cartridges
+            else "No hay apps configuradas para conexiones activas del workspace."
+        ),
+    }
     return normalized
 
 

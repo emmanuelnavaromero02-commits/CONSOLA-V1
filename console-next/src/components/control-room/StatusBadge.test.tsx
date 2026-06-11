@@ -6,13 +6,13 @@ import { MiniBar, ReadinessBadge, readinessLabels, readinessTone } from "./Statu
 describe("Control Room readiness states", () => {
   it.each([
     ["ready", "Listo"],
-    ["partial", "Datos incompletos"],
-    ["stub", "Sin información suficiente"],
-    ["empty", "Sin información suficiente"],
-    ["missing", "Información no disponible"],
-    ["unavailable", "Información no disponible"],
+    ["partial", "Datos parciales"],
+    ["stub", "Fuera de alcance actual"],
+    ["empty", "Sin datos configurados"],
+    ["missing", "Dataset no materializado"],
+    ["unavailable", "Dependencia no configurada"],
     ["blocked", "Bloqueado"],
-    ["no_permission", "Bloqueado por permisos"],
+    ["no_permission", "Requiere permisos OData"],
     ["error", "Error operativo"],
   ] as const)("renders %s explicitly", (status, label) => {
     const markup = renderToStaticMarkup(<ReadinessBadge status={status} />);

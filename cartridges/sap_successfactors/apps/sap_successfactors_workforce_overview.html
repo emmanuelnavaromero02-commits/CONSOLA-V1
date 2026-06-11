@@ -90,6 +90,15 @@ const charts = {};
 function showError(msg){ document.getElementById('error').innerHTML = `<div class="error">Error cargando datos: ${msg}</div>`; }
 function showNotice(msg){ document.getElementById('error').innerHTML = msg ? `<div class="notice">${msg}</div>` : ''; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function missingMessage(label, error){
+  const byLabel = {
+    Rotacion: 'Rotación: Dato no disponible por alcance actual · Requiere módulo adicional',
+    Departamentos: 'Departamentos: Dependencia no configurada',
+    Ubicaciones: 'Ubicaciones: Dependencia no configurada',
+    Companias: 'Compañías: Dependencia no configurada'
+  };
+  return `${byLabel[label] || `${label}: Dependencia no configurada`} (${esc(error)})`;
+}
 
 async function fetchJson(url){
   const r = await fetch(url);
@@ -124,6 +133,7 @@ function hbar(canvasId, labels, values, color){
 }
 
 function latestYearTurnover(){
+  if(UNAVAILABLE['Rotacion']) return null;
   const years = TURN.map(r=> String(r.termination_month||'').slice(0,4)).filter(Boolean);
   if(!years.length) return 0;
   const max = years.sort().at(-1);
@@ -132,6 +142,7 @@ function latestYearTurnover(){
 
 function renderKPIs(compRows){
   const headcount = compRows.reduce((s,r)=> s + Number(r.headcount||0), 0);
+  const turnover = latestYearTurnover();
   document.getElementById('kpis').innerHTML = `
     <div class="kpi-card" style="--accent:var(--green)">
       <div class="kpi-label">Headcount activo</div>
@@ -150,8 +161,8 @@ function renderKPIs(compRows){
     </div>
     <div class="kpi-card" style="--accent:var(--red)">
       <div class="kpi-label">Rotación YTD</div>
-      <div class="kpi-val">${fmtN(latestYearTurnover())}</div>
-      <div class="kpi-sub">bajas (último año)</div>
+      <div class="kpi-val">${turnover == null ? '—' : fmtN(turnover)}</div>
+      <div class="kpi-sub">${turnover == null ? 'Dato no disponible por alcance actual' : 'bajas (último año)'}</div>
     </div>`;
 }
 
@@ -181,7 +192,7 @@ function renderTurnoverChart(){
   if(charts['chart-turnover']) charts['chart-turnover'].destroy();
   const ctx = document.getElementById('chart-turnover');
   if(UNAVAILABLE['Rotacion']){
-    ctx.parentElement.innerHTML = `<div class="empty">Rotacion pendiente: ${esc(UNAVAILABLE['Rotacion'])}</div>`;
+    ctx.parentElement.innerHTML = `<div class="empty">Dato no disponible por alcance actual · Requiere módulo adicional</div>`;
     return;
   }
   if(!TURN.length){ ctx.parentElement.innerHTML = '<div class="empty">Sin datos de rotación en la ventana extraída</div>'; return; }
@@ -213,8 +224,8 @@ async function init(){
       fetchOptional('Rotacion', '/api/data/sap_successfactors_turnover_by_period'),
     ]);
     DEPT = dept; LOC = loc; COMP = comp; TURN = turn;
-    const missing = Object.entries(UNAVAILABLE).map(([k,v]) => `${esc(k)}: ${esc(v)}`);
-    showNotice(missing.length ? `Datos parciales cargados. Pendiente: ${missing.join(' · ')}` : '');
+    const missing = Object.entries(UNAVAILABLE).map(([k,v]) => missingMessage(k, v));
+    showNotice(missing.length ? `Datos parciales cargados. ${missing.join(' · ')}` : '');
 
     const companies = [...new Set(COMP.map(r=> String(r.company_id||r.company_name||'')).filter(Boolean))];
     document.getElementById('company-filter').insertAdjacentHTML('beforeend',

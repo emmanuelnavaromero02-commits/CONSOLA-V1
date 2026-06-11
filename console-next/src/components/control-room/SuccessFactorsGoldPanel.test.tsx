@@ -110,7 +110,7 @@ describe("SuccessFactorsGoldPanel", () => {
     expect(markup).toContain("Vista de personal");
     expect(markup).toContain("Decisiones OMEGA");
     expect(markup).toContain("Distribución de plantilla");
-    expect(markup).toContain("Bloqueado por permisos");
+    expect(markup).toContain("Requiere permisos OData");
     expect(markup).toContain("RLS blocked scoped read");
     expect(markup).not.toContain("Preview data");
     expect(markup).not.toContain("Schema");
@@ -164,6 +164,8 @@ describe("SuccessFactorsGoldPanel", () => {
     expect(markup).toContain("Qué se puede decidir con SuccessFactors");
     expect(markup).toContain("Embudo de reclutamiento");
     expect(markup).toContain("Aprendizaje y desempeño");
+    expect(markup).toContain("Datos parciales");
+    expect(markup).toContain("Fuera de alcance actual");
     expect(markup).not.toContain("/viewer?type=schema");
     expect(markup).not.toContain("/api/data/");
     expect(markup).not.toContain("Catálogo Gold");

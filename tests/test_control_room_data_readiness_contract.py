@@ -72,6 +72,18 @@ def test_dashboard_exposes_data_readiness_in_backend_and_ui():
         assert needle in ui
     assert "frentes con se\u00f1ales" in ui
     assert "listos para decidir" in ui
+    for label in (
+        "datos parciales",
+        "fuera de alcance actual",
+        "Requiere permisos OData",
+        "Dataset no materializado",
+        "Sin datos configurados",
+        "No aplica",
+    ):
+        assert label in ui
+    assert "Bloqueado por permisos." not in ui
+    assert "Datos incompletos para una decisi\u00f3n autom\u00e1tica." not in ui
+    assert "sin informaci\u00f3n suficiente" not in ui
     assert "modulos activos" not in ui
 
 

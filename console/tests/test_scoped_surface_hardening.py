@@ -475,7 +475,7 @@ def test_explorer_allows_scoped_ancestors_but_rejects_foreign_objects():
 
 
 @pytest.mark.asyncio
-async def test_apps_filter_preserves_catalog_fallback_when_no_connections(monkeypatch):
+async def test_apps_filter_blocks_catalog_fallback_when_no_connections(monkeypatch):
     class FakeResponse:
         status_code = 200
 
@@ -503,8 +503,9 @@ async def test_apps_filter_preserves_catalog_fallback_when_no_connections(monkey
 
     result = await console_main.api_apps(USER)
 
-    assert result["apps"] == [{"name": "sap_hcm_people_quality_dashboard", "cartridge": "sap_hcm"}]
-    assert "active_scoped_cartridges" not in result
+    assert result["apps"] == []
+    assert result["active_scoped_cartridges"] == []
+    assert result["apps_scope"]["mode"] == "no_active_connections"
 
 
 @pytest.mark.asyncio
