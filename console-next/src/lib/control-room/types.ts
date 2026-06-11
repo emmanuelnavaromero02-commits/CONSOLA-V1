@@ -160,9 +160,11 @@ export interface SfGoldWidgetRow {
 export interface SfGoldWidget {
   id: string;
   title: string;
-  value: number;
+  value: number | null;
   dataset: string;
   rows: SfGoldWidgetRow[];
+  status?: DataReadiness | SourceState | "ready";
+  error?: string | null;
 }
 
 export interface SfGoldKpisPayload {

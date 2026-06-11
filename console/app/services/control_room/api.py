@@ -163,21 +163,75 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             })
         return sorted(top, key=lambda item: (-int(item["headcount"]), item["label"]))[:limit]
 
-    async def gold_rows(dataset: str, limit: int) -> list[dict[str, Any]]:
+    def status_error(results: list[dict[str, Any]]) -> str | None:
+        errors = [
+            str(result.get("error"))
+            for result in results
+            if result.get("error")
+        ]
+        return "; ".join(errors) if errors else None
+
+    def usable_rows(result: dict[str, Any]) -> list[dict[str, Any]] | None:
+        status = str(result.get("status") or "")
+        if status in {"ready", "empty"}:
+            return result.get("rows") if isinstance(result.get("rows"), list) else []
+        return None
+
+    def combine_widget_status(results: list[dict[str, Any]]) -> str:
+        statuses = {str(result.get("status") or "unavailable") for result in results}
+        usable = any(status in {"ready", "empty"} for status in statuses)
+        if usable and any(status in {"no_permission", "unavailable", "missing"} for status in statuses):
+            return "partial"
+        for status in ("no_permission", "unavailable", "missing", "empty", "ready"):
+            if status in statuses:
+                return status
+        return "unavailable"
+
+    async def gold_result(dataset: str, limit: int) -> dict[str, Any]:
         try:
-            return await query_gold_dataset_rows(dataset, user, limit)
+            rows = await query_gold_dataset_rows(dataset, user, limit)
         except HTTPException as exc:
-            if exc.status_code in {404, 503}:
-                return []
-            raise
+            status = {
+                403: "no_permission",
+                404: "missing",
+                503: "unavailable",
+            }.get(exc.status_code, "unavailable")
+            return {
+                "rows": [],
+                "status": status,
+                "error": str(exc.detail or f"{dataset} unavailable"),
+            }
+        except Exception as exc:
+            return {
+                "rows": [],
+                "status": "unavailable",
+                "error": str(exc),
+            }
+        clean_rows = [dict(row) for row in rows if isinstance(row, dict)]
+        return {
+            "rows": clean_rows,
+            "status": "empty" if not clean_rows else "ready",
+            "error": None,
+        }
 
-    employee_rows = await gold_rows(sf_gold_datasets["employee_360"], 5000)
-    company_rows = await gold_rows(sf_gold_datasets["headcount_by_company"], 1000)
-    location_rows = await gold_rows(sf_gold_datasets["headcount_by_location"], 1000)
-    department_rows = await gold_rows(sf_gold_datasets["headcount_by_department"], 1000)
+    employee_result = await gold_result(sf_gold_datasets["employee_360"], 5000)
+    company_result = await gold_result(sf_gold_datasets["headcount_by_company"], 1000)
+    location_result = await gold_result(sf_gold_datasets["headcount_by_location"], 1000)
+    department_result = await gold_result(sf_gold_datasets["headcount_by_department"], 1000)
 
-    company_headcount_total = sum(int(row.get("headcount") or 0) for row in company_rows)
-    active_headcount = company_headcount_total or sum(1 for row in employee_rows if truthy(row.get("is_active")))
+    employee_rows = usable_rows(employee_result)
+    company_rows = usable_rows(company_result)
+    location_rows = usable_rows(location_result)
+    department_rows = usable_rows(department_result)
+
+    company_headcount_total = None if company_rows is None else sum(int(row.get("headcount") or 0) for row in company_rows)
+    employee_active_total = None if employee_rows is None else sum(1 for row in employee_rows if truthy(row.get("is_active")))
+    if company_headcount_total and company_headcount_total > 0:
+        active_headcount = company_headcount_total
+    elif employee_active_total is not None:
+        active_headcount = employee_active_total
+    else:
+        active_headcount = company_headcount_total
     generated_at = datetime.now(UTC).isoformat()
     tenant_id, workspace_id = _workspace_scope(user)
 
@@ -188,7 +242,9 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             "value": active_headcount,
             "dataset": sf_gold_datasets["employee_360"],
             "href": dataset_href(sf_gold_datasets["employee_360"]),
-            "rows": public_rows(employee_rows, 5),
+            "rows": public_rows(employee_rows or [], 5),
+            "status": combine_widget_status([employee_result, company_result]),
+            "error": status_error([employee_result, company_result]),
         },
         {
             "id": "sf_headcount_by_company",
@@ -196,23 +252,29 @@ async def sap_successfactors_gold_kpis(user: dict | None) -> dict[str, Any]:
             "value": company_headcount_total,
             "dataset": sf_gold_datasets["headcount_by_company"],
             "href": dataset_href(sf_gold_datasets["headcount_by_company"]),
-            "rows": top_headcount_rows(company_rows, ("company_id", "company_name")),
+            "rows": top_headcount_rows(company_rows or [], ("company_id", "company_name")),
+            "status": company_result["status"],
+            "error": company_result.get("error"),
         },
         {
             "id": "sf_headcount_by_location",
             "title": "Headcount por ubicacion",
-            "value": sum(int(row.get("headcount") or 0) for row in location_rows),
+            "value": None if location_rows is None else sum(int(row.get("headcount") or 0) for row in location_rows),
             "dataset": sf_gold_datasets["headcount_by_location"],
             "href": dataset_href(sf_gold_datasets["headcount_by_location"]),
-            "rows": top_headcount_rows(location_rows, ("location_id", "location_name")),
+            "rows": top_headcount_rows(location_rows or [], ("location_id", "location_name")),
+            "status": location_result["status"],
+            "error": location_result.get("error"),
         },
         {
             "id": "sf_headcount_by_department",
             "title": "Headcount por departamento",
-            "value": sum(int(row.get("headcount") or 0) for row in department_rows),
+            "value": None if department_rows is None else sum(int(row.get("headcount") or 0) for row in department_rows),
             "dataset": sf_gold_datasets["headcount_by_department"],
             "href": dataset_href(sf_gold_datasets["headcount_by_department"]),
-            "rows": top_headcount_rows(department_rows, ("department_id", "department_name")),
+            "rows": top_headcount_rows(department_rows or [], ("department_id", "department_name")),
+            "status": department_result["status"],
+            "error": department_result.get("error"),
         },
     ]
     return {
@@ -1262,7 +1324,25 @@ async def _collect_items(
             continue
         for source in module.sources:
             if not _show_known_non_ready_sources() and not _source_has_ready_contract(source):
+                source_status = _source_status_payload(
+                    source,
+                    "ok",
+                    count=0,
+                    checked_at=datetime.now(UTC).isoformat(),
+                )
                 rows_by_dataset[source.dataset] = []
+                sources.append(source_status)
+                if include_source_state_items:
+                    source_item = _source_state_item(
+                        source,
+                        source_status["status"],
+                        source_status.get("error"),
+                        source_status.get("data_readiness"),
+                        source_status.get("readiness_reason"),
+                        source_status.get("readiness_blockers"),
+                    )
+                    if source_item:
+                        items.append(source_item)
                 continue
             rows, source_status = await _fetch_source(source, user, fetcher, limit_per_source)
             rows_by_dataset[source.dataset] = rows if source_status["status"] == "ok" else []

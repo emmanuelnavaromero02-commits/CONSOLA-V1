@@ -4,6 +4,18 @@ function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 
 let allJobs = [];
 
+function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
+  if (timeoutMs === 0) return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: init.signal || controller.signal })
+    .catch(err => {
+      if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
 function badge(s) {
   const cls = { running: 'badge-running', done: 'badge-done', failed: 'badge-failed' }[s] || 'badge-pending';
   return `<span class="badge ${cls}">${s.toUpperCase()}</span>`;
@@ -58,12 +70,17 @@ function renderTable() {
 }
 
 async function load() {
-  const r = await fetch('/api/jobs?limit=100');
-  const d = await r.json();
-  allJobs = d.jobs || [];
-  renderStats();
-  renderTable();
-  document.getElementById('last-update').textContent = 'Actualizado: ' + new Date().toLocaleTimeString();
+  try {
+    const r = await fetchWithTimeout('/api/jobs?limit=100');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    allJobs = d.jobs || [];
+    renderStats();
+    renderTable();
+    document.getElementById('last-update').textContent = 'Actualizado: ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('last-update').textContent = 'Error: ' + e.message;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

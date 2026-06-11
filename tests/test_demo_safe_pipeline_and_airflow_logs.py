@@ -77,6 +77,11 @@ class FakeMcpRegistry:
         return response or {}
 
 
+class FakeTimestamp:
+    def isoformat(self):
+        return "2026-06-11T01:02:03+00:00"
+
+
 def _user() -> dict:
     return {
         "id": 1,
@@ -419,3 +424,221 @@ async def test_studio_ops_get_entity_logs_uses_trigger_extract(console_main, mon
     assert [args["task_id"] for tool, args, _ in registry.calls if tool == "airflow_get_task_logs"] == [
         "trigger_extract",
     ]
+
+
+@pytest.mark.asyncio
+async def test_api_job_logs_uses_scoped_job_cartridge(console_main, monkeypatch):
+    main = console_main
+
+    class RecordingPool:
+        def __init__(self):
+            self.calls = []
+
+        async def fetch(self, query, *params):
+            self.calls.append((query, params))
+            return [
+                {
+                    "entity": "EmpJob",
+                    "level": "INFO",
+                    "message": "trigger_extract completed",
+                    "detail": '{"task_id":"trigger_extract"}',
+                    "ts": FakeTimestamp(),
+                }
+            ]
+
+    pool = RecordingPool()
+
+    async def get_db_pool():
+        return pool
+
+    async def get_scoped(job_id, user=None):
+        assert job_id == "job-sf"
+        assert user == _user()
+        return {"args": {"cartridge": "sap_successfactors"}}
+
+    monkeypatch.setattr(main, "_get_db_pool", get_db_pool)
+    monkeypatch.setattr(main.job_service, "get_scoped", get_scoped)
+
+    payload = await main.api_job_logs("job-sf", limit=50, user=_user())
+
+    assert payload["logs"] == [
+        {
+            "ts": "2026-06-11T01:02:03+00:00",
+            "entity": "EmpJob",
+            "level": "INFO",
+            "message": "trigger_extract completed",
+            "detail": {"task_id": "trigger_extract"},
+        }
+    ]
+    query, params = pool.calls[0]
+    assert "cartridge='replicon'" not in query
+    assert "cartridge=$2" in query
+    assert params == ("job-sf", "sap_successfactors", 50)
+
+
+@pytest.mark.asyncio
+async def test_api_job_logs_fails_closed_when_job_cartridge_missing(console_main, monkeypatch):
+    main = console_main
+
+    async def get_scoped(_job_id, user=None):
+        return {"args": {}, "result": {}}
+
+    monkeypatch.setattr(main.job_service, "get_scoped", get_scoped)
+
+    with pytest.raises(HTTPException) as exc:
+        await main.api_job_logs("job-without-cartridge", user=_user())
+
+    assert exc.value.status_code == 422
+    assert "job cartridge is unavailable" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_api_dataset_detail_returns_complete_contract(console_main, monkeypatch):
+    main = console_main
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_refinement(tool, args, **_kwargs):
+        calls.append((tool, args))
+        if tool == "get_dataset_definition":
+            return {
+                "name": "sap_successfactors_employee_360",
+                "layer": "gold",
+                "sql": "select * from employee_360",
+                "row_count": 1288,
+                "cartridge": "sap_successfactors",
+                "source_load_date": "2026-06-11",
+                "source_batch_id": "batch-1",
+                "updated_at": "2026-06-11T01:00:00Z",
+                "sources": ["sap_successfactors_EmpJob"],
+                "metadata": {"owner": "demo"},
+            }
+        if tool == "get_schema":
+            return {"columns": [{"name": "user_id", "type": "string"}, "company_id"]}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(main, "_refinement_invoke", fake_refinement)
+
+    detail = await main.api_dataset_detail("sap_successfactors_employee_360", user=_user())
+
+    assert detail["name"] == "sap_successfactors_employee_360"
+    assert detail["layer"] == "gold"
+    assert detail["type"] == "gold"
+    assert detail["sql"] == "select * from employee_360"
+    assert detail["columns"] == [{"name": "user_id", "type": "string"}, {"name": "company_id"}]
+    assert detail["metadata"]["owner"] == "demo"
+    assert detail["metadata"]["sources"] == ["sap_successfactors_EmpJob"]
+    assert detail["source_load_date"] == "2026-06-11"
+    assert detail["source_batch_id"] == "batch-1"
+    assert detail["status"] == "ok"
+    assert detail["error"] is None
+    assert detail["row_count"] == 1288
+    assert detail["cartridge"] == "sap_successfactors"
+    assert detail["updated_at"] == "2026-06-11T01:00:00Z"
+    assert calls == [
+        ("get_dataset_definition", {"name": "sap_successfactors_employee_360"}),
+        ("get_schema", {"name": "sap_successfactors_employee_360"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_api_dataset_detail_marks_partial_schema_failure_without_losing_definition(console_main, monkeypatch):
+    main = console_main
+
+    async def fake_refinement(tool, _args, **_kwargs):
+        if tool == "get_dataset_definition":
+            return {
+                "name": "sap_successfactors_employee_360",
+                "layer": "gold",
+                "row_count": None,
+                "cartridge": "sap_successfactors",
+            }
+        if tool == "get_schema":
+            raise HTTPException(404, "Dataset no materializado")
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(main, "_refinement_invoke", fake_refinement)
+
+    detail = await main.api_dataset_detail("sap_successfactors_employee_360", user=_user())
+
+    assert detail["name"] == "sap_successfactors_employee_360"
+    assert detail["columns"] == []
+    assert detail["status"] == "unavailable"
+    assert detail["error"] == "Dataset no materializado"
+
+
+@pytest.mark.asyncio
+async def test_dataset_data_propagates_refinement_http_error(console_main, monkeypatch):
+    main = console_main
+
+    class FakeResponse:
+        status_code = 503
+
+        def json(self):
+            return {"detail": "Fuente temporalmente no disponible"}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    request = main.Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/datasets/sap_successfactors_employee_360/data",
+        "headers": [],
+    })
+    request.state.user = _user()
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await main.dataset_data("sap_successfactors_employee_360", request, limit=20)
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Fuente temporalmente no disponible"
+
+
+@pytest.mark.asyncio
+async def test_dataset_data_maps_refinement_payload_error_to_http_error(console_main, monkeypatch):
+    main = console_main
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"error": "SOURCE_FILES_MISSING: no files found for dataset"}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    request = main.Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/datasets/sap_successfactors_employee_360/data",
+        "headers": [],
+    })
+    request.state.user = _user()
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeClient)
+
+    with pytest.raises(HTTPException) as exc:
+        await main.dataset_data("sap_successfactors_employee_360", request, limit=20)
+
+    assert exc.value.status_code == 404
+    assert "SOURCE_FILES_MISSING" in str(exc.value.detail)

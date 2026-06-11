@@ -153,8 +153,10 @@ async def test_sap_successfactors_gold_kpis_reads_scoped_gold(monkeypatch):
     assert result["workspace_id"] == USER["active_workspace_id"]
     active = next(widget for widget in result["widgets"] if widget["id"] == "sf_active_headcount")
     assert active["value"] == 2
+    assert active["status"] == "ready"
     assert active["dataset"] == "sap_successfactors_employee_360"
     by_company = next(widget for widget in result["widgets"] if widget["id"] == "sf_headcount_by_company")
+    assert by_company["status"] == "ready"
     assert by_company["rows"] == [{"label": "FEMSA", "id": "MX01", "headcount": 2}]
     assert {dataset for dataset, _user, _limit in calls} == {
         "sap_successfactors_employee_360",
@@ -179,7 +181,9 @@ async def test_sap_successfactors_gold_kpis_degrades_when_gold_missing(monkeypat
     assert result["connection_id"] == "femsa_sf"
     assert result["tenant_id"] == USER["tenant_id"]
     assert result["workspace_id"] == USER["active_workspace_id"]
-    assert [widget["value"] for widget in result["widgets"]] == [0, 0, 0, 0]
+    assert [widget["value"] for widget in result["widgets"]] == [None, None, None, None]
+    assert [widget["status"] for widget in result["widgets"]] == ["missing", "missing", "missing", "missing"]
+    assert all("dataset unavailable" in str(widget["error"]) for widget in result["widgets"])
     assert all(widget["rows"] == [] for widget in result["widgets"])
 
 

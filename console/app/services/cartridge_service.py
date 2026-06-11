@@ -48,6 +48,7 @@ _ALLOWED_SEED_TABLES = {
     "cartridge_connections",
     "cartridge_dags",
     "entity_config",
+    "datasets",
     "semantic_terms",
     "kb_config",
     "mcp_custom_tools",
@@ -418,6 +419,34 @@ def _normalize_full_cartridge_manifest(payload: dict) -> tuple[dict, str]:
     _require_unique([e["entity"] for e in entities], "entities")
     manifest["entities"] = entities
 
+    datasets = []
+    for item in _as_list(payload.get("datasets"), "datasets"):
+        if not isinstance(item, dict):
+            raise ValueError("datasets entries must be objects")
+        dataset_name = _validate_entity_identifier(str(item.get("name") or ""), "dataset name")
+        layer = str(item.get("layer") or "").strip().lower()
+        if layer not in {"silver", "gold"}:
+            raise ValueError(f"dataset '{dataset_name}' layer must be silver or gold")
+        sql_def = str(item.get("sql_def") or item.get("sql") or "")
+        _validate_kb_sql(sql_def, dataset_name)
+        sources = item.get("sources") or []
+        if not isinstance(sources, list):
+            raise ValueError(f"dataset '{dataset_name}' sources must be a list")
+        column_mapping = item.get("column_mapping") or {}
+        if not isinstance(column_mapping, dict):
+            raise ValueError(f"dataset '{dataset_name}' column_mapping must be an object")
+        datasets.append({
+            "name": dataset_name,
+            "layer": layer,
+            "sources": [str(source) for source in sources],
+            "sql_def": sql_def,
+            "description": str(item.get("description") or ""),
+            "column_mapping": column_mapping,
+            "schedule": item.get("schedule"),
+        })
+    _require_unique([d["name"] for d in datasets], "datasets")
+    manifest["datasets"] = datasets
+
     semantic_model = payload.get("semantic_model") if isinstance(payload.get("semantic_model"), dict) else {}
     vocabulary = semantic_model.get("vocabulary") or payload.get("vocabulary") or []
     normalized_vocab = []
@@ -545,13 +574,14 @@ async def create_full_cartridge(payload: dict, actor_user: dict | None = None) -
         "created": True,
         "cartridge": created,
         "seed_sql_validated": True,
-        "counts": {
-            "connections": len(manifest.get("connections") or []),
-            "dags": len(manifest.get("dags") or []),
-            "entities": len(manifest.get("entities") or []),
-            "knowledge_bits": len(manifest.get("knowledge_bits") or []),
-            "agents": len(manifest.get("agents") or []),
-            "semantic_terms": len((manifest.get("semantic_model") or {}).get("vocabulary") or []),
+            "counts": {
+                "connections": len(manifest.get("connections") or []),
+                "dags": len(manifest.get("dags") or []),
+                "entities": len(manifest.get("entities") or []),
+                "datasets": len(manifest.get("datasets") or []),
+                "knowledge_bits": len(manifest.get("knowledge_bits") or []),
+                "agents": len(manifest.get("agents") or []),
+                "semantic_terms": len((manifest.get("semantic_model") or {}).get("vocabulary") or []),
         },
     }
 
@@ -1270,6 +1300,32 @@ def _generate_seed_sql(manifest: dict) -> str:
             "        trigger_type=EXCLUDED.trigger_type, cron_expression=EXCLUDED.cron_expression,",
             "        description=EXCLUDED.description, enabled=EXCLUDED.enabled,",
             "        dag_params=EXCLUDED.dag_params;",
+            "",
+        ]
+
+    if manifest.get("datasets"):
+        lines += [
+            "-- ── Datasets (Silver/Gold contracts) ───────────────────────────────────────",
+            "INSERT INTO datasets",
+            "    (name, layer, cartridge, sources, sql_def, description, column_mapping, schedule, updated_at)",
+            "VALUES",
+        ]
+        rows = manifest["datasets"]
+        for i, d in enumerate(rows):
+            sep = "," if i < len(rows) - 1 else ""
+            sources = _json.dumps(d.get("sources") or [], ensure_ascii=False)
+            column_mapping = _json.dumps(d.get("column_mapping") or {}, ensure_ascii=False)
+            lines.append(
+                f"    ({_q(d['name'])}, {_q(d.get('layer'))}, {_q(cid)}, "
+                f"{_q(sources)}::jsonb, {_q(d.get('sql_def'))}, {_q(d.get('description'))}, "
+                f"{_q(column_mapping)}::jsonb, {_q(d.get('schedule'))}, NOW()){sep}"
+            )
+        lines += [
+            "ON CONFLICT (name) DO UPDATE",
+            "    SET layer=EXCLUDED.layer, cartridge=EXCLUDED.cartridge,",
+            "        sources=EXCLUDED.sources, sql_def=EXCLUDED.sql_def,",
+            "        description=EXCLUDED.description, column_mapping=EXCLUDED.column_mapping,",
+            "        schedule=EXCLUDED.schedule, updated_at=NOW();",
             "",
         ]
 

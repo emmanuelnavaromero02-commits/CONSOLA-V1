@@ -110,3 +110,13 @@ def test_workflow_passes_e2e_admin_password_secret():
         "E2E_ADMIN_PASSWORD must be sourced from a repo secret, not "
         "hardcoded"
     )
+
+
+def test_primary_studio_e2e_does_not_skip_visible_demo_controls():
+    """Visible Studio demo controls must fail loudly when absent or broken.
+
+    Optional/deep Studio probes can still document unsupported surfaces, but
+    the primary demo spec must not turn missing controls into green CI.
+    """
+    src = (REPO / "tests-e2e/specs/05-studio.spec.ts").read_text(encoding="utf-8")
+    assert "test.skip(" not in src

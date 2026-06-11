@@ -20,7 +20,10 @@ type JsonBody = unknown;
 export type ApiFetchInit = Omit<RequestInit, "body"> & {
   body?: BodyInit | null;
   json?: JsonBody;
+  timeoutMs?: number;
 };
+
+const DEFAULT_API_TIMEOUT_MS = 30_000;
 
 function makeRequestId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -52,8 +55,8 @@ async function parsePayload(response: Response): Promise<unknown> {
 
 export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
-  const requestId = makeRequestId();
   const headers = new Headers(init.headers);
+  const requestId = headers.get("X-Request-ID") || makeRequestId();
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", requestId);
 
@@ -68,13 +71,46 @@ export async function apiFetch(path: string, init: ApiFetchInit = {}): Promise<R
     if (csrf && !headers.has("X-CSRF-Token")) headers.set("X-CSRF-Token", csrf);
   }
 
-  return fetch(path, {
-    ...init,
-    method,
-    credentials: init.credentials ?? "include",
-    headers,
-    body,
-  });
+  const timeoutMs = init.timeoutMs === undefined ? DEFAULT_API_TIMEOUT_MS : init.timeoutMs;
+  const controller = timeoutMs === 0 ? null : new AbortController();
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const externalSignal = init.signal;
+  const onExternalAbort = () => controller?.abort(externalSignal?.reason);
+  if (controller && externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort(externalSignal.reason);
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+  if (controller && timeoutMs > 0) {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  try {
+    return await fetch(path, {
+      ...init,
+      method,
+      credentials: init.credentials ?? "include",
+      headers,
+      body,
+      signal: controller?.signal ?? externalSignal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw toApiError("La consulta tardó demasiado", 408, { timeout_ms: timeoutMs }, requestId);
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (controller && externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
+  }
 }
 
 function errorMessage(status: number, payload: unknown): string {
@@ -100,6 +136,7 @@ async function request<T>(
   try {
     response = await apiFetch(path, { method, headers: { "X-Request-ID": requestId }, json: body });
   } catch (error) {
+    if (isApiError(error)) throw error;
     throw toApiError(
       error instanceof Error ? error.message : "Error de red",
       undefined,

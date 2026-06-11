@@ -4,6 +4,18 @@ function esc(s) { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&
 const dsName = location.pathname.split('/').pop();
 let dsData = null;
 
+function fetchWithTimeout(url, init = {}, timeoutMs = 30000) {
+  if (timeoutMs === 0) return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: init.signal || controller.signal })
+    .catch(err => {
+      if (err && err.name === 'AbortError') throw new Error('La consulta tardó demasiado');
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
     const names = ['sql', 'mapping', 'lineage', 'preview'];
@@ -25,7 +37,8 @@ function fmt(iso) { return iso ? iso.replace('T', ' ').substring(0, 16) : '—';
 async function loadDataset() {
   document.getElementById('page-title').textContent = `DATASET · ${dsName}`;
   try {
-    const r = await fetch(`/datasets/${dsName}/schema`);
+    const r = await fetchWithTimeout(`/api/datasets/${dsName}/detail`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     dsData = await r.json();
 
     document.getElementById('meta').innerHTML = `
@@ -60,7 +73,8 @@ async function loadLineage() {
   document.getElementById('lineage-list').dataset.loaded = '1';
   document.getElementById('lineage-list').innerHTML = '<div class="empty-state">Cargando lineage...</div>';
   try {
-    const r = await fetch(`/api/datasets/${dsName}/lineage`);
+    const r = await fetchWithTimeout(`/api/datasets/${dsName}/lineage`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const rows = d.lineage || d.result || [];
     if (!rows.length) {
@@ -89,7 +103,8 @@ async function loadLineage() {
 async function loadPreview() {
   document.getElementById('preview-wrap').innerHTML = '<div class="empty-state">Cargando...</div>';
   try {
-    const r = await fetch(`/datasets/${dsName}/data?limit=20`);
+    const r = await fetchWithTimeout(`/datasets/${dsName}/data?limit=20`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const rows = d.rows || d.data || [];
     if (!rows.length) {

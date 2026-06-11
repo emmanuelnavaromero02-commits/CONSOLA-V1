@@ -198,9 +198,11 @@ interface SfGoldWidgetRow {
 interface SfGoldWidget {
   id: string;
   title: string;
-  value: number;
+  value: number | null;
   dataset: string;
   rows: SfGoldWidgetRow[];
+  status?: SourceState | DataReadiness | "ready";
+  error?: string | null;
 }
 
 interface SfGoldKpisPayload {
@@ -2188,8 +2190,8 @@ function ExecutiveCommandStrip({
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const impactTotal = impactValues.reduce((sum, value) => sum + value, 0);
   const readySources = sources.filter((source) => source.operationally_ready || source.data_readiness === "ready").length;
-  const sfRows = sfGoldKpis?.widgets.reduce((sum, widget) => sum + (Number.isFinite(widget.value) ? widget.value : 0), 0) ?? 0;
-  const topDataset = sfGoldKpis?.widgets.find((widget) => widget.value > 0);
+  const sfRows = sfGoldKpis?.widgets.reduce((sum, widget) => sum + (typeof widget.value === "number" && Number.isFinite(widget.value) ? widget.value : 0), 0) ?? 0;
+  const topDataset = sfGoldKpis?.widgets.find((widget) => typeof widget.value === "number" && widget.value > 0);
   const severitySeries = (["low", "medium", "high", "critical"] as Severity[]).map((level) => items.filter((item) => item.severity === level).length);
   const sourceSeries = [
     readySources,
@@ -2197,7 +2199,10 @@ function ExecutiveCommandStrip({
     sources.filter((source) => ["blocked", "no_permission", "unavailable", "missing", "error"].includes(source.data_readiness || source.status)).length,
     sources.length,
   ];
-  const goldSeries = sfGoldKpis?.widgets.map((widget) => widget.value).filter((value) => Number.isFinite(value)).slice(0, 8) ?? [];
+  const goldSeries = sfGoldKpis?.widgets
+    .map((widget) => widget.value)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .slice(0, 8) ?? [];
   const decisionSeries = [
     items.filter((item) => item.status === "open").length,
     items.filter((item) => item.status === "in_review").length,

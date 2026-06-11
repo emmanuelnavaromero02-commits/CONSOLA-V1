@@ -72,11 +72,22 @@ async def api_job_logs(job_id: str, limit: int = 200, user: dict = Depends(requi
     scoped = await job_service.get_scoped(job_id, user=user)
     if scoped.get("error"):
         raise HTTPException(404, "job not found")
+    job_args = scoped.get("args") if isinstance(scoped.get("args"), dict) else {}
+    job_result = scoped.get("result") if isinstance(scoped.get("result"), dict) else {}
+    cartridge = str(
+        job_args.get("cartridge_id")
+        or job_args.get("cartridge")
+        or job_result.get("cartridge_id")
+        or job_result.get("cartridge")
+        or ""
+    ).strip()
+    if not cartridge:
+        raise HTTPException(422, "job cartridge is unavailable; cannot resolve scoped logs")
     pool = await _get_db_pool()
     rows = await pool.fetch(
         "SELECT entity, level, message, detail, ts FROM run_logs "
-        "WHERE run_id=$1 AND cartridge='replicon' ORDER BY ts ASC LIMIT $2",
-        job_id, limit
+        "WHERE run_id=$1 AND cartridge=$2 ORDER BY ts ASC LIMIT $3",
+        job_id, cartridge, limit
     )
     result = []
     for row in rows:

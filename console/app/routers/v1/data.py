@@ -117,7 +117,14 @@ async def api_dataset_save(body: dict, user: dict = Depends(require_permission("
 @router.get("/api/datasets/{name}/detail", dependencies=[Depends(require_authenticated)])
 @_bind_to_main
 async def api_dataset_detail(name: str, user: dict = Depends(require_authenticated)):
-    return await _refinement_invoke("get_dataset_definition", {"name": name}, user=user)
+    definition = await _refinement_invoke("get_dataset_definition", {"name": name}, user=user)
+    schema_payload = None
+    schema_error = None
+    try:
+        schema_payload = await _refinement_invoke("get_schema", {"name": name}, user=user)
+    except HTTPException as exc:
+        schema_error = str(exc.detail or "Dataset schema unavailable")
+    return _normalize_dataset_detail(definition, schema_payload, schema_error)
 
 # /api/bronze/query
 @router.post("/api/bronze/query", dependencies=[Depends(require_csrf)])

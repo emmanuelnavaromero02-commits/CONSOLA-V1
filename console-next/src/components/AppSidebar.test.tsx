@@ -15,7 +15,10 @@ describe("AppSidebar", () => {
     const markup = render({
       role: { is_platform_admin: false },
       permissions: ["workspace.access", "monitor.read"],
-      ui_capabilities: {},
+      ui_capabilities: {
+        can_view_control_room: true,
+        can_view_monitor: true,
+      },
     });
 
     expect(markup).toContain("Control Room");
@@ -29,6 +32,7 @@ describe("AppSidebar", () => {
     const markup = render({
       role: { is_platform_admin: false },
       permissions: ["datasets.read"],
+      ui_capabilities: { can_view_lineage: true },
     }, "/data/lineage");
 
     expect(markup).toContain('aria-current="page"');
@@ -47,7 +51,13 @@ describe("AppSidebar", () => {
         "vault.connections.read",
         "cartridges.read",
       ],
-      ui_capabilities: { can_manage_workspace_users: true },
+      ui_capabilities: {
+        can_manage_workspace_users: true,
+        can_view_knowledge: true,
+        can_view_vault: true,
+        can_view_settings: true,
+        can_view_cartridges: true,
+      },
     }, "/operations/users");
 
     expect(markup).toContain("Usuarios");
@@ -75,7 +85,15 @@ describe("AppSidebar", () => {
         "marketplace.read",
         "monitor.read",
       ],
-      ui_capabilities: { can_manage_workspace_users: true },
+      ui_capabilities: {
+        can_manage_workspace_users: true,
+        can_view_control_room: true,
+        can_view_copilot: true,
+        can_view_tokens: true,
+        can_view_audit: true,
+        can_view_vault: true,
+        can_view_metrics: true,
+      },
     }, "/operations/users");
 
     expect(markup).toContain("Usuarios");
@@ -90,5 +108,27 @@ describe("AppSidebar", () => {
     expect(markup).not.toContain("Studio");
     expect(markup).not.toContain("Seguridad");
     expect(markup).not.toContain("Ajustes");
+  });
+
+  it("does not show backend-guarded links when permissions exist but ui capabilities deny them", () => {
+    const markup = render({
+      role: { is_platform_admin: true },
+      permissions: [
+        "datasets.write",
+        "studio.read",
+        "operations.read",
+        "vault.connections.read",
+        "security.audit.read",
+        "iam.users.read",
+      ],
+      ui_capabilities: {},
+    });
+
+    expect(markup).not.toContain("Consulta Bronce");
+    expect(markup).not.toContain("Studio");
+    expect(markup).not.toContain("Flujos de trabajo");
+    expect(markup).not.toContain("Vault");
+    expect(markup).not.toContain("Auditoría");
+    expect(markup).not.toContain("Usuarios");
   });
 });

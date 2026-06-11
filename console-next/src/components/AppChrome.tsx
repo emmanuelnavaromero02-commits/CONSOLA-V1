@@ -70,7 +70,7 @@ function userLabel(email: string): string {
 
 function canSeeSettings(access: MeAccessResponse | undefined): boolean {
   if (!access) return false;
-  return access.role?.is_platform_admin === true || (access.permissions ?? []).includes("settings.read");
+  return access.ui_capabilities?.can_view_settings === true;
 }
 
 function UserMenu({

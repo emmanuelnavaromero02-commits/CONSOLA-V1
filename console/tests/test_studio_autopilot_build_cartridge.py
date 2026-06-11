@@ -117,6 +117,61 @@ async def test_studio_autopilot_apply_requests_approval_without_writing(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_studio_create_full_cartridge_marks_partial_when_datasets_not_confirmed(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    studio = importlib.import_module("app.routers.studio")
+
+    async def incomplete_create(_args, actor_user=None):
+        return {
+            "created": True,
+            "counts": {"entities": 1},
+        }
+
+    monkeypatch.setattr(studio.cartridge_service, "create_full_cartridge", incomplete_create)
+
+    result = await studio._studio_create_full_cartridge(
+        {
+            "id": "acme",
+            "name": "ACME",
+            "datasets": [
+                {"name": "silver_orders", "layer": "silver", "sql": "SELECT 1 AS order_id", "sources": ["orders"]},
+                {"name": "gold_orders_metrics", "layer": "gold", "sql": "SELECT COUNT(*) AS c FROM silver_orders", "sources": ["silver_orders"]},
+            ],
+        },
+        {"id": "u1", "role": "workspace_admin", "allowed_cartridges": ["*"]},
+    )
+
+    assert result["status"] == "partial"
+    assert result["missing_datasets"] == ["silver_orders", "gold_orders_metrics"]
+    assert "did not confirm" in result["reason"]
+
+
+def test_create_full_cartridge_normalizer_preserves_autopilot_datasets():
+    cartridge_service = importlib.import_module("app.services.cartridge_service")
+    bp = importlib.import_module("app.services.cartridge_autopilot").build_blueprint(
+        cartridge_id="acme",
+        name="ACME",
+        entities=[{
+            "name": "orders",
+            "fields": [
+                {"name": "order_id", "type": "string", "primary_key": True, "nullable": False},
+                {"name": "amount", "type": "number", "nullable": True},
+            ],
+        }],
+    )
+
+    manifest, seed_sql = cartridge_service._normalize_full_cartridge_manifest(bp)
+
+    dataset_names = [dataset["name"] for dataset in manifest["datasets"]]
+    assert "silver_orders" in dataset_names
+    assert "gold_orders_metrics" in dataset_names
+    assert "INSERT INTO datasets" in seed_sql
+    assert "silver_orders" in seed_sql
+    assert len(manifest["datasets"]) == len(bp["datasets"])
+    assert all(dataset["sql_def"] for dataset in manifest["datasets"])
+
+
+@pytest.mark.asyncio
 async def test_studio_assistant_exposes_autopilot_tool(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     importlib.import_module("app.routers.studio")
