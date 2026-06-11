@@ -55,7 +55,7 @@ export function AppsGallery() {
   if (rows.length === 0) {
     return (
       <p className="rounded-md border bg-muted/30 p-6 text-sm text-muted-foreground">
-        No hay aplicaciones publicadas todavía.
+        No hay aplicaciones configuradas para las conexiones activas del workspace.
       </p>
     );
   }

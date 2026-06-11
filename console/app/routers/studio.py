@@ -50,6 +50,10 @@ router = APIRouter(prefix="/api/studio", tags=["Studio"])
 require_studio_read = require_permission("studio.read")
 require_studio_write = require_permission("studio.write")
 require_studio_global_admin = require_global_any_role("owner", "super_admin", ROLE_ADMIN)
+SUPERSET_INTERNAL_ONLY_MESSAGE = (
+    "Superset está disponible solo internamente por seguridad. "
+    "Solicita acceso interno/VPN para abrir dashboards."
+)
 
 REFINEMENT_URL = os.environ.get("REFINEMENT_URL", "http://refinement:8500")
 MCP_INFRA_URL = os.environ.get("MCP_INFRA_URL", "http://mcp-infra:8010")
@@ -2471,7 +2475,7 @@ async def superset_dataset(
 
     client = superset_client.client_from_env()
     if not client.configured:
-        raise HTTPException(503, "Superset not configured")
+        raise HTTPException(503, SUPERSET_INTERNAL_ONLY_MESSAGE)
     table_name = _clean_identifier(str(table_name), label="table_name")
     schema = _clean_identifier(str(schema), label="schema")
     if schema != "public":

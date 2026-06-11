@@ -776,7 +776,7 @@ function businessStatusLabel(status?: string | null): string {
     dismissed: "descartada",
     acknowledged: "reconocida",
     snoozed: "pospuesta",
-    not_configured: "pendiente",
+    not_configured: "sin datos configurados",
     not_started: "pendiente",
     running: "en ejecución",
     completed: "completada",
@@ -829,11 +829,13 @@ function businessItemDescription(item: ControlItem): string {
 }
 
 function businessSourceIssue(source: SourceStatus): string {
-  if (source.data_readiness === "no_permission" || source.status === "no_permission") return "Bloqueado por permisos.";
-  if (source.data_readiness === "partial") return "Datos incompletos para una decisión automática.";
-  if (source.data_readiness === "missing" || source.status === "missing") return "Actualización pendiente.";
-  if (source.error) return "No se pudo actualizar esta información.";
-  if (source.count === 0) return "Sin registros considerados.";
+  if (source.data_readiness === "no_permission" || source.status === "no_permission") return "Requiere permisos OData.";
+  if (source.data_readiness === "partial") return "Datos parciales: dato no disponible por alcance actual.";
+  if (source.data_readiness === "stub") return "Fuera de alcance actual.";
+  if (source.data_readiness === "missing" || source.status === "missing") return "Dataset no materializado.";
+  if (source.data_readiness === "empty") return "Sin datos configurados.";
+  if (source.error || source.status === "unavailable") return "Dependencia no configurada o no disponible.";
+  if (source.count === 0) return "No aplica para el alcance actual.";
   return `${source.count.toLocaleString("es-MX")} registros considerados.`;
 }
 
@@ -1863,7 +1865,7 @@ function Header({
         <div className="rounded-md border bg-background dark:border-sky-400/20 dark:bg-[#07111e] p-3">
           <p className="text-xs font-semibold uppercase text-muted-foreground">Cobertura</p>
           <p className="mt-1 text-sm font-medium text-foreground dark:text-white">{activeConnectors} conectores · {activeModules} frentes con señales · {dataReadyModules} listos</p>
-          {partialModules || stubModules ? <p className="mt-1 text-xs text-amber-600">{partialModules} incompletos · {stubModules} sin información suficiente</p> : null}
+          {partialModules || stubModules ? <p className="mt-1 text-xs text-amber-600">{partialModules} datos parciales · {stubModules} fuera de alcance actual</p> : null}
         </div>
       </div>
       {syncError ? <div className="border-t p-4"><OperationalNotice tone="warning" title="Última actualización fallida">{syncError}</OperationalNotice></div> : null}

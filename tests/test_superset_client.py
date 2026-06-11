@@ -12,6 +12,15 @@ REPO = Path(__file__).resolve().parents[1]
 CSRF = "csrf-test-token"
 
 
+def test_studio_superset_copy_describes_internal_access():
+    src = (REPO / "console/app/static/js/studio/legacy.js").read_text(encoding="utf-8")
+
+    assert "Superset interno por seguridad" in src
+    assert "Superset está disponible solo internamente por seguridad" in src
+    assert "Solicita acceso interno/VPN para abrir dashboards" in src
+    assert "Superset no expuesto" not in src
+
+
 @pytest.fixture()
 def superset_client_module():
     os.environ["APP_ENV"] = "test"
@@ -221,7 +230,8 @@ def test_dataset_endpoint_returns_503_without_config(studio_client, monkeypatch)
     )
 
     assert response.status_code == 503
-    assert "Superset not configured" in response.text
+    assert "Superset está disponible solo internamente por seguridad" in response.text
+    assert "Solicita acceso interno/VPN para abrir dashboards" in response.text
 
 
 def test_dataset_endpoint_returns_503_when_superset_unreachable(studio_client, monkeypatch):

@@ -132,6 +132,15 @@ function businessFrontStatus(sources: SourceStatus[], fallbackValue: number | nu
   return "missing";
 }
 
+function unavailableBusinessDetail(status: SuccessFactorsFront["status"]): string {
+  if (status === "partial") return "Datos parciales";
+  if (status === "no_permission" || status === "blocked") return "Requiere permisos OData";
+  if (status === "unavailable") return "Dependencia no configurada";
+  if (status === "missing" || status === "stub") return "Fuera de alcance actual";
+  if (status === "empty") return "Sin datos configurados";
+  return "Dataset no materializado";
+}
+
 function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: SourceStatus[]): SuccessFactorsFront[] {
   const definitions = [
     {
@@ -221,7 +230,7 @@ function buildBusinessFronts(widgets: SfGoldKpisPayload["widgets"], sources: Sou
       id: definition.id,
       title: definition.title,
       metric: value === null ? "N/D" : formatNumber(value),
-      detail: value === null ? "sin información suficiente" : definition.unit,
+      detail: value === null ? unavailableBusinessDetail(status) : definition.unit,
       decision: definition.decision,
       status,
       signals,
@@ -328,12 +337,14 @@ function buildDecisionCapabilities(
 
 function businessIssue(source: SourceStatus): string {
   if (source.data_readiness === "no_permission" || source.status === "no_permission") {
-    return "Bloqueado por permisos para este contexto.";
+    return "Requiere permisos OData para este contexto.";
   }
-  if (source.data_readiness === "partial") return "Datos incompletos para decisión automática.";
-  if (source.data_readiness === "missing" || source.status === "missing") return "Información pendiente de actualización.";
-  if (source.error) return "No se pudo actualizar esta información.";
-  if (source.count === 0) return "Sin registros considerados todavía.";
+  if (source.data_readiness === "partial") return "Datos parciales: dato no disponible por alcance actual.";
+  if (source.data_readiness === "stub") return "Fuera de alcance actual.";
+  if (source.data_readiness === "missing" || source.status === "missing") return "Dataset no materializado para este contexto.";
+  if (source.data_readiness === "empty") return "Sin datos configurados para este alcance.";
+  if (source.error || source.status === "unavailable") return "Dependencia no configurada o no disponible.";
+  if (source.count === 0) return "No aplica para el alcance actual.";
   return `${formatNumber(source.count)} registros considerados.`;
 }
 
@@ -401,14 +412,14 @@ export function SuccessFactorsGoldPanel({
           <CommandMetric
             label="Plantilla activa"
             value={employeeWidget ? formatNumber(employeeWidget.value) : "N/D"}
-            detail={employeeWidget ? "personas consideradas" : "sin información suficiente"}
+            detail={employeeWidget ? "personas consideradas" : "Dataset no materializado"}
             icon={Users}
             tone={employeeWidget ? "good" : "warning"}
           />
           <CommandMetric
             label="Estructura organizacional"
             value={orgWidget ? formatNumber(orgWidget.value) : "N/D"}
-            detail={orgWidget ? "relaciones disponibles" : "actualización pendiente"}
+            detail={orgWidget ? "relaciones disponibles" : "Dependencia no configurada"}
             icon={Network}
             tone={orgWidget ? "good" : "warning"}
           />
@@ -504,7 +515,7 @@ export function SuccessFactorsGoldPanel({
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-3 text-xs">
                   <span className="text-muted-foreground">
-                    {capability.evidence > 0 ? `${capability.evidence} señales internas consideradas` : "sin respaldo suficiente todavía"}
+                    {capability.evidence > 0 ? `${capability.evidence} señales internas consideradas` : "Fuera de alcance actual"}
                   </span>
                   <span className="rounded-full border px-2 py-1 font-medium text-foreground dark:border-sky-400/15 dark:text-white">
                     Acción supervisada
