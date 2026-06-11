@@ -522,7 +522,7 @@ def _schema_for_transform_source(body: dict, source: str, ctx: dict) -> dict:
         _require_source_scope(body, source)
         return engine.get_source_schema(source, ctx)
     _require_dataset_scope(body, ds)
-    schema = engine.get_dataset_schema(ds)
+    schema = engine.get_dataset_schema(ds, ctx)
     layer = str(ds.get("layer") or "").strip().lower()
     cartridge = str(ds.get("cartridge") or "").strip()
     out = {
@@ -1546,7 +1546,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
         if not ds:
             raise HTTPException(404, f"Dataset '{args['name']}' not found")
         _require_dataset_scope(body, ds)
-        return engine.get_dataset_schema(ds)
+        return engine.get_dataset_schema(ds, _trusted_user_context(body, args))
 
     if tool == "query_dataset":
         ds = store.get_dataset(args["name"])
@@ -1638,7 +1638,7 @@ async def mcp_invoke(body: dict, internal_service: str = Depends(verify_api_key)
             }
             ds_full = store.get_dataset(ds_meta["name"])
             if ds_full:
-                schema = engine.get_dataset_schema(ds_full)
+                schema = engine.get_dataset_schema(ds_full, _trusted_user_context(body, args))
                 entry["fields"] = schema.get("fields", [])
                 if schema.get("error"):
                     entry["schema_error"] = schema["error"]
@@ -2339,8 +2339,9 @@ async def dataset_schema(
     ds = store.get_dataset(name)
     if not ds:
         raise HTTPException(404)
-    _require_dataset_scope(_body_from_security_header(internal_service, x_security_context), ds)
-    return engine.get_dataset_schema(ds)
+    body = _body_from_security_header(internal_service, x_security_context)
+    _require_dataset_scope(body, ds)
+    return engine.get_dataset_schema(ds, _trusted_user_context(body, {}))
 
 
 @app.get("/datasets/{name}/data", dependencies=[Depends(verify_api_key)])

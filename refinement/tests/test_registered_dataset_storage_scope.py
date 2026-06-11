@@ -33,14 +33,23 @@ def _body() -> dict:
 
 class _FakeStore:
     def get_dataset(self, name: str) -> dict | None:
-        if name != "sap_successfactors_empemployment_latest":
-            return None
-        return {
-            "name": name,
-            "layer": "silver",
-            "cartridge": "sap_successfactors",
-            "workspace_id": "workspace-a",
+        datasets = {
+            "sap_successfactors_empemployment_latest": {
+                "name": name,
+                "layer": "silver",
+                "cartridge": "sap_successfactors",
+                "workspace_id": "workspace-a",
+            },
+            "sap_successfactors_employee_360": {
+                "name": name,
+                "layer": "gold",
+                "cartridge": "sap_successfactors",
+                "workspace_id": "workspace-a",
+                "sql_def": "SELECT * FROM read_parquet('s3://lakehouse/silver/sap_successfactors/sap_successfactors_empemployment_latest/**/*.parquet')",
+                "sources": ["silver/sap_successfactors/sap_successfactors_empemployment_latest"],
+            },
         }
+        return datasets.get(name)
 
 
 def test_registered_legacy_silver_glob_allowed_when_declared(monkeypatch):
@@ -108,3 +117,91 @@ def test_portable_raw_reader_is_scoped_before_storage_validation(monkeypatch):
         "select * from read_parquet('raw/sap_successfactors/EmpEmployment')",
         ["raw/sap_successfactors/EmpEmployment"],
     )
+
+
+def _signed_body(tool: str, args: dict) -> dict:
+    return {
+        "tool": tool,
+        "args": args,
+        "security_context": refinement_main._sign_security_context(_security_context()),
+    }
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_schema_passes_trusted_user_context(monkeypatch):
+    captured: dict = {}
+
+    def fake_get_dataset_schema(ds: dict, user_context: dict | None = None) -> dict:
+        captured["dataset"] = ds["name"]
+        captured["user_context"] = user_context
+        return {"name": ds["name"], "fields": [{"name": "user_id", "type": "VARCHAR"}]}
+
+    monkeypatch.setattr(refinement_main, "store", _FakeStore())
+    monkeypatch.setattr(refinement_main.engine, "get_dataset_schema", fake_get_dataset_schema)
+
+    result = await refinement_main.mcp_invoke(
+        _signed_body("get_schema", {"name": "sap_successfactors_employee_360"}),
+        internal_service="console",
+    )
+
+    assert result["fields"] == [{"name": "user_id", "type": "VARCHAR"}]
+    assert captured["dataset"] == "sap_successfactors_employee_360"
+    assert captured["user_context"]["tenant_id"] == "tenant-a"
+    assert captured["user_context"]["workspace_id"] == "workspace-a"
+    assert captured["user_context"]["_server_trusted_context"] is True
+
+
+def test_get_dataset_schema_scopes_registered_silver_glob_to_snapshot(monkeypatch):
+    engine = type(refinement_main.engine)()
+    latest = (
+        "s3://lakehouse/silver/sap_successfactors/sap_successfactors_empemployment_latest/"
+        "tenant_id=tenant-a/workspace_id=workspace-a/_snapshots/20260611.parquet"
+    )
+    captured: dict = {}
+
+    class FakeConn:
+        def execute(self, sql: str, params=None):
+            captured["sql"] = sql
+            captured["params"] = params
+            return self
+
+        def fetchall(self):
+            return [("user_id", "VARCHAR")]
+
+    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *_args, **_kwargs: latest)
+    monkeypatch.setattr(engine, "get_rls_filters", lambda sql, _ctx: (sql, []))
+    monkeypatch.setattr(engine, "_conn", lambda: FakeConn())
+
+    result = engine.get_dataset_schema(
+        _FakeStore().get_dataset("sap_successfactors_employee_360"),
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert result == {"name": "sap_successfactors_employee_360", "fields": [{"name": "user_id", "type": "VARCHAR"}]}
+    assert latest in captured["sql"]
+    assert "sap_successfactors_empemployment_latest/**/*.parquet" not in captured["sql"]
+    assert "tenant_id=tenant-a/workspace_id=workspace-a" in captured["sql"]
+
+
+def test_get_dataset_schema_missing_materialization_returns_contextual_error(monkeypatch):
+    engine = type(refinement_main.engine)()
+
+    class FakeConn:
+        def execute(self, sql: str, params=None):
+            raise RuntimeError(f"No files found that match the pattern in {sql}")
+
+    monkeypatch.setattr(engine, "_latest_materialized_uri", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(engine, "get_rls_filters", lambda sql, _ctx: (sql, []))
+    monkeypatch.setattr(engine, "_conn", lambda: FakeConn())
+
+    result = engine.get_dataset_schema(
+        _FakeStore().get_dataset("sap_successfactors_employee_360"),
+        {"tenant_id": "tenant-a", "workspace_id": "workspace-a"},
+    )
+
+    assert result["name"] == "sap_successfactors_employee_360"
+    assert "No files found" in result["error"]
+    assert "tenant_id=tenant-a/workspace_id=workspace-a" in result["error"]
+    assert "sap_successfactors_empemployment_latest/**/*.parquet" not in result["error"]
+    assert "fields" not in result
+    assert "row_count" not in result

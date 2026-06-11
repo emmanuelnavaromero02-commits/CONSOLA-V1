@@ -937,13 +937,24 @@ class DuckDBEngine:
 
     # ── Dataset query ─────────────────────────────────────────────────────────
 
-    def get_dataset_schema(self, ds: dict) -> dict:
+    def get_dataset_schema(self, ds: dict, user_context: dict | None = None) -> dict:
         try:
             validate_safe_identifier(ds["name"], "dataset")
+            sql = ds.get("sql_def") or ds.get("sql") or ""
+            self._validate_safe_sql(sql)
+            sources = ds.get("sources") or []
             with self._duckdb_lock:
+                rls_sql, rls_params = self.get_rls_filters(sql, user_context or {})
                 con = self._conn()
+                effective_sql = self._inject_bucket(rls_sql)
+                effective_sql = self._scope_storage_sql(effective_sql, sources, user_context)
+                effective_sql = self._inject_latest_date(effective_sql, sources, user_context)
+                self._validate_scoped_storage_sql(effective_sql, user_context)
+                if re.search(r'(?<![A-Za-z0-9_])"?pggold"?\s*\.', effective_sql, re.IGNORECASE):
+                    self._pg_gold_attach(con, user_context)
                 rows = con.execute(
-                    f"DESCRIBE SELECT * FROM ({self._inject_bucket(ds['sql_def'])}) _q LIMIT 0"
+                    f"DESCRIBE SELECT * FROM ({effective_sql}) _q LIMIT 0",
+                    rls_params,
                 ).fetchall()
             return {"name": ds["name"], "fields": [{"name": r[0], "type": r[1]} for r in rows]}
         except Exception as exc:

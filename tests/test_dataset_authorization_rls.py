@@ -373,7 +373,7 @@ async def test_generate_transform_mcp_propagates_gold_layer_for_registered_datas
             }
         return None
 
-    def fake_get_dataset_schema(_ds):
+    def fake_get_dataset_schema(_ds, user_context=None):
         return {"fields": [{"name": "customer_id", "type": "string"}, {"name": "amount", "type": "float"}]}
 
     async def fake_generate_sql(description, schemas, layer="silver"):
