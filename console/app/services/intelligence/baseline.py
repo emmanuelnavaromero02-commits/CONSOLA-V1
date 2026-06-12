@@ -224,6 +224,10 @@ def _base_signal(
             f"{metric_name}: {entity_label} esta {actual:.2f} vs esperado "
             f"{expected:.2f} ({deviation_pct:+.1%})."
         ),
+        "source_system": cartridge_id,
+        "source_dataset": dataset,
+        "gold_table": f"gold_{dataset}",
+        "freshness_at": period_key,
     }
 
 
@@ -245,6 +249,17 @@ def _artifact(
     time_field = str(metric["time_field"])
     value_field = str(metric["value_field"])
     external_items = build_external_evidence(contract, metric, signal, external_sources) if include_external else []
+    source_system = str(contract.get("cartridge") or signal.get("cartridge_id") or "")
+    freshness_at = period_key(latest, time_field)
+    signal.update(
+        {
+            "source_system": source_system,
+            "source_dataset": dataset,
+            "gold_table": f"gold_{dataset}",
+            "freshness_at": freshness_at,
+            "freshness_field": time_field,
+        }
+    )
     evidence = dataset_evidence_pack(
         dataset=dataset,
         id_field=id_field,
@@ -255,6 +270,9 @@ def _artifact(
         history_values=history_values,
         method=method,
         confidence=float(signal["confidence"]),
+        source_system=source_system,
+        gold_table=f"gold_{dataset}",
+        freshness_at=freshness_at,
         external_items=external_items,
     )
     signal["configured_hypotheses"] = metric.get("hypotheses") if isinstance(metric.get("hypotheses"), list) else []
@@ -270,6 +288,11 @@ def _artifact(
         "prediction_method": signal.get("prediction_method"),
         "history_values": [round(value, 4) for value in history_values],
         "confidence": signal["confidence"],
+        "source_system": source_system,
+        "source_dataset": dataset,
+        "gold_table": f"gold_{dataset}",
+        "freshness_at": freshness_at,
+        "freshness_field": time_field,
     }
     return {
         "baseline": baseline_payload,

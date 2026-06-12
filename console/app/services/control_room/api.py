@@ -1181,22 +1181,28 @@ def _lessons_for_item(item: dict[str, Any]) -> list[str]:
 @_bind_to_core
 async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any]]:
     try:
-        _, workspace_id = _workspace_scope(user)
+        tenant_id, workspace_id = _workspace_scope(user)
+        params: list[Any] = [workspace_id]
+        tenant_clause = ""
+        if tenant_id:
+            params.append(tenant_id)
+            tenant_clause = f"AND tenant_id::text = ${len(params)}"
         pool = await auth.pool()
         rows = await pool.fetch(
-            """
-            SELECT item_id, cartridge_id, domain, source_dataset, item_kind, title,
+            f"""
+            SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
                    severity, status, decision_id, entity_kind, entity_id,
                    entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
                    resolved_at, dismissed_at, impact_estimate, impact_currency,
                    confidence, priority_score, selected_option_id, execution_status
               FROM control_room_items
              WHERE workspace_id = $1
+               {tenant_clause}
                AND item_kind = 'intelligence_signal'
              ORDER BY priority_score DESC, last_seen_at DESC
              LIMIT 200
             """,
-            workspace_id,
+            *params,
         )
     except Exception:
         return []
@@ -1214,10 +1220,20 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
             {
                 "id": item_id,
                 "kind": public_row.get("item_kind") or "intelligence_signal",
+                "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
+                "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
                 "domain": public_row.get("domain") or "Operacion",
                 "module": metadata.get("module") or "Intelligence Engine",
                 "cartridge": public_row.get("cartridge_id") or "platform",
                 "source_dataset": public_row.get("source_dataset") or "intelligence_signals",
+                "source_system": metadata.get("source_system") or public_row.get("cartridge_id") or "platform",
+                "dataset": metadata.get("dataset") or public_row.get("source_dataset") or "intelligence_signals",
+                "gold_table": metadata.get("gold_table"),
+                "freshness_at": metadata.get("freshness_at"),
+                "freshness_field": metadata.get("freshness_field"),
+                "data_status": metadata.get("data_status") or "gold_ready",
+                "evidence_pack_id": metadata.get("evidence_pack_id"),
+                "evidence_pack": metadata.get("evidence_pack") if isinstance(metadata.get("evidence_pack"), dict) else {},
                 "entity_kind": public_row.get("entity_kind") or "Entidad",
                 "entity_id": public_row.get("entity_id") or "",
                 "entity_label": public_row.get("entity_label") or public_row.get("entity_id") or "Entidad",

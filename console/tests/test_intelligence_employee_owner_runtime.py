@@ -73,9 +73,11 @@ async def test_employee_signal_list_is_owner_scoped(monkeypatch):
     assert result == {"signals": []}
     assert conn.executed[0][0].startswith("SELECT set_config")
     sql, params = conn.fetches[0]
+    assert "tenant_id::text" in sql
     assert "owner_user_id" in sql
     assert params == (
         "22222222-2222-2222-2222-222222222222",
+        "11111111-1111-1111-1111-111111111111",
         101,
         25,
     )
@@ -90,8 +92,10 @@ async def test_workspace_admin_signal_list_is_workspace_scoped(monkeypatch):
 
     assert result == {"signals": []}
     sql, params = conn.fetches[0]
+    assert "tenant_id::text" in sql
     assert "owner_user_id" not in sql
     assert params == (
         "22222222-2222-2222-2222-222222222222",
+        "11111111-1111-1111-1111-111111111111",
         25,
     )
