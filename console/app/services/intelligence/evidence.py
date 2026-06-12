@@ -16,11 +16,24 @@ def dataset_evidence_pack(
     history_values: list[float],
     method: str,
     confidence: float,
+    source_system: str | None = None,
+    gold_table: str | None = None,
+    freshness_at: str | None = None,
     external_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    table = gold_table or f"gold_{dataset}"
     row_sample = {
         "latest": public_json(latest),
         "history_values": [round(value, 4) for value in history_values],
+    }
+    source_metadata = {
+        "source_system": source_system,
+        "dataset": dataset,
+        "gold_table": table,
+        "freshness_at": freshness_at,
+        "freshness_field": time_field,
+        "value_field": value_field,
+        "entity_id": entity_id,
     }
     items = [
         {
@@ -28,17 +41,21 @@ def dataset_evidence_pack(
             "source_ref": dataset,
             "query_text": (
                 f"SELECT {time_field}, {id_field}, {value_field} "
-                f"FROM {dataset} WHERE {id_field} = $entity_id ORDER BY {time_field}"
+                f"FROM {table} WHERE {id_field} = $entity_id ORDER BY {time_field}"
             ),
             "data": {
                 **row_sample,
                 "row_count": len(history_values) + 1,
                 "history_window": len(history_values),
                 "sample_hash": sample_hash(row_sample),
+                "source_system": source_system,
+                "dataset": dataset,
+                "gold_table": table,
+                "freshness_at": freshness_at,
             },
             "supports_hypothesis": "baseline_deviation",
             "strength": confidence,
-            "metadata": {"entity_id": entity_id, "value_field": value_field, "time_field": time_field},
+            "metadata": source_metadata,
         }
     ]
     items.extend(external_items or [])
@@ -46,4 +63,13 @@ def dataset_evidence_pack(
     summary = f"Baseline {method} con {len(history_values)} muestras historicas."
     if external_count:
         summary += f" Contexto externo: {external_count} fuente(s) revisada(s)."
-    return {"summary": summary, "confidence": confidence, "items": items}
+    return {
+        "summary": summary,
+        "confidence": confidence,
+        "items": items,
+        "metadata": source_metadata,
+        "freshness_at": freshness_at,
+        "source_system": source_system,
+        "dataset": dataset,
+        "gold_table": table,
+    }

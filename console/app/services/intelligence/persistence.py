@@ -69,6 +69,7 @@ async def persist_artifacts(
             signal["baseline_id"] = baseline_id
             pack_id = await persist_evidence(conn, tenant_id, workspace_id, signal, evidence_pack, owner_user_id)
             evidence_pack["id"] = pack_id
+            signal["evidence_pack_id"] = pack_id
             for hypothesis in hypotheses:
                 hypothesis["evidence_pack_id"] = pack_id
             await persist_signal(conn, tenant_id, workspace_id, signal, owner_user_id)
@@ -201,6 +202,13 @@ async def persist_signal(pool: Any, tenant_id: str | None, workspace_id: str, si
                 "metric_name": signal.get("metric_name"),
                 "expected_behavior": signal.get("expected_behavior"),
                 "signal_subtype": signal.get("signal_subtype") or "observed",
+                "source_system": signal.get("source_system") or signal.get("cartridge_id"),
+                "source_dataset": signal.get("source_dataset") or signal.get("dataset"),
+                "dataset": signal.get("dataset"),
+                "gold_table": signal.get("gold_table") or f"gold_{signal.get('dataset')}",
+                "freshness_at": signal.get("freshness_at") or signal.get("period_key"),
+                "freshness_field": signal.get("freshness_field"),
+                "evidence_pack_id": signal.get("evidence_pack_id"),
             }
         ),
         sorted(TERMINAL_SIGNAL_STATUSES),
@@ -232,6 +240,11 @@ async def persist_evidence(
                 "metric": signal["metric"],
                 "dataset": signal["dataset"],
                 "signal_subtype": signal.get("signal_subtype") or "observed",
+                "source_system": signal.get("source_system") or signal.get("cartridge_id"),
+                "source_dataset": signal.get("source_dataset") or signal.get("dataset"),
+                "gold_table": signal.get("gold_table") or f"gold_{signal.get('dataset')}",
+                "freshness_at": signal.get("freshness_at") or signal.get("period_key"),
+                "freshness_field": signal.get("freshness_field"),
             }
         ),
     )
@@ -355,7 +368,31 @@ async def publish_control_room_item(
     signal = artifact["signal"]
     top_hypothesis = (artifact.get("hypotheses") or [{}])[0]
     top_option = (artifact.get("options") or [{}])[0]
+    evidence_pack = artifact.get("evidence_pack") if isinstance(artifact.get("evidence_pack"), dict) else {}
+    evidence_items = evidence_pack.get("items") if isinstance(evidence_pack.get("items"), list) else []
+    evidence_pack_id = evidence_pack.get("id") or signal.get("evidence_pack_id")
+    source_system = signal.get("source_system") or signal.get("cartridge_id")
+    source_dataset = signal.get("source_dataset") or signal.get("dataset")
+    gold_table = signal.get("gold_table") or f"gold_{source_dataset}"
+    freshness_at = signal.get("freshness_at") or signal.get("period_key")
+    freshness_field = signal.get("freshness_field")
     metadata = {
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "source_system": source_system,
+        "source_dataset": source_dataset,
+        "dataset": signal.get("dataset"),
+        "gold_table": gold_table,
+        "freshness_at": freshness_at,
+        "freshness_field": freshness_field,
+        "data_status": "gold_ready",
+        "evidence_pack_id": evidence_pack_id,
+        "evidence_pack": {
+            "id": evidence_pack_id,
+            "summary": evidence_pack.get("summary"),
+            "confidence": evidence_pack.get("confidence"),
+            "items": public_json(evidence_items),
+        },
         "module": "Intelligence Engine",
         "description": signal["summary"],
         "recommendation": top_option.get("label") or "Revisar evidencia y decidir siguiente paso.",
@@ -367,10 +404,15 @@ async def publish_control_room_item(
             "predicted_value": signal.get("predicted_value"),
             "prediction_horizon_days": signal.get("prediction_horizon_days"),
             "deviation_pct": signal["deviation_pct"],
-            "evidence_pack_id": artifact.get("evidence_pack", {}).get("id"),
+            "evidence_pack_id": evidence_pack_id,
+            "source_system": source_system,
+            "source_dataset": source_dataset,
+            "gold_table": gold_table,
+            "freshness_at": freshness_at,
+            "freshness_field": freshness_field,
             "source": "intelligence_engine",
         },
-        "sql": (artifact.get("evidence_pack", {}).get("items") or [{}])[0].get("query_text"),
+        "sql": (evidence_items or [{}])[0].get("query_text"),
         "intelligence": public_json(artifact),
     }
     priority_score = int(max(0, min(100, round(float(signal["confidence"]) * 45 + abs(float(signal["deviation_pct"])) * 55))))
@@ -445,7 +487,17 @@ async def publish_control_room_item(
         signal["signal_id"],
         _actor_id(user.get("id")),
         user.get("email"),
-        json_dumps({"metric": signal["metric"], "severity": signal["severity"]}),
+        json_dumps(
+            {
+                "metric": signal["metric"],
+                "severity": signal["severity"],
+                "source_system": source_system,
+                "source_dataset": source_dataset,
+                "gold_table": gold_table,
+                "freshness_at": freshness_at,
+                "evidence_pack_id": evidence_pack_id,
+            }
+        ),
     )
 
 
@@ -454,6 +506,10 @@ async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
     can_read_all = _can_read_workspace_wide(user)
     owner_id = _owner_user_id(user)
     params: list[Any] = [workspace_id]
+    tenant_clause = ""
+    if tenant_id:
+        params.append(tenant_id)
+        tenant_clause = f" AND tenant_id::text = ${len(params)}"
     owner_clause = ""
     if not can_read_all:
         if owner_id is None:
@@ -472,6 +528,7 @@ async def list_signals(user: dict, *, limit: int = 100) -> dict[str, Any]:
                    prediction_method, signal_subtype, metadata, created_at, updated_at
               FROM intelligence_signals
              WHERE workspace_id = $1
+             {tenant_clause}
              {owner_clause}
              ORDER BY updated_at DESC, severity DESC
              LIMIT ${len(params)}
@@ -486,6 +543,10 @@ async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
     can_read_all = _can_read_workspace_wide(user)
     owner_id = _owner_user_id(user)
     signal_params: list[Any] = [workspace_id, signal_id]
+    signal_tenant_clause = ""
+    if tenant_id:
+        signal_params.append(tenant_id)
+        signal_tenant_clause = f" AND tenant_id::text = ${len(signal_params)}"
     owner_clause = ""
     if not can_read_all:
         if owner_id is None:
@@ -501,9 +562,10 @@ async def get_signal(user: dict, signal_id: str) -> dict[str, Any]:
                    deviation_value, deviation_pct, severity, signal_type, status,
                    confidence, summary, prediction_horizon_days, predicted_value,
                    prediction_method, signal_subtype, metadata, created_at, updated_at
-              FROM intelligence_signals
+             FROM intelligence_signals
              WHERE workspace_id = $1
                AND signal_id = $2
+               {signal_tenant_clause}
                {owner_clause}
             """,
             *signal_params,
