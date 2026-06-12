@@ -136,6 +136,22 @@ GRANT SELECT, INSERT, UPDATE ON action_run_events TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE action_runs_id_seq TO omega_console;
 GRANT USAGE, SELECT ON SEQUENCE action_run_events_id_seq TO omega_console;
 
+INSERT INTO control_room_action_templates
+    (template_id, cartridge_id, anomaly_type, label, description, action_kind, risk_level, mode_default, requires_approval, config)
+VALUES
+    ('create_investigation_note', 'platform', NULL, 'Crear nota de investigacion', 'Registra una nota interna auditada con evidencia del item.', 'investigation_note', 'low', 'dry_run', FALSE, '{"external_write": false}'::jsonb),
+    ('mark_decision_for_monitoring', 'platform', NULL, 'Marcar decision para monitoreo', 'Activa seguimiento interno de la decision y sus metricas.', 'decision_monitoring', 'low', 'dry_run', TRUE, '{"external_write": false}'::jsonb)
+ON CONFLICT (template_id) DO UPDATE
+SET label = EXCLUDED.label,
+    description = EXCLUDED.description,
+    action_kind = EXCLUDED.action_kind,
+    risk_level = EXCLUDED.risk_level,
+    mode_default = EXCLUDED.mode_default,
+    requires_approval = EXCLUDED.requires_approval,
+    enabled = TRUE,
+    config = EXCLUDED.config,
+    updated_at = NOW();
+
 INSERT INTO schema_migrations (filename, applied_at)
 VALUES ('99n_control_room_action_runs.sql', NOW())
 ON CONFLICT (filename) DO NOTHING;

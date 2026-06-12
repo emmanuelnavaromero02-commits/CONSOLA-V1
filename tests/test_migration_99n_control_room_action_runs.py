@@ -50,3 +50,13 @@ def test_action_runs_rls_is_forced_and_fail_closed():
     assert "WITH CHECK" in sql
     assert "omega_console" in sql
     assert "omega_workspace" in sql
+
+
+def test_action_runs_migration_seeds_new_internal_templates_for_existing_volumes():
+    sql = MIGRATION.read_text(encoding="utf-8")
+
+    assert "INSERT INTO control_room_action_templates" in sql
+    assert "create_investigation_note" in sql
+    assert "mark_decision_for_monitoring" in sql
+    assert "ON CONFLICT (template_id) DO UPDATE" in sql
+    assert '"external_write": false' in sql
