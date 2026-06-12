@@ -1534,6 +1534,32 @@ def _dry_run_checks(
 
 
 @_bind_to_core
+def _uses_asyncpg_pool(pool: Any) -> bool:
+    return pool.__class__.__module__.startswith("asyncpg") and callable(getattr(pool, "acquire", None))
+
+
+@_bind_to_core
+async def _run_with_db_scope(pool: Any, user: dict, work: Callable[[Any, str | None, str], Awaitable[Any]]) -> Any:
+    tenant_id, workspace_id = _workspace_scope(user)
+    if _uses_asyncpg_pool(pool):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.tenant_id', $1, true), set_config('app.workspace_id', $2, true)",
+                    tenant_id or "",
+                    workspace_id,
+                )
+                return await work(conn, tenant_id, workspace_id)
+
+    await pool.execute(
+        "SELECT set_config('app.tenant_id', $1, false), set_config('app.workspace_id', $2, false)",
+        tenant_id or "",
+        workspace_id,
+    )
+    return await work(pool, tenant_id, workspace_id)
+
+
+@_bind_to_core
 async def action_preview(
     item_id: str,
     user: dict,
@@ -1575,6 +1601,7 @@ async def action_preview(
         execution_result=result,
         legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
         metadata={"legacy_table": "control_room_action_executions"},
+        critical=True,
     )
     await _set_execution_status(pool, user=user, item=item, execution_status="preview_generated")
     await _record_item_event(
@@ -1670,6 +1697,7 @@ async def action_dry_run(
         error_code=None if validation_ok else "dry_run_validation_failed",
         error_message=None if validation_ok else result["message"],
         metadata={"legacy_table": "control_room_action_executions", "checks": validation_checks},
+        critical=True,
     )
     await _set_execution_status(pool, user=user, item=item, execution_status=execution_status)
     await _record_item_event(
@@ -1759,22 +1787,24 @@ async def list_item_outcomes(
     fetcher: DatasetFetcher = query_dataset_rows,
 ) -> dict[str, Any]:
     item = await _item_for_mutation(item_id, user, fetcher=fetcher)
-    workspace_id = _workspace_id(user)
     pool = await auth.pool()
-    rows = await pool.fetch(
-        """
-        SELECT id, tenant_id, workspace_id, signal_id, option_id, action_taken,
-               predicted_value, actual_value, prediction_error, outcome_summary,
-               learned_rule, metadata, created_at
-          FROM prediction_outcomes
-         WHERE workspace_id = $1
-           AND signal_id = $2
-         ORDER BY created_at DESC
-         LIMIT 100
-        """,
-        workspace_id,
-        item["id"],
-    )
+    async def _load(conn: Any, _tenant_id: str | None, workspace_id: str) -> Any:
+        return await conn.fetch(
+            """
+            SELECT id, tenant_id, workspace_id, signal_id, option_id, action_taken,
+                   predicted_value, actual_value, prediction_error, outcome_summary,
+                   learned_rule, metadata, created_at
+              FROM prediction_outcomes
+             WHERE workspace_id = $1
+               AND signal_id = $2
+             ORDER BY created_at DESC
+             LIMIT 100
+            """,
+            workspace_id,
+            item["id"],
+        )
+
+    rows = await _run_with_db_scope(pool, user, _load)
     return {
         "item_id": item["id"],
         "outcomes": [_outcome_public(row) for row in rows],
@@ -1812,9 +1842,7 @@ async def record_item_outcome(
         or learned_rule
         or "Outcome registrado desde Control Room."
     ).strip()
-    tenant_id, workspace_id = _workspace_scope(user)
     pool = await auth.pool()
-    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
     metadata = {
         "source": "control_room",
         "reported_by": user.get("email"),
@@ -1823,52 +1851,57 @@ async def record_item_outcome(
         "measured_impact": body.get("measured_impact"),
         "evidence": body.get("evidence") if isinstance(body.get("evidence"), dict) else {},
     }
-    row = await pool.fetchrow(
-        """
-        INSERT INTO prediction_outcomes (
-            tenant_id, workspace_id, signal_id, option_id, action_taken,
-            predicted_value, actual_value, prediction_error, outcome_summary,
-            learned_rule, owner_user_id, metadata
+    async def _write(conn: Any, tenant_id: str | None, workspace_id: str) -> Any:
+        await _ensure_item_row(conn, user=user, item=item, status=item.get("status") or "in_review", critical=True)
+        row = await conn.fetchrow(
+            """
+            INSERT INTO prediction_outcomes (
+                tenant_id, workspace_id, signal_id, option_id, action_taken,
+                predicted_value, actual_value, prediction_error, outcome_summary,
+                learned_rule, owner_user_id, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+            RETURNING *
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            option_id,
+            action_taken,
+            predicted_value,
+            actual_value,
+            prediction_error,
+            outcome_summary,
+            learned_rule,
+            user.get("id"),
+            json.dumps(metadata),
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-        RETURNING *
-        """,
-        tenant_id,
-        workspace_id,
-        item["id"],
-        option_id,
-        action_taken,
-        predicted_value,
-        actual_value,
-        prediction_error,
-        outcome_summary,
-        learned_rule,
-        user.get("id"),
-        json.dumps(metadata),
-    )
-    if learned_rule:
-        await _persist_lessons(pool, user=user, item=item, decision_id=item.get("decision_id"), lessons=[learned_rule])
-    await pool.execute(
-        """
-        UPDATE control_room_items
-           SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-               last_seen_at = NOW()
-         WHERE workspace_id = $1
-           AND item_id = $2
-        """,
-        workspace_id,
-        item["id"],
-        json.dumps({
-            "last_outcome": {
-                "action_taken": action_taken,
-                "actual_value": actual_value,
-                "prediction_error": prediction_error,
-                "outcome_summary": outcome_summary,
-                "learned_rule": learned_rule,
-            },
-            "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), learned_rule or ""),
-        }),
-    )
+        if learned_rule:
+            await _persist_lessons(conn, user=user, item=item, decision_id=item.get("decision_id"), lessons=[learned_rule])
+        await conn.execute(
+            """
+            UPDATE control_room_items
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                   last_seen_at = NOW()
+             WHERE workspace_id = $1
+               AND item_id = $2
+            """,
+            workspace_id,
+            item["id"],
+            json.dumps({
+                "last_outcome": {
+                    "action_taken": action_taken,
+                    "actual_value": actual_value,
+                    "prediction_error": prediction_error,
+                    "outcome_summary": outcome_summary,
+                    "learned_rule": learned_rule,
+                },
+                "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), learned_rule or ""),
+            }),
+        )
+        return row, tenant_id, workspace_id
+
+    row, tenant_id, workspace_id = await _run_with_db_scope(pool, user, _write)
     outcome = _outcome_public(row)
     await _record_item_event(
         pool,
@@ -2141,7 +2174,8 @@ async def _record_execute_block(
         legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
         metadata={"legacy_table": "control_room_action_executions", "block_reason": error},
     )
-    await _set_execution_status(pool, user=user, item=item, execution_status="blocked", critical=True)
+    if str(item.get("execution_status") or "not_started") != "dry_run_validated":
+        await _set_execution_status(pool, user=user, item=item, execution_status="blocked", critical=True)
     await _record_item_event(
         pool,
         user=user,

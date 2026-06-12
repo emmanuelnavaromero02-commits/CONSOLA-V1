@@ -1351,8 +1351,8 @@ async def get_item_activity(
             )
         except Exception:
             decision_action_rows = []
-    try:
-        action_run_rows = await pool.fetch(
+    async def _load_scoped_activity(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> tuple[Any, Any]:
+        runs = await conn.fetch(
             """
             SELECT id, item_id, decision_id, legacy_execution_id, action_type,
                    adapter_name, mode, status, input, dry_run_result,
@@ -1364,13 +1364,10 @@ async def get_item_activity(
              ORDER BY created_at DESC
              LIMIT 50
             """,
-            workspace_id,
+            scoped_workspace_id,
             item["id"],
         )
-    except Exception:
-        action_run_rows = []
-    try:
-        outcome_rows = await pool.fetch(
+        outcomes = await conn.fetch(
             """
             SELECT id, signal_id, option_id, action_taken, predicted_value,
                    actual_value, prediction_error, outcome_summary,
@@ -1381,10 +1378,15 @@ async def get_item_activity(
              ORDER BY created_at DESC
              LIMIT 50
             """,
-            workspace_id,
+            scoped_workspace_id,
             item["id"],
         )
+        return runs, outcomes
+
+    try:
+        action_run_rows, outcome_rows = await _run_with_db_scope(pool, user, _load_scoped_activity)
     except Exception:
+        action_run_rows = []
         outcome_rows = []
 
     activity = [

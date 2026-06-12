@@ -26,13 +26,16 @@ def test_action_runs_are_tenant_workspace_scoped_and_fk_to_items():
         assert "workspace_id" in block
     assert "FOREIGN KEY (workspace_id, item_id)" in action_runs_block
     assert "REFERENCES control_room_items(workspace_id, item_id)" in action_runs_block
-    assert "REFERENCES action_runs(id) ON DELETE CASCADE" in action_run_events_block
+    assert "FOREIGN KEY (workspace_id, action_run_id)" in action_run_events_block
+    assert "REFERENCES action_runs(workspace_id, id)" in action_run_events_block
+    assert "REFERENCES action_runs(id) ON DELETE CASCADE" not in action_run_events_block
 
 
 def test_action_runs_have_idempotency_indexes_and_status_contract():
     sql = MIGRATION.read_text(encoding="utf-8")
 
     assert "action_runs_workspace_idempotency_idx" in sql
+    assert "action_runs_workspace_id_idx" in sql
     assert "UNIQUE" in sql
     assert "dry_run_completed" in sql
     assert "dry_run_failed" in sql

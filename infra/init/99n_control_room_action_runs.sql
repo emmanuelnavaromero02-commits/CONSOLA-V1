@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS action_runs (
 CREATE UNIQUE INDEX IF NOT EXISTS action_runs_workspace_idempotency_idx
     ON action_runs(workspace_id, idempotency_key);
 
+CREATE UNIQUE INDEX IF NOT EXISTS action_runs_workspace_id_idx
+    ON action_runs(workspace_id, id);
+
 CREATE INDEX IF NOT EXISTS action_runs_item_idx
     ON action_runs(workspace_id, item_id, created_at DESC);
 
@@ -57,14 +60,17 @@ CREATE TABLE IF NOT EXISTS action_run_events (
     id             BIGSERIAL PRIMARY KEY,
     tenant_id      UUID REFERENCES tenants(id) ON DELETE CASCADE,
     workspace_id   UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    action_run_id  BIGINT NOT NULL REFERENCES action_runs(id) ON DELETE CASCADE,
+    action_run_id  BIGINT NOT NULL,
     item_id        TEXT NOT NULL,
     event_type     TEXT NOT NULL,
     status         TEXT NOT NULL,
     actor_id       BIGINT REFERENCES users(id) ON DELETE SET NULL,
     actor_email    TEXT,
     metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (workspace_id, action_run_id)
+      REFERENCES action_runs(workspace_id, id)
+      ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS action_run_events_run_idx

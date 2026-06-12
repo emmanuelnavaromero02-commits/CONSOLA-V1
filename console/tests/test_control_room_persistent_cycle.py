@@ -185,10 +185,36 @@ async def test_control_room_persistent_cycle_records_action_run_outcome_lesson_a
     assert "INSERT INTO prediction_outcomes" in fetchrow_sql
     assert "INSERT INTO control_room_lessons" in execute_sql
     assert "INSERT INTO audit_events" in execute_sql
+    assert "set_config('app.tenant_id'" in execute_sql
 
     audit_actions = [call.kwargs["action"] for call in audit_event.await_args_list]
     assert "control_room.action.dry_run" in audit_actions
     assert "control_room.outcome.record" in audit_actions
+
+
+@pytest.mark.asyncio
+async def test_dry_run_fails_closed_when_action_run_cannot_persist():
+    item = _item()
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchrow.return_value = _legacy_execution(item, row_id=101, mode="dry_run", status="validated")
+    mock_pool.fetchval.side_effect = RuntimeError("action_runs unavailable")
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(RuntimeError, match="action_runs unavailable"):
+            await control_room_service.action_dry_run(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+            )
+
+    execute_sql = "\n".join(str(call.args[0]) for call in mock_pool.execute.call_args_list)
+    assert "SET execution_status = $1" not in execute_sql
+    audit_event.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -222,3 +248,34 @@ async def test_execute_blocks_when_visual_dry_run_has_no_persistent_action_run()
     assert "INSERT INTO action_runs" in fetchval_sql
     assert audit_event.await_args.kwargs["action"] == "control_room.action.execute.blocked"
     assert audit_event.await_args.kwargs["metadata"]["reason"] == "dry_run_action_run_required"
+
+
+@pytest.mark.asyncio
+async def test_execute_block_preserves_successful_dry_run_status():
+    item = _item(execution_status="dry_run_validated")
+    mock_pool = AsyncMock()
+    mock_pool.fetch.return_value = []
+    mock_pool.fetchval.return_value = 902
+    mock_pool.fetchrow.return_value = _legacy_execution(item, row_id=334, mode="execute_live", status="blocked")
+
+    with (
+        patch.object(control_room_service.auth, "pool", return_value=mock_pool),
+        patch.object(control_room_service, "_item_for_mutation", new=AsyncMock(return_value=item)),
+        patch.object(control_room_service.audit_service, "record_event", new=AsyncMock()) as audit_event,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await control_room_service.execute_item(
+                item["id"],
+                USER,
+                template_id="create_followup_task",
+                confirm_execute=False,
+            )
+
+    assert exc.value.status_code == 409
+    assert audit_event.await_args.kwargs["metadata"]["reason"] == "explicit_confirmation_required"
+    status_updates = [
+        call
+        for call in mock_pool.execute.call_args_list
+        if "SET execution_status = $1" in str(call.args[0])
+    ]
+    assert not any(call.args[1] == "blocked" for call in status_updates)
