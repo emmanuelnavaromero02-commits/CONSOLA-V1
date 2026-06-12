@@ -31,6 +31,7 @@ def _metric() -> dict:
         "value_field": "forecast_ponderado_usd",
         "expected_behavior": "higher_is_good",
         "baseline": {"method": "moving_average", "minimum_history": 2, "window": 6},
+        "impact": {"currency": "USD", "unit_value": 20},
         "signal_rules": {"warning_pct": 0.20, "critical_pct": 0.45},
         "action_templates": [
             {
@@ -48,7 +49,12 @@ def _metric() -> dict:
 
 def _metric_with_prediction_and_external() -> dict:
     metric = _metric()
-    metric["prediction"] = {"enabled": True, "method": "trend_delta", "horizon_days": [7, 21], "minimum_history": 2}
+    metric["prediction"] = {
+        "enabled": True,
+        "method": "trend_delta",
+        "horizon_days": [7, 21],
+        "minimum_history": 2,
+    }
     metric["external_sources"] = [
         {
             "id": "commercial_calendar",
@@ -64,18 +70,43 @@ def _metric_with_prediction_and_external() -> dict:
             ],
         }
     ]
-    metric["hypotheses"] = [{"id": "campaign_lift", "title": "Campana comercial activa"}]
+    metric["hypotheses"] = [
+        {"id": "campaign_lift", "title": "Campana comercial activa"}
+    ]
     return metric
 
 
 def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     rows = [
-        {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
-        {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-        {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+        {
+            "mes": "2026-01-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        },
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 120,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 110,
+        },
+        {
+            "mes": "2026-04-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 200,
+        },
     ]
 
-    artifacts, skipped = intelligence_engine.build_metric_artifacts(_contract(), _metric(), rows)
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(), _metric(), rows
+    )
 
     assert skipped == []
     assert len(artifacts) == 1
@@ -83,16 +114,40 @@ def test_build_metric_artifacts_generates_baseline_signal_evidence_and_score():
     signal = artifact["signal"]
     baseline = artifact["baseline"]
     option = artifact["options"][0]
+    decision = artifact["decision_intelligence"]
 
     assert signal["signal_type"] == "opportunity"
     assert signal["severity"] == "critical"
     assert signal["actual_value"] == 200
     assert signal["expected_value"] == 110
-    assert baseline["sample_count"] == 2
+    assert baseline["sample_count"] == 3
+    assert signal["decision_intelligence"] == decision
+    assert decision["method"] == "robust_baseline_v0"
+    assert decision["anomaly_probability"] == 0.95
+    assert decision["uncertainty_level"] == "medium"
+    assert decision["expected_impact"]["value"] == 1800
+    assert decision["expected_impact"]["currency"] == "USD"
+    assert decision["cost_of_delay"]["value_per_day"] == 60
+    assert decision["recommended_decision"] == "investigate"
+    assert {candidate["option"] for candidate in decision["options"]} == {
+        "act_now",
+        "investigate",
+        "wait",
+        "monitor",
+    }
+    assert decision["data_quality"] == {
+        "history_points": 3,
+        "minimum_required": 3,
+        "status": "sufficient",
+        "missing_fields": [],
+    }
     assert artifact["evidence_pack"]["items"][0]["source_ref"] == "forecast_mensual"
     assert artifact["hypotheses"][0]["hypothesis_key"] == "baseline_deviation"
     assert option["score"] == pytest.approx(
-        option["impact_expected"] * option["confidence"] - option["cost"] - option["risk"] - option["time_cost"]
+        option["impact_expected"] * option["confidence"]
+        - option["cost"]
+        - option["risk"]
+        - option["time_cost"]
     )
 
 
@@ -100,14 +155,32 @@ def test_control_room_event_actor_id_accepts_numeric_strings_only():
     assert intelligence_persistence._actor_id(7) == 7
     assert intelligence_persistence._actor_id("7") == 7
     assert intelligence_persistence._actor_id("not-a-bigint") is None
-    assert intelligence_persistence._actor_id("11111111-1111-1111-1111-111111111111") is None
+    assert (
+        intelligence_persistence._actor_id("11111111-1111-1111-1111-111111111111")
+        is None
+    )
 
 
 def test_build_metric_artifacts_generates_predictive_signals_when_requested():
     rows = [
-        {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
-        {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-        {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+        {
+            "mes": "2026-01-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        },
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 120,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 200,
+        },
     ]
 
     artifacts, skipped = intelligence_engine.build_metric_artifacts(
@@ -118,17 +191,56 @@ def test_build_metric_artifacts_generates_predictive_signals_when_requested():
     )
 
     assert skipped == []
-    predictive = [artifact for artifact in artifacts if artifact["signal"]["signal_subtype"].startswith("future_")]
-    assert {artifact["signal"]["prediction_horizon_days"] for artifact in predictive} == {7, 21}
-    assert all(artifact["signal"]["predicted_value"] is not None for artifact in predictive)
-    assert all(artifact["signal"]["confidence"] < artifacts[0]["signal"]["confidence"] for artifact in predictive)
+    predictive = [
+        artifact
+        for artifact in artifacts
+        if artifact["signal"]["signal_subtype"].startswith("future_")
+    ]
+    assert {
+        artifact["signal"]["prediction_horizon_days"] for artifact in predictive
+    } == {7, 21}
+    assert all(
+        artifact["signal"]["predicted_value"] is not None for artifact in predictive
+    )
+    assert all(
+        artifact["signal"]["confidence"] < artifacts[0]["signal"]["confidence"]
+        for artifact in predictive
+    )
+    assert all(
+        artifact["decision_intelligence"]["method"] == "future_reserved_state_space"
+        for artifact in predictive
+    )
+    assert all(
+        artifact["decision_intelligence"]["anomaly_probability"] is None
+        for artifact in predictive
+    )
+    assert all(
+        artifact["decision_intelligence"]["recommended_decision"]
+        in {"investigate", "monitor"}
+        for artifact in predictive
+    )
 
 
 def test_external_context_enriches_evidence_and_hypotheses_without_inventing_numbers():
     rows = [
-        {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
-        {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-        {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+        {
+            "mes": "2026-01-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        },
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 120,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 200,
+        },
     ]
 
     artifacts, _ = intelligence_engine.build_metric_artifacts(
@@ -143,27 +255,125 @@ def test_external_context_enriches_evidence_and_hypotheses_without_inventing_num
     assert evidence_items[0]["data"]["row_count"] == 3
     assert evidence_items[0]["data"]["sample_hash"]
     assert any(item["source_type"] == "external" for item in evidence_items)
-    assert any(hypothesis["hypothesis_key"] == "external_event_correlation" for hypothesis in artifacts[0]["hypotheses"])
+    assert any(
+        hypothesis["hypothesis_key"] == "external_event_correlation"
+        for hypothesis in artifacts[0]["hypotheses"]
+    )
 
 
 def test_build_metric_artifacts_does_not_invent_when_history_is_insufficient():
     rows = [
-        {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-        {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 120,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 200,
+        },
     ]
 
-    artifacts, skipped = intelligence_engine.build_metric_artifacts(_contract(), _metric(), rows)
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(), _metric(), rows
+    )
 
     assert artifacts == []
     assert skipped[0]["status"] == "insufficient_history"
     assert skipped[0]["minimum_history"] == 2
+    decision = skipped[0]["decision_intelligence"]
+    assert decision["method"] == "insufficient_history"
+    assert decision["anomaly_probability"] is None
+    assert decision["uncertainty_level"] == "high"
+    assert decision["data_quality"]["history_points"] == 1
+    assert decision["data_quality"]["minimum_required"] == 3
+    assert decision["data_quality"]["status"] == "insufficient"
+
+
+def test_decision_intelligence_high_probability_low_uncertainty_can_recommend_act_now():
+    metric = _metric()
+    metric["baseline"]["window"] = 8
+    rows = [
+        {
+            "mes": f"2026-{month:02d}-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        }
+        for month in range(1, 9)
+    ]
+    rows.append(
+        {
+            "mes": "2026-09-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 180,
+        }
+    )
+
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(), metric, rows
+    )
+
+    assert skipped == []
+    decision = artifacts[0]["decision_intelligence"]
+    assert decision["method"] == "robust_baseline_v0"
+    assert decision["uncertainty_level"] == "low"
+    assert decision["expected_impact"]["value"] == 1600
+    assert decision["recommended_decision"] == "act_now"
+
+
+def test_decision_intelligence_high_uncertainty_does_not_recommend_act_now():
+    rows = [
+        {
+            "mes": "2026-01-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 100,
+        },
+        {
+            "mes": "2026-02-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 500,
+        },
+        {
+            "mes": "2026-03-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 50,
+        },
+        {
+            "mes": "2026-04-01",
+            "owner_id": "u1",
+            "vendedor": "Sofia",
+            "forecast_ponderado_usd": 1000,
+        },
+    ]
+
+    artifacts, skipped = intelligence_engine.build_metric_artifacts(
+        _contract(), _metric(), rows
+    )
+
+    assert skipped == []
+    decision = artifacts[0]["decision_intelligence"]
+    assert decision["method"] == "robust_baseline_v0"
+    assert decision["uncertainty_level"] == "high"
+    assert decision["recommended_decision"] in {"investigate", "monitor"}
 
 
 def test_build_metric_artifacts_supports_global_entity_for_cross_cartridge_metrics():
     metric = _metric()
     metric["id"] = "capacity_gap"
     metric["dataset"] = "salesforce_forecast_vs_capacidad"
-    metric["entity"] = {"kind": "pipeline", "id_field": "__all__", "label_field": "Forecast vs capacidad"}
+    metric["entity"] = {
+        "kind": "pipeline",
+        "id_field": "__all__",
+        "label_field": "Forecast vs capacidad",
+    }
     metric["value_field"] = "holgura_horas"
     rows = [
         {"mes": "2026-01-01", "holgura_horas": 100},
@@ -171,7 +381,9 @@ def test_build_metric_artifacts_supports_global_entity_for_cross_cartridge_metri
         {"mes": "2026-03-01", "holgura_horas": 40},
     ]
 
-    artifacts, _ = intelligence_engine.build_metric_artifacts({"cartridge": "salesforce", "domain": "Ventas"}, metric, rows)
+    artifacts, _ = intelligence_engine.build_metric_artifacts(
+        {"cartridge": "salesforce", "domain": "Ventas"}, metric, rows
+    )
 
     assert artifacts[0]["signal"]["entity_id"] == "__all__"
     assert artifacts[0]["signal"]["signal_type"] == "risk"
@@ -185,9 +397,24 @@ async def test_run_intelligence_can_run_without_persisting_or_llm(monkeypatch):
         assert user == USER
         assert limit >= 3
         return [
-            {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
-            {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-            {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+            {
+                "mes": "2026-01-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 100,
+            },
+            {
+                "mes": "2026-02-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 120,
+            },
+            {
+                "mes": "2026-03-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 200,
+            },
         ]
 
     monkeypatch.setattr(
@@ -196,7 +423,9 @@ async def test_run_intelligence_can_run_without_persisting_or_llm(monkeypatch):
         lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
     )
 
-    result = await intelligence_engine.run_intelligence(USER, {}, fetcher=fake_fetcher, persist=False)
+    result = await intelligence_engine.run_intelligence(
+        USER, {}, fetcher=fake_fetcher, persist=False
+    )
 
     assert result["workspace_id"] == USER["active_workspace_id"]
     assert len(result["signals"]) == 1
@@ -210,9 +439,24 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
     async def fake_fetcher(dataset: str, user: dict | None, limit: int):
         assert dataset == "forecast_mensual"
         return [
-            {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
-            {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-            {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+            {
+                "mes": "2026-01-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 100,
+            },
+            {
+                "mes": "2026-02-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 120,
+            },
+            {
+                "mes": "2026-03-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 200,
+            },
         ]
 
     async def fake_persist_artifacts(tenant_id, workspace_id, user, artifacts):
@@ -220,25 +464,35 @@ async def test_run_intelligence_audits_duration_when_persisting(monkeypatch):
         assert workspace_id == USER["active_workspace_id"]
         assert artifacts
 
-    async def fake_record_event(user_id, email, action, resource_type, resource_id, metadata=None):
-        events.append({
-            "user_id": user_id,
-            "email": email,
-            "action": action,
-            "resource_type": resource_type,
-            "resource_id": resource_id,
-            "metadata": metadata or {},
-        })
+    async def fake_record_event(
+        user_id, email, action, resource_type, resource_id, metadata=None
+    ):
+        events.append(
+            {
+                "user_id": user_id,
+                "email": email,
+                "action": action,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "metadata": metadata or {},
+            }
+        )
 
     monkeypatch.setattr(
         intelligence_engine,
         "load_contracts",
         lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
     )
-    monkeypatch.setattr(intelligence_engine_module, "persist_artifacts", fake_persist_artifacts)
-    monkeypatch.setattr(intelligence_engine_module.audit_service, "record_event", fake_record_event)
+    monkeypatch.setattr(
+        intelligence_engine_module, "persist_artifacts", fake_persist_artifacts
+    )
+    monkeypatch.setattr(
+        intelligence_engine_module.audit_service, "record_event", fake_record_event
+    )
 
-    result = await intelligence_engine.run_intelligence(USER, {}, fetcher=fake_fetcher, persist=True)
+    result = await intelligence_engine.run_intelligence(
+        USER, {}, fetcher=fake_fetcher, persist=True
+    )
 
     assert len(result["signals"]) == 1
     assert events[0]["action"] == "intelligence.run"
@@ -255,9 +509,24 @@ async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch)
         assert user == USER
         assert limit >= 3
         return [
-            {"mes": "2026-01-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 100},
-            {"mes": "2026-02-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 120},
-            {"mes": "2026-03-01", "owner_id": "u1", "vendedor": "Sofia", "forecast_ponderado_usd": 200},
+            {
+                "mes": "2026-01-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 100,
+            },
+            {
+                "mes": "2026-02-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 120,
+            },
+            {
+                "mes": "2026-03-01",
+                "owner_id": "u1",
+                "vendedor": "Sofia",
+                "forecast_ponderado_usd": 200,
+            },
         ]
 
     monkeypatch.setattr(
@@ -265,7 +534,9 @@ async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch)
         "load_contracts",
         lambda cartridge_ids=None: [{**_contract(), "metrics": [_metric()]}],
     )
-    monkeypatch.setattr(intelligence_engine_module, "query_intelligence_dataset_rows", fake_gold_fetcher)
+    monkeypatch.setattr(
+        intelligence_engine_module, "query_intelligence_dataset_rows", fake_gold_fetcher
+    )
 
     result = await intelligence_engine.run_intelligence(USER, {}, persist=False)
 
@@ -274,15 +545,21 @@ async def test_run_intelligence_uses_scoped_gold_fetcher_by_default(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_run_intelligence_rejects_requested_cartridge_outside_user_scope(monkeypatch):
+async def test_run_intelligence_rejects_requested_cartridge_outside_user_scope(
+    monkeypatch,
+):
     monkeypatch.setattr(
         intelligence_engine,
         "load_contracts",
-        lambda cartridge_ids=None: [{"cartridge": "replicon", "domain": "Rentabilidad", "metrics": [_metric()]}],
+        lambda cartridge_ids=None: [
+            {"cartridge": "replicon", "domain": "Rentabilidad", "metrics": [_metric()]}
+        ],
     )
 
     with pytest.raises(Exception) as exc:
-        await intelligence_engine.run_intelligence(USER, {"cartridge_id": "replicon"}, persist=False)
+        await intelligence_engine.run_intelligence(
+            USER, {"cartridge_id": "replicon"}, persist=False
+        )
 
     assert getattr(exc.value, "status_code", None) == 403
     assert "replicon" in str(getattr(exc.value, "detail", exc.value))
@@ -297,9 +574,21 @@ async def test_run_intelligence_can_target_allowed_replicon_gold(monkeypatch):
         assert user == replicon_user
         assert limit >= 3
         return [
-            {"mes": "2026-04-01", "consultor": "Andrea Morales", "horas_facturables": 124},
-            {"mes": "2026-05-01", "consultor": "Andrea Morales", "horas_facturables": 130},
-            {"mes": "2026-06-01", "consultor": "Andrea Morales", "horas_facturables": 40},
+            {
+                "mes": "2026-04-01",
+                "consultor": "Andrea Morales",
+                "horas_facturables": 124,
+            },
+            {
+                "mes": "2026-05-01",
+                "consultor": "Andrea Morales",
+                "horas_facturables": 130,
+            },
+            {
+                "mes": "2026-06-01",
+                "consultor": "Andrea Morales",
+                "horas_facturables": 40,
+            },
         ]
 
     metric = {
@@ -307,7 +596,11 @@ async def test_run_intelligence_can_target_allowed_replicon_gold(monkeypatch):
         "id": "billable_hours",
         "name": "Horas facturables mensuales por consultor",
         "dataset": "consultor_mensual",
-        "entity": {"kind": "consultant", "id_field": "consultor", "label_field": "consultor"},
+        "entity": {
+            "kind": "consultant",
+            "id_field": "consultor",
+            "label_field": "consultor",
+        },
         "time_field": "mes",
         "value_field": "horas_facturables",
         "expected_behavior": "higher_is_good",
@@ -315,7 +608,9 @@ async def test_run_intelligence_can_target_allowed_replicon_gold(monkeypatch):
     monkeypatch.setattr(
         intelligence_engine,
         "load_contracts",
-        lambda cartridge_ids=None: [{"cartridge": "replicon", "domain": "Rentabilidad", "metrics": [metric]}],
+        lambda cartridge_ids=None: [
+            {"cartridge": "replicon", "domain": "Rentabilidad", "metrics": [metric]}
+        ],
     )
 
     result = await intelligence_engine.run_intelligence(
@@ -361,7 +656,9 @@ async def test_intelligence_readiness_sets_rls_context_before_signal_stats(monke
     async def fake_connect(*args, **kwargs):
         return fake
 
-    monkeypatch.setattr(intelligence_readiness_module, "_operational_dsn", lambda: "postgresql://db")
+    monkeypatch.setattr(
+        intelligence_readiness_module, "_operational_dsn", lambda: "postgresql://db"
+    )
     monkeypatch.setattr(intelligence_readiness_module.asyncpg, "connect", fake_connect)
 
     stats = await intelligence_readiness_module._signal_stats(USER)
@@ -426,8 +723,14 @@ async def test_intelligence_readiness_counts_gold_with_default_rls_scope(monkeyp
             return FakeGoldConnection()
         raise AssertionError(f"unexpected dsn: {dsn}")
 
-    monkeypatch.setattr(intelligence_readiness_module, "_operational_dsn", lambda: "postgresql://operational")
-    monkeypatch.setattr(intelligence_readiness_module, "_gold_dsn", lambda: "postgresql://gold")
+    monkeypatch.setattr(
+        intelligence_readiness_module,
+        "_operational_dsn",
+        lambda: "postgresql://operational",
+    )
+    monkeypatch.setattr(
+        intelligence_readiness_module, "_gold_dsn", lambda: "postgresql://gold"
+    )
     monkeypatch.setattr(intelligence_readiness_module.asyncpg, "connect", fake_connect)
 
     rows = await intelligence_readiness_module._gold_counts(

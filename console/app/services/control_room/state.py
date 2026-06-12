@@ -5,7 +5,15 @@ import types
 from app.services.control_room import core as _core
 
 
-_RESERVED_GLOBALS = {"__name__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__"}
+_RESERVED_GLOBALS = {
+    "__name__",
+    "__package__",
+    "__loader__",
+    "__spec__",
+    "__file__",
+    "__cached__",
+    "__builtins__",
+}
 for _name, _value in _core.__dict__.items():
     if _name not in _RESERVED_GLOBALS:
         globals()[_name] = _value
@@ -36,6 +44,28 @@ def _row_to_public(row: Any) -> dict[str, Any]:
         if hasattr(value, "isoformat"):
             data[key] = value.isoformat()
     return data
+
+
+@_bind_to_core
+def _actor_id(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    return int(text) if text.isdigit() else None
+
+
+@_bind_to_core
+def _can_read_workspace_wide(user: dict | None) -> bool:
+    role = str((user or {}).get("role") or "").strip()
+    scoped = str(
+        (user or {}).get("workspace_role") or (user or {}).get("platform_role") or ""
+    ).strip()
+    return role in {"admin", "owner", "super_admin"} or scoped in {
+        "workspace_admin",
+        "tenant_admin",
+    }
 
 
 @_bind_to_core
@@ -78,7 +108,9 @@ def _threshold_insights(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 
 @_bind_to_core
-async def _load_threshold_rows(user: dict | None, *, enabled_only: bool = True) -> list[dict[str, Any]]:
+async def _load_threshold_rows(
+    user: dict | None, *, enabled_only: bool = True
+) -> list[dict[str, Any]]:
     workspace_id = _workspace_id(user)
     pool = await auth.pool()
     where = ["workspace_id = $1"]
@@ -180,7 +212,12 @@ def _lesson_insights(rows: list[dict[str, Any]]) -> dict[str, Any]:
         confidence = float(pattern.pop("confidence_total", 0.0))
         pattern["avg_confidence"] = round(confidence / count, 2) if count else 0.0
         top_patterns.append(pattern)
-    top_patterns.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("cartridge_id") or "")))
+    top_patterns.sort(
+        key=lambda item: (
+            -int(item.get("count") or 0),
+            str(item.get("cartridge_id") or ""),
+        )
+    )
     return {
         "total": len(rows),
         "recent": rows[:5],
@@ -240,17 +277,21 @@ def _suggested_actions_from_lessons(
 
 
 @_bind_to_core
-def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _attach_lessons_to_items(
+    items: list[dict[str, Any]], lesson_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     if not items:
         return []
     if not lesson_rows:
         return [
-            _with_omega({
-                **item,
-                "related_lessons": item.get("related_lessons") or [],
-                "lesson_count": 0,
-                "suggested_actions": item.get("suggested_actions") or [],
-            })
+            _with_omega(
+                {
+                    **item,
+                    "related_lessons": item.get("related_lessons") or [],
+                    "lesson_count": 0,
+                    "suggested_actions": item.get("suggested_actions") or [],
+                }
+            )
             for item in items
         ]
 
@@ -270,13 +311,17 @@ def _attach_lessons_to_items(items: list[dict[str, Any]], lesson_rows: list[dict
             rule = str(row.get("rule") or "").strip()
             if rule and rule not in rules:
                 rules.append(rule)
-        enriched.append(_with_omega({
-            **item,
-            "related_lessons": related[:5],
-            "lesson_count": len(related),
-            "learned_rules": rules[:5],
-            "suggested_actions": _suggested_actions_from_lessons(item, related),
-        }))
+        enriched.append(
+            _with_omega(
+                {
+                    **item,
+                    "related_lessons": related[:5],
+                    "lesson_count": len(related),
+                    "learned_rules": rules[:5],
+                    "suggested_actions": _suggested_actions_from_lessons(item, related),
+                }
+            )
+        )
     enriched.sort(key=_status_sort_key)
     return enriched
 
@@ -344,7 +389,14 @@ def _threshold_ref(
         warning_default,
     )
     critical_value = (
-        _threshold_value(thresholds, cartridge_id, anomaly_type, metric, "critical_value", critical_default)
+        _threshold_value(
+            thresholds,
+            cartridge_id,
+            anomaly_type,
+            metric,
+            "critical_value",
+            critical_default,
+        )
         if critical_default is not None
         else None
     )
@@ -371,7 +423,12 @@ def _source_state_item(
     readiness = data_readiness or ("ready" if status == "ok" else status)
     if status == "ok" and readiness == "ready":
         return None
-    severity = "high" if status in {"unavailable", "invalid_schema", "blocked", "no_permission"} or readiness == "stub" else "medium"
+    severity = (
+        "high"
+        if status in {"unavailable", "invalid_schema", "blocked", "no_permission"}
+        or readiness == "stub"
+        else "medium"
+    )
     title_by_status = {
         "empty": "Fuente sin datos materializados",
         "missing": "Dataset requerido no registrado",
@@ -389,8 +446,10 @@ def _source_state_item(
         "invalid_schema": f"{source.dataset} no cumple el contrato esperado por la Sala de Control.",
         "blocked": f"{source.module_label} esta instalado pero no esta activo para el workspace.",
         "no_permission": f"{source.module_label} no esta permitido para este usuario.",
-        "partial": readiness_reason or f"{source.dataset} devuelve datos, pero su contrato aun es parcial.",
-        "stub": readiness_reason or f"{source.dataset} conserva placeholders/TODO y no debe contarse como operativo.",
+        "partial": readiness_reason
+        or f"{source.dataset} devuelve datos, pero su contrato aun es parcial.",
+        "stub": readiness_reason
+        or f"{source.dataset} conserva placeholders/TODO y no debe contarse como operativo.",
     }
     item = _base_item(
         source,
@@ -408,20 +467,31 @@ def _source_state_item(
         source.dataset,
         source.dataset,
     )
-    item.update({
-        "kind": "source_state",
-        "title": title_by_status.get(readiness, title_by_status.get(status, "Fuente requiere atencion")),
-        "description": description_by_status.get(readiness, description_by_status.get(status, f"{source.dataset} requiere revision.")),
-        "recommendation": "Validar instalacion, credenciales, materializacion y scope tenant/workspace antes de operar con el cliente.",
-        "root_cause": "La cadena de datos no esta lista para entregar senales de negocio confiables.",
-        "impact": "El cartucho puede aparecer activo pero sin datos accionables en la sala.",
-    })
+    item.update(
+        {
+            "kind": "source_state",
+            "title": title_by_status.get(
+                readiness, title_by_status.get(status, "Fuente requiere atencion")
+            ),
+            "description": description_by_status.get(
+                readiness,
+                description_by_status.get(
+                    status, f"{source.dataset} requiere revision."
+                ),
+            ),
+            "recommendation": "Validar instalacion, credenciales, materializacion y scope tenant/workspace antes de operar con el cliente.",
+            "root_cause": "La cadena de datos no esta lista para entregar senales de negocio confiables.",
+            "impact": "El cartucho puede aparecer activo pero sin datos accionables en la sala.",
+        }
+    )
     return item
 
 
 @_bind_to_core
 def _control_state(item: dict[str, Any]) -> dict[str, Any]:
-    raw = item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
+    raw = (
+        item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
+    )
     normalized: dict[str, Any] = {}
     for control_id, value in raw.items():
         if not isinstance(value, dict):
@@ -482,21 +552,39 @@ def _control_items_for_item(
 ) -> list[dict[str, Any]]:
     control_state = _control_state(item)
     controls: list[dict[str, Any]] = []
-    for control in _default_control_items(item, status=status, decision_id=decision_id, approved=approved):
+    for control in _default_control_items(
+        item, status=status, decision_id=decision_id, approved=approved
+    ):
         override = control_state.get(str(control["id"]), {})
         next_status = str(override.get("status") or control.get("status") or "open")
         if next_status not in CONTROL_ITEM_STATUSES:
             next_status = "open"
-        controls.append({
-            **control,
-            **override,
-            "id": str(control["id"]),
-            "status": next_status,
-            "st": CONTROL_ITEM_STATUS_LABELS.get(next_status, str(control.get("st") or next_status)),
-            "owner": override.get("owner") or control.get("owner"),
-            "due_at": override.get("due_at") or control.get("due_at"),
-        })
+        controls.append(
+            {
+                **control,
+                **override,
+                "id": str(control["id"]),
+                "status": next_status,
+                "st": CONTROL_ITEM_STATUS_LABELS.get(
+                    next_status, str(control.get("st") or next_status)
+                ),
+                "owner": override.get("owner") or control.get("owner"),
+                "due_at": override.get("due_at") or control.get("due_at"),
+            }
+        )
     return controls
+
+
+@_bind_to_core
+def _decision_intelligence_for_item(item: dict[str, Any]) -> dict[str, Any]:
+    direct = item.get("decision_intelligence")
+    if isinstance(direct, dict):
+        return direct
+    intelligence = (
+        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
+    )
+    nested = intelligence.get("decision_intelligence")
+    return nested if isinstance(nested, dict) else {}
 
 
 @_bind_to_core
@@ -511,8 +599,14 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
     execution_status = str(item.get("execution_status") or "not_started")
     if execution_status not in EXECUTION_STATUSES:
         execution_status = "not_started"
-    option_label = "Restaurar fuente de datos" if is_source_state else "Remediar dato/proceso"
-    action_label = "Validar materializacion y permisos" if is_source_state else "Validar owner y remediacion"
+    option_label = (
+        "Restaurar fuente de datos" if is_source_state else "Remediar dato/proceso"
+    )
+    action_label = (
+        "Validar materializacion y permisos"
+        if is_source_state
+        else "Validar owner y remediacion"
+    )
     selected_option_id = str(item.get("selected_option_id") or "remediate")
     impact_money = (
         f"${impact['estimate']:,.0f} {impact['currency']} en revision"
@@ -557,20 +651,37 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             "selected": False,
         },
     ]
-    intelligence = item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
-    intelligence_options = intelligence.get("options") if isinstance(intelligence.get("options"), list) else []
+    intelligence = (
+        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
+    )
+    decision_intelligence = _decision_intelligence_for_item(item)
+    if decision_intelligence:
+        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
+    intelligence_options = (
+        intelligence.get("options")
+        if isinstance(intelligence.get("options"), list)
+        else []
+    )
     if intelligence_options:
         options = [
             {
-                "id": str(option.get("option_id") or option.get("id") or f"option_{index + 1}"),
+                "id": str(
+                    option.get("option_id") or option.get("id") or f"option_{index + 1}"
+                ),
                 "label": str(option.get("label") or "Opcion supervisada"),
-                "action": str(option.get("action_kind") or option.get("label") or "accion_supervisada"),
+                "action": str(
+                    option.get("action_kind")
+                    or option.get("label")
+                    or "accion_supervisada"
+                ),
                 "money": f"${float(option.get('impact_expected') or 0):,.0f} USD esperado",
                 "time": f"{float(option.get('time_cost') or 0):,.0f} puntos tiempo",
                 "score": int(round(float(option.get("score") or 0))),
                 "risk": f"{float(option.get('risk') or 0):,.0f}",
                 "auto": False,
-                "recommendation": str(option.get("score_explanation") or item.get("recommendation") or ""),
+                "recommendation": str(
+                    option.get("score_explanation") or item.get("recommendation") or ""
+                ),
                 "selected": bool(option.get("selected")),
             }
             for index, option in enumerate(intelligence_options[:3])
@@ -590,7 +701,9 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         decision_id=decision_id,
         approved=approved,
     )
-    control_closed = all(str(control.get("status")) == "closed" for control in control_items)
+    control_closed = all(
+        str(control.get("status")) == "closed" for control in control_items
+    )
     return {
         **item,
         "alert_state": alert_state,
@@ -611,8 +724,11 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
         "action_templates": action_templates,
         "related_lessons": item.get("related_lessons") or [],
         "lesson_count": lesson_count,
-        "lesson_applications": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
-        "intelligence": item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {},
+        "lesson_applications": item.get("lesson_applications")
+        if isinstance(item.get("lesson_applications"), list)
+        else [],
+        "decision_intelligence": decision_intelligence,
+        "intelligence": intelligence,
         "omega": {
             "signals": {
                 "source": item.get("source_dataset"),
@@ -641,7 +757,9 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                 "external_writeback_enabled": _external_writeback_enabled(),
                 "supervised_execution_enabled": True,
                 "execution_contract": "supervised_execution",
-                "supported_writeback_templates": sorted(SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES),
+                "supported_writeback_templates": sorted(
+                    SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES
+                ),
                 "templates": action_templates,
                 "actions": [
                     {
@@ -649,8 +767,10 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                         "sys": "omega",
                         "act": "Generar preview de accion",
                         "label": "Preview seguro",
-                        "done": execution_status in {"preview_generated", "dry_run_validated", "executed"},
-                        "approved": execution_status in {"preview_generated", "dry_run_validated", "executed"},
+                        "done": execution_status
+                        in {"preview_generated", "dry_run_validated", "executed"},
+                        "approved": execution_status
+                        in {"preview_generated", "dry_run_validated", "executed"},
                         "auto": True,
                     },
                     {
@@ -659,7 +779,8 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
                         "act": "Validar dry-run sin write-back",
                         "label": "Dry-run seguro",
                         "done": execution_status in {"dry_run_validated", "executed"},
-                        "approved": execution_status in {"dry_run_validated", "executed"},
+                        "approved": execution_status
+                        in {"dry_run_validated", "executed"},
                         "auto": True,
                     },
                     {
@@ -699,10 +820,15 @@ def _with_omega(item: dict[str, Any]) -> dict[str, Any]:
             },
             "lessons": {
                 "rules": lessons,
-                "applied": item.get("lesson_applications") if isinstance(item.get("lesson_applications"), list) else [],
-                "suggested_actions": item.get("suggested_actions") if isinstance(item.get("suggested_actions"), list) else [],
+                "applied": item.get("lesson_applications")
+                if isinstance(item.get("lesson_applications"), list)
+                else [],
+                "suggested_actions": item.get("suggested_actions")
+                if isinstance(item.get("suggested_actions"), list)
+                else [],
             },
-            "intelligence": item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {},
+            "decision_intelligence": decision_intelligence,
+            "intelligence": intelligence,
         },
     }
 
@@ -727,7 +853,11 @@ def _alert_type_for_item(item: dict[str, Any]) -> str:
         return "threshold_breach"
     if int(item.get("lesson_count") or 0) > 0:
         return "learned_pattern"
-    return "critical_signal" if item.get("severity") in {"critical", "high"} else "watchlist"
+    return (
+        "critical_signal"
+        if item.get("severity") in {"critical", "high"}
+        else "watchlist"
+    )
 
 
 @_bind_to_core
@@ -777,13 +907,19 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
         "thresholds_applied": item.get("thresholds_applied") or [],
         "threshold_state": item.get("threshold_state") or "default",
     }
-    alert_state = item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    alert_state = (
+        item.get("alert_state") if isinstance(item.get("alert_state"), dict) else {}
+    )
     if alert_state:
         metadata["alert_state"] = alert_state
-    control_state = item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
+    control_state = (
+        item.get("control_state") if isinstance(item.get("control_state"), dict) else {}
+    )
     if control_state:
         metadata["control_state"] = control_state
-    learned_rules = item.get("learned_rules") if isinstance(item.get("learned_rules"), list) else []
+    learned_rules = (
+        item.get("learned_rules") if isinstance(item.get("learned_rules"), list) else []
+    )
     if learned_rules:
         metadata["learned_rules"] = learned_rules[:10]
     lessons = item.get("lessons") if isinstance(item.get("lessons"), list) else []
@@ -796,7 +932,13 @@ def _metadata_for_item(item: dict[str, Any], impact: dict[str, Any]) -> dict[str
     )
     if lesson_applications:
         metadata["lesson_applications"] = lesson_applications[:20]
-    intelligence = item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
+    intelligence = (
+        item.get("intelligence") if isinstance(item.get("intelligence"), dict) else {}
+    )
+    decision_intelligence = _decision_intelligence_for_item(item)
+    if decision_intelligence:
+        metadata["decision_intelligence"] = decision_intelligence
+        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
     if intelligence:
         metadata["intelligence"] = intelligence
     return metadata
@@ -817,7 +959,11 @@ def _alert_message(item: dict[str, Any], alert_type: str) -> str:
             return f"Umbral operativo excedido: {names}."
     if alert_type == "learned_pattern":
         return f"Patron repetido con {int(item.get('lesson_count') or 0)} lecciones previas."
-    return str(item.get("description") or item.get("title") or "Senal operativa requiere revision.")
+    return str(
+        item.get("description")
+        or item.get("title")
+        or "Senal operativa requiere revision."
+    )
 
 
 @_bind_to_core
@@ -828,7 +974,11 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
     alert_status = str(alert_state.get("state") or "open")
     if alert_status == "false_positive":
         return None
-    priority = item.get("priority") if isinstance(item.get("priority"), dict) else _priority_payload(item)
+    priority = (
+        item.get("priority")
+        if isinstance(item.get("priority"), dict)
+        else _priority_payload(item)
+    )
     score = int(priority.get("score") or item.get("priority_score") or 0)
     alert_type = _alert_type_for_item(item)
     threshold_state = str(item.get("threshold_state") or "default")
@@ -892,20 +1042,26 @@ def _alert_for_item(item: dict[str, Any]) -> dict[str, Any] | None:
             if alert_status == "open"
             else f"Alerta en estado {alert_status}; {delivery_reason}",
         },
-        "created_at": item.get("first_seen_at") or item.get("detected_at") or datetime.now(UTC).isoformat(),
-        "updated_at": alert_state.get("updated_at") or item.get("last_seen_at") or datetime.now(UTC).isoformat(),
+        "created_at": item.get("first_seen_at")
+        or item.get("detected_at")
+        or datetime.now(UTC).isoformat(),
+        "updated_at": alert_state.get("updated_at")
+        or item.get("last_seen_at")
+        or datetime.now(UTC).isoformat(),
     }
 
 
 @_bind_to_core
 def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
     alerts = [alert for item in items if (alert := _alert_for_item(item))]
-    alerts.sort(key=lambda alert: (
-        -int(alert.get("priority_score") or 0),
-        -ALERT_SEVERITY_WEIGHT.get(str(alert.get("severity") or "medium"), 2),
-        str(alert.get("domain") or ""),
-        str(alert.get("title") or ""),
-    ))
+    alerts.sort(
+        key=lambda alert: (
+            -int(alert.get("priority_score") or 0),
+            -ALERT_SEVERITY_WEIGHT.get(str(alert.get("severity") or "medium"), 2),
+            str(alert.get("domain") or ""),
+            str(alert.get("title") or ""),
+        )
+    )
     by_type: dict[str, int] = {}
     by_domain: dict[str, int] = {}
     by_severity: dict[str, int] = {}
@@ -938,7 +1094,9 @@ def _alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 @_bind_to_core
-async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *, persist: bool = False) -> list[dict[str, Any]]:
+async def _overlay_item_state(
+    items: list[dict[str, Any]], user: dict | None, *, persist: bool = False
+) -> list[dict[str, Any]]:
     if not items:
         return []
     if not persist:
@@ -1042,41 +1200,93 @@ async def _overlay_item_state(items: list[dict[str, Any]], user: dict | None, *,
         status = str(state.get("status") or item.get("status") or "open")
         if status not in ITEM_STATUSES:
             status = "open"
-        merged.append(_with_omega({
-            **item,
-            "status": status,
-            "decision_id": state.get("decision_id") or item.get("decision_id"),
-            "impact_estimate": state.get("impact_estimate"),
-            "impact_currency": state.get("impact_currency"),
-            "confidence": state.get("confidence"),
-            "priority_score": state.get("priority_score"),
-            "selected_option_id": state.get("selected_option_id") or metadata.get("selected_option_id"),
-            "execution_status": state.get("execution_status") or metadata.get("execution_status"),
-            "thresholds_applied": metadata.get("thresholds_applied") or item.get("thresholds_applied") or [],
-            "threshold_state": metadata.get("threshold_state") or item.get("threshold_state") or "default",
-            "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else item.get("alert_state"),
-            "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else item.get("control_state"),
-            "lessons": metadata.get("lessons"),
-            "learned_rules": metadata.get("learned_rules"),
-            "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
-            "intelligence": metadata.get("intelligence") if isinstance(metadata.get("intelligence"), dict) else item.get("intelligence"),
-            "first_seen_at": state.get("first_seen_at"),
-            "last_seen_at": state.get("last_seen_at"),
-            "resolved_at": state.get("resolved_at"),
-            "dismissed_at": state.get("dismissed_at"),
-        }))
+        intelligence = (
+            metadata.get("intelligence")
+            if isinstance(metadata.get("intelligence"), dict)
+            else item.get("intelligence")
+        )
+        if not isinstance(intelligence, dict):
+            intelligence = {}
+        decision_intelligence = metadata.get("decision_intelligence")
+        if not isinstance(decision_intelligence, dict):
+            decision_intelligence = intelligence.get("decision_intelligence")
+        if not isinstance(decision_intelligence, dict):
+            decision_intelligence = (
+                item.get("decision_intelligence")
+                if isinstance(item.get("decision_intelligence"), dict)
+                else {}
+            )
+        if decision_intelligence:
+            intelligence = {
+                **intelligence,
+                "decision_intelligence": decision_intelligence,
+            }
+        merged.append(
+            _with_omega(
+                {
+                    **item,
+                    "status": status,
+                    "decision_id": state.get("decision_id") or item.get("decision_id"),
+                    "impact_estimate": state.get("impact_estimate"),
+                    "impact_currency": state.get("impact_currency"),
+                    "confidence": state.get("confidence"),
+                    "priority_score": state.get("priority_score"),
+                    "selected_option_id": state.get("selected_option_id")
+                    or metadata.get("selected_option_id"),
+                    "execution_status": state.get("execution_status")
+                    or metadata.get("execution_status"),
+                    "thresholds_applied": metadata.get("thresholds_applied")
+                    or item.get("thresholds_applied")
+                    or [],
+                    "threshold_state": metadata.get("threshold_state")
+                    or item.get("threshold_state")
+                    or "default",
+                    "alert_state": metadata.get("alert_state")
+                    if isinstance(metadata.get("alert_state"), dict)
+                    else item.get("alert_state"),
+                    "control_state": metadata.get("control_state")
+                    if isinstance(metadata.get("control_state"), dict)
+                    else item.get("control_state"),
+                    "lessons": metadata.get("lessons"),
+                    "learned_rules": metadata.get("learned_rules"),
+                    "lesson_applications": metadata.get("lesson_applications")
+                    if isinstance(metadata.get("lesson_applications"), list)
+                    else [],
+                    "decision_intelligence": decision_intelligence,
+                    "intelligence": intelligence,
+                    "first_seen_at": state.get("first_seen_at"),
+                    "last_seen_at": state.get("last_seen_at"),
+                    "resolved_at": state.get("resolved_at"),
+                    "dismissed_at": state.get("dismissed_at"),
+                }
+            )
+        )
     merged.sort(key=_status_sort_key)
     return merged
 
 
 @_bind_to_core
-async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, Any] | None:
-    workspace_id = _workspace_id(user)
+async def _persisted_item_for_mutation(
+    item_id: str, user: dict
+) -> dict[str, Any] | None:
+    tenant_id, workspace_id = _workspace_scope(user)
+    params: list[Any] = [workspace_id, item_id]
+    tenant_clause = ""
+    if tenant_id:
+        params.append(tenant_id)
+        tenant_clause = f"AND tenant_id::text = ${len(params)}"
+    owner_clause = ""
+    if not _can_read_workspace_wide(user):
+        owner_id = _actor_id((user or {}).get("id"))
+        if owner_id is None:
+            return None
+        params.append(owner_id)
+        owner_clause = f"AND owner_user_id = ${len(params)}"
     pool = await auth.pool()
     try:
         row = await pool.fetchrow(
-            """
-            SELECT item_id, cartridge_id, domain, source_dataset, item_kind, title,
+            f"""
+            SELECT tenant_id, workspace_id, item_id, cartridge_id, domain, source_dataset, item_kind, title,
                    severity, status, decision_id, entity_kind, entity_id,
                    entity_label, anomaly_type, metadata, first_seen_at, last_seen_at,
                    resolved_at, dismissed_at, impact_estimate, impact_currency,
@@ -1084,9 +1294,10 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
               FROM control_room_items
              WHERE workspace_id = $1
                AND item_id = $2
+               {tenant_clause}
+               {owner_clause}
             """,
-            workspace_id,
-            item_id,
+            *params,
         )
     except Exception:
         return None
@@ -1106,27 +1317,49 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
     if status not in ITEM_STATUSES:
         status = "open"
     escaped_item_id = item_id.replace("'", "''")
+    intelligence = (
+        metadata.get("intelligence")
+        if isinstance(metadata.get("intelligence"), dict)
+        else {}
+    )
+    decision_intelligence = metadata.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = intelligence.get("decision_intelligence")
+    if not isinstance(decision_intelligence, dict):
+        decision_intelligence = {}
+    if decision_intelligence:
+        intelligence = {**intelligence, "decision_intelligence": decision_intelligence}
     item = {
         "id": public_row["item_id"],
         "kind": public_row["item_kind"],
+        "tenant_id": public_row.get("tenant_id") or metadata.get("tenant_id"),
+        "workspace_id": public_row.get("workspace_id") or metadata.get("workspace_id"),
         "domain": public_row["domain"],
         "module": metadata.get("module") or public_row["cartridge_id"],
         "cartridge": public_row["cartridge_id"],
         "source_dataset": public_row["source_dataset"],
         "entity_kind": public_row["entity_kind"] or "Entidad",
         "entity_id": public_row["entity_id"] or "",
-        "entity_label": public_row["entity_label"] or public_row["entity_id"] or public_row["source_dataset"] or "Entidad",
+        "entity_label": public_row["entity_label"]
+        or public_row["entity_id"]
+        or public_row["source_dataset"]
+        or "Entidad",
         "anomaly_type": public_row["anomaly_type"] or "control_room_item",
         "severity": severity,
         "severity_weight": SEVERITY_WEIGHT[severity],
         "detected_at": "",
-        "details": metadata.get("details") if isinstance(metadata.get("details"), dict) else {},
+        "details": metadata.get("details")
+        if isinstance(metadata.get("details"), dict)
+        else {},
         "title": public_row["title"],
         "description": metadata.get("description") or public_row["title"],
-        "recommendation": metadata.get("recommendation") or "Revisar, decidir y registrar evidencia.",
-        "root_cause": metadata.get("root_cause") or "Senal persistida en Sala de Control.",
+        "recommendation": metadata.get("recommendation")
+        or "Revisar, decidir y registrar evidencia.",
+        "root_cause": metadata.get("root_cause")
+        or "Senal persistida en Sala de Control.",
         "impact": metadata.get("impact") or "Riesgo operativo.",
-        "sql": metadata.get("sql") or f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'",
+        "sql": metadata.get("sql")
+        or f"SELECT * FROM control_room_items WHERE item_id = '{escaped_item_id}'",
         "status": status,
         "decision_id": public_row["decision_id"],
         "impact_estimate": public_row.get("impact_estimate"),
@@ -1135,14 +1368,23 @@ async def _persisted_item_for_mutation(item_id: str, user: dict) -> dict[str, An
         "priority_score": public_row.get("priority_score"),
         "thresholds_applied": metadata.get("thresholds_applied") or [],
         "threshold_state": metadata.get("threshold_state") or "default",
-        "selected_option_id": public_row.get("selected_option_id") or metadata.get("selected_option_id"),
-        "execution_status": public_row.get("execution_status") or metadata.get("execution_status"),
-        "alert_state": metadata.get("alert_state") if isinstance(metadata.get("alert_state"), dict) else {},
-        "control_state": metadata.get("control_state") if isinstance(metadata.get("control_state"), dict) else {},
+        "selected_option_id": public_row.get("selected_option_id")
+        or metadata.get("selected_option_id"),
+        "execution_status": public_row.get("execution_status")
+        or metadata.get("execution_status"),
+        "alert_state": metadata.get("alert_state")
+        if isinstance(metadata.get("alert_state"), dict)
+        else {},
+        "control_state": metadata.get("control_state")
+        if isinstance(metadata.get("control_state"), dict)
+        else {},
         "lessons": metadata.get("lessons"),
         "learned_rules": metadata.get("learned_rules"),
-        "lesson_applications": metadata.get("lesson_applications") if isinstance(metadata.get("lesson_applications"), list) else [],
-        "intelligence": metadata.get("intelligence") if isinstance(metadata.get("intelligence"), dict) else {},
+        "lesson_applications": metadata.get("lesson_applications")
+        if isinstance(metadata.get("lesson_applications"), list)
+        else [],
+        "decision_intelligence": decision_intelligence,
+        "intelligence": intelligence,
         "first_seen_at": public_row.get("first_seen_at"),
         "last_seen_at": public_row.get("last_seen_at"),
         "resolved_at": public_row.get("resolved_at"),
@@ -1262,7 +1504,8 @@ def _action_run_to_activity(row: Any) -> dict[str, Any]:
             "completed_at": data.get("completed_at"),
         },
         "payload": _details(data.get("input")),
-        "result": _details(data.get("dry_run_result")) or _details(data.get("execution_result")),
+        "result": _details(data.get("dry_run_result"))
+        or _details(data.get("execution_result")),
         "side_effect": _details(data.get("side_effect")),
         "error": data.get("error_message") or data.get("error_code"),
     }
@@ -1351,7 +1594,10 @@ async def get_item_activity(
             )
         except Exception:
             decision_action_rows = []
-    async def _load_scoped_activity(conn: Any, _tenant_id: str | None, scoped_workspace_id: str) -> tuple[Any, Any]:
+
+    async def _load_scoped_activity(
+        conn: Any, _tenant_id: str | None, scoped_workspace_id: str
+    ) -> tuple[Any, Any]:
         runs = await conn.fetch(
             """
             SELECT id, item_id, decision_id, legacy_execution_id, action_type,
@@ -1384,7 +1630,9 @@ async def get_item_activity(
         return runs, outcomes
 
     try:
-        action_run_rows, outcome_rows = await _run_with_db_scope(pool, user, _load_scoped_activity)
+        action_run_rows, outcome_rows = await _run_with_db_scope(
+            pool, user, _load_scoped_activity
+        )
     except Exception:
         action_run_rows = []
         outcome_rows = []
@@ -1486,7 +1734,12 @@ async def _persist_lessons(
                 rule,
                 decision_id,
                 _impact_for_item(item).get("confidence") or 0.7,
-                json.dumps({"source_dataset": item.get("source_dataset"), "status": item.get("status")}),
+                json.dumps(
+                    {
+                        "source_dataset": item.get("source_dataset"),
+                        "status": item.get("status"),
+                    }
+                ),
             )
         except Exception:
             return
@@ -1595,10 +1848,9 @@ async def _ensure_item_row(
 def _lesson_matches_item(lesson: dict[str, Any], item: dict[str, Any]) -> bool:
     if lesson.get("item_id") == item.get("id"):
         return True
-    return (
-        lesson.get("cartridge_id") == item.get("cartridge")
-        and lesson.get("anomaly_type") == item.get("anomaly_type")
-    )
+    return lesson.get("cartridge_id") == item.get("cartridge") and lesson.get(
+        "anomaly_type"
+    ) == item.get("anomaly_type")
 
 
 @_bind_to_core
@@ -1761,53 +2013,56 @@ class ControlRoomService:
 
 
 __all__ = (
-    '_row_to_public',
-    '_threshold_to_public',
-    '_threshold_insights',
-    '_load_threshold_rows',
-    '_lesson_to_public',
-    '_load_lesson_rows',
-    '_lesson_insights',
-    '_suggested_action_from_lesson',
-    '_suggested_actions_from_lessons',
-    '_attach_lessons_to_items',
-    '_threshold_map',
-    '_threshold_rule',
-    '_threshold_value',
-    '_threshold_ref',
-    '_source_state_item',
-    '_control_state',
-    '_default_control_items',
-    '_control_items_for_item',
-    '_with_omega',
-    '_status_sort_key',
-    '_alert_type_for_item',
-    '_parse_utc_datetime',
-    '_alert_state',
-    '_metadata_for_item',
-    '_alert_message',
-    '_alert_for_item',
-    '_alert_payload',
-    '_overlay_item_state',
-    '_persisted_item_for_mutation',
-    '_item_for_mutation',
-    '_event_to_activity',
-    '_execution_to_activity',
-    '_decision_action_to_activity',
-    '_action_run_to_activity',
-    '_outcome_to_activity',
-    'get_item_activity',
-    '_record_item_event',
-    '_merge_rule',
-    '_persist_lessons',
-    '_set_execution_status',
-    '_ensure_item_row',
-    '_lesson_matches_item',
-    '_lesson_applications',
-    '_dedupe_lessons',
-    'list_thresholds',
-    'upsert_threshold',
-    'list_lessons',
-    'get_suggested_actions',
-    'ControlRoomService'
+    "_row_to_public",
+    "_actor_id",
+    "_can_read_workspace_wide",
+    "_threshold_to_public",
+    "_threshold_insights",
+    "_load_threshold_rows",
+    "_lesson_to_public",
+    "_load_lesson_rows",
+    "_lesson_insights",
+    "_suggested_action_from_lesson",
+    "_suggested_actions_from_lessons",
+    "_attach_lessons_to_items",
+    "_threshold_map",
+    "_threshold_rule",
+    "_threshold_value",
+    "_threshold_ref",
+    "_source_state_item",
+    "_control_state",
+    "_default_control_items",
+    "_control_items_for_item",
+    "_decision_intelligence_for_item",
+    "_with_omega",
+    "_status_sort_key",
+    "_alert_type_for_item",
+    "_parse_utc_datetime",
+    "_alert_state",
+    "_metadata_for_item",
+    "_alert_message",
+    "_alert_for_item",
+    "_alert_payload",
+    "_overlay_item_state",
+    "_persisted_item_for_mutation",
+    "_item_for_mutation",
+    "_event_to_activity",
+    "_execution_to_activity",
+    "_decision_action_to_activity",
+    "_action_run_to_activity",
+    "_outcome_to_activity",
+    "get_item_activity",
+    "_record_item_event",
+    "_merge_rule",
+    "_persist_lessons",
+    "_set_execution_status",
+    "_ensure_item_row",
+    "_lesson_matches_item",
+    "_lesson_applications",
+    "_dedupe_lessons",
+    "list_thresholds",
+    "upsert_threshold",
+    "list_lessons",
+    "get_suggested_actions",
+    "ControlRoomService",
 )

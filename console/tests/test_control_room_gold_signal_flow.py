@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -7,6 +8,7 @@ from fastapi import HTTPException
 import pytest
 
 from app.services import control_room_service, intelligence_engine
+from app.services.intelligence import persistence as intelligence_persistence
 
 
 TENANT_A = "11111111-1111-1111-1111-111111111111"
@@ -24,12 +26,21 @@ REPLICON_USER = {
 }
 
 
-async def replicon_gold_fetcher(dataset: str, user: dict | None, limit: int) -> list[dict]:
+async def replicon_gold_fetcher(
+    dataset: str, user: dict | None, limit: int
+) -> list[dict]:
     assert user == REPLICON_USER
     assert limit >= 3
     if dataset != "consultor_mensual":
         return []
     return [
+        {
+            "tenant_id": TENANT_A,
+            "workspace_id": WORKSPACE_A,
+            "mes": "2026-03-01",
+            "consultor": "Andrea Morales",
+            "horas_facturables": 122,
+        },
         {
             "tenant_id": TENANT_A,
             "workspace_id": WORKSPACE_A,
@@ -65,9 +76,14 @@ async def test_replicon_gold_generates_scoped_intelligence_signal_with_evidence(
 
     assert result["skipped"] == []
     assert result["signals"]
-    artifact = next(item for item in result["artifacts"] if item["signal"]["signal_subtype"] == "observed")
+    artifact = next(
+        item
+        for item in result["artifacts"]
+        if item["signal"]["signal_subtype"] == "observed"
+    )
     signal = artifact["signal"]
     evidence = artifact["evidence_pack"]
+    decision = artifact["decision_intelligence"]
     item = evidence["items"][0]
 
     assert signal["cartridge_id"] == "replicon"
@@ -78,9 +94,17 @@ async def test_replicon_gold_generates_scoped_intelligence_signal_with_evidence(
     assert signal["freshness_at"] == "2026-06-01"
     assert signal["freshness_field"] == "mes"
     assert signal["severity"] in {"critical", "high"}
+    assert signal["decision_intelligence"] == decision
+    assert decision["method"] == "robust_baseline_v0"
+    assert decision["expected_impact"]["currency"] == "USD"
+    assert decision["expected_impact"]["value"] > 0
+    assert decision["recommended_decision"] in {"investigate", "act_now"}
+    assert decision["data_quality"]["status"] == "sufficient"
     assert item["source_ref"] == "consultor_mensual"
-    assert item["query_text"].startswith("SELECT mes, consultor, horas_facturables FROM gold_consultor_mensual")
-    assert item["data"]["row_count"] == 3
+    assert item["query_text"].startswith(
+        "SELECT mes, consultor, horas_facturables FROM gold_consultor_mensual"
+    )
+    assert item["data"]["row_count"] == 4
     assert item["data"]["sample_hash"]
     assert item["data"]["source_system"] == "replicon"
     assert item["data"]["gold_table"] == "gold_consultor_mensual"
@@ -105,6 +129,7 @@ async def test_missing_gold_dataset_is_reported_without_inventing_signals():
     assert result["artifacts"] == []
     assert result["skipped"]
     assert all(item["status"] == "dataset_unavailable" for item in result["skipped"])
+    assert all("decision_intelligence" not in item for item in result["skipped"])
     assert {
         "cartridge_id": "replicon",
         "dataset": "consultor_mensual",
@@ -112,6 +137,139 @@ async def test_missing_gold_dataset_is_reported_without_inventing_signals():
         "status": "dataset_unavailable",
         "reason": "dataset unavailable: consultor_mensual",
     } in result["skipped"]
+
+
+@pytest.mark.asyncio
+async def test_publish_control_room_item_persists_decision_intelligence_impact():
+    decision = {
+        "method": "robust_baseline_v0",
+        "anomaly_probability": 0.88,
+        "probability_basis": "coarse rarity from robust median/MAD; not calibrated posterior",
+        "uncertainty_level": "medium",
+        "confidence_interval": {
+            "lower": 121.03,
+            "upper": 126.97,
+            "unit": "horas_facturables",
+        },
+        "expected_impact": {
+            "value": 10440,
+            "currency": "USD",
+            "basis": "abs(deviation_value) * impact.unit_value (120)",
+        },
+        "cost_of_delay": {
+            "value_per_day": 348,
+            "currency": "USD",
+            "basis": "expected_impact / 30-day operating month.",
+        },
+        "downside_risk": {
+            "value": 13050,
+            "currency": "USD",
+            "basis": "expected_impact * 1.25 uncertainty multiplier.",
+        },
+        "value_of_information": {
+            "level": "medium",
+            "rationale": "Additional evidence may change timing or owner of the action.",
+        },
+        "recommended_decision": "investigate",
+        "recommended_next_step": "Review evidence before execution.",
+        "rationale": "Decision Intelligence v0 used robust baseline evidence.",
+        "options": [
+            {
+                "option": "act_now",
+                "expected_utility": 7000,
+                "utility_basis": "proxy",
+                "risk": "medium",
+                "explanation": "Dry-run first.",
+            },
+            {
+                "option": "investigate",
+                "expected_utility": 1100,
+                "utility_basis": "proxy",
+                "risk": "medium",
+                "explanation": "Review evidence.",
+            },
+            {
+                "option": "wait",
+                "expected_utility": -2400,
+                "utility_basis": "proxy",
+                "risk": "medium",
+                "explanation": "Wait one refresh.",
+            },
+            {
+                "option": "monitor",
+                "expected_utility": -900,
+                "utility_basis": "proxy",
+                "risk": "low",
+                "explanation": "Watch only.",
+            },
+        ],
+        "data_quality": {
+            "history_points": 3,
+            "minimum_required": 3,
+            "status": "sufficient",
+            "missing_fields": [],
+        },
+    }
+    artifact = {
+        "signal": {
+            "signal_id": "intel:replicon-gold",
+            "cartridge_id": "replicon",
+            "domain": "Rentabilidad",
+            "dataset": "consultor_mensual",
+            "source_dataset": "consultor_mensual",
+            "gold_table": "gold_consultor_mensual",
+            "freshness_at": "2026-06-01",
+            "freshness_field": "mes",
+            "summary": "Horas facturables mensuales por consultor: Andrea Morales bajo baseline.",
+            "severity": "critical",
+            "entity_kind": "consultant",
+            "entity_id": "Andrea Morales",
+            "entity_label": "Andrea Morales",
+            "metric": "billable_hours",
+            "metric_name": "Horas facturables mensuales por consultor",
+            "actual_value": 40,
+            "expected_value": 127,
+            "deviation_value": -87,
+            "deviation_pct": -0.685,
+            "confidence": 0.85,
+            "decision_intelligence": decision,
+        },
+        "evidence_pack": {
+            "id": 42,
+            "summary": "Baseline robusto.",
+            "confidence": 0.85,
+            "items": [
+                {
+                    "query_text": "SELECT mes, consultor, horas_facturables FROM gold_consultor_mensual",
+                    "source_ref": "consultor_mensual",
+                    "data": {"row_count": 4},
+                }
+            ],
+        },
+        "hypotheses": [{"title": "Cambio de capacidad"}],
+        "options": [{"label": "Investigar", "option_id": "investigate"}],
+        "decision_intelligence": decision,
+    }
+    mock_pool = AsyncMock()
+    mock_pool.execute = AsyncMock()
+
+    await intelligence_persistence.publish_control_room_item(
+        mock_pool,
+        TENANT_A,
+        WORKSPACE_A,
+        REPLICON_USER,
+        artifact,
+    )
+
+    first_call = mock_pool.execute.await_args_list[0]
+    args = first_call.args
+    metadata = json.loads(args[15])
+    assert metadata["decision_intelligence"] == decision
+    assert metadata["intelligence"]["decision_intelligence"] == decision
+    assert metadata["details"]["decision_intelligence_method"] == "robust_baseline_v0"
+    assert metadata["details"]["recommended_decision"] == "investigate"
+    assert args[16] == 10440
+    assert args[17] == "USD"
 
 
 @pytest.mark.asyncio
@@ -156,7 +314,82 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
             "freshness_field": "mes",
         },
         "sql": "SELECT mes, consultor, horas_facturables FROM gold_consultor_mensual WHERE consultor = $entity_id ORDER BY mes",
-        "intelligence": {"signal": {"signal_id": "intel:replicon-gold"}},
+        "decision_intelligence": {
+            "method": "robust_baseline_v0",
+            "anomaly_probability": 0.95,
+            "probability_basis": "median=124; mad=2; history_points=3",
+            "uncertainty_level": "medium",
+            "confidence_interval": {
+                "lower": 121.03,
+                "upper": 126.97,
+                "unit": "horas_facturables",
+            },
+            "expected_impact": {
+                "value": 10440,
+                "currency": "USD",
+                "basis": "abs(deviation_value) * impact.unit_value (120)",
+            },
+            "cost_of_delay": {
+                "value_per_day": 348,
+                "currency": "USD",
+                "basis": "expected_impact / 30-day operating month.",
+            },
+            "downside_risk": {
+                "value": 13050,
+                "currency": "USD",
+                "basis": "expected_impact * 1.25 uncertainty multiplier.",
+            },
+            "value_of_information": {
+                "level": "medium",
+                "rationale": "Additional evidence may change timing or owner of the action.",
+            },
+            "recommended_decision": "investigate",
+            "recommended_next_step": "Review evidence pack before execution.",
+            "rationale": "Decision Intelligence v0 used a robust median/MAD baseline.",
+            "options": [
+                {
+                    "option": "act_now",
+                    "expected_utility": 8000,
+                    "utility_basis": "proxy",
+                    "risk": "medium",
+                    "explanation": "Dry-run first.",
+                },
+                {
+                    "option": "investigate",
+                    "expected_utility": 1200,
+                    "utility_basis": "proxy",
+                    "risk": "medium",
+                    "explanation": "Review evidence.",
+                },
+                {
+                    "option": "wait",
+                    "expected_utility": -2500,
+                    "utility_basis": "proxy",
+                    "risk": "medium",
+                    "explanation": "Wait one refresh.",
+                },
+                {
+                    "option": "monitor",
+                    "expected_utility": -1000,
+                    "utility_basis": "proxy",
+                    "risk": "low",
+                    "explanation": "Watch only.",
+                },
+            ],
+            "data_quality": {
+                "history_points": 3,
+                "minimum_required": 3,
+                "status": "sufficient",
+                "missing_fields": [],
+            },
+        },
+        "intelligence": {
+            "signal": {"signal_id": "intel:replicon-gold"},
+            "decision_intelligence": {
+                "method": "robust_baseline_v0",
+                "recommended_decision": "investigate",
+            },
+        },
     }
     mock_pool = AsyncMock()
     mock_pool.fetch = AsyncMock(
@@ -210,7 +443,15 @@ async def test_control_room_lists_persisted_gold_signal_with_source_evidence_and
     assert item["evidence_pack_id"] == 42
     assert item["evidence_pack"]["items"][0]["source_ref"] == "consultor_mensual"
     assert item["details"]["source_dataset"] == "consultor_mensual"
-    assert item["sql"].startswith("SELECT mes, consultor, horas_facturables FROM gold_consultor_mensual")
+    assert item["sql"].startswith(
+        "SELECT mes, consultor, horas_facturables FROM gold_consultor_mensual"
+    )
+    decision = item["decision_intelligence"]
+    assert decision["method"] == "robust_baseline_v0"
+    assert decision["recommended_decision"] == "investigate"
+    assert item["intelligence"]["decision_intelligence"] == decision
+    assert item["omega"]["decision_intelligence"] == decision
+    assert item["omega"]["intelligence"]["decision_intelligence"] == decision
 
 
 @pytest.mark.asyncio
@@ -219,7 +460,13 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
         assert "workspace_id = $1" in query
         assert "tenant_id::text = $2" in query
         if workspace_id == WORKSPACE_A and tenant_id == TENANT_A:
-            return [{"item_id": "intel:a", "metadata": {}, "item_kind": "intelligence_signal"}]
+            return [
+                {
+                    "item_id": "intel:a",
+                    "metadata": {},
+                    "item_kind": "intelligence_signal",
+                }
+            ]
         return []
 
     mock_pool = AsyncMock()
@@ -231,10 +478,85 @@ async def test_control_room_persisted_signal_read_is_scoped_by_tenant_and_worksp
     }
 
     with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
-        a_items = await control_room_service._persisted_intelligence_items(REPLICON_USER)
+        a_items = await control_room_service._persisted_intelligence_items(
+            REPLICON_USER
+        )
         b_items = await control_room_service._persisted_intelligence_items(user_b)
 
     assert [item["id"] for item in a_items] == ["intel:a"]
     assert b_items == []
     assert mock_pool.fetch.await_args_list[0].args[1:] == (WORKSPACE_A, TENANT_A)
     assert mock_pool.fetch.await_args_list[1].args[1:] == (WORKSPACE_B, TENANT_B)
+
+
+@pytest.mark.asyncio
+async def test_control_room_persisted_signal_read_is_owner_scoped_for_non_admin():
+    async def scoped_fetch(
+        query: str, workspace_id: str, tenant_id: str, owner_id: int
+    ):
+        assert "workspace_id = $1" in query
+        assert "tenant_id::text = $2" in query
+        assert "owner_user_id = $3" in query
+        assert workspace_id == WORKSPACE_A
+        assert tenant_id == TENANT_A
+        assert owner_id == 11
+        return [
+            {
+                "item_id": "intel:owned",
+                "metadata": {},
+                "item_kind": "intelligence_signal",
+            }
+        ]
+
+    mock_pool = AsyncMock()
+    mock_pool.fetch = AsyncMock(side_effect=scoped_fetch)
+    employee_user = {
+        **REPLICON_USER,
+        "id": 11,
+        "role": "analyst",
+        "workspace_role": "member",
+    }
+
+    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+        items = await control_room_service._persisted_intelligence_items(employee_user)
+
+    assert [item["id"] for item in items] == ["intel:owned"]
+    assert mock_pool.fetch.await_args.args[1:] == (WORKSPACE_A, TENANT_A, 11)
+
+
+@pytest.mark.asyncio
+async def test_control_room_persisted_item_for_mutation_is_owner_scoped_for_non_admin():
+    async def scoped_fetchrow(
+        query: str, workspace_id: str, item_id: str, tenant_id: str, owner_id: int
+    ):
+        assert "workspace_id = $1" in query
+        assert "item_id = $2" in query
+        assert "tenant_id::text = $3" in query
+        assert "owner_user_id = $4" in query
+        assert workspace_id == WORKSPACE_A
+        assert item_id == "intel:other"
+        assert tenant_id == TENANT_A
+        assert owner_id == 11
+        return None
+
+    mock_pool = AsyncMock()
+    mock_pool.fetchrow = AsyncMock(side_effect=scoped_fetchrow)
+    employee_user = {
+        **REPLICON_USER,
+        "id": 11,
+        "role": "analyst",
+        "workspace_role": "member",
+    }
+
+    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+        item = await control_room_service._persisted_item_for_mutation(
+            "intel:other", employee_user
+        )
+
+    assert item is None
+    assert mock_pool.fetchrow.await_args.args[1:] == (
+        WORKSPACE_A,
+        "intel:other",
+        TENANT_A,
+        11,
+    )

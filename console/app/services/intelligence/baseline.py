@@ -4,6 +4,11 @@ from collections import defaultdict
 from typing import Any
 
 from app.services.intelligence.contracts import configured_horizons, validate_metric
+from app.services.intelligence.decision_intelligence import (
+    build_decision_intelligence,
+    build_future_reserved_decision_intelligence,
+    build_insufficient_history_decision_intelligence,
+)
 from app.services.intelligence.evidence import dataset_evidence_pack
 from app.services.intelligence.external import build_external_evidence
 from app.services.intelligence.hypotheses import hypotheses
@@ -43,11 +48,17 @@ def build_metric_artifacts(
     time_field = str(metric["time_field"])
     value_field = str(metric["value_field"])
     expected_behavior = str(metric.get("expected_behavior") or "watch")
-    baseline = metric.get("baseline") if isinstance(metric.get("baseline"), dict) else {}
+    baseline = (
+        metric.get("baseline") if isinstance(metric.get("baseline"), dict) else {}
+    )
     method = str(baseline.get("method") or "moving_average")
     minimum_history = int(baseline.get("minimum_history") or 2)
     window = int(baseline.get("window") or 6)
-    rules = metric.get("signal_rules") if isinstance(metric.get("signal_rules"), dict) else {}
+    rules = (
+        metric.get("signal_rules")
+        if isinstance(metric.get("signal_rules"), dict)
+        else {}
+    )
     warning_pct = float(rules.get("warning_pct") or 0.20)
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -79,6 +90,13 @@ def build_metric_artifacts(
             if (parsed := num(row.get(value_field))) is not None
         ]
         if len(history_values) < minimum_history:
+            missing_fields = [
+                field
+                for field in (time_field, value_field)
+                if field and field not in latest
+            ]
+            if id_field != "__all__" and id_field not in latest:
+                missing_fields.append(id_field)
             skipped.append(
                 {
                     "cartridge_id": cartridge_id,
@@ -88,12 +106,23 @@ def build_metric_artifacts(
                     "status": "insufficient_history",
                     "sample_count": len(history_values),
                     "minimum_history": minimum_history,
+                    "decision_intelligence": build_insufficient_history_decision_intelligence(
+                        metric=metric,
+                        history_points=len(history_values),
+                        actual_value=actual,
+                        deviation_value=None,
+                        missing_fields=sorted(set(missing_fields)),
+                    ),
                 }
             )
             continue
         expected = sum(history_values) / len(history_values)
         deviation = actual - expected
-        deviation_pct = 0.0 if expected == 0 and actual == 0 else (1.0 if expected == 0 else deviation / abs(expected))
+        deviation_pct = (
+            0.0
+            if expected == 0 and actual == 0
+            else (1.0 if expected == 0 else deviation / abs(expected))
+        )
         abs_pct = abs(deviation_pct)
         entity_label = field_or_literal(latest, label_field, entity_id)
         latest_period_key = period_key(latest, time_field)
@@ -248,7 +277,11 @@ def _artifact(
     id_field = str(entity.get("id_field") or "")
     time_field = str(metric["time_field"])
     value_field = str(metric["value_field"])
-    external_items = build_external_evidence(contract, metric, signal, external_sources) if include_external else []
+    external_items = (
+        build_external_evidence(contract, metric, signal, external_sources)
+        if include_external
+        else []
+    )
     source_system = str(contract.get("cartridge") or signal.get("cartridge_id") or "")
     freshness_at = period_key(latest, time_field)
     signal.update(
@@ -275,7 +308,9 @@ def _artifact(
         freshness_at=freshness_at,
         external_items=external_items,
     )
-    signal["configured_hypotheses"] = metric.get("hypotheses") if isinstance(metric.get("hypotheses"), list) else []
+    signal["configured_hypotheses"] = (
+        metric.get("hypotheses") if isinstance(metric.get("hypotheses"), list) else []
+    )
     baseline_payload = {
         "method": method,
         "sample_count": len(history_values),
@@ -294,10 +329,26 @@ def _artifact(
         "freshness_at": freshness_at,
         "freshness_field": time_field,
     }
+    if str(signal.get("signal_subtype") or "").startswith("future_"):
+        decision_intelligence = build_future_reserved_decision_intelligence(
+            metric=metric,
+            signal=signal,
+            history_points=len(history_values),
+        )
+    else:
+        decision_intelligence = build_decision_intelligence(
+            metric=metric,
+            signal=signal,
+            baseline=baseline_payload,
+            latest=latest,
+            history_values=history_values,
+        )
+    signal["decision_intelligence"] = decision_intelligence
     return {
         "baseline": baseline_payload,
         "signal": signal,
         "evidence_pack": evidence,
+        "decision_intelligence": decision_intelligence,
         "hypotheses": hypotheses(signal, evidence["items"]),
         "options": decision_options(signal, metric),
         "outcome": None,

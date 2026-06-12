@@ -263,7 +263,7 @@ interface LessonApplication {
 
 interface ActivityEntry {
   id: string;
-  kind: "event" | "execution" | "decision_action";
+  kind: "event" | "execution" | "decision_action" | "action_run" | "outcome";
   type: string;
   label: string;
   status?: string;
@@ -322,10 +322,54 @@ interface Omega {
     rules: string[];
     applied?: LessonApplication[];
   };
+  decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
 }
 
+type DecisionMethod =
+  | "robust_baseline_v0"
+  | "insufficient_history"
+  | "deterministic_guardrail"
+  | "dataset_unavailable"
+  | "future_reserved_bayesian"
+  | "future_reserved_conformal"
+  | "future_reserved_state_space";
+
+type DecisionOptionName = "act_now" | "investigate" | "wait" | "monitor";
+type DecisionRecommendation = DecisionOptionName | "insufficient_data";
+type DecisionLevel = "low" | "medium" | "high" | "unknown";
+type DecisionQualityStatus = "sufficient" | "thin" | "insufficient";
+
+interface DecisionIntelligence {
+  method: DecisionMethod;
+  anomaly_probability?: number | null;
+  probability_basis: string;
+  uncertainty_level: DecisionLevel;
+  confidence_interval: { lower?: number | null; upper?: number | null; unit?: string | null };
+  expected_impact: { value?: number | null; currency?: string | null; basis: string };
+  cost_of_delay: { value_per_day?: number | null; currency?: string | null; basis: string };
+  downside_risk: { value?: number | null; currency?: string | null; basis: string };
+  value_of_information: { level: DecisionLevel; rationale: string };
+  recommended_decision: DecisionRecommendation;
+  recommended_next_step: string;
+  rationale: string;
+  options: Array<{
+    option: DecisionOptionName;
+    expected_utility?: number | null;
+    utility_basis: string;
+    risk: DecisionLevel;
+    explanation: string;
+  }>;
+  data_quality: {
+    history_points: number;
+    minimum_required: number;
+    status: DecisionQualityStatus;
+    missing_fields: string[];
+  };
+}
+
 interface IntelligencePack {
+  decision_intelligence?: DecisionIntelligence;
   baseline?: {
     method?: string;
     actual_value?: number;
@@ -347,6 +391,7 @@ interface IntelligencePack {
     prediction_method?: string | null;
     confidence?: number;
     summary?: string;
+    decision_intelligence?: DecisionIntelligence;
   };
   evidence_pack?: {
     summary?: string;
@@ -408,6 +453,7 @@ interface ControlItem {
   lesson_count?: number;
   lesson_applications?: LessonApplication[];
   action_templates?: ActionTemplate[];
+  decision_intelligence?: DecisionIntelligence;
   intelligence?: IntelligencePack;
   omega: Omega;
 }
@@ -3027,6 +3073,7 @@ function InvestigationStep({
   onRecordIntelligenceOutcome: (item: ControlItem, draft: IntelligenceOutcomeDraft) => void;
 }) {
   const intelligence = item.intelligence || item.omega.intelligence;
+  const decisionIntelligence = getDecisionIntelligence(item);
   return (
     <div className="mt-4 space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
@@ -3034,11 +3081,101 @@ function InvestigationStep({
         <InfoBlock label="Impacto" value={sanitizeBusinessCopy(item.impact || item.omega.investigation.impact || item.recommendation, "Pendiente")} />
       </div>
       {intelligence ? <IntelligencePanel item={item} intelligence={intelligence} busyAction={busyAction} onRecordOutcome={onRecordIntelligenceOutcome} /> : null}
+      {decisionIntelligence ? <DecisionIntelligencePanel decisionIntelligence={decisionIntelligence} /> : null}
       <button type="button" onClick={() => onRecordStep(item, "investigation", "Investigación revisada")} disabled={busyAction !== ""} className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
         {busyAction.startsWith(`step:${item.id}:investigation`) ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <CheckCircle2 aria-hidden className="h-4 w-4" />}
         Registrar investigación revisada
       </button>
     </div>
+  );
+}
+
+function getDecisionIntelligence(item: ControlItem): DecisionIntelligence | undefined {
+  const candidate =
+    item.decision_intelligence ||
+    item.intelligence?.decision_intelligence ||
+    item.omega.decision_intelligence ||
+    item.omega.intelligence?.decision_intelligence ||
+    item.intelligence?.signal?.decision_intelligence;
+  return isDecisionIntelligence(candidate) ? candidate : undefined;
+}
+
+function isDecisionIntelligence(value: unknown): value is DecisionIntelligence {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<DecisionIntelligence>;
+  return Boolean(
+    typeof candidate.method === "string" &&
+      "anomaly_probability" in candidate &&
+      typeof candidate.probability_basis === "string" &&
+      typeof candidate.uncertainty_level === "string" &&
+      candidate.confidence_interval &&
+      typeof candidate.confidence_interval === "object" &&
+      candidate.expected_impact &&
+      typeof candidate.expected_impact === "object" &&
+      candidate.cost_of_delay &&
+      typeof candidate.cost_of_delay === "object" &&
+      candidate.downside_risk &&
+      typeof candidate.downside_risk === "object" &&
+      candidate.value_of_information &&
+      typeof candidate.value_of_information === "object" &&
+      typeof candidate.value_of_information.level === "string" &&
+      typeof candidate.recommended_decision === "string" &&
+      typeof candidate.recommended_next_step === "string" &&
+      typeof candidate.rationale === "string" &&
+      Array.isArray(candidate.options) &&
+      candidate.data_quality &&
+      typeof candidate.data_quality === "object" &&
+      typeof candidate.data_quality.history_points === "number" &&
+      typeof candidate.data_quality.minimum_required === "number" &&
+      typeof candidate.data_quality.status === "string"
+  );
+}
+
+function DecisionIntelligencePanel({ decisionIntelligence }: { decisionIntelligence: DecisionIntelligence }) {
+  const quality = decisionIntelligence.data_quality;
+  return (
+    <section className="rounded-lg border bg-card p-4" aria-label="Decision intelligence">
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-semibold uppercase text-muted-foreground">Decisión bajo incertidumbre</p>
+        <h4 className="text-base font-semibold">{decisionLabel(decisionIntelligence.recommended_decision)}</h4>
+        <p className="text-sm text-muted-foreground">{decisionIntelligence.recommended_next_step}</p>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-4">
+        <InfoBlock label="Método" value={methodLabel(decisionIntelligence.method)} />
+        <InfoBlock label="Probabilidad" value={formatDecisionProbability(decisionIntelligence.anomaly_probability)} />
+        <InfoBlock label="Incertidumbre" value={levelLabel(decisionIntelligence.uncertainty_level)} />
+        <InfoBlock label="Historia" value={`${quality.history_points}/${quality.minimum_required} · ${qualityLabel(quality.status)}`} />
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-4">
+        <InfoBlock label="Impacto esperado" value={formatDecisionMoney(decisionIntelligence.expected_impact.value, decisionIntelligence.expected_impact.currency)} />
+        <InfoBlock label="Costo de esperar" value={formatDecisionMoney(decisionIntelligence.cost_of_delay.value_per_day, decisionIntelligence.cost_of_delay.currency, "/día")} />
+        <InfoBlock label="Riesgo bajista" value={formatDecisionMoney(decisionIntelligence.downside_risk.value, decisionIntelligence.downside_risk.currency)} />
+        <InfoBlock label="Intervalo" value={formatDecisionInterval(decisionIntelligence.confidence_interval)} />
+      </div>
+      <div className="mt-3 rounded-md border bg-background p-3">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground">Valor de información</p>
+            <p className="mt-1 text-sm font-medium">{levelLabel(decisionIntelligence.value_of_information.level)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{decisionIntelligence.value_of_information.rationale}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground">Base de probabilidad</p>
+            <p className="mt-1 text-xs text-muted-foreground">{decisionIntelligence.probability_basis}</p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {decisionIntelligence.options.map((option) => (
+          <div key={option.option} className="rounded-md border bg-background p-3">
+            <p className="text-sm font-semibold">{decisionOptionLabel(option.option)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Utilidad {formatDecisionUtility(option.expected_utility)} · riesgo {levelLabel(option.risk)}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{option.explanation}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">{decisionIntelligence.rationale}</p>
+    </section>
   );
 }
 
@@ -3469,6 +3606,65 @@ function formatIntelligenceNumber(value?: number) {
 function formatIntelligencePercent(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "N/D";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatDecisionProbability(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "No estimada";
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function formatDecisionMoney(value?: number | null, currency?: string | null, suffix = "") {
+  if (typeof value !== "number" || Number.isNaN(value) || !currency) return "N/D";
+  return `${new Intl.NumberFormat("es-MX", { style: "currency", currency, maximumFractionDigits: 0 }).format(value)}${suffix}`;
+}
+
+function formatDecisionUtility(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "No calculada";
+  return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatDecisionInterval(interval: DecisionIntelligence["confidence_interval"]) {
+  if (typeof interval.lower !== "number" || typeof interval.upper !== "number") return "N/D";
+  return `${formatIntelligenceNumber(interval.lower)} - ${formatIntelligenceNumber(interval.upper)} ${interval.unit || ""}`.trim();
+}
+
+function methodLabel(method: DecisionMethod) {
+  return {
+    robust_baseline_v0: "Baseline robusto v0",
+    insufficient_history: "Historia insuficiente",
+    deterministic_guardrail: "Regla determinística",
+    dataset_unavailable: "Dataset no disponible",
+    future_reserved_bayesian: "Bayes reservado",
+    future_reserved_conformal: "Conformal reservado",
+    future_reserved_state_space: "State-space reservado",
+  }[method];
+}
+
+function levelLabel(level: DecisionLevel) {
+  return { low: "Baja", medium: "Media", high: "Alta", unknown: "Desconocida" }[level];
+}
+
+function qualityLabel(status: DecisionQualityStatus) {
+  return { sufficient: "suficiente", thin: "historia limitada", insufficient: "insuficiente" }[status];
+}
+
+function decisionLabel(decision: DecisionRecommendation) {
+  return {
+    act_now: "Actuar con supervisión",
+    investigate: "Investigar",
+    wait: "Esperar",
+    monitor: "Monitorear",
+    insufficient_data: "Datos insuficientes",
+  }[decision];
+}
+
+function decisionOptionLabel(option: DecisionOptionName) {
+  return {
+    act_now: "Actuar",
+    investigate: "Investigar",
+    wait: "Esperar",
+    monitor: "Monitorear",
+  }[option];
 }
 
 function StatePanel({ icon: Icon, text, spinning = false }: { icon: LucideIcon; text: string; spinning?: boolean }) {
