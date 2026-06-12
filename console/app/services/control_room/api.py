@@ -721,7 +721,7 @@ def _normalize_replicon_timesheet(
     row: dict[str, Any],
     thresholds: ThresholdMap | None = None,
 ) -> dict[str, Any] | None:
-    total = _num(row.get("horas_total")) or 0
+    total = _num(row.get("horas_total")) or _num(row.get("horas_totales")) or 0
     no_billable = _num(row.get("horas_no_facturables")) or 0
     if total <= 0:
         return None
@@ -749,11 +749,13 @@ def _normalize_replicon_timesheet(
     threshold_state = "critical" if ratio >= critical_ratio else "warning"
     severity = "high" if threshold_state == "critical" else "medium"
     item = _base_item(source, {**row, "severity": severity}, "non_billable_ratio", f"{consultor}:{proyecto}", consultor)
+    period = row.get("semana") or row.get("mes")
+    period_text = f" en {period}" if period else ""
     item.update({
         "title": "Horas no facturables fuera de rango",
-        "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}.",
+        "description": f"{consultor} tiene {ratio:.0%} de horas no facturables en {proyecto}{period_text}.",
         "recommendation": "Validar causa con PM/RM, reclasificar si procede y ajustar forecast de margen.",
-        "root_cause": "Registro de tiempo no facturable alto frente al total semanal.",
+        "root_cause": "Registro de tiempo no facturable alto frente al total reportado.",
         "impact": "Puede erosionar margen y ocultar demanda no planificada.",
         "details": {**item["details"], **row},
     })
@@ -1256,6 +1258,54 @@ async def _persisted_intelligence_items(user: dict | None) -> list[dict[str, Any
 
 
 @_bind_to_core
+async def _cleanup_obsolete_source_state_items(
+    user: dict | None,
+    sources: list[dict[str, Any]],
+    current_items: list[dict[str, Any]],
+) -> None:
+    by_cartridge: dict[str, set[str]] = {}
+    for source in sources:
+        cartridge_id = str(source.get("cartridge") or source.get("connector_id") or "").strip()
+        dataset = str(source.get("dataset") or "").strip()
+        if cartridge_id and dataset:
+            by_cartridge.setdefault(cartridge_id, set()).add(dataset)
+    if not by_cartridge:
+        return
+
+    state_ids_by_cartridge: dict[str, set[str]] = {cartridge_id: set() for cartridge_id in by_cartridge}
+    for item in current_items:
+        if item.get("kind") != "source_state":
+            continue
+        cartridge_id = str(item.get("cartridge") or item.get("connector_id") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        if cartridge_id in state_ids_by_cartridge and item_id:
+            state_ids_by_cartridge[cartridge_id].add(item_id)
+
+    _, workspace_id = _workspace_scope(user)
+    try:
+        pool = await auth.pool()
+        for cartridge_id, datasets in by_cartridge.items():
+            await pool.execute(
+                """
+                DELETE FROM control_room_items
+                 WHERE workspace_id = $1
+                   AND cartridge_id = $2
+                   AND item_kind = 'source_state'
+                   AND (
+                       NOT (source_dataset = ANY($3::text[]))
+                       OR NOT (item_id = ANY($4::text[]))
+                   )
+                """,
+                workspace_id,
+                cartridge_id,
+                sorted(datasets),
+                sorted(state_ids_by_cartridge.get(cartridge_id, set())),
+            )
+    except Exception:
+        return
+
+
+@_bind_to_core
 async def _collect_items(
     user: dict | None,
     *,
@@ -1522,6 +1572,8 @@ async def dashboard(
     lesson_rows = await _load_lesson_rows(user, limit=200)
     lesson_summary = _lesson_insights(lesson_rows)
     items = _attach_lessons_to_items(items, lesson_rows)
+    if persist:
+        await _cleanup_obsolete_source_state_items(user, sources, items)
     if persist:
         known_ids = {str(item.get("id")) for item in items}
         for item in await _persisted_intelligence_items(user):

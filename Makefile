@@ -1,4 +1,5 @@
 PYTEST ?= $(shell if [ -x .venv/bin/pytest ]; then echo .venv/bin/pytest; else echo pytest; fi)
+PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
 RUFF ?= $(shell if [ -x .venv/bin/ruff ]; then echo .venv/bin/ruff; else echo ruff; fi)
 BANDIT ?= .venv/bin/bandit
 PIP_AUDIT ?= .venv/bin/pip-audit
@@ -17,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -39,6 +40,7 @@ help:
 	@echo "  make test-hermetic"
 	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
+	@echo "  make beta-smoke   run strict beta gate: smoke + Gold/lineage/RLS/readiness"
 	@echo "  make stress       run Locust stress profile against the running stack"
 	@echo "  make stress-smoke run 25-user/5m smoke load with p95/p99 summary"
 	@echo "  make stress-beta  run beta load profile with p95/p99 summary"
@@ -83,6 +85,8 @@ help:
 	@echo "                    regenerate the unified v1 GA report for the current run"
 	@echo "  make seed-intelligence-gold"
 	@echo "                    seed scoped prod-like Gold rows for intelligence demos"
+	@echo "  make seed-replicon-beta-gold"
+	@echo "                    seed scoped Replicon Gold rows for private beta apps"
 	@echo "  make dr-rehearsal"
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
@@ -165,6 +169,16 @@ seed-intelligence-gold:
 	GOLD_DATABASE_URL="postgresql://omega_refinement_gold:$${OMEGA_REFINEMENT_GOLD_PASSWORD}@127.0.0.1:$${GOLD_PG_PORT}/modecissions_gold" \
 	PYTHONPATH=console $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/seed_intelligence_gold_prod_like.py
 
+seed-replicon-beta-gold:
+	@set -a; \
+	if [ -f infra/.env ]; then . infra/.env; fi; \
+	set +a; \
+	PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres 5432 2>/dev/null | awk -F: 'END {print $$NF}')"; \
+	GOLD_PG_PORT="$$(docker compose --env-file infra/.env -f infra/docker-compose.yml --profile sap port postgres_gold 5433 2>/dev/null | awk -F: 'END {print $$NF}')"; \
+	POSTGRES_PORT="$${PG_PORT:-$${POSTGRES_PORT:-15432}}" \
+	POSTGRES_GOLD_PORT="$${GOLD_PG_PORT:-$${POSTGRES_GOLD_PORT:-15433}}" \
+	$(PYTHON) scripts/seed_replicon_beta_gold.py
+
 test:
 	$(PYTEST) -ra tests/
 	PYTHONPATH=console $(PYTEST) -ra console/tests/
@@ -204,6 +218,14 @@ test-hermetic:
 # Assumes `make up` has been run; doesn't try to start the stack.
 smoke:
 	@bash scripts/smoke_test.sh
+
+beta-smoke:
+	@if [ "$${OMEGA_BETA_SMOKE_WARM_ACCEPTANCE:-0}" = "1" ]; then \
+		echo "[beta-smoke] warming HubSpot Bronze/Silver/Gold via make acceptance"; \
+		$(MAKE) acceptance; \
+	fi
+	@$(MAKE) smoke
+	@$(PYTHON) scripts/beta_smoke.py
 
 stress:
 	@bash scripts/run_stress.sh

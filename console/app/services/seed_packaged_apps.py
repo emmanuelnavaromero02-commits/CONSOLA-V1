@@ -18,6 +18,31 @@ logger = logging.getLogger(__name__)
 
 _REGISTRY = pathlib.Path("/registry/cartridges")
 _DATA_API_RE = re.compile(r"/api/data/([A-Za-z_][A-Za-z0-9_]*)")
+_DATA_BIND_RE = re.compile(r"\bdata-bind=[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']")
+
+
+def _declared_datasets(meta: dict, html: str) -> list[str]:
+    """Return explicit datasets a packaged app needs.
+
+    Older HubSpot metadata used a singular ``dataset`` key and some apps expose
+    declarative ``data-bind`` placeholders instead of calling /api/data from the
+    HTML. Treat both as first-class declarations so the app gallery can enforce
+    real Gold readiness instead of publishing empty dashboards.
+    """
+    candidates: list[str] = []
+    for key in ("datasets_used", "datasets", "dataset"):
+        raw = meta.get(key)
+        if isinstance(raw, list):
+            candidates.extend(str(item).strip() for item in raw)
+        elif isinstance(raw, str):
+            candidates.append(raw.strip())
+    candidates.extend(_DATA_API_RE.findall(html))
+    candidates.extend(_DATA_BIND_RE.findall(html))
+    return sorted({
+        item
+        for item in candidates
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item or "")
+    })
 
 
 def _app_files() -> dict[str, list[pathlib.Path]]:
@@ -50,11 +75,7 @@ async def seed_packaged_apps(pool: asyncpg.Pool) -> None:
                 name = str(meta.get("name") or html_path.stem).strip()
                 title = str(meta.get("title") or name.replace("_", " ").title()).strip()
                 description = str(meta.get("description") or "").strip()
-                datasets_used = meta.get("datasets_used")
-                if not isinstance(datasets_used, list):
-                    datasets_used = sorted(set(_DATA_API_RE.findall(html)))
-                else:
-                    datasets_used = [str(item) for item in datasets_used if str(item).strip()]
+                datasets_used = _declared_datasets(meta, html)
                 await conn.execute(
                     """INSERT INTO analytic_apps
                           (name, title, html, description, cartridge_id, visibility,

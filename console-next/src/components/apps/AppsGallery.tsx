@@ -50,12 +50,16 @@ export function AppsGallery() {
     );
   }
 
-  const rows = apps.data ?? [];
+  const rows = apps.data?.apps ?? [];
+  const emptyMessage =
+    apps.data?.apps_readiness?.message ||
+    apps.data?.apps_scope?.message ||
+    "No hay aplicaciones configuradas para las conexiones activas del workspace.";
 
   if (rows.length === 0) {
     return (
       <p className="rounded-md border bg-muted/30 p-6 text-sm text-muted-foreground">
-        No hay aplicaciones configuradas para las conexiones activas del workspace.
+        {emptyMessage}
       </p>
     );
   }

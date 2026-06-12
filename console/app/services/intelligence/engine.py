@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.services import audit_service
 from app.services.intelligence.baseline import build_metric_artifacts
 from app.services.intelligence.contracts import load_contracts
@@ -45,6 +47,8 @@ async def run_intelligence(
     tenant_id, workspace_id = workspace_scope(user)
     allowed = allowed_cartridges(user)
     requested_cartridge = str((body or {}).get("cartridge_id") or "").strip()
+    if requested_cartridge and allowed is not None and requested_cartridge not in allowed:
+        raise HTTPException(403, f"cartridge '{requested_cartridge}' is not active for this workspace")
     cartridge_filter = {requested_cartridge} if requested_cartridge else allowed
     contracts = load_contracts(cartridge_filter)
     metric_filter = {

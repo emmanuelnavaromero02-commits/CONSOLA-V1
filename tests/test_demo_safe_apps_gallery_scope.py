@@ -7,7 +7,11 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("INTERNAL_API_KEY", "x" * 64)
 sys.path.insert(0, str(REPO / "console"))
 
-from app.main import _app_payload_cartridge_candidates, _filter_apps_payload_to_scoped_connections  # noqa: E402
+from app.main import (  # noqa: E402
+    _app_payload_cartridge_candidates,
+    _filter_apps_payload_to_ready_datasets,
+    _filter_apps_payload_to_scoped_connections,
+)
 
 
 
@@ -63,3 +67,30 @@ def test_apps_gallery_empty_state_mentions_configured_connections():
 
     assert "No hay aplicaciones configuradas para las conexiones activas del workspace." in src
     assert "No hay aplicaciones publicadas todavía." not in src
+
+
+def test_apps_gallery_filters_to_gold_ready_datasets():
+    payload = {
+        "apps": [
+            {"name": "pipeline_forecast_dashboard", "datasets_used": ["forecast_mensual"]},
+            {"name": "replicon_margin_dashboard", "datasets_used": ["pnl_mensual"]},
+            {"name": "empty_shell", "datasets_used": []},
+        ]
+    }
+
+    scoped = _filter_apps_payload_to_ready_datasets(payload, {"forecast_mensual"})
+
+    assert [app["name"] for app in scoped["apps"]] == ["pipeline_forecast_dashboard"]
+    assert scoped["apps"][0]["data_status"] == "ready"
+    assert scoped["apps_readiness"]["hidden_unready_count"] == 2
+    assert scoped["apps_readiness"]["unavailable_datasets"] == ["pnl_mensual"]
+
+
+def test_apps_gallery_marks_readiness_unchecked_without_hiding_twice():
+    payload = {"apps": [{"name": "pipeline_forecast_dashboard", "datasets_used": ["forecast_mensual"]}]}
+
+    scoped = _filter_apps_payload_to_ready_datasets(payload, None, mode="gold_unreachable")
+
+    assert scoped["apps"] == payload["apps"]
+    assert scoped["apps_readiness"]["mode"] == "gold_unreachable"
+    assert scoped["apps_readiness"]["hidden_unready_count"] == 0

@@ -74,13 +74,81 @@ SAMPLE_ROWS = {
     "open_sales_orders": [],
     "purchase_spend_by_supplier": [],
     "consultor_asignacion": [],
-    "consultor_timesheet_semanal": [],
+    "consultor_mensual": [],
     "pnl_mensual": [],
     "analytic_skill_gap_by_manager": [],
 }
 
 for _source in control_room_service._all_sources():  # noqa: SLF001 - registry contract test fixture
     SAMPLE_ROWS.setdefault(_source.dataset, [])
+
+
+def test_replicon_control_room_sources_match_beta_gold_contract():
+    replicon_sources = [
+        source.dataset
+        for source in control_room_service._all_sources()  # noqa: SLF001
+        if source.cartridge == "replicon"
+    ]
+
+    assert "consultor_mensual" in replicon_sources
+    assert "consultor_timesheet_semanal" not in replicon_sources
+    assert "project_progress_history" not in replicon_sources
+
+
+def test_replicon_timesheet_normalizer_accepts_monthly_gold_shape():
+    source = next(
+        source
+        for source in control_room_service._all_sources()  # noqa: SLF001
+        if source.cartridge == "replicon" and source.dataset == "consultor_mensual"
+    )
+
+    item = control_room_service._normalize_replicon_timesheet(  # noqa: SLF001
+        source,
+        {
+            "mes": "2026-08-01",
+            "consultor": "Ana Gomez",
+            "proyecto": "PROJ-1",
+            "project_name": "Omega Norte",
+            "horas_no_facturables": 60,
+            "horas_totales": 100,
+        },
+    )
+
+    assert item is not None
+    assert item["source_dataset"] == "consultor_mensual"
+    assert item["anomaly_type"] == "non_billable_ratio"
+    assert item["threshold_state"] == "critical"
+    assert "2026-08-01" in item["description"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_obsolete_source_state_items_only_removes_stale_source_states():
+    mock_pool = AsyncMock()
+
+    with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
+        await control_room_service._cleanup_obsolete_source_state_items(  # noqa: SLF001
+            USER,
+            sources=[
+                {"cartridge": "replicon", "dataset": "consultor_mensual"},
+                {"cartridge": "replicon", "dataset": "pnl_mensual"},
+            ],
+            current_items=[
+                {
+                    "kind": "source_state",
+                    "cartridge": "replicon",
+                    "source_dataset": "pnl_mensual",
+                    "id": "current-source-state",
+                }
+            ],
+        )
+
+    sql, workspace_id, cartridge_id, datasets, item_ids = mock_pool.execute.await_args.args
+    assert "DELETE FROM control_room_items" in sql
+    assert "item_kind = 'source_state'" in sql
+    assert workspace_id == USER["active_workspace_id"]
+    assert cartridge_id == "replicon"
+    assert datasets == ["consultor_mensual", "pnl_mensual"]
+    assert item_ids == ["current-source-state"]
 
 
 async def sample_fetcher(dataset: str, _user: dict | None, _limit: int) -> list[dict]:

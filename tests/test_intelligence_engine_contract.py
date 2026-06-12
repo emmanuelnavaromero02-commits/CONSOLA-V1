@@ -104,6 +104,8 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert 'APIRouter(prefix="/api/v1/intelligence"' in router
     assert "BaseModel" in router
     assert 'extra="forbid"' in router
+    assert "cartridge_id" in router
+    assert "metrics" in router
     assert '@router.get("/signals"' in router
     assert '@v1_router.get("/signals"' in router
     assert '@router.get("/readiness"' in router
@@ -114,6 +116,8 @@ def test_intelligence_router_is_registered_and_mutations_are_guarded():
     assert 'Depends(require_permission("datasets.read"))' in router
     assert 'Depends(require_permission("control_room.write"))' in router
     assert "Depends(require_csrf)" in router
+    assert "def _invalidate_control_room_cache" in router
+    assert "_invalidate_control_room_cache(user)" in router
 
 
 def test_scope_owner_hotfix_migration_covers_vault_and_intelligence_owner():
@@ -224,3 +228,8 @@ def test_control_room_surfaces_persisted_intelligence_items_and_ui_pack():
     assert "function IntelligencePanel" in ui
     assert "Registrar resultado" in ui
     assert "Evidencia considerada" in ui
+
+
+def test_service_readiness_defaults_to_private_beta_golden_path():
+    readiness = read("console/app/services/intelligence/readiness.py")
+    assert 'os.environ.get("INTELLIGENCE_READINESS_CARTRIDGES", "hubspot,replicon")' in readiness

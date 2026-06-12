@@ -19,9 +19,24 @@ class _StrictModel(BaseModel):
 
 
 class IntelligenceRunRequest(_StrictModel):
+    cartridge_id: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+    metrics: list[str] | None = None
     include_external: bool = False
     horizon_days: int | list[int] | None = None
     dry_run: bool = False
+
+    @field_validator("metrics")
+    @classmethod
+    def _validate_metrics(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        cleaned = [str(item).strip() for item in value if str(item or "").strip()]
+        if len(cleaned) > 20:
+            raise ValueError("metrics cannot contain more than 20 entries")
+        for item in cleaned:
+            if len(item) > 128 or not item.replace("_", "").replace("-", "").isalnum():
+                raise ValueError("metrics entries must be simple identifiers")
+        return cleaned
 
     @field_validator("horizon_days")
     @classmethod
@@ -64,6 +79,14 @@ def _payload(model: BaseModel | None) -> dict:
     return model.model_dump(exclude_none=True)
 
 
+def _invalidate_control_room_cache(user: dict) -> None:
+    try:
+        from app.routers.control_room import _control_room_cache_invalidate
+    except Exception:
+        return
+    _control_room_cache_invalidate(user)
+
+
 @router.get("/signals", dependencies=[Depends(require_permission("datasets.read"))])
 @v1_router.get("/signals", dependencies=[Depends(require_permission("datasets.read"))])
 async def intelligence_signals(
@@ -103,7 +126,9 @@ async def intelligence_run(
     body: IntelligenceRunRequest | None = Body(default=None),
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_engine.run_intelligence(user, _payload(body))
+    result = await intelligence_engine.run_intelligence(user, _payload(body))
+    _invalidate_control_room_cache(user)
+    return result
 
 
 @router.get("/external/sources", dependencies=[Depends(require_permission("datasets.read"))])
@@ -142,7 +167,9 @@ async def intelligence_external_run(
     body: ExternalRunRequest | None = Body(default=None),
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_engine.run_sources(user, _payload(body))
+    result = await intelligence_engine.run_sources(user, _payload(body))
+    _invalidate_control_room_cache(user)
+    return result
 
 
 @router.post(
@@ -158,7 +185,9 @@ async def intelligence_select_option(
     option_id: str,
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_engine.select_option(user, signal_id, option_id)
+    result = await intelligence_engine.select_option(user, signal_id, option_id)
+    _invalidate_control_room_cache(user)
+    return result
 
 
 @router.post(
@@ -174,4 +203,6 @@ async def intelligence_record_outcome(
     body: OutcomeRequest,
     user: dict = Depends(require_authenticated),
 ):
-    return await intelligence_engine.record_outcome(user, signal_id, _payload(body))
+    result = await intelligence_engine.record_outcome(user, signal_id, _payload(body))
+    _invalidate_control_room_cache(user)
+    return result
