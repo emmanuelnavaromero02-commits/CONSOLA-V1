@@ -316,15 +316,31 @@ def _jwt(scope: Scope) -> str:
     return signing_input + "." + _b64url(signature)
 
 
-def _http_json(base_url: str, path: str, scope: Scope, *, workspace_id: str | None = None, expected: set[int] | None = None) -> tuple[int, Any]:
+def _http_json(
+    base_url: str,
+    path: str,
+    scope: Scope,
+    *,
+    workspace_id: str | None = None,
+    expected: set[int] | None = None,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
+) -> tuple[int, Any]:
     url = base_url.rstrip("/") + path
+    data = None
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {_jwt(scope)}",
+        "x-workspace-id": workspace_id or scope.workspace_id,
+    }
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {_jwt(scope)}",
-            "x-workspace-id": workspace_id or scope.workspace_id,
-        },
+        data=data,
+        headers=headers,
+        method=method.upper(),
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -335,7 +351,7 @@ def _http_json(base_url: str, path: str, scope: Scope, *, workspace_id: str | No
         body = exc.read().decode("utf-8", errors="replace")
     allowed = expected or {200}
     if status not in allowed:
-        raise RuntimeError(f"GET {path} returned {status}: {_short(body)}")
+        raise RuntimeError(f"{method.upper()} {path} returned {status}: {_short(body)}")
     try:
         return status, json.loads(body) if body else {}
     except json.JSONDecodeError:
@@ -429,6 +445,45 @@ def _run_api_checks(a: Scope, b: Scope) -> list[Check]:
         )
         status, _payload = _http_json(base_url, "/api/copilot/briefing/v2", own, workspace_id=other.workspace_id, expected={403})
         checks.append(Check("copilot", f"{own.label} Copilot workspace {other.label} rejected", PASS if status == 403 else FAIL, f"status={status}"))
+        mutation_probes = (
+            (
+                "decision",
+                f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/decision",
+                {},
+            ),
+            (
+                "outcome",
+                f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/outcomes",
+                {"action_taken": "tenant_ab_forbidden_probe", "outcome_summary": "must not cross scope"},
+            ),
+            (
+                "lesson",
+                f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/lessons",
+                {"rule": "Tenant A/B forbidden lesson probe must not cross workspace."},
+            ),
+            (
+                "execute",
+                f"/api/control-room/items/{urllib.parse.quote(other.item_id)}/execute",
+                {"template_id": "create_followup_task", "confirm_execute": True, "idempotency_key": f"tenant-ab-forbidden-{own.label}-{other.label}"},
+            ),
+        )
+        for probe_name, path, body in mutation_probes:
+            status, payload = _http_json(
+                base_url,
+                path,
+                own,
+                expected={403, 404},
+                method="POST",
+                body=body,
+            )
+            checks.append(
+                Check(
+                    "control-room",
+                    f"{own.label} forbidden {probe_name} mutation on {other.label}",
+                    PASS if status in {403, 404} else FAIL,
+                    f"status={status} body={_short(json.dumps(payload, sort_keys=True, default=str))}",
+                )
+            )
     return checks
 
 

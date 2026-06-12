@@ -53,10 +53,20 @@ def _external_delivery_enabled() -> bool:
 def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
     template_id = str(template.get("template_id") or "")
     if template_id in SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES:
+        target_by_template = {
+            "create_followup_task": "decision_actions",
+            "create_investigation_note": "control_room_item_events",
+            "mark_decision_for_monitoring": "control_room_items.metadata",
+        }
+        description_by_template = {
+            "create_followup_task": "Crea un seguimiento operativo auditado en decision_actions; no escribe en ERP.",
+            "create_investigation_note": "Crea una nota de investigacion auditada en Control Room; no escribe en ERP.",
+            "mark_decision_for_monitoring": "Marca la decision para monitoreo interno; no escribe en ERP.",
+        }
         return {
             "supported": True,
             "mode": "supervised_execution",
-            "target": "decision_actions",
+            "target": target_by_template.get(template_id, "control_room"),
             "external": False,
             "requires_flag": False,
             "requires_external_writeback_flag": False,
@@ -65,7 +75,7 @@ def _writeback_capability(template: dict[str, Any]) -> dict[str, Any]:
             "requires_dry_run": True,
             "permission": "control_room.execute",
             "status": "supported",
-            "description": "Crea un seguimiento operativo auditado en decision_actions; no escribe en ERP.",
+            "description": description_by_template.get(template_id, "Ejecuta una accion interna auditada; no escribe en ERP."),
         }
     template_type = str(template.get("template_type") or template_id)
     has_adapter = WriteBackAdapterFactory.has_adapter(template_type)
@@ -504,6 +514,33 @@ def _action_payload_for_template(item: dict[str, Any], template: dict[str, Any])
             "prepared_actions": [
                 "validar asignacion/timesheet",
                 "preparar ajuste para owner",
+            ],
+        }
+    if action_kind == "investigation_note":
+        return {
+            **base,
+            "note": {
+                "summary": item.get("root_cause") or item.get("description") or item.get("title"),
+                "recommendation": item.get("recommendation"),
+                "evidence_sql": item.get("sql"),
+            },
+            "prepared_actions": [
+                "registrar nota de investigacion",
+                "mantener evidencia ligada al item",
+            ],
+        }
+    if action_kind == "decision_monitoring":
+        return {
+            **base,
+            "monitoring": {
+                "metric": item.get("metric") or item.get("anomaly_type"),
+                "severity": item.get("severity"),
+                "entity": item.get("entity_label") or item.get("entity_id"),
+                "source_dataset": item.get("source_dataset"),
+            },
+            "prepared_actions": [
+                "marcar decision para seguimiento",
+                "vincular control y leccion esperada",
             ],
         }
     if action_kind in {"s4_revenue_review", "s4_business_partner_review", "s4_procurement_review", "sap_review"}:
@@ -1175,6 +1212,328 @@ def _resolve_template(item: dict[str, Any], template_id: str | None) -> dict[str
 
 
 @_bind_to_core
+def _adapter_name_for_template(template: dict[str, Any]) -> str:
+    template_id = str(template.get("template_id") or "")
+    if template_id == "create_followup_task":
+        return "internal_followup_task"
+    if template_id == "create_investigation_note":
+        return "internal_investigation_note"
+    if template_id == "mark_decision_for_monitoring":
+        return "internal_decision_monitoring"
+    return str(template.get("template_type") or template_id or "external_adapter")
+
+
+@_bind_to_core
+def _action_run_idempotency_key(
+    *,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    mode: str,
+    provided: str | None = None,
+    status: str | None = None,
+) -> str:
+    safe_provided = str(provided or "").strip()
+    template_id = str(template.get("template_id") or "unknown")
+    if safe_provided:
+        return f"{mode}:{template_id}:{safe_provided}"[:512]
+    decision_id = str(item.get("decision_id") or "no-decision")
+    item_id = str(item.get("id") or "")
+    status_part = f":{status}" if status in {"blocked", "failed", "dry_run_failed"} else ""
+    return f"{mode}:{item_id}:{template_id}:{decision_id}{status_part}"[:512]
+
+
+@_bind_to_core
+def _action_run_public(row: Any, *, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = _row_to_public(row) if row else dict(fallback or {})
+    for key in ("input", "dry_run_result", "execution_result", "side_effect", "metadata"):
+        data[key] = _details(data.get(key))
+    return data
+
+
+@_bind_to_core
+async def _record_action_run_event(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    action_run_id: int | None,
+    event_type: str,
+    status: str,
+    metadata: dict[str, Any],
+    critical: bool = False,
+) -> None:
+    if action_run_id is None:
+        return
+    tenant_id, workspace_id = _workspace_scope(user)
+    try:
+        await pool.execute(
+            """
+            INSERT INTO action_run_events (
+                tenant_id, workspace_id, action_run_id, item_id, event_type,
+                status, actor_id, actor_email, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+            """,
+            tenant_id,
+            workspace_id,
+            int(action_run_id),
+            item["id"],
+            event_type,
+            status,
+            user.get("id"),
+            user.get("email"),
+            json.dumps(metadata),
+        )
+    except Exception:
+        if critical:
+            raise
+
+
+@_bind_to_core
+async def _record_action_run(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    mode: str,
+    status: str,
+    input_payload: dict[str, Any],
+    dry_run_result: dict[str, Any] | None = None,
+    execution_result: dict[str, Any] | None = None,
+    side_effect: dict[str, Any] | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    idempotency_key: str | None = None,
+    legacy_execution_id: int | None = None,
+    metadata: dict[str, Any] | None = None,
+    critical: bool = False,
+) -> dict[str, Any]:
+    tenant_id, workspace_id = _workspace_scope(user)
+    action_type = str(template.get("template_id") or template.get("action_kind") or "unknown")
+    adapter_name = _adapter_name_for_template(template)
+    key = idempotency_key or _action_run_idempotency_key(
+        item=item,
+        template=template,
+        mode=mode,
+        status=status,
+    )
+    terminal = status in {"preview_generated", "dry_run_completed", "dry_run_failed", "blocked", "completed", "failed"}
+    meta = {
+        "template": template,
+        "source_dataset": item.get("source_dataset"),
+        "cartridge": item.get("cartridge"),
+        **(metadata or {}),
+    }
+    fallback = {
+        "id": None,
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "item_id": item["id"],
+        "decision_id": item.get("decision_id"),
+        "legacy_execution_id": legacy_execution_id,
+        "action_type": action_type,
+        "adapter_name": adapter_name,
+        "mode": mode,
+        "status": status,
+        "risk_level": str(template.get("risk_level") or "low"),
+        "requires_approval": bool(template.get("requires_approval", True)),
+        "approval_status": "implicit_internal_beta",
+        "idempotency_key": key,
+        "actor_id": user.get("id"),
+        "actor_email": user.get("email"),
+        "input": input_payload,
+        "dry_run_result": dry_run_result or {},
+        "execution_result": execution_result or {},
+        "side_effect": side_effect or {},
+        "error_code": error_code,
+        "error_message": error_message,
+        "metadata": meta,
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat() if terminal else None,
+    }
+    try:
+        action_run_id = await pool.fetchval(
+            """
+            INSERT INTO action_runs (
+                tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
+                action_type, adapter_name, mode, status, risk_level,
+                requires_approval, approval_status, idempotency_key,
+                actor_id, actor_email, input, dry_run_result, execution_result,
+                side_effect, error_code, error_message, metadata, completed_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10,
+                $11, $12, $13,
+                $14, $15, $16::jsonb, $17::jsonb, $18::jsonb,
+                $19::jsonb, $20, $21, $22::jsonb,
+                CASE WHEN $23::boolean THEN NOW() ELSE NULL END
+            )
+            ON CONFLICT (workspace_id, idempotency_key) DO UPDATE
+            SET decision_id = EXCLUDED.decision_id,
+                legacy_execution_id = COALESCE(EXCLUDED.legacy_execution_id, action_runs.legacy_execution_id),
+                status = EXCLUDED.status,
+                risk_level = EXCLUDED.risk_level,
+                requires_approval = EXCLUDED.requires_approval,
+                approval_status = EXCLUDED.approval_status,
+                input = EXCLUDED.input,
+                dry_run_result = CASE
+                    WHEN EXCLUDED.dry_run_result <> '{}'::jsonb THEN EXCLUDED.dry_run_result
+                    ELSE action_runs.dry_run_result
+                END,
+                execution_result = CASE
+                    WHEN EXCLUDED.execution_result <> '{}'::jsonb THEN EXCLUDED.execution_result
+                    ELSE action_runs.execution_result
+                END,
+                side_effect = CASE
+                    WHEN EXCLUDED.side_effect <> '{}'::jsonb THEN EXCLUDED.side_effect
+                    ELSE action_runs.side_effect
+                END,
+                error_code = EXCLUDED.error_code,
+                error_message = EXCLUDED.error_message,
+                metadata = action_runs.metadata || EXCLUDED.metadata,
+                updated_at = NOW(),
+                completed_at = CASE WHEN $23::boolean THEN NOW() ELSE action_runs.completed_at END
+            RETURNING id
+            """,
+            tenant_id,
+            workspace_id,
+            item["id"],
+            int(item["decision_id"]) if item.get("decision_id") is not None else None,
+            legacy_execution_id,
+            action_type,
+            adapter_name,
+            mode,
+            status,
+            str(template.get("risk_level") or "low"),
+            bool(template.get("requires_approval", True)),
+            "implicit_internal_beta",
+            key,
+            user.get("id"),
+            user.get("email"),
+            json.dumps(input_payload),
+            json.dumps(dry_run_result or {}),
+            json.dumps(execution_result or {}),
+            json.dumps(side_effect or {}),
+            error_code,
+            error_message,
+            json.dumps(meta),
+            terminal,
+        )
+        fallback["id"] = action_run_id
+        await _record_action_run_event(
+            pool,
+            user=user,
+            item=item,
+            action_run_id=int(action_run_id) if action_run_id is not None else None,
+            event_type=f"action_run.{status}",
+            status=status,
+            metadata={
+                "mode": mode,
+                "action_type": action_type,
+                "adapter_name": adapter_name,
+                "legacy_execution_id": legacy_execution_id,
+                "error_code": error_code,
+            },
+            critical=critical,
+        )
+        return _action_run_public(None, fallback=fallback)
+    except Exception:
+        if critical:
+            raise
+        return _action_run_public(None, fallback=fallback)
+
+
+@_bind_to_core
+async def _latest_successful_dry_run(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+) -> dict[str, Any] | None:
+    workspace_id = _workspace_id(user)
+    row = await pool.fetchrow(
+        """
+        SELECT id, tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
+               action_type, adapter_name, mode, status, risk_level,
+               requires_approval, approval_status, idempotency_key,
+               actor_id, actor_email, input, dry_run_result, execution_result,
+               side_effect, error_code, error_message, metadata,
+               created_at, updated_at, completed_at
+          FROM action_runs
+         WHERE workspace_id = $1
+           AND item_id = $2
+           AND action_type = $3
+           AND mode = 'dry_run'
+           AND status = 'dry_run_completed'
+         ORDER BY completed_at DESC NULLS LAST, updated_at DESC
+         LIMIT 1
+        """,
+        workspace_id,
+        item["id"],
+        str(template.get("template_id") or ""),
+    )
+    return _action_run_public(row) if row else None
+
+
+@_bind_to_core
+def _dry_run_checks(
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str], bool]:
+    capability = payload.get("writeback") if isinstance(payload.get("writeback"), dict) else _writeback_capability(template)
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, passed: bool, *, detail: str, required: bool = True) -> None:
+        checks.append({
+            "name": name,
+            "status": "passed" if passed else "failed",
+            "required": required,
+            "detail": detail,
+        })
+
+    tenant_id, workspace_id = _workspace_scope(user)
+    add("tenant_scope", bool(tenant_id), detail="tenant resolved from authenticated user")
+    add("workspace_scope", bool(workspace_id), detail="workspace resolved from authenticated user")
+    add("actor", bool(user.get("id") or user.get("email")), detail="actor is authenticated")
+    add("input_schema", bool(payload.get("item") and payload.get("operations")), detail="execution payload has item and operation")
+    add("risk", str(template.get("risk_level") or "") in {"low", "medium", "high", "critical"}, detail="risk level is recognized")
+    add("approval", True, detail="approval/confirmation gate is declared")
+    add("data", bool(item.get("source_dataset") and item.get("entity_id")), detail="source dataset and entity are present")
+    if capability.get("external"):
+        add(
+            "adapter",
+            bool(capability.get("adapter_available")),
+            detail=str(capability.get("adapter") or capability.get("reason") or "external adapter unavailable"),
+        )
+        add(
+            "external_writeback_flag",
+            not _external_writeback_enabled(),
+            required=False,
+            detail="external writeback remains blocked by default for beta dry-run",
+        )
+    else:
+        add(
+            "adapter",
+            bool(capability.get("supported")),
+            detail=str(capability.get("target") or "internal adapter"),
+        )
+    warnings = [
+        str(check["name"])
+        for check in checks
+        if check["status"] != "passed" and not bool(check.get("required", True))
+    ]
+    ok = all(check["status"] == "passed" for check in checks if bool(check.get("required", True)))
+    return checks, warnings, ok
+
+
+@_bind_to_core
 async def action_preview(
     item_id: str,
     user: dict,
@@ -1205,13 +1564,29 @@ async def action_preview(
         payload=payload,
         result=result,
     )
+    action_run = await _record_action_run(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="preview",
+        status="preview_generated",
+        input_payload=payload,
+        execution_result=result,
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        metadata={"legacy_table": "control_room_action_executions"},
+    )
     await _set_execution_status(pool, user=user, item=item, execution_status="preview_generated")
     await _record_item_event(
         pool,
         user=user,
         item=item,
         event_type="action_preview",
-        metadata={"template_id": template["template_id"], "execution_id": execution.get("id")},
+        metadata={
+            "template_id": template["template_id"],
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+        },
     )
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -1226,7 +1601,7 @@ async def action_preview(
         critical=True,
     )
     public_item = _with_omega({**item, "execution_status": "preview_generated"})
-    return {"execution": execution, "payload": payload, "result": result, "item": public_item}
+    return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
 
 
 @_bind_to_core
@@ -1247,13 +1622,27 @@ async def action_dry_run(
         warnings.append("impact_unavailable")
     if not item.get("decision_id"):
         warnings.append("decision_not_created_yet")
+    validation_checks, validation_warnings, validation_ok = _dry_run_checks(
+        user=user,
+        item=item,
+        template=template,
+        payload=payload,
+    )
+    warnings.extend(value for value in validation_warnings if value not in warnings)
+    action_run_status = "dry_run_completed" if validation_ok else "dry_run_failed"
+    execution_status = "dry_run_validated" if validation_ok else "failed"
     result = {
-        "ok": True,
+        "ok": validation_ok,
         "mode": "dry_run",
-        "validated": True,
+        "validated": validation_ok,
         "external_write": False,
         "warnings": warnings,
-        "message": "Dry-run validado. V1 no escribe en sistemas externos.",
+        "checks": validation_checks,
+        "message": (
+            "Dry-run validado. V1 no escribe en sistemas externos."
+            if validation_ok
+            else "Dry-run fallido: el contrato de ejecucion no paso todas las validaciones requeridas."
+        ),
     }
     pool = await auth.pool()
     await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review")
@@ -1263,17 +1652,38 @@ async def action_dry_run(
         item=item,
         template=template,
         mode="dry_run",
-        status="validated",
+        status="validated" if validation_ok else "failed",
         payload=payload,
         result=result,
+        error=None if validation_ok else "dry_run_validation_failed",
     )
-    await _set_execution_status(pool, user=user, item=item, execution_status="dry_run_validated")
+    action_run = await _record_action_run(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="dry_run",
+        status=action_run_status,
+        input_payload=payload,
+        dry_run_result=result,
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        error_code=None if validation_ok else "dry_run_validation_failed",
+        error_message=None if validation_ok else result["message"],
+        metadata={"legacy_table": "control_room_action_executions", "checks": validation_checks},
+    )
+    await _set_execution_status(pool, user=user, item=item, execution_status=execution_status)
     await _record_item_event(
         pool,
         user=user,
         item=item,
         event_type="action_dry_run",
-        metadata={"template_id": template["template_id"], "execution_id": execution.get("id"), "warnings": warnings},
+        metadata={
+            "template_id": template["template_id"],
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+            "action_run_status": action_run_status,
+            "warnings": warnings,
+        },
     )
     await audit_service.record_event(
         user_id=user.get("id"),
@@ -1283,12 +1693,222 @@ async def action_dry_run(
         resource_id=item_id,
         ip=ip,
         user_agent=user_agent,
-        status="success",
-        metadata={"template_id": template["template_id"], "result": result},
+        status="success" if validation_ok else "failed",
+        metadata={"template_id": template["template_id"], "result": result, "action_run_id": action_run.get("id")},
         critical=True,
     )
-    public_item = _with_omega({**item, "execution_status": "dry_run_validated"})
-    return {"execution": execution, "payload": payload, "result": result, "item": public_item}
+    public_item = _with_omega({**item, "execution_status": execution_status})
+    return {"execution": execution, "action_run": action_run, "payload": payload, "result": result, "item": public_item}
+
+
+@_bind_to_core
+async def list_item_action_runs(
+    item_id: str,
+    user: dict,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    workspace_id = _workspace_id(user)
+    pool = await auth.pool()
+    rows = await pool.fetch(
+        """
+        SELECT id, tenant_id, workspace_id, item_id, decision_id, legacy_execution_id,
+               action_type, adapter_name, mode, status, risk_level,
+               requires_approval, approval_status, idempotency_key,
+               actor_id, actor_email, input, dry_run_result, execution_result,
+               side_effect, error_code, error_message, metadata,
+               created_at, updated_at, completed_at
+          FROM action_runs
+         WHERE workspace_id = $1
+           AND item_id = $2
+         ORDER BY created_at DESC
+         LIMIT 100
+        """,
+        workspace_id,
+        item["id"],
+    )
+    return {
+        "item_id": item["id"],
+        "action_runs": [_action_run_public(row) for row in rows],
+    }
+
+
+@_bind_to_core
+def _outcome_num(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@_bind_to_core
+def _outcome_public(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    data["metadata"] = _details(data.get("metadata"))
+    return data
+
+
+@_bind_to_core
+async def list_item_outcomes(
+    item_id: str,
+    user: dict,
+    *,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    workspace_id = _workspace_id(user)
+    pool = await auth.pool()
+    rows = await pool.fetch(
+        """
+        SELECT id, tenant_id, workspace_id, signal_id, option_id, action_taken,
+               predicted_value, actual_value, prediction_error, outcome_summary,
+               learned_rule, metadata, created_at
+          FROM prediction_outcomes
+         WHERE workspace_id = $1
+           AND signal_id = $2
+         ORDER BY created_at DESC
+         LIMIT 100
+        """,
+        workspace_id,
+        item["id"],
+    )
+    return {
+        "item_id": item["id"],
+        "outcomes": [_outcome_public(row) for row in rows],
+    }
+
+
+@_bind_to_core
+async def record_item_outcome(
+    item_id: str,
+    body: dict[str, Any],
+    user: dict,
+    *,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    fetcher: DatasetFetcher = query_dataset_rows,
+) -> dict[str, Any]:
+    item = await _item_for_mutation(item_id, user, fetcher=fetcher)
+    action_taken = str(body.get("action_taken") or body.get("action") or "").strip()
+    if not action_taken:
+        raise HTTPException(400, "action_taken is required")
+    option_id = str(body.get("option_id") or item.get("selected_option_id") or "").strip() or None
+    predicted_value = _outcome_num(body.get("predicted_value"))
+    if predicted_value is None:
+        predicted_value = _outcome_num(item.get("impact_estimate") or _impact_for_item(item).get("estimate"))
+    actual_value = _outcome_num(body.get("actual_value"))
+    prediction_error = None
+    if actual_value is not None and predicted_value is not None:
+        prediction_error = round(actual_value - predicted_value, 4)
+    learned_rule = str(body.get("learned_rule") or "").strip() or None
+    if not learned_rule and prediction_error is not None:
+        learned_rule = f"Resultado medido con error {prediction_error:.2f} para {item.get('anomaly_type') or item.get('title')}."
+    outcome_summary = str(
+        body.get("outcome_summary")
+        or body.get("summary")
+        or learned_rule
+        or "Outcome registrado desde Control Room."
+    ).strip()
+    tenant_id, workspace_id = _workspace_scope(user)
+    pool = await auth.pool()
+    await _ensure_item_row(pool, user=user, item=item, status=item.get("status") or "in_review", critical=True)
+    metadata = {
+        "source": "control_room",
+        "reported_by": user.get("email"),
+        "action_run_id": body.get("action_run_id"),
+        "decision_id": item.get("decision_id"),
+        "measured_impact": body.get("measured_impact"),
+        "evidence": body.get("evidence") if isinstance(body.get("evidence"), dict) else {},
+    }
+    row = await pool.fetchrow(
+        """
+        INSERT INTO prediction_outcomes (
+            tenant_id, workspace_id, signal_id, option_id, action_taken,
+            predicted_value, actual_value, prediction_error, outcome_summary,
+            learned_rule, owner_user_id, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+        RETURNING *
+        """,
+        tenant_id,
+        workspace_id,
+        item["id"],
+        option_id,
+        action_taken,
+        predicted_value,
+        actual_value,
+        prediction_error,
+        outcome_summary,
+        learned_rule,
+        user.get("id"),
+        json.dumps(metadata),
+    )
+    if learned_rule:
+        await _persist_lessons(pool, user=user, item=item, decision_id=item.get("decision_id"), lessons=[learned_rule])
+    await pool.execute(
+        """
+        UPDATE control_room_items
+           SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               last_seen_at = NOW()
+         WHERE workspace_id = $1
+           AND item_id = $2
+        """,
+        workspace_id,
+        item["id"],
+        json.dumps({
+            "last_outcome": {
+                "action_taken": action_taken,
+                "actual_value": actual_value,
+                "prediction_error": prediction_error,
+                "outcome_summary": outcome_summary,
+                "learned_rule": learned_rule,
+            },
+            "learned_rules": _merge_rule(item.get("omega", {}).get("lessons", {}).get("rules"), learned_rule or ""),
+        }),
+    )
+    outcome = _outcome_public(row)
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="outcome_recorded",
+        metadata={
+            "outcome_id": outcome.get("id"),
+            "action_taken": action_taken,
+            "option_id": option_id,
+            "prediction_error": prediction_error,
+            "learned_rule": learned_rule,
+        },
+        critical=True,
+    )
+    await audit_service.record_event(
+        user_id=user.get("id"),
+        email=user.get("email"),
+        action="control_room.outcome.record",
+        resource_type="control_room_item",
+        resource_id=item_id,
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "workspace_id": workspace_id,
+            "tenant_id": tenant_id,
+            "outcome_id": outcome.get("id"),
+            "action_taken": action_taken,
+            "option_id": option_id,
+            "learned_rule": learned_rule,
+        },
+        critical=True,
+    )
+    return {
+        "recorded": True,
+        "outcome": outcome,
+        "lesson_recorded": bool(learned_rule),
+        "item": _with_omega({**item, "last_outcome": outcome}),
+    }
 
 
 @_bind_to_core
@@ -1340,7 +1960,8 @@ async def run_auto_item(
         decision = {"decision": {"id": item.get("decision_id")}, "item": item}
     steps.append({"step": "decision", "decision_id": item.get("decision_id")})
 
-    template_id = _primary_template_for_item(item)["template_id"]
+    available_template_ids = {str(template.get("template_id")) for template in _action_templates_for_item(item)}
+    template_id = "create_followup_task" if "create_followup_task" in available_template_ids else _primary_template_for_item(item)["template_id"]
     preview = await action_preview(
         item_id,
         user,
@@ -1500,13 +2121,38 @@ async def _record_execute_block(
         error=error,
         critical=True,
     )
+    action_run = await _record_action_run(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute",
+        status="blocked",
+        input_payload=payload,
+        execution_result=result,
+        error_code=error,
+        error_message=message,
+        idempotency_key=_action_run_idempotency_key(
+            item=item,
+            template=template,
+            mode="execute",
+            status="blocked",
+        ),
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        metadata={"legacy_table": "control_room_action_executions", "block_reason": error},
+    )
     await _set_execution_status(pool, user=user, item=item, execution_status="blocked", critical=True)
     await _record_item_event(
         pool,
         user=user,
         item=item,
         event_type="action_blocked",
-        metadata={"template_id": template["template_id"], "execution_id": execution.get("id"), "reason": error},
+        metadata={
+            "template_id": template["template_id"],
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+            "reason": error,
+        },
         critical=True,
     )
     await audit_service.record_event(
@@ -1518,7 +2164,12 @@ async def _record_execute_block(
         ip=ip,
         user_agent=user_agent,
         status="blocked",
-        metadata={"template_id": template["template_id"], "result": result, "reason": error},
+        metadata={
+            "template_id": template["template_id"],
+            "result": result,
+            "reason": error,
+            "action_run_id": action_run.get("id"),
+        },
         critical=True,
     )
 
@@ -1726,6 +2377,30 @@ async def _execute_internal_followup_task_tx(
         result=result,
         critical=True,
     )
+    action_run = await _record_action_run(
+        db,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute",
+        status="completed",
+        input_payload={**payload, "idempotency_key": idempotency_key},
+        execution_result=result,
+        side_effect={
+            "target": "decision_actions",
+            "decision_id": decision_id,
+            "decision_action_id": public_action.get("id"),
+        },
+        idempotency_key=_action_run_idempotency_key(
+            item=item,
+            template=template,
+            mode="execute",
+            provided=idempotency_key,
+        ),
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        metadata={"legacy_table": "control_room_action_executions"},
+        critical=True,
+    )
     await db.execute(
         """
         UPDATE control_room_items
@@ -1744,6 +2419,7 @@ async def _execute_internal_followup_task_tx(
                 "target": "decision_actions",
                 "decision_action_id": public_action.get("id"),
                 "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
             },
         }),
     )
@@ -1758,6 +2434,7 @@ async def _execute_internal_followup_task_tx(
             "decision_id": decision_id,
             "decision_action_id": public_action.get("id"),
             "target": "decision_actions",
+            "action_run_id": action_run.get("id"),
         },
         critical=True,
     )
@@ -1776,6 +2453,7 @@ async def _execute_internal_followup_task_tx(
             "decision_id": decision_id,
             "decision_action_id": public_action.get("id"),
             "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
             "before": before,
             "after": after,
         },
@@ -1785,9 +2463,242 @@ async def _execute_internal_followup_task_tx(
         "executed": True,
         "idempotent": False,
         "execution": execution,
+        "action_run": action_run,
         "payload": payload,
         "result": result,
         "decision_action": public_action,
+        "item": public_item,
+    }
+
+
+@_bind_to_core
+async def _execute_internal_investigation_note(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    idempotency_key: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict[str, Any]:
+    note_payload = payload.get("action_payload") if isinstance(payload.get("action_payload"), dict) else {}
+    note = _details(note_payload.get("note")).get("summary") or item.get("root_cause") or item.get("description") or item.get("title")
+    side_effect = {
+        "target": "control_room_item_events",
+        "event_type": "investigation_note_created",
+        "note": str(note or "")[:700],
+    }
+    result = {
+        "ok": True,
+        "mode": "execute_live",
+        "executed": True,
+        "external_write": False,
+        "internal_write": True,
+        "target": "control_room_item_events",
+        "adapter": "internal_investigation_note",
+        "decision_id": item.get("decision_id"),
+        "idempotency_key": idempotency_key,
+        "side_effect": side_effect,
+        "message": "Nota de investigacion creada en Control Room; no se escribio en ERP.",
+    }
+    execution = await _record_action_execution(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute_live",
+        status="executed",
+        payload={**payload, "idempotency_key": idempotency_key},
+        result=result,
+        critical=True,
+    )
+    action_run = await _record_action_run(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute",
+        status="completed",
+        input_payload={**payload, "idempotency_key": idempotency_key},
+        execution_result=result,
+        side_effect=side_effect,
+        idempotency_key=_action_run_idempotency_key(
+            item=item,
+            template=template,
+            mode="execute",
+            provided=idempotency_key,
+        ),
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        metadata={"legacy_table": "control_room_action_executions"},
+        critical=True,
+    )
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="investigation_note_created",
+        metadata={
+            "template_id": template["template_id"],
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+            "note": side_effect["note"],
+        },
+        critical=True,
+    )
+    await _set_execution_status(pool, user=user, item=item, execution_status="executed", critical=True)
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "template_id": template["template_id"],
+            "target": "control_room_item_events",
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+            "side_effect": side_effect,
+        },
+    )
+    public_item = _with_omega({**item, "execution_status": "executed"})
+    return {
+        "executed": True,
+        "idempotent": False,
+        "execution": execution,
+        "action_run": action_run,
+        "payload": payload,
+        "result": result,
+        "item": public_item,
+    }
+
+
+@_bind_to_core
+async def _execute_internal_decision_monitoring(
+    pool: Any,
+    *,
+    user: dict,
+    item: dict[str, Any],
+    template: dict[str, Any],
+    payload: dict[str, Any],
+    idempotency_key: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict[str, Any]:
+    workspace_id = _workspace_id(user)
+    monitoring_state = {
+        "enabled": True,
+        "decision_id": item.get("decision_id"),
+        "metric": item.get("metric") or item.get("anomaly_type"),
+        "entity_id": item.get("entity_id"),
+        "source_dataset": item.get("source_dataset"),
+        "marked_at": datetime.now(UTC).isoformat(),
+        "marked_by": user.get("email") or "user",
+    }
+    side_effect = {
+        "target": "control_room_items.metadata",
+        "metadata_key": "decision_monitoring",
+        "decision_monitoring": monitoring_state,
+    }
+    result = {
+        "ok": True,
+        "mode": "execute_live",
+        "executed": True,
+        "external_write": False,
+        "internal_write": True,
+        "target": "control_room_items.metadata",
+        "adapter": "internal_decision_monitoring",
+        "decision_id": item.get("decision_id"),
+        "idempotency_key": idempotency_key,
+        "side_effect": side_effect,
+        "message": "Decision marcada para monitoreo interno; no se escribio en ERP.",
+    }
+    execution = await _record_action_execution(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute_live",
+        status="executed",
+        payload={**payload, "idempotency_key": idempotency_key},
+        result=result,
+        critical=True,
+    )
+    action_run = await _record_action_run(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute",
+        status="completed",
+        input_payload={**payload, "idempotency_key": idempotency_key},
+        execution_result=result,
+        side_effect=side_effect,
+        idempotency_key=_action_run_idempotency_key(
+            item=item,
+            template=template,
+            mode="execute",
+            provided=idempotency_key,
+        ),
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        metadata={"legacy_table": "control_room_action_executions"},
+        critical=True,
+    )
+    await pool.execute(
+        """
+        UPDATE control_room_items
+           SET execution_status = 'executed',
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               last_seen_at = NOW()
+         WHERE workspace_id = $1
+           AND item_id = $2
+        """,
+        workspace_id,
+        item["id"],
+        json.dumps({"decision_monitoring": monitoring_state, "execution_status": "executed"}),
+    )
+    await _record_item_event(
+        pool,
+        user=user,
+        item=item,
+        event_type="decision_monitoring_marked",
+        metadata={
+            "template_id": template["template_id"],
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+            "decision_monitoring": monitoring_state,
+        },
+        critical=True,
+    )
+    await _record_writeback_audit_event(
+        pool,
+        user=user,
+        action="control_room.action.execute",
+        resource_type="control_room_item",
+        resource_id=item["id"],
+        ip=ip,
+        user_agent=user_agent,
+        status="success",
+        metadata={
+            "template_id": template["template_id"],
+            "target": "control_room_items.metadata",
+            "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
+            "side_effect": side_effect,
+        },
+    )
+    public_item = _with_omega({**item, "execution_status": "executed", "decision_monitoring": monitoring_state})
+    return {
+        "executed": True,
+        "idempotent": False,
+        "execution": execution,
+        "action_run": action_run,
+        "payload": payload,
+        "result": result,
         "item": public_item,
     }
 
@@ -2024,14 +2935,60 @@ async def _execute_external_writeback(
             error="circuit_breaker_open",
             critical=True,
         )
+        action_run = await _record_action_run(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            mode="execute",
+            status="failed",
+            input_payload=action_data,
+            execution_result=result,
+            error_code="circuit_breaker_open",
+            error_message=str(exc),
+            idempotency_key=_action_run_idempotency_key(
+                item=item,
+                template=template,
+                mode="execute",
+                provided=idempotency_key,
+            ),
+            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            metadata={"external_write": True, "target": target, "adapter": adapter_name},
+            critical=True,
+        )
         await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
         await _record_item_event(
             pool,
             user=user,
             item=item,
             event_type="action_blocked",
-            metadata={"template_id": template["template_id"], "execution_id": execution.get("id"), "reason": "circuit_breaker_open"},
+            metadata={
+                "template_id": template["template_id"],
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "reason": "circuit_breaker_open",
+            },
             critical=True,
+        )
+        await _record_writeback_audit_event(
+            pool,
+            user=user,
+            action="control_room.action.execute",
+            resource_type="control_room_item",
+            resource_id=item["id"],
+            ip=ip,
+            user_agent=user_agent,
+            status="failure",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "target": target,
+                "adapter": adapter_name,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "reason": "circuit_breaker_open",
+                "validation_result": public_validation_result,
+            },
         )
         raise HTTPException(503, result) from exc
     except AdapterExecutionError as exc:
@@ -2056,14 +3013,60 @@ async def _execute_external_writeback(
             error="external_writeback_failed",
             critical=True,
         )
+        action_run = await _record_action_run(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            mode="execute",
+            status="failed",
+            input_payload=action_data,
+            execution_result=result,
+            error_code="external_writeback_failed",
+            error_message=str(exc),
+            idempotency_key=_action_run_idempotency_key(
+                item=item,
+                template=template,
+                mode="execute",
+                provided=idempotency_key,
+            ),
+            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            metadata={"external_write": True, "target": target, "adapter": adapter_name},
+            critical=True,
+        )
         await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
         await _record_item_event(
             pool,
             user=user,
             item=item,
             event_type="action_blocked",
-            metadata={"template_id": template["template_id"], "execution_id": execution.get("id"), "reason": "external_writeback_failed"},
+            metadata={
+                "template_id": template["template_id"],
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "reason": "external_writeback_failed",
+            },
             critical=True,
+        )
+        await _record_writeback_audit_event(
+            pool,
+            user=user,
+            action="control_room.action.execute",
+            resource_type="control_room_item",
+            resource_id=item["id"],
+            ip=ip,
+            user_agent=user_agent,
+            status="failure",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "target": target,
+                "adapter": adapter_name,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "reason": "external_writeback_failed",
+                "validation_result": public_validation_result,
+            },
         )
         raise HTTPException(502, result) from exc
     except Exception as exc:
@@ -2087,14 +3090,60 @@ async def _execute_external_writeback(
             error=type(exc).__name__,
             critical=True,
         )
+        action_run = await _record_action_run(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            mode="execute",
+            status="failed",
+            input_payload=action_data,
+            execution_result=result,
+            error_code=type(exc).__name__,
+            error_message=str(exc),
+            idempotency_key=_action_run_idempotency_key(
+                item=item,
+                template=template,
+                mode="execute",
+                provided=idempotency_key,
+            ),
+            legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+            metadata={"external_write": True, "target": target, "adapter": adapter_name},
+            critical=True,
+        )
         await _set_execution_status(pool, user=user, item=item, execution_status="failed", critical=True)
         await _record_item_event(
             pool,
             user=user,
             item=item,
             event_type="action_blocked",
-            metadata={"template_id": template["template_id"], "execution_id": execution.get("id"), "reason": type(exc).__name__},
+            metadata={
+                "template_id": template["template_id"],
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "reason": type(exc).__name__,
+            },
             critical=True,
+        )
+        await _record_writeback_audit_event(
+            pool,
+            user=user,
+            action="control_room.action.execute",
+            resource_type="control_room_item",
+            resource_id=item["id"],
+            ip=ip,
+            user_agent=user_agent,
+            status="failure",
+            metadata={
+                "template_id": template["template_id"],
+                "template_type": template_type,
+                "target": target,
+                "adapter": adapter_name,
+                "execution_id": execution.get("id"),
+                "action_run_id": action_run.get("id"),
+                "reason": type(exc).__name__,
+                "validation_result": public_validation_result,
+            },
         )
         raise HTTPException(502, result) from exc
 
@@ -2136,6 +3185,28 @@ async def _execute_external_writeback(
         error=None if ok else message,
         critical=True,
     )
+    action_run = await _record_action_run(
+        pool,
+        user=user,
+        item=item,
+        template=template,
+        mode="execute",
+        status="completed" if ok else "failed",
+        input_payload=action_data,
+        execution_result=result,
+        side_effect={"target": target, "adapter": adapter_name, "after": after},
+        error_code=None if ok else "external_writeback_failed",
+        error_message=None if ok else message,
+        idempotency_key=_action_run_idempotency_key(
+            item=item,
+            template=template,
+            mode="execute",
+            provided=idempotency_key,
+        ),
+        legacy_execution_id=int(execution["id"]) if execution.get("id") is not None else None,
+        metadata={"external_write": True, "target": target, "adapter": adapter_name},
+        critical=True,
+    )
     await _set_execution_status(pool, user=user, item=item, execution_status=execution_status, critical=True)
     await _record_item_event(
         pool,
@@ -2146,6 +3217,7 @@ async def _execute_external_writeback(
             "template_id": template["template_id"],
             "template_type": template_type,
             "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
             "target": target,
             "adapter": adapter_name,
         },
@@ -2166,6 +3238,7 @@ async def _execute_external_writeback(
             "target": target,
             "adapter": adapter_name,
             "execution_id": execution.get("id"),
+            "action_run_id": action_run.get("id"),
             "before": before,
             "after": after,
             "validation_result": public_validation_result,
@@ -2194,6 +3267,7 @@ async def _execute_external_writeback(
         "executed": True,
         "idempotent": False,
         "execution": execution,
+        "action_run": action_run,
         "payload": action_data,
         "result": result,
         "learning_lesson": learning_lesson,
@@ -2351,8 +3425,66 @@ async def execute_item(
         )
         raise HTTPException(409, "dry-run validation is required before execution")
 
+    try:
+        successful_dry_run = await _latest_successful_dry_run(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+        )
+    except Exception as exc:
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="No se pudo validar el action_run de dry-run antes de ejecutar.",
+            error="dry_run_lookup_failed",
+        )
+        raise HTTPException(503, "dry-run action run lookup failed") from exc
+    if not successful_dry_run:
+        await _record_execute_block(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            ip=ip,
+            user_agent=user_agent,
+            message="Se requiere action_run de dry-run exitoso antes de la ejecucion supervisada.",
+            error="dry_run_action_run_required",
+        )
+        raise HTTPException(409, "successful dry-run action run is required before execution")
+
     if str(template.get("template_id") or "") == "create_followup_task":
         return await _execute_internal_followup_task(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+            ip=ip,
+            user_agent=user_agent,
+        )
+
+    if str(template.get("template_id") or "") == "create_investigation_note":
+        return await _execute_internal_investigation_note(
+            pool,
+            user=user,
+            item=item,
+            template=template,
+            payload=payload,
+            idempotency_key=(str(idempotency_key).strip() if idempotency_key else None),
+            ip=ip,
+            user_agent=user_agent,
+        )
+
+    if str(template.get("template_id") or "") == "mark_decision_for_monitoring":
+        return await _execute_internal_decision_monitoring(
             pool,
             user=user,
             item=item,
@@ -2867,8 +3999,20 @@ __all__ = (
     'create_item_lesson',
     'apply_item_lesson',
     '_resolve_template',
+    '_adapter_name_for_template',
+    '_action_run_idempotency_key',
+    '_action_run_public',
+    '_record_action_run_event',
+    '_record_action_run',
+    '_latest_successful_dry_run',
+    '_dry_run_checks',
     'action_preview',
     'action_dry_run',
+    'list_item_action_runs',
+    '_outcome_num',
+    '_outcome_public',
+    'list_item_outcomes',
+    'record_item_outcome',
     'run_auto_item',
     '_confirmed_for_execute',
     '_supports_transactional_acquire',
@@ -2877,6 +4021,8 @@ __all__ = (
     '_existing_executed_writeback',
     '_execute_internal_followup_task',
     '_execute_internal_followup_task_tx',
+    '_execute_internal_investigation_note',
+    '_execute_internal_decision_monitoring',
     '_external_action_data',
     '_execute_external_writeback',
     'execute_item',

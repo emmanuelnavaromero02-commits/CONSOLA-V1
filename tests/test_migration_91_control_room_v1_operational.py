@@ -26,6 +26,8 @@ def test_control_room_v1_seeds_safe_action_templates_only():
     for template in (
         "restore_data_source",
         "create_followup_task",
+        "create_investigation_note",
+        "mark_decision_for_monitoring",
         "request_owner_review",
         "prepare_replicon_adjustment",
         "prepare_billing_review",

@@ -114,6 +114,8 @@ INSERT INTO control_room_action_templates
 VALUES
     ('restore_data_source', 'platform', 'source_unavailable', 'Restaurar fuente de datos', 'Valida instalacion, credenciales, materializacion y scope tenant/workspace.', 'data_recovery', 'medium', 'dry_run', TRUE, '{"external_write": false}'::jsonb),
     ('create_followup_task', 'platform', NULL, 'Crear seguimiento operativo', 'Genera una tarea auditada para responsable operativo.', 'followup_task', 'low', 'dry_run', TRUE, '{"external_write": false}'::jsonb),
+    ('create_investigation_note', 'platform', NULL, 'Crear nota de investigacion', 'Registra una nota interna auditada con evidencia del item.', 'investigation_note', 'low', 'dry_run', FALSE, '{"external_write": false}'::jsonb),
+    ('mark_decision_for_monitoring', 'platform', NULL, 'Marcar decision para monitoreo', 'Activa seguimiento interno de la decision y sus metricas.', 'decision_monitoring', 'low', 'dry_run', TRUE, '{"external_write": false}'::jsonb),
     ('request_owner_review', 'platform', NULL, 'Solicitar revision de owner', 'Prepara solicitud de revision humana con evidencia y SQL.', 'owner_review', 'low', 'dry_run', TRUE, '{"external_write": false}'::jsonb),
     ('prepare_replicon_adjustment', 'replicon', NULL, 'Preparar ajuste Replicon', 'Construye payload seguro para revisar billing, timesheet o asignacion en Replicon.', 'replicon_adjustment', 'high', 'dry_run', TRUE, '{"target": "replicon", "external_write": false}'::jsonb),
     ('prepare_billing_review', 'replicon', NULL, 'Preparar revision de facturacion', 'Construye evidencia para validar WIP, margen, horas y facturacion.', 'billing_review', 'medium', 'dry_run', TRUE, '{"target": "replicon", "external_write": false}'::jsonb),

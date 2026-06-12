@@ -1275,7 +1275,14 @@ async def test_get_item_activity_is_workspace_scoped_and_merges_operational_trai
     with patch.object(control_room_service.auth, "pool", return_value=mock_pool):
         result = await control_room_service.get_item_activity("item-activity", USER)
 
-    assert result["counts"] == {"events": 1, "executions": 1, "decision_actions": 1, "total": 3}
+    assert result["counts"] == {
+        "events": 1,
+        "executions": 1,
+        "decision_actions": 1,
+        "action_runs": 0,
+        "outcomes": 0,
+        "total": 3,
+    }
     assert [entry["kind"] for entry in result["activity"]] == ["event", "execution", "decision_action"]
     assert result["activity"][0]["label"] == "Aprobacion registrada"
     assert result["activity"][1]["label"] == "Dry-run validado"
@@ -1636,6 +1643,38 @@ def _execution_row(
     }
 
 
+def _dry_run_action_run_row(item: dict, *, template_id: str = "create_followup_task") -> dict:
+    adapter_name = "internal_followup_task" if template_id == "create_followup_task" else template_id
+    return {
+        "id": 44,
+        "tenant_id": "tenant-A",
+        "workspace_id": "workspace-A",
+        "item_id": item["id"],
+        "decision_id": item.get("decision_id") or 42,
+        "legacy_execution_id": 22,
+        "action_type": template_id,
+        "adapter_name": adapter_name,
+        "mode": "dry_run",
+        "status": "dry_run_completed",
+        "risk_level": "low",
+        "requires_approval": True,
+        "approval_status": "implicit_internal_beta",
+        "idempotency_key": f"dry_run:{item['id']}:{template_id}:42",
+        "actor_id": 7,
+        "actor_email": "ops@example.com",
+        "input": {},
+        "dry_run_result": {"ok": True, "validated": True},
+        "execution_result": {},
+        "side_effect": {},
+        "error_code": None,
+        "error_message": None,
+        "metadata": {},
+        "created_at": datetime(2026, 5, 20, 10, 1, 0),
+        "updated_at": datetime(2026, 5, 20, 10, 1, 1),
+        "completed_at": datetime(2026, 5, 20, 10, 1, 1),
+    }
+
+
 def test_writeback_factory_resolves_builtin_sap_hcm_it0008_adapter():
     adapter = control_room_service.WriteBackAdapterFactory.get_adapter("sap_hcm_it0008")
 
@@ -1760,6 +1799,7 @@ async def test_execute_live_supported_followup_writes_decision_action_and_audits
     mock_pool = AsyncMock()
     mock_pool.fetchrow = AsyncMock(side_effect=[
         None,
+        _dry_run_action_run_row(item),
         None,
         {"id": 42},
         action_row,
@@ -1818,7 +1858,7 @@ async def test_execute_live_supported_followup_uses_transaction_and_lock(monkeyp
         "ts": datetime(2026, 5, 20, 10, 2, 0),
     }
     pool = _TransactionalPool(
-        pool_fetchrow_side_effect=[None],
+        pool_fetchrow_side_effect=[None, _dry_run_action_run_row(item)],
         conn_fetchrow_side_effect=[None, {"id": 42}, action_row, _execution_row(item)],
     )
 
@@ -2012,6 +2052,7 @@ async def test_execute_live_external_template_uses_registered_adapter(monkeypatc
     mock_pool = AsyncMock()
     mock_pool.fetchrow = AsyncMock(side_effect=[
         None,
+        _dry_run_action_run_row(item, template_id="prepare_billing_review"),
         _execution_row(
             item,
             template_id="prepare_billing_review",
@@ -2424,7 +2465,13 @@ async def test_execute_live_rejects_decision_from_other_workspace(monkeypatch):
     ))["items"][0]
     item = _executed_item(base_item)
     mock_pool = AsyncMock()
-    mock_pool.fetchrow = AsyncMock(side_effect=[None, None, None, _execution_row(item, status="blocked")])
+    mock_pool.fetchrow = AsyncMock(side_effect=[
+        None,
+        _dry_run_action_run_row(item),
+        None,
+        None,
+        _execution_row(item, status="blocked"),
+    ])
     mock_pool.fetch.return_value = []
     mock_pool.fetchval.return_value = 0
 
@@ -2502,7 +2549,7 @@ async def test_execute_live_audit_failure_aborts_internal_writeback(monkeypatch)
         "ts": datetime(2026, 5, 20, 10, 2, 0),
     }
     pool = _TransactionalPool(
-        pool_fetchrow_side_effect=[None],
+        pool_fetchrow_side_effect=[None, _dry_run_action_run_row(item)],
         conn_fetchrow_side_effect=[None, {"id": 42}, action_row, _execution_row(item)],
     )
 

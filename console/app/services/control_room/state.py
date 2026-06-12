@@ -1236,6 +1236,59 @@ def _decision_action_to_activity(row: Any) -> dict[str, Any]:
 
 
 @_bind_to_core
+def _action_run_to_activity(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    status = str(data.get("status") or "recorded")
+    label_by_status = {
+        "preview_generated": "Preview persistido",
+        "dry_run_completed": "Dry-run persistente validado",
+        "dry_run_failed": "Dry-run persistente fallido",
+        "blocked": "Ejecucion bloqueada",
+        "completed": "Action run completado",
+        "failed": "Action run fallido",
+    }
+    return {
+        "id": f"action_run:{data.get('id')}",
+        "kind": "action_run",
+        "type": data.get("mode") or data.get("action_type"),
+        "label": label_by_status.get(status, status.replace("_", " ").title()),
+        "status": status,
+        "actor": data.get("actor_email") or "sistema",
+        "at": data.get("created_at"),
+        "metadata": {
+            "action_type": data.get("action_type"),
+            "adapter_name": data.get("adapter_name"),
+            "legacy_execution_id": data.get("legacy_execution_id"),
+            "completed_at": data.get("completed_at"),
+        },
+        "payload": _details(data.get("input")),
+        "result": _details(data.get("dry_run_result")) or _details(data.get("execution_result")),
+        "side_effect": _details(data.get("side_effect")),
+        "error": data.get("error_message") or data.get("error_code"),
+    }
+
+
+@_bind_to_core
+def _outcome_to_activity(row: Any) -> dict[str, Any]:
+    data = _row_to_public(row)
+    return {
+        "id": f"outcome:{data.get('id')}",
+        "kind": "outcome",
+        "type": "prediction_outcome",
+        "label": str(data.get("outcome_summary") or "Outcome registrado"),
+        "status": "recorded",
+        "actor": _details(data.get("metadata")).get("reported_by") or "user",
+        "at": data.get("created_at"),
+        "metadata": {
+            "option_id": data.get("option_id"),
+            "action_taken": data.get("action_taken"),
+            "prediction_error": data.get("prediction_error"),
+            "learned_rule": data.get("learned_rule"),
+        },
+    }
+
+
+@_bind_to_core
 async def get_item_activity(
     item_id: str,
     user: dict,
@@ -1248,6 +1301,8 @@ async def get_item_activity(
     event_rows: list[Any] = []
     execution_rows: list[Any] = []
     decision_action_rows: list[Any] = []
+    action_run_rows: list[Any] = []
+    outcome_rows: list[Any] = []
     try:
         event_rows = await pool.fetch(
             """
@@ -1296,11 +1351,48 @@ async def get_item_activity(
             )
         except Exception:
             decision_action_rows = []
+    try:
+        action_run_rows = await pool.fetch(
+            """
+            SELECT id, item_id, decision_id, legacy_execution_id, action_type,
+                   adapter_name, mode, status, input, dry_run_result,
+                   execution_result, side_effect, error_code, error_message,
+                   actor_email, created_at, completed_at
+              FROM action_runs
+             WHERE workspace_id = $1
+               AND item_id = $2
+             ORDER BY created_at DESC
+             LIMIT 50
+            """,
+            workspace_id,
+            item["id"],
+        )
+    except Exception:
+        action_run_rows = []
+    try:
+        outcome_rows = await pool.fetch(
+            """
+            SELECT id, signal_id, option_id, action_taken, predicted_value,
+                   actual_value, prediction_error, outcome_summary,
+                   learned_rule, metadata, created_at
+              FROM prediction_outcomes
+             WHERE workspace_id = $1
+               AND signal_id = $2
+             ORDER BY created_at DESC
+             LIMIT 50
+            """,
+            workspace_id,
+            item["id"],
+        )
+    except Exception:
+        outcome_rows = []
 
     activity = [
         *(_event_to_activity(row) for row in event_rows),
         *(_execution_to_activity(row) for row in execution_rows),
         *(_decision_action_to_activity(row) for row in decision_action_rows),
+        *(_action_run_to_activity(row) for row in action_run_rows),
+        *(_outcome_to_activity(row) for row in outcome_rows),
     ]
     activity.sort(key=lambda entry: str(entry.get("at") or ""), reverse=True)
     return {
@@ -1310,6 +1402,8 @@ async def get_item_activity(
             "events": len(event_rows),
             "executions": len(execution_rows),
             "decision_actions": len(decision_action_rows),
+            "action_runs": len(action_run_rows),
+            "outcomes": len(outcome_rows),
             "total": len(activity),
         },
     }
@@ -1698,6 +1792,8 @@ __all__ = (
     '_event_to_activity',
     '_execution_to_activity',
     '_decision_action_to_activity',
+    '_action_run_to_activity',
+    '_outcome_to_activity',
     'get_item_activity',
     '_record_item_event',
     '_merge_rule',

@@ -241,6 +241,16 @@ async def control_room_item_activity(item_id: str, user: dict = Depends(require_
     return await control_room_service.get_item_activity(item_id, user)
 
 
+@router.get("/items/{item_id}/action-runs", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_item_action_runs(item_id: str, user: dict = Depends(require_authenticated)):
+    return await control_room_service.list_item_action_runs(item_id, user)
+
+
+@router.get("/items/{item_id}/outcomes", dependencies=[Depends(require_permission("datasets.read"))])
+async def control_room_item_outcomes(item_id: str, user: dict = Depends(require_authenticated)):
+    return await control_room_service.list_item_outcomes(item_id, user)
+
+
 @router.post(
     "/items/{item_id}/step",
     dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
@@ -281,6 +291,28 @@ async def control_room_create_item_lesson(
     return await _invalidate_after_write(
         user,
         control_room_service.create_item_lesson(
+            item_id,
+            body if isinstance(body, dict) else {},
+            user,
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        ),
+    )
+
+
+@router.post(
+    "/items/{item_id}/outcomes",
+    dependencies=[Depends(require_csrf), Depends(require_permission("control_room.write"))],
+)
+async def control_room_record_item_outcome(
+    item_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    user: dict = Depends(require_authenticated),
+):
+    return await _invalidate_after_write(
+        user,
+        control_room_service.record_item_outcome(
             item_id,
             body if isinstance(body, dict) else {},
             user,

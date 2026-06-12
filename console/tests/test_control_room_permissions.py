@@ -38,7 +38,9 @@ def test_control_room_mutations_use_specific_write_permission():
         '"/items/{item_id}/action-dry-run"',
         '"/items/{item_id}/execute"',
         '"/items/{item_id}/step"',
+        '"/items/{item_id}/outcomes"',
         '"/items/{item_id}/lessons"',
+        '"/items/{item_id}/action-runs"',
         '"/thresholds"',
     ):
         assert route in router

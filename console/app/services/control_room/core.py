@@ -82,7 +82,11 @@ ACTIVITY_LABELS = {
     "alert_false_positive": "Falso positivo cerrado",
 }
 
-SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES = {"create_followup_task"}
+SUPPORTED_INTERNAL_WRITEBACK_TEMPLATES = {
+    "create_followup_task",
+    "create_investigation_note",
+    "mark_decision_for_monitoring",
+}
 
 
 @dataclass(frozen=True)
@@ -196,6 +200,26 @@ ACTION_TEMPLATES: dict[str, dict[str, Any]] = {
         "label": "Crear seguimiento operativo",
         "description": "Genera una tarea auditada para responsable operativo.",
         "action_kind": "followup_task",
+        "risk_level": "low",
+        "mode_default": "dry_run",
+        "requires_approval": True,
+    },
+    "create_investigation_note": {
+        "template_id": "create_investigation_note",
+        "cartridge_id": "platform",
+        "label": "Crear nota de investigacion",
+        "description": "Registra una nota interna auditada con evidencia del item.",
+        "action_kind": "investigation_note",
+        "risk_level": "low",
+        "mode_default": "dry_run",
+        "requires_approval": False,
+    },
+    "mark_decision_for_monitoring": {
+        "template_id": "mark_decision_for_monitoring",
+        "cartridge_id": "platform",
+        "label": "Marcar decision para monitoreo",
+        "description": "Activa seguimiento interno de la decision y sus metricas.",
+        "action_kind": "decision_monitoring",
         "risk_level": "low",
         "mode_default": "dry_run",
         "requires_approval": True,
