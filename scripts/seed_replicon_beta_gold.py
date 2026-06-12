@@ -9,6 +9,9 @@ metadata so app readiness, lineage, and dataset previews agree.
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
 import os
 from datetime import date
 from pathlib import Path
@@ -698,6 +701,17 @@ def _connect_gold():
     return psycopg2.connect(dsn)
 
 
+def resolve_seed_scope() -> tuple[str, str]:
+    """Resolve the seed scope without mutating data."""
+    _load_env_file()
+    operational = _connect_operational()
+    try:
+        with operational.cursor() as cur:
+            return _resolve_scope(cur)
+    finally:
+        operational.close()
+
+
 def _table_columns(cur, table_name: str, *, schema: str = "public") -> set[str]:
     cur.execute(
         """
@@ -796,6 +810,58 @@ def _seed_gold_dataset(cur, dataset: str, tenant_id: str, workspace_id: str) -> 
     return len(rows)
 
 
+def _table_scope_fingerprint(cur, dataset: str, tenant_id: str, workspace_id: str) -> dict[str, Any]:
+    table_name = f"gold_{dataset}"
+    cur.execute("SELECT to_regclass(%s)", (f"public.{table_name}",))
+    if not cur.fetchone()[0]:
+        return {"table": table_name, "row_count": 0, "checksum": "missing"}
+    cur.execute(
+        sql.SQL(
+            """
+            SELECT COUNT(*)::bigint,
+                   COALESCE(
+                       md5(COALESCE(string_agg(to_jsonb(t)::text, '|' ORDER BY to_jsonb(t)::text), '')),
+                       md5('')
+                   )
+              FROM (
+                    SELECT *
+                      FROM public.{}
+                     WHERE tenant_id::text = %s
+                       AND workspace_id::text = %s
+                   ) AS t
+            """
+        ).format(sql.Identifier(table_name)),
+        (tenant_id, workspace_id),
+    )
+    row = cur.fetchone()
+    return {
+        "table": table_name,
+        "row_count": int(row[0] or 0),
+        "checksum": str(row[1]),
+    }
+
+
+def replicon_beta_gold_scope_fingerprint(tenant_id: str, workspace_id: str) -> dict[str, Any]:
+    """Return deterministic counts/checksums for one tenant/workspace Gold scope."""
+    _load_env_file()
+    datasets: dict[str, Any] = {}
+    gold = _connect_gold()
+    try:
+        with gold.cursor() as cur:
+            for dataset in sorted(DATASETS):
+                datasets[dataset] = _table_scope_fingerprint(cur, dataset, tenant_id, workspace_id)
+    finally:
+        gold.close()
+    overall_input = json.dumps(datasets, sort_keys=True, separators=(",", ":"))
+    return {
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "datasets": datasets,
+        "row_count": sum(int(item["row_count"]) for item in datasets.values()),
+        "checksum": hashlib.sha256(overall_input.encode("utf-8")).hexdigest(),
+    }
+
+
 def _upsert_dataset_catalog(cur, dataset_counts: dict[str, int], tenant_id: str, workspace_id: str) -> None:
     dataset_columns = _table_columns(cur, "datasets")
     for dataset, count in dataset_counts.items():
@@ -871,9 +937,18 @@ def _upsert_dataset_catalog(cur, dataset_counts: dict[str, int], tenant_id: str,
 
 
 def _refresh_lineage(cur, dataset_counts: dict[str, int], tenant_id: str, workspace_id: str) -> None:
+    storage_prefix = (
+        "postgres_gold://modecissions_gold/public/"
+        f"tenant_id={tenant_id}/workspace_id={workspace_id}/"
+    )
     cur.execute(
-        "DELETE FROM silver_lineage WHERE cartridge_id = %s AND source_batch_id = %s",
-        ("replicon", SEED_BATCH_ID),
+        """
+        DELETE FROM silver_lineage
+         WHERE cartridge_id = %s
+           AND source_batch_id = %s
+           AND storage_uri LIKE %s
+        """,
+        ("replicon", SEED_BATCH_ID, storage_prefix + "%"),
     )
     for dataset, count in dataset_counts.items():
         payload = DATASETS[dataset]
@@ -894,10 +969,7 @@ def _refresh_lineage(cur, dataset_counts: dict[str, int], tenant_id: str, worksp
                 "Controlled private-beta Replicon Gold seed; no external API extraction.",
                 Json({name: {"type": kind} for name, kind in payload["columns"]}),
                 count,
-                (
-                    "postgres_gold://modecissions_gold/public/"
-                    f"tenant_id={tenant_id}/workspace_id={workspace_id}/gold_{dataset}"
-                ),
+                f"{storage_prefix}gold_{dataset}",
                 "replicon_beta_seed",
             ),
         )
@@ -1046,20 +1118,72 @@ def seed_replicon_beta_gold() -> dict[str, Any]:
         "workspace_id": workspace_id,
         "datasets": dataset_counts,
         "rows": sum(dataset_counts.values()),
+        "scope_fingerprint": replicon_beta_gold_scope_fingerprint(tenant_id, workspace_id),
         "vault_marker": REPLICON_VAULT_KEY,
     }
 
 
-def main() -> None:
-    result = seed_replicon_beta_gold()
-    counts = ", ".join(f"{name}={count}" for name, count in sorted(result["datasets"].items()))
-    print(
-        "seeded Replicon beta Gold "
-        f"workspace={result['workspace_id']} tenant={result['tenant_id']} "
-        f"rows={result['rows']} datasets=[{counts}] "
-        f"vault_marker={result['vault_marker']} status=data_seed_only"
+def _idempotency_payload(runs: int) -> dict[str, Any]:
+    tenant_id, workspace_id = resolve_seed_scope()
+    before = replicon_beta_gold_scope_fingerprint(tenant_id, workspace_id)
+    results: list[dict[str, Any]] = []
+    for index in range(runs):
+        result = seed_replicon_beta_gold()
+        fingerprint = result["scope_fingerprint"]
+        results.append(
+            {
+                "run": index + 1,
+                "rows": result["rows"],
+                "checksum": fingerprint["checksum"],
+                "row_count": fingerprint["row_count"],
+                "datasets": result["datasets"],
+            }
+        )
+    after = replicon_beta_gold_scope_fingerprint(tenant_id, workspace_id)
+    run_checksums = {item["checksum"] for item in results}
+    run_counts = {item["row_count"] for item in results}
+    return {
+        "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
+        "before": before,
+        "after": after,
+        "runs": results,
+        "idempotent": len(run_checksums) == 1 and len(run_counts) == 1 and bool(results) and results[-1]["checksum"] == after["checksum"],
+        "before_equals_after": before["checksum"] == after["checksum"],
+        "vault_marker": REPLICON_VAULT_KEY,
+        "status": "data_seed_only",
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Seed scoped Replicon Gold rows for private beta.")
+    parser.add_argument(
+        "--verify-idempotent-runs",
+        type=int,
+        default=int(os.environ.get("OMEGA_SEED_VERIFY_IDEMPOTENT_RUNS", "1")),
+        help="Run the seed N times and verify the post-run checksum is stable.",
     )
+    parser.add_argument("--json", action="store_true", help="Print structured JSON.")
+    args = parser.parse_args(argv)
+    runs = max(1, args.verify_idempotent_runs)
+    payload = _idempotency_payload(runs)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+    else:
+        latest = payload["runs"][-1]
+        counts = ", ".join(f"{name}={count}" for name, count in sorted(latest["datasets"].items()))
+        print(
+            "seeded Replicon beta Gold "
+            f"workspace={payload['workspace_id']} tenant={payload['tenant_id']} "
+            f"rows={latest['rows']} datasets=[{counts}] "
+            f"checksum={latest['checksum']} idempotent={payload['idempotent']} "
+            f"before_equals_after={payload['before_equals_after']} "
+            f"vault_marker={payload['vault_marker']} status=data_seed_only"
+        )
+    if runs > 1 and not payload["idempotent"]:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -156,6 +156,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - /opt/modecissions/VERSION:/app/VERSION:ro
       - /opt/modecissions/cartridges:/registry/cartridges:ro
       - /opt/modecissions/airflow/dags:/opt/airflow/dags:ro
       - /opt/modecissions/console/app/static:/app/app/static:ro

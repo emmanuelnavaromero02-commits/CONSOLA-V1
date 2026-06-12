@@ -18,7 +18,7 @@ TARGET ?= local
 WORKLOAD ?= sap_successfactors
 PROFILE ?= beta-safe
 
-.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold
+.PHONY: help bootstrap-env up up-core down nuke repair-local-stack logs ps test smoke beta-smoke beta-smoke-aws stress stress-smoke stress-beta stress-spike stress-breakpoint stress-soak-24h stress-write-heavy multiuser-simulation tenant-ab-local tenant-ab-aws live-cartridge-tests monitor-check production-readiness v1-live-readiness production-readiness-aws v1-ga-lite-local v1-ga-lite-aws v1-ga-max-aws v1-ga-cleanup v1-ga-report data-integrity-audit copilot-redteam cartridge-resilience chaos-local chaos-aws enterprise-readiness sap-successfactors-aws-live-max dr-rehearsal backup-aws dr-rehearsal-aws rollback-aws rollback-rehearsal migrate rotate-keys e2e acceptance preflight demo-check security-scan verify-release verify-v1-public seed-intelligence-gold seed-replicon-beta-gold seed-replicon-beta-gold-aws
 .PHONY: test-hermetic reconcile-db-passwords
 
 help:
@@ -41,6 +41,8 @@ help:
 	@echo "                    run tests/ against isolated mock services"
 	@echo "  make smoke        run end-to-end smoke checks against a running stack"
 	@echo "  make beta-smoke   run strict beta gate: smoke + Gold/lineage/RLS/readiness"
+	@echo "  make beta-smoke-aws"
+	@echo "                    run read-only AWS beta gate via SSM with ALB+internal checks"
 	@echo "  make stress       run Locust stress profile against the running stack"
 	@echo "  make stress-smoke run 25-user/5m smoke load with p95/p99 summary"
 	@echo "  make stress-beta  run beta load profile with p95/p99 summary"
@@ -87,8 +89,14 @@ help:
 	@echo "                    seed scoped prod-like Gold rows for intelligence demos"
 	@echo "  make seed-replicon-beta-gold"
 	@echo "                    seed scoped Replicon Gold rows for private beta apps"
+	@echo "  make seed-replicon-beta-gold-aws"
+	@echo "                    seed scoped Replicon Gold rows on AWS via SSM, idempotency checked"
+	@echo "  make tenant-ab-local / tenant-ab-aws"
+	@echo "                    verify tenant A/B positive and forbidden cross-scope probes"
 	@echo "  make dr-rehearsal"
 	@echo "                    rehearse backup/restore scripts in a guarded mode"
+	@echo "  make backup-aws / dr-rehearsal-aws / rollback-aws"
+	@echo "                    AWS backup, DR rehearsal, and tag rollback via SSM"
 	@echo "  make e2e          run Playwright browser-driven E2E tests (v1.44.3.2)"
 	@echo "  make acceptance   run heavy full-stack acceptance with fake live HubSpot"
 	@echo "  make security-scan"
@@ -179,6 +187,9 @@ seed-replicon-beta-gold:
 	POSTGRES_GOLD_PORT="$${GOLD_PG_PORT:-$${POSTGRES_GOLD_PORT:-15433}}" \
 	$(PYTHON) scripts/seed_replicon_beta_gold.py
 
+seed-replicon-beta-gold-aws:
+	@$(PYTHON) scripts/seed_replicon_beta_gold_aws.py
+
 test:
 	$(PYTEST) -ra tests/
 	PYTHONPATH=console $(PYTEST) -ra console/tests/
@@ -227,6 +238,9 @@ beta-smoke:
 	@$(MAKE) smoke
 	@$(PYTHON) scripts/beta_smoke.py
 
+beta-smoke-aws:
+	@$(PYTHON) scripts/beta_smoke_aws.py
+
 stress:
 	@bash scripts/run_stress.sh
 
@@ -272,6 +286,12 @@ sap-successfactors-aws-live-max:
 multiuser-simulation:
 	@bash scripts/run_multiuser_isolation_simulation.sh
 
+tenant-ab-local:
+	@$(PYTHON) scripts/tenant_ab_e2e.py --target local
+
+tenant-ab-aws:
+	@$(PYTHON) scripts/tenant_ab_e2e.py --target aws
+
 live-cartridge-tests:
 	@bash scripts/run_live_cartridge_checks.sh
 
@@ -304,6 +324,15 @@ v1-ga-report:
 
 dr-rehearsal:
 	@bash scripts/run_dr_rehearsal.sh
+
+backup-aws:
+	@$(PYTHON) scripts/aws_backup.py
+
+dr-rehearsal-aws:
+	@$(PYTHON) scripts/aws_dr_rehearsal.py
+
+rollback-aws:
+	@$(PYTHON) scripts/aws_rollback.py
 
 rollback-rehearsal:
 	@$(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi) scripts/rollback_rehearsal.py
